@@ -1,0 +1,16 @@
+[package]
+name = "solana-program"
+version = "0.1.0"
+edition = "2021"
+description = "On-chain Solana program for atomic swaps between Solana and Monero"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+anchor-lang = { version = "0.30.1", features = ["init-if-needed"] }
+anchor-spl = "0.30.1"
+
+[dev-dependencies]
+solana-sdk = "1.18"
+solana-client = "1.18"

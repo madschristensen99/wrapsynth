@@ -1,0 +1,20 @@
+SVM-XMR TypeScript Server V1
+
+Simple TypeScript server for atomic SVM-XMR swaps using local Monero wallet.
+
+## Program Interface
+Program ID: G1BVSiFojnXFaPG1WUgJAcYaB7aGKLKWtSqhMreKgA82
+Net: Devnet
+
+## Endpoints
+- POST /swap/create-usdc-to-xmr
+- POST /swap/create-xmr-to-usdc
+- POST /swap/:id/lock-proof
+- POST /swap/:id/redeem
+- GET /swap/:id
+
+## Requirements
+- Connect to local monero-wallet-rpc
+- Solana devnet RPC
+- Basic swap state persistence
+- No mocks, real transactions only

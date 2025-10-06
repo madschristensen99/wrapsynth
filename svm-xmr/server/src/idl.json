@@ -1,0 +1,256 @@
+{
+  "version": "0.1.0",
+  "name": "stealth_swap",
+  "instructions": [
+    {
+      "name": "createUsdcToXmrSwap",
+      "accounts": [
+        { "name": "swap", "isMut": true, "isSigner": false },
+        { "name": "alice", "isMut": true, "isSigner": true },
+        { "name": "bob", "isMut": false, "isSigner": false },
+        { "name": "aliceUsdc", "isMut": true, "isSigner": false },
+        { "name": "vaultUsdc", "isMut": true, "isSigner": false },
+        { "name": "usdcMint", "isMut": false, "isSigner": false },
+        { "name": "tokenProgram", "isMut": false, "isSigner": false },
+        { "name": "associatedTokenProgram", "isMut": false, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "swapId", "type": { "array": ["u8", 32] } },
+        { "name": "secretHash", "type": { "array": ["u8", 32] } },
+        { "name": "usdcAmount", "type": "u64" },
+        { "name": "xmrAmount", "type": "u64" },
+        { "name": "moneroSubAddress", "type": { "array": ["u8", 64] } },
+        { "name": "expiry", "type": "i64" },
+        { "name": "relayerFee", "type": "u64" }
+      ]
+    },
+    {
+      "name": "recordMoneroLockProof",
+      "accounts": [
+        { "name": "swap", "isMut": true, "isSigner": false },
+        { "name": "bob", "isMut": false, "isSigner": true }
+      ],
+      "args": [
+        { "name": "swapId", "type": { "array": ["u8", 32] } },
+        { "name": "moneroLockTxid", "type": { "array": ["u8", 32] } }
+      ]
+    },
+    {
+      "name": "redeemUsdc",
+      "accounts": [
+        { "name": "swap", "isMut": true, "isSigner": false },
+        { "name": "bob", "isMut": false, "isSigner": true },
+        { "name": "vaultUsdc", "isMut": true, "isSigner": false },
+        { "name": "bobToken", "isMut": true, "isSigner": false },
+        { "name": "relayerToken", "isMut": true, "isSigner": false },
+        { "name": "relayer", "isMut": false, "isSigner": false },
+        { "name": "usdcMint", "isMut": false, "isSigner": false },
+        { "name": "tokenProgram", "isMut": false, "isSigner": false },
+        { "name": "associatedTokenProgram", "isMut": false, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "swapId", "type": { "array": ["u8", 32] } },
+        { "name": "adaptorSig", "type": "bytes" }
+      ]
+    },
+    {
+      "name": "createXmrToUsdcSwap",
+      "accounts": [
+        { "name": "swap", "isMut": true, "isSigner": false },
+        { "name": "alice", "isMut": false, "isSigner": false },
+        { "name": "bob", "isMut": true, "isSigner": true },
+        { "name": "bobUsdc", "isMut": true, "isSigner": false },
+        { "name": "vaultUsdc", "isMut": true, "isSigner": false },
+        { "name": "usdcMint", "isMut": false, "isSigner": false },
+        { "name": "tokenProgram", "isMut": false, "isSigner": false },
+        { "name": "associatedTokenProgram", "isMut": false, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "swapId", "type": { "array": ["u8", 32] } },
+        { "name": "secretHash", "type": { "array": ["u8", 32] } },
+        { "name": "usdcAmount", "type": "u64" },
+        { "name": "xmrAmount", "type": "u64" },
+        { "name": "aliceSolana", "type": "publicKey" },
+        { "name": "expiry", "type": "i64" },
+        { "name": "relayerFee", "type": "u64" }
+      ]
+    },
+    {
+      "name": "redeemUsdcAlice",
+      "accounts": [
+        { "name": "swap", "isMut": true, "isSigner": false },
+        { "name": "alice", "isMut": false, "isSigner": true },
+        { "name": "vaultUsdc", "isMut": true, "isSigner": false },
+        { "name": "aliceToken", "isMut": true, "isSigner": false },
+        { "name": "relayerToken", "isMut": true, "isSigner": false },
+        { "name": "relayer", "isMut": false, "isSigner": false },
+        { "name": "usdcMint", "isMut": false, "isSigner": false },
+        { "name": "tokenProgram", "isMut": false, "isSigner": false },
+        { "name": "associatedTokenProgram", "isMut": false, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "swapId", "type": { "array": ["u8", 32] } },
+        { "name": "adaptorSig", "type": "bytes" }
+      ]
+    },
+    {
+      "name": "refund",
+      "accounts": [
+        { "name": "swap", "isMut": true, "isSigner": false },
+        { "name": "funder", "isMut": false, "isSigner": true },
+        { "name": "vaultUsdc", "isMut": true, "isSigner": false },
+        { "name": "funderToken", "isMut": true, "isSigner": false },
+        { "name": "usdcMint", "isMut": false, "isSigner": false },
+        { "name": "tokenProgram", "isMut": false, "isSigner": false },
+        { "name": "associatedTokenProgram", "isMut": false, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "swapId", "type": { "array": ["u8", 32] } }
+      ]
+    },
+    {
+      "name": "claimBountyForSecret",
+      "accounts": [
+        { "name": "swap", "isMut": true, "isSigner": false },
+        { "name": "claimant", "isMut": true, "isSigner": true },
+        { "name": "vaultCollateral", "isMut": true, "isSigner": false },
+        { "name": "claimantToken", "isMut": true, "isSigner": false },
+        { "name": "usdcMint", "isMut": false, "isSigner": false },
+        { "name": "tokenProgram", "isMut": false, "isSigner": false },
+        { "name": "associatedTokenProgram", "isMut": false, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "swapId", "type": { "array": ["u8", 32] } },
+        { "name": "adaptorSig", "type": { "array": ["u8", 64] } },
+        { "name": "parity", "type": "u8" },
+        { "name": "curvePoint", "type": { "array": ["u8", 32] } }
+      ]
+    },
+    {
+      "name": "adaptorVerify",
+      "accounts": [
+        { "name": "swap", "isMut": true, "isSigner": false },
+        { "name": "signer", "isMut": true, "isSigner": true },
+        { "name": "vaultUsdc", "isMut": true, "isSigner": false },
+        { "name": "vaultCollateral", "isMut": true, "isSigner": false },
+        { "name": "signerToken", "isMut": true, "isSigner": false },
+        { "name": "relayerToken", "isMut": true, "isSigner": false },
+        { "name": "relayer", "isMut": false, "isSigner": false },
+        { "name": "usdcMint", "isMut": false, "isSigner": false },
+        { "name": "tokenProgram", "isMut": false, "isSigner": false },
+        { "name": "associatedTokenProgram", "isMut": false, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "swapId", "type": { "array": ["u8", 32] } },
+        { "name": "sig", "type": { "array": ["u8", 64] } },
+        { "name": "parity", "type": "u8" },
+        { "name": "curvePoint", "type": { "array": ["u8", 32] } }
+      ]
+    },
+    {
+      "name": "forceOpenVtc",
+      "accounts": [
+        { "name": "swap", "isMut": true, "isSigner": false },
+        { "name": "caller", "isMut": false, "isSigner": true }
+      ],
+      "args": [
+        { "name": "swapId", "type": { "array": ["u8", 32] } }
+      ]
+    },
+    {
+      "name": "submitFraudProof",
+      "accounts": [
+        { "name": "swap", "isMut": true, "isSigner": false },
+        { "name": "vaultCollateral", "isMut": true, "isSigner": false },
+        { "name": "caller", "isMut": true, "isSigner": true },
+        { "name": "aliceToken", "isMut": true, "isSigner": false },
+        { "name": "bobToken", "isMut": true, "isSigner": false },
+        { "name": "usdcMint", "isMut": false, "isSigner": false },
+        { "name": "tokenProgram", "isMut": false, "isSigner": false },
+        { "name": "associatedTokenProgram", "isMut": false, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "swapId", "type": { "array": ["u8", 32] } },
+        { "name": "moneroTxidOld", "type": { "array": ["u8", 32] } },
+        { "name": "moneroTxidNew", "type": { "array": ["u8", 32] } }
+      ]
+    },
+    {
+      "name": "createCommitment",
+      "accounts": [
+        { "name": "commitment", "isMut": true, "isSigner": false },
+        { "name": "relayer", "isMut": true, "isSigner": true },
+        { "name": "swapper", "isMut": false, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "commitmentHash", "type": { "array": ["u8", 32] } },
+        { "name": "expiry", "type": "i64" }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Swap",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "direction", "type": { "defined": "Direction" } },
+          { "name": "swapId", "type": { "array": ["u8", 32] } },
+          { "name": "alice", "type": "publicKey" },
+          { "name": "bob", "type": "publicKey" },
+          { "name": "secretHash", "type": { "array": ["u8", 32] } },
+          { "name": "expiry", "type": "i64" },
+          { "name": "relayerFee", "type": "u64" },
+          { "name": "isRedeemed", "type": "bool" },
+          { "name": "isRefunded", "type": "bool" },
+          { "name": "usdcAmount", "type": "u64" },
+          { "name": "xmrAmount", "type": "u64" },
+          { "name": "moneroSubAddress", "type": { "array": ["u8", 64] } },
+          { "name": "moneroLockTxid", "type": { "array": ["u8", 32] } },
+          { "name": "aliceSolana", "type": "publicKey" },
+          { "name": "bump", "type": "u8" },
+          { "name": "vtcOpened", "type": "bool" },
+          { "name": "bobCollateralLocked", "type": "bool" },
+          { "name": "aliceCollateralLocked", "type": "bool" },
+          { "name": "fraudProven", "type": "bool" },
+          { "name": "bountyClaimed", "type": "bool" }
+        ]
+      }
+    },
+    {
+      "name": "RelayerCommitment",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "swapper", "type": "publicKey" },
+          { "name": "relayer", "type": "publicKey" },
+          { "name": "commitmentHash", "type": { "array": ["u8", 32] } },
+          { "name": "expiry", "type": "i64" },
+          { "name": "slot", "type": "u64" },
+          { "name": "bump", "type": "u8" }
+        ]
+      }
+    }
+  ],
+  "types": [
+    {
+      "name": "Direction",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          { "name": "UsdcToXmr" },
+          { "name": "XmrToUsdc" }
+        ]
+      }
+    }
+  ]
+}
