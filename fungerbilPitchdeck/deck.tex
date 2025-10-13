@@ -103,24 +103,58 @@
 \end{frame}
 
 % -------------------------------------------------
-\begin{frame}[t]{\color{brightpurple}\textbf{DeFi Today: A Privacy Nightmare}}
+\begin{frame}[t]{\color{brightpurple}\textbf{The Problem: Two Ecosystems, Two Challenges}}
 
-  \centering
-  \vspace{1em}
-  \begin{tikzpicture}
-    % Background for emphasis
-    \fill[midbg,opacity=0.7,rounded corners=15pt] (-6,-3) rectangle (6,3);
+  \vspace{0.5em}
+  
+  \begin{columns}[T]
+    % Left column - Solana Problems
+    \begin{column}{0.48\textwidth}
+      \centering
+      \begin{tikzpicture}
+        % Background box for Solana
+        \fill[solana,opacity=0.15,rounded corners=15pt] (-3.5,-4.2) rectangle (3.5,2.2);
+        
+        % Solana Logo
+        \node at (0,1.5) {\includegraphics[height=1.2cm]{solana-logo.png}};
+        
+        % Title
+        \node[text=solana,font=\Large\bfseries] at (0,0.5) {\textcolor{solana}{Solana}};
+        
+        % Three problems
+        \node[text=monero,font=\large,drop shadow={shadow xshift=0.05cm,shadow yshift=-0.05cm,opacity=0.3}] at (-2.5,-0.7) {\faEye};
+        \node[text=fg,font=\normalsize\bfseries,align=left,text width=4.5cm] at (0.3,-0.7) {Public Account\\Balances};
+        
+        \node[text=gold,font=\large,drop shadow={shadow xshift=0.05cm,shadow yshift=-0.05cm,opacity=0.3}] at (-2.5,-1.9) {\faUserSecret};
+        \node[text=fg,font=\normalsize\bfseries,align=left,text width=4.5cm] at (0.3,-1.9) {Every Transaction\\Visible};
+        
+        \node[text=neon,font=\large,drop shadow={shadow xshift=0.05cm,shadow yshift=-0.05cm,opacity=0.3}] at (-2.5,-3.1) {\faThumbsDown};
+        \node[text=fg,font=\normalsize\bfseries,align=left,text width=4.5cm] at (0.3,-3.1) {Front-Running\\Attacks};
+      \end{tikzpicture}
+    \end{column}
     
-    % Three simple points
-    \node[text=monero,font=\Huge,drop shadow={shadow xshift=0.1cm,shadow yshift=-0.1cm,opacity=0.3}] at (-4,1.5) {\faEye};
-    \node[text=fg,font=\LARGE\bfseries] at (0,1.5) {\textcolor{monero}{Public Account Balances}};
-    
-    \node[text=gold,font=\Huge,drop shadow={shadow xshift=0.1cm,shadow yshift=-0.1cm,opacity=0.3}] at (-4,-0.3) {\faUserSecret};
-    \node[text=fg,font=\LARGE\bfseries] at (0,-0.3) {\textcolor{gold}{Every Transaction Visible}};
-    
-    \node[text=neon,font=\Huge,drop shadow={shadow xshift=0.1cm,shadow yshift=-0.1cm,opacity=0.3}] at (-4,-2.1) {\faThumbsDown};
-    \node[text=fg,font=\LARGE\bfseries] at (0,-2.1) {\textcolor{neon}{Front-Running}};
-  \end{tikzpicture}
+    % Right column - Monero Problems
+    \begin{column}{0.48\textwidth}
+      \centering
+      \begin{tikzpicture}
+        % Background box for Monero
+        \fill[monero,opacity=0.15,rounded corners=15pt] (-3.5,-4.2) rectangle (3.5,2.2);
+        
+        % Monero Logo
+        \node at (0,1.5) {\includegraphics[height=1.2cm]{monero-logo.png}};
+        
+        % Title
+        \node[text=monero,font=\Large\bfseries] at (0,0.5) {\textcolor{monero}{Monero}};
+        
+        % Two problems
+        \node[text=gold,font=\large,drop shadow={shadow xshift=0.05cm,shadow yshift=-0.05cm,opacity=0.3}] at (-2.5,-1.3) {\faCode};
+        \node[text=fg,font=\normalsize\bfseries,align=left,text width=4.5cm] at (0.3,-1.3) {No Native Smart\\Contracts or Scripting};
+        
+        \node[text=neon,font=\large,drop shadow={shadow xshift=0.05cm,shadow yshift=-0.05cm,opacity=0.3}] at (-2.5,-2.8) {\faBan};
+        \node[text=fg,font=\normalsize\bfseries,align=left,text width=4.5cm] at (0.3,-2.8) {Facing Exchange\\Delistings};
+      \end{tikzpicture}
+    \end{column}
+  \end{columns}
 
 \end{frame}
 
@@ -168,6 +202,7 @@
     \node[rounded corners=15pt, minimum width=5cm, minimum height=5cm, 
           draw=fg!40, line width=2pt, fill=midbg, fill opacity=0.8,
           path picture={
+            \clip[rounded corners=15pt] (path picture bounding box.south west) rectangle (path picture bounding box.north east);
             \node at (path picture bounding box.center) {
               \includegraphics[width=4.8cm,height=4.8cm,keepaspectratio]{darklake.jpeg}
             };
@@ -177,6 +212,7 @@
     \node[rounded corners=15pt, minimum width=5cm, minimum height=5cm,
           draw=fg!40, line width=2pt, fill=midbg, fill opacity=0.8,
           path picture={
+            \clip[rounded corners=15pt] (path picture bounding box.south west) rectangle (path picture bounding box.north east);
             \node at (path picture bounding box.center) {
               \includegraphics[width=4.8cm,height=4.8cm,keepaspectratio]{arcium.jpg}
             };
@@ -242,8 +278,39 @@
     \node[text=fg!80,font=\normalsize,align=center] at (4.75,2.5) {Premium Orders};
     
     % Target revenue
-    \node[text=gold,font=\LARGE\bfseries] at (0,0.8) {\$1M Daily Revenue Target};
-    \node[text=meteora,font=\normalsize] at (0,0.1) {1\% of \$100M Monero daily volume};
+    \node[text=gold,font=\LARGE\bfseries] at (0,0.8) {\$100K Daily Revenue Target};
+    \node[text=meteora,font=\normalsize] at (0,0.1) {.1\% of \$100M Monero daily volume};
+  \end{tikzpicture}
+\end{frame}
+
+% -------------------------------------------------
+\begin{frame}[t]{\color{brightpurple}\textbf{Fun Gerbil: Competitive Advantage}}
+  \begin{tikzpicture}[remember picture,overlay]
+    \fill[monero,opacity=0.05] (current page.south west) rectangle (current page.north east);
+  \end{tikzpicture}
+  
+  \centering
+
+  \begin{tikzpicture}
+    % Advantage 1 - Monero's Anonymity Set
+    \fill[monero,opacity=0.2,rounded corners=15pt] (-7,2.2) rectangle (7,3.4);
+    \node[text=monero,font=\Large] at (-6,2.8) {\faUsers};
+    \node[text=white,font=\Large\bfseries,align=left,anchor=west] at (-5.2,2.8) {Established Anonymity Set};
+    
+    % Advantage 2 - Open FHE and ZK Infrastructure
+    \fill[solana,opacity=0.2,rounded corners=15pt] (-7,0.9) rectangle (7,2.0);
+    \node[text=neon,font=\Large] at (-6,1.45) {\faLock};
+    \node[text=white,font=\Large\bfseries,align=left,anchor=west] at (-5.2,1.45) {Open FHE and ZK Infrastructure};
+    
+    % Advantage 3 - Cross-Chain vs Intrachain
+    \fill[meteora,opacity=0.2,rounded corners=15pt] (-7,-0.4) rectangle (7,0.7);
+    \node[text=gold,font=\Large] at (-6,0.15) {\faLink};
+    \node[text=white,font=\Large\bfseries,align=left,anchor=west] at (-5.2,0.15) {Cross-Chain, Not Intrachain};
+    
+    % Advantage 4 - Arcium Confidential Tokens
+    \fill[brightpurple,opacity=0.2,rounded corners=15pt] (-7,-1.7) rectangle (7,-0.6);
+    \node[text=meteora,font=\Large] at (-6,-1.15) {\faCoins};
+    \node[text=white,font=\Large\bfseries,align=left,anchor=west] at (-5.2,-1.15) {Arcium Confidential Tokens};
   \end{tikzpicture}
 \end{frame}
 
@@ -260,16 +327,16 @@
     % Four key figures - large and prominent
     
     % $8.2B
-    \node[text=monero,font=\fontsize{42}{50}\selectfont\bfseries] at (-4,2) {\$8.2B};
-    \node[text=fg!70,font=\normalsize] at (-4,0.8) {Privacy Coins};
+    \node[text=monero,font=\fontsize{42}{50}\selectfont\bfseries] at (-5,2) {\$8.2B};
+    \node[text=fg!70,font=\normalsize] at (-5,0.8) {Privacy Coin Market Cap};
     
     % $45B
-    \node[text=meteora,font=\fontsize{42}{50}\selectfont\bfseries] at (0,2) {\$45B};
-    \node[text=fg!70,font=\normalsize] at (0,0.8) {Cross-chain DeFi};
+    \node[text=meteora,font=\fontsize{42}{50}\selectfont\bfseries] at (0,2) {\$4.5B};
+    \node[text=fg!70,font=\normalsize] at (0,0.8) {Cross-chain DeFi Volume};
     
-    % 4M+
-    \node[text=gold,font=\fontsize{42}{50}\selectfont\bfseries] at (4,2) {4M+};
-    \node[text=fg!70,font=\normalsize] at (4,0.8) {Active Users};
+    % FCMP
+    \node[text=gold,font=\fontsize{42}{50}\selectfont\bfseries] at (5,2) {FCMP};
+    \node[text=fg!70,font=\normalsize] at (5,0.8) {Monero Upgrade};
     
     % Rising Delistings
     \node[text=neon,font=\LARGE\bfseries,align=center] at (0,-1.2) {Rising Exchange\\Delistings};
@@ -339,7 +406,7 @@
     % Team member boxes - better sizing
     \fill[monero,opacity=0.3,rounded corners=8pt] (-6.5,0.8) rectangle (-2.2,2.3);
     \node[text=white,font=\bfseries,align=center] at (-4.35,1.9) {Mads Christensen};
-    \node[text=white,font=\small,align=center] at (-4.35,1.6) {CEO \& Co-founder};
+    \node[text=white,font=\small,align=center] at (-4.35,1.6) {CEO \& Founder};
     \node[text=monero,font=\scriptsize,align=center] at (-4.35,1.1) {DeFi and Infrastructure\\Engineer};
     
     \fill[meteora,opacity=0.3,rounded corners=8pt] (-1.8,0.8) rectangle (1.8,2.3);
@@ -348,14 +415,14 @@
     \node[text=meteora,font=\scriptsize,align=center] at (0,1.1) {Former Fhenix\\Current DarkLake};
     
     \fill[solana,opacity=0.3,rounded corners=8pt] (2.2,0.8) rectangle (6.5,2.3);
-    \node[text=white,font=\bfseries,align=center] at (4.35,1.9) {Eric Nans};
-    \node[text=white,font=\small,align=center] at (4.35,1.6) {Head of Marketing};
-    \node[text=solana,font=\scriptsize,align=center] at (4.35,1.1) {Level 100 Studios\\Growth Expert};
+    \node[text=white,font=\bfseries,align=center] at (4.35,1.9) {Tiago Alves};
+    \node[text=white,font=\small,align=center] at (4.35,1.6) {Cryptography & ZK Expert};
+    \node[text=solana,font=\scriptsize,align=center] at (4.35,1.1) {Current DarkLake};
     
     % Backing info
     \node[text=gold,font=\large,align=center] at (0,0.1) {\textbf{Fundraising}};
     \node[text=white,font=\normalsize,align=center] at (0,-0.5) {Seeking seed capital once permissionless protocols launch};
-    \node[text=meteora,font=\normalsize,align=center] at (0,-1.1) {Target: \$3M seed round for protocol development};
+    \node[text=meteora,font=\normalsize,align=center] at (0,-1.1) {Target: \$1M seed round for protocol development};
   \end{tikzpicture}
 \end{frame}
 
