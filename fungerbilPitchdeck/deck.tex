@@ -7,36 +7,36 @@
 \usepackage{fontawesome5}
 \usepackage{tikz}
 \usetikzlibrary{positioning,calc,shapes.geometric,backgrounds,patterns}
-\usepackage{FiraSans}
-\usepackage{FiraMono}
+\usepackage{helvet}
+\renewcommand{\familydefault}{\sfdefault}
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{booktabs}
 \usepackage{pgf-pie}
 \usepackage{xcolor}
 
-% Theme & colors - CONSISTENT PALETTE
+% Theme & colors - SOPHISTICATED BAY AREA PALETTE
 \usetheme{metropolis}
 
-% Primary brand colors
-\definecolor{primary}{HTML}{FF6600}      % Orange (main brand color)
-\definecolor{secondary}{HTML}{9945FF}    % Purple (secondary brand)
-\definecolor{accent}{HTML}{14F195}       % Green (accent for highlights)
+% Primary brand colors - elevated and minimal
+\definecolor{primary}{HTML}{2D5C4E}        % Sage green (sophisticated earth tone)
+\definecolor{secondary}{HTML}{8B7355}      % Warm taupe (elevated neutral)
+\definecolor{accent}{HTML}{C9A96E}         % Muted gold (refined luxury)
 
-% Background colors
-\definecolor{darkbg}{HTML}{0B0F1A}       % Dark background
-\definecolor{midbg}{HTML}{1A1F2E}        % Medium background
-\definecolor{lightbg}{HTML}{2D3748}      % Light background/panels
+% Background colors - clean and airy
+\definecolor{darkbg}{HTML}{F7F5F2}         % Warm off-white (main background)
+\definecolor{midbg}{HTML}{E8E4DF}          % Light greige (panels)
+\definecolor{lightbg}{HTML}{FFFFFF}        % Pure white (cards)
 
-% Text and UI colors
-\definecolor{textprimary}{HTML}{FFFFFF}  % Primary text (white)
-\definecolor{textsecondary}{HTML}{B8BCC8} % Secondary text (light gray)
-\definecolor{highlight}{HTML}{FFD700}     % Gold for special emphasis
+% Text and UI colors - high contrast sophistication
+\definecolor{textprimary}{HTML}{1A1A1A}    % Near black (primary text)
+\definecolor{textsecondary}{HTML}{6B6B6B}  % Medium gray (secondary text)
+\definecolor{highlight}{HTML}{2D5C4E}      % Sage green for special emphasis
 
-% Semantic colors
-\definecolor{success}{HTML}{14F195}      % Success/positive (green)
-\definecolor{warning}{HTML}{FFD700}      % Warning/important (gold)
-\definecolor{info}{HTML}{00D1FF}         % Info/neutral (cyan)
+% Semantic colors - muted and refined
+\definecolor{success}{HTML}{5F8575}        % Dusty jade (success/positive)
+\definecolor{warning}{HTML}{C9A96E}        % Muted gold (warning/important)
+\definecolor{info}{HTML}{7B8FA3}           % Slate blue (info/neutral)
 
 \setbeamercolor{background canvas}{bg=darkbg}
 \setbeamercolor{normal text}{fg=textprimary}
@@ -74,37 +74,37 @@
 % -------------------------------------------------
 \begin{frame}[plain]
   \begin{tikzpicture}[remember picture,overlay]
-    % Epic gradient background with overlays
+    % Minimal gradient background
     \fill[darkbg] (current page.south west) rectangle (current page.north east);
-    \fill[primary,opacity=0.15] (current page.south west) -- 
+    \fill[primary,opacity=0.08] (current page.south west) -- 
           (current page.north west) -- 
           ([yshift=-3cm]current page.north east) -- 
           ([yshift=2cm]current page.south east) -- cycle;
-    \fill[secondary,opacity=0.1] ([xshift=3cm]current page.south west) -- 
+    \fill[accent,opacity=0.05] ([xshift=3cm]current page.south west) -- 
           ([xshift=-2cm]current page.north west) -- 
           (current page.north east) -- 
           (current page.south east) -- cycle;
     
-    % Animated circuit pattern overlay
+    % Subtle geometric pattern overlay
     \foreach \x in {0,1,2,...,20} {
       \foreach \y in {0,1,2,...,12} {
-        \fill[info,opacity=0.03] ([shift={(0.8*\x cm, 0.8*\y cm)}]current page.south west) circle (0.5pt);
+        \fill[secondary,opacity=0.02] ([shift={(0.8*\x cm, 0.8*\y cm)}]current page.south west) circle (0.5pt);
       }
     }
     
-    % Main title content with epic styling
+    % Main title content - minimal and elegant
     \node[align=center] at (current page.center){
-      % Main title - MASSIVE and bold with glow effect
-      {\fontsize{72}{80}\selectfont\color{primary!40}\textbf{FUN GERBIL}}\\[-4.6em]
+      % Main title - clean with subtle shadow
+      {\fontsize{72}{80}\selectfont\color{textsecondary!20}\textbf{FUN GERBIL}}\\[-4.6em]
       {\fontsize{72}{80}\selectfont\color{textprimary}\textbf{FUN GERBIL}}\\[1.2em]
       
-      % Subtitle - clean and simple
+      % Subtitle - understated elegance
       {\fontsize{42}{50}\selectfont\color{primary}\textbf{onboarding Monero}}
     };
     
-    % Corner decorative elements
-    \fill[highlight,opacity=0.8] (current page.south west) -- ++(2,0) -- ++(0,0.1) -- ++(-2,0) -- cycle;
-    \fill[info,opacity=0.8] (current page.north east) -- ++(-2,0) -- ++(0,-0.1) -- ++(2,0) -- cycle;
+    % Minimal accent lines
+    \fill[accent,opacity=0.6] (current page.south west) -- ++(2,0) -- ++(0,0.1) -- ++(-2,0) -- cycle;
+    \fill[secondary,opacity=0.6] (current page.north east) -- ++(-2,0) -- ++(0,-0.1) -- ++(2,0) -- cycle;
     
   \end{tikzpicture}
 \end{frame}
@@ -120,7 +120,8 @@
       \centering
       \begin{tikzpicture}
         % Background box for Solana
-        \fill[secondary,opacity=0.15,rounded corners=15pt] (-3.5,-4.2) rectangle (3.5,2.2);
+        \fill[lightbg,rounded corners=15pt] (-3.5,-4.2) rectangle (3.5,2.2);
+        \draw[secondary,line width=1pt,rounded corners=15pt] (-3.5,-4.2) rectangle (3.5,2.2);
         
         % Solana Logo
         \node at (0,1.5) {\includegraphics[height=1.2cm]{solana-logo.png}};
@@ -142,7 +143,8 @@
       \centering
       \begin{tikzpicture}
         % Background box for Monero
-        \fill[primary,opacity=0.15,rounded corners=15pt] (-3.5,-4.2) rectangle (3.5,2.2);
+        \fill[lightbg,rounded corners=15pt] (-3.5,-4.2) rectangle (3.5,2.2);
+        \draw[primary,line width=1pt,rounded corners=15pt] (-3.5,-4.2) rectangle (3.5,2.2);
         
         % Monero Logo
         \node at (0,1.5) {\includegraphics[height=1.2cm]{monero-logo.png}};
@@ -165,7 +167,7 @@
 % -------------------------------------------------
 \begin{frame}[t]{\color{textprimary}\textbf{Fun Gerbil: Past Barriers to Entry are Gone}}
   \begin{tikzpicture}[remember picture,overlay]
-    \fill[primary,opacity=0.05] (current page.south west) rectangle (current page.north east);
+    \fill[midbg,opacity=0.3] (current page.south west) rectangle (current page.north east);
   \end{tikzpicture}
   
   \centering
@@ -174,38 +176,44 @@
     % Six barriers in 2 rows of 3 - BIGGER
     % Row 1 - 3 items
     \begin{scope}[shift={(-4.5,1.5)}]
-      \fill[midbg,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
+      \fill[lightbg,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
+      \draw[textsecondary,line width=0.5pt,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
       \node[text=primary,font=\Large] at (0,0.6) {\faChartLine};
       \node[text=textprimary,font=\normalsize\bfseries,align=center,text width=4cm] at (0,-0.4) {DeFi Was Too Small\\vs CeFi};
     \end{scope}
     
     \begin{scope}[shift={(0,1.5)}]
-      \fill[midbg,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
+      \fill[lightbg,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
+      \draw[textsecondary,line width=0.5pt,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
       \node[text=success,font=\Large] at (0,0.6) {\faCheckCircle};
       \node[text=textprimary,font=\normalsize\bfseries,align=center,text width=4cm] at (0,-0.4) {CEXs Supported\\Monero};
     \end{scope}
     
     \begin{scope}[shift={(4.5,1.5)}]
-      \fill[midbg,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
+      \fill[lightbg,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
+      \draw[textsecondary,line width=0.5pt,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
       \node[text=info,font=\Large] at (0,0.6) {\faLink};
       \node[text=textprimary,font=\normalsize\bfseries,align=center,text width=4cm] at (0,-0.4) {FCMP Enables\\Transaction Chaining};
     \end{scope}
     
     % Row 2 - 3 items
     \begin{scope}[shift={(-4.5,-1.5)}]
-      \fill[midbg,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
+      \fill[lightbg,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
+      \draw[textsecondary,line width=0.5pt,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
       \node[text=warning,font=\Large] at (0,0.6) {\faDollarSign};
       \node[text=textprimary,font=\normalsize\bfseries,align=center,text width=4cm] at (0,-0.4) {No Centralized Grant\\Foundation Funding};
     \end{scope}
     
     \begin{scope}[shift={(0,-1.5)}]
-      \fill[midbg,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
+      \fill[lightbg,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
+      \draw[textsecondary,line width=0.5pt,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
       \node[text=secondary,font=\Large] at (0,0.6) {\faBalanceScale};
       \node[text=textprimary,font=\normalsize\bfseries,align=center,text width=4cm] at (0,-0.4) {Regulatory Fallout};
     \end{scope}
     
     \begin{scope}[shift={(4.5,-1.5)}]
-      \fill[midbg,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
+      \fill[lightbg,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
+      \draw[textsecondary,line width=0.5pt,rounded corners=12pt] (-2.2,-1.3) rectangle (2.2,1.3);
       \node[text=primary,font=\Large] at (0,0.6) {\faCogs};
       \node[text=textprimary,font=\normalsize\bfseries,align=center,text width=4cm] at (0,-0.4) {Technical\\Complexity};
     \end{scope}
@@ -215,7 +223,7 @@
 % -------------------------------------------------
 \begin{frame}{\color{textprimary}\textbf{Fun Gerbil: Built on Arcium and Darklake}}
   \begin{tikzpicture}[remember picture,overlay]
-    \fill[primary,opacity=0.05] (current page.south west) rectangle (current page.north east);
+    \fill[midbg,opacity=0.3] (current page.south west) rectangle (current page.north east);
   \end{tikzpicture}
   
   \centering
@@ -225,7 +233,7 @@
     
     % DarkLake logo box
     \node[rounded corners=15pt, minimum width=5cm, minimum height=5cm, 
-          draw=textsecondary, line width=2pt, fill=midbg, fill opacity=0.8,
+          draw=secondary, line width=2pt, fill=lightbg, fill opacity=1,
           path picture={
             \clip[rounded corners=15pt] (path picture bounding box.south west) rectangle (path picture bounding box.north east);
             \node at (path picture bounding box.center) {
@@ -235,7 +243,7 @@
     
     % Arcium logo box
     \node[rounded corners=15pt, minimum width=5cm, minimum height=5cm,
-          draw=textsecondary, line width=2pt, fill=midbg, fill opacity=0.8,
+          draw=primary, line width=2pt, fill=lightbg, fill opacity=1,
           path picture={
             \clip[rounded corners=15pt] (path picture bounding box.south west) rectangle (path picture bounding box.north east);
             \node at (path picture bounding box.center) {
@@ -249,7 +257,7 @@
 % -------------------------------------------------
 \begin{frame}{\color{textprimary}\textbf{Fun Gerbil: Efficient Technical Solutions}}
   \begin{tikzpicture}[remember picture,overlay]
-    \fill[secondary,opacity=0.05] (current page.south west) rectangle (current page.north east);
+    \fill[midbg,opacity=0.3] (current page.south west) rectangle (current page.north east);
   \end{tikzpicture}
 
   \centering
@@ -258,20 +266,20 @@
     % Three square product boxes
     
     % Atomic Swaps
-    \fill[primary,opacity=0.15,rounded corners=12pt] (-6.8,0) rectangle (-2.6,4.2);
-    \fill[primary,opacity=0.1,rounded corners=12pt] (-6.8,0) rectangle (-2.6,4.2);
+    \fill[lightbg,rounded corners=12pt] (-6.8,0) rectangle (-2.6,4.2);
+    \draw[primary,line width=1.5pt,rounded corners=12pt] (-6.8,0) rectangle (-2.6,4.2);
     \node[text=primary,font=\Huge] at (-4.7,3) {\faRandom};
     \node[text=textprimary,font=\huge\bfseries,align=center] at (-4.7,1.5) {Atomic\\Swaps};
     
     % Wrapped Monero
-    \fill[secondary,opacity=0.15,rounded corners=12pt] (-2.1,0) rectangle (2.1,4.2);
-    \fill[secondary,opacity=0.1,rounded corners=12pt] (-2.1,0) rectangle (2.1,4.2);
+    \fill[lightbg,rounded corners=12pt] (-2.1,0) rectangle (2.1,4.2);
+    \draw[secondary,line width=1.5pt,rounded corners=12pt] (-2.1,0) rectangle (2.1,4.2);
     \node[text=secondary,font=\Huge] at (0,3) {\faCube};
     \node[text=textprimary,font=\huge\bfseries,align=center] at (0,1.5) {Wrapped\\Monero};
     
     % Fully Homomorphic Encryption
-    \fill[accent,opacity=0.15,rounded corners=12pt] (2.6,0) rectangle (6.8,4.2);
-    \fill[accent,opacity=0.1,rounded corners=12pt] (2.6,0) rectangle (6.8,4.2);
+    \fill[lightbg,rounded corners=12pt] (2.6,0) rectangle (6.8,4.2);
+    \draw[accent,line width=1.5pt,rounded corners=12pt] (2.6,0) rectangle (6.8,4.2);
     \node[text=accent,font=\Huge] at (4.7,3) {\faLock};
     \node[text=textprimary,font=\huge\bfseries,align=center] at (4.7,1.5) {ZK MPC\\FHE};
   \end{tikzpicture}
@@ -281,29 +289,33 @@
 % -------------------------------------------------
 \begin{frame}[t]{\color{textprimary}\textbf{Fun Gerbil: Leveraging Decentralization}}
   \begin{tikzpicture}[remember picture,overlay]
-    \fill[primary,opacity=0.05] (current page.south west) rectangle (current page.north east);
+    \fill[midbg,opacity=0.3] (current page.south west) rectangle (current page.north east);
   \end{tikzpicture}
   
   \centering
 
   \begin{tikzpicture}
     % Advantage 1 - Monero's Anonymity Set
-    \fill[midbg,rounded corners=15pt] (-7,2.2) rectangle (7,3.4);
+    \fill[lightbg,rounded corners=15pt] (-7,2.2) rectangle (7,3.4);
+    \draw[textsecondary,line width=0.5pt,rounded corners=15pt] (-7,2.2) rectangle (7,3.4);
     \node[text=primary,font=\Large] at (-6,2.8) {\faUsers};
     \node[text=textprimary,font=\Large\bfseries,align=left,anchor=west] at (-5.2,2.8) {Established Anonymity Set};
     
     % Advantage 2 - Open FHE and ZK Infrastructure
-    \fill[midbg,rounded corners=15pt] (-7,0.9) rectangle (7,2.0);
+    \fill[lightbg,rounded corners=15pt] (-7,0.9) rectangle (7,2.0);
+    \draw[textsecondary,line width=0.5pt,rounded corners=15pt] (-7,0.9) rectangle (7,2.0);
     \node[text=secondary,font=\Large] at (-6,1.45) {\faLock};
     \node[text=textprimary,font=\Large\bfseries,align=left,anchor=west] at (-5.2,1.45) {Open FHE and ZK Infrastructure};
     
     % Advantage 3 - Cross-Chain vs Intrachain
-    \fill[midbg,rounded corners=15pt] (-7,-0.4) rectangle (7,0.7);
+    \fill[lightbg,rounded corners=15pt] (-7,-0.4) rectangle (7,0.7);
+    \draw[textsecondary,line width=0.5pt,rounded corners=15pt] (-7,-0.4) rectangle (7,0.7);
     \node[text=accent,font=\Large] at (-6,0.15) {\faLink};
     \node[text=textprimary,font=\Large\bfseries,align=left,anchor=west] at (-5.2,0.15) {Cross-Chain, Not Intrachain};
     
     % Advantage 4 - Approachable Branding
-    \fill[midbg,rounded corners=15pt] (-7,-1.7) rectangle (7,-0.6);
+    \fill[lightbg,rounded corners=15pt] (-7,-1.7) rectangle (7,-0.6);
+    \draw[textsecondary,line width=0.5pt,rounded corners=15pt] (-7,-1.7) rectangle (7,-0.6);
     \node[text=info,font=\Large] at (-6,-1.15) {\faEye};
     \node[text=textprimary,font=\Large\bfseries,align=left,anchor=west] at (-5.2,-1.15) {Approachable Branding};
     
@@ -313,7 +325,7 @@
 % -------------------------------------------------
 \begin{frame}[t]{\color{textprimary}\textbf{Fun Gerbil: Multiple Revenue Streams}}
   \begin{tikzpicture}[remember picture,overlay]
-    \fill[primary,opacity=0.05] (current page.south west) rectangle (current page.north east);
+    \fill[midbg,opacity=0.3] (current page.south west) rectangle (current page.north east);
   \end{tikzpicture}
   
   \centering
@@ -322,21 +334,24 @@
   \begin{tikzpicture}
     % App Layer
     \node[text=primary,font=\LARGE\bfseries] at (-4.5,4.5) {App};
-    \fill[primary,opacity=0.15,rounded corners=10pt] (-7,1.5) rectangle (-2,4);
+    \fill[lightbg,rounded corners=10pt] (-7,1.5) rectangle (-2,4);
+    \draw[primary,line width=1pt,rounded corners=10pt] (-7,1.5) rectangle (-2,4);
     \node[text=primary,font=\Large] at (-4.5,3.3) {\faPercentage};
     \node[text=textprimary,font=\normalsize\bfseries,align=center] at (-4.5,2.5) {Swap Fee};
     \node[text=textprimary,font=\normalsize\bfseries,align=center] at (-4.5,1.9) {Mint/Burn Fee};
     
     % Protocol Layer
     \node[text=secondary,font=\LARGE\bfseries] at (0,4.5) {Protocol};
-    \fill[secondary,opacity=0.15,rounded corners=10pt] (-1.75,1.5) rectangle (1.75,4);
+    \fill[lightbg,rounded corners=10pt] (-1.75,1.5) rectangle (1.75,4);
+    \draw[secondary,line width=1pt,rounded corners=10pt] (-1.75,1.5) rectangle (1.75,4);
     \node[text=secondary,font=\Large] at (0,3.3) {\faCoins};
     \node[text=textprimary,font=\normalsize\bfseries,align=center] at (0,2.5) {Liquidity Fee};
     \node[text=textprimary,font=\normalsize\bfseries,align=center] at (0,1.9) {Relayer Fees};
     
     % Infrastructure Layer
     \node[text=accent,font=\LARGE\bfseries] at (4.5,4.5) {Infrastructure};
-    \fill[accent,opacity=0.15,rounded corners=10pt] (2,1.5) rectangle (7,4);
+    \fill[lightbg,rounded corners=10pt] (2,1.5) rectangle (7,4);
+    \draw[accent,line width=1pt,rounded corners=10pt] (2,1.5) rectangle (7,4);
     \node[text=accent,font=\Large] at (4.5,3.3) {\faClock};
     \node[text=textprimary,font=\normalsize\bfseries,align=center] at (4.5,2.7) {E-TWAMM};
     \node[text=textprimary,font=\normalsize\bfseries,align=center] at (4.5,2.3) {Limit Orders};
@@ -347,7 +362,7 @@
 % -------------------------------------------------
 \begin{frame}{\color{textprimary}\textbf{Fun Gerbil: Live Web App}}
   \begin{tikzpicture}[remember picture,overlay]
-    \fill[primary,opacity=0.05] (current page.south west) rectangle (current page.north east);
+    \fill[midbg,opacity=0.3] (current page.south west) rectangle (current page.north east);
   \end{tikzpicture}
   
   % Two column layout
@@ -357,7 +372,7 @@
       \centering
       
       % Title
-      {\LARGE\color{highlight}\textbf{FUN GERBIL SWAP TERMINAL}}
+      {\LARGE\color{primary}\textbf{FUN GERBIL SWAP TERMINAL}}
       
       {\normalsize\color{accent}Live demo: \textbf{fungerbil.com}}
       
@@ -375,7 +390,7 @@
 % -------------------------------------------------
 \begin{frame}[t]{\color{textprimary}\textbf{Fun Gerbil: Privacy Market is Immense}}
   \begin{tikzpicture}[remember picture,overlay]
-    \fill[primary,opacity=0.05] (current page.south west) rectangle (current page.north east);
+    \fill[midbg,opacity=0.3] (current page.south west) rectangle (current page.north east);
   \end{tikzpicture}
   
   \centering
@@ -393,18 +408,18 @@
     \node[text=textsecondary,font=\normalsize] at (0,0.8) {Daily Monero Volume};
     
     % Cross-chain DeFi Volume (right)
-    \node[text=highlight,font=\fontsize{52}{60}\selectfont] at (5,2.3) {\faChartLine};
+    \node[text=accent,font=\fontsize{52}{60}\selectfont] at (5,2.3) {\faChartLine};
     \node[text=textsecondary,font=\normalsize] at (5,0.8) {Cross-chain DeFi};
     
     % Rising Delistings
-    \node[text=warning,font=\LARGE\bfseries,align=center] at (0,-1.2) {Rising Exchange\\Delistings};
+    \node[text=secondary,font=\LARGE\bfseries,align=center] at (0,-1.2) {Rising Exchange\\Delistings};
   \end{tikzpicture}
 \end{frame}
 
 % -------------------------------------------------
 \begin{frame}[t]{\color{textprimary}\textbf{Fun Gerbil: Active Product Development}}
   \begin{tikzpicture}[remember picture,overlay]
-    \fill[primary,opacity=0.05] (current page.south west) rectangle (current page.north east);
+    \fill[midbg,opacity=0.3] (current page.south west) rectangle (current page.north east);
   \end{tikzpicture}
   
   \centering
@@ -412,29 +427,33 @@
   
   \begin{tikzpicture}
     % Q4 2025
-    \fill[primary,opacity=0.15,rounded corners=10pt] (-7.5,2.8) rectangle (-4.3,6.0);
+    \fill[lightbg,rounded corners=10pt] (-7.5,2.8) rectangle (-4.3,6.0);
+    \draw[primary,line width=1pt,rounded corners=10pt] (-7.5,2.8) rectangle (-4.3,6.0);
     \node[text=primary,font=\Large\bfseries] at (-5.9,5.5) {Q4 2025};
     \node[text=textprimary,font=\normalsize,align=center] at (-5.9,4.5) {Testnet Launch};
     \node[text=textsecondary,font=\small,align=center] at (-5.9,3.9) {XMR/SOL Swaps};
     \node[text=textsecondary,font=\small,align=center] at (-5.9,3.5) {Wrapped Monero};
     
     % Q1 2026
-    \fill[secondary,opacity=0.15,rounded corners=10pt] (-4,2.8) rectangle (-0.8,6.0);
+    \fill[lightbg,rounded corners=10pt] (-4,2.8) rectangle (-0.8,6.0);
+    \draw[secondary,line width=1pt,rounded corners=10pt] (-4,2.8) rectangle (-0.8,6.0);
     \node[text=secondary,font=\Large\bfseries] at (-2.4,5.5) {Q1 2026};
     \node[text=textprimary,font=\normalsize,align=center] at (-2.4,4.5) {Mainnet};
     \node[text=textsecondary,font=\small,align=center] at (-2.4,3.9) {Live Pairs};
     \node[text=textsecondary,font=\small,align=center] at (-2.4,3.5) {Bulk Perps};
     
     % Q2 2026
-    \fill[accent,opacity=0.15,rounded corners=10pt] (-0.5,2.8) rectangle (2.7,6.0);
+    \fill[lightbg,rounded corners=10pt] (-0.5,2.8) rectangle (2.7,6.0);
+    \draw[accent,line width=1pt,rounded corners=10pt] (-0.5,2.8) rectangle (2.7,6.0);
     \node[text=accent,font=\Large\bfseries] at (1.1,5.5) {Q2 2026};
     \node[text=textprimary,font=\normalsize,align=center] at (1.1,4.5) {API/SDK};
     \node[text=textsecondary,font=\small,align=center] at (1.1,3.9) {DeFi Primitives};
     \node[text=textsecondary,font=\small,align=center] at (1.1,3.5) {Arcium CSPL};
     
     % Q3 2026
-    \fill[highlight,opacity=0.15,rounded corners=10pt] (3,2.8) rectangle (6.2,6.0);
-    \node[text=highlight,font=\Large\bfseries] at (4.6,5.5) {Q3 2026};
+    \fill[lightbg,rounded corners=10pt] (3,2.8) rectangle (6.2,6.0);
+    \draw[primary,line width=1pt,rounded corners=10pt] (3,2.8) rectangle (6.2,6.0);
+    \node[text=primary,font=\Large\bfseries] at (4.6,5.5) {Q3 2026};
     \node[text=textprimary,font=\normalsize,align=center] at (4.6,4.5) {Full Protocol};
     \node[text=textsecondary,font=\small,align=center] at (4.6,3.9) {DAO Governance};
     \node[text=textsecondary,font=\small,align=center] at (4.6,3.5) {Crosschain Growth};
@@ -448,7 +467,7 @@
 % -------------------------------------------------
 \begin{frame}[t]{\color{textprimary}\textbf{Fun Gerbil: Cypherpunk Founders}}
   \begin{tikzpicture}[remember picture,overlay]
-    \fill[primary,opacity=0.05] (current page.south west) rectangle (current page.north east);
+    \fill[midbg,opacity=0.3] (current page.south west) rectangle (current page.north east);
   \end{tikzpicture}
   
   \centering
@@ -456,28 +475,29 @@
   
   \begin{tikzpicture}
     % Team display moved up more
-    \fill[midbg,rounded corners=20pt] (-7,-1.5) rectangle (7,3.5);
+    \fill[lightbg,rounded corners=20pt] (-7,-1.5) rectangle (7,3.5);
+    \draw[textsecondary,line width=1pt,rounded corners=20pt] (-7,-1.5) rectangle (7,3.5);
     
 
     
     % Team member boxes - better sizing with increased vertical space
-    \fill[lightbg,rounded corners=8pt] (-6.5,0.6) rectangle (-2.2,2.5);
+    \fill[midbg,rounded corners=8pt] (-6.5,0.6) rectangle (-2.2,2.5);
     \node[text=textprimary,font=\bfseries,align=center] at (-4.35,2.0) {Mads Christensen};
     \node[text=textsecondary,font=\small,align=center] at (-4.35,1.6) {CEO \& Founder};
     \node[text=accent,font=\scriptsize,align=center] at (-4.35,1.0) {Monero Maximalist \\ DeFi Infrastructure Engineer};
     
-    \fill[lightbg,rounded corners=8pt] (-1.8,0.6) rectangle (1.8,2.5);
+    \fill[midbg,rounded corners=8pt] (-1.8,0.6) rectangle (1.8,2.5);
     \node[text=textprimary,font=\bfseries,align=center] at (0,2.0) {Kyle Koshiyama};
     \node[text=textsecondary,font=\small,align=center] at (0,1.6) {Backend Engineer};
     \node[text=accent,font=\scriptsize,align=center] at (0,1.0) {Former Fhenix\\Current DarkLake};
     
-    \fill[lightbg,rounded corners=8pt] (2.2,0.6) rectangle (6.5,2.5);
+    \fill[midbg,rounded corners=8pt] (2.2,0.6) rectangle (6.5,2.5);
     \node[text=textprimary,font=\bfseries,align=center] at (4.35,2.0) {Tiago Alves};
     \node[text=textsecondary,font=\small,align=center] at (4.35,1.6) {ZK Architect};
     \node[text=accent,font=\scriptsize,align=center] at (4.35,1.0) {Cryptography PhD\\Current DarkLake};
     
     % Backing info
-    \node[text=highlight,font=\large,align=center] at (0,0.1) {\textbf{Fundraising}};
+    \node[text=primary,font=\large,align=center] at (0,0.1) {\textbf{Fundraising}};
     \node[text=textprimary,font=\normalsize,align=center] at (0,-0.5) {Seeking seed capital once permissionless protocols launch};
     \node[text=accent,font=\normalsize,align=center] at (0,-1.1) {Target: \$1M seed round for protocol development};
   \end{tikzpicture}
@@ -486,8 +506,8 @@
 % -------------------------------------------------
 \begin{frame}
   \begin{tikzpicture}[remember picture,overlay]
-    \fill[primary,opacity=0.05] (current page.south west) rectangle (current page.north east);
-    \fill[secondary,opacity=0.1] ([yshift=4cm]current page.south west) -- 
+    \fill[midbg,opacity=0.5] (current page.south west) rectangle (current page.north east);
+    \fill[primary,opacity=0.08] ([yshift=4cm]current page.south west) -- 
           (current page.south east) -- 
           (current page.north east) -- cycle;
   \end{tikzpicture}
@@ -496,7 +516,7 @@
   \vspace{1em}
   
   {\fontsize{42}{50}\selectfont\color{textprimary}\textbf{Join the}}\\
-  {\fontsize{52}{60}\selectfont\color{highlight}\textbf{PRIVACY}}\\
+  {\fontsize{52}{60}\selectfont\color{primary}\textbf{PRIVACY}}\\
   {\fontsize{42}{50}\selectfont\color{textprimary}\textbf{Revolution}}
   
   \vspace{1.8em}
@@ -510,4 +530,3 @@
 \end{frame}
 
 \end{document}
-
