@@ -110,7 +110,7 @@
 \end{frame}
 
 % -------------------------------------------------
-\begin{frame}[t]{\color{textprimary}\textbf{Fun Gerbil: Privacy for Solana, DeFi for Monero}}
+\begin{frame}[t]{\color{textsecondary}\textbf{Fun Gerbil: Privacy for Solana, DeFi for Monero}}
 
   \vspace{0.5em}
   
@@ -221,40 +221,6 @@
 \end{frame}
 
 % -------------------------------------------------
-\begin{frame}{\color{textprimary}\textbf{Fun Gerbil: Built on Arcium and Darklake}}
-  \begin{tikzpicture}[remember picture,overlay]
-    \fill[midbg,opacity=0.3] (current page.south west) rectangle (current page.north east);
-  \end{tikzpicture}
-  
-  \centering
-  \vspace{2em}
-  \begin{tikzpicture}
-    % Two prominent partner logo boxes with clipped images
-    
-    % DarkLake logo box
-    \node[rounded corners=15pt, minimum width=5cm, minimum height=5cm, 
-          draw=secondary, line width=2pt, fill=lightbg, fill opacity=1,
-          path picture={
-            \clip[rounded corners=15pt] (path picture bounding box.south west) rectangle (path picture bounding box.north east);
-            \node at (path picture bounding box.center) {
-              \includegraphics[width=4.8cm,height=4.8cm,keepaspectratio]{darklake.jpeg}
-            };
-          }] at (-3.5,2.5) {};
-    
-    % Arcium logo box
-    \node[rounded corners=15pt, minimum width=5cm, minimum height=5cm,
-          draw=primary, line width=2pt, fill=lightbg, fill opacity=1,
-          path picture={
-            \clip[rounded corners=15pt] (path picture bounding box.south west) rectangle (path picture bounding box.north east);
-            \node at (path picture bounding box.center) {
-              \includegraphics[width=4.8cm,height=4.8cm,keepaspectratio]{arcium.jpg}
-            };
-          }] at (3.5,2.5) {};
-  \end{tikzpicture}
-  
-\end{frame}
-
-% -------------------------------------------------
 \begin{frame}{\color{textprimary}\textbf{Fun Gerbil: Efficient Technical Solutions}}
   \begin{tikzpicture}[remember picture,overlay]
     \fill[midbg,opacity=0.3] (current page.south west) rectangle (current page.north east);
@@ -282,6 +248,40 @@
     \draw[accent,line width=1.5pt,rounded corners=12pt] (2.6,0) rectangle (6.8,4.2);
     \node[text=accent,font=\Huge] at (4.7,3) {\faLock};
     \node[text=textprimary,font=\huge\bfseries,align=center] at (4.7,1.5) {ZK MPC\\FHE};
+  \end{tikzpicture}
+  
+\end{frame}
+
+% -------------------------------------------------
+\begin{frame}{\color{textprimary}\textbf{Fun Gerbil: Built on Arcium and Darklake}}
+  \begin{tikzpicture}[remember picture,overlay]
+    \fill[midbg,opacity=0.3] (current page.south west) rectangle (current page.north east);
+  \end{tikzpicture}
+  
+  \centering
+
+  \begin{tikzpicture}
+    % Two prominent partner logo boxes with clipped images
+    
+    % DarkLake logo box
+    \node[rounded corners=15pt, minimum width=5cm, minimum height=5cm, 
+          draw=secondary, line width=2pt, fill=lightbg, fill opacity=1,
+          path picture={
+            \clip[rounded corners=15pt] (path picture bounding box.south west) rectangle (path picture bounding box.north east);
+            \node at (path picture bounding box.center) {
+              \includegraphics[width=4.8cm,height=4.8cm,keepaspectratio]{darklake.jpeg}
+            };
+          }] at (-3.5,2.5) {};
+    
+    % Arcium logo box
+    \node[rounded corners=15pt, minimum width=5cm, minimum height=5cm,
+          draw=primary, line width=2pt, fill=lightbg, fill opacity=1,
+          path picture={
+            \clip[rounded corners=15pt] (path picture bounding box.south west) rectangle (path picture bounding box.north east);
+            \node at (path picture bounding box.center) {
+              \includegraphics[width=4.8cm,height=4.8cm,keepaspectratio]{arcium.jpg}
+            };
+          }] at (3.5,2.5) {};
   \end{tikzpicture}
   
 \end{frame}
@@ -336,7 +336,7 @@
     \node[text=primary,font=\LARGE\bfseries] at (-4.5,4.5) {App};
     \fill[lightbg,rounded corners=10pt] (-7,1.5) rectangle (-2,4);
     \draw[primary,line width=1pt,rounded corners=10pt] (-7,1.5) rectangle (-2,4);
-    \node[text=primary,font=\Large] at (-4.5,3.3) {\faPercentage};
+    \node[text=primary,font=\Large] at (-4.5,3.3) {\faMobile};
     \node[text=textprimary,font=\normalsize\bfseries,align=center] at (-4.5,2.5) {Swap Fee};
     \node[text=textprimary,font=\normalsize\bfseries,align=center] at (-4.5,1.9) {Mint/Burn Fee};
     
@@ -344,7 +344,9 @@
     \node[text=secondary,font=\LARGE\bfseries] at (0,4.5) {Protocol};
     \fill[lightbg,rounded corners=10pt] (-1.75,1.5) rectangle (1.75,4);
     \draw[secondary,line width=1pt,rounded corners=10pt] (-1.75,1.5) rectangle (1.75,4);
-    \node[text=secondary,font=\Large] at (0,3.3) {\faCoins};
+    % Custom trading arrows
+    \draw[->,secondary,line width=2.5pt] (-0.6,3.5) -- (0.6,3.5);
+    \draw[->,secondary,line width=2.5pt] (0.6,3.1) -- (-0.6,3.1);
     \node[text=textprimary,font=\normalsize\bfseries,align=center] at (0,2.5) {Liquidity Fee};
     \node[text=textprimary,font=\normalsize\bfseries,align=center] at (0,1.9) {Relayer Fees};
     
@@ -352,7 +354,7 @@
     \node[text=accent,font=\LARGE\bfseries] at (4.5,4.5) {Infrastructure};
     \fill[lightbg,rounded corners=10pt] (2,1.5) rectangle (7,4);
     \draw[accent,line width=1pt,rounded corners=10pt] (2,1.5) rectangle (7,4);
-    \node[text=accent,font=\Large] at (4.5,3.3) {\faClock};
+    \node[text=accent,font=\Large] at (4.5,3.3) {\faIndustry};
     \node[text=textprimary,font=\normalsize\bfseries,align=center] at (4.5,2.7) {E-TWAMM};
     \node[text=textprimary,font=\normalsize\bfseries,align=center] at (4.5,2.3) {Limit Orders};
     \node[text=textprimary,font=\normalsize\bfseries,align=center] at (4.5,1.8) {Private Perps};
@@ -515,9 +517,7 @@
   \centering
   \vspace{1em}
   
-  {\fontsize{42}{50}\selectfont\color{textprimary}\textbf{Join the}}\\
-  {\fontsize{52}{60}\selectfont\color{primary}\textbf{PRIVACY}}\\
-  {\fontsize{42}{50}\selectfont\color{textprimary}\textbf{Revolution}}
+  {\fontsize{52}{60}\selectfont\color{primary}\textbf{Fungibility is Fundamental}}
   
   \vspace{1.8em}
   \begin{tikzpicture}
