@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Solana Wallet dApp</title>
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- Solana Web3.js -->
+  <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Solana Wallet Interface</h1>
+      <p>Connect with Phantom or Brave Wallet</p>
+    </header>
+
+    <!-- Wallet Section -->
+    <div class="wallet-section">
+      <h2>Connect Wallet</h2>
+      <button id="connectWallet" class="btn btn-primary">Connect Solana Wallet</button>
+      <button id="disconnectWallet" class="btn btn-secondary" style="display:none;">Disconnect</button>
+
+      <div id="walletInfo" class="wallet-info" style="display:none;">
+        <p><strong>Connected:</strong> <span id="walletAddress"></span></p>
+        <p><strong>Network:</strong> <span id="networkName">Solana Devnet</span></p>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="balance">My Balance</button>
+      <button class="tab-btn" data-tab="transfer">Transfer</button>
+      <button class="tab-btn" data-tab="mint">Mint</button>
+    </div>
+
+    <!-- Balance Tab -->
+    <div id="balance-tab" class="tab-content active">
+      <h3>My SOL Balance</h3>
+      <div class="balance-display">
+        <p><strong>Balance:</strong> <span id="balance">-</span> SOL</p>
+      </div>
+      <button id="refreshBalance" class="btn btn-secondary">Refresh Balance</button>
+    </div>
+
+    <!-- Transfer Tab -->
+    <div id="transfer-tab" class="tab-content">
+      <h3>Transfer SOL</h3>
+      <form id="transferForm">
+        <div class="form-group">
+          <label for="recipient">Recipient Address:</label>
+          <input type="text" id="recipient" placeholder="Solana address..." required />
+        </div>
+        <div class="form-group">
+          <label for="amount">Amount (SOL):</label>
+          <input type="number" id="amount" placeholder="0.0" min="0" step="0.0001" required />
+        </div>
+        <button type="submit" class="btn btn-primary">Send</button>
+      </form>
+    </div>
+
+    <!-- Mint Tab -->
+    <div id="mint-tab" class="tab-content">
+      <h3>Request Mint</h3>
+      <p>Submit request for minting tokens (dummy form for now).</p>
+      <form id="mintForm">
+        <div class="form-group">
+          <label for="mintAmount">Amount to Mint:</label>
+          <input type="number" id="mintAmount" placeholder="0.0" min="0" step="0.01" required />
+        </div>
+        <button type="submit" class="btn btn-primary">Request Mint</button>
+      </form>
+    </div>
+
+    <!-- Messages -->
+    <div id="loading" class="loading" style="display:none;">
+      <div class="spinner"></div>
+      <p>Processing transaction...</p>
+    </div>
+
+    <div id="error" class="error-message" style="display:none;">
+      <span id="errorText"></span>
+      <button onclick="this.parentElement.style.display='none'">×</button>
+    </div>
+
+    <div id="success" class="success-message" style="display:none;">
+      <span id="successText"></span>
+      <button onclick="this.parentElement.style.display='none'">×</button>
+    </div>
+  </div>
+
+  <script type="module" src="./SolanaWalletConnect.js"></script>
+  <script src="./tabs.js"></script>
+</body>
+</html>
