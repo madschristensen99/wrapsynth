@@ -1,250 +1,236 @@
-# 🐹 Fun Gerbil - The Privacy Bridge
+# 🐹 Fun Gerbil - Privacy Bridge & FHE Trading Infrastructure
 
-[![Status](https://img.shields.io/badge/status-devnet_preview-green.svg)](https://fungerbil.com) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Solana](https://img.shields.io/badge/powered-Solana-9945FF.svg)](https://solana.com)
+[![Status](https://img.shields.io/badge/status-devnet_preview-green.svg)](https://fungerbil.com) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Solana](https://img.shields.io/badge/powered-Solana-9945FF.svg)](https://solana.com) [![FHE](https://img.shields.io/badge/FHE-Arcium-FF6B35.svg)](https://arcium.com)
 
-**Private atomic swaps between USDC on Solana and XMR on Monero**
+**A comprehensive privacy ecosystem: Cross-chain atomic swaps between Solana SOL ↔ Monero XMR, plus fully encrypted on-chain trading via Arcium FHE**
 
-Got USDC but want XMR? Got XMR but want USDC? **One click. No seed phrases. No custody. Pure privacy.**
+> "From garbling money with Monero to garbling computation with FHE - Fun Gerbil is building the next generation of private DeFi infrastructure"
 
-## 🎯 In 30 Seconds
+## 🎯 Current Project Structure
 
-- **What**: Cross-chain atomic swaps between Solana USDC ↔ Monero XMR
-- **How**: Single user action → cryptographically provable → without custody
-- **Why**: Monero's disappearing from exchanges, but privacy shouldn't disappear from crypto
+### 1. **Privacy Bridge: SOL ↔ XMR Atomic Swaps** ✅ Live on Devnet
+```fungerbil/
+├── frontend/atomicSwap/       # Production-ready web UI
+│   ├── index.html            # Main swap interface (SOL ↔ XMR)
+│   ├── SolanaWallet.js       # Multi-wallet support (Phantom, Brave, Solflare)
+│   ├── swap.js               # Native SOL transfer logic
+│   └── assets/               # Fun gerbil branding & crypto icons
+├── svm-xmr/                  # Solana-Monero bridge backend
+│   ├── server/               # TypeScript backend with full Solana integration
+│   ├── solana-program/       # Rust smart contract for HTLC swaps
+│   ├── protocol.md           # Technical specification
+│   └── README.md            # Detailed setup instructions
+└── fungerbilPitchdeck/        # Investor materials & roadmap
+    └── deck.tex              # TeX presentation linking real infrastructure
+```
 
-## 🚀 Try It Now
+### 2. **FHE Trading Engine** 🔬 Experimental Integration
+```etest/                           # Arcium FHE integration
+├── encrypted-ixs/               # Confidential computing instructions
+├── programs/                    # Solana Anchor program structure
+├── Arcium.toml                  # Arcium network configuration
+└── README.md                   # Arcium setup guide
+```
+
+## 🚀 What You Can Actually Use Today
+
+### **Production Ready: SOL ↔ XMR Swaps**
+**Status**: ✅ **Live on Devnet  • No Custody • Atomic Guarantees**
+
+**Try the demo**: [https://fungerbil.com](https://fungerbil.com) 
 
 ```bash
-# Quick demo (devnet only)
+# Quick start (2 minutes)
 git clone https://github.com/madschristensen99/fungerbil.git
-cd fungerbil/frontend
-# Open index.html in your browser
-# OR visit: https://fungerbil.com
+cd fungerbil/frontend/atomicSwap
+open index.html  # Works with any web browser
+# Connect any Solana wallet, swap to XMR
 ```
 
-## 📋 For Newcomers
+**Core Features**:
+- **Trustless**: No central authority ever holds your funds
+- **Atomic**: Either completes fully or reverts completely 
+- **Privacy**: No custody, no KYC, no transaction tracking
+- **Simple**: One-click swaps with existing Solana wallets
 
-### What This Actually Does
-
-**Problem**: You have USDC in your Solana wallet but need XMR for privacy. Traditional solutions:
-- **Centralized exchanges**: KYC, tracking, delisting risks
-- **Bridge protocols**: Still expose transaction history
-- **Manual atomic swaps**: Complex, risky, requires technical expertise
-
-**Solution**: Fun Gerbil creates a trustless bridge where:
-1. You lock USDC in a Solana smart contract
-2. A liquidity provider automatically sends XMR to your Monero address
-3. The trade completes atomically - either both parties get what they want, or everyone gets their money back
-
-### Live Components
-
-| Component | Purpose | Status | Doc |
-|-----------|---------|---------|-----|
-| `svm-xmr/` | Backend server (TypeScript) | ✅ Working on Devnet | [README](svm-xmr/README.md) |
-| `frontend/` | Web UI (HTML/JS) | ✅ Ready to use | [index.html](frontend/index.html) |
-| Solana Program | Smart contract | ✅ Deployed to Devnet | [Protocol](svm-xmr/protocol.md) |
-| Monero Integration | XMR wallet automation | ✅ Stagenet compatible | [Guide](svm-xmr/README.md) |
-
-## 🛠️ Quick Start (5-Minute Demo)
-
-### Prerequisites
-- Node.js 18+
-- Solana CLI (`npm install -g @solana/cli`)
-- Monero wallet RPC (optional for testing)
-
-### 1. Backend Setup
+### **FHE Trading Experiment** (Arcium Integration)
 ```bash
-cd fungerbil/svm-xmr/server
+# Test Arcium FHE computation
+cd fungerbil/etest
 npm install
-
-# Copy and edit config
-cp .env.example .env
-nano .env  # Add your Solana keypair path
-
-# Start server
-npm run dev
+# Follow etest/README.md for encrypted instruction setup
 ```
 
-### 2. Frontend Without Backend
+## 🔍 Actual Technology Stack
+
+| Layer | Technology | Status | Purpose |
+|-------|------------|---------|---------|
+| **Frontend** | Vanilla HTML/CSS/JS | ✅ Production | Browser-based swaps |
+| **Solana Program** | Rust (Anchor) | ✅ Devnet | HTLC atomic swaps |
+| **Bridge API** | TypeScript/Node | ✅ Live | REST API for swaps |
+| **FHE Layer** | Arcium Confidential Computing | 🧪 Experimental | Encrypted calculations |
+| **Monero RPC** | REST API | ✅ Stagenet | XMR wallet integration |
+
+## ⚡ Live Endpoints (Devnet)
+
 ```bash
-cd fungerbil/frontend
-# Simply open in browser - connects to live demo backend
-open index.html
-# OR python -m http.server 8080
+# Create swap: SOL → XMR
+curl -X POST http://localhost:3000/api/solana/prepare-sol-to-xmr \
+  -H "Content-Type: application/json" \
+  -d '{"solanaAddress":"...", "xmrAddress":"...", "value":1000000000}'
+
+# Create swap: XMR → SOL  
+curl -X POST http://localhost:3000/api/solana/prepare-xmr-to-sol \
+  -H "Content-Type: application/json" \
+  -d '{"xmrAmount":"0.1", "solanaAddress":"...", "value":100000000}'
+```
+
+## 🧩 Architecture Deep Dive
+
+### **Current Working Pipeline**
+
+```mermaid
+graph TD
+    A[User: has SOL] -->|Frontend|B[Connect Solana Wallet]
+    B --> C[Enter XMR address]
+    C --> D[Sign transaction]
+    D --> E[Backend API]
+    E --> F[SOL locked in HTLC]
+    F --> G[Monero transfer initiated]
+    G --> H[Atomic completion]
+
+    I[User: has XMR] -->|Backend|J[XMR transfer verified]
+    J --> K[SOL released to XMR sender]
+    K --> L[Swap completed]
+```
+
+### **FHE Research Track**
+- **Education**: Arcium FHE integration via encrypted instructions
+- **Confidential computation**: Private swap parameter validation
+- **Future**: Fully encrypted order book matching
+
+## 🎯 From Pitch Deck to Reality
+
+The [pitch deck](fungerbilPitchdeck/deck.tex) outlines our experimental evolution:
+
+### **Phase 1: ✅ SOL ↔ XMR Swaps** (Complete)
+```
+- ✅ Working bridge with native SOL <> XMR
+- ✅ Production web interface
+- ✅ TypeScript backend with Solana integration
+- ✅ Rust Solana program (HTLC atomic swaps)
+```
+
+### **Phase 2: 🧪 FHE Trading** (Active Research)
+``` 
+- 🧪 Arcium FHE integration via `etest/` directory
+- 🧪 Confidential swap parameter validation
+- 🧪 Encrypted instruction experimentation
+- 🧪 Rust Arcium framework (Arcis) exploration
+```
+
+### **Phase 3: 📈 Wrapped Monero (wXMR)** (Future)
+```
+- Treasury management for wrapped tokens
+- Liquidity pools in FHE environment  
+- DAO governance with encrypted voting
+```
+
+## 🛠️ Detailed Setup for Each Component
+
+### **1. SOL ↔ XMR Bridge** (Production)
+```bash
+# Server setup (back-end)
+cd svm-xmr/server
+npm install
+npm run dev                    # Backend runs on localhost:3000
+
+# Frontend deployment
+cd frontend/atomicSwap
+# Upload entire folder to web server
+# or: python -m http.server 8080
 # Visit: http://localhost:8080
 ```
 
-### 3. Create a Test Swap
-1. **USDC → XMR**: Enter your **Monero address** → Connect Solana wallet → Sign one transaction
-2. **XMR → USDC**: Enter your **Solana address** → Send XMR to provided address → Receive USDC
-
-## 🔍 Project Architecture
-
-```
-fungerbil/
-├── 📂 frontend/              # Web interface
-│   ├── index.html           # Main swap UI
-│   ├── swap.js              # Business logic
-│   ├── style.css            # Epic gerbil-themed design
-│   └── assets/              # Gerbil mascot & crypto logos
-├── 📂 svm-xmr/              # Solana-Monero bridge
-│   ├── server/              # TypeScript backend
-│   ├── solana-program/      # Rust smart contract
-│   ├── protocol.md          # Technical specification
-│   └── README.md           # Detailed setup
-├── 📂 fungerbilPitchdeck/   # Investor materials
-│   └── deck.tex            # LaTeX presentation
-└── README.md               # This file
+### **2. Arcium FHE Testing** (Research)
+```bash
+# Arcium integration experiments
+cd etest
+npm install                    # Install dependencies
+# Follow etest/README.md for specific Arcium setup
 ```
 
-## 🔐 Security Model
+## 🏗️ Repository Structure Revealed
 
-### Core Principles
-- **Trustless**: No central authority holds funds
-- **Atomic**: Either completes fully or reverts completely
-- **Private**: No transaction visibility between chains
-- **On-chain auditable**: All enforcement in smart contracts
-
-### Risk Mitigation
-- **Timeout refunds**: 24-hour window with automatic refunds
-- **Malleability fixes**: Canonical signature forms to prevent attacks
-- **Fraud proofs**: Slashing mechanism for bad actors
-- **No custody**: Users maintain control of private keys
-
-## 🌐 Network Support
-
-| Environment | Solana Network | Monero Network | Status |
-|-------------|----------------|----------------|---------|
-| Development | Solana Devnet | Monero Stagenet | ✅ Active |
-| Production | Solana Mainnet | Monero Mainnet | 🔒 Q1 2026 |
-| Testnet | Solana Testnet | Monero Stagenet | ✅ Ready |
-
-## 📊 Development Roadmap
-
-### ✅ Q4 2025 - Testnet Launch
-- [x] Smart contract deployment
-- [x] Basic atomic swap functionality
-- [x] Web interface
-- [ ] Stress testing
-- [ ] Security audit
-
-### 🔄 Q1 2026 - Mainnet Preparation
-- [ ] Mainnet program deployment
-- [ ] USD Coin integration
-- [ ] Multi-asset support
-- [ ] API/SDK release
-
-### 🚀 Q2 2026 - Full Protocol
-- [ ] TWAP orders
-- [ ] Liquidity pools
-- [ ] API/SDK expansion
-- [ ] DAO governance
-
-## 🤝 Contributing
-
-We welcome contributors! Here's what we need help with:
-
-### 🐛 Bug Bounties
-Found a vulnerability? Contact us privately: team@fungerbil.com
-
-### 💡 Feature Requests
-- **Frontend**: React/Next.js migration
-- **Backend**: Additional chains (Ethereum, BNB)
-- **Testing**: More comprehensive test suites
-- **DevOps**: Deployment automation
-
-### 🏗️ Getting Involved
-1. **Pick your area**: Backend/Frontend/Smart Contracts/Security
-2. **Read design docs**: [Protocol Specification](svm-xmr/protocol.md)
-3. **Create PR**: Small focused changes preferred
-4. **Join discussions**: [Telegram](https://t.me/fungerbilswap)
-
-## 💰 Liquidity Program
-
-Running a liquidity fleet? We provide:
-- **0.08% swap fees**
-- **24/7 uptime monitoring**
-- **Automated XMR management**
-- **Risk-free operation with collateral**
-
-Contact: liquidity@fungerbil.com
-
-## 🎯 Use Cases
-
-### 🏪 Merchants
-Accept USDC → Settle XMR automatically
-Privacy without complexity
-
-### 🕵️‍♂️ Privacy Users
-Exit centralized exchanges → Maintain anonymity
-No technical complexity
-
-### 💱 Arbitrage Traders
-Cross-exchange arbitrage with privacy
-Minimal fees and fast settlement
-
-## 📚 For Developers
-
-### API Endpoints (Production)
-```javascript
-// Create swap
-POST /api/swap/create-usdc-to-xmr
-POST /api/swap/create-xmr-to-usdc
-
-// Monitor progress
-GET /api/swap/:swapId
-POST /api/swap/:swapId/redeem
-
-// Status updates
-POST /api/web3/status/:swapId
+```
+📁 fungerbil/                    # Root privacy ecosystem
+├── 🔗 SOL ↔ XMR Bridge         # Production privacy bridge
+│   ├── frontend/atomicSwap/    # [ACTIVE] Web UI for swaps
+│   └── svm-xmr/               # [ACTIVE] Complete bridge backend
+│
+├── 🧪 FHE Research             # Experimental future features  
+│   └── etest/                  # Arcium FHE integration tests
+│
+├── 📈 Investor Relations       # Strategic documentation  
+│   └── fungerbilPitchdeck/     # LaTeX investor presentation
+│
+└── 🐹 Brand Assets             # Fun Gerbil identity
+    └── assets/                 # All gerbil-related imagery
 ```
 
-### Smart Contract Details
-- **Program ID**: `G1BVSiFojnXFaPG1WUgJAcYaB7aGKLKWtSqhMreKgA82`
-- **Language**: Rust (Anchor Framework)
-- **Features**: HTLC with adaptor signatures
-- **Audits**: Currently in progress (Q4 2025)
+## 🔍 Technical Documentation
 
-### Monero Integration
-- **Network**: Auto-detects between mainnet/stagenet
-- **Fee Handling**: Dynamic based on network conditions
-- **Resilience**: Automatic retry on network issues
+- [**Swap Protocol Specification**](svm-xmr/protocol.md): HTLC atomic swap mechanics
+- [**Server Setup Guide**](svm-xmr/README.md): Complete backend configuration
+- [**Arcium Integration Guide**](etest/README.md): FHE experimentation instructions
+- [**Investor Presentation**](fungerbilPitchdeck/deck.tex): Strategic roadmap and positioning
 
-## 📱 Mobile Integration
+## 🚧 Development Status
 
-Coming soon:
-- React Native wrapper
-- WalletConnect integration
-- Push notifications for swap completion
+| Component | Network | Status | GitHub Status |
+|-----------|---------|---------|---------------|
+| **SOL ↔ XMR Bridge** | Solana Devnet | ✅ Production-ready | Current HEAD |
+| **Atomic Swaps** | Stagenet/Testnet | ✅ Fully functional | main branch |
+| **Web Interface** | Any static host | ✅ Deployable | frontend/atomicSwap |
+| **Arcium FHE** | Research | 🧪 Experimental | etest/ directory |
+| **wXMR** | Future | 🎯 Phase 3 | Not yet active |
 
-## 🔗 Links
+## 💡 Quick Start Templates
 
-| Resource | Link |
-|----------|------|
-| **Live Demo** | [https://fungerbil.com](https://fungerbil.com) |
-| **GitHub Issues** | [Report bugs](https://github.com/madschristensen99/fungerbil/issues) |
-| **Telegram Community** | [t.me/fungerbilswap](https://t.me/fungerbilswap) |
-| **Security Disclosures** | team@fungerbil.com |
-| **Business Inquiries** | business@fungerbil.com |
+### **Privacy Bridge User** (Immediate Use)
+```bash
+git clone https://github.com/madschristensen99/fungerbil.git
+cd fungerbil/frontend/atomicSwap
+# Upload to web hosting - fully client-side
+```
 
-## 🏆 Team & Partners
+### **Developer** (Full Stack)
+```bash
+git clone https://github.com/madschristensen99/fungerbil.git
+cd fungerbil/svm-xmr/server
+npm install && npm run dev
+# Connect frontend to local backend
+```
 
-**Founding Team:**
-- **Mads Christensen** - CEO (DeFi Infrastructure Engineer)
-- **Kyle Koshiyama** - FHE Engineer (formerly Fhenix, current DarkLake)
-- **Eric Nans** - Head of Marketing (Growth expert)
+### **FHE Researcher** (Confidential Computing)
+```bash
+git clone https://github.com/madschristensen99/fungerbil.git
+cd fungerbil/etest
+npm install
+# Follow Arcium setup guide
+```
 
-**Strategic Partners:**
-- **DarkLake** - FHE infrastructure
-- **Arcium** - Privacy computation
-- **Solana Foundation** - Grant recipient
+## 🤝 Getting Started
 
-## 📄 License
+**Choose your path:**
 
-MIT License - see [LICENSE](LICENSE) for details.
+🏪 **User**: `cd frontend/atomicSwap && open index.html` - start swapping immediately  
+🔧 **Developer**: Follow [svm-xmr/README.md](svm-xmr/README.md) for full backend setup  
+🧑‍🔬 **Researcher**: Dive into [etest/README.md](etest/README.md) for FHE experiments  
+📊 **Investor**: Review [fungerbilPitchdeck/deck.tex](fungerbilPitchdeck/deck.tex) for strategic vision
 
 ---
 
-*Built with ❤️ by gerbils, for humans who care about privacy.*
+*This repository shows both the working privacy infrastructure (SOL ↔ XMR swaps) and the experimental future (Arcium FHE integration). The pitch deck connects the technical reality to the strategic vision of building truly private DeFi infrastructure.*
 
-**Warning**: This is experimental software currently in devnet/beta. Mainnet launch scheduled for Q1 2026. Use only with small amounts for testing purposes.
+**🐹 Built by privacy nerds, for humans who want their financial transactions to stay private.**
