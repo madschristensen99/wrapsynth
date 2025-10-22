@@ -18,40 +18,35 @@ async function connectWallet() {
   }
 }
 
-// USDC to XMR Swap Flow (Solana Edition)
-async function initiateUsdcToXmrSwap(xmrAddress, usdcAmount) {
+// SOL to XMR Swap Flow (Solana Edition)
+async function initiateSolToXmrSwap(xmrAddress, solLamports) {
   try {
     // Step 1: Connect to wallet
     const { provider, publicKey, connection } = await connectWallet();
     
     // Step 2: Prepare swap parameters with the backend
-    const prepareResponse = await fetch(`${SERVER_URL}/api/solana/prepare-usdc-to-xmr`, {
+    const prepareResponse = await fetch(`${SERVER_URL}/api/solana/prepare-sol-to-xmr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         solanaAddress: publicKey.toString(),
         xmrAddress: xmrAddress,
-        value: usdcAmount // In atomic units (e.g., 10000 for 0.01 USDC)
+        value: solLamports // In lamports (e.g., 1000000000 for 1 SOL)
       })
     });
     
     const prepareResult = await prepareResponse.json();
     console.log('Swap parameters prepared:', prepareResult);
     
-    // Step 3: Create USDC transfer transaction
-    // Get USDC token account for the sender
-    const usdcMint = new solanaWeb3.PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'); // Devnet USDC
-    const programId = new solanaWeb3.PublicKey(prepareResult.swapParams.programId || '11111111111111111111111111111111');
+    // Step 3: Create SOL transfer transaction
+    console.log('Creating SOL transfer transaction...');
     
-    // Create transfer instruction
-    const transferInstruction = splToken.createTransferInstruction(
-      prepareResult.swapParams.fromTokenAccount,
-      prepareResult.swapParams.toTokenAccount,
-      publicKey,
-      prepareResult.swapParams.value
-    );
-    
-    console.log('Creating USDC transfer transaction...');
+    // Create transfer instruction to escrow account
+    const transferInstruction = solanaWeb3.SystemProgram.transfer({
+      fromPubkey: publicKey,
+      toPubkey: new solanaWeb3.PublicKey(prepareResult.swapParams.escrowAccount),
+      lamports: prepareResult.swapParams.value
+    });
     
     // Create and sign transaction
     const transaction = new solanaWeb3.Transaction().add(transferInstruction);
@@ -63,12 +58,12 @@ async function initiateUsdcToXmrSwap(xmrAddress, usdcAmount) {
     let signed = await provider.signTransaction(transaction);
     let signature = await connection.sendRawTransaction(signed.serialize());
     
-    console.log('USDC transfer transaction submitted:', signature);
+    console.log('SOL transfer transaction submitted:', signature);
     await connection.confirmTransaction(signature);
-    console.log('USDC transfer confirmed');
+    console.log('SOL transfer confirmed');
     
     // Step 4: Notify backend of swap creation
-    const notifyResponse = await fetch(`${SERVER_URL}/api/solana/notify-usdc-to-xmr-created`, {
+    const notifyResponse = await fetch(`${SERVER_URL}/api/solana/notify-sol-to-xmr-created`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -81,7 +76,7 @@ async function initiateUsdcToXmrSwap(xmrAddress, usdcAmount) {
     console.log('Backend notified of swap creation:', notifyResult);
     
     // Step 5: Wait for backend confirmation
-    const readyResponse = await fetch(`${SERVER_URL}/api/solana/notify-usdc-to-xmr-ready`, {
+    const readyResponse = await fetch(`${SERVER_URL}/api/solana/notify-sol-to-xmr-ready`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -97,24 +92,24 @@ async function initiateUsdcToXmrSwap(xmrAddress, usdcAmount) {
     
     return prepareResult.swapId;
   } catch (error) {
-    console.error('Error initiating USDC to XMR swap:', error);
+    console.error('Error initiating SOL to XMR swap:', error);
     throw error;
   }
 }
 
-// XMR to USDC Swap Flow (Solana Edition)
-async function initiateXmrToUsdcSwap(xmrAmount, usdcAmount) {
+// XMR to SOL Swap Flow (Solana Edition)
+async function initiateXmrToSolSwap(xmrAmount, solLamports) {
   try {
     // Step 1: Connect to wallet
     const { publicKey } = await connectWallet();
     
     // Step 2: Prepare swap parameters with the backend
-    const prepareResponse = await fetch(`${SERVER_URL}/api/solana/prepare-xmr-to-usdc`, {
+    const prepareResponse = await fetch(`${SERVER_URL}/api/solana/prepare-xmr-to-sol`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         solanaAddress: publicKey.toString(),
-        value: usdcAmount, // In atomic units (e.g., 10000 for 0.01 USDC)
+        value: solLamports, // In lamports (e.g., 1000000000 for 1 SOL)
         xmrAmount: xmrAmount // As a string (e.g., "0.001")
       })
     });
@@ -123,7 +118,7 @@ async function initiateXmrToUsdcSwap(xmrAmount, usdcAmount) {
     console.log('Swap parameters prepared:', prepareResult);
     
     // Step 3: Send XMR (backend operation)
-    const sendXmrResponse = await fetch(`${SERVER_URL}/api/solana/xmr-to-usdc/${prepareResult.swapId}/send-xmr`, {
+    const sendXmrResponse = await fetch(`${SERVER_URL}/api/solana/xmr-to-sol/${prepareResult.swapId}/send-xmr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({})
@@ -133,8 +128,7 @@ async function initiateXmrToUsdcSwap(xmrAmount, usdcAmount) {
     console.log('XMR sent:', sendXmrResult);
     
     // Step 4: Notify backend of Solana swap creation
-    // For Solana, this would create a transaction that will release USDC on XMR confirmation
-    const notifyResponse = await fetch(`${SERVER_URL}/api/solana/notify-xmr-to-usdc-created`, {
+    const notifyResponse = await fetch(`${SERVER_URL}/api/solana/notify-xmr-to-sol-created`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -151,7 +145,7 @@ async function initiateXmrToUsdcSwap(xmrAmount, usdcAmount) {
     
     return prepareResult.swapId;
   } catch (error) {
-    console.error('Error initiating XMR to USDC swap:', error);
+    console.error('Error initiating XMR to SOL swap:', error);
     throw error;
   }
 }
@@ -212,23 +206,23 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
         
-        if (sendCurrency === 'USDC' && receiveCurrency === 'XMR') {
+        if (sendCurrency === 'SOL' && receiveCurrency === 'XMR') {
           if (!receiverAddress) {
             alert('Please enter your XMR wallet address');
             return;
           }
           
-          // Convert USDC to atomic units (6 decimals)
-          const usdcAtomicUnits = Math.floor(parseFloat(sendAmount) * 1e6).toString();
+          // Convert SOL to lamports (9 decimals)
+          const solLamports = Math.floor(parseFloat(sendAmount) * 1e9).toString();
           
-          const swapId = await initiateUsdcToXmrSwap(receiverAddress, usdcAtomicUnits);
-          alert(`USDC to XMR swap initiated with ID: ${swapId}`);
-        } else if (sendCurrency === 'XMR' && receiveCurrency === 'USDC') {
-          // Convert USDC to atomic units (6 decimals)
-          const usdcAtomicUnits = Math.floor(parseFloat(receiveAmount) * 1e6).toString();
+          const swapId = await initiateSolToXmrSwap(receiverAddress, solLamports);
+          alert(`SOL to XMR swap initiated with ID: ${swapId}`);
+        } else if (sendCurrency === 'XMR' && receiveCurrency === 'SOL') {
+          // Convert SOL to lamports (9 decimals)
+          const solLamports = Math.floor(parseFloat(receiveAmount) * 1e9).toString();
           
-          const swapId = await initiateXmrToUsdcSwap(sendAmount, usdcAtomicUnits);
-          alert(`XMR to USDC swap initiated with ID: ${swapId}`);
+          const swapId = await initiateXmrToSolSwap(sendAmount, solLamports);
+          alert(`XMR to SOL swap initiated with ID: ${solLamports}`);
         } else {
           alert('Unsupported currency pair');
         }
@@ -258,22 +252,13 @@ document.addEventListener('DOMContentLoaded', () => {
       receiveAmount.value = tempAmount;
       
       // Show/hide XMR address field based on receive currency
-      const receiverAddressField = document.querySelector('.swap-step:nth-child(2)');
+      const receiverAddressField = document.querySelector('.swap-step');
       if (receiveCurrency.innerText.includes('XMR')) {
         receiverAddressField.style.display = 'block';
       } else {
         receiverAddressField.style.display = 'none';
       }
     });
-  }
-  
-  // Initialize UI
-  const receiveCurrency = document.getElementById('receiveCurrency');
-  if (receiveCurrency && receiveCurrency.innerText.includes('XMR')) {
-    const receiverAddressField = document.querySelector('.swap-step:nth-child(2)');
-    if (receiverAddressField) {
-      receiverAddressField.style.display = 'block';
-    }
   }
 });
 
@@ -290,8 +275,10 @@ function formatAddress(address) {
 // Export functions for external use
 export {
   connectWallet,
-  initiateUsdcToXmrSwap,
-  initiateXmrToUsdcSwap,
+  initiateSolToXmrSwap,
+  initiateXmrToSolSwap,
+  initiateUsdcToXmrSwap, // Keep for backward compatibility
+  initiateXmrToUsdcSwap, // Keep for backward compatibility
   pollSwapStatus,
   formatAddress,
   formatSolanaAddress
