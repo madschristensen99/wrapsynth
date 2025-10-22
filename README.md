@@ -1,10 +1,9 @@
-# 🐹 Fun Gerbil - Privacy Bridge & FHE Trading Infrastructure
+# 🐹 Fun Gerbil - Privacy Bridge & MPC Infrastructure
 
-[![Status](https://img.shields.io/badge/status-devnet_preview-green.svg)](https://fungerbil.com) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Solana](https://img.shields.io/badge/powered-Solana-9945FF.svg)](https://solana.com) [![FHE](https://img.shields.io/badge/FHE-Arcium-FF6B35.svg)](https://arcium.com)
+[![Status](https://img.shields.io/badge/status-devnet_preview-green.svg)](https://fungerbil.com) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Solana](https://img.shields.io/badge/powered-Solana-9945FF.svg)](https://solana.com) [![MPC](https://img.shields.io/badge/MPC-Arcium-FF6B35.svg)](https://arcium.com)
 
-**A comprehensive privacy ecosystem: Cross-chain atomic swaps between Solana SOL ↔ Monero XMR, plus fully encrypted on-chain trading via Arcium FHE**
+**Privacy DeFi: Cross-chain atomic swaps between Solana SOL ↔ Monero XMR, with Arcium MPC for secure computation**
 
-> "From garbling money with Monero to garbling computation with FHE - Fun Gerbil is building the next generation of private DeFi infrastructure"
 
 ## 🎯 Current Project Structure
 
@@ -24,8 +23,8 @@
     └── deck.tex              # TeX presentation linking real infrastructure
 ```
 
-### 2. **FHE Trading Engine** 🔬 Experimental Integration
-```etest/                           # Arcium FHE integration
+### 2. **MPC Trading Engine** 🔬 Experimental Integration
+```etest/                           # Arcium MPC integration
 ├── encrypted-ixs/               # Confidential computing instructions
 ├── programs/                    # Solana Anchor program structure
 ├── Arcium.toml                  # Arcium network configuration
@@ -53,9 +52,9 @@ open index.html  # Works with any web browser
 - **Privacy**: No custody, no KYC, no transaction tracking
 - **Simple**: One-click swaps with existing Solana wallets
 
-### **FHE Trading Experiment** (Arcium Integration)
+### **MPC Trading Experiment** (Arcium Integration)
 ```bash
-# Test Arcium FHE computation
+# Test Arcium MPC computation
 cd fungerbil/etest
 npm install
 # Follow etest/README.md for encrypted instruction setup
@@ -68,7 +67,7 @@ npm install
 | **Frontend** | Vanilla HTML/CSS/JS | ✅ Production | Browser-based swaps |
 | **Solana Program** | Rust (Anchor) | ✅ Devnet | HTLC atomic swaps |
 | **Bridge API** | TypeScript/Node | ✅ Live | REST API for swaps |
-| **FHE Layer** | Arcium Confidential Computing | 🧪 Experimental | Encrypted calculations |
+| **MPC Layer** | Arcium Confidential Computing | 🧪 Experimental | Encrypted calculations |
 | **Monero RPC** | REST API | ✅ Stagenet | XMR wallet integration |
 
 ## ⚡ Live Endpoints (Devnet)
@@ -104,8 +103,8 @@ graph TD
     K --> L[Swap completed]
 ```
 
-### **FHE Research Track**
-- **Education**: Arcium FHE integration via encrypted instructions
+### **MPC Research Track**
+- **Education**: Arcium MPC integration via encrypted instructions
 - **Confidential computation**: Private swap parameter validation
 - **Future**: Fully encrypted order book matching
 
@@ -121,9 +120,9 @@ The [pitch deck](fungerbilPitchdeck/deck.tex) outlines our experimental evolutio
 - ✅ Rust Solana program (HTLC atomic swaps)
 ```
 
-### **Phase 2: 🧪 FHE Trading** (Active Research)
+### **Phase 2: 🧪 MPC Trading** (Active Research)
 ``` 
-- 🧪 Arcium FHE integration via `etest/` directory
+- 🧪 Arcium MPC integration via `etest/` directory
 - 🧪 Confidential swap parameter validation
 - 🧪 Encrypted instruction experimentation
 - 🧪 Rust Arcium framework (Arcis) exploration
@@ -132,7 +131,7 @@ The [pitch deck](fungerbilPitchdeck/deck.tex) outlines our experimental evolutio
 ### **Phase 3: 📈 Wrapped Monero (wXMR)** (Future)
 ```
 - Treasury management for wrapped tokens
-- Liquidity pools in FHE environment  
+- Liquidity pools in MPC environment  
 - DAO governance with encrypted voting
 ```
 
@@ -152,7 +151,7 @@ cd frontend/atomicSwap
 # Visit: http://localhost:8080
 ```
 
-### **2. Arcium FHE Testing** (Research)
+### **2. Arcium MPC Testing** (Research)
 ```bash
 # Arcium integration experiments
 cd etest
@@ -168,8 +167,8 @@ npm install                    # Install dependencies
 │   ├── frontend/atomicSwap/    # [ACTIVE] Web UI for swaps
 │   └── svm-xmr/               # [ACTIVE] Complete bridge backend
 │
-├── 🧪 FHE Research             # Experimental future features  
-│   └── etest/                  # Arcium FHE integration tests
+├── 🧪 MPC Research             # Experimental future features  
+│   └── etest/                  # Arcium MPC integration tests
 │
 ├── 📈 Investor Relations       # Strategic documentation  
 │   └── fungerbilPitchdeck/     # LaTeX investor presentation
@@ -182,7 +181,7 @@ npm install                    # Install dependencies
 
 - [**Swap Protocol Specification**](svm-xmr/protocol.md): HTLC atomic swap mechanics
 - [**Server Setup Guide**](svm-xmr/README.md): Complete backend configuration
-- [**Arcium Integration Guide**](etest/README.md): FHE experimentation instructions
+- [**Arcium Integration Guide**](etest/README.md): MPC experimentation instructions
 - [**Investor Presentation**](fungerbilPitchdeck/deck.tex): Strategic roadmap and positioning
 
 ## 🚧 Development Status
@@ -192,7 +191,7 @@ npm install                    # Install dependencies
 | **SOL ↔ XMR Bridge** | Solana Devnet | ✅ Production-ready | Current HEAD |
 | **Atomic Swaps** | Stagenet/Testnet | ✅ Fully functional | main branch |
 | **Web Interface** | Any static host | ✅ Deployable | frontend/atomicSwap |
-| **Arcium FHE** | Research | 🧪 Experimental | etest/ directory |
+| **Arcium MPC** | Research | 🧪 Experimental | etest/ directory |
 | **wXMR** | Future | 🎯 Phase 3 | Not yet active |
 
 ## 💡 Quick Start Templates
@@ -212,7 +211,7 @@ npm install && npm run dev
 # Connect frontend to local backend
 ```
 
-### **FHE Researcher** (Confidential Computing)
+### **MPC Researcher** (Confidential Computing)
 ```bash
 git clone https://github.com/madschristensen99/fungerbil.git
 cd fungerbil/etest
@@ -226,11 +225,11 @@ npm install
 
 🏪 **User**: `cd frontend/atomicSwap && open index.html` - start swapping immediately  
 🔧 **Developer**: Follow [svm-xmr/README.md](svm-xmr/README.md) for full backend setup  
-🧑‍🔬 **Researcher**: Dive into [etest/README.md](etest/README.md) for FHE experiments  
+🧑‍🔬 **Researcher**: Dive into [etest/README.md](etest/README.md) for MPC experiments  
 📊 **Investor**: Review [fungerbilPitchdeck/deck.tex](fungerbilPitchdeck/deck.tex) for strategic vision
 
 ---
 
-*This repository shows both the working privacy infrastructure (SOL ↔ XMR swaps) and the experimental future (Arcium FHE integration). The pitch deck connects the technical reality to the strategic vision of building truly private DeFi infrastructure.*
+*This repository shows both the working privacy infrastructure (SOL ↔ XMR swaps) and the experimental future (Arcium MPC integration). The pitch deck connects the technical reality to the strategic vision of building truly private DeFi infrastructure.*
 
 **🐹 Built by privacy nerds, for humans who want their financial transactions to stay private.**
