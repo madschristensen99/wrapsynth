@@ -1,4 +1,4 @@
-# 🐹 Fun Gerbil - Privacy Bridge & MPC Infrastructure
+# 🐹 Fun Gerbil - Privacy Bridge
 
 [![Status](https://img.shields.io/badge/status-devnet_preview-green.svg)](https://fungerbil.com) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Solana](https://img.shields.io/badge/powered-Solana-9945FF.svg)](https://solana.com) [![MPC](https://img.shields.io/badge/MPC-Arcium-FF6B35.svg)](https://arcium.com)
 
