@@ -1,43 +1,35 @@
 // Swap functionality for the frontend
-import { SWAP_CREATOR_ADDRESS, SWAP_CREATOR_ABI } from './constants.js';
+import { connectSolanaWallet, getCurrentWallet } from './SolanaWallet.js';
 
 // Server URL for API calls
 const SERVER_URL = 'http://localhost:3000';
 
-// Connect to MetaMask
+// Connect to Solana wallet (Phantom, Brave, or Solflare)
 async function connectWallet() {
-  if (window.ethereum) {
-    try {
-      // Request account access
-      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
-      const signer = provider.getSigner();
-      
-      console.log('Connected to wallet:', accounts[0]);
-      
-      return { provider, signer, address: accounts[0] };
-    } catch (error) {
-      console.error('User denied account access', error);
-      throw error;
-    }
-  } else {
-    console.error('MetaMask not detected');
-    throw new Error('Please install MetaMask to use this application');
+  try {
+    const walletData = await connectSolanaWallet();
+    
+    console.log('Connected to Solana wallet:', walletData.address);
+    
+    return walletData;
+  } catch (error) {
+    console.error('Failed to connect Solana wallet:', error);
+    throw error;
   }
 }
 
-// USDC to XMR Swap Flow
+// USDC to XMR Swap Flow (Solana Edition)
 async function initiateUsdcToXmrSwap(xmrAddress, usdcAmount) {
   try {
     // Step 1: Connect to wallet
-    const { signer, address } = await connectWallet();
+    const { provider, publicKey, connection } = await connectWallet();
     
     // Step 2: Prepare swap parameters with the backend
-    const prepareResponse = await fetch(`${SERVER_URL}/api/web3/prepare-usdc-to-xmr`, {
+    const prepareResponse = await fetch(`${SERVER_URL}/api/solana/prepare-usdc-to-xmr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        evmAddress: address,
+        solanaAddress: publicKey.toString(),
         xmrAddress: xmrAddress,
         value: usdcAmount // In atomic units (e.g., 10000 for 0.01 USDC)
       })
@@ -46,80 +38,50 @@ async function initiateUsdcToXmrSwap(xmrAddress, usdcAmount) {
     const prepareResult = await prepareResponse.json();
     console.log('Swap parameters prepared:', prepareResult);
     
-    // Step 3: Approve USDC spending
-    // Get USDC contract instance
-    const usdcContract = new ethers.Contract(
-      prepareResult.swapParams.asset, // USDC address
-      ['function approve(address spender, uint256 amount) public returns (bool)'],
-      signer
-    );
+    // Step 3: Create USDC transfer transaction
+    // Get USDC token account for the sender
+    const usdcMint = new solanaWeb3.PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'); // Devnet USDC
+    const programId = new solanaWeb3.PublicKey(prepareResult.swapParams.programId || '11111111111111111111111111111111');
     
-    // Approve the swap contract to spend USDC
-    const approveTx = await usdcContract.approve(
-      SWAP_CREATOR_ADDRESS,
+    // Create transfer instruction
+    const transferInstruction = splToken.createTransferInstruction(
+      prepareResult.swapParams.fromTokenAccount,
+      prepareResult.swapParams.toTokenAccount,
+      publicKey,
       prepareResult.swapParams.value
     );
     
-    console.log('Approval transaction submitted:', approveTx.hash);
-    await approveTx.wait();
-    console.log('Approval confirmed');
+    console.log('Creating USDC transfer transaction...');
     
-    // Step 4: Create the swap on the contract
-    const swapContract = new ethers.Contract(
-      SWAP_CREATOR_ADDRESS,
-      SWAP_CREATOR_ABI,
-      signer
-    );
+    // Create and sign transaction
+    const transaction = new solanaWeb3.Transaction().add(transferInstruction);
+    transaction.feePayer = publicKey;
     
-    // Create the swap
-    const createSwapTx = await swapContract.newSwap(
-      prepareResult.swapParams.claimCommitment,
-      prepareResult.swapParams.refundCommitment,
-      prepareResult.swapParams.claimer,
-      prepareResult.swapParams.timeout1,
-      prepareResult.swapParams.timeout2,
-      prepareResult.swapParams.asset,
-      prepareResult.swapParams.value,
-      prepareResult.swapParams.nonce
-    );
+    let blockhashObj = await connection.getLatestBlockhash();
+    transaction.recentBlockhash = blockhashObj.blockhash;
     
-    console.log('Swap creation transaction submitted:', createSwapTx.hash);
-    await createSwapTx.wait();
-    console.log('Swap created on the blockchain');
+    let signed = await provider.signTransaction(transaction);
+    let signature = await connection.sendRawTransaction(signed.serialize());
     
-    // Step 5: Notify backend of swap creation
-    const notifyResponse = await fetch(`${SERVER_URL}/api/web3/notify-usdc-to-xmr-created`, {
+    console.log('USDC transfer transaction submitted:', signature);
+    await connection.confirmTransaction(signature);
+    console.log('USDC transfer confirmed');
+    
+    // Step 4: Notify backend of swap creation
+    const notifyResponse = await fetch(`${SERVER_URL}/api/solana/notify-usdc-to-xmr-created`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         swapId: prepareResult.swapId,
-        txHash: createSwapTx.hash
+        txHash: signature
       })
     });
     
     const notifyResult = await notifyResponse.json();
     console.log('Backend notified of swap creation:', notifyResult);
     
-    // Step 6: Set the swap as ready
-    const swapObj = [
-      prepareResult.swapParams.owner,
-      prepareResult.swapParams.claimer,
-      prepareResult.swapParams.claimCommitment,
-      prepareResult.swapParams.refundCommitment,
-      prepareResult.swapParams.timeout1,
-      prepareResult.swapParams.timeout2,
-      prepareResult.swapParams.asset,
-      prepareResult.swapParams.value,
-      prepareResult.swapParams.nonce
-    ];
-    
-    const setReadyTx = await swapContract.setReady(swapObj);
-    console.log('SetReady transaction submitted:', setReadyTx.hash);
-    await setReadyTx.wait();
-    console.log('Swap set as ready on the blockchain');
-    
-    // Step 7: Notify backend that swap is ready for XMR sending
-    const readyResponse = await fetch(`${SERVER_URL}/api/web3/notify-usdc-to-xmr-ready`, {
+    // Step 5: Wait for backend confirmation
+    const readyResponse = await fetch(`${SERVER_URL}/api/solana/notify-usdc-to-xmr-ready`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -130,7 +92,7 @@ async function initiateUsdcToXmrSwap(xmrAddress, usdcAmount) {
     const readyResult = await readyResponse.json();
     console.log('Backend notified of ready state:', readyResult);
     
-    // Step 8: Poll for status updates
+    // Step 6: Poll for status updates
     pollSwapStatus(prepareResult.swapId);
     
     return prepareResult.swapId;
@@ -140,18 +102,18 @@ async function initiateUsdcToXmrSwap(xmrAddress, usdcAmount) {
   }
 }
 
-// XMR to USDC Swap Flow
+// XMR to USDC Swap Flow (Solana Edition)
 async function initiateXmrToUsdcSwap(xmrAmount, usdcAmount) {
   try {
     // Step 1: Connect to wallet
-    const { signer, address } = await connectWallet();
+    const { publicKey } = await connectWallet();
     
     // Step 2: Prepare swap parameters with the backend
-    const prepareResponse = await fetch(`${SERVER_URL}/api/web3/prepare-xmr-to-usdc`, {
+    const prepareResponse = await fetch(`${SERVER_URL}/api/solana/prepare-xmr-to-usdc`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        evmAddress: address,
+        solanaAddress: publicKey.toString(),
         value: usdcAmount, // In atomic units (e.g., 10000 for 0.01 USDC)
         xmrAmount: xmrAmount // As a string (e.g., "0.001")
       })
@@ -161,7 +123,7 @@ async function initiateXmrToUsdcSwap(xmrAmount, usdcAmount) {
     console.log('Swap parameters prepared:', prepareResult);
     
     // Step 3: Send XMR (backend operation)
-    const sendXmrResponse = await fetch(`${SERVER_URL}/api/web3/xmr-to-usdc/${prepareResult.swapId}/send-xmr`, {
+    const sendXmrResponse = await fetch(`${SERVER_URL}/api/solana/xmr-to-usdc/${prepareResult.swapId}/send-xmr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({})
@@ -170,41 +132,14 @@ async function initiateXmrToUsdcSwap(xmrAmount, usdcAmount) {
     const sendXmrResult = await sendXmrResponse.json();
     console.log('XMR sent:', sendXmrResult);
     
-    // Step 4: Create EVM swap
-    const swapContract = new ethers.Contract(
-      SWAP_CREATOR_ADDRESS,
-      SWAP_CREATOR_ABI,
-      signer
-    );
-    
-    // Generate swap parameters
-    const now = Math.floor(Date.now() / 1000);
-    const timeout1 = now + 3600; // 1 hour
-    const timeout2 = now + 7200; // 2 hours
-    
-    // Create the swap
-    const createSwapTx = await swapContract.newSwap(
-      prepareResult.claimCommitment,
-      prepareResult.refundCommitment,
-      address, // Self-swap for testing
-      timeout1,
-      timeout2,
-      '0x0000000000000000000000000000000000000000', // Native currency (ETH/BNB)
-      ethers.utils.parseEther(usdcAmount), // Convert to wei
-      Math.floor(Math.random() * 1000000) // Random nonce
-    );
-    
-    console.log('Swap creation transaction submitted:', createSwapTx.hash);
-    await createSwapTx.wait();
-    console.log('Swap created on the blockchain');
-    
-    // Step 5: Notify backend of EVM swap creation
-    const notifyResponse = await fetch(`${SERVER_URL}/api/web3/notify-xmr-to-usdc-created`, {
+    // Step 4: Notify backend of Solana swap creation
+    // For Solana, this would create a transaction that will release USDC on XMR confirmation
+    const notifyResponse = await fetch(`${SERVER_URL}/api/solana/notify-xmr-to-usdc-created`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         swapId: prepareResult.swapId,
-        txHash: createSwapTx.hash
+        solanaAddress: publicKey.toString()
       })
     });
     
@@ -254,7 +189,7 @@ document.addEventListener('DOMContentLoaded', () => {
     connectWalletBtn.addEventListener('click', async () => {
       try {
         const { address } = await connectWallet();
-        alert(`Connected to wallet: ${address}`);
+        alert(`Connected to Solana wallet: ${formatAddress(address)}`);
       } catch (error) {
         alert(`Failed to connect wallet: ${error.message}`);
       }
@@ -342,10 +277,22 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
+// Helper function to display shortened Solana address
+function formatSolanaAddress(address) {
+  if (!address) return '';
+  return `${address.slice(0, 4)}...${address.slice(-4)}`;
+}
+
+function formatAddress(address) {
+  return formatSolanaAddress(address);
+}
+
 // Export functions for external use
 export {
   connectWallet,
   initiateUsdcToXmrSwap,
   initiateXmrToUsdcSwap,
-  pollSwapStatus
+  pollSwapStatus,
+  formatAddress,
+  formatSolanaAddress
 };
