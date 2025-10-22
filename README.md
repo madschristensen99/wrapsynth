@@ -226,7 +226,7 @@ npm install
 🏪 **User**: `cd frontend/atomicSwap && open index.html` - start swapping immediately  
 🔧 **Developer**: Follow [svm-xmr/README.md](svm-xmr/README.md) for full backend setup  
 🧑‍🔬 **Researcher**: Dive into [etest/README.md](etest/README.md) for MPC experiments  
-📊 **Investor**: Review [fungerbilPitchdeck/deck.tex](fungerbilPitchdeck/deck.tex) for strategic vision
+📊 **Investor**: Review [Fun Gerbil Pitchdeck](https://fungerbil.com/pitchdeck.pdf) for strategic vision
 
 ---
 
