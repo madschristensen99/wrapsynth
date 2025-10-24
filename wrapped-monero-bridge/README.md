@@ -208,42 +208,6 @@ pub struct BridgeState {
 }
 ```
 
-## 🎯 Production Considerations
-
-### Current Implementation (Demo)
-- ⚠️ Simple key derivation (NOT cryptographically secure)
-- ⚠️ Placeholder ZK proof verification
-- ⚠️ Deterministic key generation from seed
-
-### Production Requirements
-1. **Proper Cryptography**
-   - Use real Ed25519/Curve25519 operations
-   - Cryptographically secure random number generation
-   - Proper Monero key derivation
-
-2. **ZK Proof Integration**
-   - Implement Groth16 proof verification
-   - Verify XMR deposits on Monero blockchain
-   - Prevent double-spending
-
-3. **Key Management**
-   - Key rotation policies
-   - Multi-signature requirements
-   - Emergency procedures
-
-4. **Solana Integration**
-   - SPL token for wXMR
-   - Anchor program for state management
-   - Event emission for indexing
-
-## 🔧 Integration with Abridge
-
-This bridge is designed to work with **Abridge** (Arcium's bridge framework):
-
-1. **Arcium MPC** - Handles encrypted key generation and storage
-2. **Groth16 Proofs** - Verify XMR deposits (to be integrated)
-3. **Solana Program** - Manage wXMR token and state
-4. **Indexer** - Track deposits and burns
 
 ## 💡 Use Cases
 
@@ -263,14 +227,6 @@ This bridge is designed to work with **Abridge** (Arcium's bridge framework):
 2. **Selective Revelation**: Keys only revealed to rightful owner
 3. **Cryptographic Enforcement**: Can't extract keys without burning
 4. **Verifiable Deposits**: ZK proofs ensure XMR was actually sent
-
-## 📚 Next Steps
-
-1. **Integrate Real Crypto**: Replace placeholder with real Ed25519
-2. **Add Groth16**: Implement ZK proof verification
-3. **Solana Program**: Create wXMR SPL token and bridge program
-4. **Testing**: Comprehensive test suite
-5. **Audit**: Security audit before mainnet
 
 ## 🔗 Resources
 
