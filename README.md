@@ -36,6 +36,8 @@
 ### **Production Ready: SOL ↔ XMR Swaps**
 **Status**: ✅ **Live on Devnet  • No Custody • Atomic Guarantees**
 
+https://solscan.io/account/G1BVSiFojnXFaPG1WUgJAcYaB7aGKLKWtSqhMreKgA82?cluster=devnet
+
 **Try the demo**: [https://fungerbil.com](https://fungerbil.com) 
 
 ```bash
