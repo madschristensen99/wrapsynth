@@ -112,7 +112,7 @@ graph TD
 
 ## 🎯 From Pitch Deck to Reality
 
-The [pitch deck](fungerbilPitchdeck/deck.tex) outlines our experimental evolution:
+The [pitch deck](https://fungerbil.com/pitchdeck.pdf) outlines our experimental evolution:
 
 ### **Phase 1: ✅ SOL ↔ XMR Swaps** (Complete)
 ```
