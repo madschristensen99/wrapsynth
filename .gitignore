@@ -1,0 +1,25 @@
+# Rust
+**/target/
+**/.cargo/
+**/*.rs.bk
+Cargo.lock
+
+# Node.js
+**/node_modules/
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+**/.npm
+**/.eslintcache
+
+# Build directories
+**/build/
+**/dist/
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.local
+.env.*.local
