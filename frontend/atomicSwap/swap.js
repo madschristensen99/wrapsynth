@@ -177,6 +177,31 @@ async function pollSwapStatus(swapId) {
 
 // Event listeners for UI
 document.addEventListener('DOMContentLoaded', () => {
+  // Mobile menu toggle
+  const menuToggle = document.querySelector('.menu-toggle');
+  const navLinks = document.querySelector('.nav-links');
+  
+  if (menuToggle) {
+    menuToggle.addEventListener('click', () => {
+      navLinks.classList.toggle('active');
+    });
+    
+    // Close mobile menu when clicking outside
+    document.addEventListener('click', (event) => {
+      if (!event.target.closest('.nav-links') && !event.target.closest('.menu-toggle')) {
+        navLinks.classList.remove('active');
+      }
+    });
+  }
+  
+  // Close mobile menu when clicking on nav links
+  const navLinksArray = navLinks.querySelectorAll('a, .btn');
+  navLinksArray.forEach(link => {
+    link.addEventListener('click', () => {
+      navLinks.classList.remove('active');
+    });
+  });
+
   // Connect wallet button
   const connectWalletBtn = document.getElementById('connectWalletBtn');
   if (connectWalletBtn) {
