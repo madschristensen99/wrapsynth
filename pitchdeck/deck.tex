@@ -473,35 +473,50 @@
   \end{tikzpicture}
   
   \centering
-  \vspace{-0.5em}
+  \vspace{-1.5em}
   
   \begin{tikzpicture}
-    % Team display moved up more
-    \fill[lightbg,rounded corners=20pt] (-7,-1.5) rectangle (7,3.5);
-    \draw[textsecondary,line width=1pt,rounded corners=20pt] (-7,-1.5) rectangle (7,3.5);
+    % Larger white bubble to contain everything
+    \fill[lightbg,rounded corners=20pt] (-7,-2.5) rectangle (7,4.0);
+    \draw[textsecondary,line width=1pt,rounded corners=20pt] (-7,-2.5) rectangle (7,4.0);
     
-
+    % MADS - Left founder box (taller to fit all content)
+    \fill[midbg,rounded corners=8pt] (-6.5,-0.5) rectangle (-2.2,3.6);
+    \node[text=textprimary,font=\bfseries,align=center] at (-4.35,3.3) {Mads Christensen};
+    % Image with frame
+    \begin{scope}
+      \node[inner sep=0pt] (mads) at (-4.35,2.0) {\includegraphics[width=2.0cm,height=2.0cm,keepaspectratio]{mads.jpeg}};
+      \draw[textsecondary,line width=1.5pt,rounded corners=4pt] (mads.south west) rectangle (mads.north east);
+    \end{scope}
+    \node[text=textsecondary,font=\small,align=center] at (-4.35,0.7) {CEO \& Founder};
+    \node[text=accent,font=\scriptsize,align=center,text width=3.8cm] at (-4.35,0.0) {Monero Maximalist \\ Fullstack Engineer};
     
-    % Team member boxes - better sizing with increased vertical space
-    \fill[midbg,rounded corners=8pt] (-6.5,0.6) rectangle (-2.2,2.5);
-    \node[text=textprimary,font=\bfseries,align=center] at (-4.35,2.0) {Mads Christensen};
-    \node[text=textsecondary,font=\small,align=center] at (-4.35,1.6) {CEO \& Founder};
-    \node[text=accent,font=\scriptsize,align=center] at (-4.35,1.0) {Monero Maximalist \\ Fullstack Engineer};
+    % KYLE - Center founder box (taller to fit all content)
+    \fill[midbg,rounded corners=8pt] (-1.8,-0.5) rectangle (1.8,3.6);
+    \node[text=textprimary,font=\bfseries,align=center] at (0,3.3) {Kyle Koshiyama};
+    % Image with frame
+    \begin{scope}
+      \node[inner sep=0pt] (kyle) at (0,2.0) {\includegraphics[width=2.0cm,height=2.0cm,keepaspectratio]{kyle.jpeg}};
+      \draw[textsecondary,line width=1.5pt,rounded corners=4pt] (kyle.south west) rectangle (kyle.north east);
+    \end{scope}
+    \node[text=textsecondary,font=\small,align=center] at (0,0.7) {Protocol Engineer};
+    \node[text=accent,font=\scriptsize,align=center,text width=3.2cm] at (0,0.0) {Former Fhenix\\Current DarkLake};
     
-    \fill[midbg,rounded corners=8pt] (-1.8,0.6) rectangle (1.8,2.5);
-    \node[text=textprimary,font=\bfseries,align=center] at (0,2.0) {Kyle Koshiyama};
-    \node[text=textsecondary,font=\small,align=center] at (0,1.6) {Protocol Engineer};
-    \node[text=accent,font=\scriptsize,align=center] at (0,1.0) {Former Fhenix\\Current DarkLake};
+    % TIAGO - Right founder box (taller to fit all content)
+    \fill[midbg,rounded corners=8pt] (2.2,-0.5) rectangle (6.5,3.6);
+    \node[text=textprimary,font=\bfseries,align=center] at (4.35,3.3) {Tiago Alves};
+    % Image with frame
+    \begin{scope}
+      \node[inner sep=0pt] (tiago) at (4.35,2.0) {\includegraphics[width=2.0cm,height=2.0cm,keepaspectratio]{tiago.jpg}};
+      \draw[textsecondary,line width=1.5pt,rounded corners=4pt] (tiago.south west) rectangle (tiago.north east);
+    \end{scope}
+    \node[text=textsecondary,font=\small,align=center] at (4.35,0.7) {Researcher};
+    \node[text=accent,font=\scriptsize,align=center,text width=3.8cm] at (4.35,0.0) {Cryptography PhD\\Current DarkLake};
     
-    \fill[midbg,rounded corners=8pt] (2.2,0.6) rectangle (6.5,2.5);
-    \node[text=textprimary,font=\bfseries,align=center] at (4.35,2.0) {Tiago Alves};
-    \node[text=textsecondary,font=\small,align=center] at (4.35,1.6) {Researcher};
-    \node[text=accent,font=\scriptsize,align=center] at (4.35,1.0) {Cryptography PhD\\Current DarkLake};
-    
-    % Team strength statement
-    \node[text=primary,font=\large,align=center] at (0,0.1) {\textbf{Deep Cryptography \& Privacy Expertise}};
-    \node[text=textprimary,font=\normalsize,align=center] at (0,-0.5) {Connected across the Solana and Monero communities};
-    \node[text=accent,font=\normalsize,align=center] at (0,-1.1) {Building the future of private, cross-chain DeFi};
+    % Team strength statement - now properly inside the white bubble
+    \node[text=primary,font=\large,align=center] at (0,-1.0) {\textbf{Deep Cryptography \& Privacy Expertise}};
+    \node[text=textprimary,font=\normalsize,align=center] at (0,-1.6) {Connected across the Solana and Monero communities};
+    \node[text=accent,font=\normalsize,align=center] at (0,-2.1) {Building the future of private, cross-chain DeFi};
   \end{tikzpicture}
 \end{frame}
 
