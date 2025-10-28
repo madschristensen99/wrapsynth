@@ -277,8 +277,6 @@ export {
   connectWallet,
   initiateSolToXmrSwap,
   initiateXmrToSolSwap,
-  initiateUsdcToXmrSwap, // Keep for backward compatibility
-  initiateXmrToUsdcSwap, // Keep for backward compatibility
   pollSwapStatus,
   formatAddress,
   formatSolanaAddress
