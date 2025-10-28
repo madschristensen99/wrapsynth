@@ -331,26 +331,37 @@ document.addEventListener('DOMContentLoaded', () => {
   
   let isCalculating = false;
   
-  // Update price displays
+  // Get currency configuration
+  function getCurrentCurrencyConfig() {
+    const sendIsSol = sendCurrency.innerText.trim().includes('SOL');
+    const receiveIsSol = receiveCurrency.innerText.trim().includes('SOL');
+    return {
+      sendIsSol,
+      sendIsXmr: !sendIsSol,
+      receiveIsSol,
+      receiveIsXmr: !receiveIsSol
+    };
+  }
+  
+  // Update price displays and exchange rate
   function updatePriceDisplay(priceData) {
     console.log('Price update received:', priceData);
     
     if (priceData && priceData.prices) {
       const prices = priceData.prices || {};
       
-      // Display SOL price
-      if (solPriceDisplay && prices.sol && prices.sol.price !== null && prices.sol.price !== undefined) {
+      // Display current prices
+      if (solPriceDisplay && prices.sol && prices.sol.price) {
         solPriceDisplay.textContent = `SOL: $${prices.sol.price.toFixed(2)}`;
       }
-      
-      // Display XMR price
-      if (xmrPriceDisplay && prices.xmr && prices.xmr.price !== null && prices.xmr.price !== undefined) {
+      if (xmrPriceDisplay && prices.xmr && prices.xmr.price) {
         xmrPriceDisplay.textContent = `XMR: $${prices.xmr.price.toFixed(2)}`;
       }
       
-      // Update exchange rate
-      if (exchangeRateDisplay && priceData.exchangeRate) {
-        exchangeRateDisplay.textContent = `1 SOL ≈ ${priceData.exchangeRate.toFixed(6)} XMR`;
+      // Always show 1 SOL = ? XMR regardless of currency swap direction
+      if (exchangeRateDisplay && prices.sol && prices.xmr) {
+        const rate = prices.sol.price / prices.xmr.price;
+        exchangeRateDisplay.textContent = `1 SOL ≈ ${rate.toFixed(6)} XMR`;
       }
     }
   }
@@ -375,16 +386,19 @@ document.addEventListener('DOMContentLoaded', () => {
     
     isCalculating = true;
     
-    const exchangeRate = rates.prices[receiveType].price / rates.prices[sendType].price;
+    // Calculate correct conversion rate for currency exchange
+    const sendPrice = rates.prices[sendType].price;
+    const receivePrice = rates.prices[receiveType].price;
+    const conversionRate = sendPrice / receivePrice;
     
     if (document.activeElement === sendAmount && sendAmount.value) {
       // User typing in send, calculate receive
       const sendVal = parseFloat(sendAmount.value) || 0;
-      receiveAmount.value = sendVal > 0 ? (sendVal * exchangeRate).toFixed(6) : '';
+      receiveAmount.value = sendVal > 0 ? (sendVal * conversionRate).toFixed(6) : '';
     } else if (document.activeElement === receiveAmount && receiveAmount.value) {
       // User typing in receive, calculate send  
       const receiveVal = parseFloat(receiveAmount.value) || 0;
-      sendAmount.value = receiveVal > 0 ? (receiveVal / exchangeRate).toFixed(6) : '';
+      sendAmount.value = receiveVal > 0 ? (receiveVal / conversionRate).toFixed(6) : '';
     }
     
     isCalculating = false;
