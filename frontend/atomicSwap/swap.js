@@ -183,6 +183,8 @@ document.addEventListener('DOMContentLoaded', () => {
     connectWalletBtn.addEventListener('click', async () => {
       try {
         const { address } = await connectWallet();
+        connectWalletBtn.textContent = 'Connected';
+        connectWalletBtn.classList.add('connected');
         alert(`Connected to Solana wallet: ${formatAddress(address)}`);
       } catch (error) {
         alert(`Failed to connect wallet: ${error.message}`);
