@@ -1,20 +1,23 @@
-// CoinGecko API integration for real-time XMR price
+// CoinGecko API integration for real-time XMR and SOL prices
 const COINGECKO_API_BASE = 'https://api.coingecko.com/api/v3';
 
 class PriceTracker {
   constructor() {
-    this.currentPrice = null;
-    this.priceChange24h = null;
+    this.prices = {
+      xmr: { price: null, change: null },
+      sol: { price: null, change: null }
+    };
+    this.exchangeRate = null;
     this.lastUpdate = null;
     this.updateInterval = null;
     this.updateFrequency = 30000; // 30 seconds
     this.listeners = [];
   }
 
-  // Fetch current XMR price from CoinGecko
-  async fetchXmrPrice() {
+  // Fetch both XMR and SOL prices from CoinGecko
+  async fetchPrices() {
     try {
-      const response = await fetch(`${COINGECKO_API_BASE}/simple/price?ids=monero&vs_currencies=usd&include_24hr_change=true`);
+      const response = await fetch(`${COINGECKO_API_BASE}/simple/price?ids=solana,monero&vs_currencies=usd&include_24hr_change=true`);
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -22,24 +25,32 @@ class PriceTracker {
       
       const data = await response.json();
       
-      if (data.monero) {
-        this.currentPrice = data.monero.usd;
-        this.priceChange24h = data.monero.usd_24h_change;
+      if (data.solana && data.monero) {
+        // Update SOL prices
+        this.prices.sol.price = data.solana.usd;
+        this.prices.sol.change = data.solana.usd_24h_change;
+        
+        // Update XMR prices
+        this.prices.xmr.price = data.monero.usd;
+        this.prices.xmr.change = data.monero.usd_24h_change;
+        
+        // Update exchange rate
+        this.exchangeRate = this.calculateExchangeRate('xmr', 'sol');
         this.lastUpdate = new Date();
         
         // Notify all registered listeners
         this.notifyListeners();
         
         return {
-          price: this.currentPrice,
-          change24h: this.priceChange24h,
+          prices: this.prices,
+          exchangeRate: this.exchangeRate,
           lastUpdate: this.lastUpdate
         };
       }
       
       throw new Error('Invalid response format from CoinGecko');
     } catch (error) {
-      console.error('Error fetching XMR price:', error);
+      console.error('Error fetching prices:', error);
       return null;
     }
   }
@@ -51,12 +62,17 @@ class PriceTracker {
     }
     
     // Initial fetch
-    this.fetchXmrPrice();
+    this.fetchPrices();
     
     // Set up recurring updates
     this.updateInterval = setInterval(() => {
-      this.fetchXmrPrice();
+      this.fetchPrices();
     }, this.updateFrequency);
+  }
+
+  // Deprecated: use fetchPrices() instead
+  async fetchXmrPrice() {
+    return this.fetchPrices();
   }
 
   // Stop automatic price updates
@@ -85,14 +101,43 @@ class PriceTracker {
     this.listeners.forEach(callback => {
       try {
         callback({
-          price: this.currentPrice,
-          change24h: this.priceChange24h,
+          prices: this.prices,
+          exchangeRate: this.exchangeRate,
           lastUpdate: this.lastUpdate
         });
       } catch (error) {
         console.error('Error in price update listener:', error);
       }
     });
+  }
+
+  // Get cached prices
+  getPrices() {
+    return {
+      prices: this.prices,
+      exchangeRate: this.exchangeRate,
+      lastUpdate: this.lastUpdate
+    };
+  }
+
+  // Calculate exchange rate
+  calculateExchangeRate(fromCurrency, toCurrency) {
+    if (!this.prices[fromCurrency] || !this.prices[toCurrency] || 
+        this.prices[fromCurrency].price === null || this.prices[toCurrency].price === null) {
+      return null;
+    }
+    
+    // Convert from one currency to another
+    const fromPrice = this.prices[fromCurrency].price;
+    const toPrice = this.prices[toCurrency].price;
+    
+    return fromPrice ? toPrice / fromPrice : null;
+  }
+
+  // Format exchange rate for display
+  formatExchangeRate(rate) {
+    if (!rate) return 'Calculating...';
+    return `${rate.toFixed(6)}`;
   }
 
   // Get current cached price data

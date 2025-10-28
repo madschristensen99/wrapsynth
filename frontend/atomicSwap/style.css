@@ -391,6 +391,18 @@ header {
     font-family: 'Nunito', sans-serif;
 }
 
+.price-crypto {
+    font-size: 0.85rem;
+    display: inline-block;
+    margin-right: 10px;
+    font-weight: 700;
+}
+
+#exchangeRate {
+    font-weight: 700;
+    color: var(--primary);
+}
+
 .btn {
     display: inline-block;
     padding: 0.9rem 1.2rem;
