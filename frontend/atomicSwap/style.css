@@ -49,6 +49,7 @@ header {
     top: 0;
     z-index: 10;
     width: 100%;
+    position: relative;
 }
 
 .logo {
@@ -554,6 +555,13 @@ footer {
     width: 30px;
     height: 21px;
     cursor: pointer;
+    position: absolute;
+    right: 1rem;
+    top: 1.5rem;
+    z-index: 15;
+    background: none;
+    border: none;
+    padding: 0;
 }
 
 .menu-toggle span {
