@@ -241,22 +241,36 @@ document.addEventListener('DOMContentLoaded', () => {
       const sendAmount = document.getElementById('sendAmount');
       const receiveAmount = document.getElementById('receiveAmount');
       
-      // Swap currencies
-      const tempCurrency = sendCurrency.innerHTML;
-      sendCurrency.innerHTML = receiveCurrency.innerHTML;
-      receiveCurrency.innerHTML = tempCurrency;
+      // Swap currencies properly while maintaining icons
+      const sendCurrencyText = sendCurrency.textContent.trim();
+      const receiveCurrencyText = receiveCurrency.textContent.trim();
+      
+      // Get the img elements
+      const sendImg = sendCurrency.querySelector('img');
+      const receiveImg = receiveCurrency.querySelector('img');
+      
+      if (sendCurrencyText.includes('SOL')) {
+        // SWAP: SOL -> becomes XMR
+        sendCurrency.innerHTML = '<img src="./assets/monero.png" alt="XMR icon" class="currency-icon" /> XMR';
+        receiveCurrency.innerHTML = '<img src="./assets/sol.png" alt="SOL icon" class="currency-icon" /> SOL';
+      } else {
+        // SWAP: XMR -> becomes SOL  
+        sendCurrency.innerHTML = '<img src="./assets/sol.png" alt="SOL icon" class="currency-icon" /> SOL';
+        receiveCurrency.innerHTML = '<img src="./assets/monero.png" alt="XMR icon" class="currency-icon" /> XMR';
+      }
       
       // Swap amounts
       const tempAmount = sendAmount.value;
       sendAmount.value = receiveAmount.value;
       receiveAmount.value = tempAmount;
       
-      // Show/hide XMR address field based on receive currency
-      const receiverAddressField = document.querySelector('.swap-step');
-      if (receiveCurrency.innerText.includes('XMR')) {
-        receiverAddressField.style.display = 'block';
+      // Show/hide XMR address field based on receive currency (more precise targeting)
+      const receiverAddressForm = document.getElementById('receiverAddress').closest('.swap-step');
+      // Check the newly swapped content
+      if (receiveCurrency.innerHTML.includes('XMR')) {
+        receiverAddressForm.style.display = 'block';
       } else {
-        receiverAddressField.style.display = 'none';
+        receiverAddressForm.style.display = 'none';
       }
     });
   }
