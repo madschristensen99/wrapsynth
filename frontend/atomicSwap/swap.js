@@ -175,8 +175,56 @@ async function pollSwapStatus(swapId) {
   }, 10 * 60 * 1000);
 }
 
+// Import price tracker for XMR pricing
+import priceTracker from './priceTracker.js';
+
 // Event listeners for UI
 document.addEventListener('DOMContentLoaded', () => {
+  // Initialize price tracking
+  const priceDisplay = document.getElementById('xmrPrice');
+  
+  if (priceDisplay) {
+    console.log('Initializing price tracker...');
+    
+    // Update price display
+    function updatePriceDisplay(priceData) {
+      console.log('Price update received:', priceData);
+      
+      if (priceData && priceData.price !== null) {
+        const formattedPrice = priceTracker.formatPrice(priceData.price);
+        const formattedChange = priceTracker.formatChange(priceData.change24h);
+        const indicator = priceTracker.getPriceIndicator(priceData.change24h);
+        
+        priceDisplay.textContent = `${formattedPrice} ${formattedChange} ${indicator}`.trim();
+        
+        // Add color based on price change
+        if (priceData.change24h !== null) {
+          priceDisplay.style.color = priceData.change24h >= 0 ? 'var(--success)' : 'var(--danger)';
+        }
+      } else {
+        priceDisplay.textContent = 'Price unavailable';
+      }
+    }
+    
+    // Add listener for price updates
+    priceTracker.addListener(updatePriceDisplay);
+    
+    // Start auto-update
+    priceTracker.startAutoUpdate();
+    
+    // Initial update with error handling
+    priceTracker.fetchXmrPrice().then(priceData => {
+      if (priceData) {
+        updatePriceDisplay(priceData);
+      } else {
+        priceDisplay.textContent = 'Price unavailable';
+      }
+    }).catch(err => {
+      console.error('Price fetch failed:', err);
+      priceDisplay.textContent = 'Price unavailable';
+    });
+  }
+
   // Mobile menu toggle
   const menuToggle = document.querySelector('.menu-toggle');
   const navLinks = document.querySelector('.nav-links');
@@ -292,12 +340,17 @@ document.addEventListener('DOMContentLoaded', () => {
       receiveAmount.value = tempAmount;
       
       // Show/hide XMR address field based on receive currency (more precise targeting)
-      const receiverAddressForm = document.getElementById('receiverAddress').closest('.swap-step');
-      // Check the newly swapped content
-      if (receiveCurrency.innerHTML.includes('XMR')) {
-        receiverAddressForm.style.display = 'block';
-      } else {
-        receiverAddressForm.style.display = 'none';
+      const receiverAddressField = document.getElementById('receiverAddress');
+      if (receiverAddressField) {
+        const receiverAddressForm = receiverAddressField.closest('.swap-step');
+        if (receiverAddressForm) {
+          // Check the newly swapped content
+          if (receiveCurrency.innerHTML.includes('XMR')) {
+            receiverAddressForm.style.display = 'block';
+          } else {
+            receiverAddressForm.style.display = 'none';
+          }
+        }
       }
     });
   }

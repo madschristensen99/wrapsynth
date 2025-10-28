@@ -384,6 +384,13 @@ header {
     color: var(--dark);
 }
 
+.price-display {
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    transition: all 0.3s ease;
+    font-family: 'Nunito', sans-serif;
+}
+
 .btn {
     display: inline-block;
     padding: 0.9rem 1.2rem;

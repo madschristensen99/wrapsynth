@@ -95,6 +95,10 @@
 
                 <div class="swap-info">
                     <p>
+                        <span>XMR Price</span>
+                        <span id="xmrPrice" class="price-display">Loading...</span>
+                    </p>
+                    <p>
                         <span>Exchange Rate</span>
                         <span>1 SOL ≈ 0.00476 XMR</span>
                     </p>
@@ -137,4 +141,5 @@
 <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
 <!-- SPL Token Library -->
 <script src="https://unpkg.com/@solana/spl-token@latest/lib/index.iife.min.js"></script>
+<script type="module" src="./priceTracker.js"></script>
 <script type="module" src="./swap.js"></script>
