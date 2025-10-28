@@ -263,25 +263,19 @@
   \begin{tikzpicture}
     % Two prominent partner logo boxes with clipped images
     
-    % DarkLake logo box
-    \node[rounded corners=15pt, minimum width=5cm, minimum height=5cm, 
-          draw=secondary, line width=2pt, fill=lightbg, fill opacity=1,
-          path picture={
-            \clip[rounded corners=15pt] (path picture bounding box.south west) rectangle (path picture bounding box.north east);
-            \node at (path picture bounding box.center) {
-              \includegraphics[width=4.8cm,height=4.8cm,keepaspectratio]{darklake.jpeg}
-            };
-          }] at (-3.5,2.5) {};
+    % DarkLake logo box - clipped image with frame
+    \begin{scope}
+      \clip[rounded corners=15pt] (-6.0,0) rectangle (-1.0,5.0);
+      \node[inner sep=0pt] at (-3.5,2.5) {\includegraphics[width=5.0cm,height=5.0cm,keepaspectratio]{darklake.jpeg}};
+    \end{scope}
+    \draw[secondary,line width=2pt,rounded corners=15pt] (-6.0,0) rectangle (-1.0,5.0);
     
-    % Arcium logo box
-    \node[rounded corners=15pt, minimum width=5cm, minimum height=5cm,
-          draw=primary, line width=2pt, fill=lightbg, fill opacity=1,
-          path picture={
-            \clip[rounded corners=15pt] (path picture bounding box.south west) rectangle (path picture bounding box.north east);
-            \node at (path picture bounding box.center) {
-              \includegraphics[width=4.8cm,height=4.8cm,keepaspectratio]{arcium.jpg}
-            };
-          }] at (3.5,2.5) {};
+    % Arcium logo box - clipped image with frame
+    \begin{scope}
+      \clip[rounded corners=15pt] (1.0,0) rectangle (6.0,5.0);
+      \node[inner sep=0pt] at (3.5,2.5) {\includegraphics[width=5.0cm,height=5.0cm,keepaspectratio]{arcium.jpg}};
+    \end{scope}
+    \draw[primary,line width=2pt,rounded corners=15pt] (1.0,0) rectangle (6.0,5.0);
   \end{tikzpicture}
   
 \end{frame}
@@ -485,9 +479,10 @@
     \node[text=textprimary,font=\bfseries,align=center] at (-4.35,3.3) {Mads Christensen};
     % Image with frame
     \begin{scope}
+      \clip[rounded corners=4pt] (-5.35,1.0) rectangle (-3.35,3.0);
       \node[inner sep=0pt] (mads) at (-4.35,2.0) {\includegraphics[width=2.0cm,height=2.0cm,keepaspectratio]{mads.jpeg}};
-      \draw[textsecondary,line width=1.5pt,rounded corners=4pt] (mads.south west) rectangle (mads.north east);
     \end{scope}
+    \draw[textsecondary,line width=1.5pt,rounded corners=4pt] (-5.35,1.0) rectangle (-3.35,3.0);
     \node[text=textsecondary,font=\small,align=center] at (-4.35,0.7) {CEO \& Founder};
     \node[text=accent,font=\scriptsize,align=center,text width=3.8cm] at (-4.35,0.0) {Monero Maximalist \\ Fullstack Engineer};
     
@@ -496,9 +491,10 @@
     \node[text=textprimary,font=\bfseries,align=center] at (0,3.3) {Kyle Koshiyama};
     % Image with frame
     \begin{scope}
+      \clip[rounded corners=4pt] (-1.0,1.0) rectangle (1.0,3.0);
       \node[inner sep=0pt] (kyle) at (0,2.0) {\includegraphics[width=2.0cm,height=2.0cm,keepaspectratio]{kyle.jpeg}};
-      \draw[textsecondary,line width=1.5pt,rounded corners=4pt] (kyle.south west) rectangle (kyle.north east);
     \end{scope}
+    \draw[textsecondary,line width=1.5pt,rounded corners=4pt] (-1.0,1.0) rectangle (1.0,3.0);
     \node[text=textsecondary,font=\small,align=center] at (0,0.7) {Protocol Engineer};
     \node[text=accent,font=\scriptsize,align=center,text width=3.2cm] at (0,0.0) {Former Fhenix\\Current DarkLake};
     
@@ -507,9 +503,10 @@
     \node[text=textprimary,font=\bfseries,align=center] at (4.35,3.3) {Tiago Alves};
     % Image with frame
     \begin{scope}
+      \clip[rounded corners=4pt] (3.35,1.0) rectangle (5.35,3.0);
       \node[inner sep=0pt] (tiago) at (4.35,2.0) {\includegraphics[width=2.0cm,height=2.0cm,keepaspectratio]{tiago.jpg}};
-      \draw[textsecondary,line width=1.5pt,rounded corners=4pt] (tiago.south west) rectangle (tiago.north east);
     \end{scope}
+    \draw[textsecondary,line width=1.5pt,rounded corners=4pt] (3.35,1.0) rectangle (5.35,3.0);
     \node[text=textsecondary,font=\small,align=center] at (4.35,0.7) {Researcher};
     \node[text=accent,font=\scriptsize,align=center,text width=3.8cm] at (4.35,0.0) {Cryptography PhD\\Current DarkLake};
     
