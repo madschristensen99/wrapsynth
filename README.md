@@ -9,8 +9,8 @@ Fun Gerbil is building the infrastructure to onboard Monero's privacy to Solana'
 ## 📊 Key Features
 
 ### 1. Solana ↔ Monero Atomic Swaps
-- **USDC-to-XMR**: Lock USDC on Solana, receive XMR on Monero
-- **XMR-to-USDC**: Lock XMR on Monero, receive USDC on Solana
+- **SOL-to-XMR**: Lock SOL on Solana, receive XMR on Monero
+- **XMR-to-SOL**: Lock XMR on Monero, receive SOL on Solana
 - **Adaptor Signatures**: Deterministic secret revelation via Schnorr signatures
 - **Dual-collateral system**: Both parties lock equal collateral to prevent fraud
 
@@ -45,17 +45,17 @@ fungerbil/
 
 ### Transaction Flows
 
-#### USDC → XMR Swap
-1. **Alice** locks USDC in Solana HTLC contract
-2. **Bob** locks equivalent USDC collateral simultaneously
+#### SOL → XMR Swap
+1. **Alice** locks SOL in Solana HTLC contract
+2. **Bob** locks equivalent SOL collateral simultaneously
 3. **Alice** reveals XMR secret via adaptor signature
-4. **Bob** redeems USDC, **Alice** receives XMR
+4. **Bob** redeems SOL, **Alice** receives XMR
 
-#### XMR → USDC Swap
-1. **Bob** locks USDC in Solana HTLC contract
+#### XMR → SOL Swap
+1. **Bob** locks SOL in Solana HTLC contract
 2. **Alice** sends XMR to Bob's Monero address
-3. **Alice** claims USDC using revealed secret
-4. **Bob** receives XMR, **Alice** receives USDC
+3. **Alice** claims SOL using revealed secret
+4. **Bob** receives XMR, **Alice** receives SOL
 
 ### Security Properties
 - **Atomic**: All-or-nothing swaps preventing partial execution
@@ -68,7 +68,7 @@ fungerbil/
 ### Smart Contracts
 - **Anchor Framework**: Rust-based Solana program development
 - **Adaptor Signatures**: Schnorr signature revelation mechanism
-- **Token Program**: SPL token integration for USDC transfers
+- **Token Program**: SPL token integration for SOL transfers
 - **Cross-program invocation**: Atomic multi-token transfers
 
 ### Backend Services
@@ -127,9 +127,9 @@ Open `/frontend/atomicSwap/index.html` in any modern web browser.
 Contain the complete atomic swap infrastructure:
 
 **Smart Contract** (`solana-program/src/lib.rs`):
-- `create_usdc_to_xmr_swap`: Alice initiates USDC→XMR swap
-- `create_xmr_to_usdc_swap`: Bob initiates XMR→USDC swap
-- `redeem_usdc`: Secret revelation and asset redemption
+- `create_SOL_to_xmr_swap`: Alice initiates SOL→XMR swap
+- `create_xmr_to_SOL_swap`: Bob initiates XMR→SOL swap
+- `redeem_SOL`: Secret revelation and asset redemption
 - `refund`: Automatic expiry refunds with collateral return
 
 **Backend Server** (`server/src/`):
@@ -139,11 +139,11 @@ Contain the complete atomic swap infrastructure:
 
 **API Endpoints**:
 ```bash
-# Create USDC → XMR swap
-POST /api/swap/create-usdc-to-xmr
+# Create SOL → XMR swap
+POST /api/swap/create-SOL-to-xmr
 
-# Create XMR → USDC swap  
-POST /api/swap/create-xmr-to-usdc
+# Create XMR → SOL swap  
+POST /api/swap/create-xmr-to-SOL
 
 # Redeem completed swap
 POST /api/swap/:swapId/redeem
@@ -223,7 +223,7 @@ Comprehensive pitch presentation covering:
 - Mainnet deployment preparation
 - Security audit completion
 - Audited program verification
-- Mainnet USDC support integration
+- Mainnet SOL support integration
 
 ### Q2 2026
 - wXMR privacy token launch
