@@ -35,7 +35,7 @@ Fun Gerbil is building the infrastructure to onboard Monero's privacy to Solana'
 ```
 fungerbil/
 ├── atomic-swap/           # Core atomic swap infrastructure
-├── arcium-mint/          # FHE-based privacy tokens
+├── arcium-mint/          # MPC-based privacy tokens
 ├── frontend/             # Web interfaces
 ├── pitchdeck/           # Investor materials
 └── svm-fhe/            # (Future) Solana-native FHE
