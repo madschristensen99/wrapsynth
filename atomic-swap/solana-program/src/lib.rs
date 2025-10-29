@@ -1,7 +1,6 @@
 // src/lib.rs
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self as spl_token, Token, TokenAccount, Mint, Transfer};
-use anchor_spl::associated_token::AssociatedToken;
+use anchor_lang::system_program;
 
 declare_id!("G1BVSiFojnXFaPG1WUgJAcYaB7aGKLKWtSqhMreKgA82");
 
@@ -105,24 +104,24 @@ pub mod stealth_swap {
     use super::*;
 
     /*----------------------------------------------------------
-     * 1.  USDC → XMR : Alice locks USDC for Bob
+     * 1.  SOL → XMR : Alice locks SOL for Bob
      *---------------------------------------------------------*/
-    pub fn create_usdc_to_xmr_swap(
-        ctx: Context<CreateUsdcToXmr>,
+    pub fn create_sol_to_xmr_swap(
+        ctx: Context<CreateSolToXmr>,
         swap_id: [u8; 32],
         secret_hash: [u8; 32],
-        usdc_amount: u64,
+        sol_amount: u64,
         xmr_amount: u64,
         monero_sub_address: [u8; 64],
         expiry: i64,
         relayer_fee: u64,
     ) -> Result<()> {
         require!(expiry > Clock::get()?.unix_timestamp + 24 * 3600, ErrorCode::InvalidExpiry);
-        require!(relayer_fee <= usdc_amount.checked_div(20).unwrap_or(0), ErrorCode::ExcessiveRelayerFee);
+        require!(relayer_fee <= sol_amount.checked_div(20).unwrap_or(0), ErrorCode::ExcessiveRelayerFee);
         require!(secret_hash.iter().any(|&b| b != 0), ErrorCode::InvalidSecretHash);
 
         let swap = &mut ctx.accounts.swap;
-        swap.direction          = Direction::UsdcToXmr;
+        swap.direction          = Direction::SolToXmr;
         swap.swap_id            = swap_id;
         swap.alice              = *ctx.accounts.alice.key;
         swap.bob                = *ctx.accounts.bob.key;
@@ -131,7 +130,7 @@ pub mod stealth_swap {
         swap.relayer_fee        = relayer_fee;
         swap.is_redeemed        = false;
         swap.is_refunded        = false;
-        swap.usdc_amount        = usdc_amount;
+        swap.sol_amount         = sol_amount;
         swap.xmr_amount         = xmr_amount;
         swap.monero_sub_address = monero_sub_address;
         swap.monero_lock_txid   = [0; 32];
@@ -139,29 +138,30 @@ pub mod stealth_swap {
         swap.vtc_opened         = false;
         swap.bob_collateral_locked = false;
         swap.alice_collateral_locked = false;
-        // fraud fields removed
         swap.bounty_claimed     = false;
 
-        // Alice locks USDC
-        let cpi_accounts = Transfer {
-            from: ctx.accounts.alice_usdc.to_account_info(),
-            to:   ctx.accounts.vault_usdc.to_account_info(),
-            authority: ctx.accounts.alice.to_account_info(),
-        };
-        let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
-        spl_token::transfer(cpi_ctx, usdc_amount)?;
+        // Alice locks SOL (transfer to vault PDA)
+        let cpi_context = CpiContext::new(
+            ctx.accounts.system_program.to_account_info(),
+            system_program::Transfer {
+                from: ctx.accounts.alice.to_account_info(),
+                to: ctx.accounts.vault.to_account_info(),
+            },
+        );
+        system_program::transfer(cpi_context, sol_amount)?;
 
-        // Bob locks USDC collateral (equal amount) in same transaction
-        let cpi_accounts = Transfer {
-            from: ctx.accounts.bob_usdc.to_account_info(),
-            to:   ctx.accounts.vault_collateral.to_account_info(),
-            authority: ctx.accounts.bob.to_account_info(),
-        };
-        let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
-        spl_token::transfer(cpi_ctx, usdc_amount)?;
+        // Bob locks SOL collateral (equal amount) in same transaction
+        let cpi_context = CpiContext::new(
+            ctx.accounts.system_program.to_account_info(),
+            system_program::Transfer {
+                from: ctx.accounts.bob.to_account_info(),
+                to: ctx.accounts.vault_collateral.to_account_info(),
+            },
+        );
+        system_program::transfer(cpi_context, sol_amount)?;
         swap.bob_collateral_locked = true;
 
-        msg!("USDC→XMR swap {:?} initiated with collateral", &swap_id[..8]);
+        msg!("SOL→XMR swap {:?} initiated with collateral", &swap_id[..8]);
         Ok(())
     }
 
@@ -171,89 +171,75 @@ pub mod stealth_swap {
         monero_lock_txid: [u8; 32],
     ) -> Result<()> {
         let swap = &mut ctx.accounts.swap;
-        require!(swap.direction == Direction::UsdcToXmr, ErrorCode::WrongDirection);
+        require!(swap.direction == Direction::SolToXmr, ErrorCode::WrongDirection);
         swap.monero_lock_txid = monero_lock_txid;
         msg!("Monero lock txid recorded");
         Ok(())
     }
 
-pub fn redeem_usdc(
-    ctx: Context<RedeemUsdc>,
-    _swap_id: [u8; 32],
-    adaptor_sig: [u8; 64],
-    parity: u8,
-    curve_point: [u8; 32],
-) -> Result<[u8; 32]> {
-    let swap = &mut ctx.accounts.swap;
-    require!(!swap.is_redeemed && !swap.is_refunded, ErrorCode::AlreadyFinalized);
-    require!(swap.direction == Direction::UsdcToXmr, ErrorCode::WrongDirection);
-    require!(parity <= 1, ErrorCode::InvalidAdaptorSig);
+    pub fn redeem_sol(
+        ctx: Context<RedeemSol>,
+        _swap_id: [u8; 32],
+        adaptor_sig: [u8; 64],
+        parity: u8,
+        curve_point: [u8; 32],
+    ) -> Result<[u8; 32]> {
+        let swap = &mut ctx.accounts.swap;
+        require!(!swap.is_redeemed && !swap.is_refunded, ErrorCode::AlreadyFinalized);
+        require!(swap.direction == Direction::SolToXmr, ErrorCode::WrongDirection);
+        require!(parity <= 1, ErrorCode::InvalidAdaptorSig);
 
-    // Verify adaptor signature reveals correct secret
-    let secret = verify_adaptor_signature(&adaptor_sig, parity, &curve_point, &swap.secret_hash)?;
+        // Verify adaptor signature reveals correct secret
+        let secret = verify_adaptor_signature(&adaptor_sig, parity, &curve_point, &swap.secret_hash)?;
 
-    // copy values before mutable use
-    let swap_bump   = swap.bump;
-    let swap_id     = swap.swap_id;
-    let relayer_fee = swap.relayer_fee;
+        // Copy values before mutable use
+        let swap_bump   = swap.bump;
+        let swap_id     = swap.swap_id;
+        let relayer_fee = swap.relayer_fee;
 
-    let vault_balance = ctx.accounts.vault_usdc.amount;
-    let to_bob        = vault_balance.checked_sub(relayer_fee).unwrap();
+        let vault_balance = ctx.accounts.vault.lamports();
+        let rent_exempt = Rent::get()?.minimum_balance(ctx.accounts.vault.to_account_info().data_len());
+        let available = vault_balance.saturating_sub(rent_exempt);
+        let to_bob = available.saturating_sub(relayer_fee);
 
-    // drop mutable borrow
-    drop(swap);
+        // Build seeds
+        let seeds = &[b"vault", swap_id.as_ref(), &[swap_bump]];
+        let signer_seeds = &[&seeds[..]];
 
-    // build seeds
-    let seeds = &[b"swap", swap_id.as_ref(), &[swap_bump]];
-    let signer_seeds = &[&seeds[..]];
+        // Transfer relayer fee
+        if relayer_fee > 0 && relayer_fee <= available {
+            **ctx.accounts.vault.to_account_info().try_borrow_mut_lamports()? -= relayer_fee;
+            **ctx.accounts.relayer.to_account_info().try_borrow_mut_lamports()? += relayer_fee;
+        }
 
-    // CPI 1: relayer fee
-    if relayer_fee > 0 {
-        let cpi_accounts = Transfer {
-            from: ctx.accounts.vault_usdc.to_account_info(),
-            to:   ctx.accounts.relayer_token.to_account_info(),
-            authority: ctx.accounts.swap.to_account_info(),
-        };
-        spl_token::transfer(
-            CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds),
-            relayer_fee,
-        )?;
+        // Transfer remainder to Bob
+        if to_bob > 0 {
+            **ctx.accounts.vault.to_account_info().try_borrow_mut_lamports()? -= to_bob;
+            **ctx.accounts.bob.to_account_info().try_borrow_mut_lamports()? += to_bob;
+        }
+
+        // Mark redeemed
+        swap.is_redeemed = true;
+
+        msg!("SOL redeemed by Bob");
+        Ok(secret)
     }
 
-    // CPI 2: remainder to Bob
-    let cpi_accounts = Transfer {
-        from: ctx.accounts.vault_usdc.to_account_info(),
-        to:   ctx.accounts.bob_token.to_account_info(),
-        authority: ctx.accounts.swap.to_account_info(),
-    };
-    spl_token::transfer(
-        CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds),
-        to_bob,
-    )?;
-
-    // mark redeemed
-    let swap = &mut ctx.accounts.swap;
-    swap.is_redeemed = true;
-
-    msg!("USDC redeemed by Bob");
-    Ok(secret)
-}
-
     /*----------------------------------------------------------
-     * 2.  XMR → USDC : Bob locks USDC, Alice reveals secret
+     * 2.  XMR → SOL : Bob locks SOL, Alice reveals secret
      *---------------------------------------------------------*/
-    pub fn create_xmr_to_usdc_swap(
-        ctx: Context<CreateXmrToUsdc>,
+    pub fn create_xmr_to_sol_swap(
+        ctx: Context<CreateXmrToSol>,
         swap_id: [u8; 32],
         secret_hash: [u8; 32],
-        usdc_amount: u64,
+        sol_amount: u64,
         xmr_amount: u64,
         alice_solana: Pubkey,
         expiry: i64,
         relayer_fee: u64,
     ) -> Result<()> {
         let swap = &mut ctx.accounts.swap;
-        swap.direction    = Direction::XmrToUsdc;
+        swap.direction    = Direction::XmrToSol;
         swap.swap_id      = swap_id;
         swap.alice        = *ctx.accounts.alice.key;
         swap.bob          = *ctx.accounts.bob.key;
@@ -262,110 +248,100 @@ pub fn redeem_usdc(
         swap.relayer_fee  = relayer_fee;
         swap.is_redeemed  = false;
         swap.is_refunded  = false;
-        swap.usdc_amount  = usdc_amount;
+        swap.sol_amount   = sol_amount;
         swap.xmr_amount   = xmr_amount;
         swap.alice_solana = alice_solana;
         swap.bump         = ctx.bumps.swap;
+        swap.vtc_opened   = false;
+        swap.bob_collateral_locked = false;
+        swap.alice_collateral_locked = false;
+        swap.bounty_claimed = false;
 
-        msg!("XMR→USDC swap {:?}", &swap_id[..8]);
+        // Bob locks SOL
+        let cpi_context = CpiContext::new(
+            ctx.accounts.system_program.to_account_info(),
+            system_program::Transfer {
+                from: ctx.accounts.bob.to_account_info(),
+                to: ctx.accounts.vault.to_account_info(),
+            },
+        );
+        system_program::transfer(cpi_context, sol_amount)?;
+
+        msg!("XMR→SOL swap {:?}", &swap_id[..8]);
         Ok(())
     }
 
-pub fn redeem_usdc_alice(
-    ctx: Context<RedeemUsdcAlice>,
-    _swap_id: [u8; 32],
-    adaptor_sig: Vec<u8>,
-) -> Result<()> {
-    let swap = &mut ctx.accounts.swap;
-    require!(!swap.is_redeemed && !swap.is_refunded, ErrorCode::AlreadyFinalized);
-    require!(swap.direction == Direction::XmrToUsdc, ErrorCode::WrongDirection);
-    require!(adaptor_sig.len() == 64, ErrorCode::InvalidAdaptorSig);
+    pub fn redeem_sol_alice(
+        ctx: Context<RedeemSolAlice>,
+        _swap_id: [u8; 32],
+        adaptor_sig: Vec<u8>,
+    ) -> Result<()> {
+        let swap = &mut ctx.accounts.swap;
+        require!(!swap.is_redeemed && !swap.is_refunded, ErrorCode::AlreadyFinalized);
+        require!(swap.direction == Direction::XmrToSol, ErrorCode::WrongDirection);
+        require!(adaptor_sig.len() == 64, ErrorCode::InvalidAdaptorSig);
 
-    let swap_bump   = swap.bump;
-    let swap_id     = swap.swap_id;
-    let relayer_fee = swap.relayer_fee;
+        let swap_bump   = swap.bump;
+        let swap_id     = swap.swap_id;
+        let relayer_fee = swap.relayer_fee;
 
-    let vault_balance = ctx.accounts.vault_usdc.amount;
-    let to_alice      = vault_balance.checked_sub(relayer_fee).unwrap();
+        let vault_balance = ctx.accounts.vault.lamports();
+        let rent_exempt = Rent::get()?.minimum_balance(ctx.accounts.vault.to_account_info().data_len());
+        let available = vault_balance.saturating_sub(rent_exempt);
+        let to_alice = available.saturating_sub(relayer_fee);
 
-    drop(swap);
+        // Transfer relayer fee
+        if relayer_fee > 0 && relayer_fee <= available {
+            **ctx.accounts.vault.to_account_info().try_borrow_mut_lamports()? -= relayer_fee;
+            **ctx.accounts.relayer.to_account_info().try_borrow_mut_lamports()? += relayer_fee;
+        }
 
-    let seeds = &[b"swap", swap_id.as_ref(), &[swap_bump]];
-    let signer_seeds = &[&seeds[..]];
+        // Transfer remainder to Alice
+        if to_alice > 0 {
+            **ctx.accounts.vault.to_account_info().try_borrow_mut_lamports()? -= to_alice;
+            **ctx.accounts.alice.to_account_info().try_borrow_mut_lamports()? += to_alice;
+        }
 
-    if relayer_fee > 0 {
-        let cpi_accounts = Transfer {
-            from: ctx.accounts.vault_usdc.to_account_info(),
-            to:   ctx.accounts.relayer_token.to_account_info(),
-            authority: ctx.accounts.swap.to_account_info(),
-        };
-        spl_token::transfer(
-            CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds),
-            relayer_fee,
-        )?;
+        swap.is_redeemed = true;
+        msg!("SOL redeemed by Alice");
+        Ok(())
     }
-
-    let cpi_accounts = Transfer {
-        from: ctx.accounts.vault_usdc.to_account_info(),
-        to:   ctx.accounts.alice_token.to_account_info(),
-        authority: ctx.accounts.swap.to_account_info(),
-    };
-    spl_token::transfer(
-        CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds),
-        to_alice,
-    )?;
-
-    ctx.accounts.swap.is_redeemed = true;
-    msg!("USDC redeemed by Alice");
-    Ok(())
-}
 
     /*----------------------------------------------------------
      * 3.  Refund after expiry
      *---------------------------------------------------------*/
-pub fn refund(ctx: Context<Refund>, _swap_id: [u8; 32]) -> Result<()> {
-    let swap = &mut ctx.accounts.swap;
-    require!(!swap.is_redeemed && !swap.is_refunded, ErrorCode::AlreadyFinalized);
-    require!(Clock::get()?.unix_timestamp > swap.expiry, ErrorCode::NotYetExpired);
+    pub fn refund(ctx: Context<Refund>, _swap_id: [u8; 32]) -> Result<()> {
+        let swap = &mut ctx.accounts.swap;
+        require!(!swap.is_redeemed && !swap.is_refunded, ErrorCode::AlreadyFinalized);
+        require!(Clock::get()?.unix_timestamp > swap.expiry, ErrorCode::NotYetExpired);
 
-    let bump           = swap.bump;
-    let swap_id        = swap.swap_id;
-    let vault_balance  = ctx.accounts.vault_usdc.amount;
+        let bump    = swap.bump;
+        let swap_id = swap.swap_id;
 
-    drop(swap);
+        let vault_balance = ctx.accounts.vault.lamports();
+        let rent_exempt = Rent::get()?.minimum_balance(ctx.accounts.vault.to_account_info().data_len());
+        let available = vault_balance.saturating_sub(rent_exempt);
 
-    let seeds = &[b"swap", swap_id.as_ref(), &[bump]];
-    let signer_seeds = &[&seeds[..]];
+        // Return locked SOL to original funder
+        if available > 0 {
+            **ctx.accounts.vault.to_account_info().try_borrow_mut_lamports()? -= available;
+            **ctx.accounts.funder.to_account_info().try_borrow_mut_lamports()? += available;
+        }
 
-    // Return locked USDC to original funder
-    let cpi_accounts = Transfer {
-        from: ctx.accounts.vault_usdc.to_account_info(),
-        to:   ctx.accounts.funder_token.to_account_info(),
-        authority: ctx.accounts.swap.to_account_info(),
-    };
-    spl_token::transfer(
-        CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds),
-        vault_balance,
-    )?;
+        // Return collateral to appropriate party
+        let collateral_balance = ctx.accounts.vault_collateral.lamports();
+        let collateral_rent = Rent::get()?.minimum_balance(ctx.accounts.vault_collateral.to_account_info().data_len());
+        let collateral_available = collateral_balance.saturating_sub(collateral_rent);
 
-    // Return collateral to appropriate party
-    let collateral_balance = ctx.accounts.vault_collateral.amount;
-    if collateral_balance > 0 {
-        let cpi_accounts = Transfer {
-            from: ctx.accounts.vault_collateral.to_account_info(),
-            to:   ctx.accounts.collateral_token.to_account_info(),
-            authority: ctx.accounts.swap.to_account_info(),
-        };
-        spl_token::transfer(
-            CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer_seeds),
-            collateral_balance,
-        )?;
+        if collateral_available > 0 {
+            **ctx.accounts.vault_collateral.to_account_info().try_borrow_mut_lamports()? -= collateral_available;
+            **ctx.accounts.funder.to_account_info().try_borrow_mut_lamports()? += collateral_available;
+        }
+
+        swap.is_refunded = true;
+        msg!("Swap refunded with collateral");
+        Ok(())
     }
-
-    ctx.accounts.swap.is_refunded = true;
-    msg!("Swap refunded with collateral");
-    Ok(())
-}
 
     /*----------------------------------------------------------
      * 4.  Claim bounty for revealing secret
@@ -388,30 +364,16 @@ pub fn refund(ctx: Context<Refund>, _swap_id: [u8; 32]) -> Result<()> {
         swap.bounty_claimed = true;
 
         // Check if there is collateral to claim
-        let collateral_balance = ctx.accounts.vault_collateral.amount;
-        if collateral_balance > 0 {
-            // Prepare PDA seeds for CPI transfer
-            let swap_bump = swap.bump;
-            let swap_id_bytes = swap.swap_id;
-            let seeds = &[b"swap", swap_id_bytes.as_ref(), &[swap_bump]];
-            let signer_seeds = &[&seeds[..]];
+        let collateral_balance = ctx.accounts.vault_collateral.lamports();
+        let rent_exempt = Rent::get()?.minimum_balance(ctx.accounts.vault_collateral.to_account_info().data_len());
+        let available = collateral_balance.saturating_sub(rent_exempt);
 
-            // Transfer collateral to claimant via CPI (works for both directions)
-            let cpi_accounts = Transfer {
-                from: ctx.accounts.vault_collateral.to_account_info(),
-                to: ctx.accounts.claimant_token.to_account_info(),
-                authority: ctx.accounts.swap.to_account_info(),
-            };
-            spl_token::transfer(
-                CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
-                    cpi_accounts,
-                    signer_seeds
-                ),
-                collateral_balance,
-            )?;
+        if available > 0 {
+            // Transfer collateral to claimant
+            **ctx.accounts.vault_collateral.to_account_info().try_borrow_mut_lamports()? -= available;
+            **ctx.accounts.claimant.to_account_info().try_borrow_mut_lamports()? += available;
 
-            msg!("Bounty claimed: {} USDC transferred to claimant", collateral_balance);
+            msg!("Bounty claimed: {} lamports transferred to claimant", available);
         } else {
             msg!("Bounty claimed: no collateral available for transfer");
         }
@@ -459,7 +421,7 @@ pub fn refund(ctx: Context<Refund>, _swap_id: [u8; 32]) -> Result<()> {
     }
 
     /*----------------------------------------------------------
-     * 8.  Create commitment implementation
+     * 7.  Create commitment implementation
      *---------------------------------------------------------*/
     pub fn create_commitment(
         ctx: Context<CreateCommitment>,
@@ -480,7 +442,6 @@ pub fn refund(ctx: Context<Refund>, _swap_id: [u8; 32]) -> Result<()> {
         msg!("Commitment created with hash: {:?}", &commitment_hash[..8]);
         Ok(())
     }
-
 }
 
 /*==============================================================
@@ -497,7 +458,7 @@ pub struct Swap {
     pub relayer_fee: u64,
     pub is_redeemed: bool,
     pub is_refunded: bool,
-    pub usdc_amount: u64,
+    pub sol_amount: u64,
     pub xmr_amount: u64,
     pub monero_sub_address: [u8; 64],
     pub monero_lock_txid: [u8; 32],
@@ -521,8 +482,8 @@ pub struct RelayerCommitment {
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
-    UsdcToXmr,
-    XmrToUsdc,
+    SolToXmr,
+    XmrToSol,
 }
 
 impl Swap {
@@ -537,8 +498,8 @@ impl RelayerCommitment {
  * Contexts
  *============================================================*/
 #[derive(Accounts)]
-#[instruction(swap_id:[u8;32], secret_hash:[u8;32], usdc_amount:u64, xmr_amount:u64, monero_sub_address:[u8;64], expiry:i64, relayer_fee:u64)]
-pub struct CreateUsdcToXmr<'info> {
+#[instruction(swap_id:[u8;32], secret_hash:[u8;32], sol_amount:u64, xmr_amount:u64, monero_sub_address:[u8;64], expiry:i64, relayer_fee:u64)]
+pub struct CreateSolToXmr<'info> {
     #[account(
         init,
         payer = alice,
@@ -554,39 +515,22 @@ pub struct CreateUsdcToXmr<'info> {
     #[account(mut)]
     pub bob: Signer<'info>,
 
+    /// CHECK: PDA vault for Alice's locked SOL
     #[account(
         mut,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = alice,
+        seeds = [b"vault", swap_id.as_ref()],
+        bump
     )]
-    pub alice_usdc: Account<'info, TokenAccount>,
+    pub vault: AccountInfo<'info>,
 
-    #[account(
-        init,
-        payer = alice,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = swap,
-    )]
-    pub vault_usdc: Account<'info, TokenAccount>, // Alice's locked USDC
-
-    #[account(
-        init,
-        payer = alice,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = swap,
-    )]
-    pub vault_collateral: Account<'info, TokenAccount>, // Bob's locked USDC collateral
-
+    /// CHECK: PDA vault for Bob's locked SOL collateral
     #[account(
         mut,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = bob,
+        seeds = [b"vault_collateral", swap_id.as_ref()],
+        bump
     )]
-    pub bob_usdc: Account<'info, TokenAccount>,
+    pub vault_collateral: AccountInfo<'info>,
 
-    pub usdc_mint: Account<'info, Mint>,
-    pub token_program: Program<'info, Token>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
 
@@ -599,48 +543,32 @@ pub struct RecordProof<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(swap_id:[u8;32], adaptor_sig:Vec<u8>)]
-pub struct RedeemUsdc<'info> {
+#[instruction(swap_id:[u8;32], adaptor_sig:[u8;64], parity:u8, curve_point:[u8;32])]
+pub struct RedeemSol<'info> {
     #[account(mut, seeds=[b"swap", swap.swap_id.as_ref()], bump=swap.bump)]
     pub swap: Account<'info, Swap>,
+    
     #[account(mut)]
     pub bob: Signer<'info>,
 
+    /// CHECK: PDA vault
     #[account(
         mut,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = swap,
+        seeds = [b"vault", swap.swap_id.as_ref()],
+        bump
     )]
-    pub vault_usdc: Account<'info, TokenAccount>,
+    pub vault: AccountInfo<'info>,
 
-    #[account(
-        init_if_needed,
-        payer = bob,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = bob,
-    )]
-    pub bob_token: Account<'info, TokenAccount>,
-
-    #[account(
-        init_if_needed,
-        payer = bob,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = relayer,
-    )]
-    pub relayer_token: Account<'info, TokenAccount>,
-
-    /// CHECK: relayer
+    /// CHECK: relayer account
+    #[account(mut)]
     pub relayer: AccountInfo<'info>,
 
-    pub usdc_mint: Account<'info, Mint>,
-    pub token_program: Program<'info, Token>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
-#[instruction(swap_id:[u8;32], secret_hash:[u8;32], usdc_amount:u64, xmr_amount:u64, alice_solana:Pubkey, expiry:i64, relayer_fee:u64)]
-pub struct CreateXmrToUsdc<'info> {
+#[instruction(swap_id:[u8;32], secret_hash:[u8;32], sol_amount:u64, xmr_amount:u64, alice_solana:Pubkey, expiry:i64, relayer_fee:u64)]
+pub struct CreateXmrToSol<'info> {
     #[account(
         init,
         payer = bob,
@@ -656,75 +584,46 @@ pub struct CreateXmrToUsdc<'info> {
     #[account(mut)]
     pub bob: Signer<'info>,
 
+    /// CHECK: PDA vault for Bob's locked SOL
     #[account(
         mut,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = bob,
+        seeds = [b"vault", swap_id.as_ref()],
+        bump
     )]
-    pub bob_usdc: Account<'info, TokenAccount>,
+    pub vault: AccountInfo<'info>,
 
+    /// CHECK: PDA vault for collateral (if needed)
     #[account(
-        init,
-        payer = bob,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = swap,
+        mut,
+        seeds = [b"vault_collateral", swap_id.as_ref()],
+        bump
     )]
-    pub vault_usdc: Account<'info, TokenAccount>,
+    pub vault_collateral: AccountInfo<'info>,
 
-    #[account(
-        init,
-        payer = bob,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = swap,
-    )]
-    pub vault_collateral: Account<'info, TokenAccount>,
-
-    /// CHECK: Alice's collateral account (will be transferred from in create XMR->USDC scenario)
-    pub alice_collateral: Account<'info, TokenAccount>,
-
-    pub usdc_mint: Account<'info, Mint>,
-    pub token_program: Program<'info, Token>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
 #[instruction(swap_id:[u8;32], adaptor_sig:Vec<u8>)]
-pub struct RedeemUsdcAlice<'info> {
+pub struct RedeemSolAlice<'info> {
     #[account(mut, seeds=[b"swap", swap.swap_id.as_ref()], bump=swap.bump)]
     pub swap: Account<'info, Swap>,
+    
     #[account(mut)]
     pub alice: Signer<'info>,
 
+    /// CHECK: PDA vault
     #[account(
         mut,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = swap,
+        seeds = [b"vault", swap.swap_id.as_ref()],
+        bump
     )]
-    pub vault_usdc: Account<'info, TokenAccount>,
+    pub vault: AccountInfo<'info>,
 
-    #[account(
-        init_if_needed,
-        payer = alice,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = alice,
-    )]
-    pub alice_token: Account<'info, TokenAccount>,
-
-    #[account(
-        init_if_needed,
-        payer = alice,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = relayer,
-    )]
-    pub relayer_token: Account<'info, TokenAccount>,
-
-    /// CHECK: relayer
+    /// CHECK: relayer account
+    #[account(mut)]
     pub relayer: AccountInfo<'info>,
 
-    pub usdc_mint: Account<'info, Mint>,
-    pub token_program: Program<'info, Token>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
 
@@ -737,39 +636,109 @@ pub struct Refund<'info> {
     #[account(mut)]
     pub funder: Signer<'info>,
 
+    /// CHECK: PDA vault
     #[account(
         mut,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = swap,
+        seeds = [b"vault", swap.swap_id.as_ref()],
+        bump
     )]
-    pub vault_usdc: Account<'info, TokenAccount>,
+    pub vault: AccountInfo<'info>,
 
+    /// CHECK: PDA vault collateral
     #[account(
         mut,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = swap,
+        seeds = [b"vault_collateral", swap.swap_id.as_ref()],
+        bump
     )]
-    pub vault_collateral: Account<'info, TokenAccount>,
+    pub vault_collateral: AccountInfo<'info>,
 
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(swap_id: [u8; 32], adaptor_sig: [u8; 64], parity: u8, curve_point: [u8; 32])]
+pub struct ClaimBounty<'info> {
+    #[account(mut, seeds=[b"swap", swap_id.as_ref()], bump=swap.bump)]
+    pub swap: Account<'info, Swap>,
+
+    #[account(mut)]
+    pub claimant: Signer<'info>,
+
+    /// CHECK: PDA vault collateral
     #[account(
-        init_if_needed,
-        payer = funder,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = funder,
+        mut,
+        seeds = [b"vault_collateral", swap_id.as_ref()],
+        bump
     )]
-    pub funder_token: Account<'info, TokenAccount>,
+    pub vault_collateral: AccountInfo<'info>,
 
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(
+    swap_id: [u8; 32], 
+    sig: [u8; 64], 
+    parity: u8, 
+    curve_point: [u8; 32]
+)]
+pub struct AdaptorVerifyCtx<'info> {
+    #[account(seeds=[b"swap", swap_id.as_ref()], bump=swap.bump)]
+    pub swap: Account<'info, Swap>,
+    
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    
+    /// CHECK: PDA vault
     #[account(
-        init_if_needed,
-        payer = funder,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = funder,
+        mut,
+        seeds = [b"vault", swap_id.as_ref()],
+        bump
     )]
-    pub collateral_token: Account<'info, TokenAccount>,
+    pub vault: AccountInfo<'info>,
+    
+    /// CHECK: PDA vault collateral
+    #[account(
+        mut,
+        seeds = [b"vault_collateral", swap_id.as_ref()],
+        bump
+    )]
+    pub vault_collateral: AccountInfo<'info>,
+    
+    /// CHECK: relayer account
+    #[account(mut)]
+    pub relayer: AccountInfo<'info>,
+    
+    pub system_program: Program<'info, System>,
+}
 
-    pub usdc_mint: Account<'info, Mint>,
-    pub token_program: Program<'info, Token>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
+#[derive(Accounts)]
+#[instruction(swap_id: [u8; 32])]
+pub struct ForceOpenVtc<'info> {
+    #[account(mut, seeds=[b"swap", swap_id.as_ref()], bump=swap.bump)]
+    pub swap: Account<'info, Swap>,
+    
+    pub caller: Signer<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(commitment_hash: [u8; 32], expiry: i64)]
+pub struct CreateCommitment<'info> {
+    #[account(
+        init,
+        payer = relayer,
+        space = 8 + RelayerCommitment::LEN,
+        seeds = [b"commitment", commitment_hash.as_ref()],
+        bump
+    )]
+    pub commitment: Account<'info, RelayerCommitment>,
+    
+    #[account(mut)]
+    pub relayer: Signer<'info>,
+    
+    /// CHECK: swapper pubkey
+    pub swapper: AccountInfo<'info>,
+    
     pub system_program: Program<'info, System>,
 }
 
@@ -808,118 +777,4 @@ pub enum ErrorCode {
     BountyAlreadyClaimed,
     #[msg("No collateral available for bounty")]
     NoCollateralAvailable,
-}
-
-// Additional contexts for new functionality
-
-#[derive(Accounts)]
-#[instruction(
-    swap_id: [u8; 32], 
-    sig: [u8; 64], 
-    parity: u8, 
-    curve_point: [u8; 32]
-)]
-pub struct AdaptorVerifyCtx<'info> {
-    #[account(seeds=[b"swap", swap_id.as_ref()], bump=swap.bump)]
-    pub swap: Account<'info, Swap>,
-    
-    #[account(mut)]
-    pub signer: Signer<'info>,
-    
-    #[account(
-        associated_token::mint = usdc_mint,
-        associated_token::authority = swap,
-    )]
-    pub vault_usdc: Account<'info, TokenAccount>,
-    
-    #[account(
-        associated_token::mint = usdc_mint,
-        associated_token::authority = swap,
-    )]
-    pub vault_collateral: Account<'info, TokenAccount>,
-    
-    #[account(
-        init_if_needed,
-        payer = signer,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = signer,
-    )]
-    pub signer_token: Account<'info, TokenAccount>,
-    
-    #[account(
-        init_if_needed,
-        payer = signer,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = relayer,
-    )]
-    pub relayer_token: Account<'info, TokenAccount>,
-    
-    /// CHECK: relayer
-    pub relayer: AccountInfo<'info>,
-    
-    pub usdc_mint: Account<'info, Mint>,
-    pub token_program: Program<'info, Token>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
-    pub system_program: Program<'info, System>,
-}
-
-#[derive(Accounts)]
-#[instruction(swap_id: [u8; 32])]
-pub struct ForceOpenVtc<'info> {
-    #[account(mut, seeds=[b"swap", swap_id.as_ref()], bump=swap.bump)]
-    pub swap: Account<'info, Swap>,
-    
-    pub caller: Signer<'info>,
-}
-
-
-#[derive(Accounts)]
-#[instruction(commitment_hash: [u8; 32], expiry: i64)]
-pub struct CreateCommitment<'info> {
-    #[account(
-        init,
-        payer = relayer,
-        space = 8 + RelayerCommitment::LEN,
-        seeds = [b"commitment", commitment_hash.as_ref()],
-        bump
-    )]
-    pub commitment: Account<'info, RelayerCommitment>,
-    
-    #[account(mut)]
-    pub relayer: Signer<'info>,
-    
-    /// CHECK: swapper pubkey
-    pub swapper: AccountInfo<'info>,
-    
-    pub system_program: Program<'info, System>,
-}
-
-#[derive(Accounts)]
-#[instruction(swap_id: [u8; 32], adaptor_sig: [u8; 64], parity: u8, curve_point: [u8; 32])]
-pub struct ClaimBounty<'info> {
-    #[account(mut, seeds=[b"swap", swap_id.as_ref()], bump=swap.bump)]
-    pub swap: Account<'info, Swap>,
-
-    #[account(mut)]
-    pub claimant: Signer<'info>,
-
-    #[account(
-        mut,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = swap,
-    )]
-    pub vault_collateral: Account<'info, TokenAccount>,
-
-    #[account(
-        init_if_needed,
-        payer = claimant,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = claimant,
-    )]
-    pub claimant_token: Account<'info, TokenAccount>,
-
-    pub usdc_mint: Account<'info, Mint>,
-    pub token_program: Program<'info, Token>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
-    pub system_program: Program<'info, System>,
 }
