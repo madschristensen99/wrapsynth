@@ -1,4 +1,3 @@
-```markdown
 # Encrypted-State Order-Book Bridge  
 **Monero ⇄ Solana wrapped-XMR (wxMR) via Arcium MXE**
 
