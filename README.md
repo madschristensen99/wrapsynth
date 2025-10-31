@@ -265,7 +265,7 @@ We welcome contributions from the privacy and DeFi communities:
 
 ## 📞 Contact
 
-- **Email**: team@fungerbil.com
+- **Email**: mads@fungerbil.com
 - **Telegram**: [t.me/fungerbilswap](https://t.me/fungerbilswap)
 - **Twitter**: [@fungerbilXMR](https://x.com/fungerbilXMR)
 - **GitHub**: [madschristensen99/fungerbil](https://github.com/madschristensen99/fungerbil)
