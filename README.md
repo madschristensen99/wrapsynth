@@ -2,6 +2,8 @@
 
 A comprehensive privacy-focused DeFi protocol bridging Solana and Monero ecosystems, featuring atomic swaps, wrapped privacy tokens, and zero-knowledge computation.
 
+[![Pitch:](https://img.youtube.com/vi/ZaeMy5X_Lc8/0.jpg)](https://youtu.be/ZaeMy5X_Lc8)
+
 ## 🎯 Mission
 
 Fun Gerbil is building the infrastructure to onboard Monero's privacy to Solana's DeFi ecosystem, creating private, trustless cross-chain financial primitives for the first time.
