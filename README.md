@@ -2,7 +2,7 @@
 
 A comprehensive privacy-focused DeFi protocol bridging Solana and Monero ecosystems, featuring atomic swaps, wrapped privacy tokens, and zero-knowledge computation.
 
-[![Pitch:](https://img.youtube.com/vi/ZaeMy5X_Lc8/0.jpg)](https://youtu.be/ZaeMy5X_Lc8)
+[![Pitch:](https://img.youtube.com/vi/ZaeMy5X_Lc8/maxresdefault.jpg)](https://youtu.be/ZaeMy5X_Lc8)
 
 ## 🎯 Mission
 
