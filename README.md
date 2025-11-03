@@ -205,7 +205,7 @@ Comprehensive pitch presentation covering:
 
 ### Production Services
 - **Main Website**: [fungerbil.com](https://fungerbil.com)
-- **Discord**: [t.me/fungerbilswap](https://t.me/fungerbilswap)
+- **Telegram**: [t.me/fungerbilswap](https://t.me/fungerbilswap)
 - **GitHub**: [github.com/madschristensen99/fungerbil](https://github.com/madschristensen99/fungerbil)
 
 ### Network Status
