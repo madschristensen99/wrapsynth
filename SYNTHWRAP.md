@@ -45,7 +45,6 @@ sequenceDiagram
     User->>Monero: Sends XMR to LP's posted address
     User->>Solana: Submits ZK proof of XMR payment
     Solana->>User: Mints wXMR tokens immediately
-    Solana->>LP: Locks collateral for this minting
 
     Note over User,Monero: BURN FLOW (wXMR -> Monero)
     User->>Solana: Burns wXMR + XMR destination
