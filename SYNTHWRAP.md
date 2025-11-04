@@ -41,7 +41,7 @@ sequenceDiagram
 
     Note over User,Monero: MINT FLOW (Monero -> wXMR)
     User->>Solana: Requests mint, selects LP + amount
-    Solana->>LP: Verifies collateral coverage (150%+ minimum)
+    Solana->>LP: Verifies collateral coverage (140%+ minimum)
     User->>Monero: Sends XMR to LP's posted address
     User->>Solana: Submits ZK proof of XMR payment
     Solana->>User: Mints wXMR tokens immediately
@@ -57,7 +57,7 @@ sequenceDiagram
     
     alt If LP fails redemption
         Solana->>User: 115% of burn value via slashed collateral
-        Solana->>LP: Returns remaining collateral (150% - 115% = 35%)
+        Solana->>LP: Returns remaining collateral (140% - 115% = 25%)
     end
 ```
 

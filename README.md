@@ -178,7 +178,7 @@ Modern web applications for different user personas:
 
 **Wrapped XMR (wXMR) System** (`wxmr/`):
 - **Synthwrap Model**: Privacy-preserving Monero bridging via LPs
-- **LP collateral staking**: SOL/hyUSD deposits with 150%+ overcollateralization
+- **LP collateral staking**: SOL/hyUSD deposits with 140%+ overcollateralization
 - **Atomic minting**: ZK proof-verified XMR receipts auto-mint wXMR
 - **Automatic slashing**: 2-hour window for XMR redemptions, collateral penalty on failure
 - **Pyth integration**: Real-time XMR pricing for accurate collateral calculations
