@@ -61,6 +61,23 @@ sequenceDiagram
     end
 ```
 
+## Liquidation Mechanism (115% Threshold)
+
+### Cross-LP Liquidations
+When any LP's collateral ratio drops below 115% (Global Min Health), other LPs can **liquidate each other** to maintain system-wide collateralization:
+
+1. **Health Check**: Continuous monitoring of LP collateral vs minted positions
+2. **Liquidation Trigger**: Anyone can call `liquidate_lp()` when health < 115%
+3. **Liquidation Process**:
+   - Losing LP's wXMR positions get **distributed** to liquidating LPs at 115% value
+   - Liquidating LPs take over **mint/burn obligations** for liquidated positions
+   - All positions remain **fully collateralized** throughout the process
+
+### Supply Invariants
+- **Total wXMR supply ≤ Total valid collateral at 115% liq level**
+- **No undercollateralized positions** allowed to exist
+- **Automatic rebalancing** via competitive liquidations
+
 ## Technical Implementation
 
 ### Pyth Integration
