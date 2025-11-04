@@ -175,6 +175,12 @@ Modern web applications for different user personas:
 - Wallet connection and swap creation
 - Real-time transaction monitoring
 
+**Wrapped XMR (wXMR) System** (`wxmr/`):
+- LP collateral staking (SOL/hyUSD) with overcollateralization
+- Monero atomic mint/burn with ZK proofs
+- Automatic slashing for failed XMR redemptions
+- Real-time Pyth pricing integration
+
 **Wallet Interface** (`wxmr/`):
 - Basic Solana wallet functionality
 - wXMR token management
