@@ -40,22 +40,26 @@ sequenceDiagram
     participant Pyth
 
     Note over User,Monero: MINT FLOW (Monero -> wXMR)
-    User->>LP: Sends XMR to LP address
-    User->>Solana: Submits ZK proof of payment
-    Solana->>Pyth: Gets XMR/SOL price
-    Solana->>LP: Verifies collateral adequacy
-    Solana->>User: Mints wXMR tokens
-    Solana->>LP: Adds to slashable amount
+    User->>Solana: Requests mint, selects LP + amount
+    Solana->>LP: Verifies collateral coverage (150%+ minimum)
+    User->>Monero: Sends XMR to LP's posted address
+    User->>Solana: Submits ZK proof of XMR payment
+    Solana->>User: Mints wXMR tokens immediately
+    Solana->>LP: Locks collateral for this minting
 
     Note over User,Monero: BURN FLOW (wXMR -> Monero)
-    User->>Solana: Burns wXMR, provides XMR destination
+    User->>Solana: Burns wXMR + XMR destination
+    Solana->>Pyth: Gets current XMR/SOL price
     Solana->>LP: 2-hour countdown starts
-    LP->>Monero: Sends XMR to destination
-    LP->>Solana: Posts XMR send proof
-    Solana->>User: Burn completed
+    LP->>Monero: Sends actual XMR to destination
+    LP->>Solana: Submits proof + Monero tx hash
+    Solana->>User: Burn completes
+    Solana->>LP: Releases remaining collateral
     
-    alt If LP fails to send
-        Solana->>User: Slashes LP collateral to user
+    alt If LP fails redemption
+        Solana->>Pyth: Gets liquidation price
+        Solana->>User: 115% of burn value via slashed collateral
+        Solana->>LP: Returns remaining collateral (150% - 115% = 35%)
     end
 ```
 
