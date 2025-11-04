@@ -56,7 +56,6 @@ sequenceDiagram
     Solana->>User: Burn completes
     
     alt If LP fails redemption
-        Solana->>Pyth: Gets liquidation price
         Solana->>User: 115% of burn value via slashed collateral
         Solana->>LP: Returns remaining collateral (150% - 115% = 35%)
     end
