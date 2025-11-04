@@ -41,6 +41,7 @@ fungerbil/
 ├── frontend/             # Web interfaces
 ├── pitchdeck/           # Investor materials
 └── svm-fhe/            # (Future) Solana-native FHE
+├── wxmr-token/         # Synthwrap wXMR implementation
 ```
 
 ## 🔗 Cross-Chain Infrastructure
@@ -176,15 +177,19 @@ Modern web applications for different user personas:
 - Real-time transaction monitoring
 
 **Wrapped XMR (wXMR) System** (`wxmr/`):
-- LP collateral staking (SOL/hyUSD) with overcollateralization
-- Monero atomic mint/burn with ZK proofs
-- Automatic slashing for failed XMR redemptions
-- Real-time Pyth pricing integration
+- **Synthwrap Model**: Privacy-preserving Monero bridging via LPs
+- **LP collateral staking**: SOL/hyUSD deposits with 150%+ overcollateralization
+- **Atomic minting**: ZK proof-verified XMR receipts auto-mint wXMR
+- **Automatic slashing**: 2-hour window for XMR redemptions, collateral penalty on failure
+- **Pyth integration**: Real-time XMR pricing for accurate collateral calculations
 
 **Wallet Interface** (`wxmr/`):
 - Basic Solana wallet functionality
 - wXMR token management
 - Token minting and burning
+
+### `SYNTHWRAP.md` - Detailed Documentation
+Comprehensive explanation of the synthwrap model, LP mechanics, and ZK verification system
 
 ### `pitchdeck/` - Investor Materials
 Comprehensive pitch presentation covering:
