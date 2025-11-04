@@ -54,7 +54,6 @@ sequenceDiagram
     LP->>Monero: Sends actual XMR to destination
     LP->>Solana: Submits proof + Monero tx hash
     Solana->>User: Burn completes
-    Solana->>LP: Releases remaining collateral
     
     alt If LP fails redemption
         Solana->>Pyth: Gets liquidation price
