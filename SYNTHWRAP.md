@@ -110,3 +110,33 @@
 
 ## 11.  Result
 Every **major Solana yield venue** becomes a **source of wxMR liquidity** without **locking a single SOL** in a dedicated vault. The bridge **outsources collateral** to **existing DeFi receipts**, **prices them on-chain**, and **guarantees** users **115 % payout** even if every LP disappears.
+
+sequenceDiagram
+  participant U as User
+  participant B as Bridge
+  participant P as DEX Pool / Yield Vault
+  participant L as Liquidity Provider
+  participant X as Monero Chain
+  participant PY as Pyth Oracle
+
+  Note over U,L: MINT FLOW (User → XMR, wants wXMR)
+  U->>B: request mint + pick LP
+  B->>B: check LP collateral ≥ 150 % (priced by PY + reserves)
+  U->>X: send XMR to LP's stealth address
+  U->>B: submit ZK proof of payment
+  B->>U: mint wXMR immediately
+  B->>B: increase LP obligation
+
+  Note over U,L: BURN FLOW (wXMR → XMR)
+  U->>B: burn wXMR + XMR destination
+  B->>L: 2-hour countdown starts
+  alt LP fulfils
+    L->>X: send XMR to destination
+    L->>B: ZK proof of XMR send
+    B->>U: burn complete
+  else LP fails
+    B->>P: seize $115 of LP receipt tokens
+    P-->>B: unwrap → ≈ 50 % stable + ≈ 50 % asset
+    B->>U: transfer seized value (≈ $115)
+    B->>L: return residual collateral (if any)
+  end
