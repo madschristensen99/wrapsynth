@@ -32,15 +32,15 @@
 
 ---
 
-## 3.  Collateral Types (all yield-bearing)
+## 3.  Collateral Types
 
-| Receipt Token | Underlying Yield | Price Feed | Adapter Source |
+| Receipt Token | Underlying Protocol | Price Feed | Adapter Source |
 |---------------|------------------|------------|----------------|
 | jitoSOL | MEV + staking | Pyth SOL + jito reserve ratio | Jito stake-pool program |
 | mSOL | Marinade staking | Pyth SOL + mSOL reserve | Marinade program |
 | yhyUSD | Hylo lending | 1.00 USD + NAV accumulator | Hylo vault program |
 | wxMR-hyUSD-LP | Swap fees | Pyth XMR + hyUSD + pool reserves | Pool program account |
-
+| wxMR | Token itself | 1:1 | Program account |
 ---
 
 ## 4.  Mint Flow (User → XMR, wants wXMR)
