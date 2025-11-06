@@ -111,6 +111,11 @@
 ## 11.  Result
 Every **major Solana yield venue** becomes a **source of wxMR liquidity** without **locking a single SOL** in a dedicated vault. The bridge **outsources collateral** to **existing DeFi receipts**, **prices them on-chain**, and **guarantees** users **115 % payout** even if every LP disappears.
 
+---
+
+## 12.  Flow Diagram
+
+```mermaid
 sequenceDiagram
   participant U as User
   participant B as Bridge
@@ -140,3 +145,4 @@ sequenceDiagram
     B->>U: transfer seized value (≈ $115)
     B->>L: return residual collateral (if any)
   end
+```
