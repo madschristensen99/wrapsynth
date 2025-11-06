@@ -4,16 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "zk_oracle"
-path = "src/server.rs"
-
-[[bin]]
 name = "legacy_server"
 path = "server.rs"
 
-[lib]
-name = "push_oracle_lib"
-path = "src/lib.rs"
+[[bin]]
+name = "solana_push"
+path = "solana_push.rs"
+
+[[bin]]
+name = "demo"
+path = "demo.rs"
 
 [dependencies]
 serde_json = "1.0"
