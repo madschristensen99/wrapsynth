@@ -1,132 +1,68 @@
-# wXMR Synthwrap Model  
-*A Monero ↔ Solana bridge that lets liquidity providers back wrapped-XMR with **any** yield-bearing receipt token while continuing to farm their usual DeFi yields.*
+# wXMR Synthwrap Model – Standalone v1.0  
+*An immutable Monero ↔ Solana bridge that mints 1:1 wrapped-XMR, collateralised only by itself, with **≥ 100 %** backing and no arbitrary buffers.*
 
 ---
 
-## 1.  Core Idea
-- Users mint **wXMR** on Solana by sending **real XMR** to an LP’s Monero address and proving it with a **ZK-proof**.  
-- To guarantee redemption, LPs **stake receipt tokens** (LP shares, LSTs, yield-bearing stables) instead of idle coins.  
-- If an LP ghosts a redemption, the bridge **seizes those receipts**, unwraps them, and pays the burner **115 % of par value**.  
-- Capital **never stops earning** swap fees, staking yield, or protocol incentives.
+## 1.  Mission Statement
+Launch **one immutable contract** that mints **1 wXMR for 1 XMR**, collateralised **only by wXMR itself**, with **≥ 100 %** backing and **no external oracles or arbitrary liquidation premiums**.
 
 ---
 
-## 2.  Participant Roles
-
-### Liquidity Providers (LPs)
-- Post **Monero addresses** on-chain.  
-- Stake **approved receipt tokens** (jitoSOL, mSOL, yhyUSD, wxMR-hyUSD-LP, etc.).  
-- Earn **mint fees** + **existing DeFi yields** while collateral is locked.  
-- Must fulfill **wXMR → XMR** redemptions within **2 h** or be slashed.
-
-### Users
-- Mint: send XMR → receive wXMR.  
-- Burn: return wXMR → demand real XMR.  
-- Always **made whole** at **115 % USD value** if LP fails.
-
-### Bridge Program
-- **Whitelist** receipt tokens, set risk params.  
-- **Prices** collateral with **Pyth + on-chain reserves**.  
-- **Seizes & unwraps** receipts on failure.  
-- **Re-balances** under-water positions via **cross-LP liquidations**.
+## 2.  v1 Scope (immutable, no external oracles)
+- **Collateral**: **raw wXMR only** → **1:1 pricing**, **zero oracle risk**.  
+- **Collateral ratio**: **self-declared by each LP** (≥ 100 %, i.e. ≥ parity).  
+- **Payout on failure**: **exactly 100 % of burned value** → **paid in wXMR** (no unwrap, no swap).  
+- **Code**: **deploy once**, **no admin keys**, **no upgrade proxy**, **no governance**.
 
 ---
 
-## 3.  Collateral Types
-
-| Receipt Token | Underlying Protocol | Price Feed | Adapter Source |
-|---------------|------------------|------------|----------------|
-| jitoSOL | MEV + staking | Pyth SOL + jito reserve ratio | Jito stake-pool program |
-| mSOL | Marinade staking | Pyth SOL + mSOL reserve | Marinade program |
-| yhyUSD | Hylo lending | 1.00 USD + NAV accumulator | Hylo vault program |
-| wxMR-hyUSD-LP | Swap fees | Pyth XMR + hyUSD + pool reserves | Pool program account |
-| wxMR | Token itself | 1:1 | Program account |
----
-
-## 4.  Mint Flow (User → XMR, wants wXMR)
-1. User selects **cheapest LP** (fee + slippage) with **≥ 150 % collateral**.  
-2. User sends **XMR** to LP’s **stealth address**.  
-3. User submits **ZK proof** of payment.  
-4. Bridge **mints wXMR** immediately.  
-5. LP obligation ↑; collateral remains **farming**.
+## 3.  v1 Launch Sequence (one-shot)
+1. **Deploy bridge**.  
+2. **Deployer deposits 1 real XMR** → **submits ZK proof**.  
+3. **Bridge mints 1 wXMR** to deployer.  
+4. **Mint authority is permanently disabled** → **supply can never change again**.  
+5. **Deployer stakes the 1 wXMR** → **creates initial head-room (0.67 wXMR)**.  
+6. **Deployer opens registration** → **anyone can LP**, **no further admin actions**.
 
 ---
 
-## 5.  Burn Flow (wXMR → XMR)
-1. User **burns wXMR** + supplies **XMR destination**.  
-2. **2-hour countdown** starts.  
-3. **Success**: LP sends XMR + ZK proof → obligation cleared.  
-4. **Failure**: bridge **seizes \$115** of LP’s receipt tokens, **unwraps**, and pays:  
-   - **≈ 50 % underlying stable** + **≈ 50 % underlying asset** (or liquid equivalent).  
-5. **Residual collateral** returned to LP; **no wXMR refund** (already burned).
+## 4.  v1 Roles & Rules
+| Role | Responsibility | Reward | Risk |
+|------|---------------|--------|------|
+| **LP** | **Post XMR addresses**, **stake ≥ 100 % self-declared wXMR**, **redeem within 2 h**. | **Mint fee (market-set)** | **Lose exactly 100 % wXMR if fail**. |
+| **User** | **Send XMR**, **ZK-proof**, **burn wXMR**, **pick any LP ≥ parity**. | **1 wXMR minted**, **100 % wXMR paid on failure**. | **None** (always ≥ 100 % backed). |
+| **Bridge** | **Verify proofs**, **track obligations**, **seize collateral**, **no upgrades**. | **None** (immutable). | **None** (no admin keys). |
 
----
+------------------------------------------------
+### v1 Parameters (hard-coded)
+- **Min collateral ratio**: **100 %** (LP can set 100 %, 101 %, 150 %, …).  
+- **Liquidation payout**: **exactly 100 % of burn value**.  
+- **Countdown**: **2 hours**.  
+- **Mint fee**: **LP declares** (basis points).  
+- **Registration deposit**: **0.05 SOL** (scales with obligation to deter grief).
 
-## 6.  Liquidation & Rebalancing
-- **Anyone** can call `liquidate_lp()` when **collateral < 115 %**.  
-- **Under-water obligations** are **absorbed** by liquidating LPs at a **5 % discount**.  
-- **Total wXMR supply** can **never exceed** **115 % backed USD value**.
+------------------------------------------------
+### v1 Attack & Mitigation
+| Attack | Mitigation |
+|--------|------------|
+| **Self-mint / self-burn** | **Deposit + mint fee + 2 h lock** → **net loss after gas**. |
+| **Race to 100 % → thin buffer** | **Deposit scales with head-room** → **griefing costs money**. |
+| **Oracle manipulation** | **None** – **no external price feed**. |
 
----
-
-## 7.  Risk Parameters (governance-set)
-| Parameter | Typical Value |
-|-----------|---------------|
-| **Collateral factor** | 95 % |
-| **Liquidation threshold** | 115 % |
-| **Mint fee** | 0.1 % (paid to LP) |
-| **TWAP window** | 1 hour |
-| **Pool cap** | ≤ 30 % of total supply |
-
----
-
-## 8.  Oracle & Adapter Stack
-- **Pyth** → **underlying asset prices** (SOL, XMR, USD).  
-- **On-chain reserve reader** → **exchange-rate or reserve amounts**.  
-- **TWAP** (1 h) on **pool reserves** to **block flash-loan noise**.  
-- **One adapter per receipt program**; **upgradeable** by governance.
-
----
-
-## 9.  Governance Lifecycle
-1. **Temperature check** (Snapshot) – **7 days**.  
-2. **Risk review** – **audit + oracle spec + caps**.  
-3. **On-chain vote** (SPL-Gov) – **3 day vote + 2 day timelock**.  
-4. **Deploy adapter** → **whitelist mint** → **go live**.  
-5. **Quarterly review** – **delist or adjust caps** if **APY < 1 % or de-peg > 2 %**.
-
----
-
-## 10.  Why LPs Love It
-- **Same capital**, **three incomes**:  
-  1. **Protocol yield** (staking, lending, swap fees)  
-  2. **Bridge mint fee** (0.1 %)  
-  3. **Potential liquidation bonus** (5 %)  
-- **No extra leverage**, **no idle coins**, **no separate borrow market**.  
-- **Exit any time** – just **unstake receipts** once **obligations = zero**.
-
----
-
-## 11.  Result
-Every **major Solana yield venue** becomes a **source of wxMR liquidity** without **locking a single SOL** in a dedicated vault. The bridge **outsources collateral** to **existing DeFi receipts**, **prices them on-chain**, and **guarantees** users **115 % payout** even if every LP disappears.
-
----
-
-## 12.  Flow Diagram
+------------------------------------------------
+## 5.  v1 Flow (no external oracles)
 
 ```mermaid
 sequenceDiagram
   participant U as User
   participant B as Bridge
-  participant P as DEX Pool / Yield Vault
   participant L as Liquidity Provider
   participant X as Monero Chain
-  participant PY as Pyth Oracle
 
   Note over U,L: MINT FLOW (User → XMR, wants wXMR)
-  U->>B: request mint + pick LP
-  B->>B: check LP collateral ≥ 150 % (priced by PY + reserves)
-  U->>X: send XMR to LP's stealth address
+  U->>B: request mint + pick any LP (self-ratio ≥ 100 %)
+  B->>B: check LP raw wXMR ≥ self-declared ratio
+  U->>X: send XMR to LP stealth address
   U->>B: submit ZK proof of payment
   B->>U: mint wXMR immediately
   B->>B: increase LP obligation
@@ -139,9 +75,25 @@ sequenceDiagram
     L->>B: ZK proof of XMR send
     B->>U: burn complete
   else LP fails
-    B->>P: seize $115 of LP receipt tokens
-    P-->>B: unwrap → ≈ 50 % stable + ≈ 50 % asset
-    B->>U: transfer seized value (≈ $115)
+    B->>B: seize exactly 100 wXMR from LP collateral
+    B->>U: transfer 100 wXMR (no external tokens)
     B->>L: return residual collateral (if any)
   end
 ```
+
+------------------------------------------------
+## 6.  Roadmap (post-v1, optional, non-breaking)
+
+| Version | What Changes | Token Contract | Bridge Code | Risk Surface |
+|---------|--------------|----------------|-------------|--------------|
+| **v2** | **Tier-2 adapter whitelist** (SOL, hyUSD, BTC, ETH) | **same wXMR-v1 mint** | **new bridge program** (reads adapter registry) | **+ Pyth oracle** |
+| **v3** | **Tier-3 adapter whitelist** (LSTs, LP tokens, money-market shares) | **same wXMR-v1 mint** | **same v2 bridge**, **more adapters** | **+ protocol smart-contract risk** |
+| **v4+** | **Private collateral** (shielded pool notes, zk-LP) | **same wXMR-v1 mint** | **same v2/v3 bridge**, **zk adapters** | **+ zk-circuit risk** |
+
+**Migration path**: **LPs withdraw from v1**, **deposit into v2/v3** → **1:1 wrap**, **no token change**, **no user friction**.
+
+------------------------------------------------
+## 7.  Take-away
+- **v1 is done** – **immutable, oracle-free, market-set collateral ratios ≥ parity**, **pays exactly 100 % on failure**.  
+- **Future tiers** = **optional adapter programs** that **wrap/unwrap the same wXMR-v1 token**.  
+- **Market decides** which tier dominates; **v1 stays live forever** as **the ultra-safe, ultra-simple Monero bridge**.
