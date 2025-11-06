@@ -77,7 +77,6 @@
 | **Mint fee** | 0.1 % (paid to LP) |
 | **TWAP window** | 1 hour |
 | **Pool cap** | ≤ 30 % of total supply |
-| **Emergency pause** | Multisig 6/9, <2 % drift in 1 h |
 
 ---
 
