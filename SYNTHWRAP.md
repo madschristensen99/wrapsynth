@@ -1,10 +1,10 @@
 # wXMR Synthwrap Model – Standalone v1.0  
-*An immutable Monero ↔ Solana bridge that mints 1:1 wrapped-XMR, collateralised by yield-bearing assets, with **≥ 100 %** backing and rewards for Monero node block header pushers.*
+*An immutable Monero ↔ Solana bridge that mints 1:1 wrapped-XMR, collateralised by USX and yield-bearing native tokens, with **110 %** backing and rewards for Monero node block header pushers.*
 
 ---
 
 ## 1.  Mission Statement
-Launch **one immutable contract** that mints **1 wXMR for 1 XMR**, collateralised by **yield-bearing stablecoins and yield-bearing native tokens**, with **≥ 100 %** backing and **rewards for Monero node block header pushers** to incentivize data availability.
+Launch **one immutable contract** that mints **1 wXMR for 1 XMR**, collateralised by **USX and yield-bearing native tokens**, with **110 %** backing and **rewards for Monero node block header pushers** to incentivize data availability.
 
 ---
 
