@@ -177,11 +177,11 @@ Modern web applications for different user personas:
 - Real-time transaction monitoring
 
 **Wrapped XMR (wXMR) System** (`wxmr/`):
-- **Synthwrap Model**: Privacy-preserving Monero bridging via LPs
-- **LP collateral staking**: SOL/hyUSD deposits with 140%+ overcollateralization
-- **Atomic minting**: ZK proof-verified XMR receipts auto-mint wXMR
-- **Automatic slashing**: 2-hour window for XMR redemptions, collateral penalty on failure
-- **Pyth integration**: Real-time XMR pricing for accurate collateral calculations
+- **Yield-bearing synthwrap**: 105% overcollateralized by yield-bearing assets (USX, native tokens)
+- **Pyth integration**: Real-time wXMR pricing prevents on-chain manipulation
+- **Block header rewards**: Monero node operators receive yield proceeds for pushing block headers
+- **wXMR governance**: Token holders vote on reward percentages and protocol parameters
+- **Full collateral seizure**: Failed LP obligations result in complete collateral distribution to users
 
 **Wallet Interface** (`wxmr/`):
 - Basic Solana wallet functionality
