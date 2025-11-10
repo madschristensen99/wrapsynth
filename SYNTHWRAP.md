@@ -15,17 +15,16 @@ Launch **one immutable contract** that mints **1 wXMR for 1 XMR**, collateralise
 - **Payout on failure**: **110 % of burned value paid to users from seized collateral**.  
 - **Price oracle**: **Pyth oracle used for wXMR price feeds** to prevent on-chain price manipulation.  
 - **Block header rewards**: **yield proceeds distributed to Monero node block header pushers**, with **percentage set via wXMR governance voting**.  
-- **Governance**: **wXMR token holders set reward percentages and protocol parameters**.
+- **Governance**: **wXMR token holders set reward percentages and Monero node addresses**.
 
 ---
 
 ## 3.  v1 Launch Sequence (one-shot)
-1. **Deploy bridge**.  
-2. **Deployer deposits 1 real XMR** → **submits ZK proof**.  
-3. **Bridge mints 1 wXMR** to deployer.  
-4. **Mint authority is permanently disabled** → **supply can never change again**.  
-5. **Deployer stakes the 1 wXMR** → **creates initial head-room (0.67 wXMR)**.  
-6. **Deployer opens registration** → **anyone can LP**, **no further admin actions**.
+1. **Deploy wXMR Token**.  
+2. **Deployer sets valid yield-bearing asset whitelist** (USX, native tokens).  
+3. **Deployer initializes protocol** → **zero wXMR supply to start**.  
+4. **anyone can become LP** → **post 110% collateral** in whitelisted yield-bearing assets.  
+5. **registration opens automatically** → **no admin keys**.
 
 ---
 
@@ -34,7 +33,7 @@ Launch **one immutable contract** that mints **1 wXMR for 1 XMR**, collateralise
 |------|---------------|--------|------|
 | **LP** | **Post XMR addresses**, **stake ≥ 110 % USX/native tokens**, **redeem within 2 h**. | **Mint fee (market-set)** | **Position taken if <110%, lose 110% if fail**. |
 | **User** | **Send XMR**, **ZK-proof**, **burn wXMR**, **pick any LP ≥ 110%**. | **1 wXMR minted**, **110 % paid on failure**. | **None** (always ≥ 110 % backed). |
-| **Bridge** | **Verify proofs**, **track obligations**, **seize collateral**, **no upgrades**. | **None** (immutable). | **None** (no admin keys). |
+| **wXMR Token** | **Verify proofs**, **track obligations**, **seize collateral**, **allow position takeover**. | **None** (immutable). | **None** (no admin keys). |
 
 ------------------------------------------------
 ### v1 Parameters 
@@ -45,7 +44,7 @@ Launch **one immutable contract** that mints **1 wXMR for 1 XMR**, collateralise
 - **Mint fee**: **LP declares** (basis points).  
 - **Registration deposit**: **0.05 SOL** (scales with obligation to deter grief).
 - **Price oracle**: **Pyth oracle for wXMR pricing**.
-- **Governance**: **wXMR token voting for reward parameters**.
+- **Governance**: **wXMR token voting for reward percentages and Monero node addresses**.
 
 ------------------------------------------------
 ### v1 Attack & Mitigation
@@ -62,33 +61,33 @@ Launch **one immutable contract** that mints **1 wXMR for 1 XMR**, collateralise
 ```mermaid
 sequenceDiagram
   participant U as User
-  participant B as Bridge
-  participant L as Liquidity Provider
+  participant W as wXMR Token
+  participant L as Liquidity Provider  
   participant X as Monero Chain
   participant P as Pyth Oracle
 
   Note over U,L: MINT FLOW (User → XMR, wants wXMR)
-  U->>B: request mint + pick any LP (≥ 105% collateral)
-  B->>P: fetch wXMR/USD price
-  B->>B: check LP yield-bearing collateral ≥ 105% obligation
+  U->>W: request mint + pick any LP (≥ 110% collateral)
+  W->>P: fetch wXMR/USD price  
+  W->>W: check LP yield-bearing collateral ≥ 110% obligation
   U->>X: send XMR to LP stealth address
   U->>B: submit ZK proof of payment
   B->>U: mint wXMR immediately
   B->>B: increase LP obligation
 
   Note over U,L: BURN FLOW (wXMR → XMR)
-  U->>B: burn wXMR + XMR destination
-  B->>P: fetch wXMR/USD price
-  B->>L: 2-hour countdown starts
+  U->>W: burn wXMR + XMR destination
+  W->>P: fetch wXMR/USD price
+  W->>L: 2-hour countdown starts
   alt LP fulfils
     L->>X: send XMR to destination
-    L->>B: ZK proof of XMR send
-    B->>U: burn complete
+    L->>W: ZK proof of XMR send
+    W->>U: burn complete
   else LP fails
-    B->>P: fetch wXMR/USD price
-    B->>B: seize 110% collateral from LP
-    B->>U: transfer 110% wXMR value using seized collateral via Pyth pricing
-    B->>L: return residual collateral (if any above 110%)
+    W->>P: fetch wXMR/USD price
+    W->>W: seize 110% collateral from LP
+    W->>U: transfer 110% wXMR value using seized collateral via Pyth pricing
+    W->>L: return residual collateral (if any above 110%)
   end
 ```
 
