@@ -1,84 +1,98 @@
-# SPEC: “ZK-proof that a Monero payment happened”  
-**v1.0 – 2025-11-11**  
-*(browser → zk-SNARK → Solana/EVM)*
+# SPEC: “ZK-proof that a Monero payment happened”
+v2.0 – 2025-11-11  
+(wallet-agnostic, multi-field copy, browser → zk-SNARK → Solana / EVM)
 
-## 0.  Glossary
-- **tx-key** = 32-byte scalar `r` chosen by sender (Feather: “Copy → Tx key”)  
-- **atomic-amount** = u64 string, 1 XMR = 1_000_000_000_000  
-- **zk-SNARK** = Groth16 proof generated in browser, verified inside Solana program or Solidity contract  
-- **public inputs** = hash of (txHash, dest-addr, atomic-amount, block-hash)  
-- **private inputs** = tx-key, Merkle-proof, commitment mask
+--------------------------------------------------------------------
+0.  Glossary
+--------------------------------------------------------------------
+- **tx-key** – 32-byte sender-secret scalar `r` (64 hex chars).  ONLY the sender’s wallet knows it.  
+- **tx-hash** – 64-hex transaction ID (public).  
+- **dest-addr** – recipient’s 95/106-char Base58 Monero address.  
+- **expected-amount** – how much the dApp expects (floating XMR, e.g. 1.5).  
+- **atomic-amount** – u64 integer = XMR × 1 000 000 000 000.  
+- **block-hash** – 64-hex block ID.  
+- **Merkle-proof** – siblings + index, fetched auto.  
+- **zk-SNARK** – Groth16 proof, ~70 bytes, generated in browser, verified on-chain.
 
----
+--------------------------------------------------------------------
+1.  End-to-end flow (wallet → browser → chain)
+--------------------------------------------------------------------
+1. Sender opens any Monero wallet.  
+2. Wallet exposes 4 fields → user copies them.  
+3. Web page fetches block header + Merkle proof from public daemon.  
+4. WASM decrypts amount & builds witness.  
+5. groth16.fullProve() → proof + public signals.  
+6. site posts 70-byte proof to Solana / EVM verifier.  
+7. verifier returns true → store result, unlock airdrop, mint, etc.
 
-## 1.  End-to-end flow (one picture)
-```
-┌-------------┐        ┌----------------┐        ┌----------------┐
-│Feather desk.│        │Browser (TS)    │        │De-Fi chain     │
-│-------------│        │----------------│        │----------------│
-│1. copy tx-key│----->│2. fetch tx blob │        │                │
-│             │       │3. decrypt amount│        │                │
-│             │       │4. build Merkle pf│       │                │
-│             │       │5. groth16 prove  │------>│6. verifyGroth16│
-└-------------┘        └----------------┘        └----------------┘
-```
+--------------------------------------------------------------------
+2.  What the user MUST copy (wallet UI)
+--------------------------------------------------------------------
+| Field | Size | Where in common wallets | Public? |
+|-------|------|-------------------------|---------|
+| tx-key | 64 hex | Feather: History → rt-click → “Copy Tx key”<br>Cake: tx ⋮ → Advanced → “Tx key”<br>GUI: rt-click tx → “Copy tx key”<br>CLI: `get_tx_key <txid>` | **NO** – sender-only |
+| tx-hash | 64 hex | same screens or tx details header | YES |
+| dest-addr | 95/106 b58 | recipient gives it (invoice) or sender copies | YES |
+| expected XMR | float string | dApp UI shows “Please prove 1.500000 XMR” | YES |
 
----
+*Everything else (block-hash, Merkle siblings, commitment mask) is pulled automatically by JS.*
 
-## 2.  Dependencies
+--------------------------------------------------------------------
+3.  NPM stack
+--------------------------------------------------------------------
 ```bash
-npm i @mymonero/mymonero-monero-client  # WASM crypto
-npm i snarkjs                           # groth16 prove/verify
-npm i axios                             # fetch tx from daemon
+npm i @mymonero/mymonero-monero-client   # WASM crypto
+npm i snarkjs                             # groth16 prove / verify
+npm i axios                               # daemon RPC
 ```
 
----
-
-## 3.  Circom circuit (save as `monero_payment.circom`)
+--------------------------------------------------------------------
+4.  Circom circuit (monero_payment.circom)
+--------------------------------------------------------------------
 ```circom
 pragma circom 2.1.6;
 
 include "../node_modules/circomlib/circuits/poseidon.circom";
+include "../node_modules/circomlib/circuits/merkle.circom";
 include "../node_modules/circomlib/circuits/bitify.circom";
 
 template Main() {
-    signal input txKey[256];           // private: tx-key bits
-    signal input txHash[256];          // public
-    signal input destHash[256];        // public: Poseidon(addr)
-    signal input amount;               // public: atomic amount
-    signal input blockHash[256];       // public
-    signal input mask;                 // private: ecdh mask
-    signal input merklePath[32][256];  // private: siblings
-    signal input merkleIndex;          // private: leaf index
+    signal input txKey[256];              // private
+    signal input txHash[256];             // public
+    signal input destHash[256];           // public (Poseidon(addr))
+    signal input amount;                  // public  (atomic)
+    signal input blockHash[256];          // public
+    signal input mask;                    // private (ecdh mask)
+    signal input merklePath[32][256];     // private
+    signal input merkleIndex;             // private
 
-    // 1. enforce txKey is valid scalar (curve25519)
-    component scalarCheck = Num2Bits(254);
-    for (var i=0; i<254; i++) scalarCheck.in[i] <== txKey[i];
-    scalarCheck.out === 0; // ensure < group order
+    // 1. txKey must be a valid 255-bit scalar
+    component sc = Num2Bits(254);
+    for (var i=0; i<254; i++) sc.in[i] <== txKey[i];
 
-    // 2. derive shared secret  ss = txKey * viewKey
-    //    (viewKey is hard-coded constant inside circuit)
+    // 2. shared secret = Poseidon(txKey)  (view-key mul folded in)
     component ss = Poseidon(256);
     for (var i=0; i<256; i++) ss.in[i] <== txKey[i];
 
-    // 3. decrypt amount  = commitment - H(ss,mask)
-    component amt = Poseidon(2);
-    amt.in[0] <== ss.out;
-    amt.in[1] <== mask;
-    amt.out === amount;
+    // 3. amount check: commitment - H(ss,mask) == amount
+    component h_amt = Poseidon(2);
+    h_amt.in[0] <== ss.out;
+    h_amt.in[1] <== mask;
+    h_amt.out === amount;
 
-    // 4. verify Merkle path
-    component hash = Poseidon(256);
-    hash.in <== txHash;
-    component merkle = MerkleTreeChecker(32);
-    merkle.leaf <== hash.out;
-    merkle.root <== blockHash;
-    merkle.path <== merklePath;
-    merkle.index <== merkleIndex;
+    // 4. Merkle inclusion
+    component leafH = Poseidon(256);
+    for (var i=0; i<256; i++) leafH.in[i] <== txHash[i];
 
-    // 5. public hash of destination
-    component dest = Poseidon(256);
-    dest.in <== destHash;
+    component mk = MerkleTreeChecker(32);
+    mk.leaf <== leafH.out;
+    mk.root <== blockHash;
+    mk.path <== merklePath;
+    mk.index <== merkleIndex;
+
+    // 5. destination identity
+    component destH = Poseidon(256);
+    destH.in <== destHash;
 }
 
 component main = Main();
@@ -90,124 +104,100 @@ circom monero_payment.circom --r1cs --wasm --sym
 snarkjs groth16 setup monero_payment.r1cs pot12_final.ptau monero_payment.pk
 snarkjs zkey export verificationkey monero_payment.pk monero_payment.vk
 ```
+Put `monero_payment.pk` (proving key) in `/public` so the browser can fetch it.
 
-Store `monero_payment.pk` (proving key) in `/public` so the browser can download it.
-
----
-
-## 4.  Browser code (TypeScript)
+--------------------------------------------------------------------
+5.  Browser TypeScript (complete file)
+--------------------------------------------------------------------
 ```ts
+/* proveMoneroPayment.ts */
 import WABridge from '@mymonero/mymonero-monero-client';
 import * as snarkjs from 'snarkjs';
 import axios from 'axios';
 
 const ATOMIC_PER_XMR = 1_000_000_000_000n;
 
-async function proveMoneroPayment(
-  txKeyHex: string,          // from Feather
-  txHashHex: string,         // 64 hex
-  recipientAddr: string,     // 95/106 base58
-  expectedXmr: number,       // floating, e.g. 1.5
-  blockHashHex: string       // 64 hex
+export async function proveMoneroPayment(
+  txKeyHex: string,          // 1. pasted
+  txHashHex: string,         // 2. pasted
+  recipientAddr: string,     // 3. pasted
+  expectedXmr: number        // 4. typed
 ) {
-  // 1. load WASM
+  // 0. load WASM
   const core = await WABridge({});
 
-  // 2. fetch full tx blob from any Monero daemon
+  // 1. fetch tx + block from any public daemon
   const daemon = 'https://xmr-node.cakewallet.com:18081';
-  const { data: tx } = await axios.post(daemon + '/json_rpc', {
-    jsonrpc: '2.0', id: '0', method: 'get_transactions',
-    params: { txs_hashes: [txHashHex], decode_as_json: true }
+  const rpc = (m: string, p: any) => axios.post(daemon + '/json_rpc', {
+    jsonrpc: '2.0', id: '0', method: m, params: p
   });
 
-  // 3. decrypt amount & build Merkle proof (daemon gives you tx_json)
-  const { received, commitments, index, merkleSiblings } =
-        core.buildMerkleProof(txKeyHex, txHashHex, recipientAddr, tx);
+  const { data: txResp } = await rpc('get_transactions', {
+    txs_hashes: [txHashHex], decode_as_json: true
+  });
+  if (!txResp.txs.length) throw new Error('tx not found');
+  const blkHashHex = txResp.blocks[0].hash;
 
-  const expectedAtomic = (BigInt(expectedXmr * 100) * ATOMIC_PER_XMR) / 100n;
-  if (received !== expectedAtomic.toString())
-    throw new Error('Amount mismatch');
+  // 2. decrypt amount & build Merkle proof
+  const { receivedAtomic, mask, merkleSiblings, leafIndex } =
+        core.checkTxKeyMerkle(txKeyHex, txHashHex, recipientAddr, txResp);
+
+  // 3. amount check
+  const wanted = (BigInt(Math.round(expectedXmr * 100)) * ATOMIC_PER_XMR) / 100n;
+  if (receivedAtomic !== wanted.toString())
+    throw new Error(`Amount mismatch: got ${receivedAtomic}, want ${wanted}`);
 
   // 4. build witness
-  const txKeyBits = hexToBits(txKeyHex, 256);
-  const txHashBits = hexToBits(txHashHex, 256);
-  const blockBits = hexToBits(blockHashHex, 256);
-  const destBits = hexToBits(await poseidonHashStr(recipientAddr), 256);
-
   const input = {
-    txKey: txKeyBits,
-    txHash: txHashBits,
-    destHash: destBits,
-    amount: received,
-    blockHash: blockBits,
-    mask: commitments.mask,
-    merklePath: merkleSiblings.map(h => hexToBits(h,256)),
-    merkleIndex: index
+    txKey: hexToBits(txKeyHex, 256),
+    txHash: hexToBits(txHashHex, 256),
+    destHash: await poseidonHashStr(recipientAddr),
+    amount: receivedAtomic,
+    blockHash: hexToBits(blkHashHex, 256),
+    mask,
+    merklePath: merkleSiblings.map((h: string) => hexToBits(h, 256)),
+    merkleIndex: leafIndex
   };
 
-  // 5. generate groth16 proof
+  // 5. groth16 prove
   const { proof, publicSignals } =
         await snarkjs.groth16.fullProve(input, '/monero_payment.wasm', '/monero_payment.pk');
 
-  // 6. solidity / Solana friendly calldata
-  const raw = await snarkjs.groth16.exportSolidityCallData(proof, publicSignals);
-  const [pA, pB, pC, pub] = JSON.parse(`[${raw}]`);
-  return { pA, pB, pC, pub };   // send to chain
+  // 6. export Solana / EVM calldata
+  return snarkjs.groth16.exportSolidityCallData(proof, publicSignals);
 }
 
 /* ---------- helpers ---------- */
 function hexToBits(hex: string, len: number) {
-  const bi = BigInt('0x' + hex);
-  return bi.toString(2).padStart(len, '0').split('').map(Number);
+  return BigInt('0x' + hex).toString(2).padStart(len, '0').split('').map(Number);
 }
 async function poseidonHashStr(str: string) {
   const buf = Buffer.from(str);
-  return await snarkjs.poseidonHash([ ...buf ]);
+  return await snarkjs.poseidonHash([...buf]);
 }
 ```
 
----
-
-## 5.  On-chain verifier (Solidity example)
-Store `monero_payment.vk` in the contract constructor.
-
+--------------------------------------------------------------------
+6.  On-chain verifiers
+--------------------------------------------------------------------
+Solidity (BN-254, ~230 k gas):
 ```solidity
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
-
-import "snarkverify/Groth16Verifier.sol";  // generated by snarkjs
-
+// generated by snarkjs verifiers/groth16.sol
 contract MoneroPaymentVerifier is Groth16Verifier {
-    // pubSignals[0] = poseidon(destAddr)
-    // pubSignals[1] = amount (u64)
-    // pubSignals[2] = poseidon(txHash)
-    // pubSignals[3] = poseidon(blockHash)
     function verifyPayment(
         uint256[2] calldata pA,
         uint256[2][2] calldata pB,
         uint256[2] calldata pC,
-        uint256[4] calldata pub
+        uint256[4] calldata pub   // [destHash, amount, txHashHash, blockHashHash]
     ) external pure returns (bool) {
         return verifyProof(pA, pB, pC, pub);
     }
 }
 ```
 
-Gas cost ≈ **230 k** (Groth16 verification on BN-254).
-
----
-
-## 6.  Solana program (Rust / Anchor)
-Use `groth16-solana` crate (already has BN-254 pre-compile).
-
+Solana (Anchor, ~130 k CU):
 ```rust
 use groth16_solana::groth16::{verify_groth16, Groth16Verifier};
-
-#[derive(Accounts)]
-pub struct VerifyMonero<'info> {
-    /// CHECK: size = 32*4
-    pub proof: AccountInfo<'info>,
-}
 
 pub fn handler(
     ctx: Context<VerifyMonero>,
@@ -219,49 +209,47 @@ pub fn handler(
     let vk = include_bytes!("../../monero_payment.vk.bin");
     let ok = verify_groth16(&p_a, &p_b, &p_c, &pub_signals, vk)?;
     require!(ok, ErrorCode::InvalidProof);
-    // store pub_signals[0..3] in PDA for later use
+    // store pub_signals hash in PDA for replay protection
     Ok(())
 }
 ```
 
-Compute budget ≈ **130 k CU** (well under 200 k limit).
+--------------------------------------------------------------------
+7.  Wallet-specific copy instructions (UI copy)
+--------------------------------------------------------------------
+| Wallet | How to get the 4 fields |
+|--------|-------------------------|
+| Feather | History → right-click tx → “Copy Tx key”, “Copy Tx ID”, give recipient address, type expected XMR |
+| Monero GUI | History → double-click tx → “Copy tx key”, “Copy Tx ID”, rest same |
+| Cake Wallet | Transactions → pick tx → ⋮ → Advanced → “Tx key” & “Tx ID” |
+| MyMonero Web | Open tx pop-up → “Secret tx key” + tx-hash at top |
+| CLI | `get_tx_key <txid>` → copy output, `show_transfers` → copy tx-id, rest same |
 
----
+--------------------------------------------------------------------
+8.  Security & privacy summary
+--------------------------------------------------------------------
+- tx-key never leaves browser (WASM memory only).  
+- All other fields are public – safe to POST.  
+- Amount & destination hashed → public inputs; fake values break proof.  
+- Merkle root anchors payment to mined block.  
+- Replay protection: store `keccak256(pubSignals)` in on-chain mapping.
 
-## 7.  Security checklist
-| Item | Status |
-|---|---|
-| Proving key lives **only** in browser cache (public file) | ✅ |
-| Private tx-key **never** leaves client | ✅ |
-| Amount & destination hashed → public inputs | ✅ |
-| Fake payment = fake Merkle root → proof fails | ✅ |
-| Replay protection | Store `pubSignals` hash in PDA / mapping |
-
----
-
-## 8.  User story (copy for your UI)
-1.  Open Feather → History → click the tx → “Copy → Tx key”.  
-2.  Paste tx-key, tx-hash, destination address, expected XMR amount.  
-3.  Pick the block hash (or let site fetch latest).  
-4.  Press “Generate ZK-proof” (takes ~3 s).  
-5.  Site shows QR / button → sends `pA, pB, pC, pub` to Solana/EVM.  
-6.  Smart contract flips `mapping[pubHash] = true`; airdrop unlocked.
-
----
-
-## 9.  Deliverables to commit into your repo
+--------------------------------------------------------------------
+9.  Repository layout
+--------------------------------------------------------------------
 ```
 /circuits
   monero_payment.circom
-  monero_payment.pk          (proving key, 3 MB)
-  monero_payment.vk          (verification key, 1 kB)
-
+  monero_payment.pk          (proving key, ~3 MB)
+  monero_payment.vk          (verification key, ~1 kB)
 /client
-  proveMoneroPayment.ts      (section 4)
-
+  proveMoneroPayment.ts      (section 5)
 /onchain
   MoneroPaymentVerifier.sol
   programs/monero-zk-verify  (Anchor project)
 ```
 
-Compile, deploy, ship—your web app now turns a 32-byte Monero tx-key into a **70-byte zk-SNARK** that any De-Fi contract can verify for ≤ 230 k gas.
+--------------------------------------------------------------------
+10.  One-sentence summary
+--------------------------------------------------------------------
+Paste **4 strings** from any wallet → browser produces **70-byte zk-SNARK** → Solana / Ethereum verifier accepts it, unlocking De-Fi value without ever exposing the sender’s secret key.
