@@ -1,18 +1,20 @@
 # wXMR Synthwrap Model – Standalone v1.0  
-*An immutable Monero ↔ Solana bridge that mints 1:1 wrapped-XMR, collateralised only by itself, with **≥ 100 %** backing and no arbitrary buffers.*
+*An immutable Monero ↔ Solana bridge that mints 1:1 wrapped-XMR, collateralised by yield-bearing assets, with **≥ 100 %** backing and rewards for Monero node block header pushers.*
 
 ---
 
 ## 1.  Mission Statement
-Launch **one immutable contract** that mints **1 wXMR for 1 XMR**, collateralised **only by wXMR itself**, with **≥ 100 %** backing and **no external oracles or arbitrary liquidation premiums**.
+Launch **one immutable contract** that mints **1 wXMR for 1 XMR**, collateralised by **yield-bearing stablecoins and yield-bearing native tokens**, with **≥ 100 %** backing and **rewards for Monero node block header pushers** to incentivize data availability.
 
 ---
 
-## 2.  v1 Scope (immutable, no external oracles)
-- **Collateral**: **raw wXMR only** → **1:1 pricing**, **zero oracle risk**.  
-- **Collateral ratio**: **self-declared by each LP** (≥ 100 %, i.e. ≥ parity).  
-- **Payout on failure**: **exactly 100 % of burned value** → **paid in wXMR** (no unwrap, no swap).  
-- **Code**: **deploy once**, **no admin keys**, **no upgrade proxy**, **no governance**.
+## 2.  v1 Scope 
+- **Collateral**: **yield-bearing stablecoins (USX) and yield-bearing native tokens**.  
+- **Collateral ratio**: **enforced minimum 105 % overcollateralization** for all LPs.  
+- **Payout on failure**: **entire collateral seized and distributed to affected users**.  
+- **Price oracle**: **Pyth oracle used for wXMR price feeds** to prevent on-chain price manipulation.  
+- **Block header rewards**: **yield proceeds distributed to Monero node block header pushers**, with **percentage set via wXMR governance voting**.  
+- **Governance**: **wXMR token holders set reward percentages and protocol parameters**.
 
 ---
 
@@ -34,20 +36,22 @@ Launch **one immutable contract** that mints **1 wXMR for 1 XMR**, collateralise
 | **Bridge** | **Verify proofs**, **track obligations**, **seize collateral**, **no upgrades**. | **None** (immutable). | **None** (no admin keys). |
 
 ------------------------------------------------
-### v1 Parameters (hard-coded)
-- **Min collateral ratio**: **100 %** (LP can set 100 %, 101 %, 150 %, …).  
-- **Liquidation payout**: **exactly 100 % of burn value**.  
+### v1 Parameters 
+- **Min collateral ratio**: **105 %** (enforced for all LPs).  
+- **Liquidation payout**: **entire collateral seized**.  
 - **Countdown**: **2 hours**.  
 - **Mint fee**: **LP declares** (basis points).  
 - **Registration deposit**: **0.05 SOL** (scales with obligation to deter grief).
+- **Price oracle**: **Pyth oracle for wXMR pricing**.
+- **Governance**: **wXMR token voting for reward parameters**.
 
 ------------------------------------------------
 ### v1 Attack & Mitigation
 | Attack | Mitigation |
 |--------|------------|
 | **Self-mint / self-burn** | **Deposit + mint fee + 2 h lock** → **net loss after gas**. |
-| **Race to 100 % → thin buffer** | **Deposit scales with head-room** → **griefing costs money**. |
-| **Oracle manipulation** | **None** – **no external price feed**. |
+| **Race to 105 % → thin buffer** | **105% enforced minimum + deposit scales with head-room** → **griefing costs money**. |
+| **On-chain price manipulation** | **Pyth oracle prevents wXMR price manipulation**. |
 
 ------------------------------------------------
 ## 5.  v1 Flow (no external oracles)
@@ -58,10 +62,12 @@ sequenceDiagram
   participant B as Bridge
   participant L as Liquidity Provider
   participant X as Monero Chain
+  participant P as Pyth Oracle
 
   Note over U,L: MINT FLOW (User → XMR, wants wXMR)
-  U->>B: request mint + pick any LP (self-ratio ≥ 100 %)
-  B->>B: check LP raw wXMR ≥ self-declared ratio
+  U->>B: request mint + pick any LP (≥ 105% collateral)
+  B->>P: fetch wXMR/USD price
+  B->>B: check LP yield-bearing collateral ≥ 105% obligation
   U->>X: send XMR to LP stealth address
   U->>B: submit ZK proof of payment
   B->>U: mint wXMR immediately
@@ -69,31 +75,30 @@ sequenceDiagram
 
   Note over U,L: BURN FLOW (wXMR → XMR)
   U->>B: burn wXMR + XMR destination
+  B->>P: fetch wXMR/USD price
   B->>L: 2-hour countdown starts
   alt LP fulfils
     L->>X: send XMR to destination
     L->>B: ZK proof of XMR send
     B->>U: burn complete
   else LP fails
-    B->>B: seize exactly 100 wXMR from LP collateral
-    B->>U: transfer 100 wXMR (no external tokens)
-    B->>L: return residual collateral (if any)
+    B->>P: fetch wXMR/USD price
+    B->>B: seize entire collateral from LP
+    B->>U: transfer wXMR value using seized collateral via Pyth pricing
+    B->>L: return residual collateral (if any above 105%)
   end
 ```
 
 ------------------------------------------------
-## 6.  Roadmap (post-v1, optional, non-breaking)
-
-| Version | What Changes | Token Contract | Bridge Code | Risk Surface |
-|---------|--------------|----------------|-------------|--------------|
-| **v2** | **Tier-2 adapter whitelist** (SOL, hyUSD, BTC, ETH) | **same wXMR-v1 mint** | **new bridge program** (reads adapter registry) | **+ Pyth oracle** |
-| **v3** | **Tier-3 adapter whitelist** (LSTs, LP tokens, money-market shares) | **same wXMR-v1 mint** | **same v2 bridge**, **more adapters** | **+ protocol smart-contract risk** |
-| **v4+** | **Private collateral** (shielded pool notes, zk-LP) | **same wXMR-v1 mint** | **same v2/v3 bridge**, **zk adapters** | **+ zk-circuit risk** |
-
-**Migration path**: **LPs withdraw from v1**, **deposit into v2/v3** → **1:1 wrap**, **no token change**, **no user friction**.
+## 6.  wXMR Governance Model
+- **Governance token**: **wXMR holders vote on protocol parameters**
+- **Votable parameters**: **block header pusher reward percentages**, **collateral ratios**, **fees**
+- **Yield distribution**: **governance set percentage of yield from collateral goes to block header pushers**
+- **Reward mechanism**: **Monero node operators push block headers → receive yield rewards**
 
 ------------------------------------------------
 ## 7.  Take-away
-- **v1 is done** – **immutable, oracle-free, market-set collateral ratios ≥ parity**, **pays exactly 100 % on failure**.  
-- **Future tiers** = **optional adapter programs** that **wrap/unwrap the same wXMR-v1 token**.  
-- **Market decides** which tier dominates; **v1 stays live forever** as **the ultra-safe, ultra-simple Monero bridge**.
+- **Yield-bearing collateral** provides **organic returns** for **block header pushers**.  
+- **105% overcollateralization** enforced with **Pyth oracle price feeds**.  
+- **wXMR governance** controls **reward allocations** and **protocol evolution**.  
+- **Entire collateral seized on failure** → **maximum user protection**.
