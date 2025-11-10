@@ -177,7 +177,7 @@ Modern web applications for different user personas:
 - Real-time transaction monitoring
 
 **Wrapped XMR (wXMR) System** (`wxmr/`):
-- **Yield-bearing synthwrap**: 105% overcollateralized by yield-bearing assets (USX, native tokens)
+- **Yield-bearing synthwrap**: 110% overcollateralized by yield-bearing USX stablecoin and native tokens
 - **Pyth integration**: Real-time wXMR pricing prevents on-chain manipulation
 - **Block header rewards**: Monero node operators receive yield proceeds for pushing block headers
 - **wXMR governance**: Token holders vote on reward percentages and protocol parameters

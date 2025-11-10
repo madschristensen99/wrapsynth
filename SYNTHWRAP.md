@@ -10,8 +10,9 @@ Launch **one immutable contract** that mints **1 wXMR for 1 XMR**, collateralise
 
 ## 2.  v1 Scope 
 - **Collateral**: **yield-bearing stablecoins (USX) and yield-bearing native tokens**.  
-- **Collateral ratio**: **enforced minimum 105 % overcollateralization** for all LPs.  
-- **Payout on failure**: **entire collateral seized and distributed to affected users**.  
+- **Collateral ratio**: **enforced minimum 110 % overcollateralization** for all LPs.  
+- **Position takeover**: **any LP can take over positions below 110%**.  
+- **Payout on failure**: **110 % of burned value paid to users from seized collateral**.  
 - **Price oracle**: **Pyth oracle used for wXMR price feeds** to prevent on-chain price manipulation.  
 - **Block header rewards**: **yield proceeds distributed to Monero node block header pushers**, with **percentage set via wXMR governance voting**.  
 - **Governance**: **wXMR token holders set reward percentages and protocol parameters**.
@@ -31,14 +32,15 @@ Launch **one immutable contract** that mints **1 wXMR for 1 XMR**, collateralise
 ## 4.  v1 Roles & Rules
 | Role | Responsibility | Reward | Risk |
 |------|---------------|--------|------|
-| **LP** | **Post XMR addresses**, **stake ≥ 100 % self-declared wXMR**, **redeem within 2 h**. | **Mint fee (market-set)** | **Lose exactly 100 % wXMR if fail**. |
-| **User** | **Send XMR**, **ZK-proof**, **burn wXMR**, **pick any LP ≥ parity**. | **1 wXMR minted**, **100 % wXMR paid on failure**. | **None** (always ≥ 100 % backed). |
+| **LP** | **Post XMR addresses**, **stake ≥ 110 % USX/native tokens**, **redeem within 2 h**. | **Mint fee (market-set)** | **Position taken if <110%, lose 110% if fail**. |
+| **User** | **Send XMR**, **ZK-proof**, **burn wXMR**, **pick any LP ≥ 110%**. | **1 wXMR minted**, **110 % paid on failure**. | **None** (always ≥ 110 % backed). |
 | **Bridge** | **Verify proofs**, **track obligations**, **seize collateral**, **no upgrades**. | **None** (immutable). | **None** (no admin keys). |
 
 ------------------------------------------------
 ### v1 Parameters 
-- **Min collateral ratio**: **105 %** (enforced for all LPs).  
-- **Liquidation payout**: **entire collateral seized**.  
+- **Min collateral ratio**: **110 %** (enforced for all LPs, allows position takeover below threshold).  
+- **User payout**: **110 % of burned value** → **extra 10% compensation**.  
+- **Position takeover**: **any LP can take over positions below 110% collateral**.  
 - **Countdown**: **2 hours**.  
 - **Mint fee**: **LP declares** (basis points).  
 - **Registration deposit**: **0.05 SOL** (scales with obligation to deter grief).
@@ -50,11 +52,12 @@ Launch **one immutable contract** that mints **1 wXMR for 1 XMR**, collateralise
 | Attack | Mitigation |
 |--------|------------|
 | **Self-mint / self-burn** | **Deposit + mint fee + 2 h lock** → **net loss after gas**. |
-| **Race to 105 % → thin buffer** | **105% enforced minimum + deposit scales with head-room** → **griefing costs money**. |
+| **LP undercollateralization** | **110% minimum + position takeover by other LPs** → **collateral always managed**. |
 | **On-chain price manipulation** | **Pyth oracle prevents wXMR price manipulation**. |
+| **Race to 110% → thin buffer** | **Position takeover mechanism** → **undercollateralized LPs lose positions**. |
 
 ------------------------------------------------
-## 5.  v1 Flow (no external oracles)
+## 5.  v1 Flow
 
 ```mermaid
 sequenceDiagram
@@ -83,9 +86,9 @@ sequenceDiagram
     B->>U: burn complete
   else LP fails
     B->>P: fetch wXMR/USD price
-    B->>B: seize entire collateral from LP
-    B->>U: transfer wXMR value using seized collateral via Pyth pricing
-    B->>L: return residual collateral (if any above 105%)
+    B->>B: seize 110% collateral from LP
+    B->>U: transfer 110% wXMR value using seized collateral via Pyth pricing
+    B->>L: return residual collateral (if any above 110%)
   end
 ```
 
