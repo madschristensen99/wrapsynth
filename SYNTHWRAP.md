@@ -94,13 +94,14 @@ sequenceDiagram
 ------------------------------------------------
 ## 6.  wXMR Governance Model
 - **Governance token**: **wXMR holders vote on protocol parameters**
-- **Votable parameters**: **block header pusher reward percentages**, **collateral ratios**, **fees**
+- **Votable parameters**: **block header pusher reward percentages**, **Monero node addresses**
 - **Yield distribution**: **governance set percentage of yield from collateral goes to block header pushers**
 - **Reward mechanism**: **Monero node operators push block headers → receive yield rewards**
 
 ------------------------------------------------
 ## 7.  Take-away
 - **Yield-bearing collateral** provides **organic returns** for **block header pushers**.  
-- **105% overcollateralization** enforced with **Pyth oracle price feeds**.  
-- **wXMR governance** controls **reward allocations** and **protocol evolution**.  
-- **Entire collateral seized on failure** → **maximum user protection**.
+- **110% overcollateralization** enforced with **Pyth oracle price feeds**.  
+- **wXMR governance** controls **reward percentages** and **Monero node addresses**.  
+- **110% collateral payout on failure** → **maximum user protection + 10% bonus**.  
+- **Position takeover mechanism** → **LP accountability and system stability**.
