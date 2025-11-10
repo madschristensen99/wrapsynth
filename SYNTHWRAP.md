@@ -10,9 +10,9 @@ Launch **one immutable contract** that mints **1 wXMR for 1 XMR**, collateralise
 
 ## 2.  v1 Scope 
 - **Collateral**: **yield-bearing stablecoins (USX) and yield-bearing native tokens**.  
-- **Collateral ratio**: **enforced minimum 110 % overcollateralization** for all LPs.  
+- **Collateral ratio**: **minimum 110+% overcollateralization** for all LPs (can be higher).  
 - **Position takeover**: **any LP can take over positions below 110%**.  
-- **Payout on failure**: **110 % of burned value paid to users from seized collateral**.  
+- **Payout on failure**: **exactly 110 % of burned value paid to users from seized collateral**.  
 - **Price oracle**: **Pyth oracle used for wXMR price feeds** to prevent on-chain price manipulation.  
 - **Block header rewards**: **yield proceeds distributed to Monero node block header pushers**, with **percentage set via wXMR governance voting**.  
 - **Governance**: **wXMR token holders set reward percentages and Monero node addresses**.
@@ -37,8 +37,8 @@ Launch **one immutable contract** that mints **1 wXMR for 1 XMR**, collateralise
 
 ------------------------------------------------
 ### v1 Parameters 
-- **Min collateral ratio**: **110 %** (enforced for all LPs, allows position takeover below threshold).  
-- **User payout**: **110 % of burned value** → **extra 10% compensation**.  
+- **Min collateral ratio**: **≥110 %** (for all LPs, allows position takeover below 110%).  
+- **User payout**: **exactly 110 % of burned value** → **fixed 10% bonus compensation**.  
 - **Position takeover**: **any LP can take over positions below 110% collateral**.  
 - **Countdown**: **2 hours**.  
 - **Mint fee**: **LP declares** (basis points).  
@@ -101,7 +101,7 @@ sequenceDiagram
 ------------------------------------------------
 ## 7.  Take-away
 - **Yield-bearing collateral** provides **organic returns** for **block header pushers**.  
-- **110% overcollateralization** enforced with **Pyth oracle price feeds**.  
+- **≥110% overcollateralization** enforced with **Pyth oracle price feeds**.  
 - **wXMR governance** controls **reward percentages** and **Monero node addresses**.  
-- **110% collateral payout on failure** → **maximum user protection + 10% bonus**.  
+- **exactly 110% collateral payout on failure** → **fixed protection + 10% bonus**.  
 - **Position takeover mechanism** → **LP accountability and system stability**.
