@@ -122,7 +122,9 @@ impl OracleServer {
     }
 
     fn fetch_monero_data(node_url: &str) -> Result<MoneroZkData, Box<dyn std::error::Error>> {
-        let client = reqwest::blocking::Client::new();
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()?;
         
         // Get current block height
         let height_response: Value = client
@@ -136,7 +138,8 @@ impl OracleServer {
             .send()?
             .json()?;
             
-        let height = height_response["result"]["count"].as_u64().unwrap_or(0);
+        let height = height_response["result"]["count"].as_u64().unwrap_or(0).saturating_sub(1);
+        println!("Got block height: {}", height);
         
         // Get block data
         let block_response: Value = client
