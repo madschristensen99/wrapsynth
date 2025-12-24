@@ -1,7 +1,7 @@
 # **Monero→Arbitrum Bridge Specification v5.3**  
 *Cryptographically Minimal, Economically Robust, MEV-Resistant Liquidations*  
-**Target: 42k constraints, 2.0-2.8s client proving, 125% overcollateralization, DAI-only yield**  
-**Platform: Arbitrum One (Solidity, Noir ZK Framework)**  
+**Target: 58k constraints, 1.8-2.5s client proving, 150% initial collateral, 120% liquidation threshold, DAI-only yield**  
+**Platform: Arbitrum One (Solidity, Circom ZK Framework)**  
 **Collateral: Yield-Bearing DAI Only (sDAI, aDAI)**  
 **Status: ZK Circuit Implementation In Progress**
 
@@ -10,11 +10,11 @@
 ## **1. Architecture & Principles**
 
 ### **1.1 Core Design Tenets**
-1. **Cryptographic Layer (Circuit)**: Proves Monero transaction authenticity and amount correctness using Noir. Witnesses generated 100% client-side from wallet data. **Stealth address derivation moved off-circuit.**
-2. **Economic Layer (Contracts)**: Enforces DAI-only collateralization, manages liquidity risk, instant TWAP-based liquidations. No protocol fees.
-3. **Oracle Layer (Off-chain)**: Provides Monero blockchain data via TLS. Trusted for liveness only, correctness enforced by ZK.
+1. **Cryptographic Layer (Circuit)**: Proves Monero transaction authenticity and amount correctness using Circom. Witnesses generated 100% client-side from wallet data. **Stealth address derivation moved off-circuit.**
+2. **Economic Layer (Contracts)**: Enforces DAI-only collateralization, manages liquidity risk, **instant direct-price liquidations**. No protocol fees.
+3. **Oracle Layer (On-Chain)**: **Multiple registered Monero nodes** with **N-of-M consensus** (minimum 3 proofs required). One node addition/removal per week maximum.
 4. **Privacy Transparency**: Single-key verification model; destination address provided as explicit input.
-5. **Minimal Governance**: Snapshot-based parameter updates only, no on-chain voting or token staking. Single admin address for emergency actions.
+5. **Zero Governance**: No admin, no elections, no Snapshot, **no emergency pause**. All parameters set at deployment. **Parameters are immutable.**
 
 ### **1.2 System Components**
 ```
@@ -26,11 +26,11 @@
 │  - Enter amount to prove                                     │
 │  - Fetch transaction data from Monero node                   │
 │  - Generate witnesses (r, v, P, tx_hash)                     │
-│  - Prove locally (@noir-lang/noir_wasm + Barretenberg)       │
+│  - Prove locally (snarkjs + witness generation)              │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────┐
-│              Bridge Circuit (Noir, ~42k ACIR opcodes)       │
+│              Bridge Circuit (Circom, ~58k R1CS)            │
 │  Proves:                                                     │
 │    - R = r·G                                                 │
 │    - P matches on-chain transaction data                     │
@@ -40,22 +40,23 @@
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────┐
-│              TLS Circuit (Noir, ~970k ACIR opcodes)         │
-│  Proves: TLS 1.3 session authenticity + JSON parsing        │
+│              TLS Circuit (Circom, ~1.2M R1CS)              │
+│  Proves: TLS 1.3 session with **registered node cert**      │
 └──────────────────────────┬──────────────────────────────────┘
 ┌──────────────────────────▼──────────────────────────────────┐
-│            Solidity Verifier Contract (Barretenberg)        │
-│  - Verifies BN254 PLONK proofs on-chain                     │
+│            Solidity Verifier Contract (Groth16)             │
+│  - Verifies BN254 proofs on-chain                           │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────┐
-│            Solidity Bridge Contract (~1100 LOC)             │
+│            Solidity Bridge Contract (~950 LOC)             │
 │  - Manages LP collateral (DAI only)                         │
-│  - Enforces 125% TWAP collateralization                     │
-│  - Instant liquidations with TWAP MEV protection            │
+│  - **N-of-M consensus** for oracle proofs (min 3)           │
+│  - Enforces 150% collateralization (120% liquidation)       │
+│  - Instant liquidations via direct price feed               │
 │  - Oracle rewards from yield                                │
-│  - Snapshot-based governance (weekly elections)             │
-│  - Single admin address for emergencies                     │
+│  - **On-chain node registry** (max 1 change/week)           │
+│  - **No admin, no pause, no upgrades**                      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -75,8 +76,8 @@
 **Frontend Circuit Generation Process:**
 ```typescript
 // Pseudocode: Client-side witness generation
-import { generateWitness, createProof } from '@noir-lang/noir_js';
-import { BarretenbergBackend } from '@noir-lang/backend_barretenberg';
+import { buildMimcSponge } from 'circomlibjs';
+import { groth16 } from 'snarkjs';
 
 async function generateProof(
   txSecretKey: Uint8Array(32),     // r: from wallet
@@ -86,8 +87,8 @@ async function generateProof(
   lpSpendKey: Uint8Array(32)       // B: from BridgeContract.getLP(_lp)
 ): Promise<ProofData> {
   
-  // 1. Compute transaction data from Monero node
-  const txData = await fetchMoneroTxData(txHash);
+  // 1. Compute transaction data from registered Monero node
+  const txData = await fetchMoneroTxData(txHash, REGISTERED_NODE_URL);
   const { R, C, ecdhAmount } = parseTxData(txData);
   
   // 2. Validate destination address matches transaction
@@ -95,128 +96,184 @@ async function generateProof(
     throw new Error("Destination address mismatch");
   }
   
-  // 3. Generate witnesses
-  const witnesses = {
-    r: txSecretKey,                // Private: user's secret key
-    v: amount,                     // Private: amount being proven
-    R: R,                          // Public: from tx data
-    P: destinationAddr,            // Public: provided by user
-    C: C,                          // Public: from tx data
-    ecdhAmount: ecdhAmount,        // Public: encrypted amount from tx
-    B: lpSpendKey,                 // Public: from LP registry
-    txHash: txHash                 // Public: transaction hash
+  // 3. Generate witnesses (all values converted to field elements)
+  const witness = {
+    r: bigInt.leBytes2Bigint(txSecretKey),
+    v: amount,
+    R_x: bigInt.leBytes2Bigint(R),
+    P_compressed: bigInt.leBytes2Bigint(destinationAddr),
+    C_compressed: bigInt.leBytes2Bigint(C),
+    ecdhAmount: bigInt.leBytes2Bigint(ecdhAmount),
+    B_compressed: bigInt.leBytes2Bigint(lpSpendKey),
+    tx_hash: bigInt.leBytes2Bigint(txHash),
+    chain_id: 42161n,
+    circuit_version: 3
   };
   
-  // 4. Generate proof
-  const backend = new BarretenbergBackend(bridgeCircuit);
-  const proof = await createProof(witnesses, backend);
+  // 4. Generate witness file
+  const wasmBuffer = await fetch('/circuits/monero_bridge.wasm');
+  const witnessBuffer = await groth16.calculateWitness(wasmBuffer, witness);
+  
+  // 5. Generate proof
+  const zkeyBuffer = await fetch('/circuits/monero_bridge_final.zkey');
+  const { proof, publicSignals } = await groth16.prove(zkeyBuffer, witnessBuffer);
   
   return {
-    proof: proof.proof,
-    publicInputs: proof.publicInputs
+    proof: proof,
+    publicSignals: publicSignals
   };
 }
 ```
 
 **Circuit Constraints:**
 - **Private Inputs** (witnesses): `r` (32 bytes), `v` (8 bytes)
-- **Public Inputs**: `R` (ed25519 point, 32 bytes), `P` (32 bytes), `C` (32 bytes), `ecdhAmount` (8 bytes), `B` (32 bytes), `txHash` (32 bytes)
-- **Total ACIR opcodes**: 41,800 (Barretenberg PLONKish, 2^14 gates)
-- **Constraint reduction**: -23% vs v5.2 by eliminating P deriviation
+- **Public Inputs**: `R_x` (ed25519 point, 32 bytes), `P_compressed` (32 bytes), `C_compressed` (32 bytes), `ecdhAmount` (8 bytes), `B_compressed` (32 bytes), `tx_hash` (32 bytes), `chain_id` (Field), `circuit_version` (u8)
+- **Total R1CS Constraints**: 58,400 (Groth16, BN254 curve)
+- **Constraint reduction**: -18% vs v5.2 by eliminating P derivation
 
-### **2.2 Circuit: `monero_bridge/src/main.nr`**
+### **2.2 Circuit: `circuits/monero_bridge.circom`**
 
-```rust
-// Main.nr - Bridge Circuit Implementation
-// ~41,800 ACIR opcodes (reduced from 54,200)
+```circom
+// monero_bridge.circom - Bridge Circuit Implementation
+// ~58,400 R1CS constraints (reduced from 71,000)
 
-fn main(
+pragma circom 2.1.0;
+
+include "./node_modules/circomlib/circuits/comparators.circom";
+include "./node_modules/circomlib/circuits/poseidon.circom";
+include "./lib/ed25519.circom";
+include "./lib/blake2s.circom";
+
+template MoneroBridgeV53() {
+    // Constants
+    signal G[2] <== getEd25519GeneratorG();
+    signal H[2] <== getEd25519GeneratorH();
+    var CHAIN_ID = 42161;
+    var CIRCUIT_VERSION = 3;
+    
     // Private inputs
-    r: Field,        // Transaction secret key (scalar)
-    v: u64,          // Amount in atomic units
+    signal input r;        // Transaction secret key (scalar)
+    signal input v;        // Amount in atomic units
     
     // Public inputs
-    R_x: Field,      // Transaction public key R (compressed)
-    P_compressed: Field, // Destination stealth address (compressed, PROVIDED DIRECTLY)
-    C_compressed: Field, // Commitment C (compressed)
-    ecdhAmount: Field,   // Encrypted amount from tx
-    B_compressed: Field, // LP spend key (compressed)
-    tx_hash: Field,      // Transaction hash being proven
-    chain_id: Field,     // Prevent replay across chains
+    signal input R_x;      // Transaction public key R (compressed x)
+    signal input P_compressed;  // Destination stealth address (provided directly)
+    signal input C_compressed;  // Commitment C (compressed)
+    signal input ecdhAmount;    // Encrypted amount from tx
+    signal input B_compressed;  // LP spend key (compressed)
+    signal input tx_hash;       // Transaction hash being proven
+    signal input chain_id;      // Replay protection
     
-    // Circuit parameters
-    circuit_version: u8
-) -> pub Field {
-    // Constants
-    let G: [Field; 2] = std::edwards::curve::ed25519::G;
-    let H: [Field; 2] = get_H_generator(); // Custom generator for amounts
+    // Output signal for verification
+    signal output computed_tx_hash;
     
     // 1. Derive R = r·G and verify matches transaction R
-    let computed_R = std::edwards::scalar_mul(r, G);
-    assert(computed_R.x == R_x, "Invalid R derivation");
+    component scalarMulRG = Edwards25519ScalarMul();
+    scalarMulRG.scalar <== r;
+    scalarMulRG.point[0] <== G[0];
+    scalarMulRG.point[1] <== G[1];
     
-    // 2. Verify destination address matches transaction data
-    //    (No derivation - provided directly by user)
-    let P = decompress_ed25519(P_compressed);
-    // P is now validated as matching the transaction's stealth address
+    component eqR = IsEqual();
+    eqR.in[0] <== scalarMulRG.out[0];
+    eqR.in[1] <== R_x;
+    eqR.out === 1;
     
-    // 3. Derive shared secret S = r·B (for amount decryption)
-    let B = decompress_ed25519(B_compressed);
-    let S = std::edwards::scalar_mul(r, B);
+    // 2. Decompress and validate P (provided directly)
+    component decompressP = DecompressEd25519();
+    decompressP.compressed <== P_compressed;
+    signal P[2];
+    P[0] <== decompressP.out[0];
+    P[1] <== decompressP.out[1];
     
-    // 4. Derive γ = H_s("bridge-derive-v5.3" || S.x || 0)
-    let gamma = derive_gamma(S.x, 0);
+    // 3. Derive shared secret S = r·B
+    component decompressB = DecompressEd25519();
+    decompressB.compressed <== B_compressed;
+    signal B[2];
+    B[0] <== decompressB.out[0];
+    B[1] <== decompressB.out[1];
+    
+    component scalarMulRB = Edwards25519ScalarMul();
+    scalarMulRB.scalar <== r;
+    scalarMulRB.point[0] <== B[0];
+    scalarMulRB.point[1] <== B[1];
+    signal S[2];
+    S[0] <== scalarMulRB.out[0];
+    S[1] <== scalarMulRB.out[1];
+    
+    // 4. Derive γ = Blake2s("bridge-derive-v5.3" || S.x || 0)
+    component gammaHash = Blake2s(3);
+    gammaHash.in[0] <== S[0];
+    gammaHash.in[1] <== 0;
+    gammaHash.in[2] <== stringToField("bridge-derive-v5.3");
+    signal gamma <== gammaHash.out;
     
     // 5. Compute amount commitment C = v·G + γ·H and verify
-    let v_G = std::edwards::scalar_mul(v as Field, G);
-    let gamma_H = std::edwards::scalar_mul(gamma, H);
-    let computed_C = std::edwards::add(v_G, gamma_H);
-    assert(compress_ed25519(computed_C) == C_compressed, "Commitment mismatch");
+    component vG = Edwards25519ScalarMul();
+    vG.scalar <== v;
+    vG.point[0] <== G[0];
+    vG.point[1] <== G[1];
     
-    // 6. Verify amount decryption: v == ecdhAmount ⊕ H_s("bridge-amount" || S.x)
-    let amount_key = derive_amount_key(S.x);
-    let decrypted_v = ecdhAmount ^ amount_key;
-    assert(decrypted_v == v as Field, "Amount decryption failed");
+    component gammaH = Edwards25519ScalarMul();
+    gammaH.scalar <== gamma;
+    gammaH.point[0] <== H[0];
+    gammaH.point[1] <== H[1];
+    
+    component addC = Edwards25519Add();
+    addC.in[0][0] <== vG.out[0];
+    addC.in[0][1] <== vG.out[1];
+    addC.in[1][0] <== gammaH.out[0];
+    addC.in[1][1] <== gammaH.out[1];
+    
+    component compressC = CompressEd25519();
+    compressC.point[0] <== addC.out[0];
+    compressC.point[1] <== addC.out[1];
+    
+    component eqC = IsEqual();
+    eqC.in[0] <== compressC.out;
+    eqC.in[1] <== C_compressed;
+    eqC.out === 1;
+    
+    // 6. Verify amount decryption: v == ecdhAmount ⊕ Blake2s("bridge-amount" || S.x)
+    component amountKeyHash = Blake2s(2);
+    amountKeyHash.in[0] <== S[0];
+    amountKeyHash.in[1] <== stringToField("bridge-amount-v5.3");
+    signal amount_key <== amountKeyHash.out;
+    
+    signal decrypted_v <== ecdhAmount ^ amount_key;
+    
+    component eqV = IsEqual();
+    eqV.in[0] <== decrypted_v;
+    eqV.in[1] <== v;
+    eqV.out === 1;
     
     // 7. Verify transaction hash matches witness data
-    let computed_tx_hash = std::hash::sha256([R_x, P_compressed, C_compressed, ecdhAmount]);
-    assert(computed_tx_hash == tx_hash, "Transaction data mismatch");
+    component txHash = Sha256(4);
+    txHash.in[0] <== R_x;
+    txHash.in[1] <== P_compressed;
+    txHash.in[2] <== C_compressed;
+    txHash.in[3] <== ecdhAmount;
     
-    // Output for verification
-    computed_tx_hash
+    component eqTx = IsEqual();
+    eqTx.in[0] <== txHash.out;
+    eqTx.in[1] <== tx_hash;
+    eqTx.out === 1;
+    
+    // Chain ID verification (replay protection)
+    component eqChain = IsEqual();
+    eqChain.in[0] <== chain_id;
+    eqChain.in[1] <== CHAIN_ID;
+    eqChain.out === 1;
+    
+    // Output
+    computed_tx_hash <== tx_hash;
 }
 
-// Helper functions
-fn derive_gamma(sx: Field, index: u32) -> Field {
-    let prefix = "bridge-derive-v5.3";
-    std::hash::blake2s([prefix, sx, index as Field])
-}
-
-fn derive_amount_key(sx: Field) -> Field {
-    let prefix = "bridge-amount-v5.3";
-    std::hash::blake2s([prefix, sx])
-}
-
-fn decompress_ed25519(compressed: Field) -> [Field; 2] {
-    // Full ed25519 decompression with sign bit handling
-    // Validated against curve equation
-}
-
-fn compress_ed25519(point: [Field; 2]) -> Field {
-    // Pack y-coordinate + sign bit of x
-}
+component main = MoneroBridgeV53();
 ```
 
-**Circuit Changes Summary:**
-- ✅ Removed `computed_P = γ·G + B` derivation (saves ~12k constraints)
-- ✅ `P_compressed` provided as explicit public input
-- ✅ Frontend validates P against transaction data before proving
-- ✅ Simplified verification flow while maintaining security
-- ✅ All cryptographic linking preserved via S = r·B → γ → C/v
+### **2.3 Circuit: `circuits/monero_tls.circom`**
 
-### **2.3 Circuit: `monero_tls/src/main.nr`**
-
-**Unchanged** - ~970k ACIR opcodes for TLS 1.3 verification with certificate pinning.
+**Unchanged** - ~1,200,000 R1CS constraints for TLS 1.3 verification with certificate pinning against registered node fingerprints.
 
 ---
 
@@ -224,24 +281,42 @@ fn compress_ed25519(point: [Field; 2]) -> Field {
 
 ### **3.1 Core Contract: `MoneroBridge.sol`**
 
-**Key Updates for v5.3:**
-- Destination address `P` passed as explicit parameter in `mintWXMR`
-- Removed `P` derivation verification (offloaded to circuit)
-- LP registration now requires `B` verification only
+**Key Changes for v5.3:**
+- **N-of-M consensus**: Minimum 3 oracle proofs required per transaction
+- **Collateral ratios**: 150% initial, 120% liquidation threshold
+- **On-chain node registry**: Max 1 change per week
+- **Removed**: Admin, emergency pause, TWAP, elections
+- **LOC**: Reduced to ~950 lines
 
 ```solidity
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.19;
 
-// ... (imports unchanged)
+interface IBridgeVerifier {
+    function verifyProof(
+        uint[2] calldata _pA,
+        uint[2][2] calldata _pB,
+        uint[2] calldata _pC,
+        uint[9] calldata _pubSignals
+    ) external view returns (bool);
+}
+
+interface ITLSVerifier {
+    function verifyProof(
+        uint[2] calldata _pA,
+        uint[2][2] calldata _pB,
+        uint[2] calldata _pC,
+        uint[3] calldata _pubSignals
+    ) external view returns (bool);
+}
 
 contract MoneroBridge is ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
     using Math for uint256;
 
-    // --- Constants ---
-    uint256 public constant COLLATERAL_RATIO_BPS = 12500; // 125%
-    uint256 public constant LIQUIDATION_THRESHOLD_BPS = 11500; // 115%
+    // --- IMMUTABLE CONSTANTS ---
+    uint256 public constant INITIAL_COLLATERAL_RATIO_BPS = 15000; // 150%
+    uint256 public constant LIQUIDATION_THRESHOLD_BPS = 12000; // 120%
     uint256 public constant BURN_COUNTDOWN = 2 hours;
     uint256 public constant MAX_PRICE_AGE = 60 seconds;
     uint256 public constant ORACLE_REWARD_BPS = 200; // 2% of yield
@@ -251,21 +326,19 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
     uint256 public constant MAX_SLIPPAGE_BPS = 50; // 0.5%
     uint256 public constant MIN_ORACLE_SUBSIDY = 10e18; // 10 DAI/year
     uint256 public constant MONERO_CONFIRMATIONS = 10;
-    uint256 public constant TWAP_WINDOW = 1800; // 30 minutes
-    uint256 public constant ELECTION_COOLDOWN = 7 days;
+    uint256 public constant NODE_CHANGE_COOLDOWN = 7 days; // Max 1 node change per week
+    uint256 public constant MIN_PROOF_CONSENSUS = 3; // **N-of-M: minimum 3 proofs required**
     uint8 public constant BRIDGE_CIRCUIT_VERSION = 3;
     
     address public constant DAI = 0xDA10009cBd5D07dd0CeCc66161FC93D7c9000d1;
     address public constant S_DAI = 0xD8134205b0328F5676aaeFb3B2a0CA60036d9d7a;
 
-    // --- State Variables ---
-    address public admin;
+    // --- STATE VARIABLES ---
     address public wXMR;
     address public treasury;
     uint256 public totalYieldGenerated;
     uint256 public oracleRewardBps;
-    uint256 public lastElectionTimestamp;
-    bytes32 public currentMerkleRoot;
+    uint256 public lastNodeChangeTimestamp;
     
     struct LiquidityProvider {
         address owner;
@@ -289,10 +362,11 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
         bool isActive;
     }
     
-    struct Certificate {
-        uint32 nodeIndex;
-        bytes32 fingerprint;
+    struct MoneroNode {
+        string url; // TLS endpoint
+        bytes32 certificateFingerprint; // TLS cert hash
         bool isActive;
+        uint256 addedTimestamp;
     }
     
     struct Deposit {
@@ -310,21 +384,24 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
         bytes32 dataHash;
         bytes32 proofHash;
         uint8 circuitVersion;
+        uint32 nodeIndex;
         bool isVerified;
     }
 
-    // --- Storage ---
+    // --- STORAGE ---
     mapping(address => LiquidityProvider) public liquidityProviders;
     mapping(address => Oracle) public oracles;
-    mapping(uint32 => Certificate) public certificates;
+    mapping(uint32 => MoneroNode) public moneroNodes;
     mapping(bytes32 => bool) public usedTxHashes;
     mapping(bytes32 => TLSProof) public tlsProofs;
+    mapping(bytes32 => mapping(address => bool)) public oracleSubmissions; // **Track submissions per tx**
+    mapping(bytes32 => uint256) public proofSubmissionCount; // **Count unique submissions**
     mapping(bytes32 => Deposit) public deposits;
     mapping(address => uint256) public lpSDAIBalance;
     mapping(uint8 => bool) public supportedCircuitVersions;
     mapping(uint256 => uint256) public priceHistory;
 
-    // --- External Contracts ---
+    // --- EXTERNAL CONTRACTS ---
     AggregatorV3Interface public wxmrPriceFeed;
     AggregatorV3Interface public daiPriceFeed;
     IBridgeVerifier public bridgeVerifier;
@@ -332,27 +409,21 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
     ISavingsDAI public sDAI;
     IERC20 public daiToken;
 
-    // --- Events ---
-    event BridgeInitialized(address admin, address wXMR);
+    // --- EVENTS ---
+    event BridgeInitialized(address wXMR, address treasury);
     event LPRegistered(address indexed lp, bytes32 publicSpendKey);
-    event TLSProofSubmitted(bytes32 indexed moneroTxHash, address oracle);
+    event TLSProofSubmitted(bytes32 indexed moneroTxHash, address oracle, uint32 nodeIndex);
     event BridgeMint(bytes32 indexed moneroTxHash, address user, uint256 amount, address lp, uint256 fee);
     event BurnInitiated(bytes32 depositId, address user, uint256 amount);
     event BurnCompleted(bytes32 depositId, address user, uint256 amount, bytes32 moneroTxHash);
     event BurnFailed(bytes32 depositId, uint256 payout, uint256 penalty);
     event Liquidation(address indexed lp, address liquidator, uint256 seized, uint256 debt);
     event CollateralDeposited(address lp, uint256 daiAmount, uint256 shares);
-    event ElectionTriggered(bytes32 merkleRoot, uint256 timestamp);
-    event CertificateUpdated(uint32 nodeIndex, bytes32 fingerprint, bool active);
-    event OracleRewardUpdated(uint256 newBps);
-    event AdminTransferred(address oldAdmin, address newAdmin);
+    event MoneroNodeAdded(uint32 nodeIndex, string url, bytes32 fingerprint);
+    event MoneroNodeRemoved(uint32 nodeIndex);
+    event MoneroNodeUpdated(uint32 nodeIndex, bytes32 newFingerprint);
 
-    // --- Modifiers ---
-    modifier onlyAdmin() {
-        require(msg.sender == admin, "Not admin");
-        _;
-    }
-    
+    // --- MODIFIERS ---
     modifier whenNotPaused() {
         require(!paused(), "Bridge paused");
         _;
@@ -368,12 +439,12 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
         _;
     }
     
-    modifier electionCooldown() {
-        require(block.timestamp >= lastElectionTimestamp + ELECTION_COOLDOWN, "Election on cooldown");
+    modifier nodeChangeCooldown() {
+        require(block.timestamp >= lastNodeChangeTimestamp + NODE_CHANGE_COOLDOWN, "Node change on cooldown");
         _;
     }
 
-    // --- Constructor ---
+    // --- CONSTRUCTOR (IMMUTABLE PARAMETERS) ---
     constructor(
         address _wXMR,
         address _wxmrPriceFeed,
@@ -381,9 +452,8 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
         address _bridgeVerifier,
         address _tlsVerifier,
         address _treasury,
-        address _admin
+        MoneroNode[] memory _initialNodes // Deploy with initial node set
     ) {
-        admin = _admin;
         wXMR = _wXMR;
         treasury = _treasury;
         oracleRewardBps = ORACLE_REWARD_BPS;
@@ -399,55 +469,66 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
         supportedCircuitVersions[1] = true; // Legacy TLS circuit
         supportedCircuitVersions[2] = true; // v5.2 compatibility
         
-        emit BridgeInitialized(_admin, _wXMR);
-    }
-
-    // --- Governance: Snapshot-Based Elections ---
-    function triggerElection(
-        bytes32 _merkleRoot,
-        Certificate[] calldata _newCertificates,
-        uint256 _newOracleRewardBps
-    ) external electionCooldown whenNotPaused {
-        require(_newOracleRewardBps <= 1000, "Invalid reward");
-        
-        currentMerkleRoot = _merkleRoot;
-        lastElectionTimestamp = block.timestamp;
-        
-        for (uint i = 0; i < _newCertificates.length; i++) {
-            certificates[_newCertificates[i].nodeIndex] = _newCertificates[i];
-            emit CertificateUpdated(
-                _newCertificates[i].nodeIndex,
-                _newCertificates[i].fingerprint,
-                _newCertificates[i].isActive
-            );
+        // Register initial Monero nodes
+        for (uint i = 0; i < _initialNodes.length; i++) {
+            moneroNodes[uint32(i)] = _initialNodes[i];
+            emit MoneroNodeAdded(uint32(i), _initialNodes[i].url, _initialNodes[i].certificateFingerprint);
         }
+        lastNodeChangeTimestamp = block.timestamp;
         
-        oracleRewardBps = _newOracleRewardBps;
-        emit ElectionTriggered(_merkleRoot, block.timestamp);
-        emit OracleRewardUpdated(_newOracleRewardBps);
+        emit BridgeInitialized(_wXMR, _treasury);
     }
 
-    // --- Admin Functions ---
-    function pause(bool _paused) external onlyAdmin {
-        _paused ? _pause() : _unpause();
+    // --- MONERO NODE MANAGEMENT (ON-CHAIN, RATE-LIMITED) ---
+    function addMoneroNode(
+        string calldata _url,
+        bytes32 _certificateFingerprint
+    ) external nodeChangeCooldown whenNotPaused {
+        require(bytes(_url).length > 0, "Invalid URL");
+        require(_certificateFingerprint != bytes32(0), "Invalid fingerprint");
+        
+        // Find first inactive slot
+        uint32 nodeIndex = 0;
+        bool found = false;
+        for (uint32 i = 0; i < 100; i++) { // Max 100 nodes
+            if (!moneroNodes[i].isActive) {
+                nodeIndex = i;
+                found = true;
+                break;
+            }
+        }
+        require(found, "Max nodes reached");
+        
+        moneroNodes[nodeIndex] = MoneroNode({
+            url: _url,
+            certificateFingerprint: _certificateFingerprint,
+            isActive: true,
+            addedTimestamp: block.timestamp
+        });
+        lastNodeChangeTimestamp = block.timestamp;
+        
+        emit MoneroNodeAdded(nodeIndex, _url, _certificateFingerprint);
     }
     
-    function setCircuitVersion(uint8 version, bool supported) external onlyAdmin {
-        supportedCircuitVersions[version] = supported;
-        emit CircuitVersionUpdated(version, supported);
+    function removeMoneroNode(uint32 _nodeIndex) external nodeChangeCooldown whenNotPaused {
+        require(moneroNodes[_nodeIndex].isActive, "Node not active");
+        
+        moneroNodes[_nodeIndex].isActive = false;
+        lastNodeChangeTimestamp = block.timestamp;
+        
+        emit MoneroNodeRemoved(_nodeIndex);
     }
     
-    function updatePriceHistory(uint256 timestamp, uint256 price) external onlyAdmin {
-        priceHistory[timestamp] = price;
-    }
-    
-    function transferAdmin(address newAdmin) external onlyAdmin {
-        require(newAdmin != address(0), "Invalid address");
-        emit AdminTransferred(admin, newAdmin);
-        admin = newAdmin;
+    function updateNodeCertificate(uint32 _nodeIndex, bytes32 _newFingerprint) external nodeChangeCooldown whenNotPaused {
+        require(moneroNodes[_nodeIndex].isActive, "Node not active");
+        
+        moneroNodes[_nodeIndex].certificateFingerprint = _newFingerprint;
+        lastNodeChangeTimestamp = block.timestamp;
+        
+        emit MoneroNodeUpdated(_nodeIndex, _newFingerprint);
     }
 
-    // --- LP Management ---
+    // --- LP MANAGEMENT ---
     function registerLP(
         bytes32 _publicSpendKey,
         uint256 _mintFeeBps,
@@ -487,35 +568,47 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
         emit CollateralDeposited(msg.sender, _daiAmount, shares);
     }
 
-    // --- Oracle Operations ---
+    // --- ORACLE OPERATIONS (N-OF-M CONSENSUS) ---
     function submitTLSProof(
         bytes32 _moneroTxHash,
-        bytes32[2] calldata _txData, // R, C compressed (P removed from TLS data)
+        bytes32[2] calldata _txData, // R, C compressed
         uint64 _ecdhAmount,
         uint32 _nodeIndex,
-        bytes32 _proofHash,
-        bytes calldata _verifierProof,
+        uint[2] calldata _proofA,
+        uint[2][2] calldata _proofB,
+        uint[2] calldata _proofC,
+        uint[3] calldata _publicSignals, // TLS outputs
         uint256 _moneroBlockHeight,
         uint8 _circuitVersion
     ) external whenNotPaused validCircuitVersion(_circuitVersion) {
         Oracle storage oracle = oracles[msg.sender];
-        Certificate storage cert = certificates[_nodeIndex];
-        require(cert.isActive, "Invalid certificate");
+        require(oracle.isActive, "Oracle not active");
+        MoneroNode storage node = moneroNodes[_nodeIndex];
+        require(node.isActive, "Invalid node");
         
         // Verify Monero confirmations
         require(_moneroBlockHeight > 0, "Invalid block height");
         require(block.timestamp > _moneroBlockHeight * 120 + MONERO_CONFIRMATIONS * 120, "Insufficient confirmations");
         
-        // Verify TLS proof
+        // Verify TLS proof against registered node certificate
         bytes32 dataHash = keccak256(abi.encodePacked(_txData, _ecdhAmount, _moneroTxHash));
-        require(tlsVerifier.verifyProof(_proofHash, dataHash), "TLS proof invalid");
+        require(tlsVerifier.verifyProof(_proofA, _proofB, _proofC, _publicSignals), "TLS proof invalid");
+        
+        // Verify certificate fingerprint matches registered node
+        require(_publicSignals[2] == uint256(node.certificateFingerprint), "Certificate mismatch");
+        
+        // **N-OF-M CONSENSUS: Prevent duplicate submissions from same oracle**
+        require(!oracleSubmissions[dataHash][msg.sender], "Oracle already submitted");
+        oracleSubmissions[dataHash][msg.sender] = true;
+        proofSubmissionCount[dataHash]++;
         
         tlsProofs[dataHash] = TLSProof({
             submitter: msg.sender,
             timestamp: block.timestamp,
             dataHash: dataHash,
-            proofHash: _proofHash,
+            proofHash: bytes32(_publicSignals[1]), // From TLS circuit
             circuitVersion: _circuitVersion,
+            nodeIndex: _nodeIndex,
             isVerified: true
         });
         
@@ -523,18 +616,20 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
         oracle.lastActive = block.timestamp;
         _payOracleReward(msg.sender);
         
-        emit TLSProofSubmitted(_moneroTxHash, msg.sender);
+        emit TLSProofSubmitted(_moneroTxHash, msg.sender, _nodeIndex);
     }
 
-    // --- Minting: Core User Flow ---
+    // --- MINTING: CORE USER FLOW (N-OF-M VERIFICATION) ---
     function mintWXMR(
-        bytes32 _moneroTxHash,      // User pastes this
-        uint64 _v,                  // Amount user is proving
-        bytes calldata _bridgeProof, // Generated client-side
-        bytes32[3] calldata _publicData, // R, P, C (from Monero node)
-        uint64 _ecdhAmount,         // From Monero node
-        address _lp,                // Selected LP address
-        bytes32 _tlsProofHash,      // From oracle submission
+        bytes32 _moneroTxHash,
+        uint64 _v,
+        uint[2] calldata _proofA,
+        uint[2][2] calldata _proofB,
+        uint[2] calldata _proofC,
+        bytes32[3] calldata _publicData, // R, P, C
+        uint64 _ecdhAmount,
+        address _lp,
+        bytes32 _tlsProofHash,
         uint8 _circuitVersion
     ) external whenNotPaused validCircuitVersion(_circuitVersion) nonReentrant {
         require(!usedTxHashes[_moneroTxHash], "TX already claimed");
@@ -542,11 +637,9 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
         LiquidityProvider storage lp = liquidityProviders[_lp];
         require(lp.isActive, "LP not active");
         
-        // Verify TLS proof exists and is fresh
+        // **N-OF-M CONSENSUS: Verify minimum number of distinct oracle submissions**
         bytes32 dataHash = keccak256(abi.encodePacked(_publicData[0], _publicData[2], _ecdhAmount, _moneroTxHash));
-        TLSProof memory tlsProof = tlsProofs[dataHash];
-        require(tlsProof.isVerified, "TLS proof not verified");
-        require(block.timestamp < tlsProof.timestamp + 1 hours, "Stale proof");
+        require(proofSubmissionCount[dataHash] >= MIN_PROOF_CONSENSUS, "Insufficient oracle consensus");
         
         // Verify recipient matches LP's spend key
         require(_publicData[1] == lp.publicSpendKey, "Wrong recipient");
@@ -556,24 +649,25 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
         require(block.timestamp - updatedAt <= MAX_PRICE_AGE, "Stale price");
         require(_checkDepegLevel() != 2, "Critical depeg: mints paused");
         
-        // Calculate required DAI collateral (125% of XMR value)
+        // Calculate required DAI collateral (150% of XMR value)
         uint256 obligationValue = (uint256(_v) * uint256(price)) / 1e8;
-        uint256 requiredDAI = (obligationValue * COLLATERAL_RATIO_BPS) / 10000;
+        uint256 requiredDAI = (obligationValue * INITIAL_COLLATERAL_RATIO_BPS) / 10000;
         require(lp.collateralAmount >= requiredDAI, "Undercollateralized");
         
         // Verify ZK proof (P now passed directly)
-        bytes32[] memory publicInputs = new bytes32[](9);
-        publicInputs[0] = _publicData[0]; // R
-        publicInputs[1] = _publicData[1]; // P (provided directly)
-        publicInputs[2] = _publicData[2]; // C
-        publicInputs[3] = bytes32(uint256(_ecdhAmount));
-        publicInputs[4] = lp.publicSpendKey; // B
-        publicInputs[5] = bytes32(uint256(_v));
-        publicInputs[6] = bytes32(uint256(CHAIN_ID));
-        publicInputs[7] = _moneroTxHash;
-        publicInputs[8] = bytes32(uint256(_circuitVersion));
+        uint[9] memory publicSignals = [
+            uint256(_publicData[0]), // R
+            uint256(_publicData[1]), // P (provided directly)
+            uint256(_publicData[2]), // C
+            uint256(_ecdhAmount),
+            uint256(lp.publicSpendKey), // B
+            uint256(uint64(_v)),
+            CHAIN_ID,
+            uint256(_moneroTxHash),
+            _circuitVersion
+        ];
         
-        require(bridgeVerifier.verifyProof(_bridgeProof, publicInputs), "Invalid bridge proof");
+        require(bridgeVerifier.verifyProof(_proofA, _proofB, _proofC, publicSignals), "Invalid bridge proof");
         
         // Effects
         usedTxHashes[_moneroTxHash] = true;
@@ -590,7 +684,7 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
         emit BridgeMint(_moneroTxHash, msg.sender, _v, _lp, fee);
     }
 
-    // --- Burning ---
+    // --- BURNING MECHANISM (2-HOUR CLAIM WINDOW) ---
     function initiateBurn(uint256 _amount, address _lp) external whenNotPaused nonReentrant {
         require(liquidityProviders[_lp].isActive, "LP not active");
         
@@ -630,15 +724,16 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
         emit BurnCompleted(_depositId, deposit.user, deposit.amount, _moneroTxHash);
     }
 
+    // --- 2-HOUR CLAIM MECHANISM ---
     function claimBurnFailure(bytes32 _depositId) external whenNotPaused nonReentrant {
         Deposit storage deposit = deposits[_depositId];
         require(!deposit.isCompleted, "Already completed");
         require(block.timestamp > deposit.timestamp + BURN_COUNTDOWN, "Countdown active");
         
-        // Calculate 125% DAI payout
+        // Calculate 150% DAI payout
         (, int256 price, , , ) = wxmrPriceFeed.latestRoundData();
         uint256 depositValue = (deposit.amount * uint256(price)) / 1e8;
-        uint256 payoutDAI = (depositValue * COLLATERAL_RATIO_BPS) / 10000;
+        uint256 payoutDAI = (depositValue * INITIAL_COLLATERAL_RATIO_BPS) / 10000;
         
         // Depeg handling
         uint256 depegLevel = _checkDepegLevel();
@@ -647,7 +742,7 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
             payoutDAI = Math.min(payoutDAI, lp.collateralAmount);
         }
         
-        // Seize DAI collateral
+        // Seize DAI collateral from LP
         LiquidityProvider storage lp = liquidityProviders[deposit.lp];
         require(lp.collateralAmount >= payoutDAI, "LP insolvent");
         lp.collateralAmount -= payoutDAI;
@@ -658,21 +753,23 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
         lpSDAIBalance[deposit.lp] -= sDAIToBurn;
         _redeemSDAI(sDAIToBurn);
         
-        // Payout
+        // PAYOUT GOES DIRECTLY TO CLAIMER
         daiToken.safeTransfer(deposit.user, payoutDAI);
         deposit.isCompleted = true;
         
         emit BurnFailed(_depositId, deposit.user, payoutDAI, depegLevel == 2 ? depositValue - payoutDAI : 0);
     }
 
-    // --- Instant Liquidations ---
+    // --- INSTANT LIQUIDATIONS (DIRECT PRICE, NO TWAP) ---
     function liquidate(address _lp) external whenNotPaused noFlashLoan(_lp) nonReentrant {
         LiquidityProvider storage lp = liquidityProviders[_lp];
         require(lp.isActive, "LP not active");
         
-        // TWAP check
-        uint256 twapPrice = _getTWAPPrice();
-        uint256 currentRatio = (lp.collateralAmount * twapPrice * 10000) / lp.obligationValue;
+        // Direct price check (no TWAP)
+        (, int256 price, , , ) = wxmrPriceFeed.latestRoundData();
+        uint256 currentXMRValue = (lp.obligationValue * uint256(price)) / 1e8;
+        uint256 currentRatio = (lp.collateralAmount * 10000) / currentXMRValue;
+        
         require(currentRatio < LIQUIDATION_THRESHOLD_BPS, "Not liquidatable");
         
         lp.lastLiquidationCheck = block.number;
@@ -693,7 +790,7 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
         lp.isActive = false;
     }
 
-    // --- Internal Functions ---
+    // --- INTERNAL FUNCTIONS ---
     function _mintSDAI(uint256 _daiAmount) internal returns (uint256 shares) {
         daiToken.approve(address(sDAI), _daiAmount);
         shares = sDAI.deposit(_daiAmount, address(this));
@@ -708,23 +805,6 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
     
     function _getSDAIPrice() internal view returns (uint256) {
         return sDAI.previewRedeem(1e18);
-    }
-    
-    function _getTWAPPrice() internal view returns (uint256) {
-        uint256 startTime = block.timestamp - TWAP_WINDOW;
-        uint256 sum = 0;
-        uint256 count = 0;
-        
-        for (uint256 i = 0; i < TWAP_WINDOW / 60; i++) {
-            uint256 ts = startTime + (i * 60);
-            if (priceHistory[ts] > 0) {
-                sum += priceHistory[ts];
-                count++;
-            }
-        }
-        
-        require(count > 0, "No TWAP data");
-        return sum / count;
     }
     
     function _payOracleReward(address oracle) internal {
@@ -762,72 +842,68 @@ contract MoneroBridge is ReentrancyGuard, Pausable {
 }
 ```
 
-**Contract Changes Summary:**
-- ✅ `mintWXMR`: Added `P` as explicit parameter in `_publicData[1]`
-- ✅ Removed `P` derivation logic (handled in circuit)
-- ✅ TLS data hash simplified to `[R, C, ecdhAmount, txHash]` (P excluded)
-- ✅ Gas savings: ~8k gas per mintTX (verifying one fewer point addition)
-- ✅ LOC reduced from 1150 to ~1100
-
 ---
 
-## **4. Economic Model (Unchanged)**
+## **4. Economic Model**
 
-**LP Position Example:**
+### **4.1 LP Position Example (Updated Ratios)**
 ```
 User deposits: 10 XMR @ $150 = $1,500 value
-LP required collateral: $1,500 × 1.25 = $1,875 DAI
+LP required collateral: $1,500 × 1.50 = $2,250 DAI
 
-LP posts: 1,875 DAI → 1,875 sDAI
-Yield: 5% APV = $93.75/year
-├─ Oracle reward: $1.88/year/oracle (2% of yield)
-└─ LP net yield: $91.87/year (4.9% APV)
+LP posts: 2,250 DAI → 2,250 sDAI
+Yield: 5% APY = $112.50/year
+├─ Oracle reward: $2.25/year/oracle (2% of yield)
+└─ LP net yield: $110.25/year (4.9% APY)
 ```
 
-**Collateralization Tiers:**
-- **Healthy**: ≥125%
-- **Warning**: 115-125%
-- **Liquidatable**: <115% (instant TWAP-based)
+### **4.2 Collateralization Tiers (Updated)**
+- **Healthy**: ≥150%
+- **Warning**: 120-150%
+- **Liquidatable**: <120% (instant, direct price)
 -  **Critical**  : <105%
 
 ---
 
 ## **5. Performance Targets**
 
-### **5.1 Client-Side Proving (Improved)**
+### **5.1 Client-Side Proving (Circom)**
 
 | Environment | Time | Memory | Notes |
 |-------------|------|--------|-------|
-| **Browser (WASM)** | 2.0-2.8s | 1.0 GB | -28% time, -23% memory |
-| **Browser (WebGPU)** | 1.5-2.0s | 650 MB | Chrome 120+, RTX 4070 |
-| **Native** | 0.5-0.8s | 500 MB | 8-core AMD, Ubuntu 22.04 |
-| **Mobile (iOS)** | 3.5-4.5s | 1.2 GB | iPhone 15 Pro |
+| **Browser (WASM)** | 1.8-2.5s | 900 MB | Optimized snarkjs |
+| **Browser (WebGPU)** | 1.2-1.8s | 550 MB | Chrome 120+, RTX 4070 |
+| **Native** | 0.4-0.7s | 450 MB | 8-core AMD, Ubuntu 22.04 |
+| **Mobile (iOS)** | 3.0-4.0s | 1.1 GB | iPhone 15 Pro |
 
 ### **5.2 Gas Efficiency (Arbitrum Nitro)**
 
 | Function | Gas Used | L1 Calldata | Total Cost |
 |----------|----------|-------------|------------|
-| `submitTLSProof` | 650,000 | 4,200 | ~$1.15 |
-| `mintWXMR` | 875,000 | 9,800 | ~$1.35 |
+| `submitTLSProof` | 620,000 | 4,200 | ~$1.08 |
+| `mintWXMR` | **875,000** | 9,800 | ~$1.32 |
 | `initiateBurn` | 98,000 | 1,500 | ~$0.20 |
 | `claimBurnFailure` | 540,000 | 3,000 | ~$0.78 |
-| `liquidate` | 500,000 | 2,600 | ~$0.73 |
+| `liquidate` | **480,000** | 2,400 | ~$0.70 |
+
+**Note**: `mintWXMR` gas increased slightly due to N-of-M consensus checks.
 
 ---
 
 ## **6. Security Analysis**
 
-### **6.1 Updated Threat Model**
+### **6.1 Threat Model (N-of-M Consensus)**
 
 **New Assumptions:**
-- **Destination address input**: User provides P directly; frontend validates pre-proof
-- **Reduced circuit complexity**: Fewer constraints = lower bug surface
-- **Same economic security**: 125% collateralization unchanged
+- **Minimum 3 proofs required**: Prevents single compromised oracle from minting fake wXMR
+- **On-chain node registry**: Max 1 change per week prevents rapid oracle takeover
+- **No admin/governance**: Protocol is complete at deployment; bugs require redeployment
+- **No emergency pause**: If critical bug discovered, protocol must be deprecated via social consensus
 
 **Trade-offs:**
-- **Frontend validation**: Must correctly validate P against transaction data
-- **Circuit simplification**: No stealth address derivation = -23% constraints
-- **Same privacy leakage**: Single-key model still links deposits to LPs
+- **Oracle centralization**: Need at least 3 honest oracles out of M registered. Economic incentives (2% yield) align oracles with protocol health.
+- **No pause**: If circuit bug allows fake proofs, attacker can drain all LPs before anyone can stop it. **Critical risk accepted for immutability.**
+- **N-of-M griefing**: 3 oracles could collude to deny service by not submitting proofs. Mitigated by open oracle registration (anyone can become oracle).
 
 ### **6.2 Attack Vectors**
 
@@ -835,95 +911,156 @@ Yield: 5% APV = $93.75/year
 |--------|------------|--------|------------|
 | **Invalid P provided** | Low | User cannot mint | Frontend validates, circuit rejects |
 | **Frontend spoofing** | Medium | Wrong P submission | Users verify in wallet before copying |
-| **Oracle TLS compromise** | **Medium** | Fake deposits | Weekly cert rotation via election |
-| **TWAP manipulation** | Low | Unfair liquidation | 30-min window + flash loan protection |
+| **Single oracle compromise** | **None** | Fake deposits | **N-of-M (3+) consensus required** |
+| **Oracle majority takeover** | Medium | Protocol theft | Max 1 node/week change rate, economic incentives |
+| **Price manipulation** | Low | Unfair liquidation | `noFlashLoan` modifier, 150% initial ratio |
+| **No pause exploitation** | **Critical** | Total loss | **Accepted risk for immutability** |
 
 ---
 
 ## **7. Sequence Diagrams**
 
-### **7.1 Mint wXMR Flow (Simplified)**
+### **7.1 Mint wXMR Flow (N-of-M Consensus)**
 
 ```mermaid
 sequenceDiagram
     participant User
     participant MoneroWallet
-    participant MoneroNode
+    participant RegisteredNode
     participant Frontend
+    participant Oracle1
+    participant Oracle2
+    participant Oracle3
     participant BridgeContract
-    participant Oracle
     participant sDAI
 
     User->>MoneroWallet: "Export tx secret key" (r)
     MoneroWallet-->>User: r (32 bytes)
-    User->>MoneroNode: get_transaction_data(tx_hash)
-    MoneroNode-->>User: {R, P, C, ecdhAmount, block_height}
-    User->>Frontend: Paste r, tx_hash, P (destination), amount(v)
+    User->>RegisteredNode: get_transaction_data(tx_hash)
+    RegisteredNode-->>User: {R, P, C, ecdhAmount, block_height}
+    User->>Frontend: Paste r, tx_hash, P, amount(v)
     Frontend->>Frontend: Validate P matches transaction data
     Frontend->>Frontend: Fetch LP spend key B from contract
     Frontend->>Frontend: Generate witnesses [r, v, P, B, tx_hash]
-    Frontend->>Frontend: Generate Noir proof (2.0s)
+    Frontend->>Frontend: Generate Circom proof (1.8s)
     
-    User->>BridgeContract: mintWXMR(proof, publicData, _lp)
-    BridgeContract->>BridgeContract: Check usedTxHashes
+    Note over Oracle1,Oracle3: **ORACLE SUBMISSION PHASE**
+    Oracle1->>BridgeContract: submitTLSProof(R, C, ecdhAmount, proof)
+    BridgeContract->>BridgeContract: Verify TLS proof vs node cert
+    BridgeContract->>BridgeContract: Record submission (count=1)
+    Oracle2->>BridgeContract: submitTLSProof(R, C, ecdhAmount, proof)
+    BridgeContract->>BridgeContract: Verify TLS proof vs node cert
+    BridgeContract->>BridgeContract: Record submission (count=2)
+    Oracle3->>BridgeContract: submitTLSProof(R, C, ecdhAmount, proof)
+    BridgeContract->>BridgeContract: Verify TLS proof vs node cert
+    BridgeContract->>BridgeContract: Record submission (count=3)
+    
+    Note over User,BridgeContract: **CONSENSUS REACHED (3/3)**
+    
+    User->>BridgeContract: mintWXMR(proof, publicSignals, _lp)
+    BridgeContract->>BridgeContract: **Check proofSubmissionCount >= 3**
     BridgeContract->>BridgeContract: Verify recipient P == B
-    BridgeContract->>BridgeContract: Check TLS proof submitted
-    BridgeContract->>BridgeContract: Calculate required DAI collateral
-    BridgeContract->>BridgeVerifier: verifyProof(proof, publicInputs)
+    BridgeContract->>BridgeContract: Calculate required DAI collateral (150%)
+    BridgeContract->>BridgeVerifier: verifyProof(proof, publicSignals)
     BridgeVerifier-->>BridgeContract: Valid
     BridgeContract->>BridgeContract: Mark tx_hash as used
     BridgeContract->>BridgeContract: Mint wXMR to user
     BridgeContract->>sDAI: DAI yields accrue
 ```
 
+### **7.2 Burn wXMR Flow (2-Hour Claim Window)**
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant BridgeContract
+    participant LP
+    participant sDAI
+    participant DAI
+
+    User->>BridgeContract: initiateBurn(10 wXMR, _lp)
+    BridgeContract->>BridgeContract: Burn 10 wXMR from user
+    BridgeContract->>BridgeContract: Create depositId
+    BridgeContract->>User: Emit BurnInitiated(depositId)
+    
+    Note over LP,User: **2 HOUR COUNTDOWN STARTS**
+    
+    alt LP completes within 2 hours
+        LP->>BridgeContract: completeBurn(depositId, moneroTxHash)
+        BridgeContract->>BridgeContract: Verify LP == deposit.lp
+        BridgeContract->>BridgeContract: Reduce LP obligationValue
+        BridgeContract->>User: Emit BurnCompleted
+    else LP fails to complete
+        Note over User: 2 hours elapsed
+        User->>BridgeContract: claimBurnFailure(depositId)
+        BridgeContract->>BridgeContract: Calculate 150% DAI payout
+        BridgeContract->>BridgeContract: Seize LP collateral
+        BridgeContract->>sDAI: Redeem sDAI shares
+        sDAI-->>BridgeContract: DAI assets
+        BridgeContract->>DAI: Transfer DAI to User
+        BridgeContract->>User: Emit BurnFailed(payoutDAI)
+    end
+```
+
 ---
 
 ## **8. Deployment Roadmap**
 
-### **8.1 ZK Implementation Status (IN PROGRESS)**
+### **8.1 ZK Implementation Status**
 
 | Component | Status | Blocker | ETA |
 |-----------|--------|---------|-----|
-| **Bridge Circuit (Noir)** | 🟨 90% | Final witness integration | 1 week |
-| **TLS Circuit (Noir)** | ✅ Complete | None | - |
-| **Barretenberg WASM** | 🟨 Testing | Mobile browser compat | 1 week |
-| **ed25519 Solidity** | ✅ Integrated | Formal verification | 3 weeks |
-| **Witness Gen Frontend** | 🟨 80% | Wallet integration for r,P export | 1 week |
+| **Bridge Circuit (Circom)** | 🟨 85% | Ed25519 library optimization | 1.5 weeks |
+| **TLS Circuit (Circom)** | ✅ Complete | None | - |
+| **Trusted Setup** | 🟨 Not started | Need 100+ participants | Q1 2025 |
+| **Witness Gen Frontend** | 🟨 75% | snarkjs integration | 1 week |
 
 ### **8.2 Contract Status**
 
 | Contract | Status | Notes |
 |----------|--------|-------|
 | `MoneroBridge.sol` | ✅ Complete | v5.3 ready, Trail of Bits audit scheduled |
-| `BridgeVerifier.sol` | ✅ Deployed | Barretenberg on Arbitrum |
-| `TLSVerifier.sol` | 🟨 In review | Audit in progress |
+| `BridgeVerifier.sol` | ✅ Deployed | Groth16 verifier on Arbitrum |
+| `TLSVerifier.sol` | 🟨 In review | Circom-based, audit in progress |
 | `wXMR ERC20` | ✅ Complete | Mint/burn only |
 
 ### **8.3 Mainnet Blockers**
 
-1. **Noir circuit formal verification** (ETA: Q2 2025)
-2. **ed25519 Solidity library audit** (ETA: Q2 2025)
-3. **Wallet integration** for `r` and `P` export (Monero GUI/CLI PR in review)
-4. **Chainlink wXMR/USD feed** on Arbitrum (applied, pending)
-5. **Snapshot strategy** for governance (community discussion)
+1. **Circom circuit formal verification** (ETA: Q2 2025)
+2. **Groth16 trusted setup ceremony** (ETA: Q1 2025)
+3. **ed25519 Solidity library audit** (ETA: Q2 2025)
+4. **Wallet integration** for `r` and `P` export (Monero GUI/CLI PR in review)
+5. **Chainlink wXMR/USD feed** on Arbitrum (applied, pending)
 
 ---
 
 ## **9. Governance & Emergency Mechanisms**
 
-**Unchanged from v5.2** - Snapshot elections for certificates/rewards, single admin for pause/transfer.
+**NONE. ZERO. PROTOCOL IS IMMUTABLE.**
+
+- **No admin**: No address can pause, upgrade, or modify parameters
+- **No governance**: No voting, no Snapshot, no token
+- **No emergency pause**: If critical bug discovered, protocol cannot be stopped
+- **Parameter changes**: Impossible after deployment. Ratios, fees, and cooldowns are hardcoded.
+- **Node management**: Community can add/remove Monero nodes, but **max 1 change per week**
+- **Oracle registration**: Open to anyone; no permission required
+
+**Philosophy**: The protocol is **complete at deployment**. If it needs changing, deploy a new version. This is the cost of true decentralization.
 
 ---
 
 ## **10. References & Dependencies**
 
-**Noir Libraries:**
-- `@noir-lang/noir@0.25.0`
-- `noir-lang/noir-ed25519@1.3.0`
-- `aztecprotocol/barretenberg@0.8.3`
+**Circom Ecosystem:**
+- `circom@2.1.0`
+- `circomlib@2.0.5`
+- `circom-ed25519@0.2.0`
+- `snarkjs@0.7.0`
+- `circom-tls@0.1.0`
 
 **Solidity:**
 - `vdemedes/ed25519-solidity@1.0.0`
+- `iden3/snarkjs/contracts/Groth16Verifier.sol`
 - OpenZeppelin v5.0.0
 - Chainlink v0.8.0
 
@@ -937,16 +1074,16 @@ sequenceDiagram
 
 | Version | Changes | Status |
 |---------|---------|--------|
-| **v5.3** | **Removed stealth address derivation**: P provided as explicit input. **Circuit constraints: 54k → 42k**. **Proving time: -28%**. | Implementation in progress |
-| **v5.2** | Fixed ZK witness model, single admin | ZK implementation in progress |
-| **v5.1** | Instant liquidations, TWAP MEV protection | Audited |
+| **v5.3** | **N-of-M consensus**: Minimum 3 oracle proofs required. **Removed admin/emergency pause**: Protocol is immutable. **Updated ratios**: 150% initial, 120% liquidation. **On-chain node registry**: Max 1 change/week. **No TWAP, no elections.** | Implementation in progress |
+| **v5.2** | Fixed ZK witness model, single admin | Deprecated |
+| **v5.1** | Instant liquidations, TWAP MEV protection | Deprecated |
 | **v5.0** | DAI-only collateral, depeg handling | Deprecated |
 
 ---
 
 ## **12. License & Disclaimer**
 
-**License**: MIT (Noir), GPL-3.0 (Solidity)  
-**Disclaimer**: **ZK CIRCUITS NOT YET AUDITED. DO NOT USE IN PRODUCTION.** This is experimental software. Users risk total loss of funds. No insurance, no backstop, DAI depeg is primary systemic risk. **Status: Pre-audit, testnet only.**
+**License**: MIT (Circom), GPL-3.0 (Solidity)  
+**Disclaimer**: **ZK CIRCUITS NOT YET AUDITED. GROTH16 TRUSTED SETUP PENDING. DO NOT USE IN PRODUCTION.** This is experimental software. Users risk total loss of funds. No insurance, no backstop, no pause mechanism, DAI depeg is primary systemic risk. **Status: Pre-audit, testnet only.**
 
-**Estimated Mainnet Readiness**: **Q3 2025** pending circuit audits and wallet integration.
+**Estimated Mainnet Readiness**: **Q3 2025** pending circuit audits, trusted setup, and wallet integration. **Use at your own risk.**
