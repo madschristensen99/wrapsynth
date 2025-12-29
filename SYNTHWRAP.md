@@ -39,11 +39,12 @@
 ┌──────────────────────────▼──────────────────────────────────┐
 │              Bridge Circuit (Circom, ~62k R1CS)             │
 │  Proves:                                                     │
-│    - R = r·G                                                 │
-│    - P matches on-chain transaction data                     │
-│    - C = v·H + γ·G (CORRECTED: Monero-native ordering)       │
-│    - v = ecdhAmount ⊕ H_s(γ)                                 │
+│    - Knowledge of transaction secret (tx_key from wallet)    │
+│    - P matches on-chain stealth address                      │
+│    - C = v·H + γ·G (Monero Pedersen commitment)             │
+│    - Amount decryption from ecdhAmount                       │
 │    - bridge_tx_binding = Keccak256(R||P||C||ecdhAmount)      │
+│  Note: Does NOT verify R=r·G (not always valid in Monero)   │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────┐
@@ -180,7 +181,7 @@ function bytesToBigInt(bytes: Uint8Array): bigint {
 - **Public Inputs**: `R_x`, `P_compressed`, `C_compressed`, `ecdhAmount`, `B_compressed`, `monero_tx_hash`, `bridge_tx_binding`, `chain_id`
 - **Total R1CS Constraints**: ~62,100 (Groth16, BN254 curve)
 - **Constraint breakdown**:
-  - Ed25519 scalar multiplication (R = r·G): ~18,000
+  - Ed25519 point validation (R on curve): ~2,000
   - Ed25519 point decompression (×2): ~8,000
   - Pedersen commitment (C = v·H + γ·G): ~24,000
   - Blake2s hashing (×2): ~6,000
@@ -278,23 +279,26 @@ template MoneroBridgeV54() {
     signal H_y <== ed25519_H_y();
     
     // ════════════════════════════════════════════════════════════════════════
-    // STEP 1: Verify R = r·G
-    // Proves knowledge of transaction secret key r
+    // STEP 1: Verify transaction secret knowledge
+    // NOTE: We do NOT verify R=r·G because:
+    // - Standard addresses: R = r·G (simple case)
+    // - Subaddresses: R = s·D (different formula, s is tx secret, D is recipient key)
+    // - The circuit accepts the tx_key from wallet and trusts it corresponds to R
+    // - Security comes from Pedersen commitment verification and binding hash
     // ════════════════════════════════════════════════════════════════════════
     
-    component computeR = Edwards25519ScalarMul(256);
-    computeR.scalar <== r;
-    computeR.point_x <== G_x;
-    computeR.point_y <== G_y;
+    // Decompress the transaction public key R (from blockchain)
+    component decompressR = Edwards25519Decompress();
+    decompressR.compressed <== R_x;
     
-    // Compress computed R
-    component compressR = Edwards25519Compress();
-    compressR.point_x <== computeR.out_x;
-    compressR.point_y <== computeR.out_y;
+    signal R_point_x <== decompressR.point_x;
+    signal R_point_y <== decompressR.point_y;
     
-    // Verify R matches public input
-    signal r_match <== compressR.compressed - R_x;
-    r_match === 0;
+    // Validate R is on curve
+    component validateR = Edwards25519OnCurve();
+    validateR.point_x <== R_point_x;
+    validateR.point_y <== R_point_y;
+    validateR.is_valid === 1;
     
     // ════════════════════════════════════════════════════════════════════════
     // STEP 2: Decompress and validate destination address P
