@@ -1,0 +1,21 @@
+{
+  "name": "basic-circom-project",
+  "version": "1.0.0",
+  "description": "A basic Circom project setup",
+  "main": "index.js",
+  "scripts": {
+    "compile": "/home/remsee/opusCircuit/build/circom/target/release/circom circuits/monero_bridge_v54_final.circom --r1cs --wasm --sym",
+    "compile-multiplier": "/home/remsee/opusCircuit/build/circom/target/release/circom circuits/multiplier.circom --r1cs --wasm --sym",
+    "compile-bridge": "/home/remsee/opusCircuit/build/circom/target/release/circom circuits/monero_bridge_v54_final.circom --r1cs --wasm --sym",
+    "test": "node test/demo_test.js",
+    "test-bridge": "node test/test_bridge.js"
+  },
+  "dependencies": {
+    "circomlib": "^2.0.5"
+  },
+  "devDependencies": {
+    "circom_tester": "^0.0.24",
+    "mocha": "^11.7.5",
+    "snarkjs": "^0.7.0"
+  }
+}
