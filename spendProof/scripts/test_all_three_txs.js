@@ -8,7 +8,8 @@ const transactions = [
         block: 1934116,
         secretKey: "4cbf8f2cfb622ee126f08df053e99b96aa2e8c1cfd575d2a651f3343b465800a",
         amount: 20000000000,
-        destination: "53Kajgo3GhV1ddabJZqdmESkXXoz2xD2gUCVc5L2YKjq8Qhx6UXoqFChhF9n2Th9NLTz77258PMdc3G5qxVd487pFZzzVNG"
+        destination: "53Kajgo3GhV1ddabJZqdmESkXXoz2xD2gUCVc5L2YKjq8Qhx6UXoqFChhF9n2Th9NLTz77258PMdc3G5qxVd487pFZzzVNG",
+        output_index: 0  // Confirmed by block explorer: output 0 matches with 0.02 XMR
     },
     {
         name: "TX2",
@@ -24,7 +25,8 @@ const transactions = [
         block: 2023616,
         secretKey: "ab923eb60a5de7ff9e40be288ae55ccaea5a6ee175180eabe7774a2951d59701",
         amount: 0.001150000000,
-        destination: "77tyMuyZhpUNuqKfNTHL3J9AxDVX6MKRvgjLEMPra23CMUGX1UZEHJYLtG54ziVsUqdDLbtLrpMCnbPgvqAAzJrRM3jevta"
+        destination: "77tyMuyZhpUNuqKfNTHL3J9AxDVX6MKRvgjLEMPra23CMUGX1UZEHJYLtG54ziVsUqdDLbtLrpMCnbPgvqAAzJrRM3jevta",
+        output_index: 0
     }
 ];
 
@@ -38,14 +40,16 @@ for (const tx of transactions) {
     
     // Update generate_witness.js with this transaction's data
     const witnessScript = fs.readFileSync('scripts/generate_witness.js', 'utf8');
+    // Match TX_DATA object (multi-line)
     const updated = witnessScript.replace(
-        /const TX_DATA = \{[^}]+\};/s,
+        /const TX_DATA = \{[\s\S]*?\};/,
         `const TX_DATA = {
     hash: "${tx.hash}",
     block: ${tx.block},
     secretKey: "${tx.secretKey}",
-    amount: ${amountPiconero}, // ${tx.amount} XMR
+    amount: ${amountPiconero},
     destination: "${tx.destination}",
+    output_index: ${tx.output_index || 0},
     node: "https://stagenet.xmr.ditatompel.com"
 };`
     );

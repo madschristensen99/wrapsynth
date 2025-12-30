@@ -25,8 +25,9 @@ const TX_DATA = {
     hash: "827368baa751b395728f79608c0792419a88f08119601669baede39ba0225d4b",
     block: 2023616,
     secretKey: "ab923eb60a5de7ff9e40be288ae55ccaea5a6ee175180eabe7774a2951d59701",
-    amount: 1150000000, // 0.00115 XMR
+    amount: 1150000000,
     destination: "77tyMuyZhpUNuqKfNTHL3J9AxDVX6MKRvgjLEMPra23CMUGX1UZEHJYLtG54ziVsUqdDLbtLrpMCnbPgvqAAzJrRM3jevta",
+    output_index: 0,
     node: "https://stagenet.xmr.ditatompel.com"
 };
 
@@ -91,29 +92,58 @@ async function generateWitness() {
         console.log("✅ View Key (A):", addressKeys.viewKey);
         console.log("✅ Spend Key (B):", addressKeys.spendKey);
         
-        // Step 6: Extract one-time address (output public key)
-        console.log("\n📤 Step 6: Extracting output public key...");
-        let outputKey = null;
-        if (txJson.vout && txJson.vout[0] && txJson.vout[0].target) {
-            outputKey = txJson.vout[0].target.key || txJson.vout[0].target.tagged_key?.key;
+        // Step 6: Extract output keys from transaction
+        console.log("\n📤 Step 6: Extracting output keys...");
+        
+        // Get all output keys from vout (stealth addresses)
+        const outputs = [];
+        if (txJson.vout) {
+            for (const vout of txJson.vout) {
+                if (vout.target?.tagged_key?.key) {
+                    outputs.push(vout.target.tagged_key.key);
+                } else if (vout.target?.key) {
+                    outputs.push(vout.target.key);
+                }
+            }
         }
-        if (!outputKey) {
-            console.log("⚠️  Output key not found in expected location");
-            console.log("   vout[0]:", JSON.stringify(txJson.vout[0], null, 2));
-            outputKey = "unknown";
-        } else {
-            console.log("✅ Output Key (P):", outputKey);
+        console.log(`   Found ${outputs.length} outputs in transaction`);
+        
+        // Use output index from TX_DATA if specified, otherwise use 0
+        const outputIndex = TX_DATA.output_index || 0;
+        
+        if (outputIndex >= outputs.length) {
+            throw new Error(`Output index ${outputIndex} out of range (transaction has ${outputs.length} outputs)`);
         }
+        
+        const outputKey = outputs[outputIndex];
+        console.log(`✅ Using output ${outputIndex}: ${outputKey}`);
+        console.log(`   (Circuit will verify this matches H_s(8·r·A || ${outputIndex}) · G + B)`);
+
         
         // Step 6: Convert secret key to bits
         console.log("\n🔐 Step 6: Converting secret key to bits...");
         const secretKeyBits = hexToBits(TX_DATA.secretKey);
         console.log("✅ Secret key converted:", secretKeyBits.length, "bits");
         
+        // Step 6.5: Compute R = r·G for circuit verification
+        console.log("\n🔐 Step 6.5: Computing R = r·G...");
+        const {computeRFromSecret} = require('./compute_rG');
+        const computedR = computeRFromSecret(TX_DATA.secretKey);
+        
+        if (computedR.toLowerCase() !== txPubKey.toLowerCase()) {
+            console.log('⚠️  Subaddress transaction detected');
+            console.log('   Computed r·G:', computedR);
+            console.log('   Blockchain main R:', txPubKey);
+            console.log('   Using computed R for circuit verification');
+        }
+        
+        // Use computed R for circuit (supports both standard and subaddress txs)
+        const R_for_circuit = computedR;
+        
         // Step 7: Decompress Ed25519 points to extended coordinates
         console.log("\n📋 Step 7: Decompressing Ed25519 points...");
         
-        const R_extended = decompressToExtendedBase85(txPubKey);
+        const R_extended = decompressToExtendedBase85(R_for_circuit);
         const P_extended = decompressToExtendedBase85(outputKey);
         const A_extended = decompressToExtendedBase85(addressKeys.viewKey);
         const B_extended = decompressToExtendedBase85(addressKeys.spendKey);
@@ -133,30 +163,13 @@ async function generateWitness() {
         // Step 9: Create complete witness
         console.log("\n📋 Step 9: Creating complete witness...");
         
-        // SUBADDRESS COMPATIBILITY:
-        // Monero supports two types of addresses:
-        // 1. Standard addresses (prefix 5 on stagenet): Use the main tx public key R from extra field
-        // 2. Subaddresses (prefix 7 on stagenet): Use additional tx public keys (one per output)
-        //
-        // Feather wallet provides the correct tx_key for the specific output:
-        // - For standard addresses: This matches the main R in the transaction's extra field
-        // - For subaddresses: This is the additional tx key for that specific output
-        //
-        // To support both cases, we compute R from the secret key provided by Feather.
-        // The circuit then verifies r·G = R, proving knowledge of the transaction secret key.
-        // This approach works for both standard addresses and subaddresses.
-        const {computeRFromSecret} = require('./compute_rG');
-        const computedR = computeRFromSecret(TX_DATA.secretKey);
-        
-        const computedRBytes = Buffer.from(computedR, 'hex');
-        // Clear the sign bit (bit 255)
-        computedRBytes[31] &= 0x7F;
-        // Convert to BigInt (little-endian)
+        // Convert R_for_circuit to BigInt for circuit input
+        const R_for_circuit_bytes = Buffer.from(R_for_circuit, 'hex');
         let R_x_bigint = 0n;
         for (let i = 0; i < 32; i++) {
-            R_x_bigint |= BigInt(computedRBytes[i]) << BigInt(i * 8);
+            R_x_bigint |= BigInt(R_for_circuit_bytes[i]) << BigInt(i * 8);
         }
-        // Ensure it's only 255 bits
+        // Clear the sign bit (bit 255)
         R_x_bigint = R_x_bigint & ((1n << 255n) - 1n);
         
         // P_compressed and C_compressed should also be first 255 bits (without sign bit)
@@ -182,11 +195,62 @@ async function generateWitness() {
         // Convert TX hash to field element
         const txHashBigInt = BigInt('0x' + TX_DATA.hash);
         
+        // ========================================================================
+        // Compute H_s_scalar: Keccak256(8·r·A || output_index) mod L
+        // This is the scalar used for destination address derivation: P = H_s·G + B
+        // ========================================================================
+        
+        const ed = require('@noble/ed25519');
+        const keccak256 = require('keccak256');
+        
+        // Parse secret key r (little-endian)
+        const rBytes = Buffer.from(TX_DATA.secretKey, 'hex');
+        let r = 0n;
+        for (let i = 0; i < 32; i++) {
+            r |= BigInt(rBytes[i]) << BigInt(i * 8);
+        }
+        
+        // Parse view key A
+        const A = ed.Point.fromHex(addressKeys.viewKey);
+        
+        // Compute derivation = 8 · r · A
+        const rA = A.multiply(r);
+        const derivation = rA.multiply(8n);
+        const derivationHex = derivation.toHex();
+        
+        // Hash: Keccak256(derivation || output_index)
+        const derivationBytes = Buffer.from(derivationHex, 'hex');
+        const hashInput = Buffer.concat([derivationBytes, Buffer.from([outputIndex])]);
+        const hash = keccak256(hashInput);
+        
+        // Convert hash to scalar (little-endian)
+        let scalar = 0n;
+        for (let i = 0; i < 32; i++) {
+            scalar |= BigInt(hash[i]) << BigInt(i * 8);
+        }
+        
+        // CRITICAL: Reduce modulo L (Ed25519 curve order)
+        const L = 2n ** 252n + 27742317777372353535851937790883648493n;
+        scalar = scalar % L;
+        
+        // Convert scalar to 255-bit array (LSB first)
+        const H_s_scalar_bits = [];
+        for (let i = 0; i < 255; i++) {
+            H_s_scalar_bits.push(((scalar >> BigInt(i)) & 1n).toString());
+        }
+        
+        console.log(`\n🔐 Step 8.5: Computing H_s scalar (mod L)...`);
+        console.log(`   Derivation (8·r·A): ${derivationHex.substring(0, 32)}...`);
+        console.log(`   Hash: ${hash.toString('hex').substring(0, 32)}...`);
+        console.log(`   Scalar (mod L): ${scalar.toString(16).padStart(64, '0').substring(0, 32)}...`);
+        
         const witness = {
             // Private inputs
             r: secretKeyBits.slice(0, 256), // Secret key as 256 bits
             v: TX_DATA.amount.toString(), // Amount in piconero
             gamma: Array(256).fill("0"), // Dummy gamma (verification disabled - we don't have sender's gamma)
+            output_index: outputIndex.toString(), // Output index in transaction
+            H_s_scalar: H_s_scalar_bits, // Pre-reduced scalar: Keccak256(8·r·A || i) mod L
             
             // Pre-decompressed points (circuit verifies they compress correctly)
             P_extended: P_formatted, // Destination address in extended coordinates
@@ -247,6 +311,8 @@ async function generateWitness() {
             r: witness.r,
             v: witness.v,
             gamma: witness.gamma,
+            output_index: witness.output_index,
+            H_s_scalar: witness.H_s_scalar,
             A_extended: witness.A_extended,
             R_extended: witness._metadata.R_extended,
             P_extended: witness.P_extended,
