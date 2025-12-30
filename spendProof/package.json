@@ -1,21 +1,53 @@
 {
-  "name": "basic-circom-project",
-  "version": "1.0.0",
-  "description": "A basic Circom project setup",
+  "name": "monero-bridge-circuit",
+  "version": "5.4.0",
+  "description": "Monero to Arbitrum Bridge ZK Circuit - Cryptographic proof of Monero transaction authenticity",
   "main": "index.js",
   "scripts": {
-    "compile": "/home/remsee/opusCircuit/build/circom/target/release/circom circuits/monero_bridge_v54_final.circom --r1cs --wasm --sym",
-    "compile-multiplier": "/home/remsee/opusCircuit/build/circom/target/release/circom circuits/multiplier.circom --r1cs --wasm --sym",
-    "compile-bridge": "/home/remsee/opusCircuit/build/circom/target/release/circom circuits/monero_bridge_v54_final.circom --r1cs --wasm --sym",
-    "test": "node test/demo_test.js",
-    "test-bridge": "node test/test_bridge.js"
+    "test": "mocha --timeout 1000000",
+    "compile": "circom circuits/monero_bridge_v54.circom --r1cs --wasm --sym -o build",
+    "compile:debug": "circom circuits/monero_bridge_v54.circom --r1cs --wasm --sym -o build --inspect",
+    "setup": "snarkjs groth16 setup build/monero_bridge_v54.r1cs pot22_final.ptau build/monero_bridge_v54_0000.zkey",
+    "contribute": "snarkjs zkey contribute build/monero_bridge_v54_0000.zkey build/monero_bridge_v54_final.zkey --name=\"First contribution\"",
+    "export-vkey": "snarkjs zkey export verificationkey build/monero_bridge_v54_final.zkey build/verification_key.json",
+    "export-solidity": "snarkjs zkey export solidityverifier build/monero_bridge_v54_final.zkey contracts/BridgeVerifier.sol"
   },
   "dependencies": {
-    "circomlib": "^2.0.5"
+    "@electron-labs/ed25519-circom": "github:Electron-Labs/ed25519-circom",
+    "@noble/ed25519": "^3.0.0",
+    "axios": "^1.13.2",
+    "base58-monero": "^0.0.5",
+    "circomlib": "^2.0.5",
+    "ffjavascript": "^0.3.0",
+    "keccak": "^3.0.4",
+    "keccak-circom": "github:vocdoni/keccak256-circom",
+    "monero-javascript": "^0.8.4",
+    "monero-ts": "^0.11.7",
+    "snarkjs": "^0.7.4",
+    "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
-    "circom_tester": "^0.0.24",
-    "mocha": "^11.7.5",
-    "snarkjs": "^0.7.0"
+    "chai": "^4.5.0",
+    "circom_tester": "^0.0.19",
+    "mocha": "^10.2.0"
+  },
+  "keywords": [
+    "monero",
+    "bridge",
+    "zksnark",
+    "circom",
+    "ed25519",
+    "pedersen-commitment",
+    "groth16",
+    "arbitrum"
+  ],
+  "author": "FUNGERBIL Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fungerbil/monero-bridge-circuit"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
