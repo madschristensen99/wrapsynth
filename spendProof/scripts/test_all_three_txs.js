@@ -51,17 +51,23 @@ for (const tx of transactions) {
     );
     fs.writeFileSync('scripts/generate_witness.js', updated);
     
-    // Generate witness
+    // Generate witness with timing
+    const witnessStart = Date.now();
     try {
         execSync('node scripts/generate_witness.js > /dev/null 2>&1');
+        const witnessTime = Date.now() - witnessStart;
+        console.log(`  ⏱️  Witness generation: ${witnessTime}ms`);
     } catch(e) {
         console.log(`  ❌ Witness generation failed`);
         continue;
     }
     
-    // Test witness
+    // Test witness with timing
+    const calcStart = Date.now();
     try {
         execSync('snarkjs wtns calculate monero_bridge_js/monero_bridge.wasm input.json witness.wtns 2>&1', {stdio: 'pipe'});
+        const calcTime = Date.now() - calcStart;
+        console.log(`  ⏱️  Circuit calculation: ${calcTime}ms`);
         console.log(`  ✅ PASS - ${tx.name} accepted by circuit\n`);
     } catch(e) {
         console.log(`  ❌ FAIL - ${tx.name} rejected by circuit\n`);
