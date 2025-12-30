@@ -1,0 +1,12 @@
+{
+  "r": "12345",
+  "v": "99999999",
+  "R_x": "12345",
+  "P_compressed": "12345",
+  "C_compressed": "12345",
+  "ecdhAmount": "9999",
+  "B_compressed": "12345",
+  "monero_tx_hash": "12345",
+  "bridge_tx_binding": "999",
+  "chain_id": "123"
+}
