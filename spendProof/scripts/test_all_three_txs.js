@@ -13,18 +13,18 @@ const transactions = [
     {
         name: "TX2",
         hash: "efab02571fe41662cd1d10b551e9cd822bf2a32b4b5d23f653862a98b0af2682",
-        block: null,
+        block: 1948001,
         secretKey: "c7637fdfa0ae785a8982473b49a6c1ebf082e6737b837f4e1c40a270acf8130e",
-        amount: 10000000000,
+        amount: 0.010000000000,
         destination: "74Di3cYaTj7DG5D7ucHEeiSZzrH9kyrFX8ujg2S3ydoZQEkKhpFjGkGLcpenYEHMW1aYNQcy6n75MbDfFwch4657E8WjVhE"
     },
     {
         name: "TX3",
         hash: "827368baa751b395728f79608c0792419a88f08119601669baede39ba0225d4b",
-        block: null,
+        block: 2023616,
         secretKey: "ab923eb60a5de7ff9e40be288ae55ccaea5a6ee175180eabe7774a2951d59701",
-        amount: 10000000000,
-        destination: "74Di3cYaTj7DG5D7ucHEeiSZzrH9kyrFX8ujg2S3ydoZQEkKhpFjGkGLcpenYEHMW1aYNQcy6n75MbDfFwch4657E8WjVhE"
+        amount: 0.001150000000,
+        destination: "77tyMuyZhpUNuqKfNTHL3J9AxDVX6MKRvgjLEMPra23CMUGX1UZEHJYLtG54ziVsUqdDLbtLrpMCnbPgvqAAzJrRM3jevta"
     }
 ];
 
@@ -32,6 +32,9 @@ console.log('🧪 Testing all three transactions\n');
 
 for (const tx of transactions) {
     console.log(`Testing ${tx.name}...`);
+    
+    // Convert amount to piconero if it's a decimal (< 1000 means it's in XMR)
+    const amountPiconero = tx.amount < 1000 ? Math.round(tx.amount * 1e12) : tx.amount;
     
     // Update generate_witness.js with this transaction's data
     const witnessScript = fs.readFileSync('scripts/generate_witness.js', 'utf8');
@@ -41,7 +44,7 @@ for (const tx of transactions) {
     hash: "${tx.hash}",
     block: ${tx.block},
     secretKey: "${tx.secretKey}",
-    amount: ${tx.amount},
+    amount: ${amountPiconero}, // ${tx.amount} XMR
     destination: "${tx.destination}",
     node: "https://stagenet.xmr.ditatompel.com"
 };`
