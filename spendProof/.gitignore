@@ -1,0 +1,38 @@
+# Node modules
+node_modules/
+
+# Build artifacts
+build/
+monero_bridge_js/
+*.r1cs
+*.sym
+*.wtns
+*.zkey
+*.json.abi
+verification_key.json
+proof.json
+
+# Witness and input files
+input.json
+input_*.json
+witness.wtns
+witness_data.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
