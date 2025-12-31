@@ -47,12 +47,12 @@ try {
         cwd: __dirname + '/..',
         stdio: 'pipe'
     });
-    console.log("⚠️  PASS (FRAUD!) - Wrong amount accepted (amount verification disabled)");
+    console.log("❌ FAIL (FRAUD!) - Wrong amount accepted (security vulnerability!)");
     console.log("    Real amount: 20000000000 piconero (0.02 XMR)");
     console.log("    Claimed: 100000000000 piconero (0.1 XMR)");
-    console.log("    ⚠️  This fraud would be caught once amount decryption is enabled!\n");
+    console.log("    🚨 Amount verification is NOT working!\n");
 } catch (e) {
-    console.log("✅ FAIL - Wrong amount rejected (amount verification working)\n");
+    console.log("✅ PASS - Wrong amount rejected (amount verification working)\n");
 }
 
 // Test 4: Wrong destination address (should FAIL - tests destination verification)
@@ -81,14 +81,12 @@ console.log("");
 console.log("✅ WORKING Security Properties:");
 console.log("  1. Secret key verification (r·G = R)");
 console.log("  2. Destination verification (P = H_s(8·r·A)·G + B)");
+console.log("  3. Amount verification (decrypted_amount === v) ⭐ NEWLY ENABLED!");
 console.log("");
-console.log("⚠️  DISABLED Security Properties:");
-console.log("  3. Amount verification (Pedersen commitment)");
-console.log("  4. Replay protection (binding hash)");
+console.log("⚠️  STILL DISABLED Security Properties:");
+console.log("  4. Pedersen commitment verification (requires Blake2s)");
+console.log("  5. Replay protection (binding hash)");
 console.log("");
-console.log("🚨 CRITICAL: Tests 3 shows amount fraud is possible!");
-console.log("   User can claim 5x the actual amount and circuit accepts it.");
-console.log("");
-console.log("✅ What's Proven: User knows secret key + sent to correct address");
-console.log("❌ What's NOT Proven: Correct amount + no replay attacks");
+console.log("✅ What's Proven: Secret key + destination + amount correctness");
+console.log("❌ What's NOT Proven: Pedersen commitment + replay protection");
 console.log("═══════════════════════════════════════");
