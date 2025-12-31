@@ -86,38 +86,58 @@ async function generateWitness() {
         const commitment = commitments[0];
         console.log("✅ Commitment (C):", commitment);
         
+        // Define expected amount for matching
+        const expectedAmount = BigInt(TX_DATA.amount);
+        
         // Step 5: Decode destination address to get A (view key) and B (spend key)
         console.log("\n🔑 Step 5: Decoding destination Monero address...");
         const addressKeys = decodeMoneroAddress(TX_DATA.destination);
         console.log("✅ View Key (A):", addressKeys.viewKey);
         console.log("✅ Spend Key (B):", addressKeys.spendKey);
         
-        // Step 6: Extract output keys from transaction
-        console.log("\n📤 Step 6: Extracting output keys...");
+        // Step 6: Extract all output keys and determine correct index automatically
+        console.log("\n📤 Step 6: Extracting outputs and determining correct index...");
         
-        // Get all output keys from vout (stealth addresses)
-        const outputs = [];
+        const allOutputs = [];
         if (txJson.vout) {
             for (const vout of txJson.vout) {
-                if (vout.target?.tagged_key?.key) {
-                    outputs.push(vout.target.tagged_key.key);
-                } else if (vout.target?.key) {
-                    outputs.push(vout.target.key);
-                }
+                const key = vout.target?.tagged_key?.key || vout.target?.key;
+                const amount = vout.amount || 0;
+                if (key) allOutputs.push({ key, amount: amount.toString() });
             }
         }
-        console.log(`   Found ${outputs.length} outputs in transaction`);
+        console.log(`   Found ${allOutputs.length} outputs in transaction`);
         
-        // Use output index from TX_DATA if specified, otherwise use 0
-        const outputIndex = TX_DATA.output_index || 0;
+        // Automatically determine correct output index through amount matching
+        let outputIndex = 0;
+        let outputKey = allOutputs[0]?.key;
         
-        if (outputIndex >= outputs.length) {
-            throw new Error(`Output index ${outputIndex} out of range (transaction has ${outputs.length} outputs)`);
+        if (allOutputs.length > 1) {
+            console.log(`\n🔍 Testing ${allOutputs.length} outputs for correct amount...`);
+            for (let testIndex = 0; testIndex < allOutputs.length; testIndex++) {
+                const { key, amount } = allOutputs[testIndex];
+                console.log(`   Output ${testIndex}: ${amount} piconero`);
+                
+                if (amount === expectedAmount.toString()) {
+                    console.log(`   ✅ Output ${testIndex} matches expected amount ${expectedAmount} piconero`);
+                    outputIndex = testIndex;
+                    outputKey = key;
+                    break;
+                }
+            }
+        } else if (allOutputs.length === 1) {
+            outputIndex = 0;
+            outputKey = allOutputs[0].key;
         }
         
-        const outputKey = outputs[outputIndex];
+        console.log(`✅ Determined output index: ${outputIndex}`);
+        
+        if (outputIndex >= allOutputs.length) {
+            throw new Error(`Output index ${outputIndex} out of range (transaction has ${allOutputs.length} outputs)`);
+        }
+        
         console.log(`✅ Using output ${outputIndex}: ${outputKey}`);
-        console.log(`   (Circuit will verify this matches H_s(8·r·A || ${outputIndex}) · G + B)`);
+        console.log(`   (Circuit will enforce derivation at this exact index)`);
 
         
         // Step 6: Convert secret key to bits
@@ -139,6 +159,7 @@ async function generateWitness() {
         
         // Use computed R for circuit (supports both standard and subaddress txs)
         const R_for_circuit = computedR;
+        
         
         // Step 7: Decompress Ed25519 points to extended coordinates
         console.log("\n📋 Step 7: Decompressing Ed25519 points...");
