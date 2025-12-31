@@ -8,7 +8,7 @@ console.log("🧪 Testing Monero Bridge Circuit\n");
 console.log("Test 1: Real Monero transaction data");
 try {
     execSync('snarkjs wtns calculate monero_bridge_js/monero_bridge.wasm input.json witness.wtns', {
-        cwd: '/home/remsee/opusCircuitNew',
+        cwd: '/home/remsee/fungerbil/spendProof',
         stdio: 'pipe'
     });
     console.log("✅ PASS - Real data accepted\n");
@@ -27,7 +27,7 @@ fs.writeFileSync('input_wrong_r.json', JSON.stringify(wrongR, null, 2));
 
 try {
     execSync('snarkjs wtns calculate monero_bridge_js/monero_bridge.wasm input_wrong_r.json witness_wrong_r.wtns', {
-        cwd: '/home/remsee/opusCircuitNew',
+        cwd: '/home/remsee/fungerbil/spendProof',
         stdio: 'pipe'
     });
     console.log("❌ FAIL - Wrong secret key accepted (security issue!)\n");
@@ -44,7 +44,7 @@ fs.writeFileSync('input_wrong_amount.json', JSON.stringify(wrongAmount, null, 2)
 
 try {
     execSync('snarkjs wtns calculate monero_bridge_js/monero_bridge.wasm input_wrong_amount.json witness_wrong_amount.wtns', {
-        cwd: '/home/remsee/opusCircuitNew',
+        cwd: '/home/remsee/fungerbil/spendProof',
         stdio: 'pipe'
     });
     console.log("⚠️  PASS (FRAUD!) - Wrong amount accepted (amount verification disabled)");
@@ -55,31 +55,40 @@ try {
     console.log("✅ FAIL - Wrong amount rejected (amount verification working)\n");
 }
 
-// Test 4: Wrong R_x (should FAIL)
-console.log("Test 4: Wrong transaction public key (R_x)");
-const wrongRx = JSON.parse(JSON.stringify(realInput));
-const rxBigInt = BigInt(wrongRx.R_x);
-wrongRx.R_x = (rxBigInt + 12345n).toString();
-fs.writeFileSync('input_wrong_rx.json', JSON.stringify(wrongRx, null, 2));
+// Test 4: Wrong destination address (should FAIL - tests destination verification)
+console.log("Test 4: Wrong destination address (P_compressed)");
+const wrongDest = JSON.parse(JSON.stringify(realInput));
+// Flip bit 10 in P_compressed (similar to Test 2 approach)
+const pBigInt = BigInt(wrongDest.P_compressed);
+wrongDest.P_compressed = (pBigInt ^ (1n << 10n)).toString(); // XOR to flip bit 10
+fs.writeFileSync('input_wrong_dest.json', JSON.stringify(wrongDest, null, 2));
 
 try {
-    execSync('snarkjs wtns calculate monero_bridge_js/monero_bridge.wasm input_wrong_rx.json witness_wrong_rx.wtns', {
-        cwd: '/home/remsee/opusCircuitNew',
+    execSync('snarkjs wtns calculate monero_bridge_js/monero_bridge.wasm input_wrong_dest.json witness_wrong_dest.wtns', {
+        cwd: '/home/remsee/fungerbil/spendProof',
         stdio: 'pipe'
     });
-    console.log("❌ FAIL - Wrong R_x accepted (security issue!)\n");
+    console.log("❌ FAIL - Wrong destination accepted (security issue!)");
+    console.log("    User claims they sent to LP address");
+    console.log("    But P derivation check should have caught this!\n");
 } catch (e) {
-    console.log("✅ PASS - Wrong R_x rejected\n");
+    console.log("✅ PASS - Wrong destination rejected (P = H_s(8·r·A)·G + B check working)\n");
 }
 
 console.log("═══════════════════════════════════════");
-console.log("Summary:");
-console.log("- Secret key verification (R = r·G): WORKING ✅");
-console.log("- Point operations (real Ed25519): WORKING ✅");
-console.log("- Address decoding (A, B): WORKING ✅");
-console.log("- Shared secret (S = 8·(r·A)): WORKING ✅");
-console.log("- Amount verification: DISABLED ⚠️ (Keccak byte ordering)");
-console.log("- Commitment verification: DISABLED ⚠️ (Keccak byte ordering)");
+console.log("Test Summary:");
 console.log("");
-console.log("Core Security: Proves knowledge of transaction secret key!");
+console.log("✅ WORKING Security Properties:");
+console.log("  1. Secret key verification (r·G = R)");
+console.log("  2. Destination verification (P = H_s(8·r·A)·G + B)");
+console.log("");
+console.log("⚠️  DISABLED Security Properties:");
+console.log("  3. Amount verification (Pedersen commitment)");
+console.log("  4. Replay protection (binding hash)");
+console.log("");
+console.log("🚨 CRITICAL: Tests 3 shows amount fraud is possible!");
+console.log("   User can claim 5x the actual amount and circuit accepts it.");
+console.log("");
+console.log("✅ What's Proven: User knows secret key + sent to correct address");
+console.log("❌ What's NOT Proven: Correct amount + no replay attacks");
 console.log("═══════════════════════════════════════");

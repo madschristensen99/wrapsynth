@@ -283,7 +283,36 @@ async function generateWitness() {
                 return (bBigInt & ((1n << 255n) - 1n)).toString();
             })(),
             monero_tx_hash: (txHashBigInt % (1n << 252n)).toString(), // Reduced to fit field
-            bridge_tx_binding: "0", // Keccak256 of bridge tx (would be computed)
+            bridge_tx_binding: (() => {
+                // Compute binding = Keccak256(R || P || C || v)
+                const keccak256 = require('keccak256');
+                
+                // Convert to 32-byte buffers (little-endian)
+                const R_bytes = Buffer.from(R_for_circuit, 'hex');
+                const P_bytes = Buffer.from(outputKey, 'hex');
+                const C_bytes = Buffer.from(commitment, 'hex');
+                const v_bytes = Buffer.alloc(8);
+                v_bytes.writeBigUInt64LE(BigInt(TX_DATA.amount));
+                
+                // Concatenate: R || P || C || v (32 + 32 + 32 + 8 = 104 bytes)
+                const bindingInput = Buffer.concat([R_bytes, P_bytes, C_bytes, v_bytes]);
+                const bindingHash = keccak256(bindingInput);
+                
+                // Convert to BigInt (little-endian)
+                let bindingBigInt = 0n;
+                for (let i = 0; i < 32; i++) {
+                    bindingBigInt |= BigInt(bindingHash[i]) << BigInt(i * 8);
+                }
+                
+                console.log('\n🔒 Binding Hash Computation:');
+                console.log('   R:', R_for_circuit.substring(0, 16) + '...');
+                console.log('   P:', outputKey.substring(0, 16) + '...');
+                console.log('   C:', commitment.substring(0, 16) + '...');
+                console.log('   v:', TX_DATA.amount);
+                console.log('   Binding:', bindingHash.toString('hex').substring(0, 16) + '...');
+                
+                return bindingBigInt.toString();
+            })(),
             chain_id: "42161", // Arbitrum chain ID
             
             // Metadata for reference (extended coordinates for debugging)
@@ -321,6 +350,7 @@ async function generateWitness() {
             P_compressed: witness.P_compressed,
             C_compressed: witness.C_compressed,
             ecdhAmount: witness.ecdhAmount,
+            A_compressed: witness.A_compressed,
             B_compressed: witness.B_compressed,
             monero_tx_hash: witness.monero_tx_hash,
             bridge_tx_binding: witness.bridge_tx_binding,
