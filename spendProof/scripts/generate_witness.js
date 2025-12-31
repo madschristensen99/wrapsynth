@@ -257,17 +257,71 @@ async function generateWitness() {
         console.log(`   Hash: ${hash.toString('hex').substring(0, 32)}...`);
         console.log(`   Scalar (mod L): ${scalar.toString(16).padStart(64, '0').substring(0, 32)}...`);
         
+        // ========================================================================
+        // Compute gamma: hash_to_scalar(Keccak256(S || output_index))
+        // For BP2+, gamma = H_n(derivation || output_index) mod L
+        // This is the commitment blinding factor that both sender and receiver can derive
+        // ========================================================================
+        const S_bytes = Buffer.from(derivationHex, 'hex');
+        const output_index_byte = Buffer.from([outputIndex]);
+        const gammaHashInput = Buffer.concat([S_bytes, output_index_byte]);
+        const gammaHash = keccak256(gammaHashInput);
+        
+        // Convert hash to scalar and reduce modulo L (Ed25519 curve order)
+        let gamma_scalar = 0n;
+        for (let i = 0; i < 32; i++) {
+            gamma_scalar |= BigInt(gammaHash[i]) << BigInt(i * 8);
+        }
+        gamma_scalar = gamma_scalar % L;  // Reduce modulo L
+        
+        // Convert to bits (LSB first)
+        const gamma_bits = [];
+        for (let i = 0; i < 256; i++) {
+            gamma_bits.push(((gamma_scalar >> BigInt(i)) & 1n).toString());
+        }
+        
+        console.log(`\n🔐 Step 8.6: Computing gamma (commitment blinding)...`);
+        console.log(`   Hash: ${gammaHash.toString('hex').substring(0, 32)}...`);
+        console.log(`   Gamma (mod L): ${gamma_scalar.toString(16).padStart(64, '0').substring(0, 32)}...`);
+        
+        // ========================================================================
+        // Compute amount_key: Keccak256(S.x)
+        // Monero uses cn_fast_hash which is Keccak-256
+        // ========================================================================
+        const amountKeyHash = keccak256(S_bytes);
+        
+        const amount_key_bits = [];
+        for (let i = 0; i < 32; i++) {
+            const byte = amountKeyHash[i];
+            for (let j = 0; j < 8; j++) {
+                amount_key_bits.push(((byte >> j) & 1).toString());
+            }
+        }
+        
+        console.log(`\n🔐 Step 8.7: Computing amount_key...`);
+        console.log(`   Amount key: ${amountKeyHash.toString('hex').substring(0, 32)}...`);
+        
+        // ========================================================================
+        // Compute S_extended: 8·r·A in extended coordinates
+        // ========================================================================
+        const S_extended_raw = decompressToExtendedBase85(derivationHex);
+        const S_formatted = formatForCircuit(S_extended_raw);
+        
+        console.log(`✅ S_extended (8·r·A) computed and formatted`);
+        
         const witness = {
             // Private inputs
-            r: secretKeyBits.slice(0, 256), // Secret key as 256 bits
+            r: secretKeyBits.slice(0, 255), // Secret key as 255 bits (FIXED)
             v: TX_DATA.amount.toString(), // Amount in piconero
             output_index: outputIndex.toString(), // Output index in transaction
             H_s_scalar: H_s_scalar_bits, // Pre-reduced scalar: Keccak256(8·r·A || i) mod L
             
+            // Pre-computed shared secret (saves ~7.5k constraints)
+            S_extended: S_formatted, // 8·r·A in extended coordinates
+            
             // Pre-decompressed points (circuit verifies they compress correctly)
             P_extended: P_formatted, // Destination address in extended coordinates
-            A_extended: A_formatted, // LP view key (decoded from destination address)
-            B_extended: B_formatted, // LP spend key (decoded from destination address)
+            // Note: A, R, B will be decompressed from public inputs in circuit
             
             // Public inputs - Compressed points as field elements
             R_x: R_x_bigint.toString(), // First 255 bits of compressed R
@@ -321,10 +375,8 @@ async function generateWitness() {
             v: witness.v,
             output_index: witness.output_index,
             H_s_scalar: witness.H_s_scalar,
-            A_extended: witness.A_extended,
-            R_extended: witness._metadata.R_extended,
+            S_extended: witness.S_extended,
             P_extended: witness.P_extended,
-            B_extended: witness.B_extended,
             R_x: witness.R_x,
             P_compressed: witness.P_compressed,
             ecdhAmount: witness.ecdhAmount,
