@@ -25,11 +25,4 @@ template Keccak256(nBits) {
     }
 }
 
-// Stub XOR - just returns first input
-template XOR() {
-    signal input a;
-    signal input b;
-    signal output out;
-    
-    out <== a;
-}
+// XOR is provided by circomlib gates.circom
