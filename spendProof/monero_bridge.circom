@@ -95,6 +95,7 @@ template MoneroBridgeV54() {
     signal input P_compressed;      // Destination stealth address
     signal input C_compressed;      // Pedersen commitment from tx
     signal input ecdhAmount;        // ECDH-encrypted amount (64 bits)
+    signal input A_compressed;      // LP's view public key (CRITICAL: prevents wrong address)
     signal input B_compressed;      // LP's spend public key
     signal input monero_tx_hash;    // Monero tx hash (for uniqueness)
     signal input bridge_tx_binding; // Keccak256(R||P||C||ecdhAmount)
@@ -176,9 +177,25 @@ template MoneroBridgeV54() {
     P_compressed_bits.out === P_compressed;
     
     // ════════════════════════════════════════════════════════════════════════
-    // STEP 3: Verify LP spend key B and compute shared secret S = 8·r·A
+    // STEP 3: Verify LP view key A and spend key B
+    // CRITICAL: This prevents users from claiming they sent to LP when they sent elsewhere
     // ════════════════════════════════════════════════════════════════════════
     
+    // Verify A_extended compresses to A_compressed
+    component compressA = PointCompress();
+    for (var i = 0; i < 4; i++) {
+        for (var j = 0; j < 3; j++) {
+            compressA.P[i][j] <== A_extended[i][j];
+        }
+    }
+    
+    component A_compressed_bits = Bits2Num(255);
+    for (var i = 0; i < 255; i++) {
+        A_compressed_bits.in[i] <== compressA.out[i];
+    }
+    A_compressed_bits.out === A_compressed;
+    
+    // Verify B_extended compresses to B_compressed
     component compressB = PointCompress();
     for (var i = 0; i < 4; i++) {
         for (var j = 0; j < 3; j++) {
@@ -707,6 +724,7 @@ component main {public [
     P_compressed,
     C_compressed,
     ecdhAmount,
+    A_compressed,
     B_compressed,
     monero_tx_hash,
     bridge_tx_binding,

@@ -350,6 +350,7 @@ async function generateWitness() {
             P_compressed: witness.P_compressed,
             C_compressed: witness.C_compressed,
             ecdhAmount: witness.ecdhAmount,
+            A_compressed: witness.A_compressed,
             B_compressed: witness.B_compressed,
             monero_tx_hash: witness.monero_tx_hash,
             bridge_tx_binding: witness.bridge_tx_binding,
