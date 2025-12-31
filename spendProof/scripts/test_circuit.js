@@ -7,8 +7,8 @@ console.log("🧪 Testing Monero Bridge Circuit\n");
 // Test 1: Real data (should PASS)
 console.log("Test 1: Real Monero transaction data");
 try {
-    execSync('snarkjs wtns calculate monero_bridge_js/monero_bridge.wasm input.json witness.wtns', {
-        cwd: '/home/remsee/fungerbil/spendProof',
+    execSync('snarkjs wtns calculate build/monero_bridge_js/monero_bridge.wasm input.json witness.wtns', {
+        cwd: __dirname + '/..',
         stdio: 'pipe'
     });
     console.log("✅ PASS - Real data accepted\n");
@@ -26,8 +26,8 @@ wrongR.r[10] = wrongR.r[10] === "0" ? "1" : "0";
 fs.writeFileSync('input_wrong_r.json', JSON.stringify(wrongR, null, 2));
 
 try {
-    execSync('snarkjs wtns calculate monero_bridge_js/monero_bridge.wasm input_wrong_r.json witness_wrong_r.wtns', {
-        cwd: '/home/remsee/fungerbil/spendProof',
+    execSync('snarkjs wtns calculate build/monero_bridge_js/monero_bridge.wasm input_wrong_r.json witness_wrong_r.wtns', {
+        cwd: __dirname + '/..',
         stdio: 'pipe'
     });
     console.log("❌ FAIL - Wrong secret key accepted (security issue!)\n");
@@ -43,8 +43,8 @@ wrongAmount.v = "100000000000";
 fs.writeFileSync('input_wrong_amount.json', JSON.stringify(wrongAmount, null, 2));
 
 try {
-    execSync('snarkjs wtns calculate monero_bridge_js/monero_bridge.wasm input_wrong_amount.json witness_wrong_amount.wtns', {
-        cwd: '/home/remsee/fungerbil/spendProof',
+    execSync('snarkjs wtns calculate build/monero_bridge_js/monero_bridge.wasm input_wrong_amount.json witness_wrong_amount.wtns', {
+        cwd: __dirname + '/..',
         stdio: 'pipe'
     });
     console.log("⚠️  PASS (FRAUD!) - Wrong amount accepted (amount verification disabled)");
@@ -64,8 +64,8 @@ wrongDest.P_compressed = (pBigInt ^ (1n << 10n)).toString(); // XOR to flip bit 
 fs.writeFileSync('input_wrong_dest.json', JSON.stringify(wrongDest, null, 2));
 
 try {
-    execSync('snarkjs wtns calculate monero_bridge_js/monero_bridge.wasm input_wrong_dest.json witness_wrong_dest.wtns', {
-        cwd: '/home/remsee/fungerbil/spendProof',
+    execSync('snarkjs wtns calculate build/monero_bridge_js/monero_bridge.wasm input_wrong_dest.json witness_wrong_dest.wtns', {
+        cwd: __dirname + '/..',
         stdio: 'pipe'
     });
     console.log("❌ FAIL - Wrong destination accepted (security issue!)");
