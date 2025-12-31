@@ -202,8 +202,12 @@ async function generateWitness() {
         }
         P_compressed_bigint = P_compressed_bigint & ((1n << 255n) - 1n);
         
-        // Convert ECDH amount from hex to field element
-        const ecdhAmountBigInt = BigInt('0x' + ecdhAmount);
+        // Convert ECDH amount from hex to field element (little-endian)
+        const ecdhAmountBuf = Buffer.from(ecdhAmount, 'hex');
+        let ecdhAmountBigInt = 0n;
+        for (let i = 0; i < ecdhAmountBuf.length; i++) {
+            ecdhAmountBigInt |= BigInt(ecdhAmountBuf[i]) << BigInt(i * 8);
+        }
         
         // Convert TX hash to field element
         const txHashBigInt = BigInt('0x' + TX_DATA.hash);
@@ -258,48 +262,57 @@ async function generateWitness() {
         console.log(`   Scalar (mod L): ${scalar.toString(16).padStart(64, '0').substring(0, 32)}...`);
         
         // ========================================================================
-        // Compute gamma: hash_to_scalar(Keccak256(S || output_index))
-        // For BP2+, gamma = H_n(derivation || output_index) mod L
-        // This is the commitment blinding factor that both sender and receiver can derive
+        // Decrypt amount using ECDH (Bulletproof2+ format)
+        // amount_key = Keccak256("amount" || H_s_scalar)[0:8]
+        // where H_s_scalar = Keccak256(derivation || output_index) mod L
         // ========================================================================
-        const S_bytes = Buffer.from(derivationHex, 'hex');
-        const output_index_byte = Buffer.from([outputIndex]);
-        const gammaHashInput = Buffer.concat([S_bytes, output_index_byte]);
-        const gammaHash = keccak256(gammaHashInput);
         
-        // Convert hash to scalar and reduce modulo L (Ed25519 curve order)
-        let gamma_scalar = 0n;
+        console.log(`\n💰 Step 8.6: Decrypting ECDH amount...`);
+        
+        // Convert the scalar back to bytes (little-endian, 32 bytes)
+        const scalarBytes = Buffer.alloc(32);
+        let tempScalar = scalar;  // This is already computed above as Hs(derivation || i) mod L
         for (let i = 0; i < 32; i++) {
-            gamma_scalar |= BigInt(gammaHash[i]) << BigInt(i * 8);
-        }
-        gamma_scalar = gamma_scalar % L;  // Reduce modulo L
-        
-        // Convert to bits (LSB first)
-        const gamma_bits = [];
-        for (let i = 0; i < 256; i++) {
-            gamma_bits.push(((gamma_scalar >> BigInt(i)) & 1n).toString());
+            scalarBytes[i] = Number(tempScalar & 0xFFn);
+            tempScalar >>= 8n;
         }
         
-        console.log(`\n🔐 Step 8.6: Computing gamma (commitment blinding)...`);
-        console.log(`   Hash: ${gammaHash.toString('hex').substring(0, 32)}...`);
-        console.log(`   Gamma (mod L): ${gamma_scalar.toString(16).padStart(64, '0').substring(0, 32)}...`);
+        // Compute amount key: Hs("amount" || scalar)
+        const amountPrefix = Buffer.from('amount', 'ascii');
+        const amountKeyInput = Buffer.concat([amountPrefix, scalarBytes]);  // Use SCALAR, not point
+        const amountKeyFull = keccak256(amountKeyInput);
+        const amountKey = amountKeyFull.slice(0, 8);  // First 8 bytes
         
-        // ========================================================================
-        // Compute amount_key: Keccak256(S.x)
-        // Monero uses cn_fast_hash which is Keccak-256
-        // ========================================================================
-        const amountKeyHash = keccak256(S_bytes);
+        console.log(`   Scalar bytes: ${scalarBytes.toString('hex')}`);
+        console.log(`   Amount prefix: "amount" (${amountPrefix.toString('hex')}`);
+        console.log(`   Amount key input: ${amountKeyInput.toString('hex').substring(0, 32)}...`);
+        console.log(`   Amount key (full): ${amountKeyFull.toString('hex')}`);
+        console.log(`   Amount key (8 bytes): ${amountKey.toString('hex')}`);
         
-        const amount_key_bits = [];
-        for (let i = 0; i < 32; i++) {
-            const byte = amountKeyHash[i];
-            for (let j = 0; j < 8; j++) {
-                amount_key_bits.push(((byte >> j) & 1).toString());
-            }
+        // XOR decrypt
+        const ecdhAmountBytes = Buffer.from(ecdhAmount, 'hex');
+        const decryptedAmount = Buffer.alloc(8);
+        for (let i = 0; i < 8; i++) {
+            decryptedAmount[i] = ecdhAmountBytes[i] ^ amountKey[i];
         }
         
-        console.log(`\n🔐 Step 8.7: Computing amount_key...`);
-        console.log(`   Amount key: ${amountKeyHash.toString('hex').substring(0, 32)}...`);
+        // Convert to integer (little-endian)
+        let decryptedAmountInt = 0n;
+        for (let i = 0; i < 8; i++) {
+            decryptedAmountInt |= BigInt(decryptedAmount[i]) << BigInt(i * 8);
+        }
+        
+        console.log(`   ECDH amount (encrypted): ${ecdhAmount}`);
+        console.log(`   Decrypted amount bytes: ${decryptedAmount.toString('hex')}`);
+        console.log(`   Decrypted amount: ${decryptedAmountInt} piconero`);
+        console.log(`   Expected amount: ${TX_DATA.amount} piconero`);
+        
+        if (decryptedAmountInt === BigInt(TX_DATA.amount)) {
+            console.log(`   ✅ Amount decryption SUCCESSFUL!`);
+        } else {
+            console.log(`   ⚠️  Amount mismatch - transaction may use subaddress`);
+            console.log(`      (Subaddresses require additional tx keys from tx_extra)`);
+        }
         
         // ========================================================================
         // Compute S_extended: 8·r·A in extended coordinates
