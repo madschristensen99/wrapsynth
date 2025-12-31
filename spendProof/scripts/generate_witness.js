@@ -22,11 +22,11 @@ function decodeMoneroAddress(address) {
 
 // Real Monero stagenet transaction data
 const TX_DATA = {
-    hash: "827368baa751b395728f79608c0792419a88f08119601669baede39ba0225d4b",
-    block: 2023616,
-    secretKey: "ab923eb60a5de7ff9e40be288ae55ccaea5a6ee175180eabe7774a2951d59701",
-    amount: 1150000000,
-    destination: "77tyMuyZhpUNuqKfNTHL3J9AxDVX6MKRvgjLEMPra23CMUGX1UZEHJYLtG54ziVsUqdDLbtLrpMCnbPgvqAAzJrRM3jevta",
+    hash: "5caae835b751a5ab243b455ad05c489cb9a06d8444ab2e8d3a9d8ef905c1439a",
+    block: 1934116,
+    secretKey: "4cbf8f2cfb622ee126f08df053e99b96aa2e8c1cfd575d2a651f3343b465800a",
+    amount: 20000000000,
+    destination: "53Kajgo3GhV1ddabJZqdmESkXXoz2xD2gUCVc5L2YKjq8Qhx6UXoqFChhF9n2Th9NLTz77258PMdc3G5qxVd487pFZzzVNG",
     output_index: 0,
     node: "https://stagenet.xmr.ditatompel.com"
 };
