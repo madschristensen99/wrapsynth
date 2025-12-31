@@ -193,7 +193,7 @@ async function generateWitness() {
         // Clear the sign bit (bit 255)
         R_x_bigint = R_x_bigint & ((1n << 255n) - 1n);
         
-        // P_compressed and C_compressed should also be first 255 bits (without sign bit)
+        // P_compressed should be first 255 bits (without sign bit)
         const outputKeyBytes = Buffer.from(outputKey, 'hex');
         outputKeyBytes[31] &= 0x7F;
         let P_compressed_bigint = 0n;
@@ -201,14 +201,6 @@ async function generateWitness() {
             P_compressed_bigint |= BigInt(outputKeyBytes[i]) << BigInt(i * 8);
         }
         P_compressed_bigint = P_compressed_bigint & ((1n << 255n) - 1n);
-        
-        const commitmentBytes = Buffer.from(commitment, 'hex');
-        commitmentBytes[31] &= 0x7F;
-        let C_compressed_bigint = 0n;
-        for (let i = 0; i < 32; i++) {
-            C_compressed_bigint |= BigInt(commitmentBytes[i]) << BigInt(i * 8);
-        }
-        C_compressed_bigint = C_compressed_bigint & ((1n << 255n) - 1n);
         
         // Convert ECDH amount from hex to field element
         const ecdhAmountBigInt = BigInt('0x' + ecdhAmount);
@@ -321,8 +313,6 @@ async function generateWitness() {
             // Private inputs
             r: secretKeyBits.slice(0, 255), // Secret key as 255 bits (FIXED)
             v: TX_DATA.amount.toString(), // Amount in piconero
-            gamma: gamma_bits, // Blinding factor from Blake2b("commitment" || S.x || index)
-            amount_key: amount_key_bits, // Amount key from Blake2b("amount" || S.x)
             output_index: outputIndex.toString(), // Output index in transaction
             H_s_scalar: H_s_scalar_bits, // Pre-reduced scalar: Keccak256(8·r·A || i) mod L
             
@@ -336,7 +326,6 @@ async function generateWitness() {
             // Public inputs - Compressed points as field elements
             R_x: R_x_bigint.toString(), // First 255 bits of compressed R
             P_compressed: P_compressed_bigint.toString(), // Destination address as field element
-            C_compressed: C_compressed_bigint.toString(), // Commitment as field element
             ecdhAmount: ecdhAmountBigInt.toString(),
             
             // Bridge-specific inputs - LP keys
@@ -359,37 +348,6 @@ async function generateWitness() {
                 return (bBigInt & ((1n << 255n) - 1n)).toString();
             })(),
             monero_tx_hash: (txHashBigInt % (1n << 252n)).toString(), // Reduced to fit field
-            bridge_tx_binding: (() => {
-                // Compute binding = Keccak256(R || P || C || v)
-                const keccak256 = require('keccak256');
-                
-                // Convert to 32-byte buffers (little-endian)
-                const R_bytes = Buffer.from(R_for_circuit, 'hex');
-                const P_bytes = Buffer.from(outputKey, 'hex');
-                const C_bytes = Buffer.from(commitment, 'hex');
-                const v_bytes = Buffer.alloc(8);
-                v_bytes.writeBigUInt64LE(BigInt(TX_DATA.amount));
-                
-                // Concatenate: R || P || C || v (32 + 32 + 32 + 8 = 104 bytes)
-                const bindingInput = Buffer.concat([R_bytes, P_bytes, C_bytes, v_bytes]);
-                const bindingHash = keccak256(bindingInput);
-                
-                // Convert to BigInt (little-endian)
-                let bindingBigInt = 0n;
-                for (let i = 0; i < 32; i++) {
-                    bindingBigInt |= BigInt(bindingHash[i]) << BigInt(i * 8);
-                }
-                
-                console.log('\n🔒 Binding Hash Computation:');
-                console.log('   R:', R_for_circuit.substring(0, 16) + '...');
-                console.log('   P:', outputKey.substring(0, 16) + '...');
-                console.log('   C:', commitment.substring(0, 16) + '...');
-                console.log('   v:', TX_DATA.amount);
-                console.log('   Binding:', bindingHash.toString('hex').substring(0, 16) + '...');
-                
-                return bindingBigInt.toString();
-            })(),
-            chain_id: "42161", // Arbitrum chain ID
             
             // Metadata for reference (extended coordinates for debugging)
             _metadata: {
@@ -415,21 +373,16 @@ async function generateWitness() {
         const circuitInput = {
             r: witness.r,
             v: witness.v,
-            gamma: witness.gamma,
-            amount_key: witness.amount_key,
             output_index: witness.output_index,
             H_s_scalar: witness.H_s_scalar,
             S_extended: witness.S_extended,
             P_extended: witness.P_extended,
             R_x: witness.R_x,
             P_compressed: witness.P_compressed,
-            C_compressed: witness.C_compressed,
             ecdhAmount: witness.ecdhAmount,
             A_compressed: witness.A_compressed,
             B_compressed: witness.B_compressed,
-            monero_tx_hash: witness.monero_tx_hash,
-            bridge_tx_binding: witness.bridge_tx_binding,
-            chain_id: witness.chain_id
+            monero_tx_hash: witness.monero_tx_hash
         };
         
         fs.writeFileSync("input.json", JSON.stringify(circuitInput, null, 2));
