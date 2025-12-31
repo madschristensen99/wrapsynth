@@ -19,7 +19,7 @@ include "./lib/ed25519/point_decompress.circom";
 
 // Hash functions
 // include "./lib/blake2b/blake2b_256.circom";  // Monero uses Blake2b (DISABLED - not currently used)
-include "./lib/keccak/keccak256.circom";     // For binding hash
+include "./lib/stubs.circom";     // For hash functions
 
 // Utilities (from circomlib)
 include "./node_modules/circomlib/circuits/comparators.circom";
