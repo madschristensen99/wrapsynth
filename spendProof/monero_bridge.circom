@@ -70,7 +70,7 @@ function DOMAIN_AMOUNT() {
 // MAIN CIRCUIT
 // ════════════════════════════════════════════════════════════════════════════
 
-template MoneroBridgeV56Optimized() {
+template MoneroBridge() {
     
     // ════════════════════════════════════════════════════════════════════════
     // PRIVATE INPUTS (witnesses - never revealed on-chain)
@@ -312,7 +312,7 @@ template MoneroBridgeV56Optimized() {
     for (var i = 0; i < 64; i++) {
         xorDecrypt[i] = XOR();
         xorDecrypt[i].a <== ecdhBits.out[i];
-        xorDecrypt[i].b <== amount_key[i];  // Use witness amount_key directly
+        xorDecrypt[i].b <== amountKeyBits[i];  // Use derived amount key
         decryptedBits[i] <== xorDecrypt[i].out;
     }
     
@@ -473,7 +473,5 @@ component main {public [
     ecdhAmount,
     A_compressed,
     B_compressed,
-    monero_tx_hash,
-    bridge_tx_binding,
-    chain_id
-]} = MoneroBridgeV56Optimized();
+    monero_tx_hash
+]} = MoneroBridge();
