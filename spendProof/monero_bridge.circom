@@ -17,8 +17,8 @@ include "./lib/ed25519/point_compress.circom";
 include "./lib/ed25519/point_decompress.circom";
 
 // Hash functions
+include "keccak-circom/circuits/keccak.circom";  // Real Keccak256 implementation
 // include "./lib/blake2b/blake2b_256.circom";  // Monero uses Blake2b (DISABLED - not currently used)
-include "./lib/stubs.circom";     // For hash functions
 
 // Utilities (from circomlib)
 include "./node_modules/circomlib/circuits/comparators.circom";
@@ -222,7 +222,7 @@ template MoneroBridgeV56Optimized() {
     // NOTE: The witness generator provides the pre-reduced scalar H_s_scalar
     // which is Keccak256(S || output_index) mod L, where L is the Ed25519 curve order.
     // We verify this matches the hash by computing it here.
-    component hashS = Keccak256(264); // 256 bits (S) + 8 bits (output_index)
+    component hashS = Keccak(264, 256); // Input: 256 bits (S) + 8 bits (output_index), Output: 256 bits
     for (var i = 0; i < 256; i++) {
         hashS.in[i] <== S_x_bits[i];
     }
@@ -283,19 +283,58 @@ template MoneroBridgeV56Optimized() {
     
     // ════════════════════════════════════════════════════════════════════════
     // STEP 4: Decrypt and verify amount from ecdhAmount
-    // amount_key = Keccak256(S.x)
-    // v_decrypted = ecdhAmount ⊕ amount_key[0:64]
+    // amount_key = Keccak256("amount" || H_s_scalar)[0:64]
+    // v_decrypted = ecdhAmount ⊕ amount_key
     // ════════════════════════════════════════════════════════════════════════
     
+    // Domain separator: "amount" in ASCII (6 bytes = 48 bits)
+    // Each byte is encoded LSB-first (little-endian bit order)
+    signal amount_prefix[48];
     
-    // Hash S.x to derive amount key: Keccak256(S.x)
-    // Input: S.x (256 bits)
-    component amountKeyHash = Keccak256(256);
+    // 'a' = 0x61 = 01100001 -> LSB first: 10000110
+    amount_prefix[0] <== 1; amount_prefix[1] <== 0; amount_prefix[2] <== 0;
+    amount_prefix[3] <== 0; amount_prefix[4] <== 0; amount_prefix[5] <== 1;
+    amount_prefix[6] <== 1; amount_prefix[7] <== 0;
     
-    // Hash S.x directly (simplified - Monero uses Blake2s("amount" || S.x))
-    for (var i = 0; i < 256; i++) {
-        amountKeyHash.in[i] <== S_x_bits[i];
+    // 'm' = 0x6d = 01101101 -> LSB first: 10110110
+    amount_prefix[8] <== 1; amount_prefix[9] <== 0; amount_prefix[10] <== 1;
+    amount_prefix[11] <== 1; amount_prefix[12] <== 0; amount_prefix[13] <== 1;
+    amount_prefix[14] <== 1; amount_prefix[15] <== 0;
+    
+    // 'o' = 0x6f = 01101111 -> LSB first: 11110110
+    amount_prefix[16] <== 1; amount_prefix[17] <== 1; amount_prefix[18] <== 1;
+    amount_prefix[19] <== 1; amount_prefix[20] <== 0; amount_prefix[21] <== 1;
+    amount_prefix[22] <== 1; amount_prefix[23] <== 0;
+    
+    // 'u' = 0x75 = 01110101 -> LSB first: 10101110
+    amount_prefix[24] <== 1; amount_prefix[25] <== 0; amount_prefix[26] <== 1;
+    amount_prefix[27] <== 0; amount_prefix[28] <== 1; amount_prefix[29] <== 1;
+    amount_prefix[30] <== 1; amount_prefix[31] <== 0;
+    
+    // 'n' = 0x6e = 01101110 -> LSB first: 01110110
+    amount_prefix[32] <== 0; amount_prefix[33] <== 1; amount_prefix[34] <== 1;
+    amount_prefix[35] <== 1; amount_prefix[36] <== 0; amount_prefix[37] <== 1;
+    amount_prefix[38] <== 1; amount_prefix[39] <== 0;
+    
+    // 't' = 0x74 = 01110100 -> LSB first: 00101110
+    amount_prefix[40] <== 0; amount_prefix[41] <== 0; amount_prefix[42] <== 1;
+    amount_prefix[43] <== 0; amount_prefix[44] <== 1; amount_prefix[45] <== 1;
+    amount_prefix[46] <== 1; amount_prefix[47] <== 0;
+    
+    // Hash with domain separation: 48 bits ("amount") + 256 bits (H_s_scalar padded) = 304 bits
+    // Monero hashes the SCALAR (H_s), not the derivation point!
+    component amountKeyHash = Keccak(304, 256); // Input: 48 bits ("amount") + 256 bits (H_s_scalar), Output: 256 bits
+    
+    // First 48 bits: "amount" prefix
+    for (var i = 0; i < 48; i++) {
+        amountKeyHash.in[i] <== amount_prefix[i];
     }
+    
+    // Next 256 bits: H_s_scalar (255 bits padded to 256 bits with a 0)
+    for (var i = 0; i < 255; i++) {
+        amountKeyHash.in[48 + i] <== H_s_scalar[i];
+    }
+    amountKeyHash.in[48 + 255] <== 0;  // Pad to 256 bits
     
     // Take lower 64 bits for XOR
     signal amountKeyBits[64];
@@ -321,10 +360,9 @@ template MoneroBridgeV56Optimized() {
         decryptedAmount.in[i] <== decryptedBits[i];
     }
     
-    // ⚠️ TEMPORARILY DISABLED: Amount decryption check
-    // Need to verify the correct amount_key derivation for BP2+ (RCT type 6)
-    // The ECDH encryption scheme may be different than expected
-    // decryptedAmount.out === v;
+    // Verify decrypted amount matches claimed amount v
+    // This prevents fraud - user cannot claim a different amount than what was encrypted
+    decryptedAmount.out === v;
     
     // ════════════════════════════════════════════════════════════════════════
     // OUTPUTS
