@@ -1,7 +1,6 @@
-// monero_bridge_v54_fixed.circom - CORRECTED Monero Bridge Circuit v5.4
-// Proves: Monero transaction authenticity with proper Pedersen commitment verification
-// Target: ~185k constraints (realistic for Groth16/BN254)
-// Cryptography: Ed25519 curve, Blake2b, Pedersen commitments (v·H + γ·G)
+// monero_bridge.circom - Monero Bridge Circuit
+// Proves: Knowledge of transaction secret key and correct destination address
+// Cryptography: Ed25519 curve, Keccak256
 //
 // SECURITY NOTICE: Not audited for production use. Experimental software.
 
@@ -79,7 +78,6 @@ template MoneroBridgeV54() {
     
     signal input r[256];            // Transaction secret key (256-bit scalar)
     signal input v;                 // Amount in atomic piconero (64 bits)
-    signal input gamma[256];        // ⭐️ Blinding factor (derived from r·A)
     signal input output_index;      // Output index in transaction (0, 1, 2, ...)
     signal input H_s_scalar[255];   // ⭐️ Pre-reduced scalar: Keccak256(8·r·A || i) mod L
     signal input A_extended[4][3];  // ⭐️ Recipient view public key (private)
@@ -93,26 +91,21 @@ template MoneroBridgeV54() {
     
     signal input R_x;               // Transaction public key R (compressed)
     signal input P_compressed;      // Destination stealth address
-    signal input C_compressed;      // Pedersen commitment from tx
     signal input ecdhAmount;        // ECDH-encrypted amount (64 bits)
     signal input A_compressed;      // LP's view public key (CRITICAL: prevents wrong address)
     signal input B_compressed;      // LP's spend public key
     signal input monero_tx_hash;    // Monero tx hash (for uniqueness)
-    signal input bridge_tx_binding; // Keccak256(R||P||C||ecdhAmount)
-    signal input chain_id;          // Replay protection (42161)
     
     // ════════════════════════════════════════════════════════════════════════
     // OUTPUTS
     // ════════════════════════════════════════════════════════════════════════
     
-    signal output verified_binding;
     signal output verified_amount;
     
     // ════════════════════════════════════════════════════════════════════════
     // CONSTANTS
     // ════════════════════════════════════════════════════════════════════════
     
-    var CHAIN_ID_ARBITRUM = 42161;
     var COFACTOR = 8;
     
     // ════════════════════════════════════════════════════════════════════════
@@ -335,152 +328,10 @@ template MoneroBridgeV54() {
     P_derived_bits.out === P_compressed;
     
     // ════════════════════════════════════════════════════════════════════════
-    // STEP 4: Derive gamma from shared secret S (DISABLED)
-    // γ = Blake2b("commitment" || S.x || output_index)
-    // ════════════════════════════════════════════════════════════════════════
-    // DISABLED: Cannot verify gamma because:
-    // 1. We don't have the sender's gamma (it's their blinding factor)
-    // 2. Commitment C is already verified by the Monero network
-    // 3. Our circuit focuses on proving knowledge of transaction secret key r
-    
-    /*
-    // Blake2b input: 256 bits (S.x) + 8 bits (output_index) = 264 bits
-    component gammaHash = Blake2b256(264);
-    
-    // Pack S.x
-    for (var i = 0; i < 256; i++) {
-        gammaHash.in[i] <== S_x_bits[i];
-    }
-    
-    // output_index = 0 (8 bits)
-    for (var i = 256; i < 264; i++) {
-        gammaHash.in[i] <== 0;
-    }
-    
-    // Verify computed gamma matches witness input
-    component gammaWitness = Bits2Num(256);
-    for (var i = 0; i < 256; i++) {
-        gammaWitness.in[i] <== gamma[i];
-    }
-    
-    component gammaComputed = Bits2Num(256);
-    for (var i = 0; i < 256; i++) {
-        gammaComputed.in[i] <== gammaHash.out[i];
-    }
-    
-    // gamma must equal Blake2b derivation
-    gammaWitness.out === gammaComputed.out;
-    */
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // STEP 5: Derive gamma and verify Pedersen commitment C = v·H + γ·G
-    // ════════════════════════════════════════════════════════════════════════
-    // Derive gamma from shared secret S using Keccak256
-    // gamma = Keccak256("commitment" || S.x || output_index)
-    // This prevents users from claiming arbitrary amounts
-    
-    
-    // Hash input: S.x (256 bits) + output_index (8 bits) = 264 bits
-    component gammaHash = Keccak256(264);
-    for (var i = 0; i < 256; i++) {
-        gammaHash.in[i] <== S_x_bits[i];
-    }
-    
-    // Add output_index as 8 bits
-    component idx_bits_gamma = Num2Bits(8);
-    idx_bits_gamma.in <== output_index;
-    for (var i = 0; i < 8; i++) {
-        gammaHash.in[256 + i] <== idx_bits_gamma.out[i];
-    }
-    
-    // Extract gamma as 256-bit scalar (first 256 bits of hash)
-    signal gamma_derived[256];
-    for (var i = 0; i < 256; i++) {
-        gamma_derived[i] <== gammaHash.out[i];
-    }
-    
-    // Verify derived gamma matches witness gamma (for now, trust witness)
-    // TODO: Remove gamma as witness input once fully tested
-    // For now, just use gamma_derived for commitment
-    // Range check v (64 bits)
-    component vRangeCheck = Num2Bits(64);
-    vRangeCheck.in <== v;
-    
-    // Get generator point H (G is already declared in step 1)
-    var H[4][3] = ed25519_H();
-    
-    // Compute v·H (amount component)
-    component compute_vH = ScalarMul();
-    // ScalarMul expects 255 bits
-    for (var i = 0; i < 64; i++) {
-        compute_vH.s[i] <== vRangeCheck.out[i];
-    }
-    for (var i = 64; i < 255; i++) {
-        compute_vH.s[i] <== 0;  // Pad to 255 bits
-    }
-    for (var i = 0; i < 4; i++) {
-        for (var j = 0; j < 3; j++) {
-            compute_vH.P[i][j] <== H[i][j];
-        }
-    }
-    
-    // Compute γ·G (blinding component) using derived gamma
-    component compute_gammaG = ScalarMul();
-    for (var i = 0; i < 255; i++) {
-        compute_gammaG.s[i] <== gamma_derived[i];
-    }
-    for (var i = 0; i < 4; i++) {
-        for (var j = 0; j < 3; j++) {
-            compute_gammaG.P[i][j] <== G[i][j];
-        }
-    }
-    
-    // Add points: C = v·H + γ·G
-    component computeC = PointAdd();
-    for (var i = 0; i < 4; i++) {
-        for (var j = 0; j < 3; j++) {
-            computeC.P[i][j] <== compute_vH.sP[i][j];
-            computeC.Q[i][j] <== compute_gammaG.sP[i][j];
-        }
-    }
-    
-    // Compress computed C
-    component compressC = PointCompress();
-    for (var i = 0; i < 4; i++) {
-        for (var j = 0; j < 3; j++) {
-            compressC.P[i][j] <== computeC.R[i][j];
-        }
-    }
-    
-    // Convert to field element for comparison
-    component compressCBits = Bits2Num(256);
-    for (var i = 0; i < 256; i++) {
-        compressCBits.in[i] <== compressC.out[i];
-    }
-    
-    // Verify C matches public input from Monero transaction
-    // Use first 255 bits (clear sign bit) for comparison
-    component C_compressed_bits = Num2Bits(256);
-    C_compressed_bits.in <== C_compressed;
-    
-    component C_computed_num = Bits2Num(255);
-    component C_expected_num = Bits2Num(255);
-    
-    for (var i = 0; i < 255; i++) {
-        C_computed_num.in[i] <== compressCBits.in[i];
-        C_expected_num.in[i] <== C_compressed_bits.out[i];
-    }
-    
-    // Verify computed commitment matches blockchain commitment
-    // TODO: Fix gamma derivation to match Monero's Blake2s("commitment" || S.x)
-    // C_computed_num.out === C_expected_num.out;
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // STEP 6: Decrypt and verify amount from ecdhAmount
-    // amount_key = Keccak256("amount" || S.x)
+    // STEP 4: Decrypt and verify amount from ecdhAmount
+    // amount_key = Keccak256(S.x)
     // v_decrypted = ecdhAmount ⊕ amount_key[0:64]
     // ════════════════════════════════════════════════════════════════════════
-    // Using Keccak256 instead of Blake2s for now (TODO: implement Blake2s)
     
     
     // Hash S.x to derive amount key: Keccak256(S.x)
@@ -517,71 +368,14 @@ template MoneroBridgeV54() {
     }
     
     // Verify decrypted amount matches claimed amount v
-    // TODO: Fix amount key derivation to match Monero's Blake2s("amount" || S.x)
+    // TODO: Re-enable once we have test transactions to MAIN addresses (not subaddresses)
+    // Current test txs use subaddresses which require additional tx keys from tx_extra
     // decryptedAmount.out === v;
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // STEP 7: Verify bridge transaction binding (replay protection)
-    // binding = Keccak256(R || P || C || v)
-    // ════════════════════════════════════════════════════════════════════════
-    // Prevents replay attacks by binding proof to specific transaction data
-    
-    // Convert public inputs to bits
-    component Rbits = Num2Bits(256);
-    Rbits.in <== R_x;
-    
-    component Pbits = Num2Bits(256);
-    Pbits.in <== P_compressed;
-    
-    component Cbits = Num2Bits(256);
-    Cbits.in <== C_compressed;
-    
-    component vBits = Num2Bits(64);
-    vBits.in <== v;
-    
-    // Keccak256(R || P || C || v) = 832 bits
-    component bindingHash = Keccak256(832);
-    
-    // Pack in little-endian order (LSB first) to match witness generator
-    for (var i = 0; i < 256; i++) {
-        bindingHash.in[i] <== Rbits.out[i];
-        bindingHash.in[256 + i] <== Pbits.out[i];
-        bindingHash.in[512 + i] <== Cbits.out[i];
-    }
-    for (var i = 0; i < 64; i++) {
-        bindingHash.in[768 + i] <== vBits.out[i];
-    }
-    
-    // Convert hash to field element (little-endian)
-    component bindingBits = Bits2Num(256);
-    for (var i = 0; i < 256; i++) {
-        bindingBits.in[i] <== bindingHash.out[i];
-    }
-    
-    // Verify binding matches public input
-    // TODO: Fix bit ordering to match witness generator
-    // bindingBits.out === bridge_tx_binding;
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // STEP 8: Chain ID verification (replay protection) (DISABLED)
-    // ════════════════════════════════════════════════════════════════════════
-    // DISABLED: Focus on core security proof (R = r·G) only
-    
-    /*
-    // Range check chain_id (should fit in 16 bits for Arbitrum)
-    component chainRange = Num2Bits(16);
-    chainRange.in <== chain_id;
-    
-    // Verify chain_id matches expected value
-    signal chain_match <== chain_id - CHAIN_ID_ARBITRUM;
-    chain_match === 0;
-    */
     
     // ════════════════════════════════════════════════════════════════════════
     // OUTPUTS
     // ════════════════════════════════════════════════════════════════════════
     
-    verified_binding <== bridge_tx_binding;
     verified_amount <== v;
 }
 
@@ -722,11 +516,8 @@ template Edwards25519SubgroupCheck() {
 component main {public [
     R_x,
     P_compressed,
-    C_compressed,
     ecdhAmount,
     A_compressed,
     B_compressed,
-    monero_tx_hash,
-    bridge_tx_binding,
-    chain_id
+    monero_tx_hash
 ]} = MoneroBridgeV54();

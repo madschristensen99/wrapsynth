@@ -69,7 +69,7 @@ for (const tx of transactions) {
     // Test witness with timing
     const calcStart = Date.now();
     try {
-        execSync('snarkjs wtns calculate monero_bridge_js/monero_bridge.wasm input.json witness.wtns 2>&1', {stdio: 'pipe'});
+        execSync('snarkjs wtns calculate build/monero_bridge_js/monero_bridge.wasm input.json witness.wtns 2>&1', {stdio: 'pipe'});
         const calcTime = Date.now() - calcStart;
         console.log(`  ⏱️  Circuit calculation: ${calcTime}ms`);
         console.log(`  ✅ PASS - ${tx.name} accepted by circuit\n`);
