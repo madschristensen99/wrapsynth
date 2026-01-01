@@ -9,7 +9,7 @@ console.log("Test 1: Real Monero transaction data");
 const test1Start = Date.now();
 try {
     execSync('snarkjs wtns calculate build/monero_bridge_js/monero_bridge.wasm input.json witness.wtns', {
-        cwd: '/home/remsee/fungerbil/spendProof',
+        cwd: process.cwd(),
         stdio: 'pipe'
     });
     const test1Time = Date.now() - test1Start;
@@ -31,7 +31,7 @@ fs.writeFileSync('input_wrong_r.json', JSON.stringify(wrongR, null, 2));
 const test2Start = Date.now();
 try {
     execSync('snarkjs wtns calculate build/monero_bridge_js/monero_bridge.wasm input_wrong_r.json witness_wrong_r.wtns', {
-        cwd: '/home/remsee/fungerbil/spendProof',
+        cwd: process.cwd(),
         stdio: 'pipe'
     });
     const test2Time = Date.now() - test2Start;
@@ -51,7 +51,7 @@ fs.writeFileSync('input_wrong_amount.json', JSON.stringify(wrongAmount, null, 2)
 const test3Start = Date.now();
 try {
     execSync('snarkjs wtns calculate build/monero_bridge_js/monero_bridge.wasm input_wrong_amount.json witness_wrong_amount.wtns', {
-        cwd: '/home/remsee/fungerbil/spendProof',
+        cwd: process.cwd(),
         stdio: 'pipe'
     });
     const test3Time = Date.now() - test3Start;
@@ -75,7 +75,7 @@ fs.writeFileSync('input_wrong_dest.json', JSON.stringify(wrongDest, null, 2));
 const test4Start = Date.now();
 try {
     execSync('snarkjs wtns calculate build/monero_bridge_js/monero_bridge.wasm input_wrong_dest.json witness_wrong_dest.wtns', {
-        cwd: '/home/remsee/fungerbil/spendProof',
+        cwd: process.cwd(),
         stdio: 'pipe'
     });
     const test4Time = Date.now() - test4Start;
