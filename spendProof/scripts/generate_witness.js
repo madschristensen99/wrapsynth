@@ -22,13 +22,13 @@ function decodeMoneroAddress(address) {
 
 // Real Monero stagenet transaction data
 const TX_DATA = {
-    hash: "5caae835b751a5ab243b455ad05c489cb9a06d8444ab2e8d3a9d8ef905c1439a",
-    block: 1934116,
-    secretKey: "4cbf8f2cfb622ee126f08df053e99b96aa2e8c1cfd575d2a651f3343b465800a",
-    amount: 20000000000,
-    destination: "53Kajgo3GhV1ddabJZqdmESkXXoz2xD2gUCVc5L2YKjq8Qhx6UXoqFChhF9n2Th9NLTz77258PMdc3G5qxVd487pFZzzVNG",
+    hash: "bb1eab8e0de071a272e522ad912d143aa531e0016d51e0aec800be39511dd141",
+    block: 3569096,
+    secretKey: "9be32769af6e99d0fef1dcddbef68f254004e2eb06e8f712c01a63d235a5410c",
+    amount: 931064529072,
+    destination: "87DZ8wkCoePVH7UH7zL3FhR2CjadnC83pBMqXZizg7T2dJod5rzQuAMbBg5PtcA9dHTtWAvrL7ZCTXEC2RDV3Mr4HJYP9gj",
     output_index: 0,
-    node: "https://stagenet.xmr.ditatompel.com"
+    node: "https://monero-rpc.cheems.de.box.skhron.com.ua:18089"
 };
 
 async function generateWitness() {
@@ -38,7 +38,7 @@ async function generateWitness() {
     
     try {
         // Step 1: Fetch transaction data
-        console.log("📡 Step 1: Fetching transaction from stagenet...");
+        console.log("📡 Step 1: Fetching transaction from node...");
         const response = await axios.post(`${TX_DATA.node}/gettransactions`, {
             txs_hashes: [TX_DATA.hash],
             decode_as_json: true
