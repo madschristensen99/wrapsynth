@@ -314,13 +314,8 @@ async function generateWitness() {
             console.log(`      (Subaddresses require additional tx keys from tx_extra)`);
         }
         
-        // ========================================================================
-        // Compute S_extended: 8·r·A in extended coordinates
-        // ========================================================================
-        const S_extended_raw = decompressToExtendedBase85(derivationHex);
-        const S_formatted = formatForCircuit(S_extended_raw);
-        
-        console.log(`✅ S_extended (8·r·A) computed and formatted`);
+        // Note: S = 8·r·A is now computed IN-CIRCUIT from r and A
+        // This is more secure as it prevents the prover from providing a fake S
         
         const witness = {
             // Private inputs
@@ -328,9 +323,6 @@ async function generateWitness() {
             v: TX_DATA.amount.toString(), // Amount in piconero
             output_index: outputIndex.toString(), // Output index in transaction
             H_s_scalar: H_s_scalar_bits, // Pre-reduced scalar: Keccak256(8·r·A || i) mod L
-            
-            // Pre-computed shared secret (saves ~7.5k constraints)
-            S_extended: S_formatted, // 8·r·A in extended coordinates
             
             // Pre-decompressed points (circuit verifies they compress correctly)
             P_extended: P_formatted, // Destination address in extended coordinates
@@ -388,7 +380,6 @@ async function generateWitness() {
             v: witness.v,
             output_index: witness.output_index,
             H_s_scalar: witness.H_s_scalar,
-            S_extended: witness.S_extended,
             P_extended: witness.P_extended,
             R_x: witness.R_x,
             P_compressed: witness.P_compressed,
