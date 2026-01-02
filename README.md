@@ -1,294 +1,179 @@
-# Fun Gerbil - Privacy-Preserving Cross-Chain DeFi Infrastructure
+# Zero XMR
 
-A comprehensive privacy-focused DeFi protocol bridging Solana and Monero ecosystems, featuring atomic swaps, wrapped privacy tokens, and zero-knowledge computation.
+**Zero-knowledge, permissionless wrapped Monero on Ethereum**
 
-[![Pitch:](https://img.youtube.com/vi/ZaeMy5X_Lc8/maxresdefault.jpg)](https://youtu.be/ZaeMy5X_Lc8)
+Zero XMR enables trustless bridging of Monero to Ethereum through zero-knowledge proofs. Send XMR to a liquidity provider's address, generate a ZK proof of payment, and receive wrapped XMR tokens—all without revealing transaction details or requiring intermediaries.
 
-## 🎯 Mission
-
-Fun Gerbil is building the infrastructure to onboard Monero's privacy to Solana's DeFi ecosystem, creating private, trustless cross-chain financial primitives for the first time.
-
-## 📊 Key Features
-
-### 1. Solana ↔ Monero Atomic Swaps
-- **SOL-to-XMR**: Lock SOL on Solana, receive XMR on Monero
-- **XMR-to-SOL**: Lock XMR on Monero, receive SOL on Solana
-- **Adaptor Signatures**: Deterministic secret revelation via Schnorr signatures
-- **Dual-collateral system**: Both parties lock equal collateral to prevent fraud
-
-### 2. Wrapped Monero (wXMR) 
-- **Privacy Bridges**: Mint/burn privacy tokens using zero-knowledge proofs
-- **Fully Homomorphic Encryption**: Private computation on encrypted balances
-- **Arcium Integration**: MPC-based confidential computing infrastructure
-
-### 3. Privacy DeFi Primitives
-- **Private AMMs**: Confidential liquidity pools
-- **ZK Borrowing**: Zero-knowledge lending markets
-- **Private Perps**: Confidential perpetual swaps
-- **Dark Pools**: Private order matching
-
-### 4. User Experience
-- **Self-custodial**: Users maintain full control of private keys
-- **Non-custodial**: No centralized entities hold user funds
-- **Approachable branding**: Fun, pun-based naming to reduce intimidation
-
-## 🏗️ Architecture Overview
-
-```
-fungerbil/
-├── atomic-swap/           # Core atomic swap infrastructure
-├── arcium-mint/          # MPC-based privacy tokens
-├── frontend/             # Web interfaces
-├── pitchdeck/           # Investor materials
-└── svm-fhe/            # (Future) Solana-native FHE
-├── wxmr-token/         # Synthwrap wXMR implementation
-```
-
-## 🔗 Cross-Chain Infrastructure
-
-### Transaction Flows
-
-#### SOL → XMR Swap
-1. **Alice** locks SOL in Solana HTLC contract
-2. **Bob** locks equivalent SOL collateral simultaneously
-3. **Alice** reveals XMR secret via adaptor signature
-4. **Bob** redeems SOL, **Alice** receives XMR
-
-#### XMR → SOL Swap
-1. **Bob** locks SOL in Solana HTLC contract
-2. **Alice** sends XMR to Bob's Monero address
-3. **Alice** claims SOL using revealed secret
-4. **Bob** receives XMR, **Alice** receives SOL
-
-### Security Properties
-- **Atomic**: All-or-nothing swaps preventing partial execution
-- **Deterministic**: Secrets revealed through cryptographic proofs
-- **Time-locked**: Automatic refund after expiry
-- **Collaterized**: Dual-asset backing eliminates counterparty risk
-
-## 💻 Technical Implementation
-
-### Smart Contracts
-- **Anchor Framework**: Rust-based Solana program development
-- **Adaptor Signatures**: Schnorr signature revelation mechanism
-- **Token Program**: SPL token integration for SOL transfers
-- **Cross-program invocation**: Atomic multi-token transfers
-
-### Backend Services
-- **Node.js/TypeScript**: RESTful API server
-- **Solana Client**: Transaction management and account monitoring
-- **Monero Client**: RPC integration for Monero operations
-- **WebSocket**: Real-time swap status updates
-
-### Frontend Applications
-- **Atomic Swap Terminal**: Live trading interface
-- **Wallet Connection**: Multi-wallet support (Phantom, Brave, Solflare)
-- **Real-time Pricing**: Live SOL/XMR price feeds
-- **Transaction Status**: Real-time swap monitoring
-
-## 🖥️ Quick Start
-
-### Prerequisites
-- Node.js 18+
-- Rust 1.70+
-- Solana CLI tools
-- Monero wallet RPC (optional)
-
-### 1. Clone and Setup
-```bash
-git clone https://github.com/madschristensen99/fungerbil.git
-cd fungerbil
-```
-
-### 2. Start Atomic Swap Server
-```bash
-cd atomic-swap/server
-npm install
-npm run dev
-```
-Server runs on `http://localhost:3000`
-
-### 3. Setup Monero Wallet (Optional)
-```bash
-# Start monero-wallet-rpc for stagenet testing
-monero-wallet-rpc \
-  --stagenet \
-  --rpc-bind-port 18082 \
-  --wallet-file ~/monero/stagenet.wallet \
-  --password your_password \
-  --daemon-host stagenet.community.xmr.to \
-  --daemon-port 38081 \
-  --disable-rpc-login
-```
-
-### 4. Launch Frontend
-Open `/frontend/atomicSwap/index.html` in any modern web browser.
-
-## 📁 Project Structure Deep Dive
-
-### `atomic-swap/` - Core Protocol
-Contain the complete atomic swap infrastructure:
-
-**Smart Contract** (`solana-program/src/lib.rs`):
-- `create_SOL_to_xmr_swap`: Alice initiates SOL→XMR swap
-- `create_xmr_to_SOL_swap`: Bob initiates XMR→SOL swap
-- `redeem_SOL`: Secret revelation and asset redemption
-- `refund`: Automatic expiry refunds with collateral return
-
-**Backend Server** (`server/src/`):
-- `solana-client.ts`: Solana transaction management
-- `monero-client.ts`: Monero RPC client integration
-- `handlers.ts`: REST API endpoints for swap creation/execution
-
-**API Endpoints**:
-```bash
-# Create SOL → XMR swap
-POST /api/swap/create-SOL-to-xmr
-
-# Create XMR → SOL swap  
-POST /api/swap/create-xmr-to-SOL
-
-# Redeem completed swap
-POST /api/swap/:swapId/redeem
-
-# Get swap details
-GET /api/swap/:swapId
-```
-
-### `arcium-mint/` - Privacy Token Infrastructure
-FHE-enabled privacy token system based on Arcium network:
-
-**Computation Definition**:
-- Encrypted state transitions via Arcium coprocessor
-- Zero-knowledge balance updates
-- Private transfer verification
-
-**Privacy Features**:
-- Fully homomorphic encryption for computations
-- MPC-based consensus on encrypted states
-- Cross-chain cryptographic proof systems
-
-### `frontend/` - User Interfaces
-Modern web applications for different user personas:
-
-**Atomic Swap Terminal** (`atomicSwap/`):
-- Live trading interface with price feeds
-- Wallet connection and swap creation
-- Real-time transaction monitoring
-
-**Wrapped XMR (wXMR) System** (`wxmr/`):
-- **Yield-bearing synthwrap**: 110% overcollateralized by yield-bearing USX stablecoin and native tokens
-- **Pyth integration**: Real-time wXMR pricing prevents on-chain manipulation
-- **Block header rewards**: Monero node operators receive yield proceeds for pushing block headers
-- **wXMR governance**: Token holders vote on reward percentages and protocol parameters
-- **Full collateral seizure**: Failed LP obligations result in complete collateral distribution to users
-
-**Wallet Interface** (`wxmr/`):
-- Basic Solana wallet functionality
-- wXMR token management
-- Token minting and burning
-
-### `SYNTHWRAP.md` - Detailed Documentation
-Comprehensive explanation of the synthwrap model, LP mechanics, and ZK verification system
-
-### `pitchdeck/` - Investor Materials
-Comprehensive pitch presentation covering:
-- Market opportunity for privacy DeFi
-- Technical architecture and security model
-- Revenue streams and tokenomics
-- Team backgrounds and roadmap
-
-## 🔐 Security Model
-
-### Cryptographic Primitives
-- **Adaptor Signatures**: Schnorr-based secret revelation 
-- **Hash Time-Lock Contracts**: HTLC implementation with automatic expiry
-- **Zero-Knowledge Proofs**: Confidential transaction verification
-- **Threshold Cryptography**: Distributed key generation and sharing
-
-### Risk Mitigation
-- **Dual Collateral**: Both parties lock equal value, preventing fraud
-- **Time-locked Refunds**: Automatic return of funds after expiry
-- **Monatomic Execution**: All-or-nothing swap completion
-- **Cryptographic Auditing**: Mathematical verification of outcomes
-
-## 🌐 Live Applications
-
-### Production Services
-- **Main Website**: [fungerbil.com](https://fungerbil.com)
-- **Telegram**: [t.me/fungerbilswap](https://t.me/fungerbilswap)
-- **GitHub**: [github.com/madschristensen99/fungerbil](https://github.com/madschristensen99/fungerbil)
-
-### Network Status
-- **Current Version**: 2.0.0 (devnet)
-- **Solana Program ID**: `G1BVSiFojnXFaPG1WUgJAcYaB7aGKLKWtSqhMreKgA82`
-- **Deploy Network**: Solana Devnet (mainnet support planned Q1 2026)
-
-## 📈 Development Roadmap
-
-### Q4 2025 (Current)
-- ✅ Devnet testnet launch
-- ✅ Atomic swap protocol completion
-- ✅ Frontend trading terminal
-- ✅ Monero integration testing
-
-### Q1 2026
-- Mainnet deployment preparation
-- Security audit completion
-- Audited program verification
-- Mainnet SOL support integration
-
-### Q2 2026
-- wXMR privacy token launch
-- Private AMM development
-- API/SDK release for third-party integration
-- Dark pool infrastructure setup
-
-### Q3 2026
-- DAO governance implementation
-- Cross-chain expansion (Ethereum, Bitcoin)
-- Mobile application release
-- Institutional liquidity partnerships
-
-## 👥 Team
-
-### Founders
-- **Mads Christensen** - CEO & Founder
-  - Monero maximalist and full-stack engineer
-  - Former senior developer roles in DeFi protocols
-
-- **Kyle Koshiyama** - Protocol Engineer  
-  - Former Fhenix engineer
-  - Current DarkLake protocol contributor
-
-- **Tiago Alves** - Research Lead
-  - PhD Cryptography (University of Lisbon)
-  - Zero-knowledge proof systems researcher
-
-## 🤝 Contributing
-
-We welcome contributions from the privacy and DeFi communities:
-
-1. **Issue reporting**: Use GitHub issues for bug reports
-2. **Code contributions**: Opening PRs following existing patterns
-3. **Security audits**: Contact team for protocol audits
-4. **Community help**: Discord server for technical discussions
-
-## 📞 Contact
-
-- **Email**: mads@fungerbil.com
-- **Telegram**: [t.me/fungerbilswap](https://t.me/fungerbilswap)
-- **Twitter**: [@fungerbilXMR](https://x.com/fungerbilXMR)
-- **GitHub**: [madschristensen99/fungerbil](https://github.com/madschristensen99/fungerbil)
-
-## 🪪 License
-
-This project is licensed under the MIT License - see individual subdirectories for specific component licenses.
-
-## ⚠️ Disclaimer
-
-This software is experimental and should be used with testnet funds only until security audits are completed. Always verify smart contract addresses and conduct thorough testing before mainnet deployment.
+🌐 **[zeroxmr.com](https://zeroxmr.com)**
 
 ---
 
-**Fun Gerbil**: *Privacy shouldn't be complicated.*
+## How It Works
+
+Zero XMR uses a circom circuit to cryptographically prove you sent Monero to a specific address without revealing:
+
+- Transaction secret keys
+- Exact amounts (until claim)
+- Your identity or addresses
+
+The circuit verifies:
+
+1. **Knowledge of transaction secret** (`r`) by proving`R = r·G`
+2. **Correct destination address** by validating stealth address derivation
+3. **Payment to LP's address** through shared secret`S = 8·r·A` (prevents fraud)
+4. **Encrypted amount** via ECDH decryption using Keccak256-derived keys
+
+### Security Model
+
+- **Ed25519 curve operations** for Monero compatibility
+- **Keccak256 hashing** matching Monero's cryptographic primitives
+- **Public verification** of LP view/spend keys prevents address spoofing
+- **On-chain verification** via Solidity smart contract
+
+---
+
+## The Circuit
+
+The core of Zero XMR is`monero_bridge.circom`—a circom 2.1.0 zero-knowledge circuit implementing Monero's stealth address and ECDH encryption schemes:
+
+```circom
+pragma circom 2.1.0;
+
+template MoneroBridge() {
+    // Private inputs (never revealed)
+    signal input r[255];              // Transaction secret key
+    signal input v;                   // Amount in piconero
+    signal input H_s_scalar[255];     // Keccak256(8·r·A || i) mod L
+    signal input P_extended[4][3];    // Stealth address
+
+    // Public inputs (verified on-chain)
+    signal input R_x;                 // Transaction public key
+    signal input P_compressed;        // Destination address
+    signal input ecdhAmount;          // Encrypted amount
+    signal input A_compressed;        // LP view public key
+    signal input B_compressed;        // LP spend public key
+    signal input monero_tx_hash;      // Transaction uniqueness
+
+    signal output verified_amount;
+
+    // 1. Prove R = r·G (knowledge of secret)
+    // 2. Verify destination address compression
+    // 3. Compute S = 8·r·A (prove correct recipient)
+    // 4. Decrypt amount via XOR with Keccak256("amount" || H_s_scalar)
+}
+```
+
+**Key Features:**
+
+- **Curve Operations:** Ed25519 scalar multiplication, point addition, compression/decompression
+- **Cofactor Clearing:**`8·(r·A)` ensures prime-order subgroup security
+- **Domain Separation:**`"amount"` prefix prevents hash collision attacks
+- **Constraint Efficiency:** ~500k constraints (exact count depends on optimization)
+
+---
+
+## Architecture
+
+```mermaid
+graph LR
+    A[User sends XMR] --> B[Monero Network]
+    B --> C[Generate ZK Proof]
+    C --> D[Submit to Ethereum]
+    D --> E[Smart Contract Verifies]
+    E --> F[Mint Wrapped XMR]
+    F --> G[User receives tokens]
+```
+
+**Components:**
+
+- **Circom Circuit:** Generates SNARK proof of Monero transaction
+- **Solidity Verifier:** On-chain verification using Groth16
+- **LP Network:** Decentralized liquidity providers with published view/spend keys
+- **Token Contract:** ERC-20 wrapped XMR with mint/burn capabilities
+
+---
+
+## Why Zero XMR?
+
+### For Users
+- **No KYC** or trusted intermediaries
+- **Privacy preserved** through zero-knowledge proofs
+- **Permissionless** access to DeFi with Monero
+
+### For Liquidity Providers
+- **Transparent operations** via published public keys
+- **Fraud-proof** through cryptographic verification
+- **Fee revenue** from bridge operations
+
+### For Developers
+- **Composable** ERC-20 token on Ethereum
+- **Auditable** proof system (circom + Groth16)
+- **Open source** circuit and contracts
+
+---
+
+## Status
+
+⚠️ **Experimental Software** — Not audited for production use.
+
+Current implementation includes:
+- Complete circom circuit with Ed25519 operations
+- Keccak256-based ECDH amount decryption
+- Public input verification for LP addresses
+- Stealth address and shared secret derivation
+
+**Next Steps:**
+- Trusted setup ceremony for production parameters
+- Solidity verifier contract deployment
+- LP registry and token contracts
+- Frontend proof generation interface
+
+---
+
+## Technical Details
+
+### Dependencies
+
+- **circom 2.1.0** - Circuit compiler
+- **ed25519-circom** (Electron-Labs) - Curve operations
+- **keccak-circom** - Hash functions
+- **circomlib** - Utility circuits
+- **snarkjs** - Proof generation/verification
+
+### Cryptographic Primitives
+
+- **Curve:** Ed25519 (matches Monero)
+- **Hash:** Keccak256 (Monero standard)
+- **Proof System:** Groth16 SNARK
+- **Encoding:** Base 2^85 for field elements
+
+### Circuit Constraints
+
+The circuit performs:
+- Ed25519 scalar multiplications (2x:`r·G`,`r·A`)
+- Point additions (3x for cofactor clearing)
+- Point compression/decompression (3x)
+- Keccak256 hash (304-bit input)
+- 64-bit XOR decryption
+
+---
+
+## Community
+
+Zero XMR is built for privacy-first cross-chain DeFi. Join us:
+
+- **Website:** [zeroxmr.com](https://zeroxmr.com)
+- **Docs:** Coming soon
+- **Audit Status:** Unaudited - use at your own risk
+
+---
+
+## License
+
+SPDX-License-Identifier: MIT
+
+**Security Notice:** This is experimental cryptographic software. Do not use with funds you cannot afford to lose. Independent security audits are required before production deployment.
+
+---
+
+*Bringing Monero's privacy to Ethereum through zero-knowledge cryptography.*
