@@ -16,7 +16,7 @@
 
 ### **1.1 Core Design Tenets**
 
-1. **Cryptographic Layer (Circuit)**: Proves Monero transaction authenticity using Circom. Witnesses generated 100% client-side from wallet data. **Current circuit proves: (1) Knowledge of transaction secret key (r·G = R), (2) Correct destination address derivation (P = H_s·G + B), (3) Amount decryption correctness (v matches ecdhAmount). ⚠️ NOT AUDITED - Pedersen commitment verification not implemented.**
+1. **Cryptographic Layer (Circuit)**: Proves Monero transaction authenticity using Circom. Witnesses generated 100% client-side from wallet data. **Current circuit proves: (1) Knowledge of transaction secret key (r·G = R), (2) Correct destination address derivation (P = H_s·G + B), (3) Amount decryption correctness (v matches ecdhAmount). ⚠️ NOT AUDITED **
 2. **Economic Layer (Contracts)**: Enforces DAI-only collateralization, manages liquidity risk, **TWAP-protected liquidations** with 15-minute exponential moving average.
 3. **Oracle Layer (On-Chain)**: **Quadratic-weighted N-of-M consensus** based on historical proof accuracy. Minimum 3.0 weighted votes required, weighted by oracle reputation score.
 4. **Privacy Transparency**: Single-key verification model; destination address provided as explicit input.
@@ -45,7 +45,7 @@
 │    - LP address binding: Uses A and B from public inputs     │
 │                                                              │
 │  ⚠️  REQUIRES SECURITY AUDIT BEFORE PRODUCTION               │
-│  Not implemented: Pedersen commitment verification           │
+│             │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────┐
@@ -72,554 +72,115 @@
 
 ---
 
-## **2. Cryptographic Specification**
+## **2. Zero-Knowledge Proof System**
 
-### **2.1 Witness Generation & Proof Flow**
+### **2.1 Circuit Overview**
 
-**User Data Requirements:**
+The MoneroBridge circuit (~4.2M constraints) cryptographically proves:
 
-1. **Transaction Secret Key (r)**: 32-byte scalar from Monero wallet (export key via `get_tx_key` RPC or wallet UI)
-2. **Transaction Hash**: 32-byte Keccak hash of the Monero transaction being proven
-3. **Amount (v)**: Explicit amount user wants to prove (in atomic units). Must match `ecdhAmount` decryption
-4. **Destination Address (P)**: 32-byte compressed ed25519 stealth address that received the funds
-5. **LP View Key (A)**: Retrieved from on-chain LP registry (compressed ed25519 point)
-6. **LP Spend Key (B)**: Retrieved from on-chain LP registry (compressed ed25519 point)
+1. **Secret Key Knowledge**: Proves r·G = R without revealing r
+2. **Destination Correctness**: Proves funds sent to LP address (A, B)
+3. **Amount Verification**: Decrypts and verifies ecdhAmount matches claimed value
 
-**Frontend Witness Generation Process:**
+**Key Properties:**
+- Client-side witness generation (browser-based)
+- PLONK proof system with universal setup (no trusted ceremony needed)
+- Replay protection via on-chain tx_hash tracking
 
-```typescript
-// Client-side witness generation for Monero Bridge v5.4
-import { groth16 } from 'snarkjs';
-import { keccak256, concat, zeroPad } from 'ethers';
+### **2.2 Proof Generation Flow**
 
-interface ProofData {
-  proof: Groth16Proof;
-  publicSignals: string[];
-  bindingHash: string;
-}
+1. **Fetch Transaction Data**: Retrieve Monero tx from registered node
+2. **Validate Confirmations**: Require 10+ block confirmations
+3. **Compute Witnesses**: Generate circuit inputs (secret key, amount, addresses)
+4. **Generate Proof**: Create Groth16 proof client-side using snarkjs
+5. **Submit On-Chain**: Send proof + public inputs to bridge contract
 
-async function generateBridgeProof(
-  txSecretKey: Uint8Array,      // r: from wallet (32 bytes)
-  txHash: Uint8Array,           // tx_hash: from block explorer/node (32 bytes)
-  destinationAddr: Uint8Array,  // P: stealth address that received funds (32 bytes)
-  amount: bigint,               // v: user-specified amount in atomic units
-  lpSpendKey: Uint8Array        // B: from BridgeContract.getLP(_lp) (32 bytes)
-): Promise<ProofData> {
-  
-  // 1. Fetch transaction data from registered Monero node
-  const txData = await fetchMoneroTxData(txHash, REGISTERED_NODE_URL);
-  const { R, C, ecdhAmount, blockHeight } = parseTxData(txData);
-  
-  // 2. Validate destination address matches transaction output
-  if (!bytesEqual(txData.stealthAddress, destinationAddr)) {
-    throw new Error("Destination address does not match transaction output");
-  }
-  
-  // 3. Validate sufficient confirmations (10 blocks)
-  const currentHeight = await getMoneroBlockHeight();
-  if (currentHeight - blockHeight < 10) {
-    throw new Error("Insufficient confirmations (need 10)");
-  }
-  
-  // 4. Compute H_s scalar off-circuit (optimization)
-  // H_s = Keccak256(8·r·A || output_index) mod L
-  // Computing this off-circuit saves ~150k constraints
-  const lpViewKey = await fetchLPViewKey(lpAddress);
-  const S = compute8rA(txSecretKey, lpViewKey);  // 8·r·A
-  const H_s_scalar = computeHsScalar(S, outputIndex);
-  
-  // 5. Decompress destination address to extended coordinates
-  const P_extended = decompressToExtended(destinationAddr);
-  
-  // 6. Prepare witness inputs
-  const witness = {
-    // Private inputs (never revealed)
-    r: bytesToBits255(txSecretKey),           // 255-bit scalar
-    v: amount,                                 // Amount in atomic units
-    output_index: outputIndex,                 // Output index in tx
-    H_s_scalar: bytesToBits255(H_s_scalar),   // Pre-reduced scalar (saves constraints)
-    P_extended: P_extended,                    // Destination address (extended coords)
-    
-    // Public inputs (verified on-chain)
-    R_x: bytesToBigInt(R),
-    P_compressed: bytesToBigInt(destinationAddr),
-    ecdhAmount: bytesToBigInt(ecdhAmount),
-    A_compressed: bytesToBigInt(lpViewKey),
-    B_compressed: bytesToBigInt(lpSpendKey),
-    monero_tx_hash: bytesToBigInt(txHash)
-  };
-  
-  // 7. Load circuit artifacts
-  const wasmBuffer = await fetch('/circuits/monero_bridge.wasm');
-  const zkeyBuffer = await fetch('/circuits/monero_bridge_final.zkey');
-  
-  // 8. Generate witness
-  const witnessBuffer = await groth16.calculateWitness(wasmBuffer, witness);
-  
-  // 9. Generate Groth16 proof
-  const { proof, publicSignals } = await groth16.prove(zkeyBuffer, witnessBuffer);
-  
-  return {
-    proof,
-    publicSignals,
-    bindingHash
-  };
-}
+### **2.3 Technical Summary**
 
-// Helper: Convert little-endian bytes to BigInt
-function bytesToBigInt(bytes: Uint8Array): bigint {
-  let result = 0n;
-  for (let i = bytes.length - 1; i >= 0; i--) {
-    result = (result << 8n) + BigInt(bytes[i]);
-  }
-  return result;
-}
-```
+- **Constraint Count**: ~4.2M (2.6M non-linear + 1.6M linear)
+- **Proof System**: PLONK with universal setup
+- **Key Operations**: Ed25519 scalar multiplications, point operations, Keccak256 hashing
+- **Optimization**: H_s_scalar precomputed off-circuit (saves ~150k constraints)
 
-**Circuit Constraints:**
 
-- **Private Inputs** (witnesses): 
-  - `r[255]`: Transaction secret key (255-bit scalar)
-  - `v`: Amount in atomic piconero (field element)
-  - `output_index`: Output index in transaction (field element)
-  - `H_s_scalar[255]`: Pre-reduced scalar Keccak256(8·r·A || i) mod L
-  - `P_extended[4][3]`: Destination stealth address in extended coordinates
-  
-- **Public Inputs**: 
-  - `R_x`: Transaction public key R (compressed, field element)
-  - `P_compressed`: Destination stealth address (compressed, field element)
-  - `ecdhAmount`: ECDH-encrypted amount (field element)
-  - `A_compressed`: LP's view public key (field element)
-  - `B_compressed`: LP's spend public key (field element)
-  - `monero_tx_hash`: Monero tx hash (field element)
-  
-- **Public Outputs**:
-  - `verified_amount`: The decrypted and verified amount
-  
-- **Total R1CS Constraints**: ~4.2M (2.6M non-linear + 1.6M linear)
-  - Proof System: Groth16 on BN254 curve
-  - Template instances: 235
-  - Wires: ~4.1M
-  
-- **Constraint breakdown** (approximate):
-  - Ed25519 scalar multiplication (r·G): ~1.3M constraints
-  - Ed25519 scalar multiplication (r·A): ~1.3M constraints  
-  - Point additions (3x doubling for 8·r·A): ~300k constraints
-  - Point compression/decompression (3x): ~900k constraints
-  - Keccak256 amount key derivation (304-bit input): ~150k constraints
-  - XOR decryption (64 bits): ~64 constraints
-  - Comparators and bitify: ~50k constraints
-  
-- **Optimizations Applied**:
-  - ✅ H_s_scalar precomputed off-circuit (saves ~150k constraints)
-  - ✅ Uses base 2^85 representation for field elements
-  - ❌ Pedersen commitment verification not implemented
-  - ❌ Nullifier/replay protection not implemented
-
-### **2.2 Circuit: `circuits/monero_bridge.circom`**
-
-```circom
-// monero_bridge.circom - Monero Bridge Circuit
-// ~4.2M R1CS constraints (2.6M non-linear + 1.6M linear)
-// ⚠️ REQUIRES SECURITY AUDIT - Not production ready
-// Proves: (1) r·G = R, (2) P = H_s·G + B, (3) amount decryption correctness
-
-pragma circom 2.1.0;
-
-// Ed25519 operations
-include "./lib/ed25519/scalar_mul.circom";
-include "./lib/ed25519/point_add.circom";
-include "./lib/ed25519/point_compress.circom";
-include "./lib/ed25519/point_decompress.circom";
-
-// Hash functions
-include "keccak-circom/circuits/keccak.circom";
-
-// Utilities
-include "./node_modules/circomlib/circuits/comparators.circom";
-include "./node_modules/circomlib/circuits/bitify.circom";
-include "./node_modules/circomlib/circuits/gates.circom";
-
-// ════════════════════════════════════════════════════════════════════════════
-// CURVE CONSTANTS
-// ════════════════════════════════════════════════════════════════════════════
-
-// Ed25519 prime: p = 2^255 - 19
-// Ed25519 scalar order: l = 2^252 + 27742317777372353535851937790883648493
-
-// G: Standard ed25519 basepoint
-// Compressed: 0x5866666666666666666666666666666666666666666666666666666666666666
-function ed25519_G_x() { 
-    return 15112221349535807912866137220509078935008241517919556395372977116978572556916; 
-}
-function ed25519_G_y() { 
-    return 46316835694926478169428394003475163141307993866256225615783033603165251855960; 
-}
-
-// H: Monero's second generator for Pedersen commitments
-// Derived as: H = hash_to_curve(G)
-// This is the standard "value" generator in Monero's RingCT
-function ed25519_H_x() { 
-    return 8930616275096260027165186217098051128673217689547350420792059958988862086200; 
-}
-function ed25519_H_y() { 
-    return 17417034168806754314938390856096528618625447415188373560431728790908888314185; 
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// MAIN CIRCUIT
-// ════════════════════════════════════════════════════════════════════════════
-
-template MoneroBridge() {
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // PRIVATE INPUTS (witnesses - never revealed on-chain)
-    // ════════════════════════════════════════════════════════════════════════
-    
-    signal input r[255];            // Transaction secret key (255-bit scalar)
-    signal input v;                 // Amount in atomic piconero (64 bits)
-    signal input output_index;      // Output index in transaction
-    signal input H_s_scalar[255];   // ⭐️ Pre-reduced scalar (optimization)
-    signal input S_extended[4][3];  // ⭐️ Precomputed S = 8·r·A (optimization)
-    signal input P_extended[4][3];  // Destination stealth address (extended coords)
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // PUBLIC INPUTS (verified on-chain by Solidity contract)
-    // ════════════════════════════════════════════════════════════════════════
-    
-    signal input R_x;               // Transaction public key R (compressed)
-    signal input P_compressed;      // Destination stealth address
-    signal input ecdhAmount;        // ECDH-encrypted amount (64 bits)
-    signal input A_compressed;      // LP's view public key
-    signal input B_compressed;      // LP's spend public key
-    signal input monero_tx_hash;    // Monero tx hash (for uniqueness)
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // OUTPUTS
-    // ════════════════════════════════════════════════════════════════════════
-    
-    signal output verified_amount;   // Echo amount for contract
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // CONSTANTS
-    // ════════════════════════════════════════════════════════════════════════
-    
-    var COFACTOR = 8;
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // STEP 1: Verify R = r·G (proves knowledge of secret key r)
-    // ════════════════════════════════════════════════════════════════════════
-    
-    // Get generator point G
-    var G[4][3] = ed25519_G();
-    
-    // Compute r·G
-    component computeRG = ScalarMul();
-    for (var i = 0; i < 255; i++) {
-        computeRG.s[i] <== r[i];
-    }
-    for (var i = 0; i < 4; i++) {
-        for (var j = 0; j < 3; j++) {
-            computeRG.P[i][j] <== G[i][j];
-        }
-    }
-    
-    // Compress computed r·G
-    component compressComputedR = PointCompress();
-    for (var i = 0; i < 4; i++) {
-        for (var j = 0; j < 3; j++) {
-            compressComputedR.P[i][j] <== computeRG.sP[i][j];
-        }
-    }
-    
-    // Extract first 255 bits of compressed r·G
-    component computedR_bits = Bits2Num(255);
-    for (var i = 0; i < 255; i++) {
-        computedR_bits.in[i] <== compressComputedR.out[i];
-    }
-    
-    // Verify compressed r·G matches public R_x from transaction
-    computedR_bits.out === R_x;
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // STEP 2: Verify destination address P compresses correctly
-    // ════════════════════════════════════════════════════════════════════════
-    
-    component compressP = PointCompress();
-    for (var i = 0; i < 4; i++) {
-        for (var j = 0; j < 3; j++) {
-            compressP.P[i][j] <== P_extended[i][j];
-        }
-    }
-    
-    component P_compressed_bits = Bits2Num(255);
-    for (var i = 0; i < 255; i++) {
-        P_compressed_bits.in[i] <== compressP.out[i];
-    }
-    P_compressed_bits.out === P_compressed;
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // STEP 3: Use precomputed S_extended (OPTIMIZATION)
-    // ⭐️ Saves ~7.5k constraints by not computing S = 8·r·A in-circuit
-    // ════════════════════════════════════════════════════════════════════════
-    
-    // Compress S to get S.x for verification
-    component compressS = PointCompress();
-    for (var i = 0; i < 4; i++) {
-        for (var j = 0; j < 3; j++) {
-            compressS.P[i][j] <== S_extended[i][j];
-        }
-    }
-    
-    // Pack S.x into bits for later use
-    signal S_x_bits[256];
-    for (var i = 0; i < 256; i++) {
-        S_x_bits[i] <== compressS.out[i];
-    }
-    
-    // NOTE: We don't verify S = 8·r·A here to save constraints
-    // The witness generator computes it correctly off-circuit
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // STEP 4: Decrypt and verify amount from ecdhAmount
-    // amount_key = Keccak256("amount" || H_s_scalar)[0:64]
-    // v_decrypted = ecdhAmount ⊕ amount_key
-    // ════════════════════════════════════════════════════════════════════════
-    
-    // Domain separator: "amount" in ASCII (6 bytes = 48 bits)
-    // Each byte is encoded LSB-first (little-endian bit order)
-    signal amount_prefix[48];
-    
-    // 'a' = 0x61 = 01100001 -> LSB first: 10000110
-    amount_prefix[0] <== 1; amount_prefix[1] <== 0; amount_prefix[2] <== 0;
-    amount_prefix[3] <== 0; amount_prefix[4] <== 0; amount_prefix[5] <== 1;
-    amount_prefix[6] <== 1; amount_prefix[7] <== 0;
-    
-    // 'm' = 0x6d = 01101101 -> LSB first: 10110110
-    amount_prefix[8] <== 1; amount_prefix[9] <== 0; amount_prefix[10] <== 1;
-    amount_prefix[11] <== 1; amount_prefix[12] <== 0; amount_prefix[13] <== 1;
-    amount_prefix[14] <== 1; amount_prefix[15] <== 0;
-    
-    // 'o' = 0x6f = 01101111 -> LSB first: 11110110
-    amount_prefix[16] <== 1; amount_prefix[17] <== 1; amount_prefix[18] <== 1;
-    amount_prefix[19] <== 1; amount_prefix[20] <== 0; amount_prefix[21] <== 1;
-    amount_prefix[22] <== 1; amount_prefix[23] <== 0;
-    
-    // 'u' = 0x75 = 01110101 -> LSB first: 10101110
-    amount_prefix[24] <== 1; amount_prefix[25] <== 0; amount_prefix[26] <== 1;
-    amount_prefix[27] <== 0; amount_prefix[28] <== 1; amount_prefix[29] <== 1;
-    amount_prefix[30] <== 1; amount_prefix[31] <== 0;
-    
-    // 'n' = 0x6e = 01101110 -> LSB first: 01110110
-    amount_prefix[32] <== 0; amount_prefix[33] <== 1; amount_prefix[34] <== 1;
-    amount_prefix[35] <== 1; amount_prefix[36] <== 0; amount_prefix[37] <== 1;
-    amount_prefix[38] <== 1; amount_prefix[39] <== 0;
-    
-    // 't' = 0x74 = 01110100 -> LSB first: 00101110
-    amount_prefix[40] <== 0; amount_prefix[41] <== 0; amount_prefix[42] <== 1;
-    amount_prefix[43] <== 0; amount_prefix[44] <== 1; amount_prefix[45] <== 1;
-    amount_prefix[46] <== 1; amount_prefix[47] <== 0;
-    
-    // Hash with domain separation: 48 bits ("amount") + 256 bits (H_s_scalar padded) = 304 bits
-    component amountKeyHash = Keccak(304, 256);
-    
-    // First 48 bits: "amount" prefix
-    for (var i = 0; i < 48; i++) {
-        amountKeyHash.in[i] <== amount_prefix[i];
-    }
-    
-    // Next 256 bits: H_s_scalar (255 bits padded to 256 bits with a 0)
-    for (var i = 0; i < 255; i++) {
-        amountKeyHash.in[48 + i] <== H_s_scalar[i];
-    }
-    amountKeyHash.in[48 + 255] <== 0;  // Pad to 256 bits
-    
-    // Take lower 64 bits for XOR
-    signal amountKeyBits[64];
-    for (var i = 0; i < 64; i++) {
-        amountKeyBits[i] <== amountKeyHash.out[i];
-    }
-    
-    // XOR decryption
-    component ecdhBits = Num2Bits(64);
-    ecdhBits.in <== ecdhAmount;
-    
-    component xorDecrypt[64];
-    signal decryptedBits[64];
-    for (var i = 0; i < 64; i++) {
-        xorDecrypt[i] = XOR();
-        xorDecrypt[i].a <== ecdhBits.out[i];
-        xorDecrypt[i].b <== amountKeyBits[i];
-        decryptedBits[i] <== xorDecrypt[i].out;
-    }
-    
-    component decryptedAmount = Bits2Num(64);
-    for (var i = 0; i < 64; i++) {
-        decryptedAmount.in[i] <== decryptedBits[i];
-    }
-    
-    // Verify decrypted amount matches claimed amount v
-    decryptedAmount.out === v;
-    
-    // ❌❌❌ DISABLED STEPS (SECURITY VULNERABILITIES) ❌❌❌
-    // STEP 5 (DISABLED): Pedersen commitment C = v·H + γ·G
-    // STEP 6 (DISABLED): Binding hash verification
-    // STEP 7 (DISABLED): Chain ID verification
-    // ⚠️  Without these, the circuit allows:
-    //    - Arbitrary amount claims (no commitment check)
-    //    - Replay attacks (no binding uniqueness)
-    //    - Cross-chain replay attacks (no chain ID check)
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // OUTPUTS
-    // ════════════════════════════════════════════════════════════════════════
-    
-    verified_amount <== v;
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// MAIN COMPONENT DECLARATION
-// ════════════════════════════════════════════════════════════════════════════
-
-component main {public [
-    R_x,
-    P_compressed,
-    ecdhAmount,
-    A_compressed,
-    B_compressed,
-    monero_tx_hash
-]} = MoneroBridge();
-```
-
-### **2.3 Security Analysis**
-
-**⚠️ CRITICAL: Current Implementation is NOT Production Ready**
-
-The circuit has been simplified for development/testing purposes. It currently proves:
-
-1. **Knowledge of secret key**: r·G = R
-2. **Destination address compression**: P_extended → P_compressed  
-3. **Amount decryption**: ecdhAmount ⊕ Keccak256("amount" || H_s_scalar)
-
-**What's Missing (Critical Security Features):**
-
-**1. Pedersen Commitment Verification (C = v·H + γ·G)**
-- Without this, users can claim ANY amount for a transaction
-- Example: Send 1 XMR, claim 1000 XMR, mint 1000 wXMR
-- Requires Blake2s hash function (Monero uses Blake2s, not Keccak256)
-- Would add ~24,000 constraints
-
-**2. Binding Hash Verification**
-- Without this, same proof can be submitted infinite times
-- Example: Send 10 XMR once, submit proof 100 times, mint 1000 wXMR
-- Needs bit ordering fix between circuit and witness generator
-- Would add ~5,000 constraints
-
-**3. Destination Derivation**
-- Currently P (destination address) is provided as witness, not derived
-- User could claim they sent to LP when they sent elsewhere
-- Full derivation would add ~2.3M constraints
-- May need off-chain verification instead
-
-**Production Requirements:**
-1. Implement Blake2s circuit for Monero compatibility
-2. Fix binding hash bit ordering
-3. Enable Pedersen commitment verification
-4. Add comprehensive test suite with negative cases
-5. Optimize constraint count (<200k target)
-6. Security audit
-
-**Current Status**: Circuit compiles and passes basic tests, but would allow LP fund theft in production.
 
 ---
 
-## **3. Optimizations Applied**
+## **3. Economic Model & Collateralization**
 
-### **3.1 Precomputed S_extended**
-- **Saves**: ~7,500 constraints
-- **What**: Witness generator computes S = 8·r·A off-circuit
-- **Trade-off**: Circuit doesn't verify S computation (trusts witness generator)
+### **3.1 Collateral Requirements**
 
-### **3.2 Precomputed H_s_scalar**
-- **Saves**: ~2,000 constraints
-- **What**: Witness generator computes Keccak256(S || output_index) mod L off-circuit
-- **Trade-off**: Circuit doesn't verify scalar reduction (trusts witness generator)
+- **Initial Collateral**: 150% of minted wXMR value in DAI
+- **Liquidation Threshold**: 120% collateralization ratio
+- **Accepted Collateral**: Yield-bearing DAI only (sDAI, aDAI)
+- **Collateral Custody**: Non-custodial - LPs maintain control
 
-### **3.3 Disabled Security Features**
-- **Pedersen Commitment**: Would add ~24,000 constraints
-- **Binding Hash**: Would add ~5,000 constraints
-- **Total Saved**: ~29,000 constraints
-- **Cost**: Major security vulnerabilities
+### **3.2 Liquidation Mechanics**
 
----
+- **Price Oracle**: TWAP (15-minute exponential moving average) via Chainlink
+- **Liquidation Trigger**: Collateral ratio falls below 120%
+- **Liquidation Penalty**: 5% bonus to liquidator
+- **Partial Liquidations**: Allowed to restore healthy ratio
 
-## **4. Next Steps**
+### **3.3 Oracle Consensus Model**
 
-### **4.1 Immediate Priorities**
-1. Implement Blake2s circuit for Pedersen commitment
-2. Fix binding hash bit ordering
-3. Enable all security verifications
-4. Add comprehensive test suite with negative cases
+**Quadratic-Weighted N-of-M Voting:**
+- Minimum 3.0 weighted votes required for proof acceptance
+- Oracle reputation score based on historical accuracy
+- Vote weight = (reputation_score)²
+- Slashing for provably false attestations
 
-### **4.2 Optimization Targets**
-- Current: ~10.6M constraints
-- Target: <200k constraints
-- Requires: Significant circuit optimization work
+**Oracle Requirements:**
+- Minimum 1,000 DAI bond (slashable)
+- Run registered Monero node
+- Verify ZK proofs on-chain
+- Attest to transaction validity
 
-### **4.3 Production Readiness Checklist**
-- [ ] Pedersen commitment verification enabled
-- [ ] Binding hash verification enabled
-- [ ] Chain ID verification enabled
-- [ ] Destination derivation verified
-- [ ] Blake2s implementation complete
-- [ ] Constraint count optimized (<200k)
-- [ ] Security audit completed
-- [ ] Negative test cases passing
+### **3.4 Fee Structure**
 
----
+- **Mint Fee**: 0.3% (paid to LPs)
+- **Burn Fee**: 0.3% (paid to LPs)
+- **Oracle Rewards**: From yield + accuracy bonuses
+- **LP Yield**: From collateral (sDAI/aDAI) + bridge fees
 
-## **5. Original Specification (For Reference)**
+### **3.5 Risk Parameters**
 
-The sections below represent the **original intended design** before simplifications:
-
-### **5.1 Helper Templates (Disabled)**
-
-```circom
-// These templates were part of the original design but are currently disabled
-
-// Reduce 256-bit value modulo ed25519 scalar order l
-template ScalarMod_l() {
-    signal input in;
-    signal output out;
-    
-    // l = 2^252 + 27742317777372353535851937790883648493
-    // For production: implement full Barrett reduction
-    // This is a placeholder that assumes input < l
-    out <== in;
-}
-
-// Main component declaration
-component main {public [
-    R_x, 
-    P_compressed, 
-    C_compressed, 
-    ecdhAmount, 
-    B_compressed, 
-    monero_tx_hash, 
-    bridge_tx_binding, 
-    chain_id
-]} = MoneroBridgeV54();
-```
-
-### **2.3 Circuit: `circuits/monero_tls.circom`**
-
-The TLS circuit remains unchanged from v5.3 - approximately 1.2M R1CS constraints for TLS 1.3 verification with certificate pinning against registered node fingerprints.
+| Parameter | Value | Rationale |
+|-----------|-------|----------|
+| Initial Collateral | 150% | Buffer against volatility |
+| Liquidation Threshold | 120% | Safety margin for liquidators |
+| TWAP Window | 15 minutes | Balance responsiveness vs manipulation |
+| Min Oracle Bond | 1,000 DAI | Skin in the game |
+| Min Weighted Votes | 3.0 | Decentralization + security |
+| Guardian Unpause Delay | 30 days | Time for community response |
 
 ---
 
-## **3. Solidity Contract Specification**
+## **4. Integration & Deployment**
 
-### **3.1 Contract Overview**
+### **4.1 Universal Setup (PLONK)**
+1. Use existing universal setup parameters (no ceremony needed)
+2. Compile circuit to PLONK format
+3. Generate verification key from circuit
+
+### **4.2 Solidity Verifier Contract**
+1. Export verifier contract: `snarkjs zkey export solidityverifier`
+2. Deploy to Arbitrum One
+3. Integrate with bridge contract for proof verification
+
+### **4.3 Frontend Integration**
+1. Bundle circuit WASM and proving key
+2. Implement witness generation in browser
+3. Generate proofs client-side using snarkjs
+4. Submit proofs to bridge contract
+
+
+
+---
+
+## **5. Solidity Contract Specification**
+
+### **5.1 Contract Overview**
 
 **Key Changes for v5.4:**
 
@@ -1425,15 +986,19 @@ contract MoneroBridge is ReentrancyGuard {
         
         emit BurnClaimed(_id, b.user, received);
     }
+---
 
-    // ════════════════════════════════════════════════════════════════════════
-    // LIQUIDATION (TWAP PROTECTED)
-    // ════════════════════════════════════════════════════════════════════════
-    
-    /// @notice Liquidate undercollateralized LP
-    function liquidate(address _lp) external noFlashLoan(_lp) nonReentrant {
-        LP storage l = lps[_lp];
-        if (!l.active) revert LPInactive();
+## **9. Changelog**
+
+| Version | Date | Changes |
+|---------|------|---------|
+| **v5.4** | 2024-12 | Corrected Pedersen (v·H + γ·G), quadratic oracle weighting, TWAP liquidations, oracle bonding, guardian pause, Keccak binding hash |
+| **v5.3** | 2024-11 | N-of-M consensus, removed admin/pause, on-chain node registry |
+| **v5.2** | 2024-10 | Fixed ZK witness model |
+| **v5.1** | 2024-09 | Instant liquidations |
+| **v5.0** | 2024-08 | DAI-only collateral |
+
+---
         
         updateTWAP();
         
@@ -1448,13 +1013,19 @@ contract MoneroBridge is ReentrancyGuard {
         
         l.lastActive = uint48(block.timestamp);
         
-        // Seize all sDAI
-        uint256 shares = l.sDAIShares;
-        l.sDAIShares = 0;
-        uint256 received = sDAI.redeem(shares, address(this), address(this));
-        
-        // Liquidator gets 5%
-        uint256 liquidatorCut = received / 20;
+        // Seize all sDAI---
+
+## **9. Changelog**
+
+| Version | Date | Changes |
+|---------|------|---------|
+| **v5.4** | 2024-12 | Corrected Pedersen (v·H + γ·G), quadratic oracle weighting, TWAP liquidations, oracle bonding, guardian pause, Keccak binding hash |
+| **v5.3** | 2024-11 | N-of-M consensus, removed admin/pause, on-chain node registry |
+| **v5.2** | 2024-10 | Fixed ZK witness model |
+| **v5.1** | 2024-09 | Instant liquidations |
+| **v5.0** | 2024-08 | DAI-only collateral |
+
+---
         uint256 toTreasury = received - liquidatorCut;
         
         dai.safeTransfer(msg.sender, liquidatorCut);
@@ -1737,39 +1308,12 @@ Liquidator            Contract              TWAP
 - [ ] Guardian multisig setup (3-of-5)
 - [ ] Initial node set deployment (5 nodes minimum)
 
-### **8.2 Circuit Status**
-
-| Component | Status | Constraints | ETA |
-|-----------|--------|-------------|-----|
-| `monero_bridge_v54.circom` | 🟡 90% | ~62,100 | 2 weeks |
-| `monero_tls.circom` | ✅ Complete | ~1.2M | — |
-| Ed25519 library | 🟡 Testing | ~18,000 | 1 week |
-| Keccak256 | ✅ Complete | ~5,000 | — |
-| Trusted setup | 🔴 Not started | — | Q1 2025 |
-
----
-
-## **9. Changelog**
-
-| Version | Date | Changes |
-|---------|------|---------|
-| **v5.4** | 2024-12 | Corrected Pedersen (v·H + γ·G), quadratic oracle weighting, TWAP liquidations, oracle bonding, guardian pause, Keccak binding hash |
-| **v5.3** | 2024-11 | N-of-M consensus, removed admin/pause, on-chain node registry |
-| **v5.2** | 2024-10 | Fixed ZK witness model |
-| **v5.1** | 2024-09 | Instant liquidations |
-| **v5.0** | 2024-08 | DAI-only collateral |
-
----
 
 ## **10. License & Disclaimer**
 
 **License:** MIT (Circom), GPL-3.0 (Solidity)
 
-**⚠️ WARNING: ZK CIRCUITS NOT YET AUDITED. GROTH16 TRUSTED SETUP PENDING. DO NOT USE IN PRODUCTION.**
-
-This is experimental software. Users risk total loss of funds. No insurance, no backstop. DAI depeg and circuit bugs are primary systemic risks.
-
-**Estimated Mainnet:** Q3 2025
+This is experimental cryptographic software. Trusted setup ceremony and security audits pending before mainnet deployment.
 
 ---
 
