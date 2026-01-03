@@ -1,8 +1,17 @@
 // Test circuit with real and fake data
 const fs = require('fs');
 const { execSync } = require('child_process');
+const { computeAmountKey } = require('./generate_witness.js');
 
-console.log("🧪 Testing Monero Bridge Circuit\n");
+console.log("🧪 Testing Monero Bridge Circuit (Optimized)\n");
+
+// Prepare input with client-side amountKey computation
+const inputData = JSON.parse(fs.readFileSync('input.json', 'utf8'));
+const amountKey = computeAmountKey(inputData.H_s_scalar);
+inputData.amountKey = amountKey;
+inputData.s = inputData.s || new Array(255).fill("0");
+inputData.C_compressed = inputData.C_compressed || "0";
+fs.writeFileSync('input.json', JSON.stringify(inputData, null, 2));
 
 // Test 1: Real data (should PASS)
 console.log("Test 1: Real Monero transaction data");
