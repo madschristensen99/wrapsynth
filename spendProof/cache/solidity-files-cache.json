@@ -1,0 +1,119 @@
+{
+  "_format": "hh-sol-cache-2",
+  "files": {
+    "/home/remsee/rapidsnarkWindsurfAgain/spendProof/contracts/Ed25519.sol": {
+      "lastModificationDate": 1767466193366,
+      "contentHash": "d3e4c60ac626a504c2b17f4613f8162b",
+      "sourceName": "contracts/Ed25519.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "Ed25519"
+      ]
+    },
+    "/home/remsee/rapidsnarkWindsurfAgain/spendProof/contracts/MoneroBridgeDLEQ.sol": {
+      "lastModificationDate": 1767466289375,
+      "contentHash": "14f9c5b40bd6a0245e01c5924b73fc5d",
+      "sourceName": "contracts/MoneroBridgeDLEQ.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "./Ed25519.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "IVerifier",
+        "MoneroBridgeDLEQ"
+      ]
+    },
+    "/home/remsee/rapidsnarkWindsurfAgain/spendProof/contracts/PlonkVerifier.sol": {
+      "lastModificationDate": 1767466467210,
+      "contentHash": "d6dc850b9f509e8a5d3c848adb8be608",
+      "sourceName": "contracts/PlonkVerifier.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        ">=0.7.0 <0.9.0"
+      ],
+      "artifacts": [
+        "PlonkVerifier"
+      ]
+    }
+  }
+}
