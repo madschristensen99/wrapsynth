@@ -155,9 +155,20 @@ async function generateWitness(inputData) {
             H_s_hex += byte.toString(16).padStart(2, '0');
         }
         
-        // Convert A_compressed and B_compressed from decimal to hex (32 bytes)
-        const A_hex = BigInt(inputData.A_compressed).toString(16).padStart(64, '0');
-        const B_hex = BigInt(inputData.B_compressed).toString(16).padStart(64, '0');
+        // Convert A_compressed and B_compressed from decimal to hex (32 bytes, little-endian)
+        const A_bigint = BigInt(inputData.A_compressed);
+        const B_bigint = BigInt(inputData.B_compressed);
+        
+        // Convert to little-endian bytes (Ed25519 format)
+        const A_bytes = [];
+        const B_bytes = [];
+        for (let i = 0; i < 32; i++) {
+            A_bytes.push(Number((A_bigint >> BigInt(i * 8)) & 0xFFn));
+            B_bytes.push(Number((B_bigint >> BigInt(i * 8)) & 0xFFn));
+        }
+        
+        const A_hex = Buffer.from(A_bytes).toString('hex');
+        const B_hex = Buffer.from(B_bytes).toString('hex');
         
         ed25519Results = await computeEd25519Operations(
             r_hex,

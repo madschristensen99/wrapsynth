@@ -91,11 +91,14 @@ async function testTransaction(tx) {
         return false;
     }
     
-    // Step 2: Generate DLEQ witness
-    console.log('\n  🔄 Step 2: Computing DLEQ proofs...');
+    // Step 2: Generate DLEQ witness from blockchain data
+    console.log('\n  🔄 Step 2: Computing DLEQ witness...');
     try {
-        const inputData = JSON.parse(fs.readFileSync('input.json', 'utf8'));
-        const witness = await generateWitness(inputData);
+        // Read blockchain data
+        const blockchainData = JSON.parse(fs.readFileSync('input.json', 'utf8'));
+        
+        // Generate DLEQ-optimized witness
+        const witness = await generateWitness(blockchainData);
         
         // Save circuit inputs
         const circuitInputs = {
@@ -117,18 +120,48 @@ async function testTransaction(tx) {
         return false;
     }
     
-    // Step 3: Test circuit
-    console.log('\n  🧪 Step 3: Testing circuit...');
-    totalTests++;
+    // Step 3: Calculate witness
+    console.log('\n  🧪 Step 3: Calculating witness...');
     try {
         const calcStart = Date.now();
         execSync('snarkjs wtns calculate build/monero_bridge_js/monero_bridge.wasm input.json witness.wtns 2>&1', {stdio: 'pipe'});
         const calcTime = Date.now() - calcStart;
-        console.log(`  ✅ PASS - Valid transaction accepted (${calcTime}ms)`);
-        passedTests++;
-        return true;
+        console.log(`  ✅ Witness calculated (${calcTime}ms)`);
     } catch(e) {
-        console.log(`  ❌ FAIL - Transaction rejected by circuit`);
+        console.log(`  ❌ Witness calculation failed`);
+        return false;
+    }
+    
+    // Step 4: Generate PLONK proof
+    console.log('\n  🔐 Step 4: Generating PLONK proof...');
+    totalTests++;
+    try {
+        const proveStart = Date.now();
+        execSync('snarkjs plonk prove circuit_final.zkey witness.wtns proof_tx.json public_tx.json 2>&1', {stdio: 'pipe'});
+        const proveTime = Date.now() - proveStart;
+        console.log(`  ✅ PLONK proof generated (${(proveTime/1000).toFixed(2)}s)`);
+    } catch(e) {
+        console.log(`  ❌ PLONK proof generation failed`);
+        return false;
+    }
+    
+    // Step 5: Verify PLONK proof
+    console.log('\n  ✅ Step 5: Verifying PLONK proof...');
+    try {
+        const verifyStart = Date.now();
+        const result = execSync('snarkjs plonk verify verification_key.json public_tx.json proof_tx.json 2>&1', {encoding: 'utf8'});
+        const verifyTime = Date.now() - verifyStart;
+        
+        if (result.includes('OK!')) {
+            console.log(`  ✅ PLONK proof verified (${verifyTime}ms)`);
+            passedTests++;
+            return true;
+        } else {
+            console.log(`  ❌ PLONK proof verification FAILED`);
+            return false;
+        }
+    } catch(e) {
+        console.log(`  ❌ PLONK verification failed: ${e.message}`);
         return false;
     }
 }

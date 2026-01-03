@@ -133,8 +133,19 @@ async function computeEd25519Operations(r, A_compressed, B_compressed, H_s) {
     const r_bytes = Buffer.from(r.replace(/^0x/, ''), 'hex');
     const r_scalar = BigInt('0x' + r) % L;
     
-    const A = await ed.Point.fromHex(A_compressed.replace(/^0x/, ''));
-    const B = await ed.Point.fromHex(B_compressed.replace(/^0x/, ''));
+    let A, B;
+    try {
+        A = await ed.Point.fromHex(A_compressed.replace(/^0x/, ''));
+    } catch(e) {
+        throw new Error(`Failed to decompress A (view key): ${e.message}. A_compressed=${A_compressed.slice(0, 32)}...`);
+    }
+    
+    try {
+        B = await ed.Point.fromHex(B_compressed.replace(/^0x/, ''));
+    } catch(e) {
+        throw new Error(`Failed to decompress B (spend key): ${e.message}. B_compressed=${B_compressed.slice(0, 32)}...`);
+    }
+    
     const G = ed.Point.BASE;
     
     // 1. Compute R = r·G
