@@ -1,14 +1,14 @@
-# **Monero→Arbitrum Bridge Specification v5.4**
+# **Monero→Arbitrum Bridge Specification v6.0**
 
-*Cryptographically Correct, Quadratic Oracle Consensus, TWAP-Protected Liquidations*
+*Hybrid ZK Architecture: Ed25519 DLEQ + PLONK Proofs*
 
-**Target: ~2.6M non-linear constraints, ~1.6M linear constraints, 150% initial collateral, 120% liquidation threshold, DAI-only yield**
+**Current: ~1,167 constraints, Ed25519 DLEQ verification, 150% initial collateral, 120% liquidation threshold, DAI-only yield**
 
-**Platform: Arbitrum One (Solidity, Circom ZK Framework)**
+**Platform: Base Sepolia (Testnet) → Arbitrum One (Mainnet)**
 
 **Collateral: Yield-Bearing DAI Only (sDAI, aDAI)**
 
-**Status: ZK Circuit Functional - Core Security Features Working (Requires Audit)**
+**Status: ✅ Ed25519 DLEQ Verified On-Chain | ⚠️ Requires Security Audit**
 
 ---
 
@@ -16,7 +16,11 @@
 
 ### **1.1 Core Design Tenets**
 
-1. **Cryptographic Layer (Circuit)**: Proves Monero transaction authenticity using Circom. Witnesses generated 100% client-side from wallet data. **Current circuit proves: (1) Knowledge of transaction secret key (r·G = R), (2) Correct destination address derivation (P = H_s·G + B), (3) Amount decryption correctness (v matches ecdhAmount). ⚠️ NOT AUDITED **
+1. **Cryptographic Layer (Hybrid)**: 
+   - **Off-Chain**: Ed25519 operations (R=r·G, S=8·r·A, P=H_s·G+B) using @noble/ed25519
+   - **On-Chain**: Ed25519 DLEQ proof verification (proves log_G(R) = log_A(rA) = r)
+   - **In-Circuit**: Poseidon commitment binding all witness values (~1,167 constraints)
+   - **Status**: ✅ DLEQ verified on Base Sepolia | ⚠️ Requires audit
 2. **Economic Layer (Contracts)**: Enforces DAI-only collateralization, manages liquidity risk, **TWAP-protected liquidations** with 15-minute exponential moving average.
 3. **Oracle Layer (On-Chain)**: **Quadratic-weighted N-of-M consensus** based on historical proof accuracy. Minimum 3.0 weighted votes required, weighted by oracle reputation score.
 4. **Privacy Transparency**: Single-key verification model; destination address provided as explicit input.
@@ -28,29 +32,33 @@
 ┌─────────────────────────────────────────────────────────────┐
 │              User Frontend (Browser/Wallet)                  │
 │  - Paste tx secret key (r) from wallet                       │
-│  - Paste tx hash                                             │
-│  - Enter destination address used in transaction (P)         │
-│  - Enter amount to prove                                     │
+│  - Paste tx hash + output index                              │
+│  - Enter LP address (A, B) + amount                          │
 │  - Fetch transaction data from Monero node                   │
-│  - Generate witnesses (r, v, P, H_s_scalar, S_extended)      │
-│  - Prove locally (snarkjs + witness generation)              │
+│  - Generate Ed25519 operations (R, S, P) - @noble/ed25519   │
+│  - Generate DLEQ proof (c, s, K1, K2)                        │
+│  - Generate PLONK proof (~1,167 constraints, <1s)            │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────┐
-│         Bridge Circuit (Circom, ~4.2M R1CS constraints)     │
+│     DLEQ-Optimized Circuit (Circom, ~1,167 constraints)    │
 │  Proves:                                                     │
-│    - Knowledge of transaction secret: r·G = R                │
-│    - Correct destination: P = H_s(8·r·A)·G + B              │
-│    - Amount decryption: v matches ecdhAmount XOR decrypt     │
-│    - LP address binding: Uses A and B from public inputs     │
+│    - Poseidon commitment binding witness values             │
+│    - Amount decryption correctness (v XOR ecdhAmount)       │
+│    - 64-bit range check (v < 2^64)                          │
 │                                                              │
-│  ⚠️  REQUIRES SECURITY AUDIT BEFORE PRODUCTION               │
-│             │
+│  ⚠️  Requires security audit                               │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────┐
-│              TLS Circuit (Circom, ~1.2M R1CS)               │
-│  Proves: TLS 1.3 session with **registered node cert**      │
+│         Ed25519 DLEQ Verification (Solidity)               │
+│  Verifies:                                                   │
+│    - DLEQ proof: log_G(R) = log_A(rA) = r                   │
+│    - Ed25519 point operations using precompile (0x05)       │
+│    - Challenge: c = H(G, A, R, rA, K1, K2) mod L            │
+│    - Response: s·G = K1 + c·R  AND  s·A = K2 + c·rA        │
+│                                                              │
+│  ✅ Verified on Base Sepolia (Gas: ~3.16M)                 │
 └──────────────────────────┬──────────────────────────────────┘
 ┌──────────────────────────▼──────────────────────────────────┐
 │            Solidity Verifier Contract (Groth16)             │
@@ -195,942 +203,22 @@ The MoneroBridge circuit (~4.2M constraints) cryptographically proves:
 | **Circuit Version** | 3 | 4 |
 | **Contract LOC** | ~950 | ~1,150 |
 
-### **3.2 Core Contract: `MoneroBridge.sol`**
+### **5.2 Core Contract: `MoneroBridgeDLEQ.sol`**
 
-```solidity
-// SPDX-License-Identifier: GPL-3.0
-pragma solidity 0.8.19;
+**Key Components:**
+- **PLONK Verifier**: Verifies circuit proofs (~1,167 constraints)
+- **Ed25519 DLEQ**: Verifies discrete log equality proofs on-chain
+- **Collateral Management**: DAI-based collateralization (150% initial, 120% liquidation)
+- **Oracle System**: Quadratic-weighted consensus for price feeds
+- **TWAP Protection**: 15-minute exponential moving average for liquidations
 
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/math/Math.sol";
-import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+**Main Functions:**
+- `mint()`: Verify DLEQ + PLONK proofs, mint wXMR
+- `burn()`: Burn wXMR, release collateral
+- `liquidate()`: Liquidate undercollateralized positions
+- `verifyDLEQ()`: On-chain Ed25519 DLEQ verification
 
-// ════════════════════════════════════════════════════════════════════════════
-// INTERFACES
-// ════════════════════════════════════════════════════════════════════════════
-
-interface IBridgeVerifier {
-    function verifyProof(
-        uint256[2] calldata _pA,
-        uint256[2][2] calldata _pB,
-        uint256[2] calldata _pC,
-        uint256[10] calldata _pubSignals
-    ) external view returns (bool);
-}
-
-interface ITLSVerifier {
-    function verifyProof(
-        uint256[2] calldata _pA,
-        uint256[2][2] calldata _pB,
-        uint256[2] calldata _pC,
-        uint256[3] calldata _pubSignals
-    ) external view returns (bool);
-}
-
-interface ISavingsDAI {
-    function deposit(uint256 assets, address receiver) external returns (uint256 shares);
-    function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
-    function previewRedeem(uint256 shares) external view returns (uint256);
-    function balanceOf(address account) external view returns (uint256);
-}
-
-interface IERC20Mintable is IERC20 {
-    function mint(address to, uint256 amount) external;
-    function burn(address from, uint256 amount) external;
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// MAIN CONTRACT
-// ════════════════════════════════════════════════════════════════════════════
-
-contract MoneroBridge is ReentrancyGuard {
-    using SafeERC20 for IERC20;
-    using Math for uint256;
-
-    // ════════════════════════════════════════════════════════════════════════
-    // CONSTANTS
-    // ════════════════════════════════════════════════════════════════════════
-    
-    // Collateralization
-    uint256 public constant INITIAL_COLLATERAL_BPS = 15000;     // 150%
-    uint256 public constant LIQUIDATION_THRESHOLD_BPS = 12000;  // 120%
-    uint256 public constant CRITICAL_THRESHOLD_BPS = 10500;     // 105%
-    
-    // Timing
-    uint256 public constant BURN_COUNTDOWN = 2 hours;
-    uint256 public constant MAX_PRICE_AGE = 60 seconds;
-    uint256 public constant NODE_CHANGE_COOLDOWN = 7 days;
-    uint256 public constant GUARDIAN_UNPAUSE_DELAY = 30 days;
-    uint256 public constant MONERO_CONFIRMATIONS = 10;
-    
-    // Oracle
-    uint256 public constant MIN_ORACLE_BOND = 1000e18;          // 1,000 DAI
-    uint256 public constant ORACLE_REWARD_BPS = 200;            // 2% of yield
-    uint256 public constant MIN_WEIGHTED_CONSENSUS = 3e18;      // 3.0 weighted votes
-    uint256 public constant INITIAL_ACCURACY = 1e18;            // 100%
-    uint256 public constant ACCURACY_DECAY = 0.25e18;           // -25% per slash
-    
-    // TWAP
-    uint256 public constant TWAP_PERIOD = 15 minutes;
-    uint256 public constant TWAP_OBSERVATIONS = 15;
-    
-    // Fees
-    uint256 public constant MIN_FEE_BPS = 5;
-    uint256 public constant MAX_FEE_BPS = 500;
-    uint256 public constant MAX_SLIPPAGE_BPS = 50;              // 0.5%
-    
-    // Chain
-    uint256 public constant CHAIN_ID = 42161;                   // Arbitrum One
-    uint8 public constant CIRCUIT_VERSION = 4;
-    
-    // Addresses (Arbitrum One)
-    address public constant DAI = 0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1A;
-    address public constant SDAI = 0xD8134205b0328F5676aaeFb3B2a0DC60036d9d7a;
-
-    // ════════════════════════════════════════════════════════════════════════
-    // IMMUTABLES
-    // ════════════════════════════════════════════════════════════════════════
-    
-    IERC20Mintable public immutable wXMR;
-    address public immutable treasury;
-    address public immutable guardian;
-    
-    AggregatorV3Interface public immutable priceFeedXMR;
-    AggregatorV3Interface public immutable priceFeedDAI;
-    IBridgeVerifier public immutable bridgeVerifier;
-    ITLSVerifier public immutable tlsVerifier;
-    ISavingsDAI public immutable sDAI;
-    IERC20 public immutable dai;
-
-    // ════════════════════════════════════════════════════════════════════════
-    // STATE
-    // ════════════════════════════════════════════════════════════════════════
-    
-    // Pause state
-    bool public mintsPaused;
-    uint256 public pausedAt;
-    uint256 public unpauseRequestedAt;
-    
-    // Node management
-    uint256 public lastNodeChange;
-    uint32 public nodeCount;
-    
-    // TWAP state
-    uint256 public twapIndex;
-    uint256 public lastTwapUpdate;
-
-    // ════════════════════════════════════════════════════════════════════════
-    // STRUCTS
-    // ════════════════════════════════════════════════════════════════════════
-    
-    struct LP {
-        bytes32 spendKey;           // ed25519 public key (compressed)
-        uint256 collateral;         // DAI deposited
-        uint256 obligation;         // wXMR obligation value in DAI
-        uint256 sDAIShares;         // sDAI balance
-        uint16 mintFeeBps;
-        uint16 burnFeeBps;
-        uint48 lastActive;
-        uint48 timelock;
-        bool active;
-    }
-    
-    struct Oracle {
-        uint256 bond;               // DAI bonded
-        uint256 accuracy;           // 1e18 = 100%
-        uint256 proofsSubmitted;
-        uint256 proofsAccepted;
-        uint256 rewards;
-        uint48 lastActive;
-        uint8 slashCount;
-        bool active;
-    }
-    
-    struct MoneroNode {
-        bytes32 certFingerprint;
-        string url;
-        uint48 addedAt;
-        bool active;
-    }
-    
-    struct Burn {
-        address user;
-        address lp;
-        uint256 amount;
-        uint48 timestamp;
-        bytes32 moneroTxHash;
-        bool completed;
-    }
-    
-    struct OracleVote {
-        address oracle;
-        uint256 weight;
-        uint48 timestamp;
-        bool valid;
-    }
-    
-    struct PricePoint {
-        uint48 timestamp;
-        uint208 cumulativePrice;
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // MAPPINGS
-    // ════════════════════════════════════════════════════════════════════════
-    
-    mapping(address => LP) public lps;
-    mapping(address => Oracle) public oracles;
-    mapping(uint32 => MoneroNode) public nodes;
-    mapping(bytes32 => Burn) public burns;
-    mapping(bytes32 => bool) public usedTxHashes;
-    
-    // Consensus tracking
-    mapping(bytes32 => mapping(address => OracleVote)) public votes;
-    mapping(bytes32 => address[]) public voters;
-    mapping(bytes32 => uint256) public totalWeight;
-    
-    // TWAP
-    PricePoint[15] public pricePoints;
-
-    // ════════════════════════════════════════════════════════════════════════
-    // EVENTS
-    // ════════════════════════════════════════════════════════════════════════
-    
-    event LPRegistered(address indexed lp, bytes32 spendKey);
-    event CollateralAdded(address indexed lp, uint256 amount, uint256 shares);
-    event CollateralRemoved(address indexed lp, uint256 amount);
-    
-    event OracleRegistered(address indexed oracle, uint256 bond);
-    event OracleSlashed(address indexed oracle, uint256 amount, string reason);
-    event OracleVoteSubmitted(bytes32 indexed binding, address oracle, uint256 weight);
-    
-    event ConsensusReached(bytes32 indexed binding, uint256 weight, uint256 count);
-    event Minted(bytes32 indexed txHash, bytes32 binding, address user, uint256 amount, address lp);
-    event BurnStarted(bytes32 indexed burnId, address user, uint256 amount, address lp);
-    event BurnCompleted(bytes32 indexed burnId, bytes32 moneroTxHash);
-    event BurnClaimed(bytes32 indexed burnId, address user, uint256 payout);
-    
-    event Liquidated(address indexed lp, address liquidator, uint256 seized, uint256 twapPrice);
-    
-    event NodeAdded(uint32 indexed index, string url, bytes32 fingerprint);
-    event NodeRemoved(uint32 indexed index);
-    
-    event MintsPaused(address guardian);
-    event UnpauseRequested(address guardian, uint256 effectiveAt);
-    event MintsUnpaused();
-    
-    event TWAPUpdated(uint256 index, uint256 price);
-
-    // ════════════════════════════════════════════════════════════════════════
-    // ERRORS
-    // ════════════════════════════════════════════════════════════════════════
-    
-    error Paused();
-    error NotGuardian();
-    error TimelockActive();
-    error Cooldown();
-    error InvalidBond();
-    error AlreadyVoted();
-    error NoConsensus();
-    error InvalidProof();
-    error TxUsed();
-    error LPInactive();
-    error Undercollateralized();
-    error NotLiquidatable();
-    error FlashLoanBlock();
-    error InvalidFee();
-    error StalePrice();
-    error DepegCritical();
-    error BurnExpired();
-    error BurnActive();
-    error AlreadyDone();
-    error NotLP();
-    error InvalidKey();
-
-    // ════════════════════════════════════════════════════════════════════════
-    // MODIFIERS
-    // ════════════════════════════════════════════════════════════════════════
-    
-    modifier whenNotPaused() {
-        if (mintsPaused) revert Paused();
-        _;
-    }
-    
-    modifier onlyGuardian() {
-        if (msg.sender != guardian) revert NotGuardian();
-        _;
-    }
-    
-    modifier noFlashLoan(address _lp) {
-        if (lps[_lp].lastActive >= block.timestamp) revert FlashLoanBlock();
-        _;
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // CONSTRUCTOR
-    // ════════════════════════════════════════════════════════════════════════
-    
-    constructor(
-        address _wXMR,
-        address _priceFeedXMR,
-        address _priceFeedDAI,
-        address _bridgeVerifier,
-        address _tlsVerifier,
-        address _treasury,
-        address _guardian,
-        MoneroNode[] memory _initialNodes
-    ) {
-        wXMR = IERC20Mintable(_wXMR);
-        treasury = _treasury;
-        guardian = _guardian;
-        
-        priceFeedXMR = AggregatorV3Interface(_priceFeedXMR);
-        priceFeedDAI = AggregatorV3Interface(_priceFeedDAI);
-        bridgeVerifier = IBridgeVerifier(_bridgeVerifier);
-        tlsVerifier = ITLSVerifier(_tlsVerifier);
-        sDAI = ISavingsDAI(SDAI);
-        dai = IERC20(DAI);
-        
-        // Initialize nodes
-        for (uint i = 0; i < _initialNodes.length; i++) {
-            nodes[uint32(i)] = _initialNodes[i];
-            emit NodeAdded(uint32(i), _initialNodes[i].url, _initialNodes[i].certFingerprint);
-        }
-        nodeCount = uint32(_initialNodes.length);
-        lastNodeChange = block.timestamp;
-        
-        // Initialize TWAP
-        _initTWAP();
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // GUARDIAN FUNCTIONS
-    // ════════════════════════════════════════════════════════════════════════
-    
-    /// @notice Pause mints immediately (for emergencies)
-    function pauseMints() external onlyGuardian {
-        mintsPaused = true;
-        pausedAt = block.timestamp;
-        unpauseRequestedAt = 0;
-        emit MintsPaused(guardian);
-    }
-    
-    /// @notice Request unpause (30-day delay)
-    function requestUnpause() external onlyGuardian {
-        require(mintsPaused, "not paused");
-        unpauseRequestedAt = block.timestamp;
-        emit UnpauseRequested(guardian, block.timestamp + GUARDIAN_UNPAUSE_DELAY);
-    }
-    
-    /// @notice Execute unpause after delay
-    function executeUnpause() external {
-        require(mintsPaused, "not paused");
-        require(unpauseRequestedAt > 0, "not requested");
-        if (block.timestamp < unpauseRequestedAt + GUARDIAN_UNPAUSE_DELAY) {
-            revert TimelockActive();
-        }
-        mintsPaused = false;
-        unpauseRequestedAt = 0;
-        emit MintsUnpaused();
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // TWAP ORACLE
-    // ════════════════════════════════════════════════════════════════════════
-    
-    function _initTWAP() internal {
-        (, int256 price,,,) = priceFeedXMR.latestRoundData();
-        require(price > 0, "invalid price");
-        
-        uint256 p = uint256(price);
-        for (uint i = 0; i < TWAP_OBSERVATIONS; i++) {
-            pricePoints[i] = PricePoint({
-                timestamp: uint48(block.timestamp),
-                cumulativePrice: uint208(p * (i + 1))
-            });
-        }
-        lastTwapUpdate = block.timestamp;
-    }
-    
-    /// @notice Update TWAP with new observation
-    function updateTWAP() public {
-        (, int256 price,, uint256 updatedAt,) = priceFeedXMR.latestRoundData();
-        if (block.timestamp - updatedAt > MAX_PRICE_AGE) revert StalePrice();
-        require(price > 0, "invalid price");
-        
-        uint256 elapsed = block.timestamp - lastTwapUpdate;
-        if (elapsed < 60) return; // Min 1 minute between updates
-        
-        uint256 newIndex = (twapIndex + 1) % TWAP_OBSERVATIONS;
-        uint256 prevCumulative = pricePoints[twapIndex].cumulativePrice;
-        
-        pricePoints[newIndex] = PricePoint({
-            timestamp: uint48(block.timestamp),
-            cumulativePrice: uint208(prevCumulative + uint256(price) * elapsed)
-        });
-        
-        twapIndex = newIndex;
-        lastTwapUpdate = block.timestamp;
-        
-        emit TWAPUpdated(newIndex, uint256(price));
-    }
-    
-    /// @notice Get 15-minute TWAP
-    function getTWAP() public view returns (uint256) {
-        uint256 newest = twapIndex;
-        uint256 oldest = (newest + 1) % TWAP_OBSERVATIONS;
-        
-        PricePoint memory n = pricePoints[newest];
-        PricePoint memory o = pricePoints[oldest];
-        
-        uint256 timeElapsed = n.timestamp - o.timestamp;
-        if (timeElapsed < TWAP_PERIOD / 2) {
-            // Not enough data, return spot
-            (, int256 price,,,) = priceFeedXMR.latestRoundData();
-            return uint256(price);
-        }
-        
-        return (n.cumulativePrice - o.cumulativePrice) / timeElapsed;
-    }
-    
-    /// @notice Get spot price
-    function getSpotPrice() public view returns (uint256) {
-        (, int256 price,, uint256 updatedAt,) = priceFeedXMR.latestRoundData();
-        if (block.timestamp - updatedAt > MAX_PRICE_AGE) revert StalePrice();
-        return uint256(price);
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // ORACLE MANAGEMENT
-    // ════════════════════════════════════════════════════════════════════════
-    
-    /// @notice Register as oracle with bond
-    function registerOracle(uint256 _bond) external nonReentrant {
-        if (_bond < MIN_ORACLE_BOND) revert InvalidBond();
-        require(!oracles[msg.sender].active, "exists");
-        
-        dai.safeTransferFrom(msg.sender, address(this), _bond);
-        
-        oracles[msg.sender] = Oracle({
-            bond: _bond,
-            accuracy: INITIAL_ACCURACY,
-            proofsSubmitted: 0,
-            proofsAccepted: 0,
-            rewards: 0,
-            lastActive: uint48(block.timestamp),
-            slashCount: 0,
-            active: true
-        });
-        
-        emit OracleRegistered(msg.sender, _bond);
-    }
-    
-    /// @notice Add bond
-    function addBond(uint256 _amount) external nonReentrant {
-        Oracle storage o = oracles[msg.sender];
-        require(o.active, "inactive");
-        
-        dai.safeTransferFrom(msg.sender, address(this), _amount);
-        o.bond += _amount;
-    }
-    
-    /// @notice Get oracle quadratic weight
-    /// weight = sqrt(accuracy * (1 + log2(proofs + 1)))
-    function getOracleWeight(address _oracle) public view returns (uint256) {
-        Oracle storage o = oracles[_oracle];
-        if (!o.active || o.accuracy == 0) return 0;
-        
-        // Experience multiplier: 1 + min(proofs/10, 2) => max 3x
-        uint256 expMul = 1e18 + Math.min(o.proofsSubmitted * 1e17 / 10, 2e18);
-        
-        // Combined: accuracy * experience
-        uint256 combined = (o.accuracy * expMul) / 1e18;
-        
-        // Quadratic: sqrt
-        return _sqrt(combined);
-    }
-    
-    /// @notice Slash oracle
-    function slashOracle(address _oracle, bytes32 _binding, string calldata _reason) external {
-        require(msg.sender == treasury, "only treasury"); // TODO: Replace with fraud proof
-        
-        Oracle storage o = oracles[_oracle];
-        require(o.active, "inactive");
-        
-        OracleVote storage v = votes[_binding][_oracle];
-        require(v.oracle == _oracle && v.valid, "no valid vote");
-        
-        // Slash 25% of bond
-        uint256 slash = o.bond / 4;
-        o.bond -= slash;
-        o.accuracy = o.accuracy > ACCURACY_DECAY ? o.accuracy - ACCURACY_DECAY : 0;
-        o.slashCount++;
-        v.valid = false;
-        
-        dai.safeTransfer(treasury, slash);
-        
-        emit OracleSlashed(_oracle, slash, _reason);
-        
-        // Deactivate if under minimum
-        if (o.bond < MIN_ORACLE_BOND) {
-            o.active = false;
-        }
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // LP MANAGEMENT
-    // ════════════════════════════════════════════════════════════════════════
-    
-    /// @notice Register as LP
-    function registerLP(bytes32 _spendKey, uint16 _mintFee, uint16 _burnFee) external whenNotPaused {
-        if (_mintFee < MIN_FEE_BPS || _mintFee > MAX_FEE_BPS) revert InvalidFee();
-        if (_burnFee < MIN_FEE_BPS || _burnFee > MAX_FEE_BPS) revert InvalidFee();
-        require(lps[msg.sender].spendKey == bytes32(0), "exists");
-        if (!_validateEd25519Key(_spendKey)) revert InvalidKey();
-        
-        lps[msg.sender] = LP({
-            spendKey: _spendKey,
-            collateral: 0,
-            obligation: 0,
-            sDAIShares: 0,
-            mintFeeBps: _mintFee,
-            burnFeeBps: _burnFee,
-            lastActive: uint48(block.timestamp),
-            timelock: uint48(block.timestamp + 7 days),
-            active: true
-        });
-        
-        emit LPRegistered(msg.sender, _spendKey);
-    }
-    
-    /// @notice Deposit DAI collateral
-    function depositCollateral(uint256 _amount) external whenNotPaused nonReentrant {
-        LP storage l = lps[msg.sender];
-        if (!l.active) revert LPInactive();
-        
-        dai.safeTransferFrom(msg.sender, address(this), _amount);
-        
-        // Convert to sDAI
-        dai.approve(address(sDAI), _amount);
-        uint256 shares = sDAI.deposit(_amount, address(this));
-        
-        l.collateral += _amount;
-        l.sDAIShares += shares;
-        
-        emit CollateralAdded(msg.sender, _amount, shares);
-    }
-    
-    /// @notice Withdraw excess collateral
-    function withdrawCollateral(uint256 _amount) external nonReentrant {
-        LP storage l = lps[msg.sender];
-        if (!l.active) revert LPInactive();
-        require(block.timestamp > l.timelock, "timelocked");
-        
-        uint256 required = (l.obligation * INITIAL_COLLATERAL_BPS) / 10000;
-        if (l.collateral - _amount < required) revert Undercollateralized();
-        
-        l.collateral -= _amount;
-        
-        // Redeem sDAI
-        uint256 sharesToBurn = (_amount * 1e18) / _getSDAIPrice();
-        sharesToBurn = Math.min(sharesToBurn, l.sDAIShares);
-        l.sDAIShares -= sharesToBurn;
-        
-        uint256 received = sDAI.redeem(sharesToBurn, msg.sender, address(this));
-        
-        emit CollateralRemoved(msg.sender, received);
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // ORACLE VOTING (QUADRATIC WEIGHTED)
-    // ════════════════════════════════════════════════════════════════════════
-    
-    /// @notice Submit TLS proof for transaction
-    function submitVote(
-        bytes32 _binding,
-        bytes32[2] calldata _txData,
-        uint64 _ecdhAmount,
-        uint32 _nodeIndex,
-        uint256[2] calldata _proofA,
-        uint256[2][2] calldata _proofB,
-        uint256[2] calldata _proofC,
-        uint256[3] calldata _tlsSignals,
-        uint256 _blockHeight
-    ) external whenNotPaused {
-        Oracle storage o = oracles[msg.sender];
-        require(o.active, "inactive oracle");
-        
-        MoneroNode storage node = nodes[_nodeIndex];
-        require(node.active, "inactive node");
-        
-        // Verify confirmations
-        require(block.timestamp > _blockHeight * 120 + MONERO_CONFIRMATIONS * 120, "unconfirmed");
-        
-        // Verify TLS proof
-        require(tlsVerifier.verifyProof(_proofA, _proofB, _proofC, _tlsSignals), "bad tls proof");
-        require(_tlsSignals[2] == uint256(node.certFingerprint), "cert mismatch");
-        
-        // Prevent double voting
-        if (votes[_binding][msg.sender].oracle != address(0)) revert AlreadyVoted();
-        
-        // Calculate weight
-        uint256 weight = getOracleWeight(msg.sender);
-        require(weight > 0, "zero weight");
-        
-        // Record vote
-        votes[_binding][msg.sender] = OracleVote({
-            oracle: msg.sender,
-            weight: weight,
-            timestamp: uint48(block.timestamp),
-            valid: true
-        });
-        voters[_binding].push(msg.sender);
-        totalWeight[_binding] += weight;
-        
-        o.proofsSubmitted++;
-        o.lastActive = uint48(block.timestamp);
-        
-        emit OracleVoteSubmitted(_binding, msg.sender, weight);
-        
-        // Check consensus
-        if (totalWeight[_binding] >= MIN_WEIGHTED_CONSENSUS) {
-            emit ConsensusReached(_binding, totalWeight[_binding], voters[_binding].length);
-        }
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // MINTING
-    // ════════════════════════════════════════════════════════════════════════
-    
-    /// @notice Mint wXMR with ZK proof
-    function mint(
-        bytes32 _moneroTxHash,
-        bytes32 _binding,
-        uint64 _amount,
-        uint256[2] calldata _proofA,
-        uint256[2][2] calldata _proofB,
-        uint256[2] calldata _proofC,
-        bytes32[3] calldata _publicData, // R, P, C
-        uint64 _ecdhAmount,
-        address _lp
-    ) external whenNotPaused nonReentrant {
-        if (usedTxHashes[_moneroTxHash]) revert TxUsed();
-        
-        LP storage l = lps[_lp];
-        if (!l.active) revert LPInactive();
-        
-        // Update TWAP
-        updateTWAP();
-        
-        // Check consensus
-        if (totalWeight[_binding] < MIN_WEIGHTED_CONSENSUS) revert NoConsensus();
-        
-        // Verify recipient
-        require(_publicData[1] == l.spendKey, "wrong recipient");
-        
-        // Price check
-        uint256 price = getSpotPrice();
-        if (_checkDepeg() == 2) revert DepegCritical();
-        
-        // Collateral check
-        uint256 obligationInDAI = (_amount * price) / 1e8;
-        uint256 required = (obligationInDAI * INITIAL_COLLATERAL_BPS) / 10000;
-        if (l.collateral < required) revert Undercollateralized();
-        
-        // Verify ZK proof
-        uint256[10] memory signals = [
-            uint256(_publicData[0]),      // R
-            uint256(_publicData[1]),      // P
-            uint256(_publicData[2]),      // C
-            uint256(_ecdhAmount),
-            uint256(l.spendKey),          // B
-            uint256(_moneroTxHash),
-            uint256(_binding),
-            CHAIN_ID,
-            uint256(_amount),
-            uint256(CIRCUIT_VERSION)
-        ];
-        
-        if (!bridgeVerifier.verifyProof(_proofA, _proofB, _proofC, signals)) {
-            revert InvalidProof();
-        }
-        
-        // Update state
-        usedTxHashes[_moneroTxHash] = true;
-        l.obligation += obligationInDAI;
-        l.lastActive = uint48(block.timestamp);
-        
-        // Reward oracles
-        _rewardOracles(_binding);
-        
-        // Mint
-        uint256 fee = (_amount * l.mintFeeBps) / 10000;
-        uint256 toMint = _amount - fee;
-        
-        wXMR.mint(msg.sender, toMint);
-        if (fee > 0) wXMR.mint(_lp, fee);
-        
-        emit Minted(_moneroTxHash, _binding, msg.sender, _amount, _lp);
-    }
-    
-    function _rewardOracles(bytes32 _binding) internal {
-        address[] storage v = voters[_binding];
-        uint256 total = totalWeight[_binding];
-        if (total == 0 || v.length == 0) return;
-        
-        uint256 pool = _calcRewardPool();
-        
-        for (uint i = 0; i < v.length; i++) {
-            OracleVote storage vote = votes[_binding][v[i]];
-            if (vote.valid) {
-                Oracle storage o = oracles[vote.oracle];
-                uint256 reward = (pool * vote.weight) / total;
-                o.rewards += reward;
-                o.proofsAccepted++;
-                
-                // Accuracy recovery (+1% per accepted proof)
-                if (o.accuracy < INITIAL_ACCURACY) {
-                    o.accuracy = Math.min(o.accuracy + 0.01e18, INITIAL_ACCURACY);
-                }
-                
-                if (reward > 0) wXMR.mint(vote.oracle, reward);
-            }
-        }
-    }
-    
-    function _calcRewardPool() internal view returns (uint256) {
-        uint256 tvl = (sDAI.balanceOf(address(this)) * _getSDAIPrice()) / 1e18;
-        uint256 annualYield = (tvl * 5) / 100; // 5% APY assumed
-        uint256 oracleShare = (annualYield * ORACLE_REWARD_BPS) / 10000;
-        return oracleShare / 1000; // Per-mint (assume 1000 mints/year)
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // BURNING
-    // ════════════════════════════════════════════════════════════════════════
-    
-    /// @notice Start burn process
-    function startBurn(uint256 _amount, address _lp) external nonReentrant {
-        if (!lps[_lp].active) revert LPInactive();
-        
-        wXMR.burn(msg.sender, _amount);
-        
-        bytes32 id = keccak256(abi.encodePacked(msg.sender, block.timestamp, _amount, _lp));
-        burns[id] = Burn({
-            user: msg.sender,
-            lp: _lp,
-            amount: _amount,
-            timestamp: uint48(block.timestamp),
-            moneroTxHash: bytes32(0),
-            completed: false
-        });
-        
-        emit BurnStarted(id, msg.sender, _amount, _lp);
-    }
-    
-    /// @notice LP completes burn
-    function completeBurn(bytes32 _id, bytes32 _moneroTxHash) external {
-        Burn storage b = burns[_id];
-        if (b.completed) revert AlreadyDone();
-        if (b.lp != msg.sender) revert NotLP();
-        if (block.timestamp > b.timestamp + 72 hours) revert BurnExpired();
-        
-        b.moneroTxHash = _moneroTxHash;
-        b.completed = true;
-        
-        // Reduce obligation using TWAP
-        uint256 twap = getTWAP();
-        uint256 reduction = (b.amount * twap) / 1e8;
-        
-        LP storage l = lps[b.lp];
-        l.obligation = l.obligation > reduction ? l.obligation - reduction : 0;
-        l.lastActive = uint48(block.timestamp);
-        
-        emit BurnCompleted(_id, _moneroTxHash);
-    }
-    
-    /// @notice Claim failed burn (after 2 hours)
-    function claimBurn(bytes32 _id) external nonReentrant {
-        Burn storage b = burns[_id];
-        if (b.completed) revert AlreadyDone();
-        if (block.timestamp <= b.timestamp + BURN_COUNTDOWN) revert BurnActive();
-        
-        // Calculate payout at 150% using TWAP
-        uint256 twap = getTWAP();
-        uint256 value = (b.amount * twap) / 1e8;
-        uint256 payout = (value * INITIAL_COLLATERAL_BPS) / 10000;
-        
-        // Depeg handling
-        LP storage l = lps[b.lp];
-        if (_checkDepeg() == 2) {
-            payout = Math.min(payout, l.collateral);
-        }
-        
-        if (l.collateral < payout) revert Undercollateralized();
-        l.collateral -= payout;
-        
-        // Redeem sDAI
-        uint256 shares = (payout * 1e18) / _getSDAIPrice();
-        shares = Math.min(shares, l.sDAIShares);
-        l.sDAIShares -= shares;
-        
-        uint256 received = sDAI.redeem(shares, address(this), address(this));
-        
-        // Slippage check
-        uint256 minReceive = (payout * (10000 - MAX_SLIPPAGE_BPS)) / 10000;
-        require(received >= minReceive, "slippage");
-        
-        dai.safeTransfer(b.user, received);
-        b.completed = true;
-        
-        emit BurnClaimed(_id, b.user, received);
-    }
----
-
-## **9. Changelog**
-
-| Version | Date | Changes |
-|---------|------|---------|
-| **v5.4** | 2024-12 | Corrected Pedersen (v·H + γ·G), quadratic oracle weighting, TWAP liquidations, oracle bonding, guardian pause, Keccak binding hash |
-| **v5.3** | 2024-11 | N-of-M consensus, removed admin/pause, on-chain node registry |
-| **v5.2** | 2024-10 | Fixed ZK witness model |
-| **v5.1** | 2024-09 | Instant liquidations |
-| **v5.0** | 2024-08 | DAI-only collateral |
-
----
-        
-        updateTWAP();
-        
-        // Use TWAP for liquidation decision
-        uint256 twap = getTWAP();
-        uint256 xmrValue = (l.obligation * twap) / 1e8;
-        
-        if (xmrValue == 0) revert NotLiquidatable();
-        
-        uint256 ratio = (l.collateral * 10000) / xmrValue;
-        if (ratio >= LIQUIDATION_THRESHOLD_BPS) revert NotLiquidatable();
-        
-        l.lastActive = uint48(block.timestamp);
-        
-        // Seize all sDAI---
-
-## **9. Changelog**
-
-| Version | Date | Changes |
-|---------|------|---------|
-| **v5.4** | 2024-12 | Corrected Pedersen (v·H + γ·G), quadratic oracle weighting, TWAP liquidations, oracle bonding, guardian pause, Keccak binding hash |
-| **v5.3** | 2024-11 | N-of-M consensus, removed admin/pause, on-chain node registry |
-| **v5.2** | 2024-10 | Fixed ZK witness model |
-| **v5.1** | 2024-09 | Instant liquidations |
-| **v5.0** | 2024-08 | DAI-only collateral |
-
----
-        uint256 toTreasury = received - liquidatorCut;
-        
-        dai.safeTransfer(msg.sender, liquidatorCut);
-        dai.safeTransfer(treasury, toTreasury);
-        
-        emit Liquidated(_lp, msg.sender, received, twap);
-        
-        // Deactivate
-        l.collateral = 0;
-        l.obligation = 0;
-        l.active = false;
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // NODE MANAGEMENT
-    // ════════════════════════════════════════════════════════════════════════
-    
-    function addNode(string calldata _url, bytes32 _fingerprint) external {
-        if (block.timestamp < lastNodeChange + NODE_CHANGE_COOLDOWN) revert Cooldown();
-        require(bytes(_url).length > 0 && _fingerprint != bytes32(0), "invalid");
-        
-        uint32 idx = nodeCount++;
-        nodes[idx] = MoneroNode({
-            certFingerprint: _fingerprint,
-            url: _url,
-            addedAt: uint48(block.timestamp),
-            active: true
-        });
-        lastNodeChange = block.timestamp;
-        
-        emit NodeAdded(idx, _url, _fingerprint);
-    }
-    
-    function removeNode(uint32 _idx) external {
-        if (block.timestamp < lastNodeChange + NODE_CHANGE_COOLDOWN) revert Cooldown();
-        require(nodes[_idx].active, "inactive");
-        
-        nodes[_idx].active = false;
-        lastNodeChange = block.timestamp;
-        
-        emit NodeRemoved(_idx);
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // INTERNAL HELPERS
-    // ════════════════════════════════════════════════════════════════════════
-    
-    function _getSDAIPrice() internal view returns (uint256) {
-        return sDAI.previewRedeem(1e18);
-    }
-    
-    function _validateEd25519Key(bytes32 _key) internal pure returns (bool) {
-        if (_key == bytes32(0)) return false;
-        // Basic validation - production should use full curve check
-        uint256 y = uint256(_key) & ((1 << 255) - 1);
-        uint256 p = 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed;
-        return y < p;
-    }
-    
-    function _checkDepeg() internal view returns (uint256) {
-        (, int256 price,,,) = priceFeedDAI.latestRoundData();
-        if (price < 0.95e8) return 2; // Critical
-        if (price < 0.98e8) return 1; // Warning
-        return 0;
-    }
-    
-    function _sqrt(uint256 x) internal pure returns (uint256 y) {
-        if (x == 0) return 0;
-        uint256 z = (x + 1) / 2;
-        y = x;
-        while (z < y) {
-            y = z;
-            z = (x / z + z) / 2;
-        }
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // VIEW FUNCTIONS
-    // ════════════════════════════════════════════════════════════════════════
-    
-    function getLP(address _lp) external view returns (LP memory) {
-        return lps[_lp];
-    }
-    
-    function getOracle(address _oracle) external view returns (Oracle memory) {
-        return oracles[_oracle];
-    }
-    
-    function getConsensus(bytes32 _binding) external view returns (uint256 weight, uint256 count, bool reached) {
-        weight = totalWeight[_binding];
-        count = voters[_binding].length;
-        reached = weight >= MIN_WEIGHTED_CONSENSUS;
-    }
-    
-    function getHealthFactor(address _lp) external view returns (uint256) {
-        LP storage l = lps[_lp];
-        if (!l.active || l.obligation == 0) return type(uint256).max;
-        
-        uint256 twap = getTWAP();
-        uint256 xmrValue = (l.obligation * twap) / 1e8;
-        
-        return (l.collateral * 1e18 * 10000) / (xmrValue * LIQUIDATION_THRESHOLD_BPS);
-    }
-}
-```
+**Contract deployed on Base Sepolia**: `0x9241b6cE1b969F9BDf64a26CE933915d1b8dA0AD`
 
 ---
 
@@ -1317,6 +405,25 @@ This is experimental cryptographic software. Trusted setup ceremony and security
 
 ---
 
-*Document Version: 5.4.0*
-*Last Updated: December 2024*
+## **11. Current Deployment Status**
+
+### **Base Sepolia Testnet (Active)**
+- **Contract**: `0x9241b6cE1b969F9BDf64a26CE933915d1b8dA0AD`
+- **Verifier**: `0xA41E8D806e06BFEB7b86AA4c231E468286813d24`
+- **Network**: Base Sepolia (Chain ID: 84532)
+- **Status**: ✅ Ed25519 DLEQ + PLONK verification working
+- **Test TX**: [0x1c8f82e1f10aba85a8df453b384bc9e411d0cfee36695347321a9aa6f124bc38](https://sepolia.basescan.org/tx/0x1c8f82e1f10aba85a8df453b384bc9e411d0cfee36695347321a9aa6f124bc38)
+- **Gas Used**: 3,157,317
+
+### **Test Results**
+- ✅ All 4 Monero transactions verified (3 stagenet + 1 mainnet)
+- ✅ DLEQ proof generation: 100% success rate
+- ✅ On-chain verification: PASSING
+- ✅ Circuit constraints: ~1,167
+- ✅ Proof time: <1 second
+
+---
+
+*Document Version: 6.0.0*
+*Last Updated: January 2026*
 *Authors: FUNGERBIL Team*
