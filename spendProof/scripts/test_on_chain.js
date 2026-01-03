@@ -195,8 +195,10 @@ async function main() {
 
     try {
         console.log("\n  📊 Estimating gas...");
+        const txHash = "0x" + tx1.hash;
+        
         try {
-            const gasEstimate = await bridge.verifyAndMint.estimateGas(proofCalldata, publicSignals, dleqProof, ed25519Proof);
+            const gasEstimate = await bridge.verifyAndMint.estimateGas(proofCalldata, publicSignals, dleqProof, ed25519Proof, txHash);
             console.log("     Estimated gas:", gasEstimate.toString());
         } catch (gasError) {
             console.log("     ⚠️  Gas estimation failed:", gasError.message);
@@ -206,7 +208,7 @@ async function main() {
         }
         
         console.log("\n  🔄 Sending transaction...");
-        const tx = await bridge.verifyAndMint(proofCalldata, publicSignals, dleqProof, ed25519Proof);
+        const tx = await bridge.verifyAndMint(proofCalldata, publicSignals, dleqProof, ed25519Proof, txHash);
         console.log("  📝 Transaction hash:", tx.hash);
         
         console.log("  ⏳ Waiting for confirmation...");

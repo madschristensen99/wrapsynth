@@ -39,8 +39,8 @@
       ]
     },
     "/home/remsee/rapidsnarkWindsurfAgain/spendProof/contracts/MoneroBridgeDLEQ.sol": {
-      "lastModificationDate": 1767474359314,
-      "contentHash": "5b557c19a6f1470df9ba03e6db438f6d",
+      "lastModificationDate": 1767481500794,
+      "contentHash": "a92ac6165b378a0713dd3b46adcadfe3",
       "sourceName": "contracts/MoneroBridgeDLEQ.sol",
       "solcConfig": {
         "version": "0.8.20",

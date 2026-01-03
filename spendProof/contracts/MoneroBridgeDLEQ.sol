@@ -2,7 +2,6 @@
 pragma solidity ^0.8.20;
 
 import "./Ed25519.sol";
-import "./Secp256k1DLEQ.sol";
 
 /**
  * @title MoneroBridgeDLEQ
@@ -38,6 +37,17 @@ contract MoneroBridgeDLEQ {
     // Track used Monero outputs to prevent double-spending
     mapping(bytes32 => bool) public usedOutputs;
     
+    // Track Monero tx hashes for transparency
+    mapping(bytes32 => bytes32) public outputToTxHash;
+    
+    // Events
+    event Minted(
+        address indexed recipient,
+        uint256 amount,
+        bytes32 indexed outputId,
+        bytes32 indexed txHash
+    );
+    
     // ════════════════════════════════════════════════════════════════════════
     // EVENTS
     // ════════════════════════════════════════════════════════════════════════
@@ -72,12 +82,14 @@ contract MoneroBridgeDLEQ {
      * @param publicSignals Public signals from circuit (70 elements)
      * @param dleqProof DLEQ proof for discrete log equality
      * @param ed25519Proof Ed25519 operation proofs
+     * @param txHash Monero transaction hash (for transparency and tracking)
      */
     function verifyAndMint(
         uint256[24] calldata proof,
         uint256[70] calldata publicSignals,
         DLEQProof calldata dleqProof,
-        Ed25519Proof calldata ed25519Proof
+        Ed25519Proof calldata ed25519Proof,
+        bytes32 txHash
     ) external {
         // Extract public signals from circuit output
         // Order: [v, R_x, S_x, P_compressed, ecdhAmount, amountKey[64], commitment]
@@ -142,7 +154,10 @@ contract MoneroBridgeDLEQ {
         
         bytes32 outputId = keccak256(abi.encodePacked(R_x, P_compressed));
         require(!usedOutputs[outputId], "Output already spent");
+        require(txHash != bytes32(0), "Invalid tx hash");
+        
         usedOutputs[outputId] = true;
+        outputToTxHash[outputId] = txHash;
         
         // ════════════════════════════════════════════════════════════════════
         // STEP 6: Decrypt Amount
@@ -157,6 +172,7 @@ contract MoneroBridgeDLEQ {
         // TODO: Mint ERC20 tokens to msg.sender
         // _mint(msg.sender, amount);
         
+        emit Minted(msg.sender, amount, outputId, txHash);
         emit BridgeProofVerified(outputId, msg.sender, amount);
         emit Ed25519Verified(bytes32(R_x), bytes32(S_x), bytes32(P_compressed));
     }
