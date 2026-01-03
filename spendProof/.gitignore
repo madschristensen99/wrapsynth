@@ -54,3 +54,7 @@ contracts/Ed25519Debug.sol
 contracts/Secp256k1DLEQ.sol
 contracts/MoneroBridgePLONK.sol
 scripts/generate_dleq_secp256k1.js
+
+# Hardhat build artifacts
+artifacts/
+cache/
