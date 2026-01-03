@@ -51,8 +51,8 @@ for (const tx of transactions) {
     // Convert amount to piconero if it's a decimal (< 1000 means it's in XMR)
     const amountPiconero = tx.amount < 1000 ? Math.round(tx.amount * 1e12) : tx.amount;
     
-    // Update generate_witness.js with this transaction's data
-    const witnessScript = fs.readFileSync('scripts/generate_witness.js', 'utf8');
+    // Update fetch_monero_witness.js with this transaction's data
+    const witnessScript = fs.readFileSync('scripts/fetch_monero_witness.js', 'utf8');
     // Match TX_DATA object (multi-line)
     const updated = witnessScript.replace(
         /const TX_DATA = \{[\s\S]*?\};/,
@@ -66,12 +66,12 @@ for (const tx of transactions) {
     node: "${tx.node || 'https://stagenet.xmr.ditatompel.com'}"
 };`
     );
-    fs.writeFileSync('scripts/generate_witness.js', updated);
+    fs.writeFileSync('scripts/fetch_monero_witness.js', updated);
     
     // Generate witness with timing
     const witnessStart = Date.now();
     try {
-        execSync('node scripts/generate_witness.js > /dev/null 2>&1');
+        execSync('node scripts/fetch_monero_witness.js > /dev/null 2>&1');
         const witnessTime = Date.now() - witnessStart;
         console.log(`  ⏱️  Witness generation: ${witnessTime}ms`);
     } catch(e) {
