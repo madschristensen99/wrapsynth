@@ -171,8 +171,33 @@ async function testTransaction(tx) {
         await testTransaction(tx);
     }
     
+    // FRAUD DETECTION TEST
     console.log('\n' + '═'.repeat(70));
-    console.log(`\n🎯 FINAL RESULTS: ${passedTests}/${totalTests} transactions passed\n`);
+    console.log('\n🔒 FRAUD DETECTION TEST\n');
+    console.log('Testing with WRONG secret key to verify circuit rejects fraud...\n');
+    
+    const fraudTx = {
+        name: "FRAUD TEST",
+        hash: transactions[0].hash,
+        block: transactions[0].block,
+        secretKey: "0000000000000000000000000000000000000000000000000000000000000001", // WRONG!
+        amount: transactions[0].amount,
+        destination: transactions[0].destination,
+        output_index: transactions[0].output_index,
+        node: transactions[0].node
+    };
+    
+    const fraudResult = await testTransaction(fraudTx);
+    
+    if (!fraudResult) {
+        console.log('\n✅ FRAUD DETECTION WORKING: Wrong secret key was rejected!\n');
+    } else {
+        console.log('\n❌ SECURITY FAILURE: Wrong secret key was accepted!\n');
+        process.exit(1);
+    }
+    
+    console.log('═'.repeat(70));
+    console.log(`\n🎯 FINAL RESULTS: ${passedTests}/${totalTests} valid transactions passed\n`);
     console.log('═'.repeat(70));
     
     if (passedTests === totalTests) {
