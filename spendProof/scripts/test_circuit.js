@@ -16,8 +16,9 @@ async function runTests() {
     console.log("   - Expected proof time: <1 second\n");
 
     // Prepare input with client-side computations
-    const inputData = JSON.parse(fs.readFileSync('input.json', 'utf8'));
-    const witness = await generateWitness(inputData);
+    // Read original input with A_compressed and B_compressed
+    const originalInput = JSON.parse(fs.readFileSync('input.json', 'utf8'));
+    const witness = await generateWitness(originalInput);
     
     // Separate circuit inputs from DLEQ proofs
     const circuitInputs = {
@@ -32,14 +33,20 @@ async function runTests() {
         commitment: witness.commitment
     };
     
-    // Save circuit inputs
-    fs.writeFileSync('input.json', JSON.stringify(circuitInputs, null, 2));
+    // Save circuit inputs (preserve original with A_compressed/B_compressed)
+    if (!originalInput.A_compressed || !originalInput.B_compressed) {
+        // Only overwrite if original doesn't have Ed25519 keys
+        fs.writeFileSync('input.json', JSON.stringify(circuitInputs, null, 2));
+    }
     
     // Save DLEQ proofs for Solidity verification
     if (witness.dleqProof && witness.ed25519Proof) {
         fs.writeFileSync('dleq_proof.json', JSON.stringify({
             dleqProof: witness.dleqProof,
-            ed25519Proof: witness.ed25519Proof
+            ed25519Proof: witness.ed25519Proof,
+            R: witness.R,
+            rA: witness.rA,
+            S: witness.S
         }, null, 2));
         console.log('\n🔐 DLEQ Proof saved to dleq_proof.json for Solidity verification\n');
     }

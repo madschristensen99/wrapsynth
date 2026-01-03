@@ -13,6 +13,7 @@
 const { keccak256 } = require('js-sha3');
 const { buildPoseidon } = require('circomlibjs');
 const { computeEd25519Operations } = require('./generate_dleq_proof.js');
+const { generateDLEQProofSecp256k1 } = require('./generate_dleq_secp256k1.js');
 
 /**
  * Convert hex string or array to bit array (LSB first per byte)
@@ -155,20 +156,31 @@ async function generateWitness(inputData) {
             H_s_hex += byte.toString(16).padStart(2, '0');
         }
         
-        // Convert A_compressed and B_compressed from decimal to hex (32 bytes, little-endian)
-        const A_bigint = BigInt(inputData.A_compressed);
-        const B_bigint = BigInt(inputData.B_compressed);
+        // A_compressed and B_compressed can be either hex strings or decimal BigInts
+        // Convert to Ed25519 compressed format (32 bytes hex, little-endian)
+        const convertToHex = (value) => {
+            if (typeof value === 'string' && value.match(/^0x[0-9a-fA-F]+$/)) {
+                // Already hex string with 0x prefix
+                return value.replace(/^0x/, '');
+            } else if (typeof value === 'string' && value.match(/^[0-9a-fA-F]{64}$/)) {
+                // Hex string without 0x prefix (exactly 64 hex chars)
+                return value;
+            } else {
+                // Decimal string or BigInt - blockchain stores as little-endian decimal
+                // Convert back to little-endian bytes, then to hex
+                const bigint = BigInt(value);
+                const bytes = [];
+                let val = bigint;
+                for (let i = 0; i < 32; i++) {
+                    bytes.push(Number(val & 0xFFn));
+                    val >>= 8n;
+                }
+                return Buffer.from(bytes).toString('hex');
+            }
+        };
         
-        // Convert to little-endian bytes (Ed25519 format)
-        const A_bytes = [];
-        const B_bytes = [];
-        for (let i = 0; i < 32; i++) {
-            A_bytes.push(Number((A_bigint >> BigInt(i * 8)) & 0xFFn));
-            B_bytes.push(Number((B_bigint >> BigInt(i * 8)) & 0xFFn));
-        }
-        
-        const A_hex = Buffer.from(A_bytes).toString('hex');
-        const B_hex = Buffer.from(B_bytes).toString('hex');
+        const A_hex = convertToHex(inputData.A_compressed);
+        const B_hex = convertToHex(inputData.B_compressed);
         
         ed25519Results = await computeEd25519Operations(
             r_hex,
@@ -203,6 +215,9 @@ async function generateWitness(inputData) {
         commitment: commitment,
         
         // DLEQ proof (for Solidity verification)
+        R: ed25519Results ? ed25519Results.R : null,
+        rA: ed25519Results ? ed25519Results.rA : null,
+        S: ed25519Results ? ed25519Results.S : null,
         dleqProof: ed25519Results ? ed25519Results.dleqProof : null,
         ed25519Proof: ed25519Results ? ed25519Results.ed25519Proof : null
     };

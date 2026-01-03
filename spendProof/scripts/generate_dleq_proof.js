@@ -31,16 +31,30 @@ function generateDLEQProof(r, G, A, R, rA) {
     
     // 2. Compute commitments
     const K1 = ed.Point.BASE.multiply(k_scalar);  // k·G
-    const K2 = A.multiply(k_scalar);  // k·A
+    const K2 = A.multiply(k_scalar);  // k·A (standard DLEQ)
     
-    // 3. Compute challenge using Fiat-Shamir
+    // 3. Compute challenge using Fiat-Shamir (uncompressed format to match Solidity)
+    const toUncompressed = (point) => {
+        const xBuf = Buffer.alloc(32);
+        const yBuf = Buffer.alloc(32);
+        xBuf.writeBigUInt64BE(point.x >> 192n, 0);
+        xBuf.writeBigUInt64BE((point.x >> 128n) & 0xFFFFFFFFFFFFFFFFn, 8);
+        xBuf.writeBigUInt64BE((point.x >> 64n) & 0xFFFFFFFFFFFFFFFFn, 16);
+        xBuf.writeBigUInt64BE(point.x & 0xFFFFFFFFFFFFFFFFn, 24);
+        yBuf.writeBigUInt64BE(point.y >> 192n, 0);
+        yBuf.writeBigUInt64BE((point.y >> 128n) & 0xFFFFFFFFFFFFFFFFn, 8);
+        yBuf.writeBigUInt64BE((point.y >> 64n) & 0xFFFFFFFFFFFFFFFFn, 16);
+        yBuf.writeBigUInt64BE(point.y & 0xFFFFFFFFFFFFFFFFn, 24);
+        return Buffer.concat([xBuf, yBuf]);
+    };
+    
     const challengeInput = Buffer.concat([
-        Buffer.from(G.toHex()),
-        Buffer.from(A.toHex()),
-        Buffer.from(R.toHex()),
-        Buffer.from(rA.toHex()),
-        Buffer.from(K1.toHex()),
-        Buffer.from(K2.toHex())
+        toUncompressed(G),
+        toUncompressed(A),
+        toUncompressed(R),
+        toUncompressed(rA),
+        toUncompressed(K1),
+        toUncompressed(K2)
     ]);
     
     const challengeHash = keccak256(challengeInput);
@@ -95,26 +109,57 @@ function verifyDLEQProof(proof, G, A, R, rA) {
     const lhs1 = sG;
     const rhs1 = K1.add(cR);
     
-    // Verify: s·A = K2 + c·rA
+    // Verify: s·A = K2 + c·rA (standard DLEQ)
     const sA = A.multiply(s);
     const c_rA = rA.multiply(c);
     const lhs2 = sA;
     const rhs2 = K2.add(c_rA);
     
-    // Verify challenge
+    // Verify challenge (uncompressed format to match Solidity)
+    const toUncompressed = (point) => {
+        const xBuf = Buffer.alloc(32);
+        const yBuf = Buffer.alloc(32);
+        xBuf.writeBigUInt64BE(point.x >> 192n, 0);
+        xBuf.writeBigUInt64BE((point.x >> 128n) & 0xFFFFFFFFFFFFFFFFn, 8);
+        xBuf.writeBigUInt64BE((point.x >> 64n) & 0xFFFFFFFFFFFFFFFFn, 16);
+        xBuf.writeBigUInt64BE(point.x & 0xFFFFFFFFFFFFFFFFn, 24);
+        yBuf.writeBigUInt64BE(point.y >> 192n, 0);
+        yBuf.writeBigUInt64BE((point.y >> 128n) & 0xFFFFFFFFFFFFFFFFn, 8);
+        yBuf.writeBigUInt64BE((point.y >> 64n) & 0xFFFFFFFFFFFFFFFFn, 16);
+        yBuf.writeBigUInt64BE(point.y & 0xFFFFFFFFFFFFFFFFn, 24);
+        return Buffer.concat([xBuf, yBuf]);
+    };
+    
     const challengeInput = Buffer.concat([
-        Buffer.from(G.toHex()),
-        Buffer.from(A.toHex()),
-        Buffer.from(R.toHex()),
-        Buffer.from(rA.toHex()),
-        Buffer.from(K1.toHex()),
-        Buffer.from(K2.toHex())
+        toUncompressed(G),
+        toUncompressed(A),
+        toUncompressed(R),
+        toUncompressed(rA),
+        toUncompressed(K1),
+        toUncompressed(K2)
     ]);
     
     const challengeHash = keccak256(challengeInput);
     const c_check = BigInt('0x' + challengeHash) % L;
     
-    return lhs1.equals(rhs1) && lhs2.equals(rhs2) && c === c_check;
+    // Compare points by coordinates (equals() might not work correctly)
+    const eq1 = (lhs1.x === rhs1.x && lhs1.y === rhs1.y);
+    const eq2 = (lhs2.x === rhs2.x && lhs2.y === rhs2.y);
+    const eq3 = (c === c_check);
+    
+    if (!eq1) console.log('      ❌ Equation 1 failed: s*G != K1 + c*R');
+    if (!eq2) {
+        console.log('      ❌ Equation 2 failed: s*A != K2 + c*rA');
+        console.log(`         sA: (${sA.x.toString().slice(0,16)}..., ${sA.y.toString().slice(0,16)}...)`);
+        console.log(`         K2: (${K2.x.toString().slice(0,16)}..., ${K2.y.toString().slice(0,16)}...)`);
+        console.log(`         c_rA: (${c_rA.x.toString().slice(0,16)}..., ${c_rA.y.toString().slice(0,16)}...)`);
+        console.log(`         rhs2: (${rhs2.x.toString().slice(0,16)}..., ${rhs2.y.toString().slice(0,16)}...)`);
+        console.log(`         s: ${s.toString().slice(0,20)}...`);
+        console.log(`         c: ${c.toString().slice(0,20)}...`);
+    }
+    if (!eq3) console.log(`      ❌ Challenge mismatch: c=${c.toString().slice(0,20)}... vs c_check=${c_check.toString().slice(0,20)}...`);
+    
+    return eq1 && eq2 && eq3;
 }
 
 /**
@@ -134,10 +179,12 @@ async function computeEd25519Operations(r, A_compressed, B_compressed, H_s) {
     const r_scalar = BigInt('0x' + r) % L;
     
     let A, B;
+    const A_hex = A_compressed.replace(/^0x/, '');
+    console.log(`   Decompressing A: ${A_hex.slice(0, 16)}... (length: ${A_hex.length})`);
     try {
-        A = await ed.Point.fromHex(A_compressed.replace(/^0x/, ''));
+        A = ed.Point.fromHex(A_hex);
     } catch(e) {
-        throw new Error(`Failed to decompress A (view key): ${e.message}. A_compressed=${A_compressed.slice(0, 32)}...`);
+        throw new Error(`Failed to decompress A (view key): ${e.message}. A_hex=${A_hex.slice(0, 32)}...`);
     }
     
     try {
@@ -173,7 +220,7 @@ async function computeEd25519Operations(r, A_compressed, B_compressed, H_s) {
     const P_compressed = Buffer.from(P.toHex()).toString('hex');
     console.log(`      ✅ P = ${P_compressed.slice(0, 16)}...`);
     
-    // 5. Generate DLEQ proof
+    // 5. Generate DLEQ proof (using rA, Solidity will verify with S/8)
     console.log('   5. Generating DLEQ proof...');
     const dleqProof = generateDLEQProof(r_bytes, G, A, R, rA);
     console.log(`      ✅ DLEQ proof generated`);
@@ -187,6 +234,18 @@ async function computeEd25519Operations(r, A_compressed, B_compressed, H_s) {
         R_x: '0x' + R_compressed,
         S_x: '0x' + S_compressed,
         P_compressed: '0x' + P_compressed,
+        R: {
+            x: R.x.toString(),
+            y: R.y.toString()
+        },
+        rA: {
+            x: rA.x.toString(),
+            y: rA.y.toString()
+        },
+        S: {
+            x: S.x.toString(),
+            y: S.y.toString()
+        },
         dleqProof,
         ed25519Proof: {
             G: {
@@ -201,6 +260,10 @@ async function computeEd25519Operations(r, A_compressed, B_compressed, H_s) {
                 x: B.x.toString(),
                 y: B.y.toString()
             },
+            R_x: R.x.toString(),
+            R_y: R.y.toString(),
+            S_x: S.x.toString(),
+            S_y: S.y.toString(),
             H_s: H_s_scalar.toString()
         }
     };
