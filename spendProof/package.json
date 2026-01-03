@@ -18,6 +18,7 @@
     "axios": "^1.13.2",
     "base58-monero": "^0.0.5",
     "ffjavascript": "^0.3.0",
+    "js-sha3": "^0.9.3",
     "keccak": "^3.0.4",
     "keccak-circom": "github:vocdoni/keccak256-circom",
     "keccak256": "^1.0.6",
