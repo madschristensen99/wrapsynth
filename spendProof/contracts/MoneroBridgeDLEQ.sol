@@ -257,49 +257,7 @@ contract MoneroBridgeDLEQ {
         return Ed25519.verifyDLEQ(G, A, R, S, proof.c, proof.s, K1, K2);
     }
     
-    /**
-     * @notice Verify DLEQ proof using secp256k1 (EVM-native curve)
-     * @dev Proves log_G(R) = log_A(S) = r using secp256k1 instead of Ed25519
-     */
-    function verifyDLEQSecp256k1(
-        DLEQProof calldata proof,
-        Ed25519Proof calldata ed25519Proof
-    ) internal view returns (bool) {
-        // Construct secp256k1 points from proof data
-        Secp256k1DLEQ.Point memory G = Secp256k1DLEQ.Point({
-            x: ed25519Proof.G_x,
-            y: ed25519Proof.G_y
-        });
-        
-        Secp256k1DLEQ.Point memory A = Secp256k1DLEQ.Point({
-            x: ed25519Proof.A_x,
-            y: ed25519Proof.A_y
-        });
-        
-        Secp256k1DLEQ.Point memory R = Secp256k1DLEQ.Point({
-            x: ed25519Proof.R_x,
-            y: ed25519Proof.R_y
-        });
-        
-        Secp256k1DLEQ.Point memory S = Secp256k1DLEQ.Point({
-            x: ed25519Proof.S_x,
-            y: ed25519Proof.S_y
-        });
-        
-        Secp256k1DLEQ.Point memory K1 = Secp256k1DLEQ.Point({
-            x: proof.K1_x,
-            y: proof.K1_y
-        });
-        
-        Secp256k1DLEQ.Point memory K2 = Secp256k1DLEQ.Point({
-            x: proof.K2_x,
-            y: proof.K2_y
-        });
-        
-        // Verify DLEQ proof using secp256k1
-        return Secp256k1DLEQ.verifyDLEQ(G, A, R, S, proof.c, proof.s, K1, K2);
-    }
-    
+
     /**
      * @notice Verify Ed25519 point operations
      * @dev Verifies P = H_s·G + B (stealth address derivation)
