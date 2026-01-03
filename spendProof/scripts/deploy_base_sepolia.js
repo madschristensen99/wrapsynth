@@ -16,7 +16,7 @@ async function main() {
     const verifierAddress = await verifier.getAddress();
     console.log("✅ PlonkVerifier deployed to:", verifierAddress);
 
-    // Deploy MoneroBridgeDLEQ
+    // Deploy MoneroBridgeDLEQ (with PLONK support)
     console.log("\n📝 Step 2: Deploying MoneroBridgeDLEQ...");
     const MoneroBridgeDLEQ = await hre.ethers.getContractFactory("MoneroBridgeDLEQ");
     const bridge = await MoneroBridgeDLEQ.deploy(verifierAddress);

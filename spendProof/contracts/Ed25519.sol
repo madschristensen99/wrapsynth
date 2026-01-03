@@ -4,96 +4,142 @@ pragma solidity ^0.8.20;
 /**
  * @title Ed25519
  * @notice Ed25519 elliptic curve operations for Solidity
- * @dev Implements point addition, scalar multiplication, and DLEQ verification
- * 
- * Ed25519 curve: -x^2 + y^2 = 1 + d*x^2*y^2
- * where d = -121665/121666 mod p
- * p = 2^255 - 19 (field prime)
- * L = 2^252 + 27742317777372353535851937790883648493 (curve order)
+ * @dev Based on https://github.com/javgh/ed25519-solidity
+ * Using formulas from https://hyperelliptic.org/EFD/g1p/auto-twisted-projective.html
+ * and constants from https://tools.ietf.org/html/draft-josefsson-eddsa-ed25519-03
  */
 library Ed25519 {
-    
-    // Field prime: p = 2^255 - 19
-    uint256 constant P = 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed;
-    
-    // Curve order: L = 2^252 + 27742317777372353535851937790883648493
+    uint256 constant q = 2 ** 255 - 19;
+    uint256 constant d = 37095705934669439343138083508754565189542113879843219016388785533085940283555;
     uint256 constant L = 0x1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3ed;
-    
-    // Curve parameter d = -121665/121666 mod p
-    uint256 constant D = 0x52036cee2b6ffe738cc740797779e89800700a4d4141d8ab75eb4dca135978a3;
-    
-    // Base point G
-    uint256 constant GX = 0x216936d3cd6e53fec0a4e231fdd6dc5c692cc7609525a7b2c9562d608f25d51a;
-    uint256 constant GY = 0x6666666666666666666666666666666666666666666666666666666666666658;
-    
+    uint256 constant Bx = 15112221349535400772501151409588531511454012693041857206046113283949847762202;
+    uint256 constant By = 46316835694926478169428394003475163141307993866256225615783033603165251855960;
+
     struct Point {
         uint256 x;
         uint256 y;
+        uint256 z;
     }
-    
-    /**
-     * @notice Add two Ed25519 points
-     * @dev Uses unified addition formula for Edwards curves
-     */
-    function pointAdd(Point memory p1, Point memory p2) internal pure returns (Point memory) {
-        uint256 x1 = p1.x;
-        uint256 y1 = p1.y;
-        uint256 x2 = p2.x;
-        uint256 y2 = p2.y;
-        
-        // x3 = (x1*y2 + y1*x2) / (1 + d*x1*x2*y1*y2)
-        // y3 = (y1*y2 - x1*x2) / (1 - d*x1*x2*y1*y2)
-        
-        uint256 x1y2 = mulmod(x1, y2, P);
-        uint256 y1x2 = mulmod(y1, x2, P);
-        uint256 y1y2 = mulmod(y1, y2, P);
-        uint256 x1x2 = mulmod(x1, x2, P);
-        
-        uint256 dx1x2y1y2 = mulmod(mulmod(D, x1x2, P), mulmod(y1, y2, P), P);
-        
-        uint256 x3_num = addmod(x1y2, y1x2, P);
-        uint256 x3_den = addmod(1, dx1x2y1y2, P);
-        
-        uint256 y3_num = addmod(y1y2, P - x1x2, P);
-        uint256 y3_den = addmod(1, P - dx1x2y1y2, P);
-        
-        return Point({
-            x: mulmod(x3_num, modInv(x3_den, P), P),
-            y: mulmod(y3_num, modInv(y3_den, P), P)
-        });
+
+    struct Scratchpad {
+        uint256 a;
+        uint256 b;
+        uint256 c;
+        uint256 d;
+        uint256 e;
+        uint256 f;
+        uint256 g;
+        uint256 h;
     }
-    
-    /**
-     * @notice Scalar multiplication using double-and-add
-     * @dev Multiplies point P by scalar s
-     */
-    function scalarMul(Point memory p, uint256 s) internal pure returns (Point memory) {
-        if (s == 0) {
-            return Point({x: 0, y: 1}); // Identity point
+
+    function inv(uint256 a) internal view returns (uint256 invA) {
+        uint256 e = q - 2;
+        uint256 m = q;
+
+        // Use bigModExp precompile (address 0x05) with explicit gas
+        assembly {
+            let p := mload(0x40)
+            mstore(p, 0x20)             // length of base
+            mstore(add(p, 0x20), 0x20)  // length of exponent  
+            mstore(add(p, 0x40), 0x20)  // length of modulus
+            mstore(add(p, 0x60), a)     // base
+            mstore(add(p, 0x80), e)     // exponent
+            mstore(add(p, 0xa0), m)     // modulus
+            
+            // Call precompile with enough gas
+            if iszero(staticcall(200000, 0x05, p, 0xc0, p, 0x20)) {
+                revert(0, 0)
+            }
+            invA := mload(p)
         }
-        
-        Point memory result = Point({x: 0, y: 1}); // Identity
+    }
+
+    function ecAdd(Point memory p1, Point memory p2) internal pure returns (Point memory p3) {
+        Scratchpad memory tmp;
+
+        tmp.a = mulmod(p1.z, p2.z, q);
+        tmp.b = mulmod(tmp.a, tmp.a, q);
+        tmp.c = mulmod(p1.x, p2.x, q);
+        tmp.d = mulmod(p1.y, p2.y, q);
+        tmp.e = mulmod(d, mulmod(tmp.c, tmp.d, q), q);
+        tmp.f = addmod(tmp.b, q - tmp.e, q);
+        tmp.g = addmod(tmp.b, tmp.e, q);
+        p3.x = mulmod(mulmod(tmp.a, tmp.f, q),
+                      addmod(addmod(mulmod(addmod(p1.x, p1.y, q),
+                                           addmod(p2.x, p2.y, q), q),
+                                    q - tmp.c, q), q - tmp.d, q), q);
+        p3.y = mulmod(mulmod(tmp.a, tmp.g, q),
+                      addmod(tmp.d, tmp.c, q), q);
+        p3.z = mulmod(tmp.f, tmp.g, q);
+    }
+
+    function ecDouble(Point memory p1) internal pure returns (Point memory p2) {
+        Scratchpad memory tmp;
+
+        tmp.a = addmod(p1.x, p1.y, q);
+        tmp.b = mulmod(tmp.a, tmp.a, q);
+        tmp.c = mulmod(p1.x, p1.x, q);
+        tmp.d = mulmod(p1.y, p1.y, q);
+        tmp.e = q - tmp.c;
+        tmp.f = addmod(tmp.e, tmp.d, q);
+        tmp.h = mulmod(p1.z, p1.z, q);
+        tmp.g = addmod(tmp.f, q - mulmod(2, tmp.h, q), q);
+        p2.x = mulmod(addmod(addmod(tmp.b, q - tmp.c, q), q - tmp.d, q),
+                      tmp.g, q);
+        p2.y = mulmod(tmp.f, addmod(tmp.e, q - tmp.d, q), q);
+        p2.z = mulmod(tmp.f, tmp.g, q);
+    }
+
+    function scalarMult(Point memory p, uint256 s) internal view returns (Point memory result) {
+        result.x = 0;
+        result.y = 1;
+        result.z = 1;
+
         Point memory temp = p;
-        
+
         while (s > 0) {
             if (s & 1 == 1) {
-                result = pointAdd(result, temp);
+                result = ecAdd(result, temp);
             }
-            temp = pointAdd(temp, temp); // Double
-            s >>= 1;
+            s = s >> 1;
+            temp = ecDouble(temp);
         }
-        
-        return result;
+
+        // Convert from projective to affine coordinates
+        uint256 invZ = inv(result.z);
+        result.x = mulmod(result.x, invZ, q);
+        result.y = mulmod(result.y, invZ, q);
+        result.z = 1;
     }
-    
+
+    function scalarMultBase(uint256 s) internal view returns (uint256, uint256) {
+        Point memory b;
+        Point memory result;
+        b.x = Bx;
+        b.y = By;
+        b.z = 1;
+        result.x = 0;
+        result.y = 1;
+        result.z = 1;
+
+        while (s > 0) {
+            if (s & 1 == 1) {
+                result = ecAdd(result, b);
+            }
+            s = s >> 1;
+            b = ecDouble(b);
+        }
+
+        uint256 invZ = inv(result.z);
+        result.x = mulmod(result.x, invZ, q);
+        result.y = mulmod(result.y, invZ, q);
+
+        return (result.x, result.y);
+    }
+
     /**
      * @notice Verify DLEQ proof
      * @dev Proves log_G(R) = log_A(S) = r without revealing r
-     * 
-     * Verification equations:
-     * 1. s*G = K1 + c*R
-     * 2. s*A = K2 + c*S
-     * 3. c = Hash(G, A, R, S, K1, K2)
      */
     function verifyDLEQ(
         Point memory G,
@@ -104,119 +150,59 @@ library Ed25519 {
         uint256 s,
         Point memory K1,
         Point memory K2
-    ) internal pure returns (bool) {
+    ) internal view returns (bool) {
         // Verify s < L (curve order)
         if (s >= L) return false;
-        
+
         // Compute s*G
-        Point memory sG = scalarMul(G, s);
-        
+        Point memory sG = scalarMult(G, s);
+
         // Compute c*R
-        Point memory cR = scalarMul(R, c);
-        
+        Point memory cR = scalarMult(R, c);
+
         // Compute K1 + c*R
-        Point memory rhs1 = pointAdd(K1, cR);
-        
+        Point memory rhs1 = ecAdd(K1, cR);
+
+        // Convert to affine for comparison
+        uint256 invZ1 = inv(rhs1.z);
+        rhs1.x = mulmod(rhs1.x, invZ1, q);
+        rhs1.y = mulmod(rhs1.y, invZ1, q);
+
         // Verify s*G = K1 + c*R
         if (sG.x != rhs1.x || sG.y != rhs1.y) {
             return false;
         }
-        
+
         // Compute s*A
-        Point memory sA = scalarMul(A, s);
-        
+        Point memory sA = scalarMult(A, s);
+
         // Compute c*S
-        Point memory cS = scalarMul(S, c);
-        
+        Point memory cS = scalarMult(S, c);
+
         // Compute K2 + c*S
-        Point memory rhs2 = pointAdd(K2, cS);
-        
+        Point memory rhs2 = ecAdd(K2, cS);
+
+        // Convert to affine for comparison
+        uint256 invZ2 = inv(rhs2.z);
+        rhs2.x = mulmod(rhs2.x, invZ2, q);
+        rhs2.y = mulmod(rhs2.y, invZ2, q);
+
         // Verify s*A = K2 + c*S
         if (sA.x != rhs2.x || sA.y != rhs2.y) {
             return false;
         }
-        
+
         // Verify challenge (Fiat-Shamir)
+        // Note: S parameter is actually rA for standard DLEQ
         uint256 c_check = uint256(keccak256(abi.encodePacked(
             G.x, G.y,
             A.x, A.y,
             R.x, R.y,
-            S.x, S.y,
+            S.x, S.y,  // This is rA, not 8*rA
             K1.x, K1.y,
             K2.x, K2.y
         ))) % L;
-        
+
         return c == c_check;
-    }
-    
-    /**
-     * @notice Verify R = r*G using public R
-     * @dev Used to verify transaction public key
-     */
-    function verifyScalarMul(
-        Point memory G,
-        Point memory R,
-        uint256 r
-    ) internal pure returns (bool) {
-        Point memory computed = scalarMul(G, r);
-        return computed.x == R.x && computed.y == R.y;
-    }
-    
-    /**
-     * @notice Modular inverse using Fermat's little theorem
-     * @dev a^(-1) = a^(p-2) mod p
-     */
-    function modInv(uint256 a, uint256 m) internal pure returns (uint256) {
-        return modExp(a, m - 2, m);
-    }
-    
-    /**
-     * @notice Modular exponentiation
-     * @dev Computes (base^exp) mod m
-     */
-    function modExp(uint256 base, uint256 exp, uint256 m) internal pure returns (uint256) {
-        uint256 result = 1;
-        base = base % m;
-        
-        while (exp > 0) {
-            if (exp & 1 == 1) {
-                result = mulmod(result, base, m);
-            }
-            exp >>= 1;
-            base = mulmod(base, base, m);
-        }
-        
-        return result;
-    }
-    
-    /**
-     * @notice Decompress Ed25519 point from y-coordinate
-     * @dev Recovers x from y using curve equation
-     */
-    function decompress(uint256 y_coord, bool x_sign) internal pure returns (Point memory) {
-        // Solve for x: x^2 = (y^2 - 1) / (d*y^2 + 1)
-        
-        uint256 y2 = mulmod(y_coord, y_coord, P);
-        uint256 num = addmod(y2, P - 1, P); // y^2 - 1
-        uint256 den = addmod(mulmod(D, y2, P), 1, P); // d*y^2 + 1
-        
-        uint256 x2 = mulmod(num, modInv(den, P), P);
-        
-        // Compute square root using Tonelli-Shanks or direct method
-        // For p = 2^255 - 19, we can use x = x2^((p+3)/8)
-        uint256 x = modExp(x2, (P + 3) / 8, P);
-        
-        // Verify x^2 = x2
-        if (mulmod(x, x, P) != x2) {
-            // Try x = x * sqrt(-1) = x * 2^((p-1)/4)
-            x = mulmod(x, modExp(2, (P - 1) / 4, P), P);
-        }
-        
-        // Apply sign
-        if ((x & 1) != (x_sign ? 1 : 0)) {
-            x = P - x;
-        }
-        
-        return Point({x: x, y: y_coord});
     }
 }

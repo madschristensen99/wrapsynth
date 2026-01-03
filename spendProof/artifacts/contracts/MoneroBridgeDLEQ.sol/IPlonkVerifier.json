@@ -1,29 +1,19 @@
 {
   "_format": "hh-sol-artifact-1",
-  "contractName": "IVerifier",
+  "contractName": "IPlonkVerifier",
   "sourceName": "contracts/MoneroBridgeDLEQ.sol",
   "abi": [
     {
       "inputs": [
         {
-          "internalType": "uint256[2]",
-          "name": "_pA",
-          "type": "uint256[2]"
+          "internalType": "uint256[24]",
+          "name": "proof",
+          "type": "uint256[24]"
         },
         {
-          "internalType": "uint256[2][2]",
-          "name": "_pB",
-          "type": "uint256[2][2]"
-        },
-        {
-          "internalType": "uint256[2]",
-          "name": "_pC",
-          "type": "uint256[2]"
-        },
-        {
-          "internalType": "uint256[6]",
-          "name": "_pubSignals",
-          "type": "uint256[6]"
+          "internalType": "uint256[70]",
+          "name": "pubSignals",
+          "type": "uint256[70]"
         }
       ],
       "name": "verifyProof",

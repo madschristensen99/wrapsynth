@@ -1,0 +1,10 @@
+{
+  "network": "baseSepolia",
+  "chainId": 84532,
+  "deployer": "0x49a22328fecF3e43C4C0fEDfb7E5272248904E3E",
+  "contracts": {
+    "PlonkVerifier": "0xA41E8D806e06BFEB7b86AA4c231E468286813d24",
+    "MoneroBridgeDLEQ": "0x9241b6cE1b969F9BDf64a26CE933915d1b8dA0AD"
+  },
+  "timestamp": "2026-01-03T21:32:10.152Z"
+}
