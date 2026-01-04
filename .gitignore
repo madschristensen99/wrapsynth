@@ -31,4 +31,5 @@ monero-wallet-rpc.log
 # Test/Generated files
 spendProof/proof_tx.json
 spendProof/public.json
+spendProof/public_tx.json
 spendProof/dleq_proof.json
