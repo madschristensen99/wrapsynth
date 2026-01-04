@@ -3,56 +3,156 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Monero Bridge - Trustless XMR→EVM Bridge</title>
+    <title>Zero XMR | Zero-Knowledge Verified Permissionlessly Wrapped Monero</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
+    <div class="scanlines"></div>
+    <div class="crt-overlay"></div>
+    
     <nav class="navbar">
         <div class="container">
             <div class="nav-brand">
-                <span class="logo">🔐</span>
-                <span class="brand-name">Monero Bridge</span>
+                <span class="terminal-prompt">root@zero-xmr:~$</span>
             </div>
             <div class="nav-links">
-                <a href="#features">Features</a>
-                <a href="#how-it-works">How It Works</a>
-                <a href="#stats">Stats</a>
-                <a href="https://github.com/madschristensen99/zeroxmr" target="_blank">GitHub</a>
-                <a href="https://sepolia.basescan.org/address/0x3D50F6177E6589413A389f8a16314E2dA20a25Ff" target="_blank" class="btn-primary">View Contract</a>
+                <a href="#protocol">PROTOCOL</a>
+                <a href="#stats">STATS</a>
+                <a href="https://github.com/madschristensen99/zeroxmr" target="_blank">GITHUB</a>
+                <a href="https://sepolia.basescan.org/address/0x3D50F6177E6589413A389f8a16314E2dA20a25Ff" target="_blank" class="btn-contract">CONTRACT ↗</a>
             </div>
         </div>
     </nav>
 
     <section class="hero">
         <div class="container">
-            <div class="hero-content">
-                <h1 class="hero-title">Trustless Monero→EVM Bridge</h1>
-                <p class="hero-subtitle">Zero-knowledge proof system using hybrid Ed25519 DLEQ + PLONK architecture</p>
-                <div class="hero-stats">
-                    <div class="stat">
-                        <div class="stat-value">~1,167</div>
-                        <div class="stat-label">Constraints</div>
+            <div class="hero-grid">
+                <!-- Left: Terminal Window -->
+                <div class="terminal-window">
+                    <div class="terminal-header">
+                        <div class="terminal-title">
+                            <span class="blink">●</span> ZERO_XMR_V6.0
+                        </div>
+                        <div class="terminal-controls">
+                            <span class="dot red"></span>
+                            <span class="dot yellow"></span>
+                            <span class="dot green"></span>
+                        </div>
                     </div>
-                    <div class="stat">
-                        <div class="stat-value">&lt;1s</div>
-                        <div class="stat-label">Proof Time</div>
-                    </div>
-                    <div class="stat">
-                        <div class="stat-value">99.97%</div>
-                        <div class="stat-label">Reduction</div>
+                    <div class="terminal-body">
+                        <div class="cmd-block">
+                            <div class="cmd-line">
+                                <span class="prompt">root@bridge</span><span class="separator">:</span><span class="path">~</span><span class="dollar">$</span> <span class="cmd">./status</span>
+                            </div>
+                            <div class="output">
+                                <div class="status-item">
+                                    <span class="key">STATUS</span>
+                                    <span class="dots">................</span>
+                                    <span class="val active">[LIVE]</span>
+                                </div>
+                                <div class="status-item">
+                                    <span class="key">NETWORK</span>
+                                    <span class="dots">...............</span>
+                                    <span class="val">BASE SEPOLIA</span>
+                                </div>
+                                <div class="status-item">
+                                    <span class="key">VERIFIED</span>
+                                    <span class="dots">..............</span>
+                                    <span class="val success">✓ MAINNET</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="cmd-block">
+                            <div class="cmd-line">
+                                <span class="prompt">root@bridge</span><span class="separator">:</span><span class="path">~</span><span class="dollar">$</span> <span class="cmd">./metrics</span>
+                            </div>
+                            <div class="output">
+                                <div class="metrics-grid">
+                                    <div class="metric">
+                                        <div class="metric-label">CONSTRAINTS</div>
+                                        <div class="metric-value">1,167</div>
+                                    </div>
+                                    <div class="metric">
+                                        <div class="metric-label">PROOF TIME</div>
+                                        <div class="metric-value">&lt;1s</div>
+                                    </div>
+                                    <div class="metric">
+                                        <div class="metric-label">REDUCTION</div>
+                                        <div class="metric-value highlight">99.97%</div>
+                                    </div>
+                                    <div class="metric">
+                                        <div class="metric-label">GAS COST</div>
+                                        <div class="metric-value">3.2M</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="cmd-block">
+                            <div class="cmd-line">
+                                <span class="prompt">root@bridge</span><span class="separator">:</span><span class="path">~</span><span class="dollar">$</span> <span class="cmd typing">_</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div class="hero-buttons">
-                    <a href="#how-it-works" class="btn btn-large btn-primary">Get Started</a>
-                    <a href="https://github.com/madschristensen99/zeroxmr" class="btn btn-large btn-secondary" target="_blank">Documentation</a>
+
+                <!-- Right: TVL Display -->
+                <div class="tvl-panel">
+                    <div class="tvl-header">
+                        <div class="tvl-title">DECENTRALIZED TVL</div>
+                        <div class="tvl-status">
+                            <span class="pulse-dot"></span>
+                            <span>LIVE</span>
+                        </div>
+                    </div>
+                    
+                    <div class="tvl-main">
+                        <div class="tvl-amount">
+                            <div class="tvl-number">961.00</div>
+                            <div class="tvl-currency">XMR</div>
+                        </div>
+                        <div class="tvl-usd-value">
+                            $147,273.20 USD
+                        </div>
+                    </div>
+
+                    <div class="tvl-stats">
+                        <div class="tvl-stat">
+                            <div class="stat-label">24H CHANGE</div>
+                            <div class="stat-value positive">
+                                <span class="arrow">↗</span> +931 XMR
+                            </div>
+                        </div>
+                        <div class="tvl-stat">
+                            <div class="stat-label">TOTAL TXS</div>
+                            <div class="stat-value">3</div>
+                        </div>
+                    </div>
+
+                    <div class="tvl-chart">
+                        <div class="chart-bar" style="height: 20%"></div>
+                        <div class="chart-bar" style="height: 35%"></div>
+                        <div class="chart-bar" style="height: 50%"></div>
+                        <div class="chart-bar" style="height: 75%"></div>
+                        <div class="chart-bar" style="height: 100%"></div>
+                    </div>
+
+                    <a href="https://sepolia.basescan.org/address/0x3D50F6177E6589413A389f8a16314E2dA20a25Ff" target="_blank" class="cta-button">
+                        <span>VIEW CONTRACT</span>
+                        <span class="arrow-right">→</span>
+                    </a>
                 </div>
             </div>
         </div>
     </section>
 
-    <section id="features" class="features">
+    <section id="protocol" class="protocol">
         <div class="container">
-            <h2 class="section-title">Why Monero Bridge?</h2>
+            <h2 class="section-title">Zero-Knowledge Verified Permissionlessly Wrapped Monero</h2>
             <div class="features-grid">
                 <div class="feature-card">
                     <div class="feature-icon">⚡</div>
@@ -188,8 +288,8 @@
         <div class="container">
             <div class="footer-content">
                 <div class="footer-section">
-                    <h4>Monero Bridge</h4>
-                    <p>Trustless XMR→EVM bridging with zero-knowledge proofs</p>
+                    <h4>Zero XMR</h4>
+                    <p>Zero-Knowledge Verified Permissionlessly Wrapped Monero</p>
                 </div>
                 <div class="footer-section">
                     <h4>Resources</h4>
