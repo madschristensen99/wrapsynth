@@ -15,6 +15,7 @@ Cargo.lock
 # Build directories
 **/build/
 **/dist/
+**/build_optimized/
 
 # Logs
 *.log
@@ -26,3 +27,8 @@ monero-wallet-rpc.log
 .env.*.local
 *.ptau
 *.zkey
+
+# Test/Generated files
+spendProof/proof_tx.json
+spendProof/public.json
+spendProof/dleq_proof.json
