@@ -1,323 +1,281 @@
-# Monero→Arbitrum Bridge Circuit v5.4
+# Monero Bridge - Hybrid ZK Architecture
 
-Zero-knowledge circuit for proving Monero transaction authenticity and amount correctness. This circuit enables trustless bridging of XMR to Arbitrum One by verifying Pedersen commitments and ECDH-encrypted amounts without revealing transaction details.
+**Zero-knowledge proof system for trustless Monero→EVM bridging using Ed25519 DLEQ + PLONK proofs**
 
-**⚠️ WARNING: This is experimental software. Not audited. Do not use in production.**
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Deployed](https://img.shields.io/badge/Deployed-Base%20Sepolia-blue)](https://sepolia.basescan.org/address/0x3D50F6177E6589413A389f8a16314E2dA20a25Ff)
 
-## Features
+## 🎯 Overview
 
-- **Cryptographically Correct**: Uses Monero-native Pedersen commitment ordering (C = v·H + γ·G)
-- **Privacy-Preserving**: Transaction secret key `r` never leaves the client
-- **Ethereum-Compatible**: Keccak256 binding hash for on-chain verification
-- **Cross-Chain Security**: Chain ID verification prevents replay attacks
+This project implements a **hybrid zero-knowledge architecture** that achieves **99.97% constraint reduction** compared to traditional approaches by moving Ed25519 operations off-chain while maintaining full cryptographic security.
 
-## Architecture
+### Key Features
+
+- ✅ **~1,167 constraints** (vs 3.9M in traditional circuits)
+- ✅ **Ed25519 DLEQ verification** on-chain
+- ✅ **Replay protection** with tx hash tracking
+- ✅ **Real Monero transactions** verified (stagenet + mainnet)
+- ✅ **<1 second** proof generation time
+- ✅ **Deployed on Base Sepolia**
+
+## 📖 Documentation
+
+For detailed protocol specification, see [SYNTHWRAP.md](../SYNTHWRAP.md)
+
+## 🏗️ Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │              User Frontend (Browser/Wallet)                  │
-│  - Witness generation from Monero wallet data                │
-│  - Client-side proof generation (snarkjs)                   │
+│  - Generate Ed25519 operations (R, S, P) using @noble/ed25519│
+│  - Generate DLEQ proof (c, s, K1, K2)                        │
+│  - Generate PLONK proof (~1,167 constraints, <1s)            │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────┐
-│              Bridge Circuit (Circom, ~62k R1CS)             │
+│     DLEQ-Optimized Circuit (Circom, ~1,167 constraints)    │
 │  Proves:                                                     │
-│    - R = r·G (knowledge of tx secret key)                   │
-│    - C = v·H + γ·G (Monero Pedersen commitment)             │
-│    - v = ecdhAmount ⊕ H_s(γ) (amount decryption)            │
-│    - binding = Keccak256(R||P||C||ecdhAmount)               │
+│    - Poseidon commitment binding witness values             │
+│    - Amount decryption correctness (v XOR ecdhAmount)       │
+│    - 64-bit range check (v < 2^64)                          │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────┐
-│            Solidity Verifier Contract (Groth16)             │
-│  - BN254 pairing-based verification                         │
-│  - ~200k gas on Arbitrum                                    │
+│         Ed25519 DLEQ Verification (Solidity)               │
+│  Verifies:                                                   │
+│    - DLEQ proof: log_G(R) = log_A(rA) = r                   │
+│    - Ed25519 point operations using precompile (0x05)       │
+│    - Challenge: c = H(G, A, R, rA, K1, K2) mod L            │
+│    - Response: s·G = K1 + c·R  AND  s·A = K2 + c·rA        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Installation
+## 🚀 Quick Start
 
 ### Prerequisites
 
 - Node.js >= 18.0.0
+- Hardhat
 - Circom 2.1.0+
-- snarkjs 0.7.4+
+- snarkjs
 
-### Setup
+### Installation
 
 ```bash
 # Clone repository
-git clone https://github.com/fungerbil/monero-bridge-circuit
-cd monero-bridge-circuit
+git clone https://github.com/madschristensen99/zeroxmr.git
+cd zeroxmr/spendProof
 
 # Install dependencies
 npm install
 
-# Install circom (if not already installed)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-git clone https://github.com/iden3/circom.git
-cd circom
-cargo build --release
-cargo install --path circom
-cd ..
+# Set up environment
+cp .env.example .env
+# Edit .env with your Base Sepolia RPC and private key
 ```
 
-### Install External Libraries
-
-This circuit depends on several external libraries:
+### Compile Circuit
 
 ```bash
-# Install from npm
-npm install circomlib
+# Compile the DLEQ-optimized circuit
+circom monero_bridge.circom --r1cs --wasm --sym -o build
 
-# Clone additional libraries (for full Ed25519 support)
-# Electron-Labs ed25519-circom (archived but functional)
-git clone https://github.com/Electron-Labs/ed25519-circom.git node_modules/ed25519-circom
-
-# vocdoni keccak256-circom
-git clone https://github.com/vocdoni/keccak256-circom.git node_modules/keccak256-circom
-
-# bkomuves hash-circuits (for Blake2s)
-git clone https://github.com/bkomuves/hash-circuits.git node_modules/hash-circuits
+# Generate verification key
+snarkjs plonk setup build/monero_bridge.r1cs pot22_final.ptau circuit_final.zkey
 ```
 
-## Usage
-
-### 1. Compile Circuit
+### Run Tests
 
 ```bash
-# Compile with constraint output
-npm run compile
+# Test locally
+node scripts/test_circuit.js
 
-# Or manually:
-circom circuits/monero_bridge_v54.circom --r1cs --wasm --sym -o build
+# Test all transactions (3 stagenet + 1 mainnet)
+node scripts/test_all_with_dleq.js
+
+# Test on Base Sepolia
+npx hardhat run scripts/test_on_chain.js --network baseSepolia
 ```
 
-### 2. Trusted Setup
-
-Download a Powers of Tau file (2^22 constraints minimum):
-
-```bash
-# Download from Hermez ceremony
-wget https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_22.ptau -O pot22_final.ptau
-
-# Generate circuit-specific keys
-npm run setup
-
-# Contribute to phase 2
-npm run contribute
-```
-
-### 3. Generate Proof
+## 📝 Usage Example
 
 ```javascript
-const { groth16 } = require('snarkjs');
-const { keccak256 } = require('ethers');
+const { generateWitness } = require('./scripts/generate_witness.js');
 
-async function generateProof(walletData) {
-    // Prepare inputs
-    const input = {
-        // Private inputs
-        r: walletData.txSecretKey,  // 256 bits binary
-        v: walletData.amount,       // 64-bit integer
-        
-        // Public inputs
-        R_x: walletData.R,
-        P_compressed: walletData.destinationAddress,
-        C_compressed: walletData.commitment,
-        ecdhAmount: walletData.encryptedAmount,
-        B_compressed: walletData.lpSpendKey,
-        monero_tx_hash: walletData.txHash,
-        bridge_tx_binding: computeBinding(walletData),
-        chain_id: 42161n  // Arbitrum One
-    };
-    
-    // Generate proof
-    const { proof, publicSignals } = await groth16.fullProve(
-        input,
-        'build/monero_bridge_v54_js/monero_bridge_v54.wasm',
-        'build/monero_bridge_v54_final.zkey'
-    );
-    
-    return { proof, publicSignals };
-}
+// Prepare Monero transaction data
+const inputData = {
+    r: "4cbf8f2cfb622ee126f08df053e99b96aa2e8c1cfd575d2a651f3343b465800a",
+    v: "20000000000",
+    H_s_scalar: "...",
+    A_compressed: "...",
+    B_compressed: "...",
+    ecdhAmount: "..."
+};
+
+// Generate witness (includes Ed25519 ops + DLEQ proof)
+const witness = await generateWitness(inputData);
+
+// Generate PLONK proof
+const { proof, publicSignals } = await snarkjs.plonk.fullProve(
+    witness,
+    "build/monero_bridge_js/monero_bridge.wasm",
+    "circuit_final.zkey"
+);
+
+// Submit to contract
+await bridge.verifyAndMint(
+    proof,
+    publicSignals,
+    witness.dleqProof,
+    witness.ed25519Proof,
+    txHash
+);
 ```
 
-### 4. Verify On-Chain
+## 🌐 Deployed Contracts
 
-```solidity
-import "./BridgeVerifier.sol";
+### Base Sepolia (Testnet)
 
-contract MoneroBridge {
-    IBridgeVerifier public verifier;
-    
-    function mint(
-        uint256[2] calldata _pA,
-        uint256[2][2] calldata _pB,
-        uint256[2] calldata _pC,
-        uint256[10] calldata _pubSignals
-    ) external {
-        require(verifier.verifyProof(_pA, _pB, _pC, _pubSignals), "Invalid proof");
-        // ... mint logic
-    }
-}
-```
+- **MoneroBridgeDLEQ**: [`0x3D50F6177E6589413A389f8a16314E2dA20a25Ff`](https://sepolia.basescan.org/address/0x3D50F6177E6589413A389f8a16314E2dA20a25Ff)
+- **PlonkVerifier**: [`0x3139CB6fa4255591D7667361ab06Fdb155558853`](https://sepolia.basescan.org/address/0x3139CB6fa4255591D7667361ab06Fdb155558853)
+- **Network**: Base Sepolia (Chain ID: 84532)
 
-## Circuit Inputs
+### Verified Transactions
 
-### Private Inputs (Witnesses)
+| TX | Network | Amount | Status | BaseScan |
+|----|---------|--------|--------|----------|
+| TX1 | Stagenet | 20 XMR | ✅ | [View](https://sepolia.basescan.org/tx/0xf53d0a2e550ca00d79680a02c5584bfdb9871bae88025d8ec2ba2447cbec211c) |
+| TX2 | Stagenet | 10 XMR | ✅ | [View](https://sepolia.basescan.org/tx/0x3db5c81e177402f12b4ff2ba2acf5aebb6da93d2fe05260a057354608cf754cb) |
+| TX4 | **Mainnet** | 931 XMR | ✅ | [View](https://sepolia.basescan.org/tx/0x71d089e79eda5e503c727eeefdf0b42d8f08226537098a8c0ce2d4e0592a09c7) |
 
-| Name | Type | Description |
-|------|------|-------------|
-| `r` | `signal[256]` | Transaction secret key (binary) |
-| `v` | `signal` | Amount in piconero (64-bit) |
+## 🔒 Security Features
 
-### Public Inputs
+### Replay Protection
+- ✅ Output tracking: `usedOutputs[outputId]` prevents double-spending
+- ✅ Tx hash storage: `outputToTxHash[outputId]` for transparency
+- ✅ Validates `txHash != bytes32(0)` before accepting
 
-| Name | Type | Description |
-|------|------|-------------|
-| `R_x` | `signal` | Transaction public key R |
-| `P_compressed` | `signal` | Destination stealth address |
-| `C_compressed` | `signal` | Pedersen commitment |
-| `ecdhAmount` | `signal` | ECDH-encrypted amount |
-| `B_compressed` | `signal` | LP spend public key |
-| `monero_tx_hash` | `signal` | Monero transaction ID |
-| `bridge_tx_binding` | `signal` | Keccak256(R||P||C||ecdhAmount) |
-| `chain_id` | `signal` | Target chain ID (42161) |
+### Cryptographic Verification
+- ✅ **DLEQ Proof**: Proves knowledge of secret key `r` without revealing it
+- ✅ **PLONK Proof**: Verifies Poseidon commitment binding all witness values
+- ✅ **Ed25519 Operations**: Verified on-chain using modular inverse precompile
 
-### Outputs
+### Test Results
+- ✅ Real Monero transactions: All passing
+- ✅ Fake data rejection: System correctly rejects invalid secret keys
+- ✅ Replay attempts: Rejected with "Output already spent"
 
-| Name | Type | Description |
-|------|------|-------------|
-| `verified_binding` | `signal` | Echoed binding hash |
-| `verified_amount` | `signal` | Verified amount |
+## 📊 Performance
 
-## Cryptographic Details
+| Metric | Value |
+|--------|-------|
+| Circuit Constraints | ~1,167 |
+| Proof Generation | <1 second |
+| Gas Cost (mint) | ~3.2M gas |
+| Memory Usage | ~500 MB |
 
-### Pedersen Commitment (Monero-Native)
+## 🛠️ Development
 
-Monero uses: **C = v·H + γ·G**
-
-Where:
-- `v` = amount (value)
-- `H` = generator for value commitment
-- `γ` = blinding factor (derived from shared secret)
-- `G` = standard Ed25519 base point
-
-⚠️ This is **opposite** to some other systems that use C = v·G + γ·H!
-
-### Blinding Factor Derivation
+### Project Structure
 
 ```
-γ = Blake2s("commitment" || shared_secret_x || output_index) mod l
-```
-
-### Amount Decryption
-
-```
-amount = ecdhAmount ⊕ Blake2s("amount" || shared_secret_x)[0:8]
-```
-
-## External Dependencies
-
-| Library | Source | Purpose |
-|---------|--------|---------|
-| circomlib | [iden3/circomlib](https://github.com/iden3/circomlib) | Basic circuits (comparators, bitify) |
-| ed25519-circom | [Electron-Labs/ed25519-circom](https://github.com/Electron-Labs/ed25519-circom) | Ed25519 curve operations |
-| keccak256-circom | [vocdoni/keccak256-circom](https://github.com/vocdoni/keccak256-circom) | Keccak256 hash (~151k constraints) |
-| hash-circuits | [bkomuves/hash-circuits](https://github.com/bkomuves/hash-circuits) | Blake2s-256 hash |
-
-## Constraint Breakdown
-
-| Component | Constraints | Notes |
-|-----------|-------------|-------|
-| Ed25519 ScalarMul (R = r·G) | ~18,000 | Double-and-add |
-| Ed25519 ScalarMul (S = r·B) | ~18,000 | ECDH shared secret |
-| Pedersen Commitment | ~24,000 | v·H + γ·G |
-| Blake2s (×2) | ~6,000 | γ derivation + amount key |
-| Keccak256 | ~5,000 | Binding hash |
-| Other (decompress, XOR) | ~1,100 | |
-| **Total** | **~62,100** | |
-
-## Performance Targets
-
-| Environment | Proving Time | Memory |
-|-------------|--------------|--------|
-| Browser (WASM) | 2.0-2.8s | ~1.0 GB |
-| Browser (WebGPU) | 1.4-2.0s | ~600 MB |
-| Native (rapidsnark) | 0.5-0.8s | ~500 MB |
-
-## Security Considerations
-
-1. **Trusted Setup**: Groth16 requires a trusted setup ceremony
-2. **Not Audited**: This code has not been professionally audited
-3. **Ed25519 Library**: The Electron-Labs library is archived and experimental
-4. **Side Channels**: Browser-based proving may be vulnerable to timing attacks
-
-## Testing
-
-```bash
-# Run all tests
-npm test
-
-# Run specific test
-npm test -- --grep "Pedersen"
-```
-
-## Project Structure
-
-```
-monero-bridge/
-├── circuits/
-│   ├── monero_bridge_v54.circom    # Main circuit
-│   └── lib/
-│       ├── ed25519/                # Ed25519 operations
-│       │   ├── scalar_mul.circom
-│       │   ├── point_add.circom
-│       │   ├── point_compress.circom
-│       │   ├── point_decompress.circom
-│       │   ├── modulus.circom
-│       │   └── bigint.circom
-│       ├── blake2s/
-│       │   └── blake2s.circom
-│       └── keccak/
-│           └── keccak256.circom
+spendProof/
+├── contracts/
+│   ├── MoneroBridgeDLEQ.sol    # Main bridge contract
+│   ├── Ed25519.sol              # Ed25519 DLEQ verification
+│   └── PlonkVerifier.sol        # Generated PLONK verifier
+├── scripts/
+│   ├── generate_dleq_proof.js   # DLEQ proof generation
+│   ├── generate_witness.js      # Witness generation
+│   ├── test_circuit.js          # Local testing
+│   ├── test_all_with_dleq.js    # Test all transactions
+│   └── test_on_chain.js         # On-chain testing
 ├── test/
-│   └── monero_bridge.test.js
-├── build/                          # Generated artifacts
-├── package.json
+│   ├── TestEd25519.test.js      # Ed25519 library tests
+│   └── DebugDLEQOnChain.test.js # DLEQ debugging
+├── lib/ed25519/                 # Ed25519 circuit library
+├── monero_bridge.circom         # Main circuit
 └── README.md
 ```
 
-## License
+### Running Tests
 
-MIT License (circuits), GPL-3.0 (Solidity contracts)
+```bash
+# Local circuit test
+node scripts/test_circuit.js
 
-## Contributing
+# Test all 4 transactions
+node scripts/test_all_with_dleq.js
+
+# Hardhat tests
+npx hardhat test
+
+# Deploy to Base Sepolia
+npx hardhat run scripts/deploy_base_sepolia.js --network baseSepolia
+
+# Test on-chain
+npx hardhat run scripts/test_on_chain.js --network baseSepolia
+```
+
+## 📚 Technical Details
+
+### Hybrid Architecture Benefits
+
+**Traditional Approach (3.9M constraints):**
+- Ed25519 scalar multiplication: ~2.56M constraints
+- Point operations: ~1.2M constraints
+- Hash functions: ~150K constraints
+
+**Our Hybrid Approach (1,167 constraints):**
+- ✅ Ed25519 operations: **Off-chain** (using @noble/ed25519)
+- ✅ DLEQ proof: **On-chain verification** (Solidity)
+- ✅ Poseidon commitment: **In-circuit** (~1,167 constraints)
+
+### DLEQ Proof
+
+Proves: `log_G(R) = log_A(rA) = r`
+
+**Commitments:**
+- `K1 = k·G`
+- `K2 = k·A`
+
+**Challenge:**
+- `c = H(G, A, R, rA, K1, K2) mod L`
+
+**Response:**
+- `s = k + c·r mod L`
+
+**Verification:**
+- `s·G = K1 + c·R`
+- `s·A = K2 + c·rA`
+
+## ⚠️ Security Considerations
+
+1. **Not Audited**: This code has not been professionally audited
+2. **Testnet Only**: Currently deployed on Base Sepolia testnet
+3. **Experimental**: Ed25519 verification uses Ethereum precompile (0x05)
+4. **Requires Audit**: Full security audit required before mainnet deployment
+
+## 📄 License
+
+- **Circuits**: MIT License
+- **Contracts**: GPL-3.0 License
+
+## 🤝 Contributing
 
 1. Fork the repository
 2. Create a feature branch
 3. Run tests: `npm test`
 4. Submit a pull request
 
-## Changelog
+## 🔗 Links
 
-| Version | Date | Changes |
-|---------|------|---------|
-| v5.4 | 2024-12 | Corrected Pedersen (v·H + γ·G), Keccak binding |
-| v5.3 | 2024-11 | N-of-M oracle consensus |
-| v5.2 | 2024-10 | Fixed witness model |
-
-## References
-
-- [Monero RingCT Paper](https://eprint.iacr.org/2015/1098)
-- [Ed25519 RFC 8032](https://datatracker.ietf.org/doc/html/rfc8032)
-- [Circom Documentation](https://docs.circom.io/)
-- [snarkjs Documentation](https://github.com/iden3/snarkjs)
+- **Protocol Spec**: [SYNTHWRAP.md](../SYNTHWRAP.md)
+- **GitHub**: [madschristensen99/zeroxmr](https://github.com/madschristensen99/zeroxmr)
+- **Base Sepolia Contract**: [0x3D50F6177E6589413A389f8a16314E2dA20a25Ff](https://sepolia.basescan.org/address/0x3D50F6177E6589413A389f8a16314E2dA20a25Ff)
 
 ---
 
-**Estimated Mainnet: Q3 2025**
-
-*Document Version: 5.4.0 | Last Updated: December 2024 | Authors: FUNGERBIL Team*
+**Version**: 6.0.0  
+**Last Updated**: January 2026  
+**Status**: ✅ Ed25519 DLEQ Verified On-Chain | ⚠️ Requires Security Audit
