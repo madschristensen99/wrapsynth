@@ -43,6 +43,7 @@ body {
     color: var(--text-primary);
     line-height: 1.6;
     overflow-x: hidden;
+    padding-top: 70px; /* Account for fixed navbar */
 }
 
 /* === Subtle Effects === */
@@ -132,8 +133,8 @@ body {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .hero {
-    min-height: 100vh;
-    padding: 140px 0 100px;
+    min-height: calc(100vh - 70px);
+    padding: 60px 0 100px;
     display: flex;
     align-items: center;
     position: relative;
