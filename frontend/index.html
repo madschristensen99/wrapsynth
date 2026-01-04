@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zero XMR | Zero-Knowledge Verified Permissionlessly Wrapped Monero</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="scanlines"></div>
+    <div class="crt-overlay"></div>
+    
+    <nav class="navbar">
+        <div class="container">
+            <div class="nav-brand">
+                <span class="terminal-prompt">root@zero-xmr:~$</span>
+            </div>
+            <div class="nav-links">
+                <a href="#protocol">PROTOCOL</a>
+                <a href="#stats">STATS</a>
+                <a href="https://github.com/madschristensen99/zeroxmr" target="_blank">GITHUB</a>
+                <a href="https://sepolia.basescan.org/address/0x3D50F6177E6589413A389f8a16314E2dA20a25Ff" target="_blank" class="btn-contract">CONTRACT ↗</a>
+            </div>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <div class="container">
+            <div class="hero-grid">
+                <!-- Left: Terminal Window -->
+                <div class="terminal-window">
+                    <div class="terminal-header">
+                        <div class="terminal-title">
+                            <span class="blink">●</span> ZERO_XMR_V6.0
+                        </div>
+                        <div class="terminal-controls">
+                            <span class="dot red"></span>
+                            <span class="dot yellow"></span>
+                            <span class="dot green"></span>
+                        </div>
+                    </div>
+                    <div class="terminal-body">
+                        <div class="cmd-block">
+                            <div class="cmd-line">
+                                <span class="prompt">root@bridge</span><span class="separator">:</span><span class="path">~</span><span class="dollar">$</span> <span class="cmd">./status</span>
+                            </div>
+                            <div class="output">
+                                <div class="status-item">
+                                    <span class="key">STATUS</span>
+                                    <span class="dots">................</span>
+                                    <span class="val active">[LIVE]</span>
+                                </div>
+                                <div class="status-item">
+                                    <span class="key">NETWORK</span>
+                                    <span class="dots">...............</span>
+                                    <span class="val">BASE SEPOLIA</span>
+                                </div>
+                                <div class="status-item">
+                                    <span class="key">VERIFIED</span>
+                                    <span class="dots">..............</span>
+                                    <span class="val success">✓ MAINNET</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="cmd-block">
+                            <div class="cmd-line">
+                                <span class="prompt">root@bridge</span><span class="separator">:</span><span class="path">~</span><span class="dollar">$</span> <span class="cmd">./metrics</span>
+                            </div>
+                            <div class="output">
+                                <div class="metrics-grid">
+                                    <div class="metric">
+                                        <div class="metric-label">CONSTRAINTS</div>
+                                        <div class="metric-value">1,167</div>
+                                    </div>
+                                    <div class="metric">
+                                        <div class="metric-label">PROOF TIME</div>
+                                        <div class="metric-value">&lt;1s</div>
+                                    </div>
+                                    <div class="metric">
+                                        <div class="metric-label">REDUCTION</div>
+                                        <div class="metric-value highlight">99.97%</div>
+                                    </div>
+                                    <div class="metric">
+                                        <div class="metric-label">GAS COST</div>
+                                        <div class="metric-value">3.2M</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="cmd-block">
+                            <div class="cmd-line">
+                                <span class="prompt">root@bridge</span><span class="separator">:</span><span class="path">~</span><span class="dollar">$</span> <span class="cmd typing">_</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: TVL Display -->
+                <div class="tvl-panel">
+                    <div class="tvl-header">
+                        <div class="tvl-title">DECENTRALIZED TVL</div>
+                        <div class="tvl-status">
+                            <span class="pulse-dot"></span>
+                            <span>LIVE</span>
+                        </div>
+                    </div>
+                    
+                    <div class="tvl-main">
+                        <div class="tvl-amount">
+                            <div class="tvl-number">961.00</div>
+                            <div class="tvl-currency">XMR</div>
+                        </div>
+                        <div class="tvl-usd-value">
+                            $147,273.20 USD
+                        </div>
+                    </div>
+
+                    <div class="tvl-stats">
+                        <div class="tvl-stat">
+                            <div class="stat-label">24H CHANGE</div>
+                            <div class="stat-value positive">
+                                <span class="arrow">↗</span> +931 XMR
+                            </div>
+                        </div>
+                        <div class="tvl-stat">
+                            <div class="stat-label">TOTAL TXS</div>
+                            <div class="stat-value">3</div>
+                        </div>
+                    </div>
+
+                    <div class="tvl-chart">
+                        <div class="chart-bar" style="height: 20%"></div>
+                        <div class="chart-bar" style="height: 35%"></div>
+                        <div class="chart-bar" style="height: 50%"></div>
+                        <div class="chart-bar" style="height: 75%"></div>
+                        <div class="chart-bar" style="height: 100%"></div>
+                    </div>
+
+                    <a href="https://sepolia.basescan.org/address/0x3D50F6177E6589413A389f8a16314E2dA20a25Ff" target="_blank" class="cta-button">
+                        <span>VIEW CONTRACT</span>
+                        <span class="arrow-right">→</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="protocol" class="protocol">
+        <div class="container">
+            <h2 class="section-title">Zero-Knowledge Verified Permissionlessly Wrapped Monero</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">⚡</div>
+                    <h3>Lightning Fast</h3>
+                    <p>Generate proofs in under 1 second with only ~1,167 constraints using our hybrid architecture</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔒</div>
+                    <h3>Cryptographically Secure</h3>
+                    <p>Ed25519 DLEQ proofs verified on-chain ensure your transaction secret never leaves your device</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🛡️</div>
+                    <h3>Replay Protected</h3>
+                    <p>Built-in double-spend prevention with transaction hash tracking for full transparency</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">✅</div>
+                    <h3>Battle Tested</h3>
+                    <p>Successfully verified real Monero mainnet transactions on Base Sepolia testnet</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🌐</div>
+                    <h3>EVM Compatible</h3>
+                    <p>Deploy on any EVM chain - currently live on Base Sepolia with Arbitrum mainnet planned</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <h3>Transparent</h3>
+                    <p>All proofs and transactions verifiable on-chain with full audit trail</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="how-it-works" class="how-it-works">
+        <div class="container">
+            <h2 class="section-title">How It Works</h2>
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <h3>Generate Ed25519 Operations</h3>
+                        <p>Compute R = r·G, S = 8·r·A, and P = H_s·G + B off-chain using @noble/ed25519</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <h3>Create DLEQ Proof</h3>
+                        <p>Generate discrete log equality proof proving knowledge of r without revealing it</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h3>Generate PLONK Proof</h3>
+                        <p>Create zero-knowledge proof binding all witness values with Poseidon commitment</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <div class="step-content">
+                        <h3>Verify On-Chain</h3>
+                        <p>Smart contract verifies both DLEQ and PLONK proofs, then mints wrapped XMR</p>
+                    </div>
+                </div>
+            </div>
+            <div class="learn-more">
+                <a href="technical.html" class="btn-learn-more">Learn the Technical Details →</a>
+            </div>
+        </div>
+    </section>
+
+    <section id="stats" class="stats-section">
+        <div class="container">
+            <h2 class="section-title">Live Statistics</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-card-value">3</div>
+                    <div class="stat-card-label">Verified Transactions</div>
+                    <div class="stat-card-detail">2 Stagenet + 1 Mainnet</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value">~3.2M</div>
+                    <div class="stat-card-label">Gas Per Mint</div>
+                    <div class="stat-card-detail">On Base Sepolia</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value">931 XMR</div>
+                    <div class="stat-card-label">Largest Verified</div>
+                    <div class="stat-card-detail">Mainnet Transaction</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value">100%</div>
+                    <div class="stat-card-label">Success Rate</div>
+                    <div class="stat-card-detail">All Tests Passing</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="deployment">
+        <div class="container">
+            <h2 class="section-title">Deployed Contracts</h2>
+            <div class="deployment-grid">
+                <div class="deployment-card">
+                    <h3>MoneroBridgeDLEQ</h3>
+                    <p class="contract-address">0x3D50F6177E6589413A389f8a16314E2dA20a25Ff</p>
+                    <a href="https://sepolia.basescan.org/address/0x3D50F6177E6589413A389f8a16314E2dA20a25Ff" target="_blank" class="btn btn-small">View on BaseScan</a>
+                </div>
+                <div class="deployment-card">
+                    <h3>PlonkVerifier</h3>
+                    <p class="contract-address">0x3139CB6fa4255591D7667361ab06Fdb155558853</p>
+                    <a href="https://sepolia.basescan.org/address/0x3139CB6fa4255591D7667361ab06Fdb155558853" target="_blank" class="btn btn-small">View on BaseScan</a>
+                </div>
+            </div>
+            <div class="network-badge">
+                <span class="badge">Base Sepolia Testnet</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="cta">
+        <div class="container">
+            <h2>Ready to Bridge?</h2>
+            <p>Join the future of privacy-preserving cross-chain transfers</p>
+            <div class="cta-buttons">
+                <a href="https://github.com/madschristensen99/zeroxmr" class="btn btn-large btn-primary" target="_blank">View on GitHub</a>
+                <a href="../SYNTHWRAP.md" class="btn btn-large btn-secondary">Read Documentation</a>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h4>Zero XMR</h4>
+                    <p>Zero-Knowledge Verified Permissionlessly Wrapped Monero</p>
+                </div>
+                <div class="footer-section">
+                    <h4>Resources</h4>
+                    <ul>
+                        <li><a href="https://github.com/madschristensen99/zeroxmr" target="_blank">GitHub</a></li>
+                        <li><a href="../SYNTHWRAP.md">Protocol Spec</a></li>
+                        <li><a href="../spendProof/README.md">Documentation</a></li>
+                    </ul>
+                </div>
+                <div class="footer-section">
+                    <h4>Contract</h4>
+                    <ul>
+                        <li><a href="https://sepolia.basescan.org/address/0x3D50F6177E6589413A389f8a16314E2dA20a25Ff" target="_blank">Base Sepolia</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>⚠️ Experimental Software - Not Audited - Testnet Only</p>
+                <p>Version 6.0.0 | MIT License | Built with ❤️ for privacy</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

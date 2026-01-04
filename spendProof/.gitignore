@@ -36,3 +36,25 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+# Build artifacts
+artifacts/build-info/
+artifacts/contracts/Ed25519Debug.sol/
+artifacts/contracts/Secp256k1DLEQ.sol/
+
+# Debug/test files
+dleq_debug.json
+scripts/debug_dleq.js
+scripts/test_valid_data_on_chain.js
+test/CompareEd25519.test.js
+test/DebugDLEQ.test.js
+test/DebugScalarMul.test.js
+
+# Unused contracts
+contracts/Ed25519Debug.sol
+contracts/Secp256k1DLEQ.sol
+contracts/MoneroBridgePLONK.sol
+scripts/generate_dleq_secp256k1.js
+
+# Hardhat build artifacts
+artifacts/
+cache/
