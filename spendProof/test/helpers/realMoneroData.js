@@ -84,12 +84,12 @@ function getRealTransactionProof(txIndex) {
     // Public signals must match Ed25519 proof (Security Fix #1: Proof Binding)
     const publicSignals = new Array(70).fill(0);
     publicSignals[0] = tx.amount; // Real amount in piconero
-    publicSignals[1] = BigInt(ed25519Proof.R_x); // R_x from Ed25519 proof
-    publicSignals[2] = BigInt(ed25519Proof.R_y); // R_y from Ed25519 proof
-    publicSignals[3] = BigInt(ed25519Proof.S_x); // S_x from Ed25519 proof
-    publicSignals[4] = BigInt(ed25519Proof.S_y); // S_y from Ed25519 proof
-    publicSignals[5] = BigInt(ed25519Proof.P_x); // P_x from Ed25519 proof
-    publicSignals[6] = BigInt(ed25519Proof.P_y); // P_y from Ed25519 proof
+    publicSignals[1] = ed25519Proof.R_x; // R_x from Ed25519 proof
+    publicSignals[2] = ed25519Proof.R_y; // R_y from Ed25519 proof
+    publicSignals[3] = ed25519Proof.S_x; // S_x from Ed25519 proof
+    publicSignals[4] = ed25519Proof.S_y; // S_y from Ed25519 proof
+    publicSignals[5] = ed25519Proof.P_x; // P_x from Ed25519 proof
+    publicSignals[6] = ed25519Proof.P_y; // P_y from Ed25519 proof
     
     // Mock DLEQ proof
     const dleqProof = {
