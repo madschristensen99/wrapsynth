@@ -1,14 +1,14 @@
-# **Monero→Arbitrum Bridge Specification v6.0**
+# **Monero→Arbitrum Bridge Specification v7.0**
 
-*Hybrid ZK Architecture: Ed25519 DLEQ + PLONK Proofs*
+*Hybrid ZK Architecture: Ed25519 DLEQ + PLONK Proofs + Output Merkle Trees*
 
-**Current: ~1,167 constraints, Ed25519 DLEQ verification, 150% initial collateral, 120% liquidation threshold, DAI-only yield**
+**Current: ~4.2M constraints, Output Merkle Tree verification, zkTLS-ready, 150% initial collateral, 120% liquidation threshold, DAI-only yield**
 
 **Platform: Base Sepolia (Testnet) → Arbitrum One (Mainnet)**
 
 **Collateral: Yield-Bearing DAI Only (sDAI, aDAI)**
 
-**Status: ✅ Ed25519 DLEQ Verified On-Chain | ⚠️ Requires Security Audit**
+**Status: ✅ Ed25519 DLEQ Verified On-Chain | ✅ Output Merkle Tree Implemented | ⚠️ Requires Security Audit**
 
 ---
 
@@ -35,17 +35,21 @@
 │  - Paste tx hash + output index                              │
 │  - Enter LP address (A, B) + amount                          │
 │  - Fetch transaction data from Monero node                   │
+│  - Fetch Merkle proofs (TX + output) from oracle/node       │
 │  - Generate Ed25519 operations (R, S, P) - @noble/ed25519   │
 │  - Generate DLEQ proof (c, s, K1, K2)                        │
-│  - Generate PLONK proof (~1,167 constraints, <1s)            │
+│  - Generate PLONK proof (~4.2M constraints, server-side)     │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────┐
-│     DLEQ-Optimized Circuit (Circom, ~1,167 constraints)    │
+│   Security-Hardened Circuit (Circom, ~4.2M constraints)     │
 │  Proves:                                                     │
 │    - Poseidon commitment binding witness values             │
 │    - Amount decryption correctness (v XOR ecdhAmount)       │
-│    - 64-bit range check (v < 2^64)                          │
+│    - Stealth address derivation (P = H_s·G + B)             │
+│    - Scalar range checks (r < L, H_s < L)                   │
+│    - 64-bit amount range check (v < 2^64)                   │
+│    - Point validation and decompression                      │
 │                                                              │
 │  ⚠️  Requires security audit                               │
 └──────────────────────────┬──────────────────────────────────┘
@@ -58,7 +62,19 @@
 │    - Challenge: c = H(G, A, R, rA, K1, K2) mod L            │
 │    - Response: s·G = K1 + c·R  AND  s·A = K2 + c·rA        │
 │                                                              │
-│  ✅ Verified on Base Sepolia (Gas: ~3.16M)                 │
+│  ✅ Verified on Base Sepolia (Gas: ~4.1M)                  │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────┐
+│         Output Merkle Tree Verification (NEW!)              │
+│  Verifies:                                                   │
+│    - TX exists in block (txMerkleRoot)                      │
+│    - Output data authentic (outputMerkleRoot)               │
+│    - Leaf = Hash(txHash||index||ecdhAmount||pubKey||commit) │
+│    - Prevents amount fraud (ecdhAmount verified)            │
+│                                                              │
+│  ✅ zkTLS-ready: One proof per block (not per TX)          │
+│  ✅ No oracle liveness per transaction                      │
 └──────────────────────────┬──────────────────────────────────┘
 ┌──────────────────────────▼──────────────────────────────────┐
 │            Solidity Verifier Contract (Groth16)             │
@@ -103,12 +119,60 @@ The MoneroBridge circuit (~4.2M constraints) cryptographically proves:
 4. **Generate Proof**: Create Groth16 proof client-side using snarkjs
 5. **Submit On-Chain**: Send proof + public inputs to bridge contract
 
-### **2.3 Technical Summary**
+### **2.3 Output Merkle Tree Architecture (NEW in v7.0)**
+
+**Problem Solved**: Prevents amount fraud without requiring oracle liveness per transaction.
+
+**How It Works:**
+
+1. **Oracle Posts Blocks** (every 2 minutes):
+   - Fetches Monero block from RPC
+   - Extracts all transaction outputs
+   - Computes two Merkle roots:
+     - `txMerkleRoot`: Merkle root of all TX hashes (proves TX exists)
+     - `outputMerkleRoot`: Merkle root of all output data (proves amounts authentic)
+   - Posts to contract: `(blockHeight, blockHash, txMerkleRoot, outputMerkleRoot)`
+
+2. **User Submits Proof**:
+   - Fetches output data from any Monero node
+   - Fetches Merkle proofs (TX proof + output proof)
+   - Submits: `(zkProof, outputData, txMerkleProof, outputMerkleProof)`
+
+3. **Contract Verifies**:
+   - TX exists in block (via txMerkleProof)
+   - Output data is authentic (via outputMerkleProof)
+   - ecdhAmount matches oracle-posted data
+   - ZK proof proves ownership
+
+**Merkle Leaf Structure:**
+```solidity
+leaf = keccak256(abi.encodePacked(
+    txHash,
+    outputIndex,
+    ecdhAmount,      // CRITICAL: Prevents amount fraud
+    outputPubKey,
+    commitment
+));
+```
+
+**Benefits:**
+- ✅ **No oracle liveness per TX**: Oracle posts once per block
+- ✅ **Amount fraud impossible**: ecdhAmount committed in Merkle tree
+- ✅ **zkTLS-ready**: One zkTLS proof covers entire block
+- ✅ **Scalable**: Unlimited transactions per block
+- ✅ **User autonomy**: Can get data from any Monero node
+
+**Gas Costs:**
+- Oracle: ~200k gas per block (every 2 min)
+- User: ~50k gas for Merkle proofs + ~600k for ZK proof
+
+### **2.4 Technical Summary**
 
 - **Constraint Count**: ~4.2M (2.6M non-linear + 1.6M linear)
 - **Proof System**: PLONK with universal setup
 - **Key Operations**: Ed25519 scalar multiplications, point operations, Keccak256 hashing
 - **Optimization**: H_s_scalar precomputed off-circuit (saves ~150k constraints)
+- **Merkle Trees**: Dual-root system (TX existence + output authenticity)
 
 
 
@@ -408,22 +472,40 @@ This is experimental cryptographic software. Trusted setup ceremony and security
 ## **11. Current Deployment Status**
 
 ### **Base Sepolia Testnet (Active)**
-- **Contract**: `0x9241b6cE1b969F9BDf64a26CE933915d1b8dA0AD`
-- **Verifier**: `0xA41E8D806e06BFEB7b86AA4c231E468286813d24`
+- **Contract**: `0xA8C386AD6bf98599Cc19B6794F3077B3d9D5328f` (MoneroBridge v7.0)
+- **Verifier**: `0xF2D165DB863CE0e1967B30C6B44734254027aF04` (PlonkVerifier)
 - **Network**: Base Sepolia (Chain ID: 84532)
-- **Status**: ✅ Ed25519 DLEQ + PLONK verification working
-- **Test TX**: [0x1c8f82e1f10aba85a8df453b384bc9e411d0cfee36695347321a9aa6f124bc38](https://sepolia.basescan.org/tx/0x1c8f82e1f10aba85a8df453b384bc9e411d0cfee36695347321a9aa6f124bc38)
-- **Gas Used**: 3,157,317
+- **Status**: ✅ Ed25519 DLEQ + PLONK + Output Merkle Tree verification working
+- **Test TX**: [0x612c8cdaacb335e2f56b355f2943a2662ca37452d3f7cfddb44c311d7df01033](https://sepolia.basescan.org/tx/0x612c8cdaacb335e2f56b355f2943a2662ca37452d3f7cfddb44c311d7df01033)
+- **Gas Used**: 4,104,653
 
 ### **Test Results**
 - ✅ All 4 Monero transactions verified (3 stagenet + 1 mainnet)
 - ✅ DLEQ proof generation: 100% success rate
 - ✅ On-chain verification: PASSING
-- ✅ Circuit constraints: ~1,167
-- ✅ Proof time: <1 second
+- ✅ Output Merkle Tree: Implemented and ready
+- ✅ Circuit constraints: ~4.2M (security-hardened)
+- ✅ Proof time: 3-10 minutes (server-side)
+- ✅ zkTLS-ready architecture
+
+### **Architecture v7.0 Features**
+- ✅ Dual Merkle tree system (TX + output)
+- ✅ Amount fraud prevention
+- ✅ No oracle liveness per transaction
+- ✅ Stealth address derivation verification
+- ✅ Scalar range checks (r < L, H_s < L)
+- ⚠️ Requires security audit before mainnet
 
 ---
 
-*Document Version: 6.0.0*
+*Document Version: 7.0.0*
 *Last Updated: January 2026*
 *Authors: FUNGERBIL Team*
+
+**v7.0 Changes:**
+- Added Output Merkle Tree architecture for amount fraud prevention
+- Upgraded circuit to ~4.2M constraints with security hardening
+- Implemented dual Merkle root system (TX + output)
+- zkTLS-ready: No oracle liveness per transaction
+- Stealth address derivation verification
+- Scalar range checks (r < L, H_s < L)
