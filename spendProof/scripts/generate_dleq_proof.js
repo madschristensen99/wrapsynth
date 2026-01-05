@@ -260,6 +260,10 @@ async function computeEd25519Operations(r, A_compressed, B_compressed, H_s) {
                 x: B.x.toString(),
                 y: B.y.toString()
             },
+            P: {
+                x: P.x.toString(),
+                y: P.y.toString()
+            },
             R_x: R.x.toString(),
             R_y: R.y.toString(),
             S_x: S.x.toString(),
