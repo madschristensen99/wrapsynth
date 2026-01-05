@@ -10,7 +10,7 @@ async function main() {
     const deployment = JSON.parse(fs.readFileSync('deployment_base_sepolia.json', 'utf8'));
     console.log("\n📋 Using deployed contracts:");
     console.log("   PlonkVerifier:", deployment.contracts.PlonkVerifier);
-    console.log("   MoneroBridgeDLEQ:", deployment.contracts.MoneroBridgeDLEQ);
+    console.log("   MoneroBridge:", deployment.contracts.MoneroBridge);
 
     // Get signer
     const [signer] = await hre.ethers.getSigners();
@@ -18,8 +18,8 @@ async function main() {
     console.log("   Balance:", hre.ethers.formatEther(await hre.ethers.provider.getBalance(signer.address)), "ETH");
 
     // Connect to deployed contract
-    const MoneroBridgeDLEQ = await hre.ethers.getContractFactory("MoneroBridgeDLEQ");
-    const bridge = MoneroBridgeDLEQ.attach(deployment.contracts.MoneroBridgeDLEQ);
+    const MoneroBridge = await hre.ethers.getContractFactory("MoneroBridge");
+    const bridge = MoneroBridge.attach(deployment.contracts.MoneroBridge);
 
     console.log("\n" + "═".repeat(70));
     // Load transaction data from config
