@@ -86,8 +86,17 @@ async function getMoneroBlock(height) {
     }
 }
 
+// Extract outputs from block (placeholder - needs real Monero RPC implementation)
+async function extractOutputsFromBlock(blockHeight) {
+    // TODO: This needs to call Monero RPC to get actual transaction outputs
+    // For now, return empty array (will be updated when we have real TX data)
+    console.log(`   ⚠️  TODO: Extract real outputs from block ${blockHeight}`);
+    console.log(`   Using placeholder empty outputs for now`);
+    return [];
+}
+
 // Compute Merkle root from transaction hashes
-function computeMerkleRoot(txHashes) {
+function computeTxMerkleRoot(txHashes) {
     if (txHashes.length === 0) {
         return '0x' + '0'.repeat(64);
     }
@@ -122,17 +131,72 @@ function computeMerkleRoot(txHashes) {
     return '0x' + level[0].toString('hex');
 }
 
+// Compute output Merkle root from output data
+function computeOutputMerkleRoot(outputs) {
+    if (outputs.length === 0) {
+        return '0x' + '0'.repeat(64);
+    }
+    
+    // Create leaves: keccak256(txHash || outputIndex || ecdhAmount || outputPubKey || commitment)
+    const { ethers } = require('hardhat');
+    const leaves = outputs.map(output => {
+        return ethers.utils.keccak256(
+            ethers.utils.defaultAbiCoder.encode(
+                ['bytes32', 'uint256', 'bytes32', 'bytes32', 'bytes32'],
+                [
+                    output.txHash,
+                    output.outputIndex,
+                    output.ecdhAmount,
+                    output.outputPubKey,
+                    output.commitment
+                ]
+            )
+        );
+    });
+    
+    if (leaves.length === 1) {
+        return leaves[0];
+    }
+    
+    // Build Merkle tree
+    let level = leaves.map(l => Buffer.from(l.slice(2), 'hex'));
+    
+    while (level.length > 1) {
+        const nextLevel = [];
+        
+        for (let i = 0; i < level.length; i += 2) {
+            if (i + 1 < level.length) {
+                // Hash pair
+                const combined = Buffer.concat([level[i], level[i + 1]]);
+                const hash = require('crypto').createHash('sha256').update(combined).digest();
+                nextLevel.push(hash);
+            } else {
+                // Odd number - duplicate last hash
+                const combined = Buffer.concat([level[i], level[i]]);
+                const hash = require('crypto').createHash('sha256').update(combined).digest();
+                nextLevel.push(hash);
+            }
+        }
+        
+        level = nextLevel;
+    }
+    
+    return '0x' + level[0].toString('hex');
+}
+
 // Post block to contract
-async function postBlock(contract, blockHeight, blockHash, txMerkleRoot) {
+async function postBlock(contract, blockHeight, blockHash, txMerkleRoot, outputMerkleRoot) {
     try {
         console.log(`\n📤 Posting block ${blockHeight} to contract...`);
         console.log(`   Hash: ${blockHash}`);
-        console.log(`   Merkle Root: ${txMerkleRoot}`);
+        console.log(`   TX Merkle Root: ${txMerkleRoot}`);
+        console.log(`   Output Merkle Root: ${outputMerkleRoot}`);
         
         const tx = await contract.postMoneroBlock(
             blockHeight,
             blockHash,
-            txMerkleRoot
+            txMerkleRoot,
+            outputMerkleRoot
         );
         
         console.log(`   TX: ${tx.hash}`);
@@ -221,12 +285,20 @@ async function runOracle() {
                 
                 console.log(`   Transactions in block: ${txHashes.length}`);
                 
-                // Compute Merkle root
-                const txMerkleRoot = computeMerkleRoot(txHashes);
-                console.log(`   Computed Merkle root: ${txMerkleRoot}`);
+                // Compute TX Merkle root
+                const txMerkleRoot = computeTxMerkleRoot(txHashes);
+                console.log(`   Computed TX Merkle root: ${txMerkleRoot}`);
+                
+                // Extract outputs from block
+                const outputs = await extractOutputsFromBlock(blockHeight);
+                console.log(`   Outputs in block: ${outputs.length}`);
+                
+                // Compute output Merkle root
+                const outputMerkleRoot = computeOutputMerkleRoot(outputs);
+                console.log(`   Computed Output Merkle root: ${outputMerkleRoot}`);
                 
                 // Post to contract
-                await postBlock(contract, blockHeight, blockHash, txMerkleRoot);
+                await postBlock(contract, blockHeight, blockHash, txMerkleRoot, outputMerkleRoot);
                 lastPostedBlock = blockHeight;
             } else {
                 console.log(`   ✅ Already up to date`);
