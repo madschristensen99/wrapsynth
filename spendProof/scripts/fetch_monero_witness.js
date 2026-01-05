@@ -20,16 +20,16 @@ function decodeMoneroAddress(address) {
     };
 }
 
-// Real Monero stagenet transaction data
-const TX_DATA = {
-    hash: "5caae835b751a5ab243b455ad05c489cb9a06d8444ab2e8d3a9d8ef905c1439a",
-    block: 1934116,
-    secretKey: "4cbf8f2cfb622ee126f08df053e99b96aa2e8c1cfd575d2a651f3343b465800a",
-    amount: 20000000000,
-    destination: "53Kajgo3GhV1ddabJZqdmESkXXoz2xD2gUCVc5L2YKjq8Qhx6UXoqFChhF9n2Th9NLTz77258PMdc3G5qxVd487pFZzzVNG",
-    output_index: 0,
-    node: "https://stagenet.xmr.ditatompel.com"
-};
+// Load transaction data from centralized config
+const txDataConfig = JSON.parse(fs.readFileSync('tx_data.json', 'utf8'));
+const currentTxId = process.argv[2] || txDataConfig.current;
+const TX_DATA = txDataConfig.transactions[currentTxId];
+
+if (!TX_DATA) {
+    console.error(`❌ Transaction ${currentTxId} not found in tx_data.json`);
+    console.log('Available transactions:', Object.keys(txDataConfig.transactions).join(', '));
+    process.exit(1);
+}
 
 async function generateWitness() {
     console.log("🔧 Generating Circuit Witness from Real Monero Transaction\n");

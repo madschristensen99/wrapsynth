@@ -13,7 +13,7 @@
 const { keccak256 } = require('js-sha3');
 const { buildPoseidon } = require('circomlibjs');
 const { computeEd25519Operations } = require('./generate_dleq_proof.js');
-const { generateDLEQProofSecp256k1 } = require('./generate_dleq_secp256k1.js');
+// const { generateDLEQProofSecp256k1 } = require('./generate_dleq_secp256k1.js'); // Not used
 
 /**
  * Convert hex string or array to bit array (LSB first per byte)
