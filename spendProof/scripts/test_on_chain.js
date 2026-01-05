@@ -191,8 +191,20 @@ async function main() {
         console.log("\n  📊 Estimating gas...");
         const txHash = "0x" + txData.hash;
         
+        // TODO: For now, use empty Merkle proof (oracle not running yet)
+        // In production, fetch Merkle proof from Monero node
+        const blockHeight = 0;  // Placeholder
+        const merkleProof = [];  // Empty for now
+        const txIndex = 0;  // Placeholder
+        
+        console.log("\n  ⚠️  WARNING: Using placeholder Merkle proof (oracle not running)");
+        console.log("     This will fail until oracle posts blocks with Merkle roots");
+        
         try {
-            const gasEstimate = await bridge.verifyAndMint.estimateGas(proofCalldata, publicSignals, dleqProof, ed25519Proof, txHash);
+            const gasEstimate = await bridge.verifyProof.estimateGas(
+                proofCalldata, publicSignals, dleqProof, ed25519Proof, 
+                txHash, blockHeight, merkleProof, txIndex
+            );
             console.log("     Estimated gas:", gasEstimate.toString());
         } catch (gasError) {
             console.log("     ⚠️  Gas estimation failed:", gasError.message);
@@ -202,7 +214,10 @@ async function main() {
         }
         
         console.log("\n  🔄 Sending transaction...");
-        const tx = await bridge.verifyAndMint(proofCalldata, publicSignals, dleqProof, ed25519Proof, txHash);
+        const tx = await bridge.verifyProof(
+            proofCalldata, publicSignals, dleqProof, ed25519Proof,
+            txHash, blockHeight, merkleProof, txIndex
+        );
         console.log("  📝 Transaction hash:", tx.hash);
         
         console.log("  ⏳ Waiting for confirmation...");
