@@ -376,14 +376,15 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
             };
             
             // Public signals must match Ed25519 proof (Security Fix #1: Proof Binding)
+            // Convert bytes32 hex strings to BigInt for uint256[70] array
             const mockPublicSignals = new Array(70).fill(0);
             mockPublicSignals[0] = mockAmount;
-            mockPublicSignals[1] = mockEd25519.R_x;  // Already bytes32, ethers will convert
-            mockPublicSignals[2] = mockEd25519.R_y;
-            mockPublicSignals[3] = mockEd25519.S_x;
-            mockPublicSignals[4] = mockEd25519.S_y;
-            mockPublicSignals[5] = mockEd25519.P_x;
-            mockPublicSignals[6] = mockEd25519.P_y;
+            mockPublicSignals[1] = BigInt(mockEd25519.R_x);
+            mockPublicSignals[2] = BigInt(mockEd25519.R_y);
+            mockPublicSignals[3] = BigInt(mockEd25519.S_x);
+            mockPublicSignals[4] = BigInt(mockEd25519.S_y);
+            mockPublicSignals[5] = BigInt(mockEd25519.P_x);
+            mockPublicSignals[6] = BigInt(mockEd25519.P_y);
             
             // Block 3000000 already posted above for gas benchmark
             // Post output to oracle
