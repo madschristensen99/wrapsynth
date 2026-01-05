@@ -399,16 +399,26 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
             
             const collateral = calculateRequiredCollateral(mockAmount, ethers.parseEther("150"));
             await wxdai.connect(deployer).approve(await benchmarkContract.getAddress(), collateral);
-            const tx3 = await benchmarkContract.connect(deployer).mint(
-                mockProof,
-                mockPublicSignals,
-                mockDLEQ,
-                mockEd25519,
-                mockTxHash,
-                deployer.address
-            );
-            const receipt3 = await tx3.wait();
-            console.log(`   mint: ${receipt3.gasUsed.toString()} gas`);
+            
+            try {
+                const tx3 = await benchmarkContract.connect(deployer).mint(
+                    mockProof,
+                    mockPublicSignals,
+                    mockDLEQ,
+                    mockEd25519,
+                    mockTxHash,
+                    deployer.address,
+                    { gasLimit: 10000000 } // Explicit gas limit
+                );
+                const receipt3 = await tx3.wait();
+                console.log(`   mint: ${receipt3.gasUsed.toString()} gas`);
+            } catch (error) {
+                console.log("\n❌ Mint failed with error:");
+                console.log("Error message:", error.message);
+                console.log("\nPublic signals[0-6]:", mockPublicSignals.slice(0, 7));
+                console.log("\nEd25519 proof R_x:", mockEd25519.R_x);
+                throw error;
+            }
             
             console.log("\n   ✅ Gnosis Chain gas costs are ~5-10x cheaper than Ethereum mainnet!");
         });
