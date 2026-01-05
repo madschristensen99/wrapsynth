@@ -375,13 +375,7 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
                 A: ethers.keccak256(ethers.toUtf8Bytes("A"))
             };
             
-            // Post Monero block first (use unique height to avoid conflicts)
-            await benchmarkContract.postMoneroBlock(
-                3000000,
-                ethers.keccak256(ethers.toUtf8Bytes("block_gas")),
-                ethers.parseUnits("7000000", 12)
-            );
-            
+            // Block 3000000 already posted above for gas benchmark
             // Post output to oracle
             await benchmarkContract.postMoneroOutputs([{
                 txHash: mockTxHash,
