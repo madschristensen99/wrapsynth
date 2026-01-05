@@ -20,24 +20,36 @@
 require('dotenv').config();
 const hre = require('hardhat');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+
+// Try to load deployment info
+let deploymentInfo = null;
+const deploymentPath = path.join(__dirname, 'deployment.json');
+if (fs.existsSync(deploymentPath)) {
+    deploymentInfo = JSON.parse(fs.readFileSync(deploymentPath, 'utf8'));
+    console.log('✅ Loaded deployment info from deployment.json');
+}
 
 // Configuration
 const config = {
-    oraclePrivateKey: process.env.ORACLE_PRIVATE_KEY,
-    wrappedMoneroAddress: process.env.WRAPPED_MONERO_ADDRESS,
-    rpcUrl: process.env.RPC_URL || 'https://sepolia.base.org',
-    moneroRpcUrl: process.env.MONERO_RPC_URL || 'http://node.monerooutreach.org:18081',
+    oraclePrivateKey: process.env.ORACLE_PRIVATE_KEY || (deploymentInfo ? '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' : null), // Default hardhat key #0
+    bridgeAddress: process.env.BRIDGE_ADDRESS || (deploymentInfo ? deploymentInfo.bridge : null),
+    rpcUrl: process.env.RPC_URL || 'http://localhost:8545',
+    moneroRpcUrl: process.env.MONERO_RPC_URL || 'http://stagenet.community.rino.io:38081',
     intervalMs: parseInt(process.env.INTERVAL_MS || '120000'), // 2 minutes
 };
 
 // Validate configuration
 if (!config.oraclePrivateKey) {
-    console.error('❌ ORACLE_PRIVATE_KEY not set in .env');
+    console.error('❌ ORACLE_PRIVATE_KEY not set in .env and no deployment.json found');
+    console.error('   Run: npx hardhat run scripts/deploy_oracle_test.js --network localhost');
     process.exit(1);
 }
 
-if (!config.wrappedMoneroAddress) {
-    console.error('❌ WRAPPED_MONERO_ADDRESS not set in .env');
+if (!config.bridgeAddress) {
+    console.error('❌ BRIDGE_ADDRESS not set in .env and no deployment.json found');
+    console.error('   Run: npx hardhat run scripts/deploy_oracle_test.js --network localhost');
     process.exit(1);
 }
 
@@ -223,7 +235,7 @@ async function runOracle() {
     console.log('Configuration:');
     console.log(`   Monero RPC: ${config.moneroRpcUrl}`);
     console.log(`   Ethereum RPC: ${config.rpcUrl}`);
-    console.log(`   WrappedMonero: ${config.wrappedMoneroAddress}`);
+    console.log(`   MoneroBridge: ${config.bridgeAddress}`);
     console.log(`   Interval: ${config.intervalMs / 1000}s (${config.intervalMs / 60000} min)`);
     
     // Connect to contract
@@ -241,8 +253,8 @@ async function runOracle() {
     }
     
     // Load contract
-    const WrappedMonero = await hre.ethers.getContractFactory('WrappedMonero');
-    const contract = WrappedMonero.attach(config.wrappedMoneroAddress).connect(wallet);
+    const MoneroBridge = await hre.ethers.getContractFactory('MoneroBridge');
+    const contract = MoneroBridge.attach(config.bridgeAddress).connect(wallet);
     
     // Verify oracle role
     const contractOracle = await contract.oracle();
