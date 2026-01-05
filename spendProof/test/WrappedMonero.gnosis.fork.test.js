@@ -375,9 +375,9 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
                 A: ethers.keccak256(ethers.toUtf8Bytes("A"))
             };
             
-            // Post Monero block first
+            // Post Monero block first (use unique height to avoid conflicts)
             await benchmarkContract.postMoneroBlock(
-                1000000,
+                2000000,
                 ethers.keccak256(ethers.toUtf8Bytes("block_gas")),
                 ethers.parseUnits("7000000", 12)
             );
@@ -389,7 +389,7 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
                 ecdhAmount: ethers.keccak256(ethers.toUtf8Bytes("ecdh_gas")),
                 outputPubKey: mockEd25519.P_x,
                 commitment: ethers.keccak256(ethers.toUtf8Bytes("commitment_gas")),
-                blockHeight: 1000000,
+                blockHeight: 2000000,
                 exists: true
             }]);
             
