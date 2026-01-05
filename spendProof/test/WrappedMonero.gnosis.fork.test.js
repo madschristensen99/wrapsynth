@@ -179,8 +179,34 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
             
             const xmrPrice = ethers.parseEther("150"); // $150 per XMR
             
-            // Test all 4 real transactions
+            // Post Monero blocks first (required by postMoneroOutputs)
+            for (let i = 0; i < 4; i++) {
+                await wrappedMonero.postMoneroBlock(
+                    1000000 + i,
+                    ethers.keccak256(ethers.toUtf8Bytes(`block_${i}`)),
+                    ethers.parseUnits("7000000", 12) // 7M XMR supply
+                );
+            }
+            
+            // Post outputs to oracle (Security Fix #3 requirement)
             const amounts = ["0.02", "0.01", "0.00115", "0.931064529072"];
+            const outputs = [];
+            for (let i = 0; i < 4; i++) {
+                const txData = getRealTransactionProof(i);
+                outputs.push({
+                    txHash: txData.txHash,
+                    outputIndex: 0,
+                    ecdhAmount: ethers.keccak256(ethers.toUtf8Bytes(`ecdh_${i}`)),
+                    outputPubKey: txData.ed25519Proof.P_x,
+                    commitment: ethers.keccak256(ethers.toUtf8Bytes(`commitment_${i}`)),
+                    blockHeight: 1000000 + i,
+                    exists: true
+                });
+            }
+            await wrappedMonero.postMoneroOutputs(outputs);
+            console.log("   ✅ Posted 4 outputs to oracle\n");
+            
+            // Test all 4 real transactions
             for (let i = 0; i < 4; i++) {
                 const txData = getRealTransactionProof(i);
                 const collateral = calculateRequiredCollateral(txData.tx.amount, xmrPrice);
@@ -220,6 +246,24 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
             const txData = getRealTransactionProof(0);
             const xmrPrice = ethers.parseEther("150");
             const collateral = calculateRequiredCollateral(txData.tx.amount, xmrPrice);
+            
+            // Post Monero block first
+            await wrappedMonero.postMoneroBlock(
+                1000000,
+                ethers.keccak256(ethers.toUtf8Bytes("block_burn")),
+                ethers.parseUnits("7000000", 12)
+            );
+            
+            // Post output to oracle
+            await wrappedMonero.postMoneroOutputs([{
+                txHash: txData.txHash,
+                outputIndex: 0,
+                ecdhAmount: ethers.keccak256(ethers.toUtf8Bytes("ecdh_burn")),
+                outputPubKey: txData.ed25519Proof.P_x,
+                commitment: ethers.keccak256(ethers.toUtf8Bytes("commitment_burn")),
+                blockHeight: 1000000,
+                exists: true
+            }]);
             
             await wxdai.connect(user1).approve(await wrappedMonero.getAddress(), collateral);
             await wrappedMonero.connect(user1).mint(
@@ -314,11 +358,40 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
                 K1: ethers.keccak256(ethers.toUtf8Bytes("K1")),
                 K2: ethers.keccak256(ethers.toUtf8Bytes("K2"))
             };
+            // Use Ed25519 base point G for valid curve points
+            const G_x = "15112221349535400772501151409588531511454012693041857206046113283949847762202";
+            const G_y = "46316835694926478169428394003475163141307993866256225615783033603165251855960";
+            
             const mockEd25519 = {
-                A: ethers.keccak256(ethers.toUtf8Bytes("A")),
-                B: ethers.keccak256(ethers.toUtf8Bytes("B")),
-                G: ethers.keccak256(ethers.toUtf8Bytes("G"))
+                R_x: ethers.zeroPadValue(ethers.toBeHex(G_x), 32),
+                R_y: ethers.zeroPadValue(ethers.toBeHex(G_y), 32),
+                S_x: ethers.zeroPadValue(ethers.toBeHex(G_x), 32),
+                S_y: ethers.zeroPadValue(ethers.toBeHex(G_y), 32),
+                P_x: ethers.zeroPadValue(ethers.toBeHex(G_x), 32),
+                P_y: ethers.zeroPadValue(ethers.toBeHex(G_y), 32),
+                B_x: ethers.zeroPadValue(ethers.toBeHex("0"), 32),
+                B_y: ethers.zeroPadValue(ethers.toBeHex("1"), 32),
+                H_s: ethers.zeroPadValue(ethers.toBeHex("1"), 32),
+                A: ethers.keccak256(ethers.toUtf8Bytes("A"))
             };
+            
+            // Post output to oracle first
+            await benchmarkContract.postMoneroOutputs([{
+                txHash: mockTxHash,
+                outputIndex: 0,
+                ecdhAmount: ethers.keccak256(ethers.toUtf8Bytes("ecdh_gas")),
+                outputPubKey: mockEd25519.P_x,
+                commitment: ethers.keccak256(ethers.toUtf8Bytes("commitment_gas")),
+                blockHeight: 1000000,
+                exists: true
+            }]);
+            
+            // Post Monero block first
+            await benchmarkContract.postMoneroBlock(
+                1000000,
+                ethers.keccak256(ethers.toUtf8Bytes("block_gas")),
+                ethers.parseUnits("7000000", 12)
+            );
             
             const collateral = calculateRequiredCollateral(mockAmount, ethers.parseEther("150"));
             await wxdai.connect(deployer).approve(await benchmarkContract.getAddress(), collateral);
