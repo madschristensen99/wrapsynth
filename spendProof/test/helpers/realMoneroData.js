@@ -73,11 +73,11 @@ function getRealTransactionProof(txIndex) {
         R_y: ethers.zeroPadValue(ethers.toBeHex(G_y), 32),
         S_x: ethers.zeroPadValue(ethers.toBeHex(G_x), 32),  // Use G as S (valid point)
         S_y: ethers.zeroPadValue(ethers.toBeHex(G_y), 32),
-        P_x: ethers.zeroPadValue(ethers.toBeHex(G_x), 32),  // Use G as P (valid point)
+        P_x: ethers.zeroPadValue(ethers.toBeHex(G_x), 32),  // P = G
         P_y: ethers.zeroPadValue(ethers.toBeHex(G_y), 32),
-        B_x: ethers.zeroPadValue(ethers.toBeHex(G_x), 32),  // Use G as B (valid point)
+        B_x: ethers.zeroPadValue(ethers.toBeHex(G_x), 32),  // B = G
         B_y: ethers.zeroPadValue(ethers.toBeHex(G_y), 32),
-        H_s: ethers.zeroPadValue(ethers.toBeHex("0"), 32),  // H_s = 0, so 0·G + G = G
+        H_s: ethers.zeroPadValue(ethers.toBeHex("0"), 32),  // H_s = 0, so P = 0·G + B = B = G ✓
         A: ethers.keccak256(ethers.toUtf8Bytes(`A_${tx.hash}`))
     };
     
