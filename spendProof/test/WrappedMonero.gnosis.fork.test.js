@@ -375,7 +375,14 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
                 A: ethers.keccak256(ethers.toUtf8Bytes("A"))
             };
             
-            // Post output to oracle first
+            // Post Monero block first
+            await benchmarkContract.postMoneroBlock(
+                1000000,
+                ethers.keccak256(ethers.toUtf8Bytes("block_gas")),
+                ethers.parseUnits("7000000", 12)
+            );
+            
+            // Post output to oracle
             await benchmarkContract.postMoneroOutputs([{
                 txHash: mockTxHash,
                 outputIndex: 0,
@@ -385,13 +392,6 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
                 blockHeight: 1000000,
                 exists: true
             }]);
-            
-            // Post Monero block first
-            await benchmarkContract.postMoneroBlock(
-                1000000,
-                ethers.keccak256(ethers.toUtf8Bytes("block_gas")),
-                ethers.parseUnits("7000000", 12)
-            );
             
             const collateral = calculateRequiredCollateral(mockAmount, ethers.parseEther("150"));
             await wxdai.connect(deployer).approve(await benchmarkContract.getAddress(), collateral);
