@@ -20,6 +20,16 @@ module.exports = {
       chainId: 84532
     },
     hardhat: {
+      chainId: 31337,
+      forking: {
+        url: process.env.FORK_NETWORK === "gnosis" 
+          ? (process.env.GNOSIS_RPC_URL || "https://rpc.gnosischain.com")
+          : (process.env.ARBITRUM_RPC_URL || "https://arb1.arbitrum.io/rpc"),
+        enabled: process.env.FORK === "true"
+      }
+    },
+    localhost: {
+      url: "http://127.0.0.1:8545",
       chainId: 31337
     }
   },
