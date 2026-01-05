@@ -369,9 +369,9 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
                 S_y: ethers.zeroPadValue(ethers.toBeHex(G_y), 32),
                 P_x: ethers.zeroPadValue(ethers.toBeHex(G_x), 32),
                 P_y: ethers.zeroPadValue(ethers.toBeHex(G_y), 32),
-                B_x: ethers.zeroPadValue(ethers.toBeHex(G_x), 32),  // Use G for B (valid point)
+                B_x: ethers.zeroPadValue(ethers.toBeHex(G_x), 32),  // B = G
                 B_y: ethers.zeroPadValue(ethers.toBeHex(G_y), 32),
-                H_s: ethers.zeroPadValue(ethers.toBeHex("0"), 32),  // H_s = 0, so 0·G + G = G
+                H_s: ethers.zeroPadValue(ethers.toBeHex("0"), 32),  // H_s = 0, so P = 0·G + B = B = G ✓
                 A: ethers.keccak256(ethers.toUtf8Bytes("A"))
             };
             
