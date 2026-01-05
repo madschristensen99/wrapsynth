@@ -126,9 +126,10 @@ contract MoneroBridgeDLEQ {
         require(S_x == (ed25519Proof.S_x % BN254_MODULUS), "S_x mismatch between ZK and DLEQ");
         require(P_compressed == (ed25519Proof.P_x % BN254_MODULUS), "P_x mismatch between ZK and DLEQ");
         
-        // TODO: Extract and verify H_s from public signals
-        // uint256 H_s_from_zk = reconstructH_s(publicSignals);
-        // require(H_s_from_zk == ed25519Proof.H_s, "H_s mismatch between ZK and DLEQ");
+        // NOTE: H_s is a PRIVATE input to the circuit, not in public signals
+        // H_s is bound via Poseidon commitment
+        // Additional validation: P = H_s·G + B is verified in verifyEd25519Operations
+        // This ensures H_s consistency without exposing it on-chain
         
         // ════════════════════════════════════════════════════════════════════
         // STEP 2: Verify DLEQ Proofs (r consistency)
