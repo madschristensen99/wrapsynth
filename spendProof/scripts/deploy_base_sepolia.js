@@ -16,13 +16,13 @@ async function main() {
     const verifierAddress = await verifier.getAddress();
     console.log("✅ PlonkVerifier deployed to:", verifierAddress);
 
-    // Deploy MoneroBridgeDLEQ (with PLONK support)
-    console.log("\n📝 Step 2: Deploying MoneroBridgeDLEQ...");
-    const MoneroBridgeDLEQ = await hre.ethers.getContractFactory("MoneroBridgeDLEQ");
-    const bridge = await MoneroBridgeDLEQ.deploy(verifierAddress);
+    // Deploy MoneroBridge (with PLONK + DLEQ verification)
+    console.log("\n📝 Step 2: Deploying MoneroBridge...");
+    const MoneroBridge = await hre.ethers.getContractFactory("MoneroBridge");
+    const bridge = await MoneroBridge.deploy(verifierAddress);
     await bridge.waitForDeployment();
     const bridgeAddress = await bridge.getAddress();
-    console.log("✅ MoneroBridgeDLEQ deployed to:", bridgeAddress);
+    console.log("✅ MoneroBridge deployed to:", bridgeAddress);
 
     // Save deployment addresses
     const deployment = {
@@ -31,7 +31,7 @@ async function main() {
         deployer: deployer.address,
         contracts: {
             PlonkVerifier: verifierAddress,
-            MoneroBridgeDLEQ: bridgeAddress
+            MoneroBridge: bridgeAddress
         },
         timestamp: new Date().toISOString()
     };
@@ -46,7 +46,7 @@ async function main() {
     console.log("═".repeat(70));
     console.log("\n📋 Contract Addresses:");
     console.log("   PlonkVerifier:", verifierAddress);
-    console.log("   MoneroBridgeDLEQ:", bridgeAddress);
+    console.log("   MoneroBridge:", bridgeAddress);
     console.log("\n💾 Deployment info saved to: deployment_base_sepolia.json");
     console.log("\n🔍 Verify contracts:");
     console.log(`   npx hardhat verify --network baseSepolia ${verifierAddress}`);
