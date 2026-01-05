@@ -351,7 +351,7 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
             const mockAmount = 50000000000; // 0.05 XMR in piconero
             const mockTxHash = ethers.keccak256(ethers.toUtf8Bytes("gas_benchmark_tx_12345"));
             const mockProof = new Array(24).fill(1);
-            const mockPublicSignals = new Array(70).fill(1);
+            
             const mockDLEQ = {
                 c: ethers.keccak256(ethers.toUtf8Bytes("c")),
                 s: ethers.keccak256(ethers.toUtf8Bytes("s")),
@@ -374,6 +374,16 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
                 H_s: ethers.zeroPadValue(ethers.toBeHex("1"), 32),
                 A: ethers.keccak256(ethers.toUtf8Bytes("A"))
             };
+            
+            // Public signals must match Ed25519 proof (Security Fix #1: Proof Binding)
+            const mockPublicSignals = new Array(70).fill(0);
+            mockPublicSignals[0] = mockAmount;
+            mockPublicSignals[1] = BigInt(mockEd25519.R_x);
+            mockPublicSignals[2] = BigInt(mockEd25519.R_y);
+            mockPublicSignals[3] = BigInt(mockEd25519.S_x);
+            mockPublicSignals[4] = BigInt(mockEd25519.S_y);
+            mockPublicSignals[5] = BigInt(mockEd25519.P_x);
+            mockPublicSignals[6] = BigInt(mockEd25519.P_y);
             
             // Block 3000000 already posted above for gas benchmark
             // Post output to oracle
