@@ -5,12 +5,23 @@
   "main": "index.js",
   "scripts": {
     "test": "mocha --timeout 1000000",
+    "test:hardhat": "hardhat test",
+    "test:fork": "FORK=true hardhat test test/WrappedMonero.fork.test.js",
+    "test:fork:all": "FORK=true hardhat test",
+    "test:gnosis": "FORK=true FORK_NETWORK=gnosis hardhat test test/WrappedMonero.gnosis.fork.test.js",
+    "test:arbitrum": "FORK=true FORK_NETWORK=arbitrum hardhat test test/WrappedMonero.fork.test.js",
+    "setup:stagenet": "node scripts/setupStagenetWallet.js",
+    "test:gas": "REPORT_GAS=true hardhat test",
+    "test:coverage": "hardhat coverage",
     "compile": "circom monero_bridge.circom --r1cs --wasm --sym",
+    "compile:contracts": "hardhat compile",
     "compile:debug": "circom circuits/monero_bridge_v54.circom --r1cs --wasm --sym -o build --inspect",
     "setup": "snarkjs groth16 setup build/monero_bridge_v54.r1cs pot22_final.ptau build/monero_bridge_v54_0000.zkey",
     "contribute": "snarkjs zkey contribute build/monero_bridge_v54_0000.zkey build/monero_bridge_v54_final.zkey --name=\"First contribution\"",
     "export-vkey": "snarkjs zkey export verificationkey build/monero_bridge_v54_final.zkey build/verification_key.json",
-    "export-solidity": "snarkjs zkey export solidityverifier build/monero_bridge_v54_final.zkey contracts/BridgeVerifier.sol"
+    "export-solidity": "snarkjs zkey export solidityverifier build/monero_bridge_v54_final.zkey contracts/BridgeVerifier.sol",
+    "node:fork": "FORK=true hardhat node",
+    "deploy:localhost": "hardhat run scripts/deploy.js --network localhost"
   },
   "dependencies": {
     "@electron-labs/ed25519-circom": "github:Electron-Labs/ed25519-circom",
@@ -38,6 +49,7 @@
     "@nomicfoundation/hardhat-toolbox": "^6.1.0",
     "@nomicfoundation/hardhat-verify": "^2.1.3",
     "@nomicfoundation/ignition-core": "^0.15.15",
+    "@openzeppelin/contracts": "^5.4.0",
     "@typechain/ethers-v6": "^0.5.1",
     "@typechain/hardhat": "^9.1.0",
     "@types/mocha": "^10.0.10",
