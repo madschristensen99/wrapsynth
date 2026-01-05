@@ -315,9 +315,16 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
                 K2: ethers.keccak256(ethers.toUtf8Bytes("K2"))
             };
             const mockEd25519 = {
-                A: ethers.keccak256(ethers.toUtf8Bytes("A")),
-                B: ethers.keccak256(ethers.toUtf8Bytes("B")),
-                G: ethers.keccak256(ethers.toUtf8Bytes("G"))
+                R_x: ethers.keccak256(ethers.toUtf8Bytes("R_x")),
+                R_y: ethers.keccak256(ethers.toUtf8Bytes("R_y")),
+                S_x: ethers.keccak256(ethers.toUtf8Bytes("S_x")),
+                S_y: ethers.keccak256(ethers.toUtf8Bytes("S_y")),
+                P_x: ethers.keccak256(ethers.toUtf8Bytes("P_x")),
+                P_y: ethers.keccak256(ethers.toUtf8Bytes("P_y")),
+                B_x: ethers.keccak256(ethers.toUtf8Bytes("B_x")),
+                B_y: ethers.keccak256(ethers.toUtf8Bytes("B_y")),
+                H_s: ethers.keccak256(ethers.toUtf8Bytes("H_s")),
+                A: ethers.keccak256(ethers.toUtf8Bytes("A"))
             };
             
             const collateral = calculateRequiredCollateral(mockAmount, ethers.parseEther("150"));
