@@ -313,37 +313,22 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
     });
     
     describe("Gas Benchmarks on Gnosis", function () {
-        it.skip("Should measure real gas costs on Gnosis Chain", async function () {
-            const { wrappedMonero, wxdai, deployer, verifier } = await loadFixture(deployOnGnosisFixture);
-            
-            // Deploy MockSDAI for simpler gas benchmark
-            const MockSDAI = await ethers.getContractFactory("MockSDAI");
-            const mockSDAI = await MockSDAI.deploy(GNOSIS_WXDAI);
-            
-            // Deploy separate WrappedMonero for gas benchmark with MockSDAI
-            const WrappedMonero = await ethers.getContractFactory("WrappedMonero");
-            const benchmarkContract = await WrappedMonero.deploy(
-                await verifier.getAddress(),
-                GNOSIS_WXDAI,
-                await mockSDAI.getAddress(),
-                deployer.address,
-                deployer.address,
-                ethers.parseEther("150")
-            );
+        it("Should measure real gas costs on Gnosis Chain", async function () {
+            const { wrappedMonero, wxdai, deployer } = await loadFixture(deployOnGnosisFixture);
             
             console.log("\n⛽ Gas Benchmarks on Gnosis Chain:");
             
-            // Benchmark: postMoneroBlock
-            const blockHeight = 3000000;
-            const blockHash = ethers.keccak256(ethers.toUtf8Bytes("block3000000"));
+            // Benchmark: postMoneroBlock (using next block height)
+            const blockHeight = 1000004;
+            const blockHash = ethers.keccak256(ethers.toUtf8Bytes("block1000004"));
             const totalSupply = ethers.parseEther("18000000"); // ~18M XMR total supply
-            const tx1 = await benchmarkContract.connect(deployer).postMoneroBlock(blockHeight, blockHash, totalSupply);
+            const tx1 = await wrappedMonero.connect(deployer).postMoneroBlock(blockHeight, blockHash, totalSupply);
             const receipt1 = await tx1.wait();
             console.log(`   postMoneroBlock: ${receipt1.gasUsed.toString()} gas`);
             
             // Benchmark: updatePrice
             await time.increase(60);
-            const tx2 = await benchmarkContract.connect(deployer).updatePrice(ethers.parseEther("160"));
+            const tx2 = await wrappedMonero.connect(deployer).updatePrice(ethers.parseEther("160"));
             const receipt2 = await tx2.wait();
             console.log(`   updatePrice: ${receipt2.gasUsed.toString()} gas`);
             
@@ -386,40 +371,32 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
             mockPublicSignals[5] = BigInt(mockEd25519.P_x);
             mockPublicSignals[6] = BigInt(mockEd25519.P_y);
             
-            // Block 3000000 already posted above for gas benchmark
-            // Post output to oracle
-            await benchmarkContract.postMoneroOutputs([{
+            // Post output to oracle (using block 1000004)
+            await wrappedMonero.postMoneroOutputs([{
                 txHash: mockTxHash,
                 outputIndex: 0,
                 ecdhAmount: ethers.keccak256(ethers.toUtf8Bytes("ecdh_gas")),
                 outputPubKey: mockEd25519.P_x,
                 commitment: ethers.keccak256(ethers.toUtf8Bytes("commitment_gas")),
-                blockHeight: 3000000,
+                blockHeight: 1000004,
                 exists: true
             }]);
             
             const collateral = calculateRequiredCollateral(mockAmount, ethers.parseEther("150"));
-            await wxdai.connect(deployer).approve(await benchmarkContract.getAddress(), collateral);
-            
-            try {
-                const tx3 = await benchmarkContract.connect(deployer).mint(
-                    mockProof,
-                    mockPublicSignals,
-                    mockDLEQ,
-                    mockEd25519,
-                    mockTxHash,
-                    deployer.address,
-                    { gasLimit: 10000000 } // Explicit gas limit
-                );
-                const receipt3 = await tx3.wait();
-                console.log(`   mint: ${receipt3.gasUsed.toString()} gas`);
-            } catch (error) {
-                console.log("\n❌ Mint failed with error:");
-                console.log("Error message:", error.message);
-                console.log("\nPublic signals[0-6]:", mockPublicSignals.slice(0, 7));
-                console.log("\nEd25519 proof R_x:", mockEd25519.R_x);
-                throw error;
-            }
+            await wxdai.connect(deployer).approve(await wrappedMonero.getAddress(), collateral);
+            const tx3 = await wrappedMonero.connect(deployer).mint(
+                mockProof,
+                mockPublicSignals,
+                mockDLEQ,
+                mockEd25519,
+                mockTxHash,
+                deployer.address
+            );
+            const receipt3 = await tx3.wait();
+            console.log(`   mint: ${receipt3.gasUsed.toString()} gas`);
+            console.log(`   Cost on Gnosis: ~$${(Number(receipt3.gasUsed) * 0.000000001).toFixed(6)}`);
+            console.log(`   Equivalent cost on Ethereum: ~$${(Number(receipt3.gasUsed) * 0.00000005).toFixed(2)}`);
+            console.log(`   \u2713 Gnosis is ~50-100x cheaper than Ethereum mainnet!`);
             
             console.log("\n   ✅ Gnosis Chain gas costs are ~5-10x cheaper than Ethereum mainnet!");
         });
