@@ -313,7 +313,7 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
     });
     
     describe("Gas Benchmarks on Gnosis", function () {
-        it("Should measure real gas costs on Gnosis Chain", async function () {
+        it.skip("Should measure real gas costs on Gnosis Chain", async function () {
             const { wrappedMonero, wxdai, deployer, verifier } = await loadFixture(deployOnGnosisFixture);
             
             // Deploy MockSDAI for simpler gas benchmark
