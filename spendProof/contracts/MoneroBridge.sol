@@ -40,6 +40,34 @@ contract MoneroBridge {
     // Track Monero tx hashes for transparency
     mapping(bytes32 => bytes32) public outputToTxHash;
     
+    // Monero block data (for zkTLS oracle)
+    struct MoneroBlockData {
+        bytes32 blockHash;
+        bytes32 txMerkleRoot;      // Merkle root of transaction hashes (for TX existence)
+        bytes32 outputMerkleRoot;  // Merkle root of output data (for amount verification)
+        uint256 timestamp;
+        bool exists;
+    }
+    
+    // Monero transaction output data (posted by oracle)
+    struct MoneroTxOutput {
+        bytes32 txHash;
+        uint256 outputIndex;
+        bytes32 ecdhAmount;      // ECDH encrypted amount (CRITICAL for security)
+        bytes32 outputPubKey;    // Output public key
+        bytes32 commitment;      // Pedersen commitment
+        uint256 blockHeight;
+        bool exists;
+    }
+    
+    mapping(uint256 => MoneroBlockData) public moneroBlocks;
+    uint256 public latestMoneroBlock;
+    
+    // outputId (keccak256(txHash, outputIndex)) → output data
+    mapping(bytes32 => MoneroTxOutput) public moneroOutputs;
+    
+    address public oracle;  // Trusted oracle (or zkTLS prover)
+    
     // Events
     event Minted(
         address indexed recipient,
@@ -64,12 +92,28 @@ contract MoneroBridge {
         bytes32 P_compressed
     );
     
+    event MoneroBlockPosted(
+        uint256 indexed blockHeight,
+        bytes32 blockHash,
+        bytes32 txMerkleRoot
+    );
+    
+    event OracleTransferred(
+        address indexed oldOracle,
+        address indexed newOracle
+    );
+    
+    event MoneroOutputsPosted(
+        uint256 count
+    );
+    
     // ════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR
     // ════════════════════════════════════════════════════════════════════════
     
     constructor(address _verifier) {
         verifier = IPlonkVerifier(_verifier);
+        oracle = msg.sender;  // Deployer is initial oracle
     }
     
     // ════════════════════════════════════════════════════════════════════════
@@ -82,7 +126,12 @@ contract MoneroBridge {
      * @param publicSignals Public signals from circuit (70 elements)
      * @param dleqProof DLEQ proof for discrete log equality
      * @param ed25519Proof Ed25519 operation proofs
-     * @param txHash Monero transaction hash (for transparency and tracking)
+     * @param output Monero output data (txHash, index, ecdhAmount, etc.)
+     * @param blockHeight Block height containing the transaction
+     * @param txMerkleProof Merkle proof that TX is in the block
+     * @param txIndex Transaction index in block
+     * @param outputMerkleProof Merkle proof that output data is correct
+     * @param outputIndex Output index in the outputs Merkle tree
      * @return amount The verified amount in piconero
      * @return outputId The unique output identifier
      */
@@ -91,9 +140,14 @@ contract MoneroBridge {
         uint256[70] calldata publicSignals,
         DLEQProof calldata dleqProof,
         Ed25519Proof calldata ed25519Proof,
-        bytes32 txHash
+        MoneroTxOutput calldata output,
+        uint256 blockHeight,
+        bytes32[] calldata txMerkleProof,
+        uint256 txIndex,
+        bytes32[] calldata outputMerkleProof,
+        uint256 outputIndex
     ) external returns (uint256 amount, bytes32 outputId) {
-        return _verifyProof(proof, publicSignals, dleqProof, ed25519Proof, txHash);
+        return _verifyProof(proof, publicSignals, dleqProof, ed25519Proof, output, blockHeight, txMerkleProof, txIndex, outputMerkleProof, outputIndex);
     }
     
     /**
@@ -104,8 +158,43 @@ contract MoneroBridge {
         uint256[70] calldata publicSignals,
         DLEQProof calldata dleqProof,
         Ed25519Proof calldata ed25519Proof,
-        bytes32 txHash
+        MoneroTxOutput calldata output,
+        uint256 blockHeight,
+        bytes32[] calldata txMerkleProof,
+        uint256 txIndex,
+        bytes32[] calldata outputMerkleProof,
+        uint256 outputIndex
     ) internal returns (uint256 amount, bytes32 outputId) {
+        // ════════════════════════════════════════════════════════════════════
+        // STEP 0: Verify TX exists in Monero blockchain
+        // ════════════════════════════════════════════════════════════════════
+        require(output.txHash != bytes32(0), "Invalid tx hash");
+        require(
+            verifyTxInBlock(output.txHash, blockHeight, txMerkleProof, txIndex),
+            "TX not in Monero block"
+        );
+        
+        // ════════════════════════════════════════════════════════════════════
+        // STEP 0.5: Verify output data is in outputMerkleRoot
+        // ════════════════════════════════════════════════════════════════════
+        // CRITICAL: This prevents amount fraud!
+        // User provides output data, we verify it's in the Merkle tree
+        // Merkle tree was posted by oracle/zkTLS with authentic Monero data
+        
+        bytes32 outputLeaf = keccak256(abi.encodePacked(
+            output.txHash,
+            output.outputIndex,
+            output.ecdhAmount,
+            output.outputPubKey,
+            output.commitment
+        ));
+        
+        bytes32 outputRoot = moneroBlocks[blockHeight].outputMerkleRoot;
+        require(
+            verifyMerkleProof(outputLeaf, outputRoot, outputMerkleProof, outputIndex),
+            "Output data not in Merkle tree"
+        );
+        
         // Extract public signals from circuit output
         // Order: [v, R_x, S_x, P_compressed, ecdhAmount, amountKey[64], commitment]
         // Note: v and commitment are implicitly verified by PLONK proof
@@ -114,6 +203,9 @@ contract MoneroBridge {
         uint256 S_x = publicSignals[2];            // 8·r·A x-coordinate  
         uint256 P_compressed = publicSignals[3];   // Stealth address
         uint256 ecdhAmount = publicSignals[4];     // ECDH encrypted amount
+        
+        // Verify ecdhAmount matches oracle-posted data
+        require(bytes32(ecdhAmount) == output.ecdhAmount, "ecdhAmount mismatch");
         
         // Reconstruct amountKey from 64 bits at publicSignals[5..68]
         uint256 amountKey = 0;
@@ -197,10 +289,9 @@ contract MoneroBridge {
         
         bytes32 outputId = keccak256(abi.encodePacked(R_x, P_compressed));
         require(!usedOutputs[outputId], "Output already spent");
-        require(txHash != bytes32(0), "Invalid tx hash");
         
         usedOutputs[outputId] = true;
-        outputToTxHash[outputId] = txHash;
+        outputToTxHash[outputId] = output.txHash;
         
         // ════════════════════════════════════════════════════════════════════
         // STEP 6: Decrypt Amount
@@ -216,7 +307,7 @@ contract MoneroBridge {
         // Actual minting is handled by WrappedMonero.sol which calls this contract.
         // See contracts/WrappedMonero.sol for the full ERC20 implementation.
         
-        emit Minted(msg.sender, amount, outputId, txHash);
+        emit Minted(msg.sender, amount, outputId, output.txHash);
         emit BridgeProofVerified(outputId, msg.sender, amount);
         emit Ed25519Verified(bytes32(R_x), bytes32(S_x), bytes32(P_compressed));
         
@@ -368,6 +459,135 @@ contract MoneroBridge {
         uint64 expectedKey = uint64(uint256(hash) >> 192);
         
         return amountKey == expectedKey;
+    }
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // ORACLE FUNCTIONS (for zkTLS or trusted oracle)
+    // ════════════════════════════════════════════════════════════════════════
+    
+    modifier onlyOracle() {
+        require(msg.sender == oracle, "Only oracle");
+        _;
+    }
+    
+    /**
+     * @notice Post Monero block data (called by oracle or zkTLS prover)
+     * @param blockHeight Monero block height
+     * @param blockHash Block hash
+     * @param txMerkleRoot Merkle root of all transaction hashes in block
+     * @param outputMerkleRoot Merkle root of all output data in block
+     */
+    function postMoneroBlock(
+        uint256 blockHeight,
+        bytes32 blockHash,
+        bytes32 txMerkleRoot,
+        bytes32 outputMerkleRoot
+    ) external onlyOracle {
+        require(blockHeight > latestMoneroBlock, "Block height must increase");
+        require(!moneroBlocks[blockHeight].exists, "Block already posted");
+        
+        moneroBlocks[blockHeight] = MoneroBlockData({
+            blockHash: blockHash,
+            txMerkleRoot: txMerkleRoot,
+            outputMerkleRoot: outputMerkleRoot,
+            timestamp: block.timestamp,
+            exists: true
+        });
+        
+        latestMoneroBlock = blockHeight;
+        
+        emit MoneroBlockPosted(blockHeight, blockHash, txMerkleRoot);
+    }
+    
+    /**
+     * @notice Post Monero transaction outputs (called by oracle)
+     * @param outputs Array of transaction outputs to post
+     * @dev This is CRITICAL for security - prevents amount fraud
+     */
+    function postMoneroOutputs(MoneroTxOutput[] calldata outputs) external onlyOracle {
+        for (uint256 i = 0; i < outputs.length; i++) {
+            MoneroTxOutput calldata output = outputs[i];
+            
+            // Verify block exists
+            require(moneroBlocks[output.blockHeight].exists, "Block not posted");
+            
+            // Store output data
+            bytes32 outputId = keccak256(abi.encodePacked(output.txHash, output.outputIndex));
+            moneroOutputs[outputId] = output;
+        }
+        
+        emit MoneroOutputsPosted(outputs.length);
+    }
+    
+    /**
+     * @notice Transfer oracle role (one-time, deployer only)
+     * @param newOracle New oracle address
+     */
+    function transferOracle(address newOracle) external {
+        require(msg.sender == oracle, "Only current oracle");
+        require(newOracle != address(0), "Invalid oracle address");
+        
+        address oldOracle = oracle;
+        oracle = newOracle;
+        
+        emit OracleTransferred(oldOracle, newOracle);
+    }
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // MERKLE PROOF VERIFICATION
+    // ════════════════════════════════════════════════════════════════════════
+    
+    /**
+     * @notice Verify a transaction exists in a Monero block using Merkle proof
+     * @param txHash Transaction hash
+     * @param blockHeight Block height
+     * @param merkleProof Array of sibling hashes for Merkle proof
+     * @param index Transaction index in block
+     * @return True if transaction is in the block
+     */
+    function verifyTxInBlock(
+        bytes32 txHash,
+        uint256 blockHeight,
+        bytes32[] calldata merkleProof,
+        uint256 index
+    ) public view returns (bool) {
+        require(moneroBlocks[blockHeight].exists, "Block not posted");
+        
+        bytes32 root = moneroBlocks[blockHeight].txMerkleRoot;
+        return verifyMerkleProof(txHash, root, merkleProof, index);
+    }
+    
+    /**
+     * @notice Verify Merkle proof
+     * @param leaf Leaf hash (transaction hash)
+     * @param root Merkle root
+     * @param proof Array of sibling hashes
+     * @param index Leaf index
+     * @return True if proof is valid
+     */
+    function verifyMerkleProof(
+        bytes32 leaf,
+        bytes32 root,
+        bytes32[] calldata proof,
+        uint256 index
+    ) public pure returns (bool) {
+        bytes32 computedHash = leaf;
+        
+        for (uint256 i = 0; i < proof.length; i++) {
+            bytes32 proofElement = proof[i];
+            
+            if (index % 2 == 0) {
+                // Current node is left child
+                computedHash = keccak256(abi.encodePacked(computedHash, proofElement));
+            } else {
+                // Current node is right child
+                computedHash = keccak256(abi.encodePacked(proofElement, computedHash));
+            }
+            
+            index = index / 2;
+        }
+        
+        return computedHash == root;
     }
     
     // ════════════════════════════════════════════════════════════════════════
