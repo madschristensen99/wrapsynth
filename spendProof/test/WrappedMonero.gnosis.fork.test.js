@@ -358,16 +358,20 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
                 K1: ethers.keccak256(ethers.toUtf8Bytes("K1")),
                 K2: ethers.keccak256(ethers.toUtf8Bytes("K2"))
             };
+            // Use Ed25519 base point G for valid curve points
+            const G_x = "15112221349535400772501151409588531511454012693041857206046113283949847762202";
+            const G_y = "46316835694926478169428394003475163141307993866256225615783033603165251855960";
+            
             const mockEd25519 = {
-                R_x: ethers.keccak256(ethers.toUtf8Bytes("R_x")),
-                R_y: ethers.keccak256(ethers.toUtf8Bytes("R_y")),
-                S_x: ethers.keccak256(ethers.toUtf8Bytes("S_x")),
-                S_y: ethers.keccak256(ethers.toUtf8Bytes("S_y")),
-                P_x: ethers.keccak256(ethers.toUtf8Bytes("P_x")),
-                P_y: ethers.keccak256(ethers.toUtf8Bytes("P_y")),
-                B_x: ethers.keccak256(ethers.toUtf8Bytes("B_x")),
-                B_y: ethers.keccak256(ethers.toUtf8Bytes("B_y")),
-                H_s: ethers.keccak256(ethers.toUtf8Bytes("H_s")),
+                R_x: ethers.zeroPadValue(ethers.toBeHex(G_x), 32),
+                R_y: ethers.zeroPadValue(ethers.toBeHex(G_y), 32),
+                S_x: ethers.zeroPadValue(ethers.toBeHex(G_x), 32),
+                S_y: ethers.zeroPadValue(ethers.toBeHex(G_y), 32),
+                P_x: ethers.zeroPadValue(ethers.toBeHex(G_x), 32),
+                P_y: ethers.zeroPadValue(ethers.toBeHex(G_y), 32),
+                B_x: ethers.zeroPadValue(ethers.toBeHex("0"), 32),
+                B_y: ethers.zeroPadValue(ethers.toBeHex("1"), 32),
+                H_s: ethers.zeroPadValue(ethers.toBeHex("1"), 32),
                 A: ethers.keccak256(ethers.toUtf8Bytes("A"))
             };
             
