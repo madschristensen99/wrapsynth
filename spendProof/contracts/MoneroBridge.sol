@@ -40,6 +40,18 @@ contract MoneroBridge {
     // Track Monero tx hashes for transparency
     mapping(bytes32 => bytes32) public outputToTxHash;
     
+    // Monero block data (for zkTLS oracle)
+    struct MoneroBlockData {
+        bytes32 blockHash;
+        bytes32 txMerkleRoot;  // Merkle root of all transaction hashes
+        uint256 timestamp;
+        bool exists;
+    }
+    
+    mapping(uint256 => MoneroBlockData) public moneroBlocks;
+    uint256 public latestMoneroBlock;
+    address public oracle;  // Trusted oracle (or zkTLS prover)
+    
     // Events
     event Minted(
         address indexed recipient,
@@ -64,12 +76,24 @@ contract MoneroBridge {
         bytes32 P_compressed
     );
     
+    event MoneroBlockPosted(
+        uint256 indexed blockHeight,
+        bytes32 blockHash,
+        bytes32 txMerkleRoot
+    );
+    
+    event OracleTransferred(
+        address indexed oldOracle,
+        address indexed newOracle
+    );
+    
     // ════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR
     // ════════════════════════════════════════════════════════════════════════
     
     constructor(address _verifier) {
         verifier = IPlonkVerifier(_verifier);
+        oracle = msg.sender;  // Deployer is initial oracle
     }
     
     // ════════════════════════════════════════════════════════════════════════
@@ -368,6 +392,112 @@ contract MoneroBridge {
         uint64 expectedKey = uint64(uint256(hash) >> 192);
         
         return amountKey == expectedKey;
+    }
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // ORACLE FUNCTIONS (for zkTLS or trusted oracle)
+    // ════════════════════════════════════════════════════════════════════════
+    
+    modifier onlyOracle() {
+        require(msg.sender == oracle, "Only oracle");
+        _;
+    }
+    
+    /**
+     * @notice Post Monero block data (called by oracle or zkTLS prover)
+     * @param blockHeight Monero block height
+     * @param blockHash Block hash
+     * @param txMerkleRoot Merkle root of all transaction hashes in block
+     */
+    function postMoneroBlock(
+        uint256 blockHeight,
+        bytes32 blockHash,
+        bytes32 txMerkleRoot
+    ) external onlyOracle {
+        require(blockHeight > latestMoneroBlock, "Block height must increase");
+        require(!moneroBlocks[blockHeight].exists, "Block already posted");
+        
+        moneroBlocks[blockHeight] = MoneroBlockData({
+            blockHash: blockHash,
+            txMerkleRoot: txMerkleRoot,
+            timestamp: block.timestamp,
+            exists: true
+        });
+        
+        latestMoneroBlock = blockHeight;
+        
+        emit MoneroBlockPosted(blockHeight, blockHash, txMerkleRoot);
+    }
+    
+    /**
+     * @notice Transfer oracle role (one-time, deployer only)
+     * @param newOracle New oracle address
+     */
+    function transferOracle(address newOracle) external {
+        require(msg.sender == oracle, "Only current oracle");
+        require(newOracle != address(0), "Invalid oracle address");
+        
+        address oldOracle = oracle;
+        oracle = newOracle;
+        
+        emit OracleTransferred(oldOracle, newOracle);
+    }
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // MERKLE PROOF VERIFICATION
+    // ════════════════════════════════════════════════════════════════════════
+    
+    /**
+     * @notice Verify a transaction exists in a Monero block using Merkle proof
+     * @param txHash Transaction hash
+     * @param blockHeight Block height
+     * @param merkleProof Array of sibling hashes for Merkle proof
+     * @param index Transaction index in block
+     * @return True if transaction is in the block
+     */
+    function verifyTxInBlock(
+        bytes32 txHash,
+        uint256 blockHeight,
+        bytes32[] calldata merkleProof,
+        uint256 index
+    ) public view returns (bool) {
+        require(moneroBlocks[blockHeight].exists, "Block not posted");
+        
+        bytes32 root = moneroBlocks[blockHeight].txMerkleRoot;
+        return verifyMerkleProof(txHash, root, merkleProof, index);
+    }
+    
+    /**
+     * @notice Verify Merkle proof
+     * @param leaf Leaf hash (transaction hash)
+     * @param root Merkle root
+     * @param proof Array of sibling hashes
+     * @param index Leaf index
+     * @return True if proof is valid
+     */
+    function verifyMerkleProof(
+        bytes32 leaf,
+        bytes32 root,
+        bytes32[] calldata proof,
+        uint256 index
+    ) public pure returns (bool) {
+        bytes32 computedHash = leaf;
+        
+        for (uint256 i = 0; i < proof.length; i++) {
+            bytes32 proofElement = proof[i];
+            
+            if (index % 2 == 0) {
+                // Current node is left child
+                computedHash = keccak256(abi.encodePacked(computedHash, proofElement));
+            } else {
+                // Current node is right child
+                computedHash = keccak256(abi.encodePacked(proofElement, computedHash));
+            }
+            
+            index = index / 2;
+        }
+        
+        return computedHash == root;
     }
     
     // ════════════════════════════════════════════════════════════════════════
