@@ -77,20 +77,35 @@ contract MoneroBridge {
     // ════════════════════════════════════════════════════════════════════════
     
     /**
-     * @notice Verify Monero bridge proof and mint wrapped XMR
+     * @notice Verify Monero bridge proof (for external contracts like WrappedMonero)
      * @param proof PLONK proof (24 field elements)
      * @param publicSignals Public signals from circuit (70 elements)
      * @param dleqProof DLEQ proof for discrete log equality
      * @param ed25519Proof Ed25519 operation proofs
      * @param txHash Monero transaction hash (for transparency and tracking)
+     * @return amount The verified amount in piconero
+     * @return outputId The unique output identifier
      */
-    function verifyAndMint(
+    function verifyProof(
         uint256[24] calldata proof,
         uint256[70] calldata publicSignals,
         DLEQProof calldata dleqProof,
         Ed25519Proof calldata ed25519Proof,
         bytes32 txHash
-    ) external {
+    ) external returns (uint256 amount, bytes32 outputId) {
+        return _verifyProof(proof, publicSignals, dleqProof, ed25519Proof, txHash);
+    }
+    
+    /**
+     * @notice Internal proof verification logic
+     */
+    function _verifyProof(
+        uint256[24] calldata proof,
+        uint256[70] calldata publicSignals,
+        DLEQProof calldata dleqProof,
+        Ed25519Proof calldata ed25519Proof,
+        bytes32 txHash
+    ) internal returns (uint256 amount, bytes32 outputId) {
         // Extract public signals from circuit output
         // Order: [v, R_x, S_x, P_compressed, ecdhAmount, amountKey[64], commitment]
         // Note: v and commitment are implicitly verified by PLONK proof
@@ -204,6 +219,8 @@ contract MoneroBridge {
         emit Minted(msg.sender, amount, outputId, txHash);
         emit BridgeProofVerified(outputId, msg.sender, amount);
         emit Ed25519Verified(bytes32(R_x), bytes32(S_x), bytes32(P_compressed));
+        
+        return (amount, outputId);
     }
     
     // ════════════════════════════════════════════════════════════════════════
