@@ -112,15 +112,33 @@ contract MoneroBridgeDLEQ {
         );
         
         // ════════════════════════════════════════════════════════════════════
+        // CRITICAL: Bind ZK Proof and DLEQ Proof Together
+        // ════════════════════════════════════════════════════════════════════
+        // The ZK circuit proves knowledge of (r, v, H_s) via Poseidon commitment.
+        // The DLEQ proof proves R = r·G and S = 8·r·A.
+        // We MUST verify that the r, R, S, P in both proofs are the SAME!
+        
+        // BN254 field modulus - Ed25519 coordinates may exceed this
+        uint256 BN254_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
+        
+        // Public signals from circuit are reduced mod BN254, so reduce ed25519Proof values too
+        require(R_x == (ed25519Proof.R_x % BN254_MODULUS), "R_x mismatch between ZK and DLEQ");
+        require(S_x == (ed25519Proof.S_x % BN254_MODULUS), "S_x mismatch between ZK and DLEQ");
+        require(P_compressed == (ed25519Proof.P_x % BN254_MODULUS), "P_x mismatch between ZK and DLEQ");
+        
+        // TODO: Extract and verify H_s from public signals
+        // uint256 H_s_from_zk = reconstructH_s(publicSignals);
+        // require(H_s_from_zk == ed25519Proof.H_s, "H_s mismatch between ZK and DLEQ");
+        
+        // ════════════════════════════════════════════════════════════════════
         // STEP 2: Verify DLEQ Proofs (r consistency)
         // ════════════════════════════════════════════════════════════════════
         // Proves: log_G(R) = log_A(S/8) = r
         
-        // DLEQ verification using Ed25519 with precompile
-        // Note: DLEQ proof is for rA, but Monero uses S = 8*rA, so we verify with S/8
-        // We pass S coordinates but verifyDLEQ will divide by 8 internally
+        // DLEQ verification using Ed25519
+        // DLEQ proves log_G(R) = log_A(rA) = r
         require(
-            verifyDLEQ(dleqProof, ed25519Proof, ed25519Proof.R_x, ed25519Proof.R_y, ed25519Proof.S_x, ed25519Proof.S_y),
+            verifyDLEQ(dleqProof, ed25519Proof, ed25519Proof.R_x, ed25519Proof.R_y, ed25519Proof.rA_x, ed25519Proof.rA_y),
             "Invalid DLEQ proof"
         );
         
@@ -197,9 +215,13 @@ contract MoneroBridgeDLEQ {
         uint256 A_y;    // View public key y
         uint256 B_x;    // Spend public key x
         uint256 B_y;    // Spend public key y
+        uint256 P_x;    // Stealth address x-coordinate
+        uint256 P_y;    // Stealth address y-coordinate
         uint256 R_x;    // r·G x-coordinate
         uint256 R_y;    // r·G y-coordinate
-        uint256 S_x;    // 8·r·A x-coordinate
+        uint256 rA_x;   // r·A x-coordinate (for DLEQ)
+        uint256 rA_y;   // r·A y-coordinate (for DLEQ)
+        uint256 S_x;    // 8·r·A x-coordinate (for circuit)
         uint256 S_y;    // 8·r·A y-coordinate
         uint256 H_s;    // Shared secret scalar
     }

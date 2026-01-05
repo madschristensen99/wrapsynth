@@ -3,8 +3,8 @@
   "chainId": 84532,
   "deployer": "0x49a22328fecF3e43C4C0fEDfb7E5272248904E3E",
   "contracts": {
-    "PlonkVerifier": "0x7Bb4bF5bDAe975D00394Fa8c7a5a395777D3F71D",
-    "MoneroBridgeDLEQ": "0xf148A622CF38750f50324a44372D13BF6907210e"
+    "PlonkVerifier": "0xc76C2Aa4fc8F2105fdD860987162CE28211892bB",
+    "MoneroBridgeDLEQ": "0x4CA4b7629514361a8d52C50Eccf9eCFb2480B3B8"
   },
-  "timestamp": "2026-01-05T19:14:29.655Z"
+  "timestamp": "2026-01-05T19:54:55.247Z"
 }
