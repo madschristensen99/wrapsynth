@@ -22,40 +22,24 @@ async function main() {
     const bridge = MoneroBridgeDLEQ.attach(deployment.contracts.MoneroBridgeDLEQ);
 
     console.log("\n" + "═".repeat(70));
-    console.log("🔄 Generating PLONK proof for TX1...");
+    // Load transaction data from config
+    const txDataConfig = JSON.parse(fs.readFileSync('tx_data.json', 'utf8'));
+    const txId = process.argv[2] || txDataConfig.current;
+    const txData = txDataConfig.transactions[txId];
+    
+    if (!txData) {
+        console.error(`❌ Transaction ${txId} not found in tx_data.json`);
+        console.log('Available transactions:', Object.keys(txDataConfig.transactions).join(', '));
+        process.exit(1);
+    }
+    
+    console.log(`🔄 Generating PLONK proof for ${txId} (${txData.name})...`);
     console.log("═".repeat(70));
-
-    // Use TX1 data
-    const tx1 = {
-        hash: "5caae835b751a5ab243b455ad05c489cb9a06d8444ab2e8d3a9d8ef905c1439a",
-        block: 1934116,
-        secretKey: "4cbf8f2cfb622ee126f08df053e99b96aa2e8c1cfd575d2a651f3343b465800a",
-        amount: 20000000000,
-        destination: "53Kajgo3GhV1ddabJZqdmESkXXoz2xD2gUCVc5L2YKjq8Qhx6UXoqFChhF9n2Th9NLTz77258PMdc3G5qxVd487pFZzzVNG",
-        output_index: 0,
-        node: "https://stagenet.xmr.ditatompel.com"
-    };
-
-    // Update witness generator
-    const witnessScript = fs.readFileSync('scripts/fetch_monero_witness.js', 'utf8');
-    const updated = witnessScript.replace(
-        /const TX_DATA = \{[\s\S]*?\};/,
-        `const TX_DATA = {
-    hash: "${tx1.hash}",
-    block: ${tx1.block},
-    secretKey: "${tx1.secretKey}",
-    amount: ${tx1.amount},
-    destination: "${tx1.destination}",
-    output_index: ${tx1.output_index},
-    node: "${tx1.node}"
-};`
-    );
-    fs.writeFileSync('scripts/fetch_monero_witness.js', updated);
 
     // Step 1: Fetch from blockchain
     console.log("\n  🔄 Step 1: Fetching from blockchain...");
     try {
-        execSync('node scripts/fetch_monero_witness.js > /dev/null 2>&1');
+        execSync(`node scripts/fetch_monero_witness.js ${txId} > /dev/null 2>&1`);
         console.log("  ✅ Blockchain data fetched");
     } catch(e) {
         console.log("  ❌ Fetch failed:", e.message);
@@ -195,7 +179,7 @@ async function main() {
 
     try {
         console.log("\n  📊 Estimating gas...");
-        const txHash = "0x" + tx1.hash;
+        const txHash = "0x" + txData.hash;
         
         try {
             const gasEstimate = await bridge.verifyAndMint.estimateGas(proofCalldata, publicSignals, dleqProof, ed25519Proof, txHash);
