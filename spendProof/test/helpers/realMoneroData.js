@@ -77,11 +77,18 @@ function getRealTransactionProof(txIndex) {
         K2: ethers.keccak256(ethers.toUtf8Bytes(`K2_${tx.hash}`))
     };
     
-    // Mock Ed25519 proof
+    // Mock Ed25519 proof (with all required security fields)
     const ed25519Proof = {
-        A: ethers.keccak256(ethers.toUtf8Bytes(`A_${tx.hash}`)),
-        B: ethers.keccak256(ethers.toUtf8Bytes(`B_${tx.hash}`)),
-        G: ethers.keccak256(ethers.toUtf8Bytes(`G_${tx.hash}`))
+        R_x: ethers.keccak256(ethers.toUtf8Bytes(`R_x_${tx.hash}`)),
+        R_y: ethers.keccak256(ethers.toUtf8Bytes(`R_y_${tx.hash}`)),
+        S_x: ethers.keccak256(ethers.toUtf8Bytes(`S_x_${tx.hash}`)),
+        S_y: ethers.keccak256(ethers.toUtf8Bytes(`S_y_${tx.hash}`)),
+        P_x: ethers.keccak256(ethers.toUtf8Bytes(`P_x_${tx.hash}`)),
+        P_y: ethers.keccak256(ethers.toUtf8Bytes(`P_y_${tx.hash}`)),
+        B_x: ethers.keccak256(ethers.toUtf8Bytes(`B_x_${tx.hash}`)),
+        B_y: ethers.keccak256(ethers.toUtf8Bytes(`B_y_${tx.hash}`)),
+        H_s: ethers.keccak256(ethers.toUtf8Bytes(`H_s_${tx.hash}`)),
+        A: ethers.keccak256(ethers.toUtf8Bytes(`A_${tx.hash}`))
     };
     
     // Use real transaction hash
