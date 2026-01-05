@@ -179,7 +179,16 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
             
             const xmrPrice = ethers.parseEther("150"); // $150 per XMR
             
-            // Post outputs to oracle first (Security Fix #3 requirement)
+            // Post Monero blocks first (required by postMoneroOutputs)
+            for (let i = 0; i < 4; i++) {
+                await wrappedMonero.postMoneroBlock(
+                    1000000 + i,
+                    ethers.keccak256(ethers.toUtf8Bytes(`block_${i}`)),
+                    ethers.parseUnits("7000000", 12) // 7M XMR supply
+                );
+            }
+            
+            // Post outputs to oracle (Security Fix #3 requirement)
             const amounts = ["0.02", "0.01", "0.00115", "0.931064529072"];
             const outputs = [];
             for (let i = 0; i < 4; i++) {
@@ -238,7 +247,14 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
             const xmrPrice = ethers.parseEther("150");
             const collateral = calculateRequiredCollateral(txData.tx.amount, xmrPrice);
             
-            // Post output to oracle first
+            // Post Monero block first
+            await wrappedMonero.postMoneroBlock(
+                1000000,
+                ethers.keccak256(ethers.toUtf8Bytes("block_burn")),
+                ethers.parseUnits("7000000", 12)
+            );
+            
+            // Post output to oracle
             await wrappedMonero.postMoneroOutputs([{
                 txHash: txData.txHash,
                 outputIndex: 0,
@@ -365,6 +381,13 @@ describe("WrappedMonero - Gnosis Chain Fork Integration", function () {
                 blockHeight: 1000000,
                 exists: true
             }]);
+            
+            // Post Monero block first
+            await benchmarkContract.postMoneroBlock(
+                1000000,
+                ethers.keccak256(ethers.toUtf8Bytes("block_gas")),
+                ethers.parseUnits("7000000", 12)
+            );
             
             const collateral = calculateRequiredCollateral(mockAmount, ethers.parseEther("150"));
             await wxdai.connect(deployer).approve(await benchmarkContract.getAddress(), collateral);
