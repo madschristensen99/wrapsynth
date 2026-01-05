@@ -4,8 +4,8 @@ pragma solidity ^0.8.20;
 import "./Ed25519.sol";
 
 /**
- * @title MoneroBridgeDLEQ
- * @notice DLEQ-optimized Monero Bridge with hybrid verification
+ * @title MoneroBridge
+ * @notice Monero Bridge with hybrid ZK-SNARK + DLEQ verification
  * 
  * Architecture:
  * - ZK Circuit: Verifies Poseidon commitment (1,167 constraints)
@@ -26,7 +26,7 @@ interface IPlonkVerifier {
     ) external view returns (bool);
 }
 
-contract MoneroBridgeDLEQ {
+contract MoneroBridge {
     
     // ════════════════════════════════════════════════════════════════════════
     // STATE VARIABLES
