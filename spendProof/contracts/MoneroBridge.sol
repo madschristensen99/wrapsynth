@@ -106,7 +106,10 @@ contract MoneroBridge {
      * @param publicSignals Public signals from circuit (70 elements)
      * @param dleqProof DLEQ proof for discrete log equality
      * @param ed25519Proof Ed25519 operation proofs
-     * @param txHash Monero transaction hash (for transparency and tracking)
+     * @param txHash Monero transaction hash
+     * @param blockHeight Block height containing the transaction
+     * @param merkleProof Merkle proof that TX is in the block
+     * @param txIndex Transaction index in block
      * @return amount The verified amount in piconero
      * @return outputId The unique output identifier
      */
@@ -115,9 +118,12 @@ contract MoneroBridge {
         uint256[70] calldata publicSignals,
         DLEQProof calldata dleqProof,
         Ed25519Proof calldata ed25519Proof,
-        bytes32 txHash
+        bytes32 txHash,
+        uint256 blockHeight,
+        bytes32[] calldata merkleProof,
+        uint256 txIndex
     ) external returns (uint256 amount, bytes32 outputId) {
-        return _verifyProof(proof, publicSignals, dleqProof, ed25519Proof, txHash);
+        return _verifyProof(proof, publicSignals, dleqProof, ed25519Proof, txHash, blockHeight, merkleProof, txIndex);
     }
     
     /**
@@ -128,8 +134,19 @@ contract MoneroBridge {
         uint256[70] calldata publicSignals,
         DLEQProof calldata dleqProof,
         Ed25519Proof calldata ed25519Proof,
-        bytes32 txHash
+        bytes32 txHash,
+        uint256 blockHeight,
+        bytes32[] calldata merkleProof,
+        uint256 txIndex
     ) internal returns (uint256 amount, bytes32 outputId) {
+        // ════════════════════════════════════════════════════════════════════
+        // STEP 0: Verify TX exists in Monero blockchain
+        // ════════════════════════════════════════════════════════════════════
+        require(txHash != bytes32(0), "Invalid tx hash");
+        require(
+            verifyTxInBlock(txHash, blockHeight, merkleProof, txIndex),
+            "TX not in Monero block"
+        );
         // Extract public signals from circuit output
         // Order: [v, R_x, S_x, P_compressed, ecdhAmount, amountKey[64], commitment]
         // Note: v and commitment are implicitly verified by PLONK proof
@@ -221,7 +238,6 @@ contract MoneroBridge {
         
         bytes32 outputId = keccak256(abi.encodePacked(R_x, P_compressed));
         require(!usedOutputs[outputId], "Output already spent");
-        require(txHash != bytes32(0), "Invalid tx hash");
         
         usedOutputs[outputId] = true;
         outputToTxHash[outputId] = txHash;
