@@ -190,14 +190,28 @@ async function generateWitness(inputData) {
         );
     }
     
-    // Compute Poseidon commitment
+    // Compute Poseidon commitment with reduced values (computed below)
+    // Will be updated after BN254 reduction
+    
+    // BN254 field modulus - circuit values are reduced mod p
+    const BN254_MODULUS = BigInt('21888242871839275222246405745257275088548364400416034343698204186575808495617');
+    
+    // Reduce Ed25519 coordinates modulo BN254 field to match circuit behavior
+    const R_x_raw = ed25519Results ? ed25519Results.ed25519Proof.R_x : inputData.R_x.toString();
+    const S_x_raw = ed25519Results ? ed25519Results.ed25519Proof.S_x : (inputData.S_x || inputData.R_x.toString());
+    const P_x_raw = ed25519Results ? ed25519Results.ed25519Proof.P.x : inputData.P_compressed.toString();
+    const R_x_reduced = (BigInt(R_x_raw) % BN254_MODULUS).toString();
+    const S_x_reduced = (BigInt(S_x_raw) % BN254_MODULUS).toString();
+    const P_x_reduced = (BigInt(P_x_raw) % BN254_MODULUS).toString();
+    
+    // Compute Poseidon commitment with REDUCED values (what circuit actually sees)
     const commitment = await computePoseidonCommitment(
         r_num.toString(),
         inputData.v.toString(),
         H_s_num.toString(),
-        ed25519Results ? ed25519Results.R_x : inputData.R_x.toString(),
-        ed25519Results ? ed25519Results.S_x : (inputData.S_x || inputData.R_x.toString()),
-        ed25519Results ? ed25519Results.P_compressed : inputData.P_compressed.toString()
+        R_x_reduced,
+        S_x_reduced,
+        P_x_reduced
     );
     
     const witness = {
@@ -207,9 +221,10 @@ async function generateWitness(inputData) {
         H_s_scalar: H_s_scalar_bits,
         
         // Public inputs (computed off-circuit with Ed25519)
-        R_x: ed25519Results ? ed25519Results.R_x : inputData.R_x.toString(),
-        S_x: ed25519Results ? ed25519Results.S_x : (inputData.S_x || inputData.R_x.toString()),
-        P_compressed: ed25519Results ? ed25519Results.P_compressed : inputData.P_compressed.toString(),
+        // CRITICAL: Reduced modulo BN254 field to match circuit
+        R_x: R_x_reduced,
+        S_x: S_x_reduced,
+        P_compressed: P_x_reduced,  // Actually P.x, not compressed
         ecdhAmount: inputData.ecdhAmount.toString(),
         amountKey: amountKey_bits,
         commitment: commitment,

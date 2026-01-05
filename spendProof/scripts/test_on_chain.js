@@ -159,6 +159,12 @@ async function main() {
     };
     
     // Format Ed25519 proof struct
+    // CRITICAL: These values must match the public signals from the ZK circuit!
+    // Ed25519 coordinates can exceed BN254 field, so reduce mod p to match circuit
+    const BN254_MODULUS = BigInt('21888242871839275222246405745257275088548364400416034343698204186575808495617');
+    
+    // Ed25519 proof uses UNREDUCED values for DLEQ verification
+    // Pass both rA (for DLEQ) and S (for circuit consistency check)
     const ed25519Proof = {
         G_x: dleqData.ed25519Proof.G.x,
         G_y: dleqData.ed25519Proof.G.y,
@@ -166,10 +172,14 @@ async function main() {
         A_y: dleqData.ed25519Proof.A.y,
         B_x: dleqData.ed25519Proof.B.x,
         B_y: dleqData.ed25519Proof.B.y,
-        R_x: dleqData.R.x,
+        P_x: dleqData.ed25519Proof.P.x,  // Unreduced for Ed25519 ops
+        P_y: dleqData.ed25519Proof.P.y,
+        R_x: dleqData.R.x,  // Unreduced for DLEQ verification
         R_y: dleqData.R.y,
-        S_x: dleqData.rA.x,  // Pass rA as S (standard DLEQ)
-        S_y: dleqData.rA.y,
+        rA_x: dleqData.rA.x,  // For DLEQ proof
+        rA_y: dleqData.rA.y,
+        S_x: dleqData.S.x,  // For circuit consistency check
+        S_y: dleqData.S.y,
         H_s: dleqData.ed25519Proof.H_s
     };
 
