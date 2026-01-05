@@ -113,9 +113,16 @@ contract WrappedMonero is ERC20, ReentrancyGuard, Pausable {
     }
     
     struct Ed25519Proof {
-        bytes32 A;      // Recipient public spend key
-        bytes32 B;      // Recipient public view key
-        bytes32 G;      // Ed25519 base point
+        bytes32 R_x;            // r·G x-coordinate
+        bytes32 R_y;            // r·G y-coordinate
+        bytes32 S_x;            // H_s·G x-coordinate
+        bytes32 S_y;            // H_s·G y-coordinate
+        bytes32 P_x;            // P = H_s·G + B x-coordinate
+        bytes32 P_y;            // P = H_s·G + B y-coordinate
+        bytes32 B_x;            // Recipient public view key x
+        bytes32 B_y;            // Recipient public view key y
+        bytes32 H_s;            // Scalar H_s
+        bytes32 A;              // Recipient public spend key (for DLEQ)
     }
     
     // ════════════════════════════════════════════════════════════════════════
