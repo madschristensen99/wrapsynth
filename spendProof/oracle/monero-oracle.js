@@ -36,7 +36,7 @@ const config = {
     oraclePrivateKey: process.env.ORACLE_PRIVATE_KEY || (deploymentInfo ? '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' : null), // Default hardhat key #0
     bridgeAddress: process.env.BRIDGE_ADDRESS || (deploymentInfo ? deploymentInfo.bridge : null),
     rpcUrl: process.env.RPC_URL || 'http://localhost:8545',
-    moneroRpcUrl: process.env.MONERO_RPC_URL || 'http://stagenet.community.rino.io:38081',
+    moneroRpcUrl: process.env.MONERO_RPC_URL || 'https://stagenet.xmr.ditatompel.com',
     intervalMs: parseInt(process.env.INTERVAL_MS || '120000'), // 2 minutes
 };
 
@@ -98,13 +98,76 @@ async function getMoneroBlock(height) {
     }
 }
 
-// Extract outputs from block (placeholder - needs real Monero RPC implementation)
+// Extract outputs from block
 async function extractOutputsFromBlock(blockHeight) {
-    // TODO: This needs to call Monero RPC to get actual transaction outputs
-    // For now, return empty array (will be updated when we have real TX data)
-    console.log(`   ⚠️  TODO: Extract real outputs from block ${blockHeight}`);
-    console.log(`   Using placeholder empty outputs for now`);
-    return [];
+    try {
+        // Get full block
+        const blockData = await getMoneroBlock(blockHeight);
+        const blockJson = JSON.parse(blockData.json);
+        const txHashes = blockJson.tx_hashes || [];
+        
+        if (txHashes.length === 0) {
+            console.log(`   No transactions in block ${blockHeight}`);
+            return [];
+        }
+        
+        console.log(`   Fetching ${txHashes.length} transaction(s) from block...`);
+        
+        // Fetch all transactions
+        const response = await axios.post(config.moneroRpcUrl + '/get_transactions', {
+            txs_hashes: txHashes,
+            decode_as_json: true
+        });
+        
+        if (response.data.status !== 'OK' || !response.data.txs) {
+            console.error('   ⚠️  Failed to fetch transactions');
+            return [];
+        }
+        
+        const allOutputs = [];
+        
+        // Extract outputs from each transaction
+        for (const tx of response.data.txs) {
+            const txJson = JSON.parse(tx.as_json);
+            const txHash = tx.tx_hash;
+            
+            // Extract each output
+            if (txJson.vout && txJson.rct_signatures) {
+                for (let i = 0; i < txJson.vout.length; i++) {
+                    const output = txJson.vout[i];
+                    const ecdh = txJson.rct_signatures.ecdhInfo ? txJson.rct_signatures.ecdhInfo[i] : null;
+                    const commitment = txJson.rct_signatures.outPk ? txJson.rct_signatures.outPk[i] : null;
+                    
+                    // Handle both old format (target.key) and new format (target.tagged_key.key)
+                    let outputPubKey = null;
+                    if (output.target) {
+                        if (output.target.key) {
+                            outputPubKey = output.target.key;
+                        } else if (output.target.tagged_key && output.target.tagged_key.key) {
+                            outputPubKey = output.target.tagged_key.key;
+                        }
+                    }
+                    
+                    if (ecdh && commitment && outputPubKey) {
+                        allOutputs.push({
+                            txHash: '0x' + txHash,
+                            outputIndex: i,
+                            ecdhAmount: '0x' + ecdh.amount,
+                            outputPubKey: '0x' + outputPubKey,
+                            commitment: '0x' + commitment
+                        });
+                    }
+                }
+            }
+        }
+        
+        console.log(`   Extracted ${allOutputs.length} outputs from ${txHashes.length} transaction(s)`);
+        return allOutputs;
+        
+    } catch (error) {
+        console.error(`   ⚠️  Error extracting outputs: ${error.message}`);
+        return [];
+    }
 }
 
 // Compute Merkle root from transaction hashes

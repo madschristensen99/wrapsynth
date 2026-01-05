@@ -1,0 +1,15 @@
+{
+  "txHash": "5ed56dfa2bab6006f8cbed1f96fdea04e2c38487229d159e079c575f2534174f",
+  "outputs": [
+    {
+      "index": 0,
+      "ecdhAmount": "40847c9c08ab35de",
+      "commitment": "2c8cbd5fde609b919a0605a40d17b95eb553193d4dba98a165248900efa3a20e"
+    },
+    {
+      "index": 1,
+      "ecdhAmount": "fe40cd19f894b670",
+      "commitment": "b7d5763552707900b3334c09064f0887aa7b7941d85e4b2f42315986a5162423"
+    }
+  ]
+}
