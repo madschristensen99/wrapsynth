@@ -300,21 +300,46 @@ contract WrappedMonero is ERC20, ReentrancyGuard, Pausable {
         bytes32 txHash,
         address recipient
     ) external nonReentrant whenNotPaused {
-        // 1. Extract amount from public signals
-        uint256 v = publicSignals[0]; // Amount in piconero
-        uint256 R_x = publicSignals[1];
-        uint256 S_x = publicSignals[2];
-        uint256 P_compressed = publicSignals[3];
-        
-        // 2. Check for double-spending
-        bytes32 outputId = keccak256(abi.encodePacked(R_x, P_compressed));
+        // ════════════════════════════════════════════════════════════════════
+        // SECURITY FIX #3: Output Verification
+        // ════════════════════════════════════════════════════════════════════
+        bytes32 outputId = keccak256(abi.encodePacked(txHash, uint256(0))); // Simplified for now
+        require(moneroOutputs[outputId].exists, "Output not posted by oracle");
         require(!usedOutputs[outputId], "Output already spent");
         require(txHash != bytes32(0), "Invalid tx hash");
         
-        // 3. Verify PLONK proof
+        // ════════════════════════════════════════════════════════════════════
+        // SECURITY FIX #1: Proof Binding
+        // Verify ZK proof and Ed25519 proof reference same values
+        // ════════════════════════════════════════════════════════════════════
+        uint256 v = publicSignals[0]; // Amount in piconero
+        uint256 R_x = publicSignals[1];
+        uint256 R_y = publicSignals[2];
+        uint256 S_x = publicSignals[3];
+        uint256 S_y = publicSignals[4];
+        uint256 P_x = publicSignals[5];
+        uint256 P_y = publicSignals[6];
+        
+        // Verify consistency between proofs
+        require(bytes32(R_x) == ed25519Proof.R_x, "R_x mismatch");
+        require(bytes32(R_y) == ed25519Proof.R_y, "R_y mismatch");
+        require(bytes32(S_x) == ed25519Proof.S_x, "S_x mismatch");
+        require(bytes32(S_y) == ed25519Proof.S_y, "S_y mismatch");
+        require(bytes32(P_x) == ed25519Proof.P_x, "P_x mismatch");
+        require(bytes32(P_y) == ed25519Proof.P_y, "P_y mismatch");
+        
+        // ════════════════════════════════════════════════════════════════════
+        // SECURITY FIX #2: Ed25519 Stealth Address Verification
+        // Verify P = H_s·G + B on-chain
+        // ════════════════════════════════════════════════════════════════════
+        require(verifyStealthAddress(ed25519Proof), "Invalid stealth address");
+        
+        // ════════════════════════════════════════════════════════════════════
+        // Verify PLONK proof
+        // ════════════════════════════════════════════════════════════════════
         require(verifier.verifyProof(proof, publicSignals), "PLONK verification failed");
         
-        // 4. Verify DLEQ proof (discrete log equality)
+        // Verify DLEQ proof (discrete log equality)
         require(verifyDLEQ(dleqProof, R_x, S_x, ed25519Proof.A), "DLEQ verification failed");
         
         // 5. Calculate required collateral (150% of value)
@@ -426,6 +451,27 @@ contract WrappedMonero is ERC20, ReentrancyGuard, Pausable {
     // ════════════════════════════════════════════════════════════════════════
     // VERIFICATION HELPERS
     // ════════════════════════════════════════════════════════════════════════
+    
+    /**
+     * @notice Verify stealth address: P = H_s·G + B
+     * @dev Uses Ed25519 library for on-chain verification
+     */
+    function verifyStealthAddress(Ed25519Proof calldata proof) internal pure returns (bool) {
+        // Verify all points are on curve
+        require(Ed25519.isOnCurve(uint256(proof.R_x), uint256(proof.R_y)), "R not on curve");
+        require(Ed25519.isOnCurve(uint256(proof.S_x), uint256(proof.S_y)), "S not on curve");
+        require(Ed25519.isOnCurve(uint256(proof.P_x), uint256(proof.P_y)), "P not on curve");
+        require(Ed25519.isOnCurve(uint256(proof.B_x), uint256(proof.B_y)), "B not on curve");
+        
+        // Verify P = H_s·G + B
+        return Ed25519.verifyStealthAddress(
+            uint256(proof.H_s),
+            uint256(proof.B_x),
+            uint256(proof.B_y),
+            uint256(proof.P_x),
+            uint256(proof.P_y)
+        );
+    }
     
     /**
      * @notice Verify DLEQ proof: log_G(R) = log_A(S/8) = r
