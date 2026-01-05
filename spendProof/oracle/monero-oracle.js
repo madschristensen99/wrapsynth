@@ -41,7 +41,7 @@ if (!config.wrappedMoneroAddress) {
     process.exit(1);
 }
 
-// Monero RPC helper
+// Monero RPC helper - Get block header
 async function getMoneroBlockHeader(height = null) {
     try {
         const method = height !== null ? 'get_block_header_by_height' : 'get_last_block_header';
@@ -65,17 +65,74 @@ async function getMoneroBlockHeader(height = null) {
     }
 }
 
+// Get full block with transactions (for Merkle root)
+async function getMoneroBlock(height) {
+    try {
+        const response = await axios.post(config.moneroRpcUrl + '/json_rpc', {
+            jsonrpc: '2.0',
+            id: '0',
+            method: 'get_block',
+            params: { height }
+        });
+        
+        if (response.data.error) {
+            throw new Error(response.data.error.message);
+        }
+        
+        return response.data.result;
+    } catch (error) {
+        console.error('❌ Monero RPC error:', error.message);
+        throw error;
+    }
+}
+
+// Compute Merkle root from transaction hashes
+function computeMerkleRoot(txHashes) {
+    if (txHashes.length === 0) {
+        return '0x' + '0'.repeat(64);
+    }
+    
+    if (txHashes.length === 1) {
+        return '0x' + txHashes[0];
+    }
+    
+    // Build Merkle tree
+    let level = txHashes.map(h => Buffer.from(h, 'hex'));
+    
+    while (level.length > 1) {
+        const nextLevel = [];
+        
+        for (let i = 0; i < level.length; i += 2) {
+            if (i + 1 < level.length) {
+                // Hash pair
+                const combined = Buffer.concat([level[i], level[i + 1]]);
+                const hash = require('crypto').createHash('sha256').update(combined).digest();
+                nextLevel.push(hash);
+            } else {
+                // Odd number - duplicate last hash
+                const combined = Buffer.concat([level[i], level[i]]);
+                const hash = require('crypto').createHash('sha256').update(combined).digest();
+                nextLevel.push(hash);
+            }
+        }
+        
+        level = nextLevel;
+    }
+    
+    return '0x' + level[0].toString('hex');
+}
+
 // Post block to contract
-async function postBlock(contract, blockHeight, blockHash, totalSupply) {
+async function postBlock(contract, blockHeight, blockHash, txMerkleRoot) {
     try {
         console.log(`\n📤 Posting block ${blockHeight} to contract...`);
         console.log(`   Hash: ${blockHash}`);
-        console.log(`   Supply: ${totalSupply} piconero`);
+        console.log(`   Merkle Root: ${txMerkleRoot}`);
         
         const tx = await contract.postMoneroBlock(
             blockHeight,
             blockHash,
-            totalSupply
+            txMerkleRoot
         );
         
         console.log(`   TX: ${tx.hash}`);
@@ -142,11 +199,10 @@ async function runOracle() {
         try {
             console.log(`\n[${new Date().toISOString()}] 🔍 Checking Monero blockchain...`);
             
-            // Get latest Monero block
+            // Get latest Monero block header
             const header = await getMoneroBlockHeader();
             const blockHeight = header.height;
             const blockHash = '0x' + header.hash;
-            const totalSupply = header.already_generated_coins; // in piconero
             
             console.log(`   Latest Monero block: ${blockHeight}`);
             console.log(`   Hash: ${blockHash}`);
@@ -157,8 +213,20 @@ async function runOracle() {
             
             // Post if new block available
             if (blockHeight > latestPosted) {
-                console.log(`   📊 New block detected! Posting...`);
-                await postBlock(contract, blockHeight, blockHash, totalSupply);
+                console.log(`   📊 New block detected! Fetching full block data...`);
+                
+                // Get full block with transactions
+                const blockData = await getMoneroBlock(blockHeight);
+                const txHashes = JSON.parse(blockData.json).tx_hashes || [];
+                
+                console.log(`   Transactions in block: ${txHashes.length}`);
+                
+                // Compute Merkle root
+                const txMerkleRoot = computeMerkleRoot(txHashes);
+                console.log(`   Computed Merkle root: ${txMerkleRoot}`);
+                
+                // Post to contract
+                await postBlock(contract, blockHeight, blockHash, txMerkleRoot);
                 lastPostedBlock = blockHeight;
             } else {
                 console.log(`   ✅ Already up to date`);
