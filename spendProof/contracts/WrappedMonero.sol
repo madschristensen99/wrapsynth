@@ -23,6 +23,11 @@ import "./libraries/Ed25519.sol";
  * - Contract verifies Ed25519 operations + DLEQ proofs
  * - Oracle provides Monero blockchain data per block
  * - Guardian can pause mints only (30-day unpause timelock)
+ * 
+ * NOTE: This contract has its own verification logic.
+ * For production, consider using MoneroBridge.sol for verification
+ * to avoid code duplication and use battle-tested logic.
+ * See contracts/MoneroBridge.sol for the standalone verifier.
  */
 
 interface IPlonkVerifier {
