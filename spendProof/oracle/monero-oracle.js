@@ -20,24 +20,36 @@
 require('dotenv').config();
 const hre = require('hardhat');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+
+// Try to load deployment info
+let deploymentInfo = null;
+const deploymentPath = path.join(__dirname, 'deployment.json');
+if (fs.existsSync(deploymentPath)) {
+    deploymentInfo = JSON.parse(fs.readFileSync(deploymentPath, 'utf8'));
+    console.log('✅ Loaded deployment info from deployment.json');
+}
 
 // Configuration
 const config = {
-    oraclePrivateKey: process.env.ORACLE_PRIVATE_KEY,
-    wrappedMoneroAddress: process.env.WRAPPED_MONERO_ADDRESS,
-    rpcUrl: process.env.RPC_URL || 'https://sepolia.base.org',
-    moneroRpcUrl: process.env.MONERO_RPC_URL || 'http://node.monerooutreach.org:18081',
+    oraclePrivateKey: process.env.ORACLE_PRIVATE_KEY || (deploymentInfo ? '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' : null), // Default hardhat key #0
+    bridgeAddress: process.env.BRIDGE_ADDRESS || (deploymentInfo ? deploymentInfo.bridge : null),
+    rpcUrl: process.env.RPC_URL || 'http://localhost:8545',
+    moneroRpcUrl: process.env.MONERO_RPC_URL || 'https://stagenet.xmr.ditatompel.com',
     intervalMs: parseInt(process.env.INTERVAL_MS || '120000'), // 2 minutes
 };
 
 // Validate configuration
 if (!config.oraclePrivateKey) {
-    console.error('❌ ORACLE_PRIVATE_KEY not set in .env');
+    console.error('❌ ORACLE_PRIVATE_KEY not set in .env and no deployment.json found');
+    console.error('   Run: npx hardhat run scripts/deploy_oracle_test.js --network localhost');
     process.exit(1);
 }
 
-if (!config.wrappedMoneroAddress) {
-    console.error('❌ WRAPPED_MONERO_ADDRESS not set in .env');
+if (!config.bridgeAddress) {
+    console.error('❌ BRIDGE_ADDRESS not set in .env and no deployment.json found');
+    console.error('   Run: npx hardhat run scripts/deploy_oracle_test.js --network localhost');
     process.exit(1);
 }
 
@@ -86,8 +98,80 @@ async function getMoneroBlock(height) {
     }
 }
 
+// Extract outputs from block
+async function extractOutputsFromBlock(blockHeight) {
+    try {
+        // Get full block
+        const blockData = await getMoneroBlock(blockHeight);
+        const blockJson = JSON.parse(blockData.json);
+        const txHashes = blockJson.tx_hashes || [];
+        
+        if (txHashes.length === 0) {
+            console.log(`   No transactions in block ${blockHeight}`);
+            return [];
+        }
+        
+        console.log(`   Fetching ${txHashes.length} transaction(s) from block...`);
+        
+        // Fetch all transactions
+        const response = await axios.post(config.moneroRpcUrl + '/get_transactions', {
+            txs_hashes: txHashes,
+            decode_as_json: true
+        });
+        
+        if (response.data.status !== 'OK' || !response.data.txs) {
+            console.error('   ⚠️  Failed to fetch transactions');
+            return [];
+        }
+        
+        const allOutputs = [];
+        
+        // Extract outputs from each transaction
+        for (const tx of response.data.txs) {
+            const txJson = JSON.parse(tx.as_json);
+            const txHash = tx.tx_hash;
+            
+            // Extract each output
+            if (txJson.vout && txJson.rct_signatures) {
+                for (let i = 0; i < txJson.vout.length; i++) {
+                    const output = txJson.vout[i];
+                    const ecdh = txJson.rct_signatures.ecdhInfo ? txJson.rct_signatures.ecdhInfo[i] : null;
+                    const commitment = txJson.rct_signatures.outPk ? txJson.rct_signatures.outPk[i] : null;
+                    
+                    // Handle both old format (target.key) and new format (target.tagged_key.key)
+                    let outputPubKey = null;
+                    if (output.target) {
+                        if (output.target.key) {
+                            outputPubKey = output.target.key;
+                        } else if (output.target.tagged_key && output.target.tagged_key.key) {
+                            outputPubKey = output.target.tagged_key.key;
+                        }
+                    }
+                    
+                    if (ecdh && commitment && outputPubKey) {
+                        allOutputs.push({
+                            txHash: '0x' + txHash,
+                            outputIndex: i,
+                            ecdhAmount: '0x' + ecdh.amount,
+                            outputPubKey: '0x' + outputPubKey,
+                            commitment: '0x' + commitment
+                        });
+                    }
+                }
+            }
+        }
+        
+        console.log(`   Extracted ${allOutputs.length} outputs from ${txHashes.length} transaction(s)`);
+        return allOutputs;
+        
+    } catch (error) {
+        console.error(`   ⚠️  Error extracting outputs: ${error.message}`);
+        return [];
+    }
+}
+
 // Compute Merkle root from transaction hashes
-function computeMerkleRoot(txHashes) {
+function computeTxMerkleRoot(txHashes) {
     if (txHashes.length === 0) {
         return '0x' + '0'.repeat(64);
     }
@@ -122,17 +206,74 @@ function computeMerkleRoot(txHashes) {
     return '0x' + level[0].toString('hex');
 }
 
+// Compute output Merkle root from output data
+function computeOutputMerkleRoot(outputs) {
+    if (outputs.length === 0) {
+        return '0x' + '0'.repeat(64);
+    }
+    
+    // Create leaves: keccak256(txHash || outputIndex || ecdhAmount || outputPubKey || commitment)
+    const leaves = outputs.map(output => {
+        // Pad ecdhAmount to 32 bytes (it's only 8 bytes from Monero)
+        const ecdhAmountPadded = output.ecdhAmount.padEnd(66, '0'); // 0x + 64 hex chars
+        
+        return hre.ethers.keccak256(
+            hre.ethers.AbiCoder.defaultAbiCoder().encode(
+                ['bytes32', 'uint256', 'bytes32', 'bytes32', 'bytes32'],
+                [
+                    output.txHash,
+                    output.outputIndex,
+                    ecdhAmountPadded,
+                    output.outputPubKey,
+                    output.commitment
+                ]
+            )
+        );
+    });
+    
+    if (leaves.length === 1) {
+        return leaves[0];
+    }
+    
+    // Build Merkle tree
+    let level = leaves.map(l => Buffer.from(l.slice(2), 'hex'));
+    
+    while (level.length > 1) {
+        const nextLevel = [];
+        
+        for (let i = 0; i < level.length; i += 2) {
+            if (i + 1 < level.length) {
+                // Hash pair
+                const combined = Buffer.concat([level[i], level[i + 1]]);
+                const hash = require('crypto').createHash('sha256').update(combined).digest();
+                nextLevel.push(hash);
+            } else {
+                // Odd number - duplicate last hash
+                const combined = Buffer.concat([level[i], level[i]]);
+                const hash = require('crypto').createHash('sha256').update(combined).digest();
+                nextLevel.push(hash);
+            }
+        }
+        
+        level = nextLevel;
+    }
+    
+    return '0x' + level[0].toString('hex');
+}
+
 // Post block to contract
-async function postBlock(contract, blockHeight, blockHash, txMerkleRoot) {
+async function postBlock(contract, blockHeight, blockHash, txMerkleRoot, outputMerkleRoot) {
     try {
         console.log(`\n📤 Posting block ${blockHeight} to contract...`);
         console.log(`   Hash: ${blockHash}`);
-        console.log(`   Merkle Root: ${txMerkleRoot}`);
+        console.log(`   TX Merkle Root: ${txMerkleRoot}`);
+        console.log(`   Output Merkle Root: ${outputMerkleRoot}`);
         
         const tx = await contract.postMoneroBlock(
             blockHeight,
             blockHash,
-            txMerkleRoot
+            txMerkleRoot,
+            outputMerkleRoot
         );
         
         console.log(`   TX: ${tx.hash}`);
@@ -159,7 +300,7 @@ async function runOracle() {
     console.log('Configuration:');
     console.log(`   Monero RPC: ${config.moneroRpcUrl}`);
     console.log(`   Ethereum RPC: ${config.rpcUrl}`);
-    console.log(`   WrappedMonero: ${config.wrappedMoneroAddress}`);
+    console.log(`   MoneroBridge: ${config.bridgeAddress}`);
     console.log(`   Interval: ${config.intervalMs / 1000}s (${config.intervalMs / 60000} min)`);
     
     // Connect to contract
@@ -177,8 +318,8 @@ async function runOracle() {
     }
     
     // Load contract
-    const WrappedMonero = await hre.ethers.getContractFactory('WrappedMonero');
-    const contract = WrappedMonero.attach(config.wrappedMoneroAddress).connect(wallet);
+    const MoneroBridge = await hre.ethers.getContractFactory('MoneroBridge');
+    const contract = MoneroBridge.attach(config.bridgeAddress).connect(wallet);
     
     // Verify oracle role
     const contractOracle = await contract.oracle();
@@ -211,23 +352,39 @@ async function runOracle() {
             const latestPosted = await contract.latestMoneroBlock();
             console.log(`   Last posted block: ${latestPosted.toString()}`);
             
-            // Post if new block available
+            // Post all missing blocks sequentially
             if (blockHeight > latestPosted) {
-                console.log(`   📊 New block detected! Fetching full block data...`);
+                const blocksToPost = blockHeight - Number(latestPosted);
+                console.log(`   📊 ${blocksToPost} new block(s) detected!`);
                 
-                // Get full block with transactions
-                const blockData = await getMoneroBlock(blockHeight);
-                const txHashes = JSON.parse(blockData.json).tx_hashes || [];
-                
-                console.log(`   Transactions in block: ${txHashes.length}`);
-                
-                // Compute Merkle root
-                const txMerkleRoot = computeMerkleRoot(txHashes);
-                console.log(`   Computed Merkle root: ${txMerkleRoot}`);
-                
-                // Post to contract
-                await postBlock(contract, blockHeight, blockHash, txMerkleRoot);
-                lastPostedBlock = blockHeight;
+                // Post each block sequentially
+                for (let height = Number(latestPosted) + 1; height <= blockHeight; height++) {
+                    console.log(`\n   📦 Processing block ${height}...`);
+                    
+                    // Get full block with transactions
+                    const blockData = await getMoneroBlock(height);
+                    const blockJson = JSON.parse(blockData.json);
+                    const txHashes = blockJson.tx_hashes || [];
+                    const blockHashForHeight = '0x' + blockData.block_header.hash;
+                    
+                    console.log(`      Transactions: ${txHashes.length}`);
+                    
+                    // Compute TX Merkle root
+                    const txMerkleRoot = computeTxMerkleRoot(txHashes);
+                    console.log(`      TX Merkle root: ${txMerkleRoot}`);
+                    
+                    // Extract outputs from block
+                    const outputs = await extractOutputsFromBlock(height);
+                    console.log(`      Outputs: ${outputs.length}`);
+                    
+                    // Compute output Merkle root
+                    const outputMerkleRoot = computeOutputMerkleRoot(outputs);
+                    console.log(`      Output Merkle root: ${outputMerkleRoot}`);
+                    
+                    // Post to contract
+                    await postBlock(contract, height, blockHashForHeight, txMerkleRoot, outputMerkleRoot);
+                    lastPostedBlock = height;
+                }
             } else {
                 console.log(`   ✅ Already up to date`);
             }
