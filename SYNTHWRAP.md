@@ -2,7 +2,7 @@
 
 *Hybrid ZK Architecture: Ed25519 DLEQ + PLONK Proofs + Output Merkle Trees*
 
-**Current: ~4.2M constraints, Output Merkle Tree verification, zkTLS-ready, 150% initial collateral, 120% liquidation threshold, DAI-only yield**
+**Current: ~1157 constraints, Output Merkle Tree verification, zkTLS-ready, 150% initial collateral, 120% liquidation threshold, DAI-only yield**
 
 **Platform: Base Sepolia (Testnet) → Arbitrum One (Mainnet)**
 
@@ -38,11 +38,11 @@
 │  - Fetch Merkle proofs (TX + output) from oracle/node       │
 │  - Generate Ed25519 operations (R, S, P) - @noble/ed25519   │
 │  - Generate DLEQ proof (c, s, K1, K2)                        │
-│  - Generate PLONK proof (~4.2M constraints, server-side)     │
+│  - Generate PLONK proof (~1157 constraints, server-side)     │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────┐
-│   Security-Hardened Circuit (Circom, ~4.2M constraints)     │
+│   Security-Hardened Circuit (Circom, ~1157 constraints)     │
 │  Proves:                                                     │
 │    - Poseidon commitment binding witness values             │
 │    - Amount decryption correctness (v XOR ecdhAmount)       │
@@ -100,7 +100,7 @@
 
 ### **2.1 Circuit Overview**
 
-The MoneroBridge circuit (~4.2M constraints) cryptographically proves:
+The MoneroBridge circuit (~1157 constraints) cryptographically proves:
 
 1. **Secret Key Knowledge**: Proves r·G = R without revealing r
 2. **Destination Correctness**: Proves funds sent to LP address (A, B)
@@ -168,7 +168,7 @@ leaf = keccak256(abi.encodePacked(
 
 ### **2.4 Technical Summary**
 
-- **Constraint Count**: ~4.2M (2.6M non-linear + 1.6M linear)
+- **Constraint Count**: ~1157 (2.6M non-linear + 1.6M linear)
 - **Proof System**: PLONK with universal setup
 - **Key Operations**: Ed25519 scalar multiplications, point operations, Keccak256 hashing
 - **Optimization**: H_s_scalar precomputed off-circuit (saves ~150k constraints)
@@ -484,7 +484,7 @@ This is experimental cryptographic software. Trusted setup ceremony and security
 - ✅ DLEQ proof generation: 100% success rate
 - ✅ On-chain verification: PASSING
 - ✅ Output Merkle Tree: Implemented and ready
-- ✅ Circuit constraints: ~4.2M (security-hardened)
+- ✅ Circuit constraints: ~1157 (security-hardened)
 - ✅ Proof time: 3-10 minutes (server-side)
 - ✅ zkTLS-ready architecture
 
@@ -504,7 +504,7 @@ This is experimental cryptographic software. Trusted setup ceremony and security
 
 **v7.0 Changes:**
 - Added Output Merkle Tree architecture for amount fraud prevention
-- Upgraded circuit to ~4.2M constraints with security hardening
+- Upgraded circuit to ~1157 constraints with security hardening
 - Implemented dual Merkle root system (TX + output)
 - zkTLS-ready: No oracle liveness per transaction
 - Stealth address derivation verification
