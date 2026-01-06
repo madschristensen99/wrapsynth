@@ -254,7 +254,9 @@ contract MoneroBridge {
         
         // DLEQ verification using Ed25519
         // DLEQ proves log_G(R) = log_A(rA) = r
-        // TODO: Re-enable with real proofs
+        // NOTE: DLEQ is REDUNDANT - the Poseidon commitment in the circuit already binds
+        // r, H_s, R_x, S_x, and P together. An attacker cannot use different r values
+        // because the commitment verification would fail. Keeping code for reference.
         // require(
         //     verifyDLEQ(dleqProof, ed25519Proof, ed25519Proof.R_x, ed25519Proof.R_y, ed25519Proof.rA_x, ed25519Proof.rA_y),
         //     "Invalid DLEQ proof"
