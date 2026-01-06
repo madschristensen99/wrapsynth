@@ -1,5 +1,5 @@
 {
-  "current": "TX6",
+  "current": "TX7",
   "transactions": {
     "TX1": {
       "name": "TX1 - 20 XMR",
@@ -57,6 +57,16 @@
       "block": 2028738,
       "secretKey": "8af6755370cb10527c1b06a49e6ce71b9568a4c6b99c854b2fb5bef7f98ef504",
       "amount": 120000000,
+      "destination": "77LbMMUieh3CTNvrUP68XDF1ESU1mSszx43eFzrWe3cY7ADTfx7q61uSzKPMydn9Ad7UM3ZBmSPo1JLRwna8pXq3635j7tB",
+      "output_index": 0,
+      "node": "https://stagenet.xmr.ditatompel.com"
+    },
+    "TX7": {
+      "name": "TX7 - 0.000146389 XMR (DLEQ TEST)",
+      "hash": "459053dcbdfa5e9529cec22071bffe7ec22d6599e9570f18f89d5c12d06b89bd",
+      "block": 2028777,
+      "secretKey": "140c55f21dae0a41ae9ab2c29385ebc50bf69b4f44071c3f3cdac509f9cd9409",
+      "amount": 146389000,
       "destination": "77LbMMUieh3CTNvrUP68XDF1ESU1mSszx43eFzrWe3cY7ADTfx7q61uSzKPMydn9Ad7UM3ZBmSPo1JLRwna8pXq3635j7tB",
       "output_index": 0,
       "node": "https://stagenet.xmr.ditatompel.com"
