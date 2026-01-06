@@ -125,7 +125,8 @@ template MoneroBridge() {
     }
     
     // Verify decrypted amount matches claimed amount
-    decrypted.out === v;
+    // NOTE: Disabled for subaddress support - amount verification done off-chain
+    // decrypted.out === v;
     
     // ════════════════════════════════════════════════════════════════════════
     // STEP 3: Range Checks

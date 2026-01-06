@@ -1,0 +1,7 @@
+{
+  "moneroAddress": "77LbMMUieh3CTNvrUP68XDF1ESU1mSszx43eFzrWe3cY7ADTfx7q61uSzKPMydn9Ad7UM3ZBmSPo1JLRwna8pXq3635j7tB",
+  "viewKey": "0x04b951042e094305211a6594a988bc183492657cfafba11f22198140faede16e",
+  "spendKey": "0x65a0123071779c0c2870a27e093f8edcd4412a1d223678d437ff4bffa48e5b99",
+  "lpAddress": "0x5f9040738446c55703bbd01837938c1305883b6b0699ddd093f63f7dd20363c8",
+  "network": "stagenet"
+}
