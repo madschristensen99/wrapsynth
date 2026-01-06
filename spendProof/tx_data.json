@@ -1,5 +1,5 @@
 {
-  "current": "TX3",
+  "current": "TX6",
   "transactions": {
     "TX1": {
       "name": "TX1 - 20 XMR",
@@ -40,6 +40,26 @@
       "destination": "87DZ8wkCoePVH7UH7zL3FhR2CjadnC83pBMqXZizg7T2dJod5rzQuAMbBg5PtcA9dHTtWAvrL7ZCTXEC2RDV3Mr4HJYP9gj",
       "output_index": 0,
       "node": "https://monero-rpc.cheems.de.box.skhron.com.ua:18089"
+    },
+    "TX5": {
+      "name": "TX5 - 0.548 XMR",
+      "hash": "afe119a830e7406f5fa8c968cd8a54354b8d5af182dd05b1e05497e5e94b92ea",
+      "block": 2028361,
+      "secretKey": "6be5d60964f00a15fb0beaf4c7e1458d158812e2e02867a8b848a3a4ae35fc0b",
+      "amount": 548020000,
+      "destination": "77LbMMUieh3CTNvrUP68XDF1ESU1mSszx43eFzrWe3cY7ADTfx7q61uSzKPMydn9Ad7UM3ZBmSPo1JLRwna8pXq3635j7tB",
+      "output_index": 0,
+      "node": "https://stagenet.xmr.ditatompel.com"
+    },
+    "TX6": {
+      "name": "TX6 - 0.00012 XMR (FRESH)",
+      "hash": "2ede81a6d29055b9e8cb4534340fd3b3b7249b2b815ac5b26f98754227bd6ed3",
+      "block": 2028738,
+      "secretKey": "8af6755370cb10527c1b06a49e6ce71b9568a4c6b99c854b2fb5bef7f98ef504",
+      "amount": 120000000,
+      "destination": "77LbMMUieh3CTNvrUP68XDF1ESU1mSszx43eFzrWe3cY7ADTfx7q61uSzKPMydn9Ad7UM3ZBmSPo1JLRwna8pXq3635j7tB",
+      "output_index": 0,
+      "node": "https://stagenet.xmr.ditatompel.com"
     }
   }
 }
