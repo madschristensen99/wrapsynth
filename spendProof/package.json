@@ -27,6 +27,7 @@
     "@electron-labs/ed25519-circom": "github:Electron-Labs/ed25519-circom",
     "@noble/ed25519": "^3.0.0",
     "@noble/hashes": "^2.0.1",
+    "@pythnetwork/pyth-sdk-solidity": "^4.2.0",
     "axios": "^1.13.2",
     "base58-monero": "^0.0.5",
     "circomlibjs": "^0.1.7",
