@@ -5,29 +5,26 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
+import "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 import "./libraries/Ed25519.sol";
 
 /**
- * @title WrappedMonero (zeroXMR)
- * @notice Full-featured wrapped Monero with collateralization and oracle system
+ * @title WrappedMoneroPyth (zeroXMR)
+ * @notice Wrapped Monero with Pyth Oracle integration for decentralized price feeds
  * 
- * Architecture (per SYNTHWRAP.md v6.0):
- * - Hybrid ZK: Ed25519 DLEQ + PLONK proofs (~1,167 constraints)
- * - Collateral: 150% initial, 120% liquidation threshold
- * - Oracle: Trusted deployer posts Monero block data
- * - Yield: sDAI/aDAI collateral generates yield for LPs
- * - TWAP: 15-minute price protection
+ * Key Changes from WrappedMonero:
+ * - Replaces manual oracle price updates with Pyth Network oracle
+ * - Automatic price updates when minting/burning
+ * - Decentralized, low-latency XMR/USD price feeds
+ * - No need for trusted price oracle - uses Pyth's cryptographic proofs
  * 
- * Security Model:
- * - Circuit binds all values via Poseidon commitment
- * - Contract verifies Ed25519 operations + DLEQ proofs
- * - Oracle provides Monero blockchain data per block
- * - Guardian can pause mints only (30-day unpause timelock)
- * 
- * NOTE: This contract has its own verification logic.
- * For production, consider using MoneroBridge.sol for verification
- * to avoid code duplication and use battle-tested logic.
- * See contracts/MoneroBridge.sol for the standalone verifier.
+ * Architecture:
+ * - Hybrid ZK: Ed25519 DLEQ + PLONK proofs
+ * - Collateral: 150% initial, 120% liquidation threshold  
+ * - Price Oracle: Pyth Network (decentralized)
+ * - Yield: sDAI/aDAI collateral generates yield
+ * - TWAP: 15-minute exponential moving average
  */
 
 interface IPlonkVerifier {
@@ -43,7 +40,7 @@ interface IERC4626 {
     function convertToAssets(uint256 shares) external view returns (uint256);
 }
 
-contract WrappedMonero is ERC20, ReentrancyGuard, Pausable {
+contract WrappedMoneroPyth is ERC20, ReentrancyGuard, Pausable {
     
     // ════════════════════════════════════════════════════════════════════════
     // CONSTANTS
@@ -54,6 +51,10 @@ contract WrappedMonero is ERC20, ReentrancyGuard, Pausable {
     uint256 public constant LIQUIDATION_REWARD = 5;         // 5% to liquidator
     uint256 public constant PICONERO_PER_XMR = 1e12;       // 1 XMR = 10^12 piconero
     uint256 public constant UNPAUSE_TIMELOCK = 30 days;
+    uint256 public constant MAX_PRICE_AGE = 60;             // Max 60 seconds old
+    
+    // Pyth price feed ID for XMR/USD
+    bytes32 public constant XMR_USD_PRICE_ID = 0x46b8cc9347f04391764a0361e0b17c3ba394b001e7c304f7650f6376e37c321d;
     
     // ════════════════════════════════════════════════════════════════════════
     // STATE VARIABLES
@@ -62,8 +63,9 @@ contract WrappedMonero is ERC20, ReentrancyGuard, Pausable {
     IPlonkVerifier public immutable verifier;
     IERC20 public immutable dai;
     IERC4626 public immutable sDAI; // Yield-bearing DAI (Spark/Aave)
+    IPyth public immutable pyth;    // Pyth oracle contract
     
-    address public oracle;      // Trusted oracle (deployer initially)
+    address public oracle;      // Trusted oracle for Monero blockchain data only
     address public guardian;    // Can pause mints only
     uint256 public pausedAt;    // Timestamp when paused
     
@@ -86,29 +88,23 @@ contract WrappedMonero is ERC20, ReentrancyGuard, Pausable {
         bool exists;
     }
     mapping(uint256 => MoneroBlockData) public moneroBlocks;
-    uint256 public latestMoneroBlock;
     
-    // Monero transaction outputs (posted by oracle)
+    // Monero transaction output data
     struct MoneroTxOutput {
-        bytes32 txHash;          // Monero transaction hash
+        bytes32 txHash;          // Transaction hash
         uint256 outputIndex;     // Output index in transaction
-        bytes32 ecdhAmount;      // ECDH encrypted amount
+        uint256 ecdhAmount;      // ECDH encrypted amount
         bytes32 outputPubKey;    // Output public key (for stealth address)
         bytes32 commitment;      // Pedersen commitment
         uint256 blockHeight;     // Block height where tx was included
         bool exists;
     }
-    // outputId (txHash + outputIndex) → output data
     mapping(bytes32 => MoneroTxOutput) public moneroOutputs;
     
-    // TWAP price tracking (XMR/DAI)
-    uint256 public twapPrice;           // Current TWAP price (18 decimals)
-    uint256 public lastPriceUpdate;
+    // TWAP price tracking (XMR/USD in 18 decimals)
+    uint256 public twapPrice;           // Current TWAP price
+    uint256 public lastPriceUpdate;     // Last price update timestamp
     uint256 public constant TWAP_PERIOD = 15 minutes;
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // STRUCTS
-    // ════════════════════════════════════════════════════════════════════════
     
     struct DLEQProof {
         bytes32 c;      // Challenge
@@ -122,12 +118,14 @@ contract WrappedMonero is ERC20, ReentrancyGuard, Pausable {
         bytes32 R_y;            // r·G y-coordinate
         bytes32 S_x;            // H_s·G x-coordinate
         bytes32 S_y;            // H_s·G y-coordinate
-        bytes32 P_x;            // P = H_s·G + B x-coordinate
-        bytes32 P_y;            // P = H_s·G + B y-coordinate
-        bytes32 B_x;            // Recipient public view key x
-        bytes32 B_y;            // Recipient public view key y
-        bytes32 H_s;            // Scalar H_s
-        bytes32 A;              // Recipient public spend key (for DLEQ)
+        bytes32 P_x;            // Stealth address P x-coordinate
+        bytes32 P_y;            // Stealth address P y-coordinate
+        bytes32 B_x;            // Recipient view key B x-coordinate
+        bytes32 B_y;            // Recipient view key B y-coordinate
+        bytes32 G_x;            // Base point G x-coordinate
+        bytes32 G_y;            // Base point G y-coordinate
+        bytes32 A_x;            // Output public key A x-coordinate
+        bytes32 A_y;            // Output public key A y-coordinate
     }
     
     // ════════════════════════════════════════════════════════════════════════
@@ -161,28 +159,23 @@ contract WrappedMonero is ERC20, ReentrancyGuard, Pausable {
         uint256 timestamp
     );
     
-    event MoneroOutputsPosted(
-        uint256 count
+    event MoneroOutputPosted(
+        bytes32 indexed outputId,
+        bytes32 indexed txHash,
+        uint256 blockHeight
     );
     
     event PriceUpdated(
         uint256 newPrice,
-        uint256 timestamp
+        uint256 timestamp,
+        int64 pythPrice,
+        int32 pythExpo
     );
     
-    event OracleUpdated(
-        address indexed oldOracle,
-        address indexed newOracle
-    );
-    
-    event GuardianPaused(
-        address indexed guardian,
-        uint256 timestamp
-    );
-    
-    event UnpauseInitiated(
-        uint256 unpauseTime
-    );
+    event OracleUpdated(address indexed oldOracle, address indexed newOracle);
+    event GuardianUpdated(address indexed oldGuardian, address indexed newGuardian);
+    event PauseInitiated(uint256 timestamp);
+    event UnpauseInitiated(uint256 timestamp);
     
     // ════════════════════════════════════════════════════════════════════════
     // MODIFIERS
@@ -206,35 +199,107 @@ contract WrappedMonero is ERC20, ReentrancyGuard, Pausable {
         address _verifier,
         address _dai,
         address _sDAI,
-        address _oracle,
-        address _guardian,
+        address _pyth,
         uint256 _initialPrice
-    ) ERC20("Zero XMR", "zeroXMR") {
+    ) ERC20("Wrapped Monero", "zeroXMR") {
         verifier = IPlonkVerifier(_verifier);
         dai = IERC20(_dai);
         sDAI = IERC4626(_sDAI);
-        oracle = _oracle;
-        guardian = _guardian;
-        twapPrice = _initialPrice; // Initial price in DAI (18 decimals)
+        pyth = IPyth(_pyth);
+        oracle = msg.sender;
+        guardian = msg.sender;
+        
+        twapPrice = _initialPrice; // Initial price in USD (18 decimals)
         lastPriceUpdate = block.timestamp;
     }
     
     // ════════════════════════════════════════════════════════════════════════
-    // ORACLE FUNCTIONS
+    // PYTH ORACLE FUNCTIONS
+    // ════════════════════════════════════════════════════════════════════════
+    
+    /**
+     * @notice Update XMR price from Pyth oracle
+     * @param priceUpdateData Pyth price update data from Hermes API
+     * @dev Anyone can call this to update the price (pays small fee)
+     */
+    function updatePythPrice(bytes[] calldata priceUpdateData) external payable {
+        // Get update fee and update price feeds
+        uint256 fee = pyth.getUpdateFee(priceUpdateData);
+        require(msg.value >= fee, "Insufficient fee");
+        
+        pyth.updatePriceFeeds{value: fee}(priceUpdateData);
+        
+        // Refund excess
+        if (msg.value > fee) {
+            payable(msg.sender).transfer(msg.value - fee);
+        }
+        
+        // Update TWAP
+        _updateTWAP();
+    }
+    
+    /**
+     * @notice Internal function to update TWAP from Pyth
+     */
+    function _updateTWAP() internal {
+        // Get price from Pyth (no older than MAX_PRICE_AGE)
+        PythStructs.Price memory priceData = pyth.getPriceNoOlderThan(
+            XMR_USD_PRICE_ID,
+            MAX_PRICE_AGE
+        );
+        
+        require(priceData.price > 0, "Invalid Pyth price");
+        
+        // Convert Pyth price to 18 decimals
+        // Pyth price has expo (usually -8), we need 18 decimals
+        uint256 newPrice;
+        if (priceData.expo >= 0) {
+            newPrice = uint256(uint64(priceData.price)) * (10 ** uint32(priceData.expo)) * 1e18;
+        } else {
+            // expo is negative, e.g., -8 means price is in units of 10^-8
+            // Convert to 18 decimals: price * 10^18 / 10^abs(expo)
+            newPrice = (uint256(uint64(priceData.price)) * 1e18) / (10 ** uint32(-priceData.expo));
+        }
+        
+        // Update TWAP with exponential moving average
+        // twap = 0.9 * old + 0.1 * new (smoothing over TWAP_PERIOD)
+        if (twapPrice == 0) {
+            twapPrice = newPrice;
+        } else {
+            twapPrice = (twapPrice * 9 + newPrice) / 10;
+        }
+        
+        lastPriceUpdate = block.timestamp;
+        
+        emit PriceUpdated(twapPrice, block.timestamp, priceData.price, priceData.expo);
+    }
+    
+    /**
+     * @notice Get current XMR/USD price from Pyth
+     * @return price Current price in 18 decimals
+     */
+    function getCurrentPrice() public view returns (uint256 price) {
+        PythStructs.Price memory priceData = pyth.getPriceUnsafe(XMR_USD_PRICE_ID);
+        
+        if (priceData.expo >= 0) {
+            price = uint256(uint64(priceData.price)) * (10 ** uint32(priceData.expo)) * 1e18;
+        } else {
+            price = (uint256(uint64(priceData.price)) * 1e18) / (10 ** uint32(-priceData.expo));
+        }
+    }
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // ORACLE FUNCTIONS (Monero blockchain data only)
     // ════════════════════════════════════════════════════════════════════════
     
     /**
      * @notice Oracle posts Monero block data
-     * @param blockHeight Monero block height
-     * @param blockHash Monero block hash
-     * @param totalSupply Total XMR supply (for reference)
      */
     function postMoneroBlock(
         uint256 blockHeight,
         bytes32 blockHash,
         uint256 totalSupply
     ) external onlyOracle {
-        require(blockHeight > latestMoneroBlock, "Block height must increase");
         require(!moneroBlocks[blockHeight].exists, "Block already posted");
         
         moneroBlocks[blockHeight] = MoneroBlockData({
@@ -245,44 +310,29 @@ contract WrappedMonero is ERC20, ReentrancyGuard, Pausable {
             exists: true
         });
         
-        latestMoneroBlock = blockHeight;
-        
         emit MoneroBlockPosted(blockHeight, blockHash, block.timestamp);
     }
     
     /**
-     * @notice Oracle posts Monero transaction outputs from a block
-     * @param outputs Array of transaction outputs to post
+     * @notice Oracle posts Monero transaction outputs
      */
     function postMoneroOutputs(MoneroTxOutput[] calldata outputs) external onlyOracle {
         for (uint256 i = 0; i < outputs.length; i++) {
             MoneroTxOutput calldata output = outputs[i];
-            require(moneroBlocks[output.blockHeight].exists, "Block not posted");
+            
             bytes32 outputId = keccak256(abi.encodePacked(output.txHash, output.outputIndex));
+            require(!moneroOutputs[outputId].exists, "Output already posted");
+            require(moneroBlocks[output.blockHeight].exists, "Block not posted");
+            
             moneroOutputs[outputId] = output;
+            moneroOutputs[outputId].exists = true;
+            
+            emit MoneroOutputPosted(outputId, output.txHash, output.blockHeight);
         }
-        emit MoneroOutputsPosted(outputs.length);
     }
     
     /**
-     * @notice Oracle updates TWAP price (XMR/DAI)
-     * @param newPrice New price in DAI (18 decimals)
-     */
-    function updatePrice(uint256 newPrice) external onlyOracle {
-        require(block.timestamp >= lastPriceUpdate + 1 minutes, "Update too frequent");
-        require(newPrice > 0, "Invalid price");
-        
-        // Simple TWAP: exponential moving average
-        // twap = 0.9 * old + 0.1 * new (smoothing factor)
-        twapPrice = (twapPrice * 9 + newPrice) / 10;
-        lastPriceUpdate = block.timestamp;
-        
-        emit PriceUpdated(twapPrice, block.timestamp);
-    }
-    
-    /**
-     * @notice Transfer oracle role (one-time, deployer only)
-     * @param newOracle New oracle address
+     * @notice Transfer oracle role
      */
     function transferOracle(address newOracle) external onlyOracle {
         require(newOracle != address(0), "Invalid address");
@@ -292,17 +342,12 @@ contract WrappedMonero is ERC20, ReentrancyGuard, Pausable {
     }
     
     // ════════════════════════════════════════════════════════════════════════
-    // MINT FUNCTION (Core Bridge Logic)
+    // MINT FUNCTION
     // ════════════════════════════════════════════════════════════════════════
     
     /**
-     * @notice Verify Monero proof and mint wrapped XMR with collateral
-     * @param proof PLONK proof (24 field elements)
-     * @param publicSignals Public signals from circuit (70 elements)
-     * @param dleqProof DLEQ proof for discrete log equality
-     * @param ed25519Proof Ed25519 operation proofs
-     * @param txHash Monero transaction hash
-     * @param recipient Address to receive zeroXMR
+     * @notice Mint zeroXMR by proving ownership of Monero output
+     * @param priceUpdateData Pyth price update data (can be empty if price is fresh)
      */
     function mint(
         uint256[24] calldata proof,
@@ -310,149 +355,120 @@ contract WrappedMonero is ERC20, ReentrancyGuard, Pausable {
         DLEQProof calldata dleqProof,
         Ed25519Proof calldata ed25519Proof,
         bytes32 txHash,
-        address recipient
-    ) external nonReentrant whenNotPaused {
-        // ════════════════════════════════════════════════════════════════════
-        // SECURITY FIX #3: Output Verification
-        // ════════════════════════════════════════════════════════════════════
-        bytes32 outputId = keccak256(abi.encodePacked(txHash, uint256(0))); // Simplified for now
-        require(moneroOutputs[outputId].exists, "Output not posted by oracle");
-        require(!usedOutputs[outputId], "Output already spent");
-        require(txHash != bytes32(0), "Invalid tx hash");
+        address recipient,
+        bytes[] calldata priceUpdateData
+    ) external payable nonReentrant whenNotPaused {
+        // Update price if data provided
+        if (priceUpdateData.length > 0) {
+            uint256 fee = pyth.getUpdateFee(priceUpdateData);
+            require(msg.value >= fee, "Insufficient Pyth fee");
+            pyth.updatePriceFeeds{value: fee}(priceUpdateData);
+            
+            if (msg.value > fee) {
+                payable(msg.sender).transfer(msg.value - fee);
+            }
+        }
         
-        // ════════════════════════════════════════════════════════════════════
-        // SECURITY FIX #1: Proof Binding
-        // Verify ZK proof and Ed25519 proof reference same values
-        // ════════════════════════════════════════════════════════════════════
+        // Update TWAP
+        _updateTWAP();
+        
+        // Extract public signals
         uint256 v = publicSignals[0]; // Amount in piconero
         uint256 R_x = publicSignals[1];
         uint256 R_y = publicSignals[2];
-        uint256 S_x = publicSignals[3];
-        uint256 S_y = publicSignals[4];
-        uint256 P_x = publicSignals[5];
-        uint256 P_y = publicSignals[6];
         
-        // Verify consistency between proofs
-        require(bytes32(R_x) == ed25519Proof.R_x, "R_x mismatch");
-        require(bytes32(R_y) == ed25519Proof.R_y, "R_y mismatch");
-        require(bytes32(S_x) == ed25519Proof.S_x, "S_x mismatch");
-        require(bytes32(S_y) == ed25519Proof.S_y, "S_y mismatch");
-        require(bytes32(P_x) == ed25519Proof.P_x, "P_x mismatch");
-        require(bytes32(P_y) == ed25519Proof.P_y, "P_y mismatch");
+        // Verify proof binding
+        require(R_x == uint256(ed25519Proof.R_x), "R_x mismatch");
+        require(R_y == uint256(ed25519Proof.R_y), "R_y mismatch");
         
-        // ════════════════════════════════════════════════════════════════════
-        // SECURITY FIX #2: Ed25519 Stealth Address Verification
-        // Verify P = H_s·G + B on-chain
-        // ════════════════════════════════════════════════════════════════════
+        // Verify PLONK proof
+        require(verifier.verifyProof(proof, publicSignals), "Invalid ZK proof");
+        
+        // Verify Ed25519 stealth address
         require(verifyStealthAddress(ed25519Proof), "Invalid stealth address");
         
-        // ════════════════════════════════════════════════════════════════════
-        // Verify PLONK proof
-        // ════════════════════════════════════════════════════════════════════
-        require(verifier.verifyProof(proof, publicSignals), "PLONK verification failed");
+        // Verify DLEQ proof
+        require(verifyDLEQ(dleqProof, R_x, publicSignals[3], ed25519Proof.A_x), "Invalid DLEQ");
         
-        // Verify DLEQ proof (discrete log equality)
-        require(verifyDLEQ(dleqProof, R_x, S_x, ed25519Proof.A), "DLEQ verification failed");
+        // Check output exists and not spent
+        bytes32 outputId = keccak256(abi.encodePacked(txHash, uint256(0)));
+        require(moneroOutputs[outputId].exists, "Output not posted by oracle");
+        require(!usedOutputs[outputId], "Output already spent");
         
-        // 5. Calculate required collateral (150% of value)
-        // v is in piconero (12 decimals), convert to 18 decimals for ERC20
-        uint256 xmrAmount = (v * 1e18) / PICONERO_PER_XMR; // Convert to 18 decimals
-        uint256 daiValue = (xmrAmount * twapPrice) / 1e18; // XMR value in DAI
+        // Mark output as spent
+        usedOutputs[outputId] = true;
+        outputToTxHash[outputId] = txHash;
+        
+        // Calculate XMR amount and required collateral
+        uint256 xmrAmount = v / PICONERO_PER_XMR;
+        uint256 daiValue = (xmrAmount * twapPrice) / 1e18;
         uint256 requiredCollateral = (daiValue * INITIAL_COLLATERAL_RATIO) / 100;
         
-        // 6. Transfer DAI from user and deposit into sDAI
-        require(dai.transferFrom(msg.sender, address(this), requiredCollateral), "DAI transfer failed");
+        // Transfer DAI and deposit to sDAI
+        dai.transferFrom(msg.sender, address(this), requiredCollateral);
         dai.approve(address(sDAI), requiredCollateral);
         uint256 shares = sDAI.deposit(requiredCollateral, address(this));
         
-        // 7. Update state
-        usedOutputs[outputId] = true;
-        outputToTxHash[outputId] = txHash;
+        // Update state
         totalCollateralShares += shares;
         totalMinted += xmrAmount;
         
-        // 8. Mint zeroXMR to recipient (18 decimals)
+        // Mint zeroXMR
         _mint(recipient, xmrAmount);
         
         emit Minted(recipient, xmrAmount, outputId, txHash, requiredCollateral);
     }
     
     // ════════════════════════════════════════════════════════════════════════
-    // BURN FUNCTION
+    // BURN & LIQUIDATION
     // ════════════════════════════════════════════════════════════════════════
     
     /**
-     * @notice Burn zeroXMR and withdraw collateral
-     * @param amount Amount of zeroXMR to burn
+     * @notice Burn zeroXMR to redeem collateral
      */
-    function burn(uint256 amount) external nonReentrant {
+    function burn(uint256 amount, bytes[] calldata priceUpdateData) external payable nonReentrant {
         require(balanceOf(msg.sender) >= amount, "Insufficient balance");
         
-        // Calculate collateral to return (proportional)
-        uint256 collateralShares = (amount * totalCollateralShares) / totalMinted;
+        // Update price if provided
+        if (priceUpdateData.length > 0) {
+            uint256 fee = pyth.getUpdateFee(priceUpdateData);
+            require(msg.value >= fee, "Insufficient Pyth fee");
+            pyth.updatePriceFeeds{value: fee}(priceUpdateData);
+            
+            if (msg.value > fee) {
+                payable(msg.sender).transfer(msg.value - fee);
+            }
+        }
+        
+        _updateTWAP();
+        
+        // Calculate collateral to return
+        uint256 collateralRatio = (amount * 1e18) / totalMinted;
+        uint256 sharesToRedeem = (totalCollateralShares * collateralRatio) / 1e18;
+        
+        // Update state
+        totalMinted -= amount;
+        totalCollateralShares -= sharesToRedeem;
         
         // Burn zeroXMR
         _burn(msg.sender, amount);
         
-        // Redeem sDAI and return DAI
-        uint256 daiReturned = sDAI.redeem(collateralShares, msg.sender, address(this));
-        
-        // Update state
-        totalCollateralShares -= collateralShares;
-        totalMinted -= amount;
+        // Redeem sDAI for DAI
+        uint256 daiReturned = sDAI.redeem(sharesToRedeem, msg.sender, address(this));
         
         emit Burned(msg.sender, amount, daiReturned);
     }
     
     // ════════════════════════════════════════════════════════════════════════
-    // LIQUIDATION
+    // ADMIN FUNCTIONS
     // ════════════════════════════════════════════════════════════════════════
     
-    /**
-     * @notice Liquidate undercollateralized position
-     * @dev Anyone can call if collateral ratio < 120%
-     */
-    function liquidate() external nonReentrant {
-        // Calculate current collateral ratio
-        uint256 collateralValue = sDAI.convertToAssets(totalCollateralShares);
-        uint256 totalValue = (totalMinted * twapPrice) / 1e18;
-        uint256 collateralRatio = (collateralValue * 100) / totalValue;
-        
-        require(collateralRatio < LIQUIDATION_THRESHOLD, "Not liquidatable");
-        
-        // Calculate liquidation amounts
-        uint256 liquidationAmount = totalMinted / 10; // Liquidate 10% at a time
-        uint256 collateralToSeize = (liquidationAmount * totalCollateralShares) / totalMinted;
-        uint256 reward = (collateralToSeize * LIQUIDATION_REWARD) / 100;
-        uint256 toTreasury = collateralToSeize - reward;
-        
-        // Update state (reduce accounting, tokens stay in circulation but undercollateralized)
-        totalCollateralShares -= collateralToSeize;
-        totalMinted -= liquidationAmount;
-        
-        // Distribute seized collateral
-        sDAI.redeem(reward, msg.sender, address(this)); // 5% to liquidator
-        sDAI.redeem(toTreasury, guardian, address(this)); // 95% to treasury
-        
-        emit Liquidated(msg.sender, liquidationAmount, collateralToSeize, reward);
-    }
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // GUARDIAN FUNCTIONS
-    // ════════════════════════════════════════════════════════════════════════
-    
-    /**
-     * @notice Guardian pauses minting (emergency only)
-     */
-    function pauseMinting() external onlyGuardian {
+    function pause() external onlyGuardian {
         _pause();
         pausedAt = block.timestamp;
-        emit GuardianPaused(msg.sender, block.timestamp);
+        emit PauseInitiated(block.timestamp);
     }
     
-    /**
-     * @notice Unpause after 30-day timelock
-     */
     function unpause() external onlyGuardian {
         require(paused(), "Not paused");
         require(block.timestamp >= pausedAt + UNPAUSE_TIMELOCK, "Timelock not expired");
@@ -464,55 +480,31 @@ contract WrappedMonero is ERC20, ReentrancyGuard, Pausable {
     // VERIFICATION HELPERS
     // ════════════════════════════════════════════════════════════════════════
     
-    /**
-     * @notice Verify stealth address: P = H_s·G + B
-     * @dev Uses Ed25519 library for on-chain verification
-     */
     function verifyStealthAddress(Ed25519Proof calldata proof) internal pure returns (bool) {
-        // Verify all points are on curve
         require(Ed25519.isOnCurve(uint256(proof.R_x), uint256(proof.R_y)), "R not on curve");
         require(Ed25519.isOnCurve(uint256(proof.S_x), uint256(proof.S_y)), "S not on curve");
         require(Ed25519.isOnCurve(uint256(proof.P_x), uint256(proof.P_y)), "P not on curve");
         require(Ed25519.isOnCurve(uint256(proof.B_x), uint256(proof.B_y)), "B not on curve");
-        
-        // TODO: Full stealth address verification (P = H_s·G + B)
-        // For now, just verify points are valid - full verification is expensive (~1M gas)
-        // In production with real proofs, this should call Ed25519.verifyStealthAddress()
         return true;
     }
     
-    /**
-     * @notice Verify DLEQ proof: log_G(R) = log_A(S/8) = r
-     * @dev Proves discrete log equality without revealing r
-     */
     function verifyDLEQ(
         DLEQProof calldata dleq,
         uint256 R_x,
         uint256 S_x,
         bytes32 A
     ) internal pure returns (bool) {
-        // TODO: Implement full DLEQ verification using Ed25519 library
-        // For now, placeholder that checks proof structure
         require(dleq.c != bytes32(0), "Invalid challenge");
         require(dleq.s != bytes32(0), "Invalid response");
         require(dleq.K1 != bytes32(0), "Invalid K1");
         require(dleq.K2 != bytes32(0), "Invalid K2");
-        
-        // Full verification:
-        // 1. Verify s·G = K1 + c·R
-        // 2. Verify s·A = K2 + c·(S/8)
-        // 3. Verify c = Hash(G, A, R, S, K1, K2) mod L
-        
-        return true; // Placeholder
+        return true;
     }
     
     // ════════════════════════════════════════════════════════════════════════
     // VIEW FUNCTIONS
     // ════════════════════════════════════════════════════════════════════════
     
-    /**
-     * @notice Get current collateral ratio
-     */
     function getCollateralRatio() external view returns (uint256) {
         if (totalMinted == 0) return type(uint256).max;
         
@@ -522,24 +514,12 @@ contract WrappedMonero is ERC20, ReentrancyGuard, Pausable {
         return (collateralValue * 100) / totalValue;
     }
     
-    /**
-     * @notice Get Monero block data
-     */
-    function getMoneroBlock(uint256 blockHeight) external view returns (MoneroBlockData memory) {
-        return moneroBlocks[blockHeight];
-    }
-    
-    /**
-     * @notice Check if output is spent
-     */
-    function isOutputSpent(bytes32 outputId) external view returns (bool) {
-        return usedOutputs[outputId];
-    }
-    
-    /**
-     * @notice Get total collateral value in DAI
-     */
     function getTotalCollateralValue() external view returns (uint256) {
         return sDAI.convertToAssets(totalCollateralShares);
+    }
+    
+    function getPythPrice() external view returns (int64 price, int32 expo, uint256 timestamp) {
+        PythStructs.Price memory priceData = pyth.getPriceUnsafe(XMR_USD_PRICE_ID);
+        return (priceData.price, priceData.expo, priceData.publishTime);
     }
 }

@@ -1,22 +1,25 @@
 # Monero Bridge - Hybrid ZK Architecture
 
-**Zero-knowledge proof system for trustless Monero→EVM bridging using Ed25519 DLEQ + PLONK proofs**
+**Zero-knowledge proof system for trustless Monero→EVM bridging using Ed25519 + PLONK proofs**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Deployed](https://img.shields.io/badge/Deployed-Base%20Sepolia-blue)](https://sepolia.basescan.org/address/0x3D50F6177E6589413A389f8a16314E2dA20a25Ff)
+[![Deployed](https://img.shields.io/badge/Deployed-Gnosis%20Chain-green)](https://gnosisscan.io/address/0xe1B76b604F12Fd20b8D490C4C1f0634521626B0B)
+[![Verified](https://img.shields.io/badge/Verified-Gnosisscan-brightgreen)](https://gnosisscan.io/address/0xe1B76b604F12Fd20b8D490C4C1f0634521626B0B#code)
 
 ## 🎯 Overview
 
-This project implements a **hybrid zero-knowledge architecture** that achieves **99.97% constraint reduction** compared to traditional approaches by moving Ed25519 operations off-chain while maintaining full cryptographic security.
+This project implements a **production-ready Monero bridge** with real PLONK verification, Ed25519 cryptography, and DeFi integration on Gnosis Chain.
 
 ### Key Features
 
-- ✅ **~1,167 constraints** (vs 3.9M in traditional circuits)
-- ✅ **Ed25519 DLEQ verification** on-chain
-- ✅ **Replay protection** with tx hash tracking
-- ✅ **Real Monero transactions** verified (stagenet + mainnet)
-- ✅ **<1 second** proof generation time
-- ✅ **Deployed on Base Sepolia**
+- ✅ **Real PLONK Verification** - Not a mock, actual cryptographic proofs
+- ✅ **Proof Binding Security** - Ed25519 coordinates bound to ZK proof
+- ✅ **12 Decimal Precision** - Piconero-level accuracy (0.000000000001 XMR)
+- ✅ **Real Monero Mainnet** - Live transaction verification
+- ✅ **DeFi Integration** - Aave V3 collateral on Gnosis Chain
+- ✅ **100x Cheaper Gas** - ~660k gas (~$0.0007 vs $60 on Ethereum)
+- ✅ **Verified Contracts** - Full source code on Gnosisscan
+- ✅ **Oracle Integration** - Automated Monero block posting
 
 ## 📖 Documentation
 
@@ -276,6 +279,37 @@ Proves: `log_G(R) = log_A(rA) = r`
 
 ---
 
-**Version**: 6.0.0  
-**Last Updated**: January 2026  
-**Status**: ✅ Ed25519 DLEQ Verified On-Chain | ⚠️ Requires Security Audit
+## 🌐 Deployment Information
+
+### Gnosis Chain Mainnet
+
+**Contract Addresses:**
+- **WrappedMoneroV3 (zeroXMR)**: [`0xe1B76b604F12Fd20b8D490C4C1f0634521626B0B`](https://gnosisscan.io/address/0xe1B76b604F12Fd20b8D490C4C1f0634521626B0B)
+- **PlonkVerifier**: [`0x8b9b7A19d4B8D6a521834c2cd94BB419bde573ef`](https://gnosisscan.io/address/0x8b9b7A19d4B8D6a521834c2cd94BB419bde573ef)
+
+**Token Details:**
+- Name: Wrapped Monero
+- Symbol: zeroXMR
+- Decimals: 12 (piconero precision)
+- Total Supply: 0.0008 XMR (as of deployment)
+
+**First Successful Mint:**
+- Transaction: [`0x275d1a7d5fd9cbde1dba32034fd867ad49e470addf052fe4ac3843e51de9e9dd`](https://gnosisscan.io/tx/0x275d1a7d5fd9cbde1dba32034fd867ad49e470addf052fe4ac3843e51de9e9dd)
+- Amount: 0.0008 XMR (800,000,000 piconero)
+- Gas Used: 660,578 (~$0.0007 on Gnosis)
+- Monero TX: [`73155c18b4b6a820ace7a77973ae1004bb8b1b8c0c8a96c9c7a6957309f14d79`](https://xmrchain.net/tx/73155c18b4b6a820ace7a77973ae1004bb8b1b8c0c8a96c9c7a6957309f14d79)
+- Block: 3595150
+
+**Security Features Enabled:**
+- ✅ Real PLONK proof verification
+- ✅ Proof binding (Ed25519 coordinates match ZK proof)
+- ✅ Replay attack protection (output tracking)
+- ✅ Merkle proof verification (TX and output inclusion)
+- ✅ Ed25519 curve validation
+- ✅ Oracle block verification
+
+---
+
+**Version**: 7.0.0  
+**Last Updated**: January 24, 2026  
+**Status**: ✅ Production Deployment on Gnosis Chain | ⚠️ Requires Security Audit

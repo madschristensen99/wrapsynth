@@ -1,0 +1,9 @@
+{
+  "network": "gnosis",
+  "contractName": "PythPriceConsumer",
+  "address": "0x8652eaDC52Cf494B8cDAc413951Ae71277F31708",
+  "pythOracle": "0x2880aB155794e7179c9eE2e38200202908C17B43",
+  "deployer": "0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB",
+  "timestamp": "2026-01-24T02:41:06.453Z",
+  "blockNumber": 44317343
+}

@@ -14,6 +14,12 @@ module.exports = {
     }
   },
   networks: {
+    gnosis: {
+      url: process.env.GNOSIS_RPC_URL || "https://rpc.gnosischain.com",
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      chainId: 100,
+      gasPrice: 2000000000 // 2 gwei
+    },
     baseSepolia: {
       url: process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org",
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
@@ -41,16 +47,7 @@ module.exports = {
   },
   etherscan: {
     apiKey: process.env.BASESCAN_API_KEY || "",
-    customChains: [
-      {
-        network: "baseSepolia",
-        chainId: 84532,
-        urls: {
-          apiURL: "https://api-sepolia.basescan.org/api",
-          browserURL: "https://sepolia.basescan.org"
-        }
-      }
-    ]
+    enabled: true
   },
   sourcify: {
     enabled: false

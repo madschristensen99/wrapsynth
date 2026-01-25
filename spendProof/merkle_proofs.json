@@ -1,0 +1,17 @@
+{
+  "blockHeight": 3595150,
+  "txHash": "73155c18b4b6a820ace7a77973ae1004bb8b1b8c0c8a96c9c7a6957309f14d79",
+  "txIndex": 3,
+  "txMerkleProof": [
+    "0x4b6ee29d034f35c991a86ee1c31c5c6b98e19d4d3859bef69c30aa0119dc4ae7",
+    "0x6dcff9c384082fc88781fa6d7e157a85bd92721e74fef2955c346308486b4691"
+  ],
+  "txMerkleRoot": "0xc0c83f86ea6b6342e6007c91bc80ed267bff8069fd4971c5727b63500226051f",
+  "outputIndex": 6,
+  "outputMerkleProof": [
+    "0xd8a7a8f35ef3b4db5c9b8123dfc1b527c52bb3726e82838b75e1fd40cc945074",
+    "0x1623bb05a3549ed73438aab53014faddf7d78e09b2472b3bdc2473d8526614bf",
+    "0xb2a684ab47170cb65a11f1917093467dcba3c8515ea49daddc7dab13ac59f076"
+  ],
+  "outputMerkleRoot": "0x7f60cb9650451e8543d80d984ea150ca60a456110cba81f66d0f00c32ff00b33"
+}

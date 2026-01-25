@@ -4,8 +4,8 @@
 
 const axios = require('axios');
 
-const MONERO_RPC = 'https://stagenet.xmr.ditatompel.com';
-const TX_HASH = '5ed56dfa2bab6006f8cbed1f96fdea04e2c38487229d159e079c575f2534174f';
+const MONERO_RPC = 'http://xmr.privex.io:18081';
+const TX_HASH = '8759425cbf9865243bf5ba75934be23e9acba13711a23d7c23d4770d1689cdd9';
 
 async function fetchTxData() {
     console.log('\n🔍 Fetching transaction data from Monero...\n');

@@ -1,0 +1,12 @@
+{
+  "network": "gnosis",
+  "wrappedMonero": "0x6958B66181e537b56E463BC41010A1D6C734fE5B",
+  "verifier": "0x754C2Af74bA150002Ed5f56DE18f2d6008F9460a",
+  "pythOracle": "0x2880aB155794e7179c9eE2e38200202908C17B43",
+  "wxdai": "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d",
+  "sdai": "0xaf204776c7245bF4147c2612BF6e5972Ee483701",
+  "initialPrice": 506.17456002,
+  "deployer": "0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB",
+  "timestamp": "2026-01-24T02:48:11.221Z",
+  "blockNumber": 44317424
+}

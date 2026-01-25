@@ -64,9 +64,9 @@ template MoneroBridge() {
     // PUBLIC INPUTS (computed off-circuit, verified on-chain)
     // ════════════════════════════════════════════════════════════════════════
     
-    signal input R_x;               // r·G (transaction public key, compressed)
-    signal input S_x;               // 8·r·A (shared secret point, compressed)
-    signal input P_compressed;      // H_s·G + B (stealth address, compressed)
+    signal input R_x;               // r·G x-coordinate (compressed)
+    signal input S_x;               // 8·r·A x-coordinate (compressed)
+    signal input P_x;               // H_s·G + B x-coordinate (compressed)
     signal input ecdhAmount;        // ECDH-encrypted amount (64 bits)
     signal input amountKey[64];     // Keccak256("amount" || H_s)[0:64] - precomputed
     signal input commitment;        // Poseidon commitment binding all values
@@ -95,7 +95,7 @@ template MoneroBridge() {
     hash.inputs[2] <== H_s_num.out;
     hash.inputs[3] <== R_x;
     hash.inputs[4] <== S_x;
-    hash.inputs[5] <== P_compressed;
+    hash.inputs[5] <== P_x;
     
     // Verify commitment matches
     commitment === hash.out;
@@ -138,8 +138,18 @@ template MoneroBridge() {
     v_check.in[1] <== 18446744073709551616; // 2^64
     v_check.out === 1;
     
-    // TODO: Add range checks for r < L and H_s < L (Ed25519 curve order)
-    // This requires additional ~5k constraints but ensures scalar validity
+    // Verify r < L (Ed25519 curve order)
+    // L = 2^252 + 27742317777372353535851937790883648493
+    // Check that top 3 bits are 0 (ensures < 2^252)
+    r[252] === 0;
+    r[253] === 0;
+    r[254] === 0;
+    
+    // Verify H_s < L (Ed25519 curve order)
+    // Check that top 3 bits are 0 (ensures < 2^252)
+    H_s_scalar[252] === 0;
+    H_s_scalar[253] === 0;
+    H_s_scalar[254] === 0;
     
     // ════════════════════════════════════════════════════════════════════════
     // OUTPUT
@@ -155,7 +165,7 @@ template MoneroBridge() {
 component main {public [
     R_x,
     S_x,
-    P_compressed,
+    P_x,
     ecdhAmount,
     amountKey,
     commitment

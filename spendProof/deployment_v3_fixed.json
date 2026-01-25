@@ -1,0 +1,29 @@
+{
+  "network": "Gnosis Chain",
+  "deployer": "0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB",
+  "timestamp": "2026-01-24T23:23:51.577Z",
+  "contracts": {
+    "WrappedMoneroV3": "0xe1B76b604F12Fd20b8D490C4C1f0634521626B0B",
+    "PlonkVerifier": "0x8b9b7A19d4B8D6a521834c2cd94BB419bde573ef",
+    "Pyth": "0x2880aB155794e7179c9eE2e38200202908C17B43",
+    "WxDAI": "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d",
+    "sDAI": "0xaf204776c7245bF4147c2612BF6e5972Ee483701"
+  },
+  "chainId": 100,
+  "verified": true,
+  "firstMint": {
+    "gnosisTx": "0x275d1a7d5fd9cbde1dba32034fd867ad49e470addf052fe4ac3843e51de9e9dd",
+    "moneroTx": "73155c18b4b6a820ace7a77973ae1004bb8b1b8c0c8a96c9c7a6957309f14d79",
+    "amount": "800000000",
+    "amountXMR": "0.0008",
+    "gasUsed": 660578,
+    "blockHeight": 3595150
+  },
+  "security": {
+    "plonkVerification": "real",
+    "proofBinding": true,
+    "replayProtection": true,
+    "merkleProofs": true,
+    "ed25519Validation": true
+  }
+}

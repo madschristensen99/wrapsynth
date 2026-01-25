@@ -33,10 +33,10 @@ if (fs.existsSync(deploymentPath)) {
 
 // Configuration
 const config = {
-    oraclePrivateKey: process.env.ORACLE_PRIVATE_KEY || (deploymentInfo ? '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' : null), // Default hardhat key #0
-    bridgeAddress: process.env.BRIDGE_ADDRESS || (deploymentInfo ? deploymentInfo.bridge : null),
+    oraclePrivateKey: process.env.PRIVATE_KEY || process.env.ORACLE_PRIVATE_KEY || (deploymentInfo ? '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' : null),
+    bridgeAddress: process.env.WRAPPED_MONERO_ADDRESS || process.env.BRIDGE_ADDRESS || (deploymentInfo ? (deploymentInfo.wrappedMoneroV3 || deploymentInfo.bridge) : null),
     rpcUrl: process.env.RPC_URL || 'http://localhost:8545',
-    moneroRpcUrl: process.env.MONERO_RPC_URL || 'https://stagenet.xmr.ditatompel.com',
+    moneroRpcUrl: process.env.MONERO_RPC_URL || 'https://xmr.ditatompel.com',
     intervalMs: parseInt(process.env.INTERVAL_MS || '120000'), // 2 minutes
 };
 
@@ -180,7 +180,8 @@ function computeTxMerkleRoot(txHashes) {
         return '0x' + txHashes[0];
     }
     
-    // Build Merkle tree
+    // Build Merkle tree (using Keccak256 to match contract verification)
+    const { keccak256 } = require('js-sha3');
     let level = txHashes.map(h => Buffer.from(h, 'hex'));
     
     while (level.length > 1) {
@@ -188,14 +189,14 @@ function computeTxMerkleRoot(txHashes) {
         
         for (let i = 0; i < level.length; i += 2) {
             if (i + 1 < level.length) {
-                // Hash pair
+                // Hash pair with Keccak256
                 const combined = Buffer.concat([level[i], level[i + 1]]);
-                const hash = require('crypto').createHash('sha256').update(combined).digest();
+                const hash = Buffer.from(keccak256(combined), 'hex');
                 nextLevel.push(hash);
             } else {
                 // Odd number - duplicate last hash
                 const combined = Buffer.concat([level[i], level[i]]);
-                const hash = require('crypto').createHash('sha256').update(combined).digest();
+                const hash = Buffer.from(keccak256(combined), 'hex');
                 nextLevel.push(hash);
             }
         }
@@ -318,8 +319,8 @@ async function runOracle() {
     }
     
     // Load contract
-    const MoneroBridge = await hre.ethers.getContractFactory('MoneroBridge');
-    const contract = MoneroBridge.attach(config.bridgeAddress).connect(wallet);
+    const WrappedMonero = await hre.ethers.getContractFactory('WrappedMoneroV3');
+    const contract = WrappedMonero.attach(config.bridgeAddress).connect(wallet);
     
     // Verify oracle role
     const contractOracle = await contract.oracle();
@@ -352,13 +353,20 @@ async function runOracle() {
             const latestPosted = await contract.latestMoneroBlock();
             console.log(`   Last posted block: ${latestPosted.toString()}`);
             
+            // If no blocks posted yet, start from current block
+            let startHeight = Number(latestPosted) + 1;
+            if (latestPosted == 0) {
+                console.log(`   🚀 First run - starting from current block ${blockHeight}`);
+                startHeight = blockHeight;
+            }
+            
             // Post all missing blocks sequentially
-            if (blockHeight > latestPosted) {
-                const blocksToPost = blockHeight - Number(latestPosted);
-                console.log(`   📊 ${blocksToPost} new block(s) detected!`);
+            if (blockHeight >= startHeight) {
+                const blocksToPost = blockHeight - startHeight + 1;
+                console.log(`   📊 ${blocksToPost} new block(s) to post`);
                 
                 // Post each block sequentially
-                for (let height = Number(latestPosted) + 1; height <= blockHeight; height++) {
+                for (let height = startHeight; height <= blockHeight; height++) {
                     console.log(`\n   📦 Processing block ${height}...`);
                     
                     // Get full block with transactions

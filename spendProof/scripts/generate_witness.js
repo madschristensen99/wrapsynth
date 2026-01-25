@@ -196,13 +196,18 @@ async function generateWitness(inputData) {
     // BN254 field modulus - circuit values are reduced mod p
     const BN254_MODULUS = BigInt('21888242871839275222246405745257275088548364400416034343698204186575808495617');
     
-    // Reduce Ed25519 coordinates modulo BN254 field to match circuit behavior
-    const R_x_raw = ed25519Results ? ed25519Results.ed25519Proof.R_x : inputData.R_x.toString();
-    const S_x_raw = ed25519Results ? ed25519Results.ed25519Proof.S_x : (inputData.S_x || inputData.R_x.toString());
-    const P_x_raw = ed25519Results ? ed25519Results.ed25519Proof.P.x : inputData.P_compressed.toString();
-    const R_x_reduced = (BigInt(R_x_raw) % BN254_MODULUS).toString();
-    const S_x_reduced = (BigInt(S_x_raw) % BN254_MODULUS).toString();
-    const P_x_reduced = (BigInt(P_x_raw) % BN254_MODULUS).toString();
+    // Get Ed25519 coordinates - do NOT reduce modulo BN254 to preserve curve validity
+    const R_x = ed25519Results ? ed25519Results.ed25519Proof.R_x.toString() : inputData.R_x.toString();
+    const R_y = ed25519Results ? ed25519Results.ed25519Proof.R_y.toString() : inputData.R_x.toString();
+    const S_x = ed25519Results ? ed25519Results.ed25519Proof.S_x.toString() : (inputData.S_x || inputData.R_x.toString());
+    const S_y = ed25519Results ? ed25519Results.ed25519Proof.S_y.toString() : (inputData.S_x || inputData.R_x.toString());
+    const P_x = ed25519Results ? ed25519Results.ed25519Proof.P.x.toString() : inputData.P_compressed.toString();
+    const P_y = ed25519Results ? ed25519Results.ed25519Proof.P.y.toString() : inputData.P_compressed.toString();
+    
+    // For Poseidon commitment, use reduced x-coordinates only (commitment doesn't need y)
+    const R_x_reduced = (BigInt(R_x) % BN254_MODULUS).toString();
+    const S_x_reduced = (BigInt(S_x) % BN254_MODULUS).toString();
+    const P_x_reduced = (BigInt(P_x) % BN254_MODULUS).toString();
     
     // Compute Poseidon commitment with REDUCED values (what circuit actually sees)
     const commitment = await computePoseidonCommitment(
@@ -221,10 +226,10 @@ async function generateWitness(inputData) {
         H_s_scalar: H_s_scalar_bits,
         
         // Public inputs (computed off-circuit with Ed25519)
-        // CRITICAL: Reduced modulo BN254 field to match circuit
+        // Reduced mod BN254 for circuit, full coordinates stored in ed25519Proof
         R_x: R_x_reduced,
         S_x: S_x_reduced,
-        P_compressed: P_x_reduced,  // Actually P.x, not compressed
+        P_x: P_x_reduced,
         ecdhAmount: inputData.ecdhAmount.toString(),
         amountKey: amountKey_bits,
         commitment: commitment,
