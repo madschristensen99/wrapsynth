@@ -33,3 +33,9 @@ spendProof/proof_tx.json
 spendProof/public.json
 spendProof/public_tx.json
 spendProof/dleq_proof.json
+
+spendProof/oracle/tx_data.json
+spendProof/oracle/output_data.js
+spendProof/oracle/deployment.json
+spendProof/oracle/lp_info.json
+
