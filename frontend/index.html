@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zero XMR | Zero-Knowledge Monero Bridge on Gnosis Chain</title>
-    <script src="https://cdn.ethers.io/lib/ethers-5.7.2.umd.min.js"></script>
+    <title>Zero XMR | Zero-Knowledge Verified Permissionlessly Wrapped Monero</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -721,8 +720,7 @@
                 <a href="#how-it-works">How It Works</a>
                 <a href="#stats">Stats</a>
                 <a href="https://github.com/madschristensen99/zeroxmr" target="_blank">GitHub</a>
-                <a href="https://gnosisscan.io/address/0x3D50F6177E6589413A389f8a16314E2dA20a25Ff" target="_blank" class="btn-contract">View Contract ↗</a>
-                <button id="connect-wallet" class="btn-wallet">CONNECT WALLET</button>
+                <a href="https://sepolia.basescan.org/address/0x3D50F6177E6589413A389f8a16314E2dA20a25Ff" target="_blank" class="btn-contract">View Contract ↗</a>
             </div>
         </div>
     </nav>
@@ -977,116 +975,5 @@
             </div>
         </div>
     </footer>
-
-    <!-- Web3 Integration -->
-    <script src="https://cdn.ethers.io/lib/ethers-5.7.2.umd.min.js"></script>
-    <script>
-        // Web3 Integration for Zero XMR on Gnosis Chain
-        const GNOSIS_CHAIN_CONFIG = {
-            chainId: 100,
-            chainName: 'Gnosis Chain',
-            rpcUrl: 'https://rpc.gnosischain.com',
-            blockExplorer: 'https://gnosisscan.io',
-            nativeCurrency: { name: 'xDAI', symbol: 'xDAI', decimals: 18 }
-        };
-
-        const CONTRACT_ADDRESSES = {
-            moneroBridge: '0x3D50F6177E6589413A389f8a16314E2dA20a25Ff',
-            plonkVerifier: '0x3139CB6fa4255591D7667361ab06Fdb155558853'
-        };
-
-        const MONERO_BRIDGE_ABI = [
-            "function verifyProof(bytes calldata proof, bytes32 txHash, address recipient) external returns (bool)",
-            "function mintWrappedXMR(address recipient, uint256 amount) external",
-            "function getBridgeStats() external view returns (uint256 totalVerified, uint256 totalMinted)",
-            "function isVerified(bytes32 txHash) external view returns (bool)"
-        ];
-
-        let provider, signer, moneroBridgeContract, userAddress;
-
-        // Initialize Web3
-        async function initializeWeb3() {
-            if (typeof window.ethereum !== 'undefined') {
-                provider = new ethers.providers.Web3Provider(window.ethereum);
-                
-                // Add Gnosis Chain
-                try {
-                    await window.ethereum.request({
-                        method: 'wallet_addEthereumChain',
-                        params: [{
-                            chainId: '0x64',
-                            chainName: 'Gnosis Chain',
-                            nativeCurrency: { name: 'xDAI', symbol: 'xDAI', decimals: 18 },
-                            rpcUrls: ['https://rpc.gnosischain.com'],
-                            blockExplorerUrls: ['https://gnosisscan.io']
-                        }]
-                    });
-                } catch (error) {
-                    console.log('Gnosis Chain may already be added');
-                }
-
-                // Check if already connected
-                const accounts = await provider.listAccounts();
-                if (accounts.length > 0) {
-                    await connectWallet();
-                }
-            } else {
-                console.log('MetaMask not detected');
-            }
-        }
-
-        // Connect wallet
-        async function connectWallet() {
-            try {
-                await window.ethereum.request({ method: 'eth_requestAccounts' });
-                signer = provider.getSigner();
-                userAddress = await signer.getAddress();
-                
-                moneroBridgeContract = new ethers.Contract(
-                    CONTRACT_ADDRESSES.moneroBridge,
-                    MONERO_BRIDGE_ABI,
-                    signer
-                );
-                
-                // Update UI
-                document.getElementById('connect-wallet').textContent = 'CONNECTED';
-                document.getElementById('connect-wallet').style.background = '#10b981';
-                document.getElementById('connect-wallet').style.borderColor = '#10b981';
-                document.getElementById('connect-wallet').style.color = '#000';
-                
-                // Update network status
-                const networkElement = document.querySelector('.badge');
-                if (networkElement) networkElement.textContent = '✓ Gnosis Chain Connected';
-                
-                // Update contract links
-                const contractLinks = document.querySelectorAll('a[href*="sepolia.basescan.org"]');
-                contractLinks.forEach(link => {
-                    link.href = link.href.replace('sepolia.basescan.org', 'gnosisscan.io');
-                });
-                
-                console.log('Wallet connected:', userAddress);
-                
-            } catch (error) {
-                console.error('Connection failed:', error);
-            }
-        }
-
-        // Add event listeners
-        document.addEventListener('DOMContentLoaded', initializeWeb3);
-        document.getElementById('connect-wallet').addEventListener('click', connectWallet);
-
-        // Listen for account changes
-        if (window.ethereum) {
-            window.ethereum.on('accountsChanged', function (accounts) {
-                if (accounts.length === 0) {
-                    userAddress = null;
-                    document.getElementById('connect-wallet').textContent = 'CONNECT WALLET';
-                    document.getElementById('connect-wallet').style = '';
-                } else {
-                    connectWallet();
-                }
-            });
-        }
-    </script>
 </body>
 </html>
