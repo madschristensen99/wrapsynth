@@ -1,6 +1,6 @@
 # Zero XMR
 
-![Zero XMR Hero Image](images/zeroxmr-hero.png)
+![Zero XMR Hero Image](images/2026-01-26-zeroxmr-hero.png)
 
 **Zero-knowledge, permissionless wrapped Monero on Ethereum**
 
