@@ -300,7 +300,7 @@ async function runOracle() {
     console.log('Configuration:');
     console.log(`   Monero RPC: ${config.moneroRpcUrl}`);
     console.log(`   Ethereum RPC: ${config.rpcUrl}`);
-    console.log(`   WrappedMoneroV3: ${config.bridgeAddress}`);
+    console.log(`   WrappedMonero: ${config.bridgeAddress}`);
     console.log(`   Interval: ${config.intervalMs / 1000}s (${config.intervalMs / 60000} min)`);
     
     // Connect to contract
@@ -318,8 +318,8 @@ async function runOracle() {
     }
     
     // Load contract
-    const WrappedMoneroV3 = await hre.ethers.getContractFactory('WrappedMoneroV3');
-    const contract = WrappedMoneroV3.attach(config.bridgeAddress).connect(wallet);
+    const WrappedMonero = await hre.ethers.getContractFactory('WrappedMonero');
+    const contract = WrappedMonero.attach(config.bridgeAddress).connect(wallet);
     
     // Verify oracle role
     const contractOracle = await contract.oracle();

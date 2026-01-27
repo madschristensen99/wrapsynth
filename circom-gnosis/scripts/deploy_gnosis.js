@@ -4,7 +4,7 @@ const path = require("path");
 const axios = require("axios");
 
 async function main() {
-    console.log("🚀 Deploying WrappedMoneroV3 to Gnosis Chain\n");
+    console.log("🚀 Deploying WrappedMonero to Gnosis Chain\n");
     console.log("═".repeat(70));
 
     // Get deployer
@@ -57,10 +57,10 @@ async function main() {
     const verifierAddress = await verifier.getAddress();
     console.log("✅ PlonkVerifier deployed at:", verifierAddress);
 
-    // Deploy WrappedMoneroV3
-    console.log("\n📝 Step 2: Deploying WrappedMoneroV3...");
-    const WrappedMoneroV3 = await hre.ethers.getContractFactory("WrappedMoneroV3");
-    const bridge = await WrappedMoneroV3.deploy(
+    // Deploy WrappedMonero
+    console.log("\n📝 Step 2: Deploying WrappedMonero...");
+    const WrappedMonero = await hre.ethers.getContractFactory("WrappedMonero");
+    const bridge = await WrappedMonero.deploy(
         verifierAddress,
         WXDAI,
         SDAI,
@@ -69,7 +69,7 @@ async function main() {
     );
     await bridge.waitForDeployment();
     const bridgeAddress = await bridge.getAddress();
-    console.log("✅ WrappedMoneroV3 deployed at:", bridgeAddress);
+    console.log("✅ WrappedMonero deployed at:", bridgeAddress);
 
     // Save deployment info
     const deployment = {
@@ -90,7 +90,7 @@ async function main() {
     console.log("🎉 Deployment Complete!\n");
     console.log("📋 Contract Addresses:");
     console.log("   PlonkVerifier:", verifierAddress);
-    console.log("   WrappedMoneroV3:", bridgeAddress);
+    console.log("   WrappedMonero:", bridgeAddress);
     console.log("   Oracle:", deployer.address);
     console.log("\n📝 Next steps:");
     console.log("   1. Start oracle: node oracle/monero-oracle.js");
