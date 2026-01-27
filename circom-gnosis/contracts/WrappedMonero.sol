@@ -24,7 +24,7 @@ import "./libraries/Ed25519.sol";
  * - 2-hour burn window: LP must send XMR or lose collateral
  */
 
-contract WrappedMoneroV3 is ERC20, ERC20Permit, ReentrancyGuard {
+contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     
     // ════════════════════════════════════════════════════════════════════════
     // CONSTANTS
@@ -38,6 +38,7 @@ contract WrappedMoneroV3 is ERC20, ERC20Permit, ReentrancyGuard {
     uint256 public constant MAX_FEE_BPS = 500;          // Max 5% fee
     uint256 public constant MINT_INTENT_TIMEOUT = 2 hours;  // Intent expires after 24h
     uint256 public constant MIN_INTENT_DEPOSIT = 1e18;  // 1 DAI minimum deposit
+    uint256 public constant MIN_MINT_BPS = 100;         // Minimum 1% of LP capacity (Sybil defense)
     
     bytes32 public constant XMR_USD_PRICE_ID = 0x46b8cc9347f04391764a0361e0b17c3ba394b001e7c304f7650f6376e37c321d;
     
@@ -60,8 +61,6 @@ contract WrappedMoneroV3 is ERC20, ERC20Permit, ReentrancyGuard {
         uint256 backedAmount;         // zeroXMR amount this LP is backing
         uint256 mintFeeBps;           // Mint fee in basis points (100 = 1%)
         uint256 burnFeeBps;           // Burn fee in basis points
-        uint256 maxPendingIntents;    // Max pending mint/burn intents
-        uint256 pendingIntents;       // Current pending intents
         bool active;                  // Is LP accepting new mints?
     }
     mapping(address => LPInfo) public lpInfo;
@@ -267,14 +266,12 @@ contract WrappedMoneroV3 is ERC20, ERC20Permit, ReentrancyGuard {
     /**
      * @notice Register as LP or update fees
      */
-    function registerLP(uint256 mintFeeBps, uint256 burnFeeBps, uint256 maxPendingIntents, bool active) external {
+    function registerLP(uint256 mintFeeBps, uint256 burnFeeBps, bool active) external {
         require(mintFeeBps <= MAX_FEE_BPS, "Mint fee too high");
         require(burnFeeBps <= MAX_FEE_BPS, "Burn fee too high");
-        require(maxPendingIntents > 0, "Must allow intents");
         
         lpInfo[msg.sender].mintFeeBps = mintFeeBps;
         lpInfo[msg.sender].burnFeeBps = burnFeeBps;
-        lpInfo[msg.sender].maxPendingIntents = maxPendingIntents;
         lpInfo[msg.sender].active = active;
         
         emit LPRegistered(msg.sender, mintFeeBps, burnFeeBps);
@@ -363,7 +360,17 @@ contract WrappedMoneroV3 is ERC20, ERC20Permit, ReentrancyGuard {
         LPInfo storage lpData = lpInfo[lp];
         require(lpData.active, "LP not active");
         require(depositAmount >= MIN_INTENT_DEPOSIT, "Deposit too small");
-        require(lpData.pendingIntents < lpData.maxPendingIntents, "LP at capacity");
+        
+        // Calculate LP's available capacity (can go from current ratio down to SAFE_RATIO)
+        // If LP has 200% collateral and SAFE_RATIO is 150%, they have 50% capacity
+        uint256 collateralValue = (lpData.collateralShares * sDAI.convertToAssets(1e18)) / 1e18;
+        uint256 currentBackedValue = (lpData.backedAmount * twapPrice) / (PICONERO_PER_XMR * 1e8);
+        uint256 maxBackedValue = (collateralValue * 100) / SAFE_RATIO;
+        uint256 availableCapacity = maxBackedValue > currentBackedValue ? maxBackedValue - currentBackedValue : 0;
+        
+        // Require mint amount to be at least 1% of available capacity (Sybil defense)
+        uint256 minMintAmount = (availableCapacity * MIN_MINT_BPS) / 10000;
+        require(expectedAmount >= minMintAmount, "Amount below minimum (1% of LP capacity)");
         
         // Generate intent ID
         intentId = keccak256(abi.encodePacked(msg.sender, lp, expectedAmount, block.timestamp));
@@ -383,8 +390,6 @@ contract WrappedMoneroV3 is ERC20, ERC20Permit, ReentrancyGuard {
             cancelled: false
         });
         
-        lpData.pendingIntents++;
-        
         emit MintIntentCreated(intentId, msg.sender, lp, expectedAmount);
     }
     
@@ -399,7 +404,6 @@ contract WrappedMoneroV3 is ERC20, ERC20Permit, ReentrancyGuard {
         require(block.timestamp > intent.createdAt + MINT_INTENT_TIMEOUT, "Not expired");
         
         intent.cancelled = true;
-        lpInfo[intent.lp].pendingIntents--;
         
         // Refund deposit
         dai.transfer(msg.sender, intent.depositAmount);

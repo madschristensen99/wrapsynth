@@ -81,7 +81,7 @@ async function main() {
         await checkStatus(verifierGuid);
     }
     
-    // Encode constructor arguments for WrappedMoneroV3
+    // Encode constructor arguments for WrappedMonero
     const hre = require('hardhat');
     const constructorArgs = hre.ethers.AbiCoder.defaultAbiCoder().encode(
         ['address', 'address', 'address', 'address', 'uint256', 'uint256'],
@@ -97,10 +97,10 @@ async function main() {
     
     console.log('\n📝 Constructor args (hex):', constructorArgs);
     
-    // Verify WrappedMoneroV3
+    // Verify WrappedMonero
     const bridgeGuid = await verifyContract(
         '0x9a437cB98CDD7621DaCd0ED44A1002bDbE6DFA70',
-        'WrappedMoneroV3',
+        'WrappedMonero',
         constructorArgs
     );
     
@@ -113,7 +113,7 @@ async function main() {
     console.log("✅ Verification requests submitted!");
     console.log("\n📝 Check status on GnosisScan:");
     console.log("   PlonkVerifier: https://gnosisscan.io/address/0x21F824b645B7369dcfB3Ef61a6697102Cb329652#code");
-    console.log("   WrappedMoneroV3: https://gnosisscan.io/address/0x9a437cB98CDD7621DaCd0ED44A1002bDbE6DFA70#code");
+    console.log("   WrappedMonero: https://gnosisscan.io/address/0x9a437cB98CDD7621DaCd0ED44A1002bDbE6DFA70#code");
 }
 
 main()

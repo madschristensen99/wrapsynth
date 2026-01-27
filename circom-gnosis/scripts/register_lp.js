@@ -14,19 +14,18 @@ async function main() {
     console.log("👤 LP Address:", signer.address);
 
     // Connect to contract
-    const bridge = await hre.ethers.getContractAt("WrappedMoneroV3", deployment.bridge);
+    const bridge = await hre.ethers.getContractAt("WrappedMonero", deployment.bridge);
 
     // LP Parameters
     const MINT_FEE_BPS = 50;  // 0.5% mint fee
     const BURN_FEE_BPS = 50;  // 0.5% burn fee
-    const MAX_PENDING_INTENTS = 10;  // Allow up to 10 pending mint intents
     const ACTIVE = true;  // Set LP as active
 
     console.log("\n⚙️  LP Configuration:");
     console.log("   Mint Fee:", MINT_FEE_BPS / 100, "%");
     console.log("   Burn Fee:", BURN_FEE_BPS / 100, "%");
-    console.log("   Max Pending Intents:", MAX_PENDING_INTENTS);
     console.log("   Active:", ACTIVE);
+    console.log("   Note: Minimum mint amount is 1% of LP capacity (Sybil defense)");
 
     // Check if already registered
     try {
@@ -36,7 +35,7 @@ async function main() {
             console.log("   Current Mint Fee:", lpInfo.mintFeeBps.toString(), "bps");
             console.log("   Current Burn Fee:", lpInfo.burnFeeBps.toString(), "bps");
             console.log("   Collateral Shares:", hre.ethers.formatUnits(lpInfo.collateralShares, 18));
-            console.log("   Backed zeroXMR:", hre.ethers.formatUnits(lpInfo.backedZeroXMR, 12), "XMR");
+            console.log("   Backed Amount:", hre.ethers.formatUnits(lpInfo.backedAmount, 12), "XMR");
             
             const response = await new Promise((resolve) => {
                 const readline = require('readline').createInterface({
@@ -64,7 +63,6 @@ async function main() {
         const tx = await bridge.registerLP(
             MINT_FEE_BPS,
             BURN_FEE_BPS,
-            MAX_PENDING_INTENTS,
             ACTIVE
         );
         
@@ -82,10 +80,9 @@ async function main() {
         console.log("\n📊 LP Info:");
         console.log("   Mint Fee:", lpInfo.mintFeeBps.toString(), "bps (", Number(lpInfo.mintFeeBps) / 100, "%)");
         console.log("   Burn Fee:", lpInfo.burnFeeBps.toString(), "bps (", Number(lpInfo.burnFeeBps) / 100, "%)");
-        console.log("   Max Pending Intents:", lpInfo.maxPendingIntents.toString());
         console.log("   Active:", lpInfo.active);
         console.log("   Collateral Shares:", hre.ethers.formatUnits(lpInfo.collateralShares, 18), "sDAI");
-        console.log("   Backed zeroXMR:", hre.ethers.formatUnits(lpInfo.backedZeroXMR, 12), "XMR");
+        console.log("   Backed Amount:", hre.ethers.formatUnits(lpInfo.backedAmount, 12), "XMR");
         
         console.log("\n📝 Next steps:");
         console.log("   1. Deposit collateral: node scripts/lp_deposit.js");
