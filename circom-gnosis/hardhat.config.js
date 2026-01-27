@@ -19,6 +19,12 @@ module.exports = {
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
       chainId: 84532
     },
+    gnosis: {
+      url: process.env.RPC_URL || process.env.GNOSIS_RPC_URL || "https://rpc.gnosischain.com",
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      chainId: 100,
+      gasPrice: 2000000000  // 2 gwei
+    },
     hardhat: {
       chainId: 31337,
       forking: {
@@ -26,7 +32,8 @@ module.exports = {
           ? (process.env.GNOSIS_RPC_URL || "https://rpc.gnosischain.com")
           : (process.env.ARBITRUM_RPC_URL || "https://arb1.arbitrum.io/rpc"),
         enabled: process.env.FORK === "true"
-      }
+      },
+      initialBaseFeePerGas: 0
     },
     localhost: {
       url: "http://127.0.0.1:8545",
@@ -43,11 +50,11 @@ module.exports = {
     apiKey: process.env.BASESCAN_API_KEY || "",
     customChains: [
       {
-        network: "baseSepolia",
-        chainId: 84532,
+        network: "gnosis",
+        chainId: 100,
         urls: {
-          apiURL: "https://api-sepolia.basescan.org/api",
-          browserURL: "https://sepolia.basescan.org"
+          apiURL: "https://api.etherscan.io/v2/api?chainid=100",
+          browserURL: "https://gnosisscan.io"
         }
       }
     ]

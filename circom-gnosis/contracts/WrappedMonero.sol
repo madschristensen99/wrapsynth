@@ -36,7 +36,7 @@ contract WrappedMoneroV3 is ERC20, ERC20Permit, ReentrancyGuard {
     uint256 public constant MAX_PRICE_AGE = 60;
     uint256 public constant BURN_TIMEOUT = 2 hours;
     uint256 public constant MAX_FEE_BPS = 500;          // Max 5% fee
-    uint256 public constant MINT_INTENT_TIMEOUT = 24 hours;  // Intent expires after 24h
+    uint256 public constant MINT_INTENT_TIMEOUT = 2 hours;  // Intent expires after 24h
     uint256 public constant MIN_INTENT_DEPOSIT = 1e18;  // 1 DAI minimum deposit
     
     bytes32 public constant XMR_USD_PRICE_ID = 0x46b8cc9347f04391764a0361e0b17c3ba394b001e7c304f7650f6376e37c321d;
@@ -183,7 +183,6 @@ contract WrappedMoneroV3 is ERC20, ERC20Permit, ReentrancyGuard {
         address _dai,
         address _sDAI,
         address _pyth,
-        uint256 _initialPrice,
         uint256 _initialMoneroBlock
     ) ERC20("Wrapped Monero", "zeroXMR") ERC20Permit("Wrapped Monero") {
         verifier = IPlonkVerifier(_verifier);
@@ -192,7 +191,29 @@ contract WrappedMoneroV3 is ERC20, ERC20Permit, ReentrancyGuard {
         pyth = IPyth(_pyth);
         oracle = msg.sender;
         
-        twapPrice = _initialPrice;
+        // Fetch initial price from Pyth
+        PythStructs.Price memory pythPrice = pyth.getPriceUnsafe(XMR_USD_PRICE_ID);
+        require(pythPrice.price > 0, "Invalid Pyth price");
+        
+        // Convert Pyth price (with expo) to uint256 with 8 decimals
+        // Pyth price format: price * 10^expo = actual price
+        // We need: actual price * 10^8
+        int256 price = int256(pythPrice.price);
+        int32 expo = pythPrice.expo;
+        
+        // Calculate: price * 10^(8 + expo)
+        if (expo >= 0) {
+            twapPrice = uint256(price) * (10 ** uint32(expo)) * 1e8;
+        } else {
+            // expo is negative, so we divide
+            int32 adjustedExpo = 8 + expo;
+            if (adjustedExpo >= 0) {
+                twapPrice = uint256(price) * (10 ** uint32(adjustedExpo));
+            } else {
+                twapPrice = uint256(price) / (10 ** uint32(-adjustedExpo));
+            }
+        }
+        
         lastPriceUpdate = block.timestamp;
         latestMoneroBlock = _initialMoneroBlock;
     }

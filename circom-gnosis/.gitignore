@@ -58,3 +58,22 @@ scripts/generate_dleq_secp256k1.js
 # Hardhat build artifacts
 artifacts/
 cache/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Circuit artifacts
+powersOfTau28_hez_final_12.ptau
+circuit_final.zkey
+verification_key.json
+
+# Flattened contracts
+*_flat.sol
+
+# Proof files
+proof.json
+public.json
+dleq_proof.json
+tx_data.json
