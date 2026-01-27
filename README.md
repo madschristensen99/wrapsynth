@@ -13,10 +13,10 @@ Zero XMR enables trustless bridging of Monero to DeFi chains through zero-knowle
 ## 🚀 Current Status: Mainnet Beta on Gnosis Chain
 
 **Deployed Contracts:**
-- **WrappedMonero**: [`0xD5351FdB8bea42f97D790353f7B72cDBb4b5a9CE`](https://gnosisscan.io/address/0xD5351FdB8bea42f97D790353f7B72cDBb4b5a9CE)
-- **PlonkVerifier**: [`0xcce29046748f14CAa681508d65Ce358Fbe486C81`](https://gnosisscan.io/address/0xcce29046748f14CAa681508d65Ce358Fbe486C81)
+- **WrappedMonero**: [`0xE3FF8b60B143Be56745149e7EB468999769eC1b7`](https://gnosisscan.io/address/0xE3FF8b60B143Be56745149e7EB468999769eC1b7)
+- **PlonkVerifier**: [`0x4f66CAc8b001938B3ec5C2582e2c6723DD7B0e6C`](https://gnosisscan.io/address/0x4f66CAc8b001938B3ec5C2582e2c6723DD7B0e6C)
 - **Network**: Gnosis Chain (ChainID: 100)
-- **Initial Monero Block**: 3,597,097
+- **Initial Monero Block**: 3,597,142
 
 **Why Gnosis Chain?**
 - 100x cheaper gas costs (~$0.0003 per mint vs $30-60 on Ethereum)

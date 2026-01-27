@@ -61,6 +61,7 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         uint256 backedAmount;         // zeroXMR amount this LP is backing
         uint256 mintFeeBps;           // Mint fee in basis points (100 = 1%)
         uint256 burnFeeBps;           // Burn fee in basis points
+        string moneroAddress;         // LP's Monero address (95 char base58)
         bool active;                  // Is LP accepting new mints?
     }
     mapping(address => LPInfo) public lpInfo;
@@ -266,12 +267,19 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     /**
      * @notice Register as LP or update fees
      */
-    function registerLP(uint256 mintFeeBps, uint256 burnFeeBps, bool active) external {
+    function registerLP(
+        uint256 mintFeeBps,
+        uint256 burnFeeBps,
+        string calldata moneroAddress,
+        bool active
+    ) external {
         require(mintFeeBps <= MAX_FEE_BPS, "Mint fee too high");
         require(burnFeeBps <= MAX_FEE_BPS, "Burn fee too high");
+        require(bytes(moneroAddress).length > 0, "Invalid Monero address");
         
         lpInfo[msg.sender].mintFeeBps = mintFeeBps;
         lpInfo[msg.sender].burnFeeBps = burnFeeBps;
+        lpInfo[msg.sender].moneroAddress = moneroAddress;
         lpInfo[msg.sender].active = active;
         
         emit LPRegistered(msg.sender, mintFeeBps, burnFeeBps);

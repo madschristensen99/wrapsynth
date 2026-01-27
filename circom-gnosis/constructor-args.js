@@ -1,7 +1,7 @@
 module.exports = [
-  '0xcce29046748f14CAa681508d65Ce358Fbe486C81',  // verifier
+  '0x4f66CAc8b001938B3ec5C2582e2c6723DD7B0e6C',  // verifier
   '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d',  // WxDAI
   '0xaf204776c7245bF4147c2612BF6e5972Ee483701',  // sDAI
   '0x2880aB155794e7179c9eE2e38200202908C17B43',  // Pyth
-  '3597097'       // initial Monero block
+  '3597142'       // initial Monero block
 ];
