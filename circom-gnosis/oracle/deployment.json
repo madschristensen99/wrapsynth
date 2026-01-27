@@ -1,8 +1,8 @@
 {
-  "network": "localhost",
-  "chainId": "31337",
-  "verifier": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-  "bridge": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
-  "oracle": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-  "deployedAt": "2026-01-05T22:01:23.919Z"
+  "network": "gnosis",
+  "chainId": "100",
+  "verifier": "0x5838C16D83DCF49DA3e3b3744321FA7B903D107B",
+  "bridge": "0x00aF272E28318A5DEC6C7460bCE68E5e9F368eF6",
+  "oracle": "0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB",
+  "deployedAt": "2026-01-27T16:25:26.804Z"
 }
