@@ -20,10 +20,20 @@ async function main() {
     const MINT_FEE_BPS = 50;  // 0.5% mint fee
     const BURN_FEE_BPS = 50;  // 0.5% burn fee
     const ACTIVE = true;  // Set LP as active
+    
+    // Monero address (any standard Monero address from your wallet)
+    const MONERO_ADDRESS = process.env.MONERO_ADDRESS || "";
+    
+    if (!MONERO_ADDRESS) {
+        console.error("\n❌ MONERO_ADDRESS not set!");
+        console.error("   Set it in .env or pass as environment variable");
+        process.exit(1);
+    }
 
     console.log("\n⚙️  LP Configuration:");
     console.log("   Mint Fee:", MINT_FEE_BPS / 100, "%");
     console.log("   Burn Fee:", BURN_FEE_BPS / 100, "%");
+    console.log("   Monero Address:", MONERO_ADDRESS);
     console.log("   Active:", ACTIVE);
     console.log("   Note: Minimum mint amount is 1% of LP capacity (Sybil defense)");
 
@@ -63,6 +73,7 @@ async function main() {
         const tx = await bridge.registerLP(
             MINT_FEE_BPS,
             BURN_FEE_BPS,
+            MONERO_ADDRESS,
             ACTIVE
         );
         
@@ -80,6 +91,7 @@ async function main() {
         console.log("\n📊 LP Info:");
         console.log("   Mint Fee:", lpInfo.mintFeeBps.toString(), "bps (", Number(lpInfo.mintFeeBps) / 100, "%)");
         console.log("   Burn Fee:", lpInfo.burnFeeBps.toString(), "bps (", Number(lpInfo.burnFeeBps) / 100, "%)");
+        console.log("   Monero Address:", lpInfo.moneroAddress);
         console.log("   Active:", lpInfo.active);
         console.log("   Collateral Shares:", hre.ethers.formatUnits(lpInfo.collateralShares, 18), "sDAI");
         console.log("   Backed Amount:", hre.ethers.formatUnits(lpInfo.backedAmount, 12), "XMR");
