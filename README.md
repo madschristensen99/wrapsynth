@@ -22,10 +22,11 @@ Zero XMR enables trustless bridging of Monero to DeFi chains through zero-knowle
 - 100x cheaper gas costs (~$0.0003 per mint vs $30-60 on Ethereum)
 - Fast block times (~5 seconds)
 - Same security model as Ethereum (merged with Ethereum consensus)
+- Stablecoin as native gas (xDAI)
 
 **Architecture:**
 - **Circuit**: Optimized DLEQ-based PLONK circuit with 1,167 constraints
-- **Proof System**: PLONK (no trusted setup required)
+- **Proof System**: PLONK (no trusted ceremony)
 - **Oracle**: Automated Monero blockchain data feed (20-second polling)
 - **Price Oracle**: Pyth Network for XMR/USD pricing
 
@@ -147,19 +148,6 @@ zeroxmr/
 
 ---
 
-## 🚧 Roadmap
-
-- [x] Optimized PLONK circuit (1,167 constraints)
-- [x] Deploy to Gnosis Chain mainnet
-- [x] Automated Monero oracle
-- [x] Contract verification on GnosisScan
-- [ ] Witness generation scripts
-- [ ] DLEQ proof generation
-- [ ] Web interface
-- [ ] LP functionality
-- [ ] Audit
-
----
 
 ## 📄 License
 
