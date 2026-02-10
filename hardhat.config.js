@@ -37,9 +37,18 @@ module.exports = {
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
       gasPrice: "auto",
     },
+    gnosis: {
+      url: process.env.GNOSIS_RPC_URL || "https://rpc.gnosischain.com",
+      chainId: 100,
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      gasPrice: "auto",
+    },
   },
   etherscan: {
-    apiKey: process.env.ETHERSCAN_API_KEY || "abc123",
+    apiKey: {
+      unichain_testnet: process.env.ETHERSCAN_API_KEY || "abc123",
+      gnosis: process.env.GNOSISSCAN_API_KEY || "abc123",
+    },
     customChains: [
       {
         network: "unichain_testnet",
@@ -47,6 +56,14 @@ module.exports = {
         urls: {
           apiURL: "https://api-sepolia.uniscan.xyz/api",
           browserURL: "https://sepolia.uniscan.xyz"
+        }
+      },
+      {
+        network: "gnosis",
+        chainId: 100,
+        urls: {
+          apiURL: "https://api.gnosisscan.io/api",
+          browserURL: "https://gnosisscan.io"
         }
       }
     ]
