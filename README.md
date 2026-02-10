@@ -40,17 +40,20 @@ WrapSynth enables trustless, privacy-preserving bridging of Monero (XMR) to Ethe
 **Development Phase**: Active development, not yet deployed to mainnet
 
 **Target Networks:**
-- **Unichain Testnet** (ChainID: 1301) - Primary development target
-- **Gnosis Chain** (ChainID: 100) - Future deployment for low gas costs
+- **Gnosis Chain** (ChainID: 100) - ✅ Ready for mainnet deployment (low gas costs)
+- **Unichain Testnet** (ChainID: 1301) - Development and testing
 
-**Contracts Compiled**: ✅ All 60 Solidity files compile successfully
+**Deployment Status:**
+- ✅ All 60 Solidity files compile successfully
+- ✅ Gnosis mainnet deployment scripts ready
+- ✅ PlonkVerifier and WrappedMonero contracts ready to deploy
 
 **Next Steps:**
-1. Complete circuit testing and optimization
+1. Deploy WrappedMonero and PlonkVerifier to Gnosis mainnet
 2. Set up proof generation server infrastructure
-3. Deploy to Unichain testnet
-4. Integrate Monero stagenet for testing
-5. Security audit and mainnet deployment
+3. Integrate with frontend for testing
+4. Complete end-to-end testing with Monero stagenet
+5. Security audit before public launch
 
 ---
 
@@ -107,7 +110,32 @@ npx hardhat compile
 
 Should output: `Compiled 60 Solidity files successfully`
 
-### Deploy to Unichain Testnet
+### Deploy Contracts
+
+#### Deploy to Gnosis Mainnet
+
+1. **Get xDAI** for gas fees (very low cost ~$0.01 per tx)
+   - Bridge DAI to xDAI: [Gnosis Bridge](https://bridge.gnosischain.com/)
+   - Or use [Jumper Exchange](https://jumper.exchange/)
+
+2. **Configure environment:**
+```bash
+cp .env.example .env
+# Edit .env and add your PRIVATE_KEY and GNOSIS_RPC_URL
+```
+
+3. **Deploy contracts:**
+```bash
+# Deploy WrappedMonero and PlonkVerifier to Gnosis mainnet
+npm run deploy:gnosis
+```
+
+4. **Verify contracts on Gnosisscan:**
+```bash
+npm run verify:gnosis
+```
+
+#### Deploy to Unichain Testnet
 
 1. **Get testnet ETH** from [Unichain Faucet](https://faucet.unichain.org/)
 
@@ -171,25 +199,32 @@ wrapsynth/
 │   └── README.md              # Contract documentation
 │
 ├── scripts/                    # Deployment & management scripts
-│   ├── deploy.js              # Main deployment script
-│   ├── deploy-with-mock.js    # Deploy with mock verifier
-│   ├── deploy-relayer.js      # Deploy privacy relayer
-│   ├── deploy-privacy-hook.js # Deploy Uniswap V4 hook
-│   ├── verify.js              # Contract verification
+│   ├── deploy/                # Deployment scripts
+│   │   ├── deploy.js          # Unichain testnet deployment
+│   │   ├── deploy-gnosis.js   # Gnosis mainnet deployment
+│   │   ├── deploy-with-mock.js # Deploy with mock verifier
+│   │   ├── deploy-relayer.js  # Deploy privacy relayer
+│   │   ├── deploy-privacy-hook.js # Deploy Uniswap V4 hook
+│   │   └── verify.js          # Contract verification
 │   │
-│   ├── proofGeneration/       # ZK proof generation
-│   │   ├── generate_witness.js           # Witness generation
-│   │   ├── generate_proof_and_mint.js    # Full proof + mint flow
-│   │   ├── generate_proof_and_relay_mint.js # Private mint via relayer
-│   │   ├── compute_monero_keys.js        # Monero key derivation
-│   │   └── compute_merkle_proofs.js      # Merkle proof computation
-│   │
-│   ├── relayer/               # Privacy relayer system
-│   │   ├── signMintIntent.js  # EIP-712 intent signing
-│   │   ├── relayerService.js  # Background relayer service
-│   │   ├── privateMint.js     # User-facing private mint
-│   │   ├── registerRelayer.js # Register as relayer
-│   │   └── startRelayer.js    # Start relayer daemon
+│   ├── lpServer/              # LP and server-side operations
+│   │   ├── proofGeneration/   # ZK proof generation
+│   │   │   ├── generate_witness.js           # Witness generation
+│   │   │   ├── generate_proof_and_mint.js    # Full proof + mint flow
+│   │   │   ├── generate_proof_and_relay_mint.js # Private mint via relayer
+│   │   │   ├── compute_monero_keys.js        # Monero key derivation
+│   │   │   └── compute_merkle_proofs.js      # Merkle proof computation
+│   │   │
+│   │   ├── relayer/           # Privacy relayer system
+│   │   │   ├── signMintIntent.js  # EIP-712 intent signing
+│   │   │   ├── relayerService.js  # Background relayer service
+│   │   │   ├── privateMint.js     # User-facing private mint
+│   │   │   ├── registerRelayer.js # Register as relayer
+│   │   │   └── startRelayer.js    # Start relayer daemon
+│   │   │
+│   │   ├── check_lp.js        # Check LP status
+│   │   ├── lp-setup-mock.js   # LP setup for testing
+│   │   └── update_lp_registration.js # Update LP settings
 │   │
 │   ├── oracle/                # Oracle management
 │   │   ├── setup.sh           # Configure oracle
