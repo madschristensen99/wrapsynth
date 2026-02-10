@@ -1,4 +1,4 @@
-![WrapSynth](images/wrapsynth-hero.png)
+![WrapSynth](./images/wrapsynth-hero.png)
 
 # 🌉 WrapSynth
 
