@@ -1,8 +1,0 @@
-{
-  "network": "gnosis",
-  "chainId": "100",
-  "verifier": "0x4f66CAc8b001938B3ec5C2582e2c6723DD7B0e6C",
-  "bridge": "0xE3FF8b60B143Be56745149e7EB468999769eC1b7",
-  "oracle": "0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB",
-  "deployedAt": "2026-01-27T18:25:41.353Z"
-}

@@ -1,0 +1,59 @@
+[package]
+name = "monero-oracle"
+version = "0.1.0"
+edition = "2021"
+authors = ["zeroXMR Team"]
+description = "Monero Oracle Service for zeroXMR on Unichain"
+license = "MIT"
+repository = "https://github.com/zeroxmr/monero-oracle"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# Ethereum/Alloy
+alloy = { version = "0.8", features = [
+    "full",
+    "node-bindings",
+    "rpc-types",
+    "signer-local",
+    "provider-http",
+] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Serialization
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0"
+
+# Cryptography
+sha2 = "0.10"
+sha3 = "0.10"
+hex = "0.4"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Time
+chrono = "0.4"
+
+# Environment
+dotenvy = "0.15"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[[bin]]
+name = "monero-oracle"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

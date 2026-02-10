@@ -1,0 +1,217 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "IMintRelayer",
+  "sourceName": "contracts/PrivacySwapHook.sol",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "signer",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "recipient",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "lp",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "expectedAmount",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "nonce",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "deadline",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "maxRelayerFee",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct IMintRelayer.MintIntent",
+          "name": "intent",
+          "type": "tuple"
+        },
+        {
+          "internalType": "bytes",
+          "name": "signature",
+          "type": "bytes"
+        },
+        {
+          "internalType": "bytes",
+          "name": "proof",
+          "type": "bytes"
+        },
+        {
+          "internalType": "uint256[]",
+          "name": "publicSignals",
+          "type": "uint256[]"
+        },
+        {
+          "components": [
+            {
+              "internalType": "bytes32",
+              "name": "c",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "s",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "K1",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "K2",
+              "type": "bytes32"
+            }
+          ],
+          "internalType": "struct IMintRelayer.DLEQProof",
+          "name": "dleqProof",
+          "type": "tuple"
+        },
+        {
+          "components": [
+            {
+              "internalType": "bytes32",
+              "name": "R_x",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "R_y",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "S_x",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "S_y",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "P_x",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "P_y",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "B_x",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "B_y",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "G_x",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "G_y",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "A_x",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "A_y",
+              "type": "bytes32"
+            }
+          ],
+          "internalType": "struct IMintRelayer.Ed25519Proof",
+          "name": "ed25519Proof",
+          "type": "tuple"
+        },
+        {
+          "components": [
+            {
+              "internalType": "bytes32",
+              "name": "key",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "commitment",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "ecdhAmount",
+              "type": "bytes32"
+            }
+          ],
+          "internalType": "struct IMintRelayer.MoneroOutput",
+          "name": "output",
+          "type": "tuple"
+        },
+        {
+          "internalType": "uint256",
+          "name": "blockHeight",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes32[]",
+          "name": "txMerkleProof",
+          "type": "bytes32[]"
+        },
+        {
+          "internalType": "uint256",
+          "name": "txIndex",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes32[]",
+          "name": "outputMerkleProof",
+          "type": "bytes32[]"
+        },
+        {
+          "internalType": "uint256",
+          "name": "outputGlobalIndex",
+          "type": "uint256"
+        }
+      ],
+      "name": "relayMint",
+      "outputs": [],
+      "stateMutability": "payable",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x",
+  "deployedBytecode": "0x",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}

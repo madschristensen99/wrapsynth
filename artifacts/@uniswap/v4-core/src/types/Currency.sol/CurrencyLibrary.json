@@ -1,0 +1,34 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "CurrencyLibrary",
+  "sourceName": "@uniswap/v4-core/src/types/Currency.sol",
+  "abi": [
+    {
+      "inputs": [],
+      "name": "ERC20TransferFailed",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "NativeTransferFailed",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ADDRESS_ZERO",
+      "outputs": [
+        {
+          "internalType": "Currency",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x608080604052346018576075908161001e823930815050f35b600080fdfe6080806040526004361015601257600080fd5b60003560e01c6366e7950914602657600080fd5b6000366003190112603a5780600060209252f35b600080fdfea26469706673582212205de3825004e1b767e8378b66b7174e2955c196d9152f5f00f07f5fb781eb049664736f6c63430008180033",
+  "deployedBytecode": "0x6080806040526004361015601257600080fd5b60003560e01c6366e7950914602657600080fd5b6000366003190112603a5780600060209252f35b600080fdfea26469706673582212205de3825004e1b767e8378b66b7174e2955c196d9152f5f00f07f5fb781eb049664736f6c63430008180033",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}

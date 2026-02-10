@@ -1,0 +1,20 @@
+{
+  "name": "monero-bridge-circuit",
+  "version": "1.0.0",
+  "description": "Circom circuit for Monero Bridge with PLONK",
+  "main": "index.js",
+  "scripts": {
+    "compile": "./compile.sh"
+  },
+  "keywords": [
+    "circom",
+    "zk-snark",
+    "plonk",
+    "monero"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "circomlib": "^2.0.5"
+  }
+}

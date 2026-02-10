@@ -1,0 +1,33 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "TickMath",
+  "sourceName": "@uniswap/v4-core/src/libraries/TickMath.sol",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "uint160",
+          "name": "sqrtPriceX96",
+          "type": "uint160"
+        }
+      ],
+      "name": "InvalidSqrtPrice",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "int24",
+          "name": "tick",
+          "type": "int24"
+        }
+      ],
+      "name": "InvalidTick",
+      "type": "error"
+    }
+  ],
+  "bytecode": "0x60808060405234601757603a9081601d823930815050f35b600080fdfe600080fdfea2646970667358221220871305fd6fd0f5d025495986ace78095199dfe0c7e3a6710556c76cc9238332c64736f6c63430008180033",
+  "deployedBytecode": "0x600080fdfea2646970667358221220871305fd6fd0f5d025495986ace78095199dfe0c7e3a6710556c76cc9238332c64736f6c63430008180033",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}

@@ -1,0 +1,47 @@
+{
+  "name": "wrapsynth",
+  "version": "1.0.0",
+  "description": "Privacy-preserving Monero bridge to Ethereum using ZK proofs",
+  "scripts": {
+    "compile": "hardhat compile",
+    "deploy": "hardhat run scripts/deploy.js",
+    "deploy:unichain": "hardhat run scripts/deploy.js --network unichain_testnet",
+    "deploy:mock": "hardhat run scripts/deploy-with-mock.js --network unichain_testnet",
+    "verify": "hardhat run scripts/verify.js --network unichain_testnet",
+    "verify:mock": "hardhat run scripts/verify-mock.js --network unichain_testnet",
+    "lp:setup": "hardhat run scripts/lp-setup.js --network unichain_testnet",
+    "lp:setup:mock": "hardhat run scripts/lp-setup-mock.js --network unichain_testnet",
+    "test": "hardhat test",
+    "node": "hardhat node"
+  },
+  "keywords": [
+    "monero",
+    "bridge",
+    "zk-snark",
+    "plonk",
+    "ethereum",
+    "unichain"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@uniswap/v4-core": "^1.0.2",
+    "@uniswap/v4-periphery": "^1.0.3",
+    "hardhat": "^2.22.0",
+    "hardhat-preprocessor": "^0.1.5"
+  },
+  "dependencies": {
+    "@noble/ed25519": "^2.0.0",
+    "@openzeppelin/contracts": "^5.0.0",
+    "@pythnetwork/pyth-sdk-solidity": "^3.0.0",
+    "axios": "^1.13.4",
+    "bs58": "^5.0.0",
+    "circomlibjs": "^0.1.7",
+    "dotenv": "^16.4.0",
+    "js-sha3": "^0.9.0",
+    "merkletreejs": "^0.6.0",
+    "monero-javascript": "^0.8.4",
+    "snarkjs": "^0.7.0"
+  }
+}
