@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hooked Monero - Privacy Bridge</title>
-    <link rel="stylesheet" href="styles.css">
+    <title>WrapSynth - Privacy Bridge</title>
+    <link rel="stylesheet" href="./styles.css">
     
     <!-- Crypto polyfill for snarkjs -->
     <script>
@@ -33,8 +33,13 @@
         <div class="container">
             <div class="header-content">
                 <div class="logo">
-                    <h1>🌉 Hooked Monero</h1>
-                    <p class="tagline">Privacy-Preserving XMR Bridge</p>
+                    <a href="../index.html" class="logo-link">
+                        <span class="back-arrow">←</span>
+                        <div>
+                            <h1>🌉 Wrapsynth</h1>
+                            <p class="tagline">Privacy-Preserving XMR Bridge</p>
+                        </div>
+                    </a>
                 </div>
                 <div class="wallet-section">
                     <button id="connectWallet" class="btn btn-primary">Connect Wallet</button>
@@ -56,7 +61,7 @@
                 <div class="stat-card">
                     <div class="stat-icon">💰</div>
                     <div class="stat-content">
-                        <p class="stat-label">Your Hooked XMR Balance</p>
+                        <p class="stat-label">Your Wrapsynth XMR Balance</p>
                         <p class="stat-value" id="userBalance">0.00</p>
                     </div>
                 </div>
@@ -86,16 +91,16 @@
             <!-- Action Tabs -->
             <section class="action-section">
                 <div class="tabs">
-                    <button class="tab-btn active" data-tab="mint">Mint Hooked XMR</button>
-                    <button class="tab-btn" data-tab="burn">Burn Hooked XMR</button>
+                    <button class="tab-btn active" data-tab="mint">Mint Wrapsynth XMR</button>
+                    <button class="tab-btn" data-tab="burn">Burn Wrapsynth XMR</button>
                     <button class="tab-btn" data-tab="lp" id="lpTabBtn">Become LP</button>
                 </div>
 
                 <!-- Mint Tab -->
                 <div id="mintTab" class="tab-content active">
                     <div class="card">
-                        <h2>🪙 Mint Hooked XMR</h2>
-                        <p class="description">Bridge your Monero to Ethereum. Send XMR to receive Hooked XMR tokens.</p>
+                        <h2>🪙 Mint Wrapsynth XMR</h2>
+                        <p class="description">Bridge your Monero to Ethereum. Send XMR to receive Wrapsynth XMR tokens.</p>
                         
                         <div class="form-group">
                             <label for="lpSelect">Select Liquidity Provider</label>
@@ -159,7 +164,7 @@
                                 <span class="step-number">4</span>
                                 <div class="step-content">
                                     <p class="step-title">Mint Tokens</p>
-                                    <p class="step-desc">Submit proof and receive Hooked XMR</p>
+                                    <p class="step-desc">Submit proof and receive Wrapsynth XMR</p>
                                 </div>
                             </div>
                         </div>
@@ -201,8 +206,8 @@
                 <!-- Burn Tab -->
                 <div id="burnTab" class="tab-content">
                     <div class="card">
-                        <h2>🔥 Burn Hooked XMR</h2>
-                        <p class="description">Convert your Hooked XMR back to native Monero.</p>
+                        <h2>🔥 Burn Wrapsynth XMR</h2>
+                        <p class="description">Convert your Wrapsynth XMR back to native Monero.</p>
                         
                         <div class="form-group">
                             <label for="burnLpSelect">Select Liquidity Provider</label>
@@ -212,9 +217,9 @@
                         </div>
 
                         <div class="form-group">
-                            <label for="burnAmount">Amount (Hooked XMR)</label>
+                            <label for="burnAmount">Amount (Wrapsynth XMR)</label>
                             <input type="number" id="burnAmount" class="input" placeholder="0.00" step="0.001" min="0.001">
-                            <p class="input-hint">Your balance: <span id="burnBalance">0.00</span> Hooked XMR</p>
+                            <p class="input-hint">Your balance: <span id="burnBalance">0.00</span> Wrapsynth XMR</p>
                         </div>
 
                         <div class="form-group">
@@ -384,7 +389,7 @@
         <div class="container">
             <div class="footer-content">
                 <div class="footer-section">
-                    <h3>Hooked Monero</h3>
+                    <h3>Wrapsynth</h3>
                     <p>Privacy-preserving XMR bridge powered by zero-knowledge proofs</p>
                 </div>
                 <div class="footer-section">
@@ -402,7 +407,7 @@
                 </div>
             </div>
             <div class="footer-bottom">
-                <p>&copy; 2026 Hooked Monero. Built with privacy in mind.</p>
+                <p>&copy; 2026 Wrapsynth. Built with privacy in mind.</p>
             </div>
         </div>
     </footer>
