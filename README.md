@@ -1,3 +1,5 @@
+![WrapSynth](images/wrapsynth-hero.png)
+
 # 🌉 WrapSynth
 
 **A privacy-preserving bridge bringing Monero to Ethereum using zero-knowledge proofs.**
