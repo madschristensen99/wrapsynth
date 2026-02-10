@@ -912,6 +912,10 @@ body {
 }
 
 @media (max-width: 768px) {
+    body {
+        padding-top: 140px; /* More space for wrapped mobile nav */
+    }
+    
     .container {
         padding: 0 1.5rem;
     }
@@ -928,7 +932,7 @@ body {
     }
     
     .hero {
-        padding: 120px 0 80px;
+        padding: 40px 0 80px; /* Reduce top padding since body has more */
     }
     
     .features-grid,
