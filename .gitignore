@@ -1,41 +1,295 @@
-# Rust
-**/target/
-**/.cargo/
-**/*.rs.bk
-Cargo.lock
+# ════════════════════════════════════════════════════════════════════════════
+# Monero Bridge - Git Ignore
+# ════════════════════════════════════════════════════════════════════════════
 
-# Node.js
-**/node_modules/
-**/npm-debug.log*
-**/yarn-debug.log*
-**/yarn-error.log*
-**/.npm
-**/.eslintcache
+# ════════════════════════════════════════════════════════════════════════════
+# Circuit Build Artifacts
+# ════════════════════════════════════════════════════════════════════════════
 
-# Build directories
-**/build/
-**/dist/
-**/build_optimized/
+# Circom compiled outputs
+circuit/build/
+circuit/*.r1cs
+circuit/*.sym
+circuit/*.wasm
+circuit/*_js/
+circuit/*_cpp/
+circuit/*.zkey
+circuit/*.ptau
+circuit/verification_key.json
+circuit/proof.json
+circuit/public.json
+circuit/witness.wtns
+
+# Generated Solidity verifiers
+# Keep the one in contracts/ for deployment, ignore the one in build/
+circuit/build/*.sol
+
+# Test inputs/outputs
+circuit/input*.json
+circuit/output*.json
+circuit/test_*.json
+
+# ════════════════════════════════════════════════════════════════════════════
+# Node.js / JavaScript
+# ════════════════════════════════════════════════════════════════════════════
+
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
 
 # Logs
+logs/
 *.log
-monero-wallet-rpc.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
 
-# Environment variables
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory
+coverage/
+*.lcov
+.nyc_output/
+
+# Build outputs
+dist/
+build/
+out/
+
+# Cache
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+.vuepress/dist/
+
+# ════════════════════════════════════════════════════════════════════════════
+# Solidity / Hardhat / Foundry
+# ════════════════════════════════════════════════════════════════════════════
+
+# Hardhat
+cache/
+artifacts/
+typechain/
+typechain-types/
+
+# Deployment records (keep latest for reference)
+deployments/*
+!deployments/*_latest.json
+
+# Foundry
+out/
+cache_forge/
+broadcast/
+
+# Compiled contracts
+contracts/**/*.abi
+contracts/**/*.bin
+
+# Deployment artifacts
+deployments/localhost/
+deployments/hardhat/
+
+# Gas reports
+gas-report.txt
+.gas-snapshot
+
+# Coverage
+coverage.json
+lcov.info
+
+# ════════════════════════════════════════════════════════════════════════════
+# Environment & Secrets
+# ════════════════════════════════════════════════════════════════════════════
+
 .env
 .env.local
 .env.*.local
+.env.production
+.env.development
+.env.test
+
+# Private keys (NEVER commit these!)
+*.key
+*.pem
+*.p12
+*.pfx
+private_keys/
+secrets/
+.secret
+mnemonic.txt
+
+# ════════════════════════════════════════════════════════════════════════════
+# IDE / Editor
+# ════════════════════════════════════════════════════════════════════════════
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+.vim/
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# ════════════════════════════════════════════════════════════════════════════
+# Operating System
+# ════════════════════════════════════════════════════════════════════════════
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+.directory
+.Trash-*
+
+# ════════════════════════════════════════════════════════════════════════════
+# Testing & Development
+# ════════════════════════════════════════════════════════════════════════════
+
+# Test artifacts
+test/fixtures/
+test/tmp/
+*.test.log
+
+# Benchmark results
+benchmark/
+*.bench
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+
+# ════════════════════════════════════════════════════════════════════════════
+# Documentation
+# ════════════════════════════════════════════════════════════════════════════
+
+# Generated docs (if auto-generated)
+docs/build/
+docs/_build/
+site/
+
+# ════════════════════════════════════════════════════════════════════════════
+# Monero Specific
+# ════════════════════════════════════════════════════════════════════════════
+
+# Monero wallet files (NEVER commit!)
+*.keys
+wallet.bin
+wallet.cache
+
+# Transaction data
+transactions/
+tx_*.json
+
+# DLEQ proofs (if sensitive)
+proofs/
+dleq_*.json
+
+# ════════════════════════════════════════════════════════════════════════════
+# Cryptographic Artifacts
+# ════════════════════════════════════════════════════════════════════════════
+
+# Powers of Tau files (large, download as needed)
 *.ptau
+powersOfTau*.ptau
+
+# Trusted setup artifacts
+setup/
+ceremony/
+
+# Large proving/verification keys (consider using Git LFS)
 *.zkey
+!*_final.zkey  # Keep final keys if needed
 
-# Test/Generated files
-spendProof/proof_tx.json
-spendProof/public.json
-spendProof/public_tx.json
-spendProof/dleq_proof.json
+# ════════════════════════════════════════════════════════════════════════════
+# Miscellaneous
+# ════════════════════════════════════════════════════════════════════════════
 
-spendProof/oracle/tx_data.json
-spendProof/oracle/output_data.js
-spendProof/oracle/deployment.json
-spendProof/oracle/lp_info.json
+# Python (if used for scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+ENV/
+env/
+
+# Rust (if used for native modules)
+target/
+Cargo.lock
+
+# Go (if used for backend)
+vendor/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Large data files
+*.dat
+*.bin
+data/
+datasets/
+
+# ════════════════════════════════════════════════════════════════════════════
+# Keep These Files
+# ════════════════════════════════════════════════════════════════════════════
+
+# Important: Explicitly keep these if needed
+!.gitkeep
+!README.md
+!LICENSE
+
+# Keep example configs
+!.env.example
+!config.example.json
+
+# Keep the Solidity verifier if it's part of the deployment
+!contracts/MoneroBridgeVerifier.sol
+
+# Transaction data with sensitive keys
+transaction_data.json
 
