@@ -1,511 +1,1096 @@
-# **Monero→Arbitrum Bridge Specification v7.1**
+# Wrapsynth Bridge Specification v8.0
 
-*Optimized ZK Architecture: PLONK Proofs + Output Merkle Trees + Poseidon Commitment*
+*LP-Collateralized Wrapped Monero with Uniswap V4 Composability*
 
-**Current: ~617 constraints, Output Merkle Tree verification, zkTLS-ready, 150% initial collateral, 120% liquidation threshold, DAI-only yield**
+**Architecture: Self-Minting LPs → sDAI Yield → Permissionless Relayers → V4 AMM Liquidity**
 
-**Platform: Gnosis Chain (Target) | Base Sepolia (Testnet)**
+**Verification: PLONK Proofs + RISC Zero Multi-Node Consensus + Output Merkle Trees**
 
-**Collateral: Yield-Bearing DAI Only (sDAI, aDAI)**
+**Collateral: DAI → auto-wrapped sDAI (yield funds infrastructure)**
 
-**Status: ✅ End-to-End PLONK Proof Working | ✅ Output Merkle Tree Implemented | ✅ 137k Gas | ⚠️ Requires Security Audit**
+**Status: ✅ PLONK Proof Working | ✅ Output Merkle Tree | ✅ 137k Gas | ⚠️ Requires Security Audit**
 
 ---
 
-## **1. Architecture & Principles**
+## 1. Architecture & Principles
 
-### **1.1 Core Design Tenets**
+### 1.1 Core Design Tenets
 
-1. **Cryptographic Layer (Optimized)**: 
-   - **Off-Chain**: Ed25519 operations (R=r·G, S=8·r·A, P=H_s·G+B) using @noble/ed25519
-   - **In-Circuit**: Poseidon commitment binding all witness values (~617 constraints)
-   - **Security**: Poseidon commitment cryptographically binds r, v, H_s, R_x, S_x, P - making DLEQ verification redundant
-   - **Status**: ✅ End-to-end proof working | ✅ 137k gas | ⚠️ Requires audit
-2. **Economic Layer (Contracts)**: Enforces DAI-only collateralization, manages liquidity risk, **TWAP-protected liquidations** with 15-minute exponential moving average.
-3. **Oracle Layer (On-Chain)**: **Quadratic-weighted N-of-M consensus** based on historical proof accuracy. Minimum 3.0 weighted votes required, weighted by oracle reputation score.
-4. **Privacy Transparency**: Single-key verification model; destination address provided as explicit input.
-5. **Minimal Governance**: No admin elections, no Snapshot. **Single guardian address** can pause mints only (30-day timelock to unpause). All other parameters immutable at deployment.
+1. **No Governance Token**: All infrastructure costs funded by sDAI yield from LP collateral. No DAO, no Snapshot, no emissions schedule.
+2. **LP-Centric Model**: Each LP maintains their own collateral, sets their own fees, and backs their own wXMR. No shared pool risk.
+3. **Self-Minting**: LPs are XMR holders who prove existing UTXOs they already own, mint wXMR, and LP both sides of a V4 pool.
+4. **Permissionless Infrastructure**: Anyone can relay Monero blocks or generate ZK proofs. Paid from sDAI yield proportional to work performed.
+5. **Two-Hour Enforcement Window**: Burns trigger a 2-hour window for the LP to send XMR. Default transfers the LP's Uniswap V4 position to the burner.
+6. **Minimal Trust**: RISC Zero zkVM verifies TLS connections to 50%+ of registered Monero nodes. No single oracle, no trusted relayer.
 
-### **1.2 System Components**
+### 1.2 System Layers
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Layer 3: AMM                              │
+│   Uniswap V4 Pool (wXMR/sDAI) with custom Hook                 │
+│   - Oracle-bounded swaps (max 3% deviation from Pyth)           │
+│   - Circuit breaker (max 5% pool drain per block)               │
+│   - beforeRemoveLiquidity blocks locked positions               │
+│   - LP positions serve as collateral in burn vaults             │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+┌──────────────────────────────▼──────────────────────────────────┐
+│                        Layer 2: Token                            │
+│   wXMR (ERC-20, 12 decimals = piconero)                         │
+│   - Self-mint: LP proves existing Monero UTXO                   │
+│   - Burn: 2-hour window, LP sends XMR or loses V4 position     │
+│   - LP collateral: DAI auto-wrapped to sDAI                     │
+│   - sDAI yield split: 40% relayers, 40% provers, 20% reserve   │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+┌──────────────────────────────▼──────────────────────────────────┐
+│                     Layer 1: Verification                        │
+│   RISC Zero Multi-Node Consensus                                │
+│   - On-chain registry of Monero node endpoints + TLS certs     │
+│   - zkVM guest: connect to N nodes, verify TLS, compare blocks │
+│   - Require 50%+ agreement on block hash                        │
+│   - Permissionless: anyone can relay with valid proof           │
+│   - Dual Merkle roots: txMerkleRoot + outputMerkleRoot          │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+┌──────────────────────────────▼──────────────────────────────────┐
+│                    Layer 0: Cryptography                         │
+│   PLONK Circuit (~1157 constraints)                              │
+│   - Poseidon commitment binding all witness values              │
+│   - Amount decryption (v XOR ecdhAmount)                        │
+│   - Stealth address derivation (P = H_s·G + B)                 │
+│   - Scalar range checks (r < L, H_s < L)                       │
+│   - 64-bit amount range check (v < 2^64)                       │
+│   - Ed25519 DLEQ verification                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 1.3 Key Differences from v7.1
+
+| | Feature | v7.1 | v8.0 | |
+|---|---|---|
+| | Oracle model | Quadratic-weighted N-of-M voting | RISC Zero multi-node consensus | |
+| | Oracle bonding | 1,000 DAI bond per oracle | No bond — permissionless relaying | |
+| | Block relay | Trusted oracle posts blocks | Anyone posts with RISC Zero proof | |
+| | Trust assumption | 3+ honest oracles | 50%+ honest Monero nodes | |
+| | Collateral model | LP posts collateral for user mints | LP self-mints against own XMR | |
+| | AMM integration | None | Uniswap V4 with custom Hook | |
+| | Collateral form | sDAI idle in vault | LP position NFT (wXMR + sDAI earning swap fees) | |
+| | Yield usage | Oracle rewards + LP yield | 40/40/20 split to relayers/provers/reserve | |
+| | Governance | Guardian pause + oracle voting | Node registry multisig only | |
+| | Burn default | User gets sDAI collateral | User gets LP position NFT | |
+| | Price oracle | Chainlink TWAP | Pyth Network + V4 pool price cross-check | |
+
+---
+
+## 2. Participant Roles
+
+### 2.1 LP (Liquidity Provider / Self-Minter)
+
+An LP is an XMR holder who wants yield. They are the core participant.
+
+**What an LP provides:**
+- XMR (already in their Monero wallet — never leaves)
+- DAI (deposited as collateral, auto-wrapped to sDAI)
+
+**What an LP receives:**
+- wXMR (minted against their proven XMR holdings)
+- Swap fees from V4 pool
+- DSR yield on sDAI component
+- Mint/burn fees from users who trade through them
+
+**What an LP must do on burn:**
+- Send XMR to burner's Monero address within 2 hours
+- Or lose their V4 LP position to the burner
+
+### 2.2 Relayer
+
+Anyone who posts Monero block data on-chain with a valid RISC Zero proof.
+
+**Requirements:** None. No bond, no registration beyond a simple sign-up.
+
+**Revenue:** 40% of sDAI yield, distributed pro-rata by blocks posted per epoch.
+
+### 2.3 Prover
+
+Anyone who generates ZK proofs for mint transactions.
+
+**Requirements:** GPU or CPU capable of running snarkjs/rapidsnark.
+
+**Revenue:** 40% of sDAI yield, distributed pro-rata by proofs facilitated per epoch.
+
+### 2.4 Casual User
+
+Someone who wants XMR exposure or wants to swap wXMR ↔ sDAI.
+
+**Primary path:** Swap on Uniswap V4. No Monero interaction needed.
+
+**Alternative path:** Mint via LP (send XMR, receive wXMR) or burn via LP (send wXMR, receive XMR).
+
+---
+
+## 3. Complete Flow Diagrams
+
+### 3.1 LP Bootstrap Flow (Alice Self-Mints)
+
+This is the primary bootstrapping mechanism. Alice is an XMR holder with DAI.
+
+```mermaid
+sequenceDiagram
+    participant AW as Alice's Monero Wallet
+    participant AF as Alice's Browser
+    participant SC as wXMR Contract
+    participant SDAI as sDAI Vault (Maker DSR)
+    participant BV as Block Verifier
+    participant PM as V4 PositionManager
+    participant POOL as V4 Pool (wXMR/sDAI)
+    participant HOOK as Wrapsynth Hook
+
+    Note over AW,HOOK: Phase 1: Registration & Collateral
+
+    AF->>SC: registerLP(mintFeeBps=50, burnFeeBps=50,<br/>intentDepositBps=100, moneroAddr, viewKey, active=true)
+    SC-->>SC: Store LP info, add to allLPs[]
+
+    AF->>SC: lpDeposit(22500 DAI)
+    SC->>SDAI: dai.transferFrom(Alice, contract, 22500 DAI)
+    SC->>SDAI: dai.approve(sDAI, 22500)
+    SC->>SDAI: sDAI.deposit(22500, contract)
+    SDAI-->>SC: ~21,800 sDAI received
+    SC-->>SC: lpInfo[Alice].collateralAmount += 21800 sDAI<br/>totalDaiDeposited += 22500 DAI
+
+    Note over AW,HOOK: Phase 2: Self-Mint (Prove Existing UTXO)
+
+    Note over AW: Alice has 100 XMR in her wallet<br/>She identifies an unspent output:<br/>txHash=0xabc..., outputIndex=0
+
+    AF->>AF: Fetch output data from Monero node<br/>(ecdhAmount, outputPubKey, commitment)
+    AF->>AF: Fetch Merkle proofs from relayer<br/>(txMerkleProof, outputMerkleProof)
+
+    AF->>AF: Generate witness:<br/>r = tx secret key<br/>v = amount (100e12 piconero)<br/>Compute R = r·G, S = 8·r·A, P = H_s·G + B
+
+    AF->>AF: Generate PLONK proof (~2-3 seconds)<br/>Proves: ownership, amount, stealth address
+
+    AF->>SC: selfMint(proof, publicSignals, dleqProof,<br/>ed25519Proof, output, blockHeight,<br/>txMerkleProof, outputMerkleProof, txPublicKey, prover)
+
+    SC->>SC: verifier.verifyProof(proof, publicSignals)
+    SC->>BV: blockExists(blockHeight)?
+    BV-->>SC: true
+    SC->>SC: verifyTxInBlock(txHash, blockHeight, txMerkleProof)
+    SC->>SC: verifyMerkleProofSHA256(outputLeaf, outputMerkleRoot, proof)
+    SC->>SC: Check: publicSignals[1] == txPublicKey
+    SC->>SC: Check: !usedOutputs[outputId]
+    SC->>SC: Mark usedOutputs[outputId] = true
+
+    SC->>SC: Check collateral ratio:<br/>sDAI.convertToAssets(21800) = 22500 DAI<br/>xmrToDai(100e12) = 15000 DAI<br/>22500/15000 = 150% ✅
+
+    SC->>SC: lpInfo[Alice].backedAmount += 100e12
+    SC->>SC: _mint(Alice, 100e12 wXMR)
+
+    Note over AW,HOOK: Phase 3: Create V4 LP Position
+
+    AF->>PM: approve(wXMR, PositionManager, 100e12)
+    AF->>PM: approve(sDAI, PositionManager, type(uint256).max)
+
+    AF->>PM: modifyLiquidities([MINT_POSITION, SETTLE_PAIR],<br/>poolKey=wXMR/sDAI, tickLower, tickUpper,<br/>liquidity, recipient=Alice)
+    PM->>POOL: modifyLiquidity()
+    POOL->>HOOK: beforeAddLiquidity(Alice, ...)
+    HOOK-->>POOL: OK
+    POOL-->>PM: Position created
+    PM-->>AF: LP NFT tokenId=42
+
+    Note over AF: Alice now holds LP NFT #42<br/>containing wXMR + sDAI<br/>earning swap fees continuously
+
+    Note over AW: Alice's XMR never moved.<br/>It's still in her Monero wallet.<br/>Ready to fulfill any burn request.
+```
+
+### 3.2 Monero Block Relay Flow (Permissionless)
+
+```mermaid
+sequenceDiagram
+    participant R as Relayer (Anyone)
+    participant ZKVM as RISC Zero zkVM
+    participant N1 as Node 1 (sethforprivacy)
+    participant N2 as Node 2 (hashvault)
+    participant N3 as Node 3 (cakewallet)
+    participant N4 as Node 4 (rino.io)
+    participant N5 as Node 5 (stackwallet)
+    participant BV as Block Verifier Contract
+    participant RZ as RISC Zero Verifier (on-chain)
+
+    Note over R,RZ: Relayer fetches block data via RISC Zero guest program
+
+    R->>ZKVM: Start guest program with inputs:<br/>blockHeight=3001000, nodeEndpoints[5]
+
+    ZKVM->>N1: TLS connect → POST /json_rpc<br/>{"method":"get_block","params":{"height":3001000}}
+    N1-->>ZKVM: blockHash=0xaaa..., txHashes[15], outputs[42]
+    ZKVM->>ZKVM: Verify TLS cert fingerprint matches registry
+
+    ZKVM->>N2: TLS connect → POST /json_rpc
+    N2-->>ZKVM: blockHash=0xaaa... (agrees)
+    ZKVM->>ZKVM: Verify TLS cert ✅
+
+    ZKVM->>N3: TLS connect → POST /json_rpc
+    N3-->>ZKVM: blockHash=0xaaa... (agrees)
+    ZKVM->>ZKVM: Verify TLS cert ✅
+
+    ZKVM->>N4: TLS connect → POST /json_rpc
+    N4-->>ZKVM: blockHash=0xbbb... (disagrees!)
+    ZKVM->>ZKVM: Verify TLS cert ✅
+
+    ZKVM->>N5: TLS connect → POST /json_rpc
+    N5-->>ZKVM: blockHash=0xaaa... (agrees)
+    ZKVM->>ZKVM: Verify TLS cert ✅
+
+    ZKVM->>ZKVM: Tally: 4/5 agree on 0xaaa...<br/>Required: 3/5 ✅
+    ZKVM->>ZKVM: Compute txMerkleRoot from txHashes
+    ZKVM->>ZKVM: Compute outputMerkleRoot from outputs
+    ZKVM->>ZKVM: Commit journal:<br/>{height, blockHash, txRoot, outputRoot,<br/>nodeCount=5, agreeing=4, attestations[5]}
+
+    ZKVM-->>R: seal (SNARK proof) + journal
+
+    R->>BV: postMoneroBlock(blockHeight=3001000, seal, journal)
+
+    BV->>RZ: verify(seal, BLOCK_VERIFIER_IMAGE_ID, sha256(journal))
+    RZ-->>BV: Valid ✅
+
+    BV->>BV: Decode journal
+    BV->>BV: Check: agreeingNodes(4) >= requiredAgreement(3) ✅
+    BV->>BV: Verify each attestation.tlsCertHash<br/>matches nodeRegistry[i].tlsCertFingerprint ✅
+    BV->>BV: Store moneroBlocks[3001000]
+
+    BV->>BV: relayers[R].blocksPosted++<br/>totalBlocksPostedThisEpoch++
+
+    Note over R: Relayer will be paid from sDAI yield<br/>at next epoch distribution
+```
+
+### 3.3 Casual User Swap Flow (No Monero Needed)
+
+```mermaid
+sequenceDiagram
+    participant U as User (wants XMR exposure)
+    participant UNI as Uniswap V4 Router
+    participant POOL as V4 Pool (wXMR/sDAI)
+    participant HOOK as Wrapsynth Hook
+    participant PYTH as Pyth Oracle
+
+    Note over U,PYTH: User buys wXMR with sDAI on Uniswap
+
+    U->>UNI: swap(sDAI → wXMR, amount=1500 sDAI)
+    UNI->>POOL: swap(params)
+
+    POOL->>HOOK: beforeSwap(sender, poolKey, params)
+    HOOK->>PYTH: getPriceNoOlderThan(XMR_USD, 60s)
+    PYTH-->>HOOK: XMR = 150.23 USD
+    HOOK->>HOOK: Get pool implied price from tick
+    HOOK->>HOOK: Check deviation: |poolPrice - oraclePrice| / oraclePrice
+    HOOK->>HOOK: 1.2% deviation < 3% max ✅
+    HOOK->>HOOK: blockDrainAmount[block.number] += swapSize
+    HOOK->>HOOK: Drain this block: 2.1% < 5% max ✅
+    HOOK-->>POOL: OK (proceed with swap)
+
+    POOL->>POOL: Execute AMM swap
+    POOL-->>UNI: BalanceDelta(wXMR: +9.98e12, sDAI: -1500e18)
+    UNI-->>U: Receive 9.98 wXMR
+
+    Note over U: User now holds wXMR<br/>Can hold, LP, or swap back anytime<br/>Never touched Monero
+```
+
+### 3.4 Burn Flow (User Redeems wXMR for XMR)
+
+```mermaid
+sequenceDiagram
+    participant U as User (Charlie)
+    participant SC as wXMR Contract
+    participant VAULT as LP Collateral Vault
+    participant PM as V4 PositionManager
+    participant POOL as V4 Pool
+    participant HOOK as Hook
+    participant A as LP (Alice)
+    participant AW as Alice's Monero Wallet
+    participant BV as Block Verifier
+
+    Note over U,BV: Phase 1: Burn Request
+
+    U->>SC: requestBurn(amount=10e12, xmrAddress="4A1B...", lp=Alice)
+    Note over U: Also sends ETH deposit (1% of burn value)
+
+    SC->>SC: Check: balanceOf(Charlie) >= 10e12 ✅
+    SC->>SC: Check: lpInfo[Alice].backedAmount >= 10e12 ✅
+    SC->>SC: _burn(Charlie, 10e12)
+
+    SC->>VAULT: lockLPPosition(Alice, burnId=7)
+    VAULT->>VAULT: isPositionLocked[Alice.positionId] = true
+    Note over VAULT: Alice cannot remove liquidity<br/>from V4 pool while locked
+
+    SC->>SC: Store burnRequest[7]:<br/>{user=Charlie, lp=Alice, amount=10e12,<br/>requestTime=now, collateralLocked=NFT#42}
+
+    SC-->>U: BurnRequested(burnId=7)
+    SC-->>A: (Alice monitors events)
+
+    Note over U,BV: Phase 2a: Alice Fulfills (Happy Path)
+
+    Note over A: Alice sees burn request event<br/>She has 2 hours to send 10 XMR
+
+    AW->>AW: Create Monero TX:<br/>Send 10 XMR to Charlie's address "4A1B..."
+
+    Note over AW: Wait for 10 confirmations (~20 min)
+
+    Note over BV: Relayer posts block containing Alice's TX
+
+    A->>SC: fulfillBurn(burnId=7, xmrTxHash=0xdef...,<br/>blockHeight=3001005, txMerkleProof, txIndex)
+
+    SC->>BV: moneroBlocks[3001005].exists? ✅
+    SC->>SC: verifyTxInBlock(0xdef..., 3001005, proof) ✅
+    SC->>SC: Check: block.timestamp >= burnRequest.requestTime ✅
+    SC->>SC: burnRequest[7].fulfilled = true
+
+    SC->>VAULT: unlockLPPosition(Alice.positionId)
+    VAULT->>VAULT: isPositionLocked[Alice.positionId] = false
+
+    SC->>U: Transfer ETH deposit back to Charlie
+    SC-->>A: Alice's LP position is free again
+
+    Note over U,BV: Phase 2b: Alice Defaults (Unhappy Path)
+
+    Note over A: 2 hours pass. Alice did NOT send XMR.
+
+    U->>SC: claimDefault(burnId=7)
+
+    SC->>SC: Check: block.timestamp > requestTime + 2 hours ✅
+    SC->>SC: Check: !fulfilled && !defaulted ✅
+    SC->>SC: burnRequest[7].defaulted = true
+
+    SC->>VAULT: transferPosition(Alice.positionId, Charlie)
+    VAULT->>PM: transferFrom(vault, Charlie, NFT#42)
+    PM-->>U: Charlie now owns LP NFT #42
+
+    SC->>U: Transfer ETH deposit back to Charlie
+
+    Note over U: Charlie now owns Alice's V4 LP position<br/>containing wXMR + sDAI + accrued fees<br/><br/>Charlie can:<br/>1. Keep LPing (earn swap fees)<br/>2. Remove liquidity (get wXMR + sDAI)<br/>3. Swap the wXMR for sDAI on V4<br/>4. Burn the wXMR through another LP
+```
+
+### 3.5 Partial Burn Default (Position Slicing)
+
+```mermaid
+sequenceDiagram
+    participant U as Charlie
+    participant SC as wXMR Contract
+    participant VAULT as LP Collateral Vault
+    participant PM as V4 PositionManager
+    participant POOL as V4 Pool
+
+    Note over U,POOL: Alice's position is worth 50 XMR<br/>Charlie is burning only 10 XMR<br/>Charlie should get ~30% (10 * 150% / 50)
+
+    U->>SC: claimDefault(burnId=7)
+    SC->>VAULT: claimPartialDefault(positionId=42, burnAmount=10e12)
+
+    VAULT->>VAULT: totalValue = getPositionValueInXMR(42) = 50e12
+    VAULT->>VAULT: charlieShare = (10e12 * 150) / (50e12 * 100) = 30%
+
+    VAULT->>PM: decreaseLiquidity(NFT#42, 30% of liquidity)
+    PM->>POOL: modifyLiquidity(decrease)
+    POOL->>POOL: Hook: beforeRemoveLiquidity<br/>sender=vault ✅ (vault is allowed)
+    POOL-->>PM: tokens released
+
+    PM-->>VAULT: 10 wXMR + 1500 sDAI (Charlie's share)
+    VAULT->>U: Transfer 10 wXMR + 1500 sDAI to Charlie
+
+    Note over VAULT: Alice keeps remaining 70% of position<br/>Her LP NFT #42 still exists with reduced liquidity
+
+    Note over U: Charlie received wXMR + sDAI worth ~150%<br/>of his burned amount. He's made whole.
+```
+
+### 3.6 Yield Distribution Flow
+
+```mermaid
+sequenceDiagram
+    participant ANY as Anyone (triggers distribution)
+    participant SC as wXMR Contract
+    participant SDAI as sDAI Vault
+    participant DAI as DAI Token
+    participant R1 as Relayer 1 (posted 200 blocks)
+    participant R2 as Relayer 2 (posted 150 blocks)
+    participant P1 as Prover 1 (facilitated 80 proofs)
+    participant P2 as Prover 2 (facilitated 40 proofs)
+
+    Note over ANY,P2: Epoch ends (7 days elapsed)
+
+    ANY->>SC: distributeYield()
+
+    SC->>SC: totalAccruedYield()
+    SC->>SDAI: convertToAssets(totalLPCollateral)
+    SDAI-->>SC: currentValueDai = 10,096,000 DAI
+    SC->>SC: totalDaiDeposited = 10,000,000 DAI
+    SC->>SC: yield = 96,000 DAI (≈0.96% weekly)
+
+    SC->>SDAI: redeem(sdaiToRedeem, contract, contract)
+    SDAI-->>SC: 96,000 DAI received
+
+    SC->>SC: relayerPool = 96,000 * 40% = 38,400 DAI
+    SC->>SC: proverPool = 96,000 * 40% = 38,400 DAI
+    SC->>SC: reservePool = 96,000 * 20% = 19,200 DAI
+
+    Note over SC: Relayer distribution (pro-rata by blocks)
+
+    SC->>SC: R1 share: 38,400 * 200/350 = 21,943 DAI
+    SC->>SC: R2 share: 38,400 * 150/350 = 16,457 DAI
+    SC->>SC: relayers[R1].pendingReward += 21,943
+    SC->>SC: relayers[R2].pendingReward += 16,457
+
+    Note over SC: Prover distribution (pro-rata by proofs)
+
+    SC->>SC: P1 share: 38,400 * 80/120 = 25,600 DAI
+    SC->>SC: P2 share: 38,400 * 40/120 = 12,800 DAI
+    SC->>SC: provers[P1].pendingReward += 25,600
+    SC->>SC: provers[P2].pendingReward += 12,800
+
+    SC->>SC: reserveBalance += 19,200
+
+    Note over SC: Reset epoch counters
+
+    R1->>SC: claimRelayerReward()
+    SC->>DAI: transfer(R1, 21,943 DAI)
+    DAI-->>R1: 21,943 DAI received
+
+    P1->>SC: claimProverReward()
+    SC->>DAI: transfer(P1, 25,600 DAI)
+    DAI-->>P1: 25,600 DAI received
+```
+
+### 3.7 Mint Intent Flow (Non-LP User Mints Through LP)
+
+```mermaid
+sequenceDiagram
+    participant U as User (Bob)
+    participant UW as Bob's Monero Wallet
+    participant SC as wXMR Contract
+    participant A as LP (Alice)
+    participant BV as Block Verifier
+    participant PR as Prover Service
+
+    Note over U,PR: Bob wants wXMR but doesn't want to be an LP.<br/>He'll send XMR to Alice and receive wXMR.
+
+    U->>SC: getActiveLPs()
+    SC-->>U: [{Alice, moneroAddr="4A...", mintFee=50bps, capacity=500e12}]
+
+    U->>SC: createMintIntent(lp=Alice, expectedAmount=10e12)
+    Note over U: Sends ETH deposit (1% of mint value as anti-griefing)
+
+    SC->>SC: Check: Alice is active ✅
+    SC->>SC: Check: 10e12 >= 1% of Alice's capacity ✅
+    SC->>SC: Store intent: {user=Bob, lp=Alice, amount=10e12,<br/>deposit=0.1 ETH, createdAt=now}
+    SC-->>U: intentId = 0xfed...
+
+    Note over U,PR: Bob sends XMR to Alice's Monero address
+
+    UW->>UW: Create Monero TX:<br/>Send 10 XMR to Alice's address "4A..."
+    Note over UW: Wait 10 confirmations
+
+    Note over BV: Relayer posts block containing Bob's TX
+
+    U->>PR: Request proof generation for TX
+    PR->>PR: Generate PLONK proof (witness: r, v, H_s, R, S, P)
+    PR-->>U: proof + publicSignals
+
+    U->>SC: mint(proof, publicSignals, dleqProof, ed25519Proof,<br/>output, blockHeight, txMerkleProof, outputMerkleProof,<br/>recipient=Bob, lp=Alice, txPublicKey, prover=PR)
+
+    SC->>SC: verifier.verifyProof(proof, publicSignals) ✅
+    SC->>SC: publicSignals[1] == txPublicKey ✅
+    SC->>BV: verifyTxInBlock(txHash, blockHeight, proof) ✅
+    SC->>SC: verifyMerkleProofSHA256(outputLeaf, outputRoot, proof) ✅
+    SC->>SC: !usedOutputs[outputId] ✅
+
+    SC->>SC: Find matching intent for Bob/Alice/10e12 ✅
+    SC->>SC: Mark intent fulfilled
+
+    SC->>SC: fee = 10e12 * 50/10000 = 5e10 (0.5%)
+    SC->>SC: netAmount = 10e12 - 5e10 = 9.95e12
+    SC->>SC: lpInfo[Alice].backedAmount += 10e12
+    SC->>SC: _mint(Bob, 9.95e12 wXMR)
+    SC->>SC: _mint(Alice, 5e10 wXMR)
+
+    SC->>SC: _creditProver(PR)
+
+    SC->>U: Return ETH deposit to Bob
+
+    Note over U: Bob has 9.95 wXMR<br/>Alice earned 0.05 wXMR in fees<br/>Prover credited for epoch distribution
+```
+
+### 3.8 LP Intent Expiry (Anti-Griefing)
+
+```mermaid
+sequenceDiagram
+    participant U as User (Bob)
+    participant SC as wXMR Contract
+    participant A as LP (Alice)
+
+    Note over U,A: Bob created mint intent but never sent XMR.<br/>2 hours have passed.
+
+    A->>SC: claimExpiredIntent(intentId=0xfed...)
+
+    SC->>SC: Check: intent.lp == Alice ✅
+    SC->>SC: Check: !intent.fulfilled ✅
+    SC->>SC: Check: !intent.cancelled ✅
+    SC->>SC: Check: block.timestamp > createdAt + 2 hours ✅
+
+    SC->>SC: intent.cancelled = true
+    SC->>A: Transfer intent deposit (0.1 ETH) to Alice
+
+    Note over A: Alice compensated for reserved capacity<br/>Bob loses his deposit for wasting Alice's time
+```
+
+### 3.9 Liquidation Flow
+
+```mermaid
+sequenceDiagram
+    participant L as Liquidator
+    participant SC as wXMR Contract
+    participant PYTH as Pyth Oracle
+    participant SDAI as sDAI Vault
+
+    Note over L,SDAI: XMR price pumped. Alice's collateral ratio dropped.<br/>Collateral: 21,800 sDAI = 22,500 DAI<br/>Backed: 100 XMR * 180 USD = 18,000 DAI<br/>Ratio: 22,500/18,000 = 125% (below 150%, above 120%)
+
+    L->>SC: getLPRatio(Alice)
+    SC->>SDAI: convertToAssets(21800 sDAI)
+    SDAI-->>SC: 22,500 DAI
+    SC->>SC: xmrToDai(100e12) = 18,000 DAI
+    SC-->>L: ratio = 125%
+
+    Note over L: Alice is in "warning zone" (120-150%)<br/>Cannot be liquidated yet, but cannot mint more
+
+    Note over L,SDAI: XMR price pumps further to 200 USD<br/>Backed: 100 XMR * 200 = 20,000 DAI<br/>Ratio: 22,500/20,000 = 112.5% (below 120%)
+
+    L->>SC: liquidateLP(Alice)
+    Note over L: Sends 5,000 DAI to add collateral
+
+    SC->>PYTH: getPriceNoOlderThan(XMR_USD, 60s)
+    PYTH-->>SC: 200.00 USD
+
+    SC->>SC: ratio = 112.5% < 120% ✅ (liquidatable)
+    SC->>SC: Take 5,000 DAI from liquidator
+    SC->>SDAI: sDAI.deposit(5000, contract)
+    SDAI-->>SC: ~4,850 sDAI
+
+    SC->>SC: Add sDAI to Alice's collateral
+    SC->>SC: New ratio: (22,500+5,000)/20,000 = 137.5%
+
+    Note over L: Liquidator receives bonus:<br/>5% of added collateral in wXMR<br/>= 250 DAI worth of wXMR
+
+    SC->>SC: _mint(Liquidator, xmrEquivalent(250 DAI))
+    SC-->>L: Liquidator receives wXMR bonus
+```
+
+---
+
+## 4. Zero-Knowledge Proof System
+
+### 4.1 Circuit Architecture (~1157 constraints)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│              User Frontend (Browser/Wallet)                  │
-│  - Paste tx secret key (r) from wallet                       │
-│  - Paste tx hash + output index                              │
-│  - Enter LP address (A, B) + amount                          │
-│  - Fetch transaction data from Monero node                   │
-│  - Fetch Merkle proofs (TX + output) from oracle/node       │
-│  - Generate Ed25519 operations (R, S, P) - @noble/ed25519   │
-│  - Generate DLEQ proof (c, s, K1, K2)                        │
-│  - Generate PLONK proof (~1157 constraints, server-side)     │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────────┐
-│   Security-Hardened Circuit (Circom, ~1157 constraints)     │
-│  Proves:                                                     │
-│    - Poseidon commitment binding witness values             │
-│    - Amount decryption correctness (v XOR ecdhAmount)       │
-│    - Stealth address derivation (P = H_s·G + B)             │
-│    - Scalar range checks (r < L, H_s < L)                   │
-│    - 64-bit amount range check (v < 2^64)                   │
-│    - Point validation and decompression                      │
+│                    PLONK Circuit                             │
 │                                                              │
-│  ⚠️  Requires security audit                               │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────────┐
-│         Ed25519 DLEQ Verification (Solidity)               │
-│  Verifies:                                                   │
-│    - DLEQ proof: log_G(R) = log_A(rA) = r                   │
-│    - Ed25519 point operations using precompile (0x05)       │
-│    - Challenge: c = H(G, A, R, rA, K1, K2) mod L            │
-│    - Response: s·G = K1 + c·R  AND  s·A = K2 + c·rA        │
+│  Private Inputs (Witness):                                   │
+│  ├── r          : tx secret key (256-bit scalar)            │
+│  ├── v          : amount in piconero (64-bit)               │
+│  ├── H_s        : scalar derived from shared secret         │
+│  ├── R_x        : x-coordinate of R = r·G                  │
+│  ├── S_x        : x-coordinate of S = 8·r·A                │
+│  └── P          : stealth address point                     │
 │                                                              │
-│  ✅ Verified on Base Sepolia (Gas: ~4.1M)                  │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────────┐
-│         Output Merkle Tree Verification (NEW!)              │
-│  Verifies:                                                   │
-│    - TX exists in block (txMerkleRoot)                      │
-│    - Output data authentic (outputMerkleRoot)               │
-│    - Leaf = Hash(txHash||index||ecdhAmount||pubKey||commit) │
-│    - Prevents amount fraud (ecdhAmount verified)            │
+│  Public Inputs:                                              │
+│  ├── poseidonCommitment  : binding commitment               │
+│  ├── R_x                 : tx public key (for matching)     │
+│  ├── ecdhAmount          : encrypted amount from chain      │
+│  ├── B_x, B_y            : LP spend public key              │
+│  └── outputPubKey        : expected stealth address         │
 │                                                              │
-│  ✅ zkTLS-ready: One proof per block (not per TX)          │
-│  ✅ No oracle liveness per transaction                      │
-└──────────────────────────┬──────────────────────────────────┘
-┌──────────────────────────▼──────────────────────────────────┐
-│            Solidity Verifier Contract (Groth16)             │
-│  - Verifies BN254 proofs on-chain                           │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────────┐
-│            Solidity Bridge Contract (~1,150 LOC)            │
-│  - Manages LP collateral (DAI only)                         │
-│  - **Quadratic-weighted N-of-M consensus** (min 3.0 votes)  │
-│  - **TWAP oracle** (15-min EMA for liquidations)            │
-│  - Enforces 150% collateralization (120% liquidation)       │
-│  - Oracle rewards from yield + accuracy bonuses             │
-│  - **On-chain node registry** (max 1 change/week)           │
-│  - **Guardian pause** (mints only, 30-day unpause timelock) │
-│  - **Oracle bonding** (slashable for provably false proofs) │
+│  Constraints:                                                │
+│  ├── Poseidon(r, v, H_s, R_x, S_x, P) == commitment       │
+│  ├── v XOR ecdhAmount == decryptedAmount (amount check)     │
+│  ├── P == H_s·G + B (stealth address derivation)           │
+│  ├── r < L (scalar range: r < ed25519 group order)         │
+│  ├── H_s < L (scalar range)                                │
+│  └── v < 2^64 (amount range)                               │
+│                                                              │
+│  Total: ~1157 constraints                                    │
+│  Proof time: 2-3s (browser WASM), 0.5-0.8s (native)        │
+│  Verification gas: ~137k                                     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### 4.2 Security Properties
+
+| | Property | How Enforced | |
+|---|---|
+| | Output ownership | DLEQ proof: log_G(R) = log_A(rA) = r | |
+| | Amount correctness | ecdhAmount committed in output Merkle tree, verified in circuit | |
+| | Double-spend prevention | usedOutputs[hash(txHash, outputIndex)] mapping | |
+| | Replay protection | txPublicKey matched against publicSignals[1] | |
+| | Address binding | Stealth address P = H_s·G + B verified in circuit | |
+| | Scalar validity | Range checks: r < L, H_s < L prevent curve attacks | |
+| | Amount validity | 64-bit range check prevents overflow | |
+
+### 4.3 Output Merkle Tree
+
+```
+Oracle posts per block:
+├── txMerkleRoot: Merkle root of all TX hashes
+│   └── Proves: "this transaction exists in this block"
+│
+└── outputMerkleRoot: Merkle root of all output data
+    └── Proves: "this output has this ecdhAmount, pubKey, commitment"
+    
+Leaf = keccak256(txHash || outputIndex || ecdhAmount || outputPubKey || commitment)
+
+User provides:
+├── txMerkleProof (proves TX in block)
+├── outputMerkleProof (proves output data authentic)
+└── ZK proof (proves they can decrypt amount and own output)
+```
+
 ---
 
-## **2. Zero-Knowledge Proof System**
+## 5. RISC Zero Block Verification
 
-### **2.1 Circuit Overview**
+### 5.1 Node Registry
 
-The MoneroBridge circuit (~1157 constraints) cryptographically proves:
+The contract maintains a list of well-known Monero nodes with their TLS certificate fingerprints. A governance multisig (3-of-5) can add or remove nodes, rate-limited to 1 change per week.
 
-1. **Secret Key Knowledge**: Proves r·G = R without revealing r
-2. **Destination Correctness**: Proves funds sent to LP address (A, B)
-3. **Amount Verification**: Decrypts and verifies ecdhAmount matches claimed value
-
-**Key Properties:**
-- Client-side witness generation (browser-based)
-- PLONK proof system with universal setup (no trusted ceremony needed)
-- Replay protection via on-chain tx_hash tracking
-
-### **2.2 Proof Generation Flow**
-
-1. **Fetch Transaction Data**: Retrieve Monero tx from registered node
-2. **Validate Confirmations**: Require 10+ block confirmations
-3. **Compute Witnesses**: Generate circuit inputs (secret key, amount, addresses)
-4. **Generate Proof**: Create Groth16 proof client-side using snarkjs
-5. **Submit On-Chain**: Send proof + public inputs to bridge contract
-
-### **2.3 Output Merkle Tree Architecture (NEW in v7.0)**
-
-**Problem Solved**: Prevents amount fraud without requiring oracle liveness per transaction.
-
-**How It Works:**
-
-1. **Oracle Posts Blocks** (every 2 minutes):
-   - Fetches Monero block from RPC
-   - Extracts all transaction outputs
-   - Computes two Merkle roots:
-     - `txMerkleRoot`: Merkle root of all TX hashes (proves TX exists)
-     - `outputMerkleRoot`: Merkle root of all output data (proves amounts authentic)
-   - Posts to contract: `(blockHeight, blockHash, txMerkleRoot, outputMerkleRoot)`
-
-2. **User Submits Proof**:
-   - Fetches output data from any Monero node
-   - Fetches Merkle proofs (TX proof + output proof)
-   - Submits: `(zkProof, outputData, txMerkleProof, outputMerkleProof)`
-
-3. **Contract Verifies**:
-   - TX exists in block (via txMerkleProof)
-   - Output data is authentic (via outputMerkleProof)
-   - ecdhAmount matches oracle-posted data
-   - ZK proof proves ownership
-
-**Merkle Leaf Structure:**
 ```solidity
-leaf = keccak256(abi.encodePacked(
-    txHash,
-    outputIndex,
-    ecdhAmount,      // CRITICAL: Prevents amount fraud
-    outputPubKey,
-    commitment
-));
+struct MoneroNode {
+    string endpoint;            // "node.sethforprivacy.com:18089"
+    bytes32 tlsCertFingerprint; // SHA-256 of TLS certificate
+    bool active;
+}
 ```
 
-**Benefits:**
-- ✅ **No oracle liveness per TX**: Oracle posts once per block
-- ✅ **Amount fraud impossible**: ecdhAmount committed in Merkle tree
-- ✅ **zkTLS-ready**: One zkTLS proof covers entire block
-- ✅ **Scalable**: Unlimited transactions per block
-- ✅ **User autonomy**: Can get data from any Monero node
+**Initial Node Set:**
 
-**Gas Costs:**
-- Oracle: ~200k gas per block (every 2 min)
-- User: ~50k gas for Merkle proofs + ~600k for ZK proof
+| | Node | Endpoint | Operator | |
+|---|---|---|
+| | 1 | node.sethforprivacy.com:18089 | Seth For Privacy | |
+| | 2 | nodes.hashvault.pro:18081 | HashVault | |
+| | 3 | xmr-node.cakewallet.com:18081 | Cake Wallet | |
+| | 4 | node.community.rino.io:18081 | RINO | |
+| | 5 | xmr.stackwallet.com:18081 | Stack Wallet | |
+| | 6 | node.supportxmr.com:18081 | SupportXMR | |
+| | 7 | node.moneroworld.com:18089 | MoneroWorld | |
 
-### **2.4 Technical Summary**
+Required agreement: 4 of 7 (50% + 1)
 
-- **Constraint Count**: ~1157 (2.6M non-linear + 1.6M linear)
-- **Proof System**: PLONK with universal setup
-- **Key Operations**: Ed25519 scalar multiplications, point operations, Keccak256 hashing
-- **Optimization**: H_s_scalar precomputed off-circuit (saves ~150k constraints)
-- **Merkle Trees**: Dual-root system (TX existence + output authenticity)
-
-
-
----
-
-## **3. Economic Model & Collateralization**
-
-### **3.1 Collateral Requirements**
-
-- **Initial Collateral**: 150% of minted wXMR value in DAI
-- **Liquidation Threshold**: 120% collateralization ratio
-- **Accepted Collateral**: Yield-bearing DAI only (sDAI, aDAI)
-- **Collateral Custody**: Non-custodial - LPs maintain control
-
-### **3.2 Liquidation Mechanics**
-
-- **Price Oracle**: TWAP (15-minute exponential moving average) via Chainlink
-- **Liquidation Trigger**: Collateral ratio falls below 120%
-- **Liquidation Penalty**: 5% bonus to liquidator
-- **Partial Liquidations**: Allowed to restore healthy ratio
-
-### **3.3 Oracle Consensus Model**
-
-**Quadratic-Weighted N-of-M Voting:**
-- Minimum 3.0 weighted votes required for proof acceptance
-- Oracle reputation score based on historical accuracy
-- Vote weight = (reputation_score)²
-- Slashing for provably false attestations
-
-**Oracle Requirements:**
-- Minimum 1,000 DAI bond (slashable)
-- Run registered Monero node
-- Verify ZK proofs on-chain
-- Attest to transaction validity
-
-### **3.4 Fee Structure**
-
-- **Mint Fee**: 0.3% (paid to LPs)
-- **Burn Fee**: 0.3% (paid to LPs)
-- **Oracle Rewards**: From yield + accuracy bonuses
-- **LP Yield**: From collateral (sDAI/aDAI) + bridge fees
-
-### **3.5 Risk Parameters**
-
-| Parameter | Value | Rationale |
-|-----------|-------|----------|
-| Initial Collateral | 150% | Buffer against volatility |
-| Liquidation Threshold | 120% | Safety margin for liquidators |
-| TWAP Window | 15 minutes | Balance responsiveness vs manipulation |
-| Min Oracle Bond | 1,000 DAI | Skin in the game |
-| Min Weighted Votes | 3.0 | Decentralization + security |
-| Guardian Unpause Delay | 30 days | Time for community response |
-
----
-
-## **4. Integration & Deployment**
-
-### **4.1 Universal Setup (PLONK)**
-1. Use existing universal setup parameters (no ceremony needed)
-2. Compile circuit to PLONK format
-3. Generate verification key from circuit
-
-### **4.2 Solidity Verifier Contract**
-1. Export verifier contract: `snarkjs zkey export solidityverifier`
-2. Deploy to Arbitrum One
-3. Integrate with bridge contract for proof verification
-
-### **4.3 Frontend Integration**
-1. Bundle circuit WASM and proving key
-2. Implement witness generation in browser
-3. Generate proofs client-side using snarkjs
-4. Submit proofs to bridge contract
-
-
-
----
-
-## **5. Solidity Contract Specification**
-
-### **5.1 Contract Overview**
-
-**Key Changes for v5.4:**
-
-| Feature | v5.3 | v5.4 |
-|---------|------|------|
-| **Oracle Consensus** | Simple N-of-M (count-based) | Quadratic-weighted (reputation-based) |
-| **Price Oracle** | Direct Chainlink spot | TWAP (15-min EMA) for liquidations |
-| **Oracle Bonding** | None | 1,000 DAI minimum, slashable |
-| **Pause Mechanism** | None | Guardian pause (mints only) |
-| **Pedersen Commitment** | v·G + γ·H (incorrect) | v·H + γ·G (Monero-native) |
-| **Binding Hash** | SHA256 | Keccak256 (Ethereum-native) |
-| **Circuit Version** | 3 | 4 |
-| **Contract LOC** | ~950 | ~1,150 |
-
-### **5.2 Core Contract: `MoneroBridgeDLEQ.sol`**
-
-**Key Components:**
-- **PLONK Verifier**: Verifies circuit proofs (~1,167 constraints)
-- **Ed25519 DLEQ**: Verifies discrete log equality proofs on-chain
-- **Collateral Management**: DAI-based collateralization (150% initial, 120% liquidation)
-- **Oracle System**: Quadratic-weighted consensus for price feeds
-- **TWAP Protection**: 15-minute exponential moving average for liquidations
-
-**Main Functions:**
-- `mint()`: Verify DLEQ + PLONK proofs, mint wXMR
-- `burn()`: Burn wXMR, release collateral
-- `liquidate()`: Liquidate undercollateralized positions
-- `verifyDLEQ()`: On-chain Ed25519 DLEQ verification
-
-**Contract deployed on Base Sepolia**: `0x9241b6cE1b969F9BDf64a26CE933915d1b8dA0AD`
-
----
-
-## **4. Economic Model**
-
-### **4.1 LP Position Example**
+### 5.2 RISC Zero Guest Program
 
 ```
-User deposits: 10 XMR @ $150 = $1,500 value
-LP required collateral: $1,500 × 1.50 = $2,250 DAI
-
-LP posts: 2,250 DAI → ~2,180 sDAI (at 1.032 price)
-Yield: 5% APY on sDAI = $112.50/year
-├─ Oracle reward pool: $2.25/year (2% of yield)
-└─ LP net yield: $110.25/year (~4.9% APY)
+Guest program (runs inside zkVM):
+1. Receive inputs: blockHeight, nodeEndpoints[7]
+2. For each node:
+   a. Establish TLS connection (host facilitates TCP)
+   b. Verify TLS certificate chain inside zkVM
+   c. Record certificate fingerprint
+   d. Send RPC: get_block(height=blockHeight)
+   e. Parse response: blockHash, txHashes[], outputs[]
+3. Tally: count nodes agreeing on same blockHash
+4. Require: agreeing >= 4
+5. From majority response:
+   a. Compute txMerkleRoot from txHashes
+   b. Compute outputMerkleRoot from outputs  
+6. Commit to journal:
+   {blockHeight, blockHash, txMerkleRoot, outputMerkleRoot,
+    nodeCount, agreeingNodes, attestations[]}
 ```
 
-### **4.2 Collateralization Tiers**
+### 5.3 On-Chain Verification
 
-| Tier | Ratio | Status | Actions |
-|------|-------|--------|---------|
-| **Healthy** | ≥150% | ✅ Normal | All operations |
-| **Warning** | 120-150% | ⚠️ At risk | Cannot mint more |
-| **Liquidatable** | <120% | 🔴 TWAP-verified | Open to liquidation |
-| **Critical** | <105% | 🚨 Emergency | Priority liquidation |
+```solidity
+function postMoneroBlock(
+    uint256 blockHeight,
+    bytes calldata seal,       // RISC Zero SNARK
+    bytes calldata journal     // Public outputs
+) external {
+    // 1. Verify RISC Zero proof
+    riscZeroVerifier.verify(seal, BLOCK_VERIFIER_IMAGE_ID, sha256(journal));
+    
+    // 2. Decode journal
+    (height, blockHash, txRoot, outputRoot, nodeCount, agreeing, attestations) 
+        = abi.decode(journal, ...);
+    
+    // 3. Check agreement threshold
+    require(agreeing >= requiredAgreement);
+    
+    // 4. Verify TLS certs match registered nodes
+    for each attestation:
+        require(attestation.tlsCertHash == nodeRegistry[attestation.nodeId].tlsCertFingerprint);
+    
+    // 5. Store block
+    moneroBlocks[blockHeight] = {blockHash, txRoot, outputRoot, timestamp, true};
+}
+```
 
-### **4.3 Oracle Quadratic Weighting**
+### 5.4 Trust Analysis
 
-**Formula:** `weight = sqrt(accuracy × experienceMultiplier)`
+| | Assumption | Required For | Failure Mode | |
+|---|---|---|
+| | RISC Zero zkVM is correct | Proof integrity | Entire system compromised | |
+| | TLS is not broken | Node identity verification | Attacker impersonates nodes | |
+| | 50%+ nodes are honest | Block data correctness | False blocks accepted | |
+| | Node registry is honest | Correct node identities | Governance multisig attack | |
 
-Where `experienceMultiplier = 1 + min(proofsSubmitted / 10, 2)`
-
-| Oracle State | Accuracy | Proofs | Experience | Combined | Weight |
-|--------------|----------|--------|------------|----------|--------|
-| **New** | 100% | 0 | 1.0× | 1.00 | 1.00 |
-| **Active** | 100% | 20 | 1.2× | 1.20 | 1.10 |
-| **Experienced** | 100% | 50 | 1.5× | 1.50 | 1.22 |
-| **Veteran** | 100% | 100+ | 2.0× | 2.00 | 1.41 |
-| **Slashed 1×** | 75% | 100+ | 2.0× | 1.50 | 1.22 |
-| **Slashed 2×** | 50% | 100+ | 2.0× | 1.00 | 1.00 |
-| **Slashed 3×** | 25% | 100+ | 2.0× | 0.50 | 0.71 |
-| **Slashed 4×** | 0% | 100+ | 2.0× | 0.00 | 0.00 |
-
-**Minimum consensus:** 3.0 weighted votes
-
-**Example consensus scenarios:**
-- 3 new oracles: 1.0 + 1.0 + 1.0 = 3.0 ✅
-- 2 veterans + 1 new: 1.41 + 1.41 + 1.0 = 3.82 ✅
-- 2 new oracles: 1.0 + 1.0 = 2.0 ❌
-- 1 veteran + 1 slashed-2×: 1.41 + 1.0 = 2.41 ❌
-
-### **4.4 TWAP Configuration**
-
-| Parameter | Value | Purpose |
-|-----------|-------|---------|
-| **Period** | 15 minutes | Manipulation resistance |
-| **Observations** | 15 | ~1 min granularity |
-| **Min Update Interval** | 60 seconds | Prevent spam |
-| **Fallback** | Spot price | If insufficient data |
+**Attack cost**: To post a false Monero block, an attacker must either compromise 4 of 7 well-known Monero community nodes simultaneously, or break TLS to impersonate them. Both are dramatically harder than bribing a single oracle.
 
 ---
 
-## **5. Performance Targets**
+## 6. Uniswap V4 Integration
 
-### **5.1 Proving Times**
-
-| Environment | Time | Memory | Notes |
-|-------------|------|--------|-------|
-| **Browser (WASM)** | 2.0-2.8s | ~1.0 GB | snarkjs optimized |
-| **Browser (WebGPU)** | 1.4-2.0s | ~600 MB | Chrome 120+ |
-| **Native (rapidsnark)** | 0.5-0.8s | ~500 MB | 8-core CPU |
-| **Mobile (iOS)** | 3.5-4.5s | ~1.2 GB | iPhone 15 Pro |
-
-### **5.2 Gas Costs (Arbitrum)**
-
-| Function | Gas | L1 Data | Cost @ 30 gwei |
-|----------|-----|---------|----------------|
-| `registerOracle` | 180k | 2.5kb | ~$0.35 |
-| `submitVote` | 680k | 4.5kb | ~$1.18 |
-| `mint` | **920k** | 10.2kb | ~$1.45 |
-| `startBurn` | 98k | 1.5kb | ~$0.20 |
-| `completeBurn` | 145k | 2.8kb | ~$0.28 |
-| `claimBurn` | 580k | 3.2kb | ~$0.85 |
-| `liquidate` | **520k** | 2.6kb | ~$0.78 |
-| `updateTWAP` | 65k | 0.8kb | ~$0.12 |
-
----
-
-## **6. Security Analysis**
-
-### **6.1 Attack Cost Matrix**
-
-| Attack | Requirements | Cost | Outcome |
-|--------|--------------|------|---------|
-| **3 Sybil Oracles** | 3× 1,000 DAI bonds | 3,000 DAI | Slashed if detected |
-| **TWAP Manipulation** | 15-min sustained | Arbitrage losses | Economically infeasible |
-| **Flash Loan Liquidation** | Flash loan + oracle | — | Blocked by TWAP |
-| **Oracle Majority** | >50% weighted votes | Variable | Degraded influence via slashing |
-| **Circuit Bug Exploit** | Zero-day | — | Guardian pause available |
-
-### **6.2 Trust Assumptions**
-
-1. **Chainlink**: Trusted for spot prices; TWAP provides resistance
-2. **3+ Honest Oracles**: Required for consensus
-3. **Guardian Key**: Can only pause mints; 30-day unpause delay
-4. **Circuit Correctness**: Pre-mainnet audits required
-5. **Monero Nodes**: N-of-M with TLS pinning
-
----
-
-## **7. Sequence Diagrams**
-
-### **7.1 Mint Flow**
+### 6.1 Pool Architecture
 
 ```
-User                Frontend            Oracles (3)         Contract
- │                     │                    │                  │
- ├─ Export r, tx_hash ─►                    │                  │
- │                     │                    │                  │
- │◄─── Fetch tx data ──┤                    │                  │
- │                     │                    │                  │
- │                     ├─ Generate binding ─►                  │
- │                     │   hash (Keccak)    │                  │
- │                     │                    │                  │
- │                     ├─ Generate ZK proof─►                  │
- │                     │   (2.0s)           │                  │
- │                     │                    │                  │
- │                     │                    ├── submitVote ───►│
- │                     │                    │   (weight: 1.0)  │
- │                     │                    ├── submitVote ───►│
- │                     │                    │   (weight: 1.22) │
- │                     │                    ├── submitVote ───►│
- │                     │                    │   (weight: 1.41) │
- │                     │                    │                  │
- │                     │                    │◄── Consensus ────┤
- │                     │                    │    (3.63 ≥ 3.0)  │
- │                     │                    │                  │
- │                     ├────── mint() ─────────────────────────►
- │                     │                                       │
- │◄─────────────────── wXMR ──────────────────────────────────┤
+Pool: wXMR / sDAI
+├── Fee tier: Dynamic (set by hook based on volatility)
+├── Hook: WrapsynthPoolHook
+│   ├── beforeSwap: Oracle price check + circuit breaker
+│   ├── beforeRemoveLiquidity: Block locked positions
+│   └── beforeAddLiquidity: Verify source
+└── Tick spacing: Determined by fee tier
 ```
 
-### **7.2 Liquidation Flow**
+### 6.2 Hook Permissions
+
+```solidity
+Hooks.Permissions({
+    beforeInitialize: false,
+    afterInitialize: false,
+    beforeAddLiquidity: true,    // gate who can LP
+    afterAddLiquidity: false,
+    beforeRemoveLiquidity: true, // CRITICAL: block locked positions
+    afterRemoveLiquidity: false,
+    beforeSwap: true,            // oracle check + circuit breaker
+    afterSwap: false,
+    beforeDonate: false,
+    afterDonate: false,
+    beforeSwapReturnDelta: false,
+    afterSwapReturnDelta: false,
+    afterAddLiquidityReturnDelta: false,
+    afterRemoveLiquidityReturnDelta: false
+})
+```
+
+### 6.3 LP Position as Collateral
+
+When a burn request is created against an LP whose collateral is a V4 position:
+
+1. The Hook's`beforeRemoveLiquidity` blocks the LP from withdrawing
+2. The position continues earning swap fees while locked
+3. On fulfill: position unlocks
+4. On default: position NFT transfers to the burner
+
+**LP position is superior collateral because:**
+
+| | Property | Idle sDAI | V4 LP Position | |
+|---|---|---|
+| | Earning yield | DSR only (~5%) | DSR + swap fees (variable) | |
+| | Contains | Single asset | wXMR + sDAI (diversified) | |
+| | On default | Burner gets sDAI | Burner gets LP NFT (both sides + fees) | |
+| | Market impact | None | Deepens liquidity for entire protocol | |
+| | IL risk | None | Present but hedges obligation (see below) | |
+
+**Impermanent loss as a hedge:**
+
+When XMR drops → LP position rebalances toward more sDAI → position retains USD value → LP's XMR obligation shrinks in USD → LP is better collateralized.
+
+When XMR rises → LP position rebalances toward more wXMR → obligation grows but wXMR component grows too.
+
+IL dampens the volatility of the collateral relative to the obligation. For a same-denomination obligation (wXMR collateral backing XMR obligation), IL is a feature.
+
+### 6.4 Single-Sided LP Entry
+
+LPs who self-mint only have wXMR (plus their sDAI collateral). They can enter the pool single-sided:
 
 ```
-Liquidator            Contract              TWAP
-    │                    │                   │
-    ├─── liquidate() ───►│                   │
-    │                    ├── updateTWAP() ──►│
-    │                    │◄── 15-min avg ───┤
-    │                    │                   │
-    │                    ├── Check ratio     │
-    │                    │   (< 120%)        │
-    │                    │                   │
-    │                    ├── Seize sDAI      │
-    │                    ├── Redeem DAI      │
-    │                    │                   │
-    │◄── 5% reward ──────┤                   │
-    │    (DAI)           │                   │
-    │                    ├── 95% to treasury │
+Current price: 1 XMR = 150 sDAI (tick = T_current)
+
+Alice provides concentrated liquidity:
+├── wXMR: from T_current to T_upper (sells wXMR as price rises)
+├── sDAI: from T_lower to T_current (buys wXMR as price drops)
+└── Both sides: full range (earns fees in both directions)
+
+For maximum fee earning, Alice provides both sides.
+She has both: wXMR from self-mint, sDAI from excess collateral.
 ```
 
 ---
 
-## **8. Deployment Checklist**
+## 7. Economic Model
 
-### **8.1 Pre-Mainnet Requirements**
+### 7.1 Complete LP Balance Sheet
+
+```
+Alice's Assets:
+├── XMR in Monero wallet       : 100 XMR (never moved)
+├── V4 LP Position (NFT)       : 100 wXMR + 15,000 sDAI
+│   ├── swap fees accruing     : ~0.05%/day (variable)
+│   └── sDAI component earning : 5% APR (DSR)
+└── Excess sDAI in protocol    : 7,500 sDAI (collateral buffer)
+
+Alice's Liabilities:
+├── Must send XMR on burn      : Up to 100 XMR (she has it)
+└── 150% collateral requirement: Maintained by sDAI deposits
+
+Alice's Revenue:
+├── Swap fees                  : Variable (pool volume dependent)
+├── DSR yield on sDAI          : 5% APR on sDAI component
+├── Mint fees (0.5%)           : On any user minting through her
+└── Burn fees (0.5%)           : On any user burning through her
+
+Alice's Risk:
+├── XMR price crash            : Must add more sDAI or get liquidated
+├── Smart contract bug         : Audit mitigates
+├── Monero wallet compromise   : Cannot fulfill burns → loses V4 position
+└── Impermanent loss           : Dampened by same-denomination obligation
+```
+
+### 7.2 Infrastructure Revenue Model
+
+```
+Total collateral: 10,000,000 DAI in sDAI
+DSR rate: 5% APR
+Annual yield: 500,000 DAI
+
+Distribution (weekly epochs):
+├── Relayers (40%): 200,000 DAI/year
+│   ├── Monero blocks/day: ~720
+│   ├── Cost per relay TX: ~0.001 USD (L2 gas)
+│   ├── Annual relay cost: ~263 USD
+│   └── Revenue per relayer (10 relayers): ~20,000 DAI/year
+│
+├── Provers (40%): 200,000 DAI/year
+│   ├── Proofs/day: ~100 (estimated)
+│   ├── Cost per proof: ~0.10 USD (GPU)
+│   ├── Annual proof cost: ~3,650 USD
+│   └── Revenue per prover (5 provers): ~40,000 DAI/year
+│
+└── Reserve (20%): 100,000 DAI/year
+    └── Covers: emergency response, bug bounties, insurance
+```
+
+### 7.3 Collateralization Tiers
+
+| | Tier | Ratio | Status | Actions Available | |
+|---|---|---|---|
+| | Healthy | ≥ 150% | ✅ Normal | All operations, can withdraw excess | |
+| | Warning | 120-150% | ⚠️ At risk | Cannot mint more, cannot withdraw | |
+| | Liquidatable | < 120% | 🔴 Danger | Open to liquidation with 5% bonus | |
+| | Default | LP misses burn | 🚨 Position seized | V4 LP NFT transferred to burner | |
+
+### 7.4 Fee Structure
+
+| | Fee | Amount | Recipient | Notes | |
+|---|---|---|---|
+| | Mint fee | LP-configurable (max 5%) | LP | Typical: 0.5% | |
+| | Burn fee | LP-configurable (max 5%) | LP | Typical: 0.5% | |
+| | Intent deposit | LP-configurable (max 10%) | LP on expiry, User on fulfillment | Anti-griefing | |
+| | Swap fee | V4 pool fee tier | LP position holders | Continuous | |
+| | DSR yield | ~5% APR | 40/40/20 split | Funds infrastructure | |
+| | Liquidation bonus | 5% | Liquidator | Incentivizes health | |
+
+---
+
+## 8. Contracts Architecture
+
+### 8.1 Contract Dependency Graph
+
+```mermaid
+graph TD
+    subgraph "Core Protocol"
+        WXMR[WrappedMonero.sol<br/>ERC-20 + LP management + mint/burn]
+        BV[MoneroBlockVerifier.sol<br/>RISC Zero proof verification + node registry]
+        PLONK[PlonkVerifier.sol<br/>ZK proof verification]
+    end
+
+    subgraph "Uniswap V4"
+        HOOK[WrapsynthPoolHook.sol<br/>Oracle checks + position locking]
+        VAULT[LPCollateralVault.sol<br/>LP position custody + default transfer]
+        PM[PositionManager<br/>Uniswap V4 NFT management]
+        POOLMGR[PoolManager<br/>Uniswap V4 singleton]
+    end
+
+    subgraph "External"
+        SDAI[sDAI<br/>Maker DSR vault]
+        DAI[DAI<br/>Stablecoin]
+        PYTH[Pyth Network<br/>Price feeds]
+        RZ[RiscZeroVerifier<br/>SNARK verification]
+    end
+
+    WXMR -->|verify proofs| PLONK
+    WXMR -->|check blocks| BV
+    WXMR -->|auto-wrap collateral| SDAI
+    WXMR -->|read prices| PYTH
+    WXMR -->|deposit/withdraw| DAI
+
+    BV -->|verify RISC Zero proofs| RZ
+
+    HOOK -->|read prices| PYTH
+    HOOK -->|check locked positions| VAULT
+    VAULT -->|manage NFTs| PM
+    PM -->|pool operations| POOLMGR
+    POOLMGR -->|hook callbacks| HOOK
+```
+
+### 8.2 Contract Sizes (Estimated)
+
+| | Contract | LOC | Purpose | |
+|---|---|---|
+| | WrappedMonero.sol | ~1,200 | Core token + LP management + mint/burn | |
+| | MoneroBlockVerifier.sol | ~400 | RISC Zero verification + node registry | |
+| | WrapsynthPoolHook.sol | ~300 | V4 hook: oracle checks + position locking | |
+| | LPCollateralVault.sol | ~350 | LP position custody + default transfers | |
+| | PlonkVerifier.sol | ~800 | Auto-generated PLONK verifier | |
+| | Ed25519.sol | ~200 | Ed25519 curve operations | |
+| | Total | ~3,250 | |  |
+
+---
+
+## 9. Deployment Plan
+
+### 9.1 Phase 1: Testnet (Current)
+
+- **Network**: Base Sepolia
+- **Status**: PLONK + DLEQ + Merkle trees working
+- **Contract**:`0xA8C386AD6bf98599Cc19B6794F3077B3d9D5328f`
+- **Gas**: 4.1M (DLEQ + PLONK combined)
+- **Next**: Integrate RISC Zero block verifier
+
+### 9.2 Phase 2: V4 Integration
+
+- Deploy wXMR/sDAI pool on Unichain testnet
+- Deploy WrapsynthPoolHook
+- Deploy LPCollateralVault
+- Test full LP bootstrap flow (self-mint → LP → earn fees)
+- Test burn → default → position transfer flow
+
+### 9.3 Phase 3: Mainnet Preparation
 
 - [ ] Circuit formal verification (Ecne/Picus)
-- [ ] Groth16 trusted setup ceremony (100+ participants)
-- [ ] Trail of Bits audit (contracts + circuits)
+- [ ] Trail of Bits audit (contracts + circuits + RISC Zero guest)
 - [ ] Ed25519 Solidity library audit
-- [ ] Monero wallet integration (`get_tx_key` PR merged)
-- [ ] Chainlink wXMR/USD feed approved
-- [ ] Guardian multisig setup (3-of-5)
-- [ ] Initial node set deployment (5 nodes minimum)
+- [ ] RISC Zero guest program audit
+- [ ] Node registry multisig setup (3-of-5)
+- [ ] Initial node set TLS fingerprint collection
+- [ ] Pyth price feed integration testing
+- [ ] V4 hook deployment and testing
 
+### 9.4 Phase 4: Mainnet Launch
 
-## **10. License & Disclaimer**
+- **Network**: Gnosis Chain (primary) or Unichain
+- Deploy all contracts
+- Seed initial node registry (7 nodes)
+- First LP self-mints, creates V4 pool
+- Open to public relayers and provers
+- Monitor yield distribution
+
+---
+
+## 10. Security Analysis
+
+### 10.1 Attack Cost Matrix
+
+| | Attack | Requirements | Cost | Mitigation | |
+|---|---|---|---|
+| | False Monero block | Compromise 4/7 TLS nodes | Extremely high | RISC Zero + TLS cert pinning | |
+| | Price manipulation | Sustained Pyth + V4 pool manipulation | Arbitrage losses | 3% deviation cap in hook | |
+| | Flash loan liquidation | Flash loan + stale price | Blocked | Pyth freshness check (60s max) | |
+| | LP rug (burn default) | LP ignores burn request | LP loses V4 position | 150% overcollateralization | |
+| | Double-spend | Reuse Monero output | Blocked | usedOutputs mapping | |
+| | Fake proof | Invalid ZK proof | Blocked | On-chain PLONK verification | |
+| | Griefing (mint intent spam) | Create intents, never send XMR | Deposit cost | Intent deposit forfeited to LP | |
+| | Node registry attack | Compromise 3/5 multisig | Social engineering | Rate limit: 1 change/week | |
+
+### 10.2 Trust Assumptions (Ordered by Criticality)
+
+| | # | Assumption | Impact if Broken | Probability | |
+|---|---|---|---|
+| | 1 | PLONK circuit is correct | False mints possible | Low (auditable) | |
+| | 2 | RISC Zero zkVM is correct | False blocks accepted | Very low (audited by RISC Zero) | |
+| | 3 | TLS is not broken | Node impersonation | Negligible | |
+| | 4 | 50%+ of registered nodes are honest | False blocks accepted | Very low (diverse operators) | |
+| | 5 | Ed25519 implementation is correct | False ownership proofs | Low (well-studied) | |
+| | 6 | Pyth oracle is accurate | Incorrect collateral ratios | Low (many data sources) | |
+| | 7 | sDAI/Maker DSR is solvent | Collateral value loss | Very low | |
+
+---
+
+## 11. Gas Costs
+
+### 11.1 Estimated Gas by Function
+
+| | Function | Gas (L2) | L1 Data | Est. Cost | |
+|---|---|---|---|
+| | registerLP | 180k | 2.5kb | ~0.01 USD | |
+| | lpDeposit (DAI → sDAI) | 250k | 3.0kb | ~0.02 USD | |
+| | selfMint | 800k | 10kb | ~0.05 USD | |
+| | mint (with intent) | 920k | 12kb | ~0.06 USD | |
+| | createMintIntent | 120k | 1.5kb | ~0.01 USD | |
+| | requestBurn | 200k | 2.5kb | ~0.02 USD | |
+| | fulfillBurn | 300k | 4.0kb | ~0.02 USD | |
+| | claimDefault | 250k | 2.0kb | ~0.02 USD | |
+| | postMoneroBlock (RISC Zero) | 350k | 5.0kb | ~0.03 USD | |
+| | distributeYield | 400k | 3.0kb | ~0.03 USD | |
+| | V4 swap (with hook) | 200k | 2.5kb | ~0.02 USD | |
+
+### 11.2 Proving Times
+
+| | Environment | Time | Memory | Notes | |
+|---|---|---|---|
+| | Browser (WASM) | 2.0-2.8s | ~1.0 GB | snarkjs optimized | |
+| | Browser (WebGPU) | 1.4-2.0s | ~600 MB | Chrome 120+ | |
+| | Native (rapidsnark) | 0.5-0.8s | ~500 MB | 8-core CPU | |
+| | RISC Zero (block relay) | 30-120s | ~2 GB | Depends on block size | |
+
+---
+
+## 12. Appendix: Key Constants
+
+```solidity
+uint256 constant SAFE_RATIO = 150;               // 150% collateral
+uint256 constant LIQUIDATION_THRESHOLD = 120;     // 120% liquidation
+uint256 constant PICONERO_PER_XMR = 1e12;         // wXMR decimals
+uint256 constant MAX_PRICE_AGE = 60;              // Pyth freshness (seconds)
+uint256 constant BURN_TIMEOUT = 2 hours;          // LP must send XMR
+uint256 constant MINT_INTENT_TIMEOUT = 2 hours;   // User must complete mint
+uint256 constant MAX_FEE_BPS = 500;               // Max 5% fee
+uint256 constant MIN_MINT_BPS = 100;              // Min 1% of LP capacity
+uint256 constant EPOCH_DURATION = 7 days;         // Yield distribution period
+uint256 constant MAX_DEVIATION_BPS = 300;         // V4 hook: 3% oracle deviation
+uint256 constant MAX_DRAIN_PER_BLOCK = 500;       // V4 hook: 5% circuit breaker
+uint256 constant RELAYER_SHARE_BPS = 4000;        // 40% yield to relayers
+uint256 constant PROVER_SHARE_BPS = 4000;         // 40% yield to provers
+uint256 constant RESERVE_SHARE_BPS = 2000;        // 20% yield to reserve
+```
+
+---
+
+## 13. License & Disclaimer
 
 **License:** MIT (Circom), GPL-3.0 (Solidity)
 
-This is experimental cryptographic software. Trusted setup ceremony and security audits pending before mainnet deployment.
+This is experimental cryptographic software. Security audits required before mainnet deployment. No governance token exists or is planned.
 
 ---
 
-## **11. Current Deployment Status**
-
-### **Base Sepolia Testnet (Active)**
-- **Contract**: `0xA8C386AD6bf98599Cc19B6794F3077B3d9D5328f` (MoneroBridge v7.0)
-- **Verifier**: `0xF2D165DB863CE0e1967B30C6B44734254027aF04` (PlonkVerifier)
-- **Network**: Base Sepolia (Chain ID: 84532)
-- **Status**: ✅ Ed25519 DLEQ + PLONK + Output Merkle Tree verification working
-- **Test TX**: [0x612c8cdaacb335e2f56b355f2943a2662ca37452d3f7cfddb44c311d7df01033](https://sepolia.basescan.org/tx/0x612c8cdaacb335e2f56b355f2943a2662ca37452d3f7cfddb44c311d7df01033)
-- **Gas Used**: 4,104,653
-
-### **Test Results**
-- ✅ All 4 Monero transactions verified (3 stagenet + 1 mainnet)
-- ✅ DLEQ proof generation: 100% success rate
-- ✅ On-chain verification: PASSING
-- ✅ Output Merkle Tree: Implemented and ready
-- ✅ Circuit constraints: ~1157 (security-hardened)
-- ✅ Proof time: 3-10 minutes (server-side)
-- ✅ zkTLS-ready architecture
-
-### **Architecture v7.0 Features**
-- ✅ Dual Merkle tree system (TX + output)
-- ✅ Amount fraud prevention
-- ✅ No oracle liveness per transaction
-- ✅ Stealth address derivation verification
-- ✅ Scalar range checks (r < L, H_s < L)
-- ⚠️ Requires security audit before mainnet
-
----
-
-*Document Version: 7.0.0*
-*Last Updated: January 2026*
+*Document Version: 8.0.0*
+*Last Updated: February 2026*
 *Authors: FUNGERBIL Team*
 
-**v7.0 Changes:**
-- Added Output Merkle Tree architecture for amount fraud prevention
-- Upgraded circuit to ~1157 constraints with security hardening
-- Implemented dual Merkle root system (TX + output)
-- zkTLS-ready: No oracle liveness per transaction
-- Stealth address derivation verification
-- Scalar range checks (r < L, H_s < L)
+**v8.0 Changes from v7.1:**
+- Replaced oracle consensus with RISC Zero multi-node verification
+- Added LP self-minting as primary bootstrapping mechanism
+- Added Uniswap V4 integration with custom Hook
+- LP position NFT as collateral (replaces idle sDAI)
+- sDAI yield funds permissionless relayers and provers (40/40/20 split)
+- Removed governance token requirement
+- Removed oracle bonding/slashing (replaced by RISC Zero proofs)
+- Added burn default → LP position transfer to burner
+- Added partial position slicing for partial defaults
+- Added anti-griefing mint intent system
+- Added V4 hook: oracle-bounded swaps + circuit breaker + position locking
+- Comprehensive sequence diagrams for all flows
