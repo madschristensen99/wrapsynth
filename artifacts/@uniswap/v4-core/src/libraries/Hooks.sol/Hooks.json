@@ -1,0 +1,37 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "Hooks",
+  "sourceName": "@uniswap/v4-core/src/libraries/Hooks.sol",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "hooks",
+          "type": "address"
+        }
+      ],
+      "name": "HookAddressNotValid",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "HookCallFailed",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "HookDeltaExceedsSwapAmount",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidHookResponse",
+      "type": "error"
+    }
+  ],
+  "bytecode": "0x60808060405234601757603a9081601d823930815050f35b600080fdfe600080fdfea26469706673582212204c44d8487d4e664c5ee602fbe09b2783ab84839c7b8e918e97f468abe4b8331c64736f6c63430008180033",
+  "deployedBytecode": "0x600080fdfea26469706673582212204c44d8487d4e664c5ee602fbe09b2783ab84839c7b8e918e97f468abe4b8331c64736f6c63430008180033",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}

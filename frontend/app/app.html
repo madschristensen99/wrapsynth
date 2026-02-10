@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hooked Monero - Privacy Bridge</title>
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- Crypto polyfill for snarkjs -->
+    <script>
+        // Polyfill crypto.randomFillSync for browser before any modules load
+        if (typeof window !== 'undefined') {
+            // Create a global crypto object if it doesn't exist
+            if (!window.crypto) {
+                window.crypto = {};
+            }
+            // Add randomFillSync polyfill
+            if (!window.crypto.randomFillSync) {
+                window.crypto.randomFillSync = function(buffer) {
+                    return window.crypto.getRandomValues(buffer);
+                };
+            }
+            // Also add to global scope for ESM modules
+            if (typeof globalThis !== 'undefined') {
+                globalThis.crypto = window.crypto;
+            }
+        }
+    </script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">
+                    <h1>🌉 Hooked Monero</h1>
+                    <p class="tagline">Privacy-Preserving XMR Bridge</p>
+                </div>
+                <div class="wallet-section">
+                    <button id="connectWallet" class="btn btn-primary">Connect Wallet</button>
+                    <div id="walletInfo" class="wallet-info hidden">
+                        <span id="walletAddress" class="wallet-address"></span>
+                        <span id="networkBadge" class="network-badge"></span>
+                        <button id="disconnectWallet" class="btn btn-secondary" style="margin-left: 12px;">Disconnect</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="container">
+            <!-- Stats Section -->
+            <section class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">💰</div>
+                    <div class="stat-content">
+                        <p class="stat-label">Your Hooked XMR Balance</p>
+                        <p class="stat-value" id="userBalance">0.00</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">📊</div>
+                    <div class="stat-content">
+                        <p class="stat-label">XMR/ETH Price</p>
+                        <p class="stat-value" id="xmrEthPrice">-</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">🔒</div>
+                    <div class="stat-content">
+                        <p class="stat-label">Total Collateral</p>
+                        <p class="stat-value" id="totalCollateral">-</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">⚡</div>
+                    <div class="stat-content">
+                        <p class="stat-label">Network</p>
+                        <p class="stat-value">Unichain Sepolia</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Action Tabs -->
+            <section class="action-section">
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="mint">Mint Hooked XMR</button>
+                    <button class="tab-btn" data-tab="burn">Burn Hooked XMR</button>
+                    <button class="tab-btn" data-tab="lp" id="lpTabBtn">Become LP</button>
+                </div>
+
+                <!-- Mint Tab -->
+                <div id="mintTab" class="tab-content active">
+                    <div class="card">
+                        <h2>🪙 Mint Hooked XMR</h2>
+                        <p class="description">Bridge your Monero to Ethereum. Send XMR to receive Hooked XMR tokens.</p>
+                        
+                        <div class="form-group">
+                            <label for="lpSelect">Select Liquidity Provider</label>
+                            <select id="lpSelect" class="input">
+                                <option value="">Loading LPs...</option>
+                            </select>
+                            <div class="lp-info" id="lpInfo">
+                                <div class="info-row">
+                                    <span>Mint Fee:</span>
+                                    <span id="lpMintFee">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span>Available Capacity:</span>
+                                    <span id="lpCapacity">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span>Collateral Ratio:</span>
+                                    <span id="lpRatio">-</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="mintAmount">Amount (XMR)</label>
+                            <input type="number" id="mintAmount" class="input" placeholder="0.00" step="0.001" min="0.001">
+                            <p class="input-hint">Minimum: 1% of LP's available capacity</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Anti-Griefing Deposit</label>
+                            <div class="info-display">
+                                <span id="intentDepositDisplay">Loading...</span> ETH
+                            </div>
+                            <p class="input-hint">Refundable deposit required by the contract (prevents spam)</p>
+                        </div>
+
+                        <div class="steps-container">
+                            <h3>Minting Process:</h3>
+                            <div class="step">
+                                <span class="step-number">1</span>
+                                <div class="step-content">
+                                    <p class="step-title">Create Mint Intent</p>
+                                    <p class="step-desc">Reserve capacity with LP and deposit ETH</p>
+                                </div>
+                            </div>
+                            <div class="step">
+                                <span class="step-number">2</span>
+                                <div class="step-content">
+                                    <p class="step-title">Send XMR</p>
+                                    <p class="step-desc">Transfer XMR to the provided Monero address</p>
+                                </div>
+                            </div>
+                            <div class="step">
+                                <span class="step-number">3</span>
+                                <div class="step-content">
+                                    <p class="step-title">Generate Proof</p>
+                                    <p class="step-desc">Create ZK proof of your Monero transaction</p>
+                                </div>
+                            </div>
+                            <div class="step">
+                                <span class="step-number">4</span>
+                                <div class="step-content">
+                                    <p class="step-title">Mint Tokens</p>
+                                    <p class="step-desc">Submit proof and receive Hooked XMR</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Active Mint Intents -->
+                        <div class="card mt-3">
+                            <h3>Your Active Mint Intents</h3>
+                            <div id="activeIntentsList">
+                                <p class="empty-state">No active mint intents</p>
+                            </div>
+                        </div>
+
+                        <button id="createIntentBtn" class="btn btn-large btn-primary">Create Mint Intent</button>
+                        
+                        <!-- Generate Proof Section - Always Visible -->
+                        <div class="card mt-3" style="border: 2px solid #2196F3; background: #f0f8ff; padding: 1.5rem;">
+                            <h3 style="color: #2196F3; margin-bottom: 0.5rem;">📝 Generate Proof & Complete Mint</h3>
+                            <p class="description" style="margin-bottom: 1.5rem;">After sending XMR to the address shown in your active intent above, provide the transaction details here to generate a ZK proof and complete your mint.</p>
+                                
+                                <div class="form-group">
+                                    <label for="txHash">Transaction Hash</label>
+                                    <input type="text" id="txHash" class="input" placeholder="e.g., a1b2c3d4e5f6...">
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="secretKeyR">Secret Key (r)</label>
+                                    <input type="text" id="secretKeyR" class="input" placeholder="From your Monero wallet">
+                                    <p class="input-hint">The transaction private key (tx_key)</p>
+                                </div>
+                                
+                                <!-- Block height and output index will be auto-detected -->
+                                <input type="hidden" id="outputIndex" value="1">
+                                
+                            <button id="generateProofBtn" class="btn btn-large btn-primary">Generate Proof & Mint</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Burn Tab -->
+                <div id="burnTab" class="tab-content">
+                    <div class="card">
+                        <h2>🔥 Burn Hooked XMR</h2>
+                        <p class="description">Convert your Hooked XMR back to native Monero.</p>
+                        
+                        <div class="form-group">
+                            <label for="burnLpSelect">Select Liquidity Provider</label>
+                            <select id="burnLpSelect" class="input">
+                                <option value="">Loading LPs...</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="burnAmount">Amount (Hooked XMR)</label>
+                            <input type="number" id="burnAmount" class="input" placeholder="0.00" step="0.001" min="0.001">
+                            <p class="input-hint">Your balance: <span id="burnBalance">0.00</span> Hooked XMR</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="xmrRecipient">Your Monero Address</label>
+                            <input type="text" id="xmrRecipient" class="input" placeholder="4...">
+                            <p class="input-hint">Enter your Monero wallet address to receive XMR</p>
+                        </div>
+
+                        <div class="alert alert-warning">
+                            <p><strong>⏱️ Burn Window:</strong> LP has 2 hours to send XMR after you burn. If they fail, you can claim their collateral.</p>
+                        </div>
+
+                        <button id="burnBtn" class="btn btn-large btn-danger">Request Burn</button>
+                    </div>
+                </div>
+
+                <!-- LP Tab -->
+                <div id="lpTab" class="tab-content">
+                    <!-- Non-LP View -->
+                    <div id="nonLpView" class="card">
+                        <h2>💎 Become a Liquidity Provider</h2>
+                        <p class="description">Earn fees by providing liquidity for the Monero bridge.</p>
+
+                        <div class="alert alert-info">
+                            <h4>📚 LP Requirements:</h4>
+                            <ul>
+                                <li>Maintain 150% collateral ratio (safe zone)</li>
+                                <li>Below 120% = liquidatable</li>
+                                <li>Must fulfill burn requests within 2 hours</li>
+                                <li>Earn yield on wstETH collateral + bridge fees</li>
+                            </ul>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="lpMintFeeInput">Mint Fee (basis points)</label>
+                            <input type="number" id="lpMintFeeInput" class="input" placeholder="100" min="0" max="500">
+                            <p class="input-hint">100 = 1%, Max: 500 (5%)</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="lpBurnFeeInput">Burn Fee (basis points)</label>
+                            <input type="number" id="lpBurnFeeInput" class="input" placeholder="100" min="0" max="500">
+                            <p class="input-hint">100 = 1%, Max: 500 (5%)</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="lpIntentDepositInput">Intent Deposit (basis points)</label>
+                            <input type="number" id="lpIntentDepositInput" class="input" placeholder="100" min="0" max="1000">
+                            <p class="input-hint">Anti-griefing deposit as % of mint amount. 100 = 1%, Max: 1000 (10%)</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="lpMoneroAddress">Your Monero Address</label>
+                            <input type="text" id="lpMoneroAddress" class="input" placeholder="44AFFq5kSiGBoZ4NMDwYtN18obc8AemS33DBLWs3H7otXft3XjrpDtQGv7SqSsaBYBb98uNbr2VBBEt7f2wfn3RVGQBEP3A">
+                            <p class="input-hint">Users will send XMR to this address for mints.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="lpPrivateViewKey">Monero Private View Key</label>
+                            <input type="text" id="lpPrivateViewKey" class="input" placeholder="0x0000000000000000000000000000000000000000000000000000000000000000">
+                            <p class="input-hint">⚠️ Required for amount verification. This will be stored publicly on-chain to decrypt transaction amounts. Never share your spend key!</p>
+                        </div>
+
+                        <button id="registerLpBtn" class="btn btn-large btn-primary">Register as LP</button>
+                    </div>
+
+                    <!-- Existing LP View -->
+                    <div id="existingLpView" class="card" style="display: none;">
+                        <h2>💎 Manage LP Position</h2>
+                        <p class="description">Monitor and manage your liquidity provider position</p>
+
+                        <!-- LP Stats -->
+                        <div class="lp-stats">
+                            <div class="lp-stat">
+                                <p class="lp-stat-label">Collateral</p>
+                                <p class="lp-stat-value" id="lpCollateral">0.00 wstETH</p>
+                            </div>
+                            <div class="lp-stat">
+                                <p class="lp-stat-label">Backed Amount</p>
+                                <p class="lp-stat-value" id="lpBacked">0.00 XMR</p>
+                            </div>
+                            <div class="lp-stat">
+                                <p class="lp-stat-label">Collateral Ratio</p>
+                                <p class="lp-stat-value" id="lpYourRatio">-</p>
+                            </div>
+                            <div class="lp-stat">
+                                <p class="lp-stat-label">Status</p>
+                                <p class="lp-stat-value" id="lpStatus">Active</p>
+                            </div>
+                        </div>
+
+                        <!-- LP Configuration -->
+                        <div class="card mt-3">
+                            <h3>Current Configuration</h3>
+                            <div style="display: grid; gap: 0.5rem;">
+                                <div style="display: flex; justify-content: space-between;">
+                                    <span style="color: var(--text-secondary);">Mint Fee:</span>
+                                    <span id="lpCurrentMintFee" style="font-weight: 600;">-</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between;">
+                                    <span style="color: var(--text-secondary);">Burn Fee:</span>
+                                    <span id="lpCurrentBurnFee" style="font-weight: 600;">-</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between;">
+                                    <span style="color: var(--text-secondary);">Monero Address:</span>
+                                    <span id="lpCurrentMoneroAddress" style="font-family: monospace; font-size: 0.85em; word-break: break-all;">-</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Update Settings -->
+                        <div class="card mt-3">
+                            <h3>Update Settings</h3>
+                            <div class="form-group">
+                                <label for="lpUpdateMintFee">New Mint Fee (basis points)</label>
+                                <input type="number" id="lpUpdateMintFee" class="input" placeholder="Current: -" min="0" max="500">
+                            </div>
+                            <div class="form-group">
+                                <label for="lpUpdateBurnFee">New Burn Fee (basis points)</label>
+                                <input type="number" id="lpUpdateBurnFee" class="input" placeholder="Current: -" min="0" max="500">
+                            </div>
+                            <div class="form-group">
+                                <label for="lpUpdateMoneroAddress">New Monero Address</label>
+                                <input type="text" id="lpUpdateMoneroAddress" class="input" placeholder="44AFFq5k...">
+                            </div>
+                            <div class="form-group">
+                                <label for="lpUpdatePrivateViewKey">New Private View Key</label>
+                                <input type="text" id="lpUpdatePrivateViewKey" class="input" placeholder="0x0000...">
+                            </div>
+                            <button id="updateLpBtn" class="btn btn-large btn-primary">Update LP Settings</button>
+                        </div>
+
+                        <div class="divider"></div>
+
+                        <!-- Collateral Management -->
+                        <h3>Collateral Management</h3>
+                        <div class="form-group">
+                            <label for="lpDepositAmount">Deposit Amount (ETH)</label>
+                            <input type="number" id="lpDepositAmount" class="input" placeholder="0.00" step="0.01" min="0.01">
+                            <p class="input-hint">Will be converted to wstETH for yield generation</p>
+                        </div>
+                        <button id="depositCollateralBtn" class="btn btn-large btn-secondary">Deposit Collateral</button>
+
+                        <!-- Performance Stats (Placeholder for future) -->
+                        <div class="card mt-3">
+                            <h3>📊 Performance Stats</h3>
+                            <div class="alert alert-info">
+                                <p>Coming soon: Average fulfillment time, fulfill rate, PnL tracking, and more!</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Recent Activity -->
+            <section class="activity-section">
+                <h2>Recent Activity</h2>
+                <div class="activity-list" id="activityList">
+                    <p class="empty-state">No recent activity</p>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h3>Hooked Monero</h3>
+                    <p>Privacy-preserving XMR bridge powered by zero-knowledge proofs</p>
+                </div>
+                <div class="footer-section">
+                    <h4>Resources</h4>
+                    <ul>
+                        <li><a href="https://github.com" target="_blank">GitHub</a></li>
+                        <li><a href="#" target="_blank">Documentation</a></li>
+                        <li><a href="#" target="_blank">Whitepaper</a></li>
+                    </ul>
+                </div>
+                <div class="footer-section">
+                    <h4>Contract</h4>
+                    <p class="contract-address">0x956d362086076b05Cf90CBf2EF30689b1172c9C5</p>
+                    <a href="https://sepolia.uniscan.xyz/address/0x956d362086076b05Cf90CBf2EF30689b1172c9C5" target="_blank" class="explorer-link">View on Uniscan →</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2026 Hooked Monero. Built with privacy in mind.</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay hidden">
+        <div class="loading-spinner"></div>
+        <p id="loadingText">Processing...</p>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- App Script (uses Viem via ES modules) -->
+    <!-- Crypto libraries for proof generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-sha3/0.9.2/sha3.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@noble/ed25519@2.0.0/+esm" type="module"></script>
+    <script src="https://cdn.jsdelivr.net/npm/snarkjs@0.7.0/build/snarkjs.min.js"></script>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>

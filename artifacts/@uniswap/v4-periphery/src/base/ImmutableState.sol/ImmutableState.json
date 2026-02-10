@@ -1,0 +1,40 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "ImmutableState",
+  "sourceName": "@uniswap/v4-periphery/src/base/ImmutableState.sol",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "contract IPoolManager",
+          "name": "_poolManager",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "inputs": [],
+      "name": "NotPoolManager",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "poolManager",
+      "outputs": [
+        {
+          "internalType": "contract IPoolManager",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x60a03461006857601f61012538819003918201601f19168301916001600160401b0383118484101761006d5780849260209460405283398101031261006857516001600160a01b03811681036100685760805260405160a1908161008482396080518160380152f35b600080fd5b634e487b7160e01b600052604160045260246000fdfe6080806040526004361015601257600080fd5b600090813560e01c63dc4c90d314602857600080fd5b34606757816003193601126067577f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b5080fdfea2646970667358221220b0d43c8404a0ff700f821d8400f724d40e778db94a11cb0e2f0fe470015bafdd64736f6c63430008180033",
+  "deployedBytecode": "0x6080806040526004361015601257600080fd5b600090813560e01c63dc4c90d314602857600080fd5b34606757816003193601126067577f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b5080fdfea2646970667358221220b0d43c8404a0ff700f821d8400f724d40e778db94a11cb0e2f0fe470015bafdd64736f6c63430008180033",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}
