@@ -1,4 +1,4 @@
-// Browser-based ZK Proof Generation for Hooked Monero
+// Browser-based ZK Proof Generation for WrapSynth
 
 async function generateProofAndMint() {
     if (!window.state || !window.state.isConnected) {

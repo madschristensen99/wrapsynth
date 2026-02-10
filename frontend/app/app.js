@@ -340,7 +340,7 @@ function waitForEthereum(timeout = 3000) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log('🌉 Hooked Monero Frontend Initialized');
+    console.log('🌉 WrapSynth Frontend Initialized');
     
     // Wait for wallet provider to be injected (Brave/MetaMask inject asynchronously)
     console.log('⏳ Waiting for wallet provider...');
@@ -2953,7 +2953,7 @@ function formatAddress(address) {
 // ============================================
 // Export for debugging
 // ============================================
-window.hookedMonero = {
+window.wrapSynth = {
     state,
     connectWallet,
     loadUserData,
