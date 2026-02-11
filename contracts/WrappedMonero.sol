@@ -12,8 +12,8 @@ import "./libraries/Ed25519.sol";
 
 /**
  * @title Wrapsynth Monero (wsXMR) - Gnosis chain
- * @notice LP-based Wrapped Monero with Pyth Oracle on Gnosis
- * @dev Uses ETH for deposits and wstETH for yield-bearing collateral
+ * @notice LP-based Wrapped Monero with Pyth Oracle on Gnosis Chain
+ * @dev Uses xDAI for deposits and sDAI (Savings DAI) for yield-bearing collateral
  * 
  * Architecture:
  * - Each LP maintains their own collateral and backed wsXMR
@@ -24,13 +24,11 @@ import "./libraries/Ed25519.sol";
  * - 2-hour burn window: LP must send XMR or lose collateral
  */
 
-interface IWstETH is IERC20 {
-    function wrap(uint256 _stETHAmount) external returns (uint256);
-    function unwrap(uint256 _wstETHAmount) external returns (uint256);
-    function getWstETHByStETH(uint256 _stETHAmount) external view returns (uint256);
-    function getStETHByWstETH(uint256 _wstETHAmount) external view returns (uint256);
-    function stEthPerToken() external view returns (uint256);
-    function tokensPerStEth() external view returns (uint256);
+interface ISDAI is IERC20 {
+    function deposit(uint256 assets, address receiver) external returns (uint256 shares);
+    function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
+    function convertToShares(uint256 assets) external view returns (uint256);
+    function convertToAssets(uint256 shares) external view returns (uint256);
 }
 
 interface IWETH is IERC20 {
@@ -55,23 +53,23 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     
     // Pyth price feed IDs
     bytes32 public constant XMR_USD_PRICE_ID = 0x46b8cc9347f04391764a0361e0b17c3ba394b001e7c304f7650f6376e37c321d;
-    bytes32 public constant ETH_USD_PRICE_ID = 0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace;
+    // Note: On Gnosis, xDAI is pegged 1:1 to USD, so no ETH/USD price feed needed
     
     // ════════════════════════════════════════════════════════════════════════
     // STATE VARIABLES
     // ════════════════════════════════════════════════════════════════════════
     
     IPlonkVerifier public immutable verifier;
-    IWstETH public immutable wstETH;
+    ISDAI public immutable sDAI;
     IPyth public immutable pyth;
     
     address public oracle;
-    uint256 public totalLPCollateral;    // Total wstETH collateral (for yield calculationn
-    uint256 public lastYieldSnapshot;    // Last wstETH value snapshot
+    uint256 public totalLPCollateral;    // Total sDAI collateral (for yield calculation)
+    uint256 public lastYieldSnapshot;    // Last sDAI value snapshot
     
     // Per-LP state
     struct LPInfo {
-        uint256 collateralAmount;     // wstETH amount deposited
+        uint256 collateralAmount;     // sDAI amount deposited
         uint256 backedAmount;         // WrapsynthXMR amount this LP is backing
         uint256 mintFeeBps;           // Mint fee in basis points (100 = 1%)
         uint256 burnFeeBps;           // Burn fee in basis points
@@ -89,7 +87,7 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         address user;
         address lp;
         uint256 expectedAmount;       // Expected XMR amount in piconero
-        uint256 depositAmount;        // Anti-griefing deposit in ETH
+        uint256 depositAmount;        // Anti-griefing deposit in DAI
         uint256 createdAt;
         bool fulfilled;
         bool cancelled;
@@ -105,10 +103,10 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         address user;
         address lp;
         uint256 amount;               // WrapsynthXMR amount (locked)
-        uint256 depositAmount;        // Anti-griefing deposit in ETH
+        uint256 depositAmount;        // Anti-griefing deposit in DAI
         string xmrAddress;
         uint256 requestTime;
-        uint256 collateralLocked;     // wstETH locked
+        uint256 collateralLocked;     // sDAI locked
         bool fulfilled;
         bool defaulted;
     }
@@ -167,8 +165,8 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     
     event LPRegistered(address indexed lp, uint256 mintFeeBps, uint256 burnFeeBps);
     event LPUpdated(address indexed lp, uint256 mintFeeBps, uint256 burnFeeBps, bool active);
-    event LPDeposited(address indexed lp, uint256 ethAmount, uint256 wstETHAmount);
-    event LPWithdrew(address indexed lp, uint256 wstETHAmount, uint256 ethValue);
+    event LPDeposited(address indexed lp, uint256 daiAmount, uint256 sDAIAmount);
+    event LPWithdrew(address indexed lp, uint256 sDAIAmount, uint256 daiValue);
     event LPLiquidated(address indexed lp, address indexed liquidator, uint256 collateralAdded);
     
     event Minted(address indexed recipient, address indexed lp, uint256 amount, uint256 fee, bytes32 indexed outputId);
@@ -198,12 +196,12 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     
     constructor(
         address _verifier,
-        address _wstETH,
+        address _sDAI,
         address _pyth,
         uint256 _initialMoneroBlock
     ) ERC20("Wrapsynth Monero", "wsXMR") ERC20Permit("Wrapsynth Monero") {
         verifier = IPlonkVerifier(_verifier);
-        wstETH = IWstETH(_wstETH);
+        sDAI = ISDAI(_sDAI);
         pyth = IPyth(_pyth);
         oracle = msg.sender;
         
@@ -215,12 +213,12 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     
     function _initializePrices() internal {
         PythStructs.Price memory xmrPriceData = pyth.getPriceUnsafe(XMR_USD_PRICE_ID);
-        PythStructs.Price memory ethPriceData = pyth.getPriceUnsafe(ETH_USD_PRICE_ID);
         
-        require(xmrPriceData.price > 0 && ethPriceData.price > 0, "Invalid Pyth prices");
+        require(xmrPriceData.price > 0, "Invalid XMR price");
         
         xmrUsdPrice = _normalizePythPrice(xmrPriceData);
-        ethUsdPrice = _normalizePythPrice(ethPriceData);
+        // On Gnosis, xDAI is pegged 1:1 to USD, so ethUsdPrice = 1e18
+        ethUsdPrice = 1e18;
         lastPriceUpdate = block.timestamp;
     }
     
@@ -268,26 +266,26 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     
     function _updatePrices() internal {
         PythStructs.Price memory xmrPriceData = pyth.getPriceNoOlderThan(XMR_USD_PRICE_ID, MAX_PRICE_AGE);
-        PythStructs.Price memory ethPriceData = pyth.getPriceNoOlderThan(ETH_USD_PRICE_ID, MAX_PRICE_AGE);
         
-        require(xmrPriceData.price > 0 && ethPriceData.price > 0, "Invalid prices");
+        require(xmrPriceData.price > 0, "Invalid XMR price");
         
         uint256 newXmrPrice = _normalizePythPrice(xmrPriceData);
-        uint256 newEthPrice = _normalizePythPrice(ethPriceData);
         
-        // TWAP smoothing
+        // TWAP smoothing for XMR price
         xmrUsdPrice = xmrUsdPrice == 0 ? newXmrPrice : (xmrUsdPrice * 9 + newXmrPrice) / 10;
-        ethUsdPrice = ethUsdPrice == 0 ? newEthPrice : (ethUsdPrice * 9 + newEthPrice) / 10;
+        // On Gnosis, xDAI is always 1:1 with USD
+        ethUsdPrice = 1e18;
         lastPriceUpdate = block.timestamp;
         
         emit PriceUpdated(xmrUsdPrice, ethUsdPrice, block.timestamp);
     }
     
     /**
-     * @notice Get XMR price in ETH (18 decimals)
+     * @notice Get XMR price in DAI (18 decimals)
+     * @dev On Gnosis, xDAI = $1, so this returns XMR/USD price
      */
-    function getXmrEthPrice() public view returns (uint256) {
-        require(ethUsdPrice > 0, "ETH price not set");
+    function getXmrDaiPrice() public view returns (uint256) {
+        require(ethUsdPrice > 0, "DAI price not set");
         return (xmrUsdPrice * 1e18) / ethUsdPrice;
     }
     
@@ -330,15 +328,15 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     }
     
     /**
-     * @notice LP deposits collateral (accepts ETH directly)
-     * @dev For testnet: Accepts ETH directly without wrapping to wstETH
-     * @dev In production, this would wrap to wstETH for yield generation
+     * @notice LP deposits collateral (accepts xDAI directly)
+     * @dev For Gnosis mainnet: Accepts DAI directly without wrapping to sDAI
+     * @dev In production, this would wrap to sDAI for yield generation
      */
     function lpDeposit() external payable nonReentrant {
         require(msg.value > 0, "Zero amount");
         
-        // TESTNET: Accept ETH directly (1:1 ratio)
-        // In production, this would wrap to wstETH
+        // GNOSIS: Accept DAI directly (1:1 ratio)
+        // In production, this would wrap to sDAI
         uint256 collateralAmount = msg.value;
         
         lpInfo[msg.sender].collateralAmount += collateralAmount;
@@ -348,22 +346,22 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     }
     
     /**
-     * @notice LP deposits wstETH directly
+     * @notice LP deposits sDAI directly
      */
-    function lpDepositWstETH(uint256 wstETHAmount) external nonReentrant {
-        require(wstETHAmount > 0, "Zero amount");
+    function lpDepositSDAI(uint256 sDAIAmount) external nonReentrant {
+        require(sDAIAmount > 0, "Zero amount");
         
-        wstETH.transferFrom(msg.sender, address(this), wstETHAmount);
+        sDAI.transferFrom(msg.sender, address(this), sDAIAmount);
         
-        lpInfo[msg.sender].collateralAmount += wstETHAmount;
-        totalLPCollateral += wstETHAmount;
+        lpInfo[msg.sender].collateralAmount += sDAIAmount;
+        totalLPCollateral += sDAIAmount;
         
-        emit LPDeposited(msg.sender, 0, wstETHAmount);
+        emit LPDeposited(msg.sender, 0, sDAIAmount);
     }
     
     /**
      * @notice LP withdraws collateral (only down to 150% ratio)
-     * @dev For testnet: Sends ETH directly instead of wstETH
+     * @dev For Gnosis mainnet: Sends DAI directly instead of sDAI
      */
     function lpWithdraw(uint256 amount) external nonReentrant {
         LPInfo storage lp = lpInfo[msg.sender];
@@ -371,9 +369,9 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         
         // Check LP maintains 150% ratio after withdrawal
         uint256 remainingCollateral = lp.collateralAmount - amount;
-        // TESTNET: Collateral is in ETH directly (1:1)
+        // GNOSIS: Collateral is in DAI directly (1:1)
         uint256 remainingValueEth = remainingCollateral;
-        uint256 backedValueEth = _xmrToETH(lp.backedAmount);
+        uint256 backedValueEth = _xmrToDAI(lp.backedAmount);
         
         if (lp.backedAmount > 0) {
             uint256 ratio = (remainingValueEth * 100) / backedValueEth;
@@ -383,9 +381,9 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         lp.collateralAmount -= amount;
         totalLPCollateral -= amount;
         
-        // TESTNET: Transfer ETH directly to LP
+        // GNOSIS: Transfer DAI directly to LP
         (bool success, ) = msg.sender.call{value: amount}("");
-        require(success, "ETH transfer failed");
+        require(success, "DAI transfer failed");
         
         emit LPWithdrew(msg.sender, amount, remainingValueEth);
     }
@@ -400,26 +398,26 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         require(lpData.backedAmount > 0, "LP has no position");
         
         // Check LP is in risk mode
-        uint256 collateralValueEth = _wstETHToETH(lpData.collateralAmount);
-        uint256 backedValueEth = _xmrToETH(lpData.backedAmount);
+        uint256 collateralValueEth = _sDAIToDAI(lpData.collateralAmount);
+        uint256 backedValueEth = _xmrToDAI(lpData.backedAmount);
         uint256 ratio = (collateralValueEth * 100) / backedValueEth;
         
         require(ratio < SAFE_RATIO, "LP not in risk mode");
         require(ratio >= LIQUIDATION_THRESHOLD, "Below liquidation threshold");
         
-        // Wrap ETH to wstETH
-        uint256 wstETHBefore = wstETH.balanceOf(address(this));
-        (bool success, ) = address(wstETH).call{value: msg.value}("");
-        require(success, "wstETH wrap failed");
-        uint256 wstETHReceived = wstETH.balanceOf(address(this)) - wstETHBefore;
+        // Wrap DAI to sDAI
+        uint256 sDAIBefore = sDAI.balanceOf(address(this));
+        (bool success, ) = address(sDAI).call{value: msg.value}("");
+        require(success, "sDAI wrap failed");
+        uint256 sDAIReceived = sDAI.balanceOf(address(this)) - sDAIBefore;
         
         // Add collateral to LP
-        lpData.collateralAmount += wstETHReceived;
-        totalLPCollateral += wstETHReceived;
+        lpData.collateralAmount += sDAIReceived;
+        totalLPCollateral += sDAIReceived;
         
         // Liquidator gets bonus shares (takes over part of LP position)
-        // For simplicity, liquidator receives equivalent wstETH rights
-        lpInfo[msg.sender].collateralAmount += wstETHReceived;
+        // For simplicity, liquidator receives equivalent sDAI rights
+        lpInfo[msg.sender].collateralAmount += sDAIReceived;
         
         emit LPLiquidated(lp, msg.sender, msg.value);
     }
@@ -439,13 +437,13 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         require(lpData.active, "LP not active");
         
         // Calculate required deposit based on LP's setting
-        uint256 expectedValueEth = _xmrToETH(expectedAmount);
+        uint256 expectedValueEth = _xmrToDAI(expectedAmount);
         uint256 requiredDeposit = (expectedValueEth * lpData.intentDepositBps) / 10000;
         require(msg.value >= requiredDeposit, "Deposit too small");
         
         // Calculate LP's available capacity
-        uint256 collateralValueEth = _wstETHToETH(lpData.collateralAmount);
-        uint256 currentBackedValueEth = _xmrToETH(lpData.backedAmount);
+        uint256 collateralValueEth = _sDAIToDAI(lpData.collateralAmount);
+        uint256 currentBackedValueEth = _xmrToDAI(lpData.backedAmount);
         uint256 maxBackedValueEth = (collateralValueEth * 100) / SAFE_RATIO;
         uint256 availableCapacityEth = maxBackedValueEth > currentBackedValueEth 
             ? maxBackedValueEth - currentBackedValueEth 
@@ -462,7 +460,7 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         intentId = keccak256(abi.encodePacked(msg.sender, lp, expectedAmount, block.timestamp));
         require(mintIntents[intentId].user == address(0), "Intent exists");
         
-        // Create intent (deposit held as ETH)
+        // Create intent (deposit held as xDAI)
         mintIntents[intentId] = MintIntent({
             user: msg.sender,
             lp: lp,
@@ -612,10 +610,10 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         uint256 netAmount = v - fee;
         
         // TEMP: Skip collateral check
-        // uint256 xmrValueEth = _xmrToETH(v);
+        // uint256 xmrValueEth = _xmrToDAI(v);
         // uint256 requiredCollateralEth = (xmrValueEth * SAFE_RATIO) / 100;
-        // uint256 requiredWstETH = _ethToWstETH(requiredCollateralEth);
-        // require(lpData.collateralAmount >= requiredWstETH, "LP insufficient collateral");
+        // uint256 requiredSDAI = _ethToSDAI(requiredCollateralEth);
+        // require(lpData.collateralAmount >= requiredSDAI, "LP insufficient collateral");
         
         // Update LP state
         lpData.backedAmount += v;
@@ -647,25 +645,25 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         LPInfo storage lpData = lpInfo[lp];
         
         // Calculate required deposit based on LP's setting
-        uint256 burnValueEth = _xmrToETH(amount);
+        uint256 burnValueEth = _xmrToDAI(amount);
         uint256 requiredDeposit = (burnValueEth * lpData.intentDepositBps) / 10000;
         require(msg.value >= requiredDeposit, "Deposit too small");
         require(lpData.backedAmount >= amount, "LP cannot cover");
         
         // Calculate collateral to lock
-        uint256 xmrValueEth = _xmrToETH(amount);
+        uint256 xmrValueEth = _xmrToDAI(amount);
         uint256 collateralNeededEth = (xmrValueEth * SAFE_RATIO) / 100;
-        uint256 wstETHNeeded = _ethToWstETH(collateralNeededEth);
+        uint256 sDAINeeded = _ethToSDAI(collateralNeededEth);
         
-        require(lpData.collateralAmount >= wstETHNeeded, "LP insufficient collateral");
+        require(lpData.collateralAmount >= sDAINeeded, "LP insufficient collateral");
         
         // Burn user's tokens
         _burn(msg.sender, amount);
         
         // Lock LP collateral
-        lpData.collateralAmount -= wstETHNeeded;
+        lpData.collateralAmount -= sDAINeeded;
         lpData.backedAmount -= amount;
-        totalLPCollateral -= wstETHNeeded;
+        totalLPCollateral -= sDAINeeded;
         
         uint256 burnId = nextBurnId++;
         burnRequests[burnId] = BurnRequest({
@@ -675,7 +673,7 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
             depositAmount: msg.value,
             xmrAddress: xmrAddress,
             requestTime: block.timestamp,
-            collateralLocked: wstETHNeeded,
+            collateralLocked: sDAINeeded,
             fulfilled: false,
             defaulted: false
         });
@@ -742,7 +740,7 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         
         request.defaulted = true;
         
-        // TESTNET: Transfer ETH collateral directly to user
+        // GNOSIS: Transfer DAI collateral directly to user
         (bool success1, ) = request.user.call{value: request.collateralLocked}("");
         require(success1, "Collateral transfer failed");
         
@@ -787,17 +785,17 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     }
     
     /**
-     * @notice Oracle claims yield from wstETH appreciation
-     * @dev wstETH accrues value over time, oracle gets the excess
+     * @notice Oracle claims yield from sDAI appreciation
+     * @dev sDAI accrues value over time, oracle gets the excess
      */
     function claimOracleYield() external onlyOracle nonReentrant {
-        uint256 totalWstETH = wstETH.balanceOf(address(this));
+        uint256 totalSDAI = sDAI.balanceOf(address(this));
         
-        // Total wstETH should be >= totalLPCollateral
+        // Total sDAI should be >= totalLPCollateral
         // Any excess is yield from stETH appreciation
-        if (totalWstETH > totalLPCollateral) {
-            uint256 yieldAmount = totalWstETH - totalLPCollateral;
-            wstETH.transfer(oracle, yieldAmount);
+        if (totalSDAI > totalLPCollateral) {
+            uint256 yieldAmount = totalSDAI - totalLPCollateral;
+            sDAI.transfer(oracle, yieldAmount);
             
             emit OracleYieldClaimed(oracle, yieldAmount);
         }
@@ -902,9 +900,9 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     // ════════════════════════════════════════════════════════════════════════
     
     /**
-     * @notice Convert XMR amount (piconero) to ETH value
+     * @notice Convert XMR amount (piconero) to DAI value
      */
-    function _xmrToETH(uint256 piconeroAmount) internal view returns (uint256) {
+    function _xmrToDAI(uint256 piconeroAmount) internal view returns (uint256) {
         // piconeroAmount is in 1e12 units
         // xmrUsdPrice and ethUsdPrice are in 1e18
         uint256 xmrAmount = piconeroAmount; // Keep in piconero
@@ -913,29 +911,29 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     }
     
     /**
-     * @notice Convert ETH value to XMR amount (piconero)
+     * @notice Convert DAI value to XMR amount (piconero)
      */
-    function _ethToXmr(uint256 ethAmount) internal view returns (uint256) {
-        uint256 usdValue = (ethAmount * ethUsdPrice) / 1e18;
+    function _ethToXmr(uint256 daiAmount) internal view returns (uint256) {
+        uint256 usdValue = (daiAmount * ethUsdPrice) / 1e18;
         return (usdValue * PICONERO_PER_XMR) / xmrUsdPrice;
     }
     
     /**
-     * @notice Convert wstETH to ETH value (accounting for stETH appreciation)
+     * @notice Convert sDAI to DAI value (accounting for stETH appreciation)
      */
-    function _wstETHToETH(uint256 wstETHAmount) internal pure returns (uint256) {
-        // TESTNET: Using ETH directly (1:1 ratio)
-        // In production, would call: wstETH.getStETHByWstETH(wstETHAmount)
-        return wstETHAmount;
+    function _sDAIToDAI(uint256 sDAIAmount) internal pure returns (uint256) {
+        // GNOSIS: Using xDAI directly (1:1 ratio)
+        // In production, would call: sDAI.getStETHBySDAI(sDAIAmount)
+        return sDAIAmount;
     }
     
     /**
-     * @notice Convert ETH value to wstETH amount
+     * @notice Convert DAI value to sDAI amount
      */
-    function _ethToWstETH(uint256 ethAmount) internal pure returns (uint256) {
-        // TESTNET: Using ETH directly (1:1 ratio)
-        // In production, would call: wstETH.getWstETHByStETH(ethAmount)
-        return ethAmount;
+    function _ethToSDAI(uint256 daiAmount) internal pure returns (uint256) {
+        // GNOSIS: Using xDAI directly (1:1 ratio)
+        // In production, would call: sDAI.getSDAIByStETH(daiAmount)
+        return daiAmount;
     }
     
     // ════════════════════════════════════════════════════════════════════════
@@ -949,8 +947,8 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         LPInfo storage lpData = lpInfo[lp];
         if (lpData.backedAmount == 0) return type(uint256).max;
         
-        uint256 collateralValueEth = _wstETHToETH(lpData.collateralAmount);
-        uint256 backedValueEth = _xmrToETH(lpData.backedAmount);
+        uint256 collateralValueEth = _sDAIToDAI(lpData.collateralAmount);
+        uint256 backedValueEth = _xmrToDAI(lpData.backedAmount);
         return (collateralValueEth * 100) / backedValueEth;
     }
     
@@ -962,7 +960,7 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     }
     
     /**
-     * @notice Get current ETH/USD price
+     * @notice Get current xDAI/USD price
      */
     function getEthUsdPrice() external view returns (uint256) {
         return ethUsdPrice;
@@ -974,8 +972,8 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     function getLPAvailableCapacity(address lp) external view returns (uint256) {
         LPInfo storage lpData = lpInfo[lp];
         
-        uint256 collateralValueEth = _wstETHToETH(lpData.collateralAmount);
-        uint256 currentBackedValueEth = _xmrToETH(lpData.backedAmount);
+        uint256 collateralValueEth = _sDAIToDAI(lpData.collateralAmount);
+        uint256 currentBackedValueEth = _xmrToDAI(lpData.backedAmount);
         uint256 maxBackedValueEth = (collateralValueEth * 100) / SAFE_RATIO;
         
         if (maxBackedValueEth <= currentBackedValueEth) return 0;
@@ -1030,8 +1028,8 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
                 mintFees[index] = lpData.mintFeeBps;
                 
                 // Calculate capacity
-                uint256 collateralValueEth = _wstETHToETH(lpData.collateralAmount);
-                uint256 currentBackedValueEth = _xmrToETH(lpData.backedAmount);
+                uint256 collateralValueEth = _sDAIToDAI(lpData.collateralAmount);
+                uint256 currentBackedValueEth = _xmrToDAI(lpData.backedAmount);
                 uint256 maxBackedValueEth = (collateralValueEth * 100) / SAFE_RATIO;
                 
                 if (maxBackedValueEth > currentBackedValueEth) {
@@ -1105,6 +1103,6 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     // ════════════════════════════════════════════════════════════════════════
     
     receive() external payable {
-        // Accept ETH for LP deposits and intent deposits
+        // Accept DAI for LP deposits and intent deposits
     }
 }

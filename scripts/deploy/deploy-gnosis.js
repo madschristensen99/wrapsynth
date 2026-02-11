@@ -14,8 +14,8 @@ async function main() {
   console.log("Account balance:", hre.ethers.formatEther(balance), "xDAI\n");
 
   // Gnosis Mainnet addresses
-  // wstETH on Gnosis: https://gnosisscan.io/token/0x6C76971f98945AE98dD7d4DFcA8711ebea946eA6
-  const WSTETH_ADDRESS = process.env.WSTETH_ADDRESS || "0x6C76971f98945AE98dD7d4DFcA8711ebea946eA6";
+  // sDAI (Savings DAI) on Gnosis: https://gnosisscan.io/token/0xaf204776c7245bF4147c2612BF6e5972Ee483701
+  const SDAI_ADDRESS = process.env.SDAI_ADDRESS || "0xaf204776c7245bF4147c2612BF6e5972Ee483701";
   
   // Pyth Oracle on Gnosis: https://docs.pyth.network/price-feeds/contract-addresses/evm
   const PYTH_ADDRESS = process.env.PYTH_ADDRESS || "0x2880aB155794e7179c9eE2e38200202908C17B43";
@@ -23,7 +23,7 @@ async function main() {
   const ORACLE_ADDRESS = process.env.ORACLE_ADDRESS || deployer.address;
 
   console.log("Configuration:");
-  console.log("  wstETH:", WSTETH_ADDRESS);
+  console.log("  sDAI:", SDAI_ADDRESS);
   console.log("  Pyth Oracle:", PYTH_ADDRESS);
   console.log("  Oracle Address:", ORACLE_ADDRESS);
   console.log("");
@@ -81,7 +81,7 @@ async function main() {
   const WrappedMonero = await hre.ethers.getContractFactory("WrappedMonero");
   const wrappedMonero = await WrappedMonero.deploy(
     verifierAddress,
-    WSTETH_ADDRESS,
+    SDAI_ADDRESS,
     PYTH_ADDRESS,
     initialMoneroBlock
   );
@@ -105,7 +105,7 @@ async function main() {
       WrappedMonero: wrappedMoneroAddress,
     },
     dependencies: {
-      wstETH: WSTETH_ADDRESS,
+      sDAI: SDAI_ADDRESS,
       pyth: PYTH_ADDRESS,
       oracle: ORACLE_ADDRESS,
     },

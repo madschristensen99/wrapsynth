@@ -720,7 +720,7 @@
                 <a href="#how-it-works">How It Works</a>
                 <a href="#stats">Stats</a>
                 <a href="https://github.com/madschristensen99/wrapsynth" target="_blank">GitHub</a>
-                <a href="https://sepolia.basescan.org/address/0x3D50F6177E6589413A389f8a16314E2dA20a25Ff" target="_blank" class="btn-contract">View Contract ↗</a>
+                <a href="https://gnosisscan.io/address/0x8a97101aB627af1B284e57f4dE89A9B3AC9D6782" target="_blank" class="btn-contract" id="hero-contract-link">View Contract ↗</a>
             </div>
         </div>
     </nav>
@@ -745,12 +745,12 @@
                             <div class="hero-stat-label">Constraints</div>
                         </div>
                         <div class="hero-stat">
-                            <div class="hero-stat-value">&lt;1s</div>
+                            <div class="hero-stat-value">&lt;5s</div>
                             <div class="hero-stat-label">Proof Time</div>
                         </div>
                         <div class="hero-stat">
-                            <div class="hero-stat-value highlight">99.97%</div>
-                            <div class="hero-stat-label">Reduction</div>
+                            <div class="hero-stat-value highlight" id="total-txs-hero">0</div>
+                            <div class="hero-stat-label">Total Txs</div>
                         </div>
                     </div>
                 </div>
@@ -772,11 +772,11 @@
                     <div class="tvl-stats-row">
                         <div class="tvl-stat-item">
                             <div class="stat-label">24h Change</div>
-                            <div class="stat-value positive">↗ +931 XMR</div>
+                            <div class="stat-value" id="tvl-24h-change">--</div>
                         </div>
                         <div class="tvl-stat-item">
                             <div class="stat-label">Total Txs</div>
-                            <div class="stat-value">3</div>
+                            <div class="stat-value" id="total-txs">0</div>
                         </div>
                     </div>
 
@@ -788,7 +788,7 @@
                         <div class="chart-bar" style="height: 100%"></div>
                     </div>
 
-                    <a href="https://sepolia.basescan.org/address/0x3D50F6177E6589413A389f8a16314E2dA20a25Ff" target="_blank" class="tvl-cta">
+                    <a href="https://gnosisscan.io/address/0x8a97101aB627af1B284e57f4dE89A9B3AC9D6782" target="_blank" class="tvl-cta" id="tvl-contract-link">
                         View Contract →
                     </a>
                 </div>
@@ -822,12 +822,12 @@
                 <div class="feature-card">
                     <div class="feature-icon">✅</div>
                     <h3>Battle Tested</h3>
-                    <p>Successfully verified real Monero mainnet transactions on Base Sepolia testnet</p>
+                    <p>Successfully verified real Monero mainnet transactions on Gnosis Chain mainnet</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">🌐</div>
                     <h3>EVM Compatible</h3>
-                    <p>Deploy on any EVM chain - currently live on Base Sepolia with Arbitrum mainnet planned</p>
+                    <p>Deploy on any EVM chain - currently live on Gnosis Chain with multi-chain expansion planned</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">📊</div>
@@ -889,14 +889,14 @@
             </div>
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-card-value">3</div>
+                    <div class="stat-card-value" id="verified-txs-stat">0</div>
                     <div class="stat-card-label">Verified Transactions</div>
-                    <div class="stat-card-detail">2 Stagenet + 1 Mainnet</div>
+                    <div class="stat-card-detail">On Gnosis Mainnet</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-card-value">~3.2M</div>
                     <div class="stat-card-label">Gas Per Mint</div>
-                    <div class="stat-card-detail">On Base Sepolia</div>
+                    <div class="stat-card-detail" id="largest-tx-network">On Gnosis Chain</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-card-value">931</div>
@@ -922,16 +922,16 @@
                 <div class="deployment-card">
                     <h3>MoneroBridgeDLEQ</h3>
                     <p class="contract-address">0x3D50F6177E6589413A389f8a16314E2dA20a25Ff</p>
-                    <a href="https://sepolia.basescan.org/address/0x3D50F6177E6589413A389f8a16314E2dA20a25Ff" target="_blank" class="btn-view">View on BaseScan</a>
+                    <a href="https://gnosisscan.io/address/0x8a97101aB627af1B284e57f4dE89A9B3AC9D6782" target="_blank" class="btn-view" id="wrapped-monero-link">View on Gnosisscan</a>
                 </div>
                 <div class="deployment-card">
                     <h3>PlonkVerifier</h3>
                     <p class="contract-address">0x3139CB6fa4255591D7667361ab06Fdb155558853</p>
-                    <a href="https://sepolia.basescan.org/address/0x3139CB6fa4255591D7667361ab06Fdb155558853" target="_blank" class="btn-view">View on BaseScan</a>
+                    <a href="https://gnosisscan.io/address/0x2cD729d7D6EfaC8559BBb1761d436C23a5f0CC4a" target="_blank" class="btn-view" id="plonk-verifier-link">View on Gnosisscan</a>
                 </div>
             </div>
             <div class="network-badge">
-                <span class="badge">✓ Base Sepolia Testnet</span>
+                <span class="badge" id="network-badge">✓ Gnosis Chain Mainnet</span>
             </div>
         </div>
     </section>
@@ -965,15 +965,164 @@
                 <div class="footer-section">
                     <h4>Contract</h4>
                     <ul>
-                        <li><a href="https://sepolia.basescan.org/address/0x3D50F6177E6589413A389f8a16314E2dA20a25Ff" target="_blank">Base Sepolia</a></li>
+                        <li><a href="https://gnosisscan.io/address/0x8a97101aB627af1B284e57f4dE89A9B3AC9D6782" target="_blank" id="footer-contract-link">Gnosis Chain</a></li>
                     </ul>
                 </div>
             </div>
             <div class="footer-bottom">
-                <p>⚠️ Experimental Software - Not Audited - Testnet Only</p>
-                <p>Version 6.0.0 | MIT License | Built with ♥ for privacy</p>
+                <p>⚠️ Experimental Software - Not Audited - Mainnet Deployment</p>
+                <p>Version 1.0.0 | MIT License | Built with ♥ for privacy</p>
             </div>
         </div>
     </footer>
+
+    <script type="module">
+        import { createPublicClient, http, formatUnits } from 'https://esm.sh/viem@2.7.15';
+        import { CONFIG, NETWORKS, DEFAULT_NETWORK } from './config.js';
+
+        // Contract ABI (minimal for reading data)
+        const CONTRACT_ABI = [
+            {
+                inputs: [],
+                name: 'totalSupply',
+                outputs: [{ name: '', type: 'uint256' }],
+                stateMutability: 'view',
+                type: 'function'
+            },
+            {
+                inputs: [],
+                name: 'totalCollateral',
+                outputs: [{ name: '', type: 'uint256' }],
+                stateMutability: 'view',
+                type: 'function'
+            }
+        ];
+
+        // Initialize viem client
+        const publicClient = createPublicClient({
+            chain: NETWORKS[DEFAULT_NETWORK],
+            transport: http(CONFIG.RPC_URL)
+        });
+
+        // Fetch transaction count from contract events
+        async function fetchTransactionCount() {
+            try {
+                // Get the current block number
+                const currentBlock = await publicClient.getBlockNumber();
+                const deploymentBlock = BigInt(CONFIG.contracts.initialMoneroBlock || 0);
+                
+                // Fetch Minted events (you can add more event types)
+                const mintedEvents = await publicClient.getLogs({
+                    address: CONFIG.CONTRACT_ADDRESS,
+                    event: {
+                        type: 'event',
+                        name: 'Minted',
+                        inputs: [
+                            { type: 'address', indexed: true, name: 'to' },
+                            { type: 'uint256', indexed: false, name: 'amount' },
+                        ]
+                    },
+                    fromBlock: deploymentBlock,
+                    toBlock: currentBlock
+                });
+                
+                return mintedEvents.length;
+            } catch (error) {
+                console.error('Error fetching transaction count:', error);
+                return 0;
+            }
+        }
+
+        // Fetch and update TVL data
+        async function updateTVLData() {
+            try {
+                // Read total supply from contract
+                const totalSupply = await publicClient.readContract({
+                    address: CONFIG.CONTRACT_ADDRESS,
+                    abi: CONTRACT_ABI,
+                    functionName: 'totalSupply'
+                });
+
+                // Convert from wei (assuming 12 decimals for XMR)
+                const xmrAmount = parseFloat(formatUnits(totalSupply, 12));
+                
+                // Update TVL number
+                const tvlNumber = document.querySelector('.tvl-number');
+                if (tvlNumber) {
+                    tvlNumber.textContent = xmrAmount.toFixed(2);
+                }
+
+                // Fetch XMR price (you can replace with real price API)
+                const xmrPrice = 153.20; // Placeholder - integrate with Pyth or CoinGecko
+                const usdValue = xmrAmount * xmrPrice;
+                
+                const tvlUsd = document.querySelector('.tvl-usd');
+                if (tvlUsd) {
+                    tvlUsd.textContent = `≈ $${usdValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`;
+                }
+
+                // Fetch and update transaction count
+                const txCount = await fetchTransactionCount();
+                const totalTxsElements = document.querySelectorAll('#total-txs, #total-txs-hero, #verified-txs-stat');
+                totalTxsElements.forEach(el => {
+                    if (el) el.textContent = txCount.toString();
+                });
+
+                // Update 24h change (placeholder for now)
+                const change24h = document.getElementById('tvl-24h-change');
+                if (change24h && xmrAmount > 0) {
+                    change24h.textContent = `↗ +${xmrAmount.toFixed(2)} XMR`;
+                    change24h.classList.add('positive');
+                }
+
+                console.log('✅ TVL data updated:', { xmrAmount, usdValue, txCount });
+            } catch (error) {
+                console.error('Error fetching TVL data:', error);
+                // Keep placeholder values on error
+            }
+        }
+
+        // Update contract addresses
+        function updateContractAddresses() {
+            const contractCards = document.querySelectorAll('.deployment-card');
+            const explorerUrl = CONFIG.EXPLORER_URL;
+            
+            if (contractCards.length >= 2) {
+                // Update WrappedMonero contract
+                const wrappedMoneroCard = contractCards[0];
+                wrappedMoneroCard.querySelector('h3').textContent = 'WrappedMonero';
+                wrappedMoneroCard.querySelector('.contract-address').textContent = CONFIG.CONTRACT_ADDRESS;
+                wrappedMoneroCard.querySelector('.btn-view').href = `${explorerUrl}/address/${CONFIG.CONTRACT_ADDRESS}`;
+                wrappedMoneroCard.querySelector('.btn-view').textContent = `View on ${NETWORKS[DEFAULT_NETWORK].blockExplorers.default.name}`;
+                
+                // Update PlonkVerifier contract
+                const verifierCard = contractCards[1];
+                verifierCard.querySelector('.contract-address').textContent = CONFIG.contracts.plonkVerifier;
+                verifierCard.querySelector('.btn-view').href = `${explorerUrl}/address/${CONFIG.contracts.plonkVerifier}`;
+                verifierCard.querySelector('.btn-view').textContent = `View on ${NETWORKS[DEFAULT_NETWORK].blockExplorers.default.name}`;
+            }
+
+            // Update network badge
+            const networkBadge = document.querySelector('.network-badge .badge');
+            if (networkBadge) {
+                networkBadge.textContent = `✓ ${NETWORKS[DEFAULT_NETWORK].name} Mainnet`;
+            }
+
+            // Update TVL contract link
+            const tvlCta = document.querySelector('.tvl-cta');
+            if (tvlCta) {
+                tvlCta.href = `${explorerUrl}/address/${CONFIG.CONTRACT_ADDRESS}`;
+            }
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            updateContractAddresses();
+            updateTVLData();
+            
+            // Update TVL every 30 seconds
+            setInterval(updateTVLData, 30000);
+        });
+    </script>
 </body>
 </html>

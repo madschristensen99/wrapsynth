@@ -68,7 +68,7 @@
                 <div class="stat-card">
                     <div class="stat-icon">📊</div>
                     <div class="stat-content">
-                        <p class="stat-label">XMR/ETH Price</p>
+                        <p class="stat-label">XMR/xDAI Price</p>
                         <p class="stat-value" id="xmrEthPrice">-</p>
                     </div>
                 </div>
@@ -132,7 +132,7 @@
                         <div class="form-group">
                             <label>Anti-Griefing Deposit</label>
                             <div class="info-display">
-                                <span id="intentDepositDisplay">Loading...</span> ETH
+                                <span id="intentDepositDisplay">Loading...</span> xDAI
                             </div>
                             <p class="input-hint">Refundable deposit required by the contract (prevents spam)</p>
                         </div>
@@ -143,7 +143,7 @@
                                 <span class="step-number">1</span>
                                 <div class="step-content">
                                     <p class="step-title">Create Mint Intent</p>
-                                    <p class="step-desc">Reserve capacity with LP and deposit ETH</p>
+                                    <p class="step-desc">Reserve capacity with LP and deposit xDAI</p>
                                 </div>
                             </div>
                             <div class="step">
@@ -249,7 +249,7 @@
                                 <li>Maintain 150% collateral ratio (safe zone)</li>
                                 <li>Below 120% = liquidatable</li>
                                 <li>Must fulfill burn requests within 2 hours</li>
-                                <li>Earn yield on wstETH collateral + bridge fees</li>
+                                <li>Earn yield on sDAI collateral + bridge fees</li>
                             </ul>
                         </div>
 
@@ -295,7 +295,7 @@
                         <div class="lp-stats">
                             <div class="lp-stat">
                                 <p class="lp-stat-label">Collateral</p>
-                                <p class="lp-stat-value" id="lpCollateral">0.00 wstETH</p>
+                                <p class="lp-stat-value" id="lpCollateral">0.00 sDAI</p>
                             </div>
                             <div class="lp-stat">
                                 <p class="lp-stat-label">Backed Amount</p>
@@ -357,11 +357,22 @@
                         <!-- Collateral Management -->
                         <h3>Collateral Management</h3>
                         <div class="form-group">
-                            <label for="lpDepositAmount">Deposit Amount (ETH)</label>
+                            <label for="lpDepositAmount">Deposit Amount (xDAI)</label>
                             <input type="number" id="lpDepositAmount" class="input" placeholder="0.00" step="0.01" min="0.01">
-                            <p class="input-hint">Will be converted to wstETH for yield generation</p>
+                            <p class="input-hint">Will be converted to sDAI (Savings DAI) for yield generation</p>
                         </div>
                         <button id="depositCollateralBtn" class="btn btn-large btn-secondary">Deposit Collateral</button>
+
+                        <div class="divider"></div>
+
+                        <!-- Withdraw Collateral -->
+                        <h3>Withdraw Collateral</h3>
+                        <div class="form-group">
+                            <label for="lpWithdrawAmount">Withdraw Amount (xDAI)</label>
+                            <input type="number" id="lpWithdrawAmount" class="input" placeholder="0.00" step="0.01" min="0.01">
+                            <p class="input-hint">Must maintain 150% collateral ratio after withdrawal</p>
+                        </div>
+                        <button id="withdrawCollateralBtn" class="btn btn-large btn-secondary">Withdraw Collateral</button>
 
                         <!-- Performance Stats (Placeholder for future) -->
                         <div class="card mt-3">
@@ -402,8 +413,8 @@
                 </div>
                 <div class="footer-section">
                     <h4>Contract</h4>
-                    <p class="contract-address">0x956d362086076b05Cf90CBf2EF30689b1172c9C5</p>
-                    <a href="https://sepolia.uniscan.xyz/address/0x956d362086076b05Cf90CBf2EF30689b1172c9C5" target="_blank" class="explorer-link">View on Uniscan →</a>
+                    <p class="contract-address" id="footer-contract-address">0x8a97101aB627af1B284e57f4dE89A9B3AC9D6782</p>
+                    <a href="https://gnosisscan.io/address/0x8a97101aB627af1B284e57f4dE89A9B3AC9D6782" target="_blank" class="explorer-link" id="footer-explorer-link">View on Gnosisscan →</a>
                 </div>
             </div>
             <div class="footer-bottom">
