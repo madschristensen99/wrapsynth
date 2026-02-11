@@ -1,163 +1,136 @@
-// monero_bridge.circom - DLEQ-Optimized Monero Bridge Circuit
-
-// SECURITY NOTICE: Not audited for production use. Experimental software.
-
+// SPDX-License-Identifier: MIT
 pragma circom 2.1.0;
 
-// ════════════════════════════════════════════════════════════════════════════
-// IMPORTS
-// ════════════════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────────────────
+// Imports
+// ─────────────────────────────────────────────────────────────────────────────
 
-// Poseidon hash for commitment (circomlib)
 include "circomlib/circuits/poseidon.circom";
-
-// Utilities (from circomlib)
-include "circomlib/circuits/comparators.circom";
 include "circomlib/circuits/bitify.circom";
+include "circomlib/circuits/comparators.circom";
 include "circomlib/circuits/gates.circom";
 
-// ════════════════════════════════════════════════════════════════════════════
-// ARCHITECTURE NOTES
-// ════════════════════════════════════════════════════════════════════════════
-//
-// This circuit uses a HYBRID approach:
-//
-// OFF-CIRCUIT (Client-side - Native Ed25519):
-//   1. Compute R = r·G (transaction public key)
-//   2. Compute S = 8·r·A (shared secret)
-//   3. Compute P = H_s·G + B (stealth address)
-//   4. Decrypt amount: v = ecdhAmount ⊕ Keccak(H_s)
-//   5. Generate DLEQ proofs for discrete log equality
-//
-// IN-CIRCUIT (This file - ~15k constraints):
-//   1. Verify Poseidon commitment binds all values
-//   2. Verify amount decryption (XOR)
-//   3. Range checks on scalars
-//
-// SOLIDITY (On-chain verification):
-//   1. Verify DLEQ proofs (r and H_s consistency)
-//   2. Verify Ed25519 point operations
-//   3. Verify this ZK proof
-//
-// ════════════════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
 
-template MoneroBridge() {
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // PRIVATE INPUTS (witnesses - never revealed on-chain)
-    // ════════════════════════════════════════════════════════════════════════
-    
-    signal input r[255];            // Transaction secret key (255-bit scalar)
-    signal input v;                 // Amount in atomic piconero (64 bits)
-    signal input H_s_scalar[255];   // Shared secret scalar: Keccak256(8·r·A || i) mod L
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // PUBLIC INPUTS (computed off-circuit, verified on-chain)
-    // ════════════════════════════════════════════════════════════════════════
-    
-    signal input R_x;               // r·G x-coordinate (compressed)
-    signal input S_x;               // 8·r·A x-coordinate (compressed)
-    signal input P_x;               // H_s·G + B x-coordinate (compressed)
-    signal input ecdhAmount;        // ECDH-encrypted amount (64 bits)
-    signal input amountKey[64];     // Keccak256("amount" || H_s)[0:64] - precomputed
-    signal input commitment;        // Poseidon commitment binding all values
-    
+// Domain separation tag (must match Solidity)
+template DomainTag() {
+    signal output out;
+    out <== 0x4d4f4e45524f5f425249444745; // "MONERO_BRIDGE"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main circuit
+// ─────────────────────────────────────────────────────────────────────────────
+
+template MoneroBridgeV2() {
+
+    // ───── Private inputs (witness) ─────
+    signal input r_bits[255];          // secret scalar r
+    signal input Hs_bits[255];         // shared secret scalar
+    signal input v;                    // decrypted amount (piconero)
+
+    // ───── Public inputs ─────
+    signal input R_x;                  // tx public key (x)
+    signal input S_x;                  // shared secret point (x)
+    signal input output_commitment;    // Monero Pedersen commitment
+    signal input ecdhAmount;           // encrypted amount
+    signal input amountKey_bits[64];   // keccak("amount" || Hs)[0..64]
+    signal input commitment;           // Poseidon binding
+
     signal output verified_amount;
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // STEP 1: Verify Poseidon Commitment (CRITICAL SECURITY)
-    // ════════════════════════════════════════════════════════════════════════
-    // This binds all private and public values together
-    // Prevents mix-and-match attacks
-    
-    // Convert bit arrays to field elements
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Bit packing
+    // ─────────────────────────────────────────────────────────────────────────
+
     component r_num = Bits2Num(255);
-    component H_s_num = Bits2Num(255);
-    
+    component Hs_num = Bits2Num(255);
+
     for (var i = 0; i < 255; i++) {
-        r_num.in[i] <== r[i];
-        H_s_num.in[i] <== H_s_scalar[i];
+        r_num.in[i] <== r_bits[i];
+        Hs_num.in[i] <== Hs_bits[i];
     }
-    
-    // Compute Poseidon hash of all values
-    component hash = Poseidon(6);
-    hash.inputs[0] <== r_num.out;
-    hash.inputs[1] <== v;
-    hash.inputs[2] <== H_s_num.out;
-    hash.inputs[3] <== R_x;
-    hash.inputs[4] <== S_x;
-    hash.inputs[5] <== P_x;
-    
-    // Verify commitment matches
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Poseidon binding
+    // ─────────────────────────────────────────────────────────────────────────
+
+    component domain = DomainTag();
+
+    component hash = Poseidon(8);
+    hash.inputs[0] <== domain.out;
+    hash.inputs[1] <== r_num.out;
+    hash.inputs[2] <== Hs_num.out;
+    hash.inputs[3] <== v;
+    hash.inputs[4] <== R_x;
+    hash.inputs[5] <== S_x;
+    hash.inputs[6] <== output_commitment;
+    hash.inputs[7] <== ecdhAmount;
+
     commitment === hash.out;
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // STEP 2: Verify Amount Decryption
-    // ════════════════════════════════════════════════════════════════════════
-    // v = ecdhAmount ⊕ amountKey
-    // amountKey verified in Solidity: Keccak256("amount" || H_s)[0:64]
-    
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Amount decryption
+    // ─────────────────────────────────────────────────────────────────────────
+
     component ecdhBits = Num2Bits(64);
     ecdhBits.in <== ecdhAmount;
-    
-    component xor[64];
+
     signal decryptedBits[64];
-    
+    component xor[64];
+
     for (var i = 0; i < 64; i++) {
         xor[i] = XOR();
         xor[i].a <== ecdhBits.out[i];
-        xor[i].b <== amountKey[i];
+        xor[i].b <== amountKey_bits[i];
         decryptedBits[i] <== xor[i].out;
     }
-    
+
     component decrypted = Bits2Num(64);
     for (var i = 0; i < 64; i++) {
         decrypted.in[i] <== decryptedBits[i];
     }
-    
-    // Verify decrypted amount matches claimed amount
-    // Now enabled with proper LP private view key support
+
     decrypted.out === v;
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // STEP 3: Range Checks
-    // ════════════════════════════════════════════════════════════════════════
-    
-    // Verify amount is less than 2^64
-    component v_check = LessThan(64);
-    v_check.in[0] <== v;
-    v_check.in[1] <== 18446744073709551616; // 2^64
-    v_check.out === 1;
-    
-    // Verify r < L (Ed25519 curve order)
-    // L = 2^252 + 27742317777372353535851937790883648493
-    // Check that top 3 bits are 0 (ensures < 2^252)
-    r[252] === 0;
-    r[253] === 0;
-    r[254] === 0;
-    
-    // Verify H_s < L (Ed25519 curve order)
-    // Check that top 3 bits are 0 (ensures < 2^252)
-    H_s_scalar[252] === 0;
-    H_s_scalar[253] === 0;
-    H_s_scalar[254] === 0;
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // OUTPUT
-    // ════════════════════════════════════════════════════════════════════════
-    
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Range checks
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // v > 0
+    component gt = GreaterThan(64);
+    gt.in[0] <== v;
+    gt.in[1] <== 0;
+    gt.out === 1;
+
+    // r < 2^252
+    r_bits[252] === 0;
+    r_bits[253] === 0;
+    r_bits[254] === 0;
+
+    // Hs < 2^252
+    Hs_bits[252] === 0;
+    Hs_bits[253] === 0;
+    Hs_bits[254] === 0;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Output
+    // ─────────────────────────────────────────────────────────────────────────
+
     verified_amount <== v;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// MAIN COMPONENT
-// ════════════════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────────────────
+// Public interface
+// ─────────────────────────────────────────────────────────────────────────────
 
-component main {public [
+component main { public [
     R_x,
     S_x,
-    P_x,
+    output_commitment,
     ecdhAmount,
-    amountKey,
+    amountKey_bits,
     commitment
-]} = MoneroBridge();
+]} = MoneroBridgeV2();
