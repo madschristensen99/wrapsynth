@@ -58,12 +58,12 @@ export const NETWORKS = {
 export const DEPLOYMENTS = {
     GNOSIS: {
         chainId: 100,
-        wrappedMonero: '0x0Eabc7c4aA6749C831AC004e0F3F74122DCb3d26',
-        plonkVerifier: '0xB4D6120f823183FFd99B11341f83572802f75000',
+        wrappedMonero: '0x5AF3083A1ed6d3bEc73aC4d690fCB0a6b83c2614',
+        plonkVerifier: '0x8686044f1B6251600e8915f90f5ecB0184092f6A',
         sDAI: '0xaf204776c7245bF4147c2612BF6e5972Ee483701', // Savings DAI on Gnosis
         pythOracle: '0x2880aB155794e7179c9eE2e38200202908C17B43',
-        initialMoneroBlock: 3607772,
-        deployedAt: '2026-02-11T14:53:27.415Z',
+        initialMoneroBlock: 3607930,
+        deployedAt: '2026-02-11T19:40:06.787Z',
     },
     UNICHAIN_SEPOLIA: {
         chainId: 1301,
