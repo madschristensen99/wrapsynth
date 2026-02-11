@@ -68,31 +68,43 @@ struct Config {
 
 impl Config {
     fn from_env() -> Result<Self> {
-        // Read bridge address from deployment file
-        let deployment_path = "../deployments/unichain_testnet_latest.json";
-        let bridge_address = if std::path::Path::new(deployment_path).exists() {
-            let deployment_json = std::fs::read_to_string(deployment_path)
-                .context("Failed to read deployment file")?;
-            let deployment: serde_json::Value = serde_json::from_str(&deployment_json)
-                .context("Failed to parse deployment JSON")?;
-            let addr_str = deployment["contracts"]["WrappedMonero"]
-                .as_str()
-                .context("WrappedMonero address not found in deployment file")?;
-            addr_str.parse().context("Invalid WrappedMonero address in deployment file")?
-        } else {
-            // Fallback to env var if deployment file doesn't exist
+        // Read bridge address from deployment file - try Gnosis first, then Unichain
+        let deployment_paths = [
+            "../deployments/gnosis_latest.json",
+            "../deployments/unichain_testnet_latest.json",
+        ];
+        
+        let mut bridge_address = None;
+        for path in &deployment_paths {
+            if std::path::Path::new(path).exists() {
+                let deployment_json = std::fs::read_to_string(path)
+                    .context("Failed to read deployment file")?;
+                let deployment: serde_json::Value = serde_json::from_str(&deployment_json)
+                    .context("Failed to parse deployment JSON")?;
+                if let Some(addr_str) = deployment["contracts"]["WrappedMonero"].as_str() {
+                    bridge_address = Some(addr_str.parse().context("Invalid WrappedMonero address in deployment file")?);
+                    info!("Using deployment from: {}", path);
+                    break;
+                }
+            }
+        }
+        
+        let bridge_address = bridge_address.or_else(|| {
             env::var("BRIDGE_ADDRESS")
-                .context("BRIDGE_ADDRESS not set and no deployment file found")?
-                .parse()
-                .context("Invalid BRIDGE_ADDRESS")?
-        };
+                .ok()
+                .and_then(|s| s.parse().ok())
+        }).context("BRIDGE_ADDRESS not set and no deployment file found")?;
+
+        // Use GNOSIS_RPC_URL if set, otherwise fall back to UNICHAIN_RPC_URL
+        let rpc_url = env::var("GNOSIS_RPC_URL")
+            .or_else(|_| env::var("UNICHAIN_RPC_URL"))
+            .unwrap_or_else(|_| "https://rpc.gnosischain.com".to_string());
 
         Ok(Self {
             oracle_private_key: env::var("PRIVATE_KEY")
                 .context("PRIVATE_KEY not set (used for both deployment and oracle)")?,
             bridge_address,
-            unichain_rpc_url: env::var("UNICHAIN_RPC_URL")
-                .unwrap_or_else(|_| "https://mainnet.unichain.org".to_string()),
+            unichain_rpc_url: rpc_url,
             monero_rpc_url: env::var("MONERO_RPC_URL")
                 .unwrap_or_else(|_| "http://xmr.privex.io:18081".to_string()),
             poll_interval_secs: env::var("POLL_INTERVAL_SECS")
