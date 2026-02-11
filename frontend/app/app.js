@@ -222,7 +222,7 @@ const CONTRACT_ABI = [
     },
     {
         inputs: [],
-        name: 'getXmrEthPrice',
+        name: 'getXmrDaiPrice',
         outputs: [{ name: '', type: 'uint256' }],
         stateMutability: 'view',
         type: 'function',
@@ -446,6 +446,7 @@ function setupEventListeners() {
     // LP tab
     document.getElementById('registerLpBtn').addEventListener('click', registerAsLP);
     document.getElementById('depositCollateralBtn').addEventListener('click', depositCollateral);
+    document.getElementById('withdrawCollateralBtn').addEventListener('click', withdrawCollateral);
     const updateLpBtn = document.getElementById('updateLpBtn');
     if (updateLpBtn) updateLpBtn.addEventListener('click', updateLPSettings);
     
@@ -681,7 +682,7 @@ async function loadUserData() {
             const price = await state.publicClient.readContract({
                 address: CONFIG.CONTRACT_ADDRESS,
                 abi: CONTRACT_ABI,
-                functionName: 'getXmrEthPrice'
+                functionName: 'getXmrDaiPrice'
             });
             const priceFormatted = formatEther(price);
             document.getElementById('xmrEthPrice').textContent = parseFloat(priceFormatted).toFixed(6) + ' ETH';
@@ -1480,6 +1481,73 @@ async function depositCollateral() {
             showToast('⚠️ ETH to wstETH wrapping failed. The wstETH contract on Unichain Sepolia may not support direct ETH deposits. Please contact the team for assistance.', 'error');
         } else {
             showToast('Failed to deposit collateral: ' + error.message, 'error');
+        }
+    }
+}
+
+async function withdrawCollateral() {
+    if (!state.isConnected) {
+        showToast('Please connect your wallet first', 'warning');
+        return;
+    }
+    
+    const amount = document.getElementById('lpWithdrawAmount').value;
+    
+    if (!amount) {
+        showToast('Please enter an amount', 'warning');
+        return;
+    }
+    
+    try {
+        showLoading('Withdrawing collateral...');
+        
+        const amountWei = parseEther(amount);
+        
+        const hash = await state.walletClient.writeContract({
+            address: CONFIG.CONTRACT_ADDRESS,
+            abi: CONTRACT_ABI,
+            functionName: 'lpWithdraw',
+            args: [amountWei],
+            gas: 300000n
+        });
+        
+        showLoading('Waiting for confirmation...');
+        
+        try {
+            await state.publicClient.waitForTransactionReceipt({ 
+                hash,
+                pollingInterval: 2000,
+                timeout: 30000
+            });
+        } catch (receiptError) {
+            if (receiptError.message.includes('block is out of range') || 
+                receiptError.message.includes('HTTP request failed')) {
+                console.log('RPC error waiting for receipt, but transaction was sent:', hash);
+            } else {
+                throw receiptError;
+            }
+        }
+        
+        hideLoading();
+        showToast(`Collateral withdrawn! TX: ${hash.slice(0, 10)}...`, 'success');
+        addActivity('Collateral Withdrawn', `${amount} xDAI`, 'Just now');
+        
+        document.getElementById('lpWithdrawAmount').value = '';
+        setTimeout(async () => {
+            await loadLPInfo();
+            await loadInitialData();
+        }, 3000);
+        
+    } catch (error) {
+        console.error('Error withdrawing collateral:', error);
+        hideLoading();
+        
+        if (error.message.includes('Would drop below 150%')) {
+            showToast('⚠️ Withdrawal would drop collateral ratio below 150%. Reduce amount.', 'error');
+        } else if (error.message.includes('Insufficient collateral')) {
+            showToast('⚠️ Insufficient collateral to withdraw this amount.', 'error');
+        } else {
+            showToast('Failed to withdraw collateral: ' + error.message, 'error');
         }
     }
 }

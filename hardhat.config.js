@@ -45,10 +45,7 @@ module.exports = {
     },
   },
   etherscan: {
-    apiKey: {
-      unichain_testnet: process.env.ETHERSCAN_API_KEY || "abc123",
-      gnosis: process.env.GNOSISSCAN_API_KEY || "abc123",
-    },
+    apiKey: process.env.GNOSISSCAN_API_KEY || process.env.ETHERSCAN_API_KEY || "abc123",
     customChains: [
       {
         network: "unichain_testnet",
