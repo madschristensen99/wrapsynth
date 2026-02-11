@@ -32,39 +32,26 @@ import * as ed from 'https://cdn.jsdelivr.net/npm/@noble/ed25519@1.7.3/+esm';
 // ============================================
 // Configuration
 // ============================================
+import { getNetworkConfig, DEFAULT_NETWORK, MONERO_CONFIG } from '../config.js';
+
+const networkConfig = getNetworkConfig(DEFAULT_NETWORK);
 const CONFIG = {
-    CHAIN_ID: 1301, // Unichain Sepolia
-    RPC_URL: 'https://sepolia.unichain.org',
-    CONTRACT_ADDRESS: '0xC67Cf54d14078ff2968b4Fcd55331C48CEf69eeF', // With mint intent validation
-    EXPLORER_URL: 'https://sepolia.uniscan.xyz',
-    PICONERO_PER_XMR: 1e12,
+    CHAIN_ID: networkConfig.chainId,
+    RPC_URL: networkConfig.rpcUrl,
+    CONTRACT_ADDRESS: networkConfig.contracts.wrappedMonero,
+    EXPLORER_URL: networkConfig.explorerUrl,
+    PICONERO_PER_XMR: MONERO_CONFIG.PICONERO_PER_XMR,
 };
 
-// Define Unichain Sepolia chain
-const unichainSepolia = {
-    id: 1301,
-    name: 'Unichain Sepolia',
-    network: 'unichain-sepolia',
-    nativeCurrency: {
-        decimals: 18,
-        name: 'Ether',
-        symbol: 'ETH',
-    },
-    rpcUrls: {
-        default: {
-            http: ['https://sepolia.unichain.org'],
-        },
-        public: {
-            http: ['https://sepolia.unichain.org'],
-        },
-    },
-    blockExplorers: {
-        default: {
-            name: 'Uniscan',
-            url: 'https://sepolia.uniscan.xyz',
-        },
-    },
-    testnet: true,
+// Define current chain from config
+const currentChain = {
+    id: networkConfig.id,
+    name: networkConfig.name,
+    network: networkConfig.network,
+    nativeCurrency: networkConfig.nativeCurrency,
+    rpcUrls: networkConfig.rpcUrls,
+    blockExplorers: networkConfig.blockExplorers,
+    testnet: false,
 };
 
 // ============================================
@@ -221,8 +208,36 @@ const CONTRACT_ABI = [
         type: 'function',
     },
     {
+        inputs: [{ name: 'amount', type: 'uint256' }],
+        name: 'lpWithdraw',
+        outputs: [],
+        stateMutability: 'nonpayable',
+        type: 'function',
+    },
+    {
         inputs: [],
         name: 'getXmrDaiPrice',
+        outputs: [{ name: '', type: 'uint256' }],
+        stateMutability: 'view',
+        type: 'function',
+    },
+    {
+        inputs: [],
+        name: 'xmrUsdPrice',
+        outputs: [{ name: '', type: 'uint256' }],
+        stateMutability: 'view',
+        type: 'function',
+    },
+    {
+        inputs: [],
+        name: 'ethUsdPrice',
+        outputs: [{ name: '', type: 'uint256' }],
+        stateMutability: 'view',
+        type: 'function',
+    },
+    {
+        inputs: [],
+        name: 'latestMoneroBlock',
         outputs: [{ name: '', type: 'uint256' }],
         stateMutability: 'view',
         type: 'function',
@@ -351,7 +366,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Initialize public client for reading contract data (doesn't require wallet)
     state.publicClient = createPublicClient({
-        chain: unichainSepolia,
+        chain: currentChain,
         transport: http(CONFIG.RPC_URL)
     });
     
@@ -440,6 +455,9 @@ function setupEventListeners() {
     const generateProofBtn = document.getElementById('generateProofBtn');
     if (generateProofBtn) generateProofBtn.addEventListener('click', generateProofAndMint);
     
+    const checkTxBtn = document.getElementById('checkTxBtn');
+    if (checkTxBtn) checkTxBtn.addEventListener('click', checkMoneroTransaction);
+    
     // Burn tab
     document.getElementById('burnBtn').addEventListener('click', requestBurn);
     
@@ -497,12 +515,12 @@ async function connectWallet() {
         // Create Viem clients
         state.walletClient = createWalletClient({
             account: state.userAddress,
-            chain: unichainSepolia,
+            chain: currentChain,
             transport: custom(provider)
         });
         
         state.publicClient = createPublicClient({
-            chain: unichainSepolia,
+            chain: currentChain,
             transport: http(CONFIG.RPC_URL)
         });
         
@@ -1141,7 +1159,7 @@ function updateIntentDepositDisplay() {
         const depositEth = xmrValueEth * (depositPercent / 100);
         const depositWithBuffer = depositEth * 5; // 5x buffer to match createMintIntent
         
-        depositDisplay.textContent = `~${depositWithBuffer.toFixed(6)} ETH (${depositPercent}% + 5x safety buffer)`;
+        depositDisplay.textContent = `~${depositWithBuffer.toFixed(6)} xDAI (${depositPercent}% + 5x buffer)`;
     } catch (e) {
         depositDisplay.textContent = 'Calculating...';
     }
@@ -1172,18 +1190,43 @@ async function createMintIntent() {
         // Convert amount to piconero
         const amountPiconero = parseUnits(amount, 12);
         
-        // Calculate required deposit based on LP's setting
-        // Using fixed prices: XMR = $330, ETH = $2500
-        // amountPiconero is in piconero (1 XMR = 1e12 piconero)
-        // We need result in wei (1 ETH = 1e18 wei)
-        // Formula: (xmrInPiconero / 1e12) * 330 / 2500 * intentDepositBps / 10000 * 1e18
-        // = xmrInPiconero * 330 * intentDepositBps * 1e18 / (1e12 * 2500 * 10000)
-        // = xmrInPiconero * 330 * intentDepositBps * 1e6 / 25000000
+        // Fetch current prices from contract
+        const xmrUsdPrice = await state.publicClient.readContract({
+            address: CONFIG.CONTRACT_ADDRESS,
+            abi: CONTRACT_ABI,
+            functionName: 'xmrUsdPrice'
+        });
         
-        let depositWei = (amountPiconero * 330n * state.selectedLPIntentDepositBps * 1000000n) / 25000000n;
-        // Add 5x buffer to account for price differences with oracle (will be refunded if excess)
+        const ethUsdPrice = await state.publicClient.readContract({
+            address: CONFIG.CONTRACT_ADDRESS,
+            abi: CONTRACT_ABI,
+            functionName: 'ethUsdPrice'
+        });
+        
+        // Calculate required deposit based on LP's setting and real prices
+        // xmrUsdPrice and ethUsdPrice are in 18 decimals
+        // amountPiconero is in piconero (1 XMR = 1e12 piconero)
+        // Formula: (amountPiconero / 1e12) * xmrUsdPrice / ethUsdPrice * intentDepositBps / 10000
+        // = amountPiconero * xmrUsdPrice * intentDepositBps / (1e12 * ethUsdPrice * 10000)
+        
+        let depositWei = (amountPiconero * xmrUsdPrice * state.selectedLPIntentDepositBps) / (1000000000000n * ethUsdPrice * 10000n);
+        console.log('Deposit before buffer:', formatEther(depositWei), 'xDAI');
+        
+        // Add 5x buffer to account for price fluctuations (will be refunded if excess)
         depositWei = depositWei * 5n;
-        console.log('Deposit required (with 5x buffer for safety):', formatEther(depositWei), 'ETH');
+        
+        // Ensure minimum deposit of 0.001 xDAI to avoid rounding to 0
+        const minDeposit = parseEther('0.001');
+        if (depositWei < minDeposit) {
+            console.warn('Calculated deposit too small, using minimum:', formatEther(minDeposit));
+            depositWei = minDeposit;
+        }
+        
+        console.log('XMR/USD Price:', formatEther(xmrUsdPrice));
+        console.log('xDAI/USD Price:', formatEther(ethUsdPrice));
+        console.log('Intent Deposit BPS:', state.selectedLPIntentDepositBps);
+        console.log('Amount (piconero):', amountPiconero.toString());
+        console.log('Deposit required (with 5x buffer):', formatEther(depositWei), 'xDAI');
         
         const hash = await state.walletClient.writeContract({
             address: CONFIG.CONTRACT_ADDRESS,
@@ -1194,12 +1237,17 @@ async function createMintIntent() {
             gas: 300000n
         });
         
+        console.log('Transaction hash:', hash);
+        console.log('View on Gnosisscan:', `${CONFIG.EXPLORER_URL}/tx/${hash}`);
+        
         showLoading('Waiting for confirmation...');
         const receipt = await state.publicClient.waitForTransactionReceipt({ 
             hash,
             pollingInterval: 2000,
             timeout: 120000
         });
+        
+        console.log('Transaction receipt:', receipt);
         
         // Parse event to get intent ID
         let intentId = 'N/A';
@@ -1549,6 +1597,169 @@ async function withdrawCollateral() {
         } else {
             showToast('Failed to withdraw collateral: ' + error.message, 'error');
         }
+    }
+}
+
+// ============================================
+// Monero Transaction Monitoring
+// ============================================
+
+async function checkMoneroTransaction() {
+    const txHash = document.getElementById('txHash').value.trim();
+    
+    if (!txHash) {
+        showToast('Please enter a transaction hash', 'warning');
+        return;
+    }
+    
+    // Show monitor
+    const monitor = document.getElementById('txStatusMonitor');
+    monitor.style.display = 'block';
+    
+    // Reset status
+    document.getElementById('mempoolStatus').textContent = 'Checking...';
+    document.getElementById('confirmationsStatus').textContent = '-';
+    document.getElementById('blockHeightStatus').textContent = '-';
+    document.getElementById('contractStatus').textContent = 'Waiting...';
+    document.getElementById('txProgressBar').style.width = '0%';
+    
+    try {
+        // Check Monero mempool/blockchain
+        const moneroRpcUrl = 'https://xmr.surveillance.monster';
+        
+        // First check if tx is in mempool
+        const mempoolResponse = await fetch(`${moneroRpcUrl}/get_transaction_pool`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: '0',
+                method: 'get_transaction_pool'
+            })
+        });
+        
+        const mempoolData = await mempoolResponse.json();
+        const inMempool = mempoolData.result?.transactions?.some(tx => tx.id_hash === txHash);
+        
+        if (inMempool) {
+            document.getElementById('mempoolStatus').textContent = '✅ Found (Unconfirmed)';
+            document.getElementById('mempoolStatus').style.color = '#ff9800';
+            document.getElementById('txProgressBar').style.width = '25%';
+            
+            // Start polling for confirmations
+            pollForConfirmations(txHash);
+            return;
+        }
+        
+        // Check if tx is confirmed
+        const txResponse = await fetch(`${moneroRpcUrl}/get_transactions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                txs_hashes: [txHash],
+                decode_as_json: true
+            })
+        });
+        
+        const txData = await txResponse.json();
+        
+        if (txData.txs && txData.txs.length > 0 && !txData.missed_tx) {
+            const tx = txData.txs[0];
+            const blockHeight = tx.block_height;
+            
+            // Get current height for confirmations
+            const heightResponse = await fetch(`${moneroRpcUrl}/json_rpc`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: '0',
+                    method: 'get_block_count'
+                })
+            });
+            
+            const heightData = await heightResponse.json();
+            const currentHeight = heightData.result.count - 1;
+            const confirmations = currentHeight - blockHeight + 1;
+            
+            document.getElementById('mempoolStatus').textContent = '✅ Confirmed';
+            document.getElementById('mempoolStatus').style.color = '#4caf50';
+            document.getElementById('confirmationsStatus').textContent = `${confirmations} blocks`;
+            document.getElementById('blockHeightStatus').textContent = blockHeight;
+            document.getElementById('txProgressBar').style.width = '50%';
+            
+            // Check if block is posted to contract
+            checkBlockPostedToContract(blockHeight);
+        } else {
+            document.getElementById('mempoolStatus').textContent = '❌ Not Found';
+            document.getElementById('mempoolStatus').style.color = '#f44336';
+            showToast('Transaction not found on Monero network', 'error');
+        }
+        
+    } catch (error) {
+        console.error('Error checking Monero transaction:', error);
+        showToast('Error checking transaction: ' + error.message, 'error');
+        document.getElementById('mempoolStatus').textContent = '❌ Error';
+        document.getElementById('mempoolStatus').style.color = '#f44336';
+    }
+}
+
+async function pollForConfirmations(txHash) {
+    const pollInterval = setInterval(async () => {
+        try {
+            const moneroRpcUrl = 'https://xmr.surveillance.monster';
+            const txResponse = await fetch(`${moneroRpcUrl}/get_transactions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    txs_hashes: [txHash],
+                    decode_as_json: true
+                })
+            });
+            
+            const txData = await txResponse.json();
+            
+            if (txData.txs && txData.txs.length > 0 && !txData.missed_tx) {
+                clearInterval(pollInterval);
+                const tx = txData.txs[0];
+                const blockHeight = tx.block_height;
+                
+                document.getElementById('mempoolStatus').textContent = '✅ Confirmed';
+                document.getElementById('mempoolStatus').style.color = '#4caf50';
+                document.getElementById('blockHeightStatus').textContent = blockHeight;
+                document.getElementById('txProgressBar').style.width = '50%';
+                
+                checkBlockPostedToContract(blockHeight);
+            }
+        } catch (error) {
+            console.error('Error polling for confirmations:', error);
+        }
+    }, 10000); // Poll every 10 seconds
+}
+
+async function checkBlockPostedToContract(blockHeight) {
+    try {
+        const latestBlock = await state.publicClient.readContract({
+            address: CONFIG.CONTRACT_ADDRESS,
+            abi: CONTRACT_ABI,
+            functionName: 'latestMoneroBlock'
+        });
+        
+        if (Number(latestBlock) >= blockHeight) {
+            document.getElementById('contractStatus').textContent = '✅ Posted!';
+            document.getElementById('contractStatus').style.color = '#4caf50';
+            document.getElementById('txProgressBar').style.width = '100%';
+            showToast('Block posted to contract! You can now generate proof.', 'success');
+        } else {
+            document.getElementById('contractStatus').textContent = `Waiting (Latest: ${latestBlock})`;
+            document.getElementById('contractStatus').style.color = '#ff9800';
+            document.getElementById('txProgressBar').style.width = '75%';
+            
+            // Poll for block posting
+            setTimeout(() => checkBlockPostedToContract(blockHeight), 15000);
+        }
+    } catch (error) {
+        console.error('Error checking contract:', error);
     }
 }
 
@@ -2012,7 +2223,7 @@ function deriveHs(sharedSecret, outputIndex) {
 }
 
 /**
- * Compute amount key from H_s
+ * Compute amount key from H_s (for older RCT types)
  */
 function computeAmountKey(H_s_hex) {
     const H_s_bytes = new Uint8Array(H_s_hex.match(/.{2}/g).map(byte => parseInt(byte, 16)));
@@ -2024,10 +2235,22 @@ function computeAmountKey(H_s_hex) {
 }
 
 /**
+ * Compute amount key from shared secret (for RCT type 6/CLSAG)
+ */
+function computeAmountKeyFromSharedSecret(sharedSecret_hex) {
+    const sharedSecret_bytes = new Uint8Array(sharedSecret_hex.match(/.{2}/g).map(byte => parseInt(byte, 16)));
+    const amountPrefix = new TextEncoder().encode('amount');
+    // Try prefix first, then shared secret
+    const input = new Uint8Array([...amountPrefix, ...sharedSecret_bytes]);
+    const hash = keccak256(input);
+    const cleanHash = hash.startsWith('0x') ? hash.slice(2) : hash;
+    return cleanHash.slice(0, 16); // First 8 bytes
+}
+
+/**
  * Decrypt amount using ECDH
  */
-function decryptAmount(ecdhAmount, H_s_hex) {
-    const amountKey = computeAmountKey(H_s_hex);
+function decryptAmount(ecdhAmount, amountKey_hex) {
     
     // Handle ecdhAmount being 0 or empty
     let ecdhHex = ecdhAmount;
@@ -2036,16 +2259,25 @@ function decryptAmount(ecdhAmount, H_s_hex) {
     }
     ecdhHex = ecdhHex.replace(/^0x/, '');
     
-    // For RCT type 6 (CLSAG), ecdhAmount is 32 bytes but amount is in the LAST 8 bytes
-    // Take the last 16 hex characters (8 bytes)
+    // For RCT type 6 (CLSAG), ecdhAmount can be 8 or 32 bytes
+    // If 32 bytes, remove leading zeros to get the actual 8-byte encrypted amount
+    // If already 8 bytes or less, use as-is
     if (ecdhHex.length > 16) {
-        ecdhHex = ecdhHex.slice(-16); // Last 8 bytes
-    } else if (ecdhHex.length < 16) {
+        // Remove all leading zeros
+        ecdhHex = ecdhHex.replace(/^0+/, '');
+        // If still more than 16 chars after removing zeros, something is wrong
+        // Take the first 16 chars (first 8 bytes)
+        if (ecdhHex.length > 16) {
+            ecdhHex = ecdhHex.substring(0, 16);
+        }
+    }
+    // Ensure we have exactly 16 hex chars (8 bytes)
+    if (ecdhHex.length < 16) {
         ecdhHex = ecdhHex.padStart(16, '0');
     }
     
     const ecdhBytes = new Uint8Array(ecdhHex.match(/.{2}/g).map(byte => parseInt(byte, 16)));
-    const keyBytes = new Uint8Array(amountKey.match(/.{2}/g).map(byte => parseInt(byte, 16)));
+    const keyBytes = new Uint8Array(amountKey_hex.match(/.{2}/g).map(byte => parseInt(byte, 16)));
     
     // XOR decryption
     const decrypted = new Uint8Array(8);
@@ -2081,9 +2313,10 @@ async function decryptMoneroAmount(privateViewKey, txPublicKey, outputIndex, ecd
     console.log('  ✅ H_s scalar:', H_s.slice(0, 16) + '...');
     
     // Step 3: Decrypt amount
-    const amountKey = computeAmountKey(H_s);
+    // For RCT type 6, amount key is derived from shared secret, not H_s
+    const amountKey = computeAmountKeyFromSharedSecret(sharedSecret);
     console.log('  🔑 Amount key:', amountKey);
-    const amountPiconero = decryptAmount(ecdhAmount, H_s);
+    const amountPiconero = decryptAmount(ecdhAmount, amountKey);
     const amountXMR = Number(amountPiconero) / 1e12;
     console.log('  ✅ Decrypted amount:', amountPiconero.toString(), 'piconero');
     console.log('  ✅ Amount in XMR:', amountXMR);
@@ -2227,10 +2460,10 @@ async function generateProofAndMint() {
     try {
         // Step 1: Fetch transaction data and block height from Monero blockchain
         showLoading('Step 1/5: Fetching transaction from Monero blockchain...');
-        // Use CORS-enabled public node from monero.fail
-        const moneroRpcUrl = 'https://node.sethforprivacy.com/get_transactions';
+        // Use CORS-enabled public Monero RPC node from monero.fail
+        const moneroRpcUrl = 'https://xmr.surveillance.monster';
         
-        const txResponse = await fetch(moneroRpcUrl, {
+        const txResponse = await fetch(`${moneroRpcUrl}/get_transactions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2241,6 +2474,8 @@ async function generateProofAndMint() {
         
         if (!txResponse.ok) {
             console.error('Monero RPC error:', txResponse.status, txResponse.statusText);
+            hideLoading();
+            showToast(`⚠️ Unable to connect to Monero node (Error ${txResponse.status}). Please try again later or use a different RPC endpoint.`, 'error');
             throw new Error(`Monero RPC request failed: ${txResponse.status}`);
         }
         
@@ -2252,8 +2487,13 @@ async function generateProofAndMint() {
             throw new Error(`Monero daemon error: ${txData.status}`);
         }
         
-        if (!txData.txs || txData.txs.length === 0) {
+        if (txData.missed_tx && txData.missed_tx.length > 0) {
             console.error('Transaction not found. Response:', txData);
+            throw new Error('Transaction not found on Monero blockchain. Make sure the transaction hash is correct and the transaction is confirmed.');
+        }
+        
+        if (!txData.txs || txData.txs.length === 0) {
+            console.error('No transactions in response. Response:', txData);
             throw new Error('Transaction not found on Monero blockchain. Make sure the transaction hash is correct and the transaction is confirmed.');
         }
         
@@ -2604,13 +2844,13 @@ async function generateProofAndMint() {
         
         try {
             // Load WASM file
-            const wasmResponse = await fetch('/circuit/monero_bridge.wasm');
+            const wasmResponse = await fetch('./circuit/monero_bridge.wasm');
             const wasmBuffer = await wasmResponse.arrayBuffer();
             console.log('✅ WASM loaded:', wasmBuffer.byteLength, 'bytes');
             
             // Load zkey file
             showLoading('Step 6/7: Loading proving key (50MB, may take a moment)...');
-            const zkeyResponse = await fetch('/circuit/monero_bridge_final.zkey');
+            const zkeyResponse = await fetch('./circuit/monero_bridge_final.zkey');
             const zkeyBuffer = await zkeyResponse.arrayBuffer();
             console.log('✅ Proving key loaded:', zkeyBuffer.byteLength, 'bytes');
             

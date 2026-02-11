@@ -456,8 +456,9 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         uint256 minMintAmount = (availableCapacityXmr * MIN_MINT_BPS) / 10000;
         require(expectedAmount >= minMintAmount, "Amount below minimum (1% of LP capacity)");
         
-        // Generate intent ID
-        intentId = keccak256(abi.encodePacked(msg.sender, lp, expectedAmount, block.timestamp));
+        // Generate intent ID (using day-based timestamp for 24h validity)
+        uint256 dayTimestamp = block.timestamp / 1 days;
+        intentId = keccak256(abi.encodePacked(msg.sender, lp, expectedAmount, dayTimestamp));
         require(mintIntents[intentId].user == address(0), "Intent exists");
         
         // Create intent (deposit held as xDAI)
