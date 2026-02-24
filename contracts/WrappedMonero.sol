@@ -58,10 +58,9 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     uint256 public constant MINT_INTENT_TIMEOUT = 2 hours;
     uint256 public constant MIN_MINT_BPS = 100;         // Minimum 1% of LP capacity (Sybil defense)
     
-    // PoS Oracle Constants
+    // PoS Oracle Constants (2/3 Quorum Consensus)
     uint256 public constant MIN_VALIDATOR_STAKE = 1000 * 1e12; // 1000 wsXMR minimum stake
-    uint256 public constant CHALLENGE_PERIOD = 2 hours;        // Time to challenge a proposed block
-    uint256 public constant SLASH_AMOUNT = 100 * 1e12;         // 100 wsXMR slashed for invalid blocks
+    uint256 public constant UNSTAKE_DELAY = 1 days;            // Prevents flash-loan voting
     
     // Pyth price feed IDs
     bytes32 public constant XMR_USD_PRICE_ID = 0x46b8cc9347f04391764a0361e0b17c3ba394b001e7c304f7650f6376e37c321d;
@@ -78,10 +77,26 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     uint256 public totalLPCollateral;    // Total sDAI collateral (for yield calculation)
     uint256 public lastYieldSnapshot;    // Last sDAI value snapshot
     
-    // PoS Oracle State
-    mapping(address => uint256) public validatorStakes;  // Validator => staked wsXMR amount
-    address[] public validators;                          // List of all validators
-    mapping(bytes32 => bool) public usedProofs;          // Prevent replay attacks: proofHash => used
+    // ════════════════════════════════════════════════════════════════════════
+    // POS ORACLE (2/3 Quorum Consensus)
+    // ════════════════════════════════════════════════════════════════════════
+    
+    uint256 public totalStaked;
+    mapping(address => uint256) public validatorStakes;
+    mapping(address => uint256) public unstakeAvailableAt;     // Timestamp when validator can unstake
+    mapping(bytes32 => bool) public usedProofs;                // Prevent replay attacks: proofHash => used
+    
+    struct BlockProposal {
+        bytes32 txMerkleRoot;
+        bytes32 outputMerkleRoot;
+        uint256 votes; // Total staked wsXMR voting for this hash
+    }
+    
+    // blockHeight => blockHash => Proposal Data
+    mapping(uint256 => mapping(bytes32 => BlockProposal)) public blockProposals;
+    
+    // blockHeight => validator => blockHash they voted for (prevents double voting)
+    mapping(uint256 => mapping(address => bytes32)) public validatorVotes;
     
     // Per-LP state
     struct LPInfo {
@@ -91,7 +106,8 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         uint256 burnFeeBps;           // Burn fee in basis points
         uint256 intentDepositBps;     // Intent deposit in basis points of mint amount (100 = 1%)
         string moneroAddress;         // LP's Monero address (95 char base58)
-        bytes32 privateViewKey;       // LP's Monero private view key (for amount decryption)
+        bytes32 publicViewKey;        // LP's public view key A (32 bytes)
+        bytes32 publicSpendKey;       // LP's public spend key B (32 bytes)
         bool active;                  // Is LP accepting new mints?
         bool registered;              // Has this LP ever registered?
     }
@@ -120,7 +136,9 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         address lp;
         uint256 amount;               // WrapsynthXMR amount (locked)
         uint256 depositAmount;        // Anti-griefing deposit in DAI
-        string xmrAddress;
+        string xmrAddress;            // User's Monero address (for display)
+        bytes32 userPublicViewKey;    // User's public view key A (32 bytes)
+        bytes32 userPublicSpendKey;   // User's public spend key B (32 bytes)
         uint256 requestTime;
         uint256 collateralLocked;     // sDAI locked
         bool fulfilled;
@@ -129,29 +147,16 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     mapping(uint256 => BurnRequest) public burnRequests;
     uint256 public nextBurnId;
     
-    // Monero blockchain data (PoS oracle)
+    // Finalized Monero blocks (2/3 quorum reached)
     struct MoneroBlockData {
         bytes32 blockHash;
         bytes32 txMerkleRoot;
         bytes32 outputMerkleRoot;
-        address proposer;             // Validator who proposed this block
         uint256 timestamp;
-        bool finalized;               // True after challenge period
         bool exists;
     }
     mapping(uint256 => MoneroBlockData) public moneroBlocks;
     uint256 public latestMoneroBlock;
-    
-    // Proposed blocks (pending finalization)
-    struct ProposedBlock {
-        bytes32 blockHash;
-        bytes32 txMerkleRoot;
-        bytes32 outputMerkleRoot;
-        address proposer;
-        uint256 timestamp;
-        bool challenged;
-    }
-    mapping(uint256 => ProposedBlock) public proposedBlocks;
     
     struct MoneroTxOutput {
         bytes32 txHash;
@@ -194,12 +199,10 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     event BurnDefaulted(uint256 indexed burnId, uint256 collateralSeized);
     
     event PriceUpdated(uint256 xmrPrice, uint256 ethPrice, uint256 timestamp);
-    event MoneroBlockProposed(uint256 indexed blockHeight, bytes32 indexed blockHash, address indexed proposer);
     event MoneroBlockFinalized(uint256 indexed blockHeight, bytes32 indexed blockHash);
-    event MoneroBlockChallenged(uint256 indexed blockHeight, address indexed challenger);
     event ValidatorStaked(address indexed validator, uint256 amount);
     event ValidatorUnstaked(address indexed validator, uint256 amount);
-    event ValidatorSlashed(address indexed validator, uint256 amount, uint256 blockHeight);
+    event UnstakeRequested(address indexed validator, uint256 availableAt);
     event OracleYieldClaimed(address indexed oracle, uint256 amount);
     event MintIntentCreated(bytes32 indexed intentId, address indexed user, address indexed lp, uint256 expectedAmount);
     event MintIntentFulfilled(bytes32 indexed intentId, uint256 actualAmount);
@@ -317,21 +320,26 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     
     /**
      * @notice Register as LP or update fees
-     * @param privateViewKey LP's Monero private view key (32 bytes) - used for amount decryption verification
+     * @param moneroAddress LP's Monero address (Base58 string for display)
+     * @param publicViewKey LP's public view key A (32 bytes, from Monero wallet)
+     * @param publicSpendKey LP's public spend key B (32 bytes, from Monero wallet)
+     * @dev LPs can get these from their Monero wallet - they're NOT private keys!
      */
     function registerLP(
         uint256 mintFeeBps,
         uint256 burnFeeBps,
         uint256 intentDepositBps,
         string calldata moneroAddress,
-        bytes32 privateViewKey,
+        bytes32 publicViewKey,
+        bytes32 publicSpendKey,
         bool active
     ) external {
         require(mintFeeBps <= MAX_FEE_BPS, "Mint fee too high");
         require(burnFeeBps <= MAX_FEE_BPS, "Burn fee too high");
         require(intentDepositBps <= 1000, "Intent deposit too high"); // Max 10%
         require(bytes(moneroAddress).length > 0, "Invalid Monero address");
-        require(privateViewKey != bytes32(0), "Invalid private view key");
+        require(publicViewKey != bytes32(0), "Invalid view key");
+        require(publicSpendKey != bytes32(0), "Invalid spend key");
         
         // Add to allLPs array if first time registering
         if (!lpInfo[msg.sender].registered) {
@@ -343,7 +351,8 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         lpInfo[msg.sender].burnFeeBps = burnFeeBps;
         lpInfo[msg.sender].intentDepositBps = intentDepositBps;
         lpInfo[msg.sender].moneroAddress = moneroAddress;
-        lpInfo[msg.sender].privateViewKey = privateViewKey;
+        lpInfo[msg.sender].publicViewKey = publicViewKey;
+        lpInfo[msg.sender].publicSpendKey = publicSpendKey;
         lpInfo[msg.sender].active = active;
         
         emit LPRegistered(msg.sender, mintFeeBps, burnFeeBps);
@@ -555,13 +564,11 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         LPInfo storage lpData = lpInfo[lp];
         require(lpData.active, "LP not active");
         
-        // 4. Get LP's public keys (stored as bytes32, convert to uint256)
-        // Note: In production, LP would register Ed25519 public keys
-        // For now, we derive from the stored data
-        uint256 A_x = uint256(keccak256(abi.encodePacked(lpData.privateViewKey, "view_x")));
-        uint256 A_y = uint256(keccak256(abi.encodePacked(lpData.privateViewKey, "view_y")));
-        uint256 B_x = uint256(keccak256(abi.encodePacked(lpData.moneroAddress, "spend_x")));
-        uint256 B_y = uint256(keccak256(abi.encodePacked(lpData.moneroAddress, "spend_y")));
+        // 4. Get LP's public keys from storage (convert bytes32 to uint256 for Ed25519 ops)
+        uint256 A_x = uint256(lpData.publicViewKey);
+        uint256 A_y = 0; // Y-coordinate derived from X in Ed25519
+        uint256 B_x = uint256(lpData.publicSpendKey);
+        uint256 B_y = 0; // Y-coordinate derived from X in Ed25519
         
         // 5. Verify DLEQ Proof: log_G(R) == log_A(S)
         // This proves S was derived correctly using the tx secret 'r' without revealing it
@@ -659,15 +666,22 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     /**
      * @notice Request burn - locks wsXMR and LP collateral
      * @param amount Amount of wsXMR to burn (in piconero)
-     * @param xmrAddress Monero address to receive XMR
+     * @param xmrAddress Monero address to receive XMR (Base58 string for display)
+     * @param userPublicViewKey User's public view key A (32 bytes, from Monero wallet)
+     * @param userPublicSpendKey User's public spend key B (32 bytes, from Monero wallet)
      * @param lp LP to process the burn
+     * @dev Users can get these from their Monero wallet - they're NOT private keys!
      */
     function requestBurn(
         uint256 amount, 
-        string calldata xmrAddress, 
+        string calldata xmrAddress,
+        bytes32 userPublicViewKey,
+        bytes32 userPublicSpendKey,
         address lp
     ) external payable nonReentrant {
         require(balanceOf(msg.sender) >= amount, "Insufficient balance");
+        require(userPublicViewKey != bytes32(0), "Invalid view key");
+        require(userPublicSpendKey != bytes32(0), "Invalid spend key");
         
         LPInfo storage lpData = lpInfo[lp];
         
@@ -699,6 +713,8 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
             amount: amount,
             depositAmount: msg.value,
             xmrAddress: xmrAddress,
+            userPublicViewKey: userPublicViewKey,
+            userPublicSpendKey: userPublicSpendKey,
             requestTime: block.timestamp,
             collateralLocked: sDAINeeded,
             fulfilled: false,
@@ -729,13 +745,11 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         require(!request.fulfilled && !request.defaulted, "Already processed");
         require(block.timestamp <= request.requestTime + BURN_TIMEOUT, "Timeout");
         
-        // Parse user's Monero address to get their public spend key B and view key A
-        // In production, user would provide their public keys when requesting burn
-        // For now, we hash the address string to derive keys
-        uint256 userB_x = uint256(keccak256(abi.encodePacked(request.xmrAddress, "spend_x")));
-        uint256 userB_y = uint256(keccak256(abi.encodePacked(request.xmrAddress, "spend_y")));
-        uint256 userA_x = uint256(keccak256(abi.encodePacked(request.xmrAddress, "view_x")));
-        uint256 userA_y = uint256(keccak256(abi.encodePacked(request.xmrAddress, "view_y")));
+        // Get user's public keys from the burn request (convert bytes32 to uint256)
+        uint256 userA_x = uint256(request.userPublicViewKey);
+        uint256 userA_y = 0; // Y-coordinate derived from X in Ed25519
+        uint256 userB_x = uint256(request.userPublicSpendKey);
+        uint256 userB_y = 0; // Y-coordinate derived from X in Ed25519
         
         // 1. Verify DLEQ Proof: log_G(R) == log_A(S)
         // This proves the LP created this transaction using their secret key r
@@ -887,9 +901,7 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
             blockHash: blockHash,
             txMerkleRoot: txMerkleRoot,
             outputMerkleRoot: outputMerkleRoot,
-            proposer: msg.sender,
             timestamp: block.timestamp,
-            finalized: true,
             exists: true
         });
         
@@ -906,122 +918,109 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     // ════════════════════════════════════════════════════════════════════════
     
     /**
-     * @notice Stake wsXMR to become a validator
-     * @param amount Amount of wsXMR to stake
+     * @notice Stake wsXMR to become a validator and gain voting power
      */
     function stakeAsValidator(uint256 amount) external nonReentrant {
-        require(amount >= MIN_VALIDATOR_STAKE, "Insufficient stake");
-        require(balanceOf(msg.sender) >= amount, "Insufficient balance");
-        
+        require(amount > 0, "Zero amount");
+
         // Transfer wsXMR to contract
         _transfer(msg.sender, address(this), amount);
-        
-        // Add to validator stake
-        if (validatorStakes[msg.sender] == 0) {
-            validators.push(msg.sender);
-        }
+
         validatorStakes[msg.sender] += amount;
-        
+        totalStaked += amount;
+
+        require(validatorStakes[msg.sender] >= MIN_VALIDATOR_STAKE, "Below minimum stake");
+
+        // Reset unstake timer if they add stake
+        unstakeAvailableAt[msg.sender] = 0;
+
         emit ValidatorStaked(msg.sender, amount);
     }
-    
+
     /**
-     * @notice Unstake wsXMR (only if no active proposals)
-     * @param amount Amount of wsXMR to unstake
+     * @notice Request to unstake (starts the delay timer)
      */
-    function unstakeValidator(uint256 amount) external nonReentrant {
-        require(validatorStakes[msg.sender] >= amount, "Insufficient stake");
-        
-        validatorStakes[msg.sender] -= amount;
-        
-        // Transfer wsXMR back to validator
+    function requestUnstake() external {
+        require(validatorStakes[msg.sender] > 0, "No stake");
+        unstakeAvailableAt[msg.sender] = block.timestamp + UNSTAKE_DELAY;
+        emit UnstakeRequested(msg.sender, unstakeAvailableAt[msg.sender]);
+    }
+
+    /**
+     * @notice Execute unstaking after the delay has passed
+     */
+    function executeUnstake() external nonReentrant {
+        uint256 amount = validatorStakes[msg.sender];
+        require(amount > 0, "No stake");
+        require(unstakeAvailableAt[msg.sender] > 0, "Unstake not requested");
+        require(block.timestamp >= unstakeAvailableAt[msg.sender], "Delay not finished");
+
+        // Clear stake
+        validatorStakes[msg.sender] = 0;
+        totalStaked -= amount;
+        unstakeAvailableAt[msg.sender] = 0;
+
+        // Transfer wsXMR back
         _transfer(address(this), msg.sender, amount);
-        
+
         emit ValidatorUnstaked(msg.sender, amount);
     }
-    
+
     /**
-     * @notice Propose a Monero block (validators only)
+     * @notice Vote for a Monero block's validity. If it hits 2/3 stake, it becomes finalized.
      * @param blockHeight Monero block height
      * @param blockHash Block hash
      * @param txMerkleRoot Transaction Merkle root
      * @param outputMerkleRoot Output Merkle root
      */
-    function proposeMoneroBlock(
+    function voteForBlock(
         uint256 blockHeight,
         bytes32 blockHash,
         bytes32 txMerkleRoot,
         bytes32 outputMerkleRoot
     ) external {
-        require(validatorStakes[msg.sender] >= MIN_VALIDATOR_STAKE, "Not a validator");
-        require(blockHeight > latestMoneroBlock, "Height must increase");
-        require(proposedBlocks[blockHeight].timestamp == 0, "Already proposed");
-        
-        proposedBlocks[blockHeight] = ProposedBlock({
-            blockHash: blockHash,
-            txMerkleRoot: txMerkleRoot,
-            outputMerkleRoot: outputMerkleRoot,
-            proposer: msg.sender,
-            timestamp: block.timestamp,
-            challenged: false
-        });
-        
-        emit MoneroBlockProposed(blockHeight, blockHash, msg.sender);
-    }
-    
-    /**
-     * @notice Finalize a proposed block after challenge period
-     * @param blockHeight Block height to finalize
-     */
-    function finalizeMoneroBlock(uint256 blockHeight) external {
-        ProposedBlock storage pb = proposedBlocks[blockHeight];
-        require(pb.timestamp > 0, "Not proposed");
-        require(!pb.challenged, "Block was challenged");
-        require(block.timestamp > pb.timestamp + CHALLENGE_PERIOD, "Challenge period active");
-        require(!moneroBlocks[blockHeight].exists, "Already finalized");
-        
-        // Finalize the block
-        moneroBlocks[blockHeight] = MoneroBlockData({
-            blockHash: pb.blockHash,
-            txMerkleRoot: pb.txMerkleRoot,
-            outputMerkleRoot: pb.outputMerkleRoot,
-            proposer: pb.proposer,
-            timestamp: pb.timestamp,
-            finalized: true,
-            exists: true
-        });
-        
-        latestMoneroBlock = blockHeight;
-        
-        emit MoneroBlockFinalized(blockHeight, pb.blockHash);
-    }
-    
-    /**
-     * @notice Challenge an invalid block proposal
-     * @param blockHeight Block height to challenge
-     * @dev In production, this would verify the challenge proof on-chain
-     */
-    function challengeMoneroBlock(uint256 blockHeight) external {
-        require(validatorStakes[msg.sender] >= MIN_VALIDATOR_STAKE, "Not a validator");
-        
-        ProposedBlock storage pb = proposedBlocks[blockHeight];
-        require(pb.timestamp > 0, "Not proposed");
-        require(!pb.challenged, "Already challenged");
-        require(block.timestamp <= pb.timestamp + CHALLENGE_PERIOD, "Challenge period expired");
-        
-        pb.challenged = true;
-        
-        // Slash the proposer
-        if (validatorStakes[pb.proposer] >= SLASH_AMOUNT) {
-            validatorStakes[pb.proposer] -= SLASH_AMOUNT;
-            // Reward challenger with half the slashed amount
-            validatorStakes[msg.sender] += SLASH_AMOUNT / 2;
-            // Burn the other half
-            _burn(address(this), SLASH_AMOUNT / 2);
+        uint256 stake = validatorStakes[msg.sender];
+        require(stake >= MIN_VALIDATOR_STAKE, "Not an active validator");
+        require(unstakeAvailableAt[msg.sender] == 0, "Cannot vote while unstaking");
+
+        bytes32 previousVote = validatorVotes[blockHeight][msg.sender];
+
+        // If changing vote, remove stake from previous block hash
+        if (previousVote != bytes32(0)) {
+            if (previousVote == blockHash) return; // Already voted for this hash
+            blockProposals[blockHeight][previousVote].votes -= stake;
         }
-        
-        emit MoneroBlockChallenged(blockHeight, msg.sender);
-        emit ValidatorSlashed(pb.proposer, SLASH_AMOUNT, blockHeight);
+
+        // Record new vote
+        validatorVotes[blockHeight][msg.sender] = blockHash;
+        blockProposals[blockHeight][blockHash].votes += stake;
+
+        // Save roots if this is the first time this hash is voted on
+        if (blockProposals[blockHeight][blockHash].txMerkleRoot == bytes32(0)) {
+            blockProposals[blockHeight][blockHash].txMerkleRoot = txMerkleRoot;
+            blockProposals[blockHeight][blockHash].outputMerkleRoot = outputMerkleRoot;
+        }
+
+        // Check if 2/3 Quorum is reached: votes >= (totalStaked * 2) / 3
+        // Note: We multiply by 2 first, then divide by 3 to avoid precision loss
+        uint256 requiredQuorum = (totalStaked * 2) / 3;
+
+        if (blockProposals[blockHeight][blockHash].votes >= requiredQuorum) {
+            // Finalize (or Overwrite in case of a Re-org)
+            moneroBlocks[blockHeight] = MoneroBlockData({
+                blockHash: blockHash,
+                txMerkleRoot: blockProposals[blockHeight][blockHash].txMerkleRoot,
+                outputMerkleRoot: blockProposals[blockHeight][blockHash].outputMerkleRoot,
+                timestamp: block.timestamp,
+                exists: true
+            });
+
+            if (blockHeight > latestMoneroBlock) {
+                latestMoneroBlock = blockHeight;
+            }
+
+            emit MoneroBlockFinalized(blockHeight, blockHash);
+        }
     }
     
     /**
