@@ -178,25 +178,15 @@ contract MintRelayer is EIP712, ReentrancyGuard {
     // ════════════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Relay a mint on behalf of a user
-     * @dev Verifies user's signature and executes mint to fresh address
+     * @notice Relay a mint on behalf of a user (DEPRECATED - needs rewrite for mintWithDLEQ)
+     * @dev This function is temporarily disabled pending migration to new DLEQ-based mint
      */
     function relayMint(
         MintIntent calldata intent,
-        bytes calldata signature,
-        uint256[24] calldata proof,
-        uint256[70] calldata publicSignals,
-        WrappedMonero.DLEQProof calldata dleqProof,
-        WrappedMonero.Ed25519Proof calldata ed25519Proof,
-        WrappedMonero.MoneroTxOutput calldata output,
-        uint256 blockHeight,
-        bytes32[] calldata txMerkleProof,
-        uint256 txIndex,
-        bytes32[] calldata outputMerkleProof,
-        uint256 outputIndex,
-        bytes32 txPublicKey,
-        bytes[] calldata priceUpdateData
+        bytes calldata signature
     ) external payable onlyAuthorizedRelayer nonReentrant {
+        revert("MintRelayer deprecated - pending migration to mintWithDLEQ");
+        /*
         // Verify intent signature
         _verifyIntent(intent, signature);
         
@@ -273,6 +263,7 @@ contract MintRelayer is EIP712, ReentrancyGuard {
             recipientAmount,
             relayerFee
         );
+        */
     }
 
     /**

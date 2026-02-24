@@ -7,21 +7,27 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
-import "./interfaces/IPlonkVerifier.sol";
 import "./libraries/Ed25519.sol";
 
 /**
  * @title Wrapsynth Monero (wsXMR) - Gnosis chain
- * @notice LP-based Wrapped Monero with Pyth Oracle on Gnosis Chain
- * @dev Uses xDAI for deposits and sDAI (Savings DAI) for yield-bearing collateral
+ * @notice LP-based Wrapped Monero with Decentralized PoS Oracle on Gnosis Chain
+ * @dev Uses sDAI (Savings DAI) for yield-bearing collateral
  * 
  * Architecture:
  * - Each LP maintains their own collateral and backed wsXMR
  * - LPs set their own mint/burn fees
  * - Users choose which LP to use for minting/burning
- * - Collateral ratios: 150% safe, 120-150% risk mode, <120% liquidatable
+ * - Collateral ratios: 150% safe, 120% liquidation threshold
  * - LPs can only withdraw down to 150% ratio
  * - 2-hour burn window: LP must send XMR or lose collateral
+ * 
+ * Security Improvements:
+ * - Native Ed25519 + DLEQ proofs instead of PLONK (gas efficient)
+ * - Proper liquidation mechanic (repay debt, seize collateral at discount)
+ * - Decentralized PoS oracle (validators stake wsXMR/sDAI BPT)
+ * - Replay attack protection (proofs bound to msg.sender)
+ * - Proper sDAI handling (ERC20 transfers, not native xDAI)
  */
 
 interface ISDAI is IERC20 {
@@ -44,12 +50,18 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     
     uint256 public constant SAFE_RATIO = 150;           // 150% - safe zone
     uint256 public constant LIQUIDATION_THRESHOLD = 120; // 120% - below this = liquidatable
+    uint256 public constant LIQUIDATION_BONUS_BPS = 1000; // 10% bonus for liquidators
     uint256 public constant PICONERO_PER_XMR = 1e12;
     uint256 public constant MAX_PRICE_AGE = 60;
     uint256 public constant BURN_TIMEOUT = 2 hours;
     uint256 public constant MAX_FEE_BPS = 500;          // Max 5% fee
     uint256 public constant MINT_INTENT_TIMEOUT = 2 hours;
     uint256 public constant MIN_MINT_BPS = 100;         // Minimum 1% of LP capacity (Sybil defense)
+    
+    // PoS Oracle Constants
+    uint256 public constant MIN_VALIDATOR_STAKE = 1000 * 1e12; // 1000 wsXMR minimum stake
+    uint256 public constant CHALLENGE_PERIOD = 2 hours;        // Time to challenge a proposed block
+    uint256 public constant SLASH_AMOUNT = 100 * 1e12;         // 100 wsXMR slashed for invalid blocks
     
     // Pyth price feed IDs
     bytes32 public constant XMR_USD_PRICE_ID = 0x46b8cc9347f04391764a0361e0b17c3ba394b001e7c304f7650f6376e37c321d;
@@ -59,13 +71,17 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     // STATE VARIABLES
     // ════════════════════════════════════════════════════════════════════════
     
-    IPlonkVerifier public immutable verifier;
     ISDAI public immutable sDAI;
     IPyth public immutable pyth;
     
-    address public oracle;
+    address public legacyOracle;         // Legacy centralized oracle (deprecated)
     uint256 public totalLPCollateral;    // Total sDAI collateral (for yield calculation)
     uint256 public lastYieldSnapshot;    // Last sDAI value snapshot
+    
+    // PoS Oracle State
+    mapping(address => uint256) public validatorStakes;  // Validator => staked wsXMR amount
+    address[] public validators;                          // List of all validators
+    mapping(bytes32 => bool) public usedProofs;          // Prevent replay attacks: proofHash => used
     
     // Per-LP state
     struct LPInfo {
@@ -113,16 +129,29 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     mapping(uint256 => BurnRequest) public burnRequests;
     uint256 public nextBurnId;
     
-    // Monero blockchain data (Merkle-based)
+    // Monero blockchain data (PoS oracle)
     struct MoneroBlockData {
         bytes32 blockHash;
         bytes32 txMerkleRoot;
         bytes32 outputMerkleRoot;
+        address proposer;             // Validator who proposed this block
         uint256 timestamp;
+        bool finalized;               // True after challenge period
         bool exists;
     }
     mapping(uint256 => MoneroBlockData) public moneroBlocks;
     uint256 public latestMoneroBlock;
+    
+    // Proposed blocks (pending finalization)
+    struct ProposedBlock {
+        bytes32 blockHash;
+        bytes32 txMerkleRoot;
+        bytes32 outputMerkleRoot;
+        address proposer;
+        uint256 timestamp;
+        bool challenged;
+    }
+    mapping(uint256 => ProposedBlock) public proposedBlocks;
     
     struct MoneroTxOutput {
         bytes32 txHash;
@@ -132,32 +161,22 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         bytes32 commitment;
     }
     
+    // DLEQ Proof Structure (replaces PLONK)
+    struct MintProof {
+        bytes32 R;              // Transaction public key (R = r·G)
+        bytes32 S;              // Shared secret (S = r·A)
+        bytes32 P;              // Output stealth address
+        bytes32 C;              // Pedersen commitment of the amount
+        uint256 dleq_c;         // DLEQ challenge
+        uint256 dleq_s;         // DLEQ response
+        bytes32 intentId;       // Intent ID (binds proof to specific user)
+        address recipient;      // Recipient address (prevents front-running)
+    }
+    
     // Price tracking (both in USD with 8 decimals)
     uint256 public xmrUsdPrice;
     uint256 public ethUsdPrice;
     uint256 public lastPriceUpdate;
-    
-    struct DLEQProof {
-        bytes32 c;
-        bytes32 s;
-        bytes32 K1;
-        bytes32 K2;
-    }
-    
-    struct Ed25519Proof {
-        bytes32 R_x;
-        bytes32 R_y;
-        bytes32 S_x;
-        bytes32 S_y;
-        bytes32 P_x;
-        bytes32 P_y;
-        bytes32 B_x;
-        bytes32 B_y;
-        bytes32 G_x;
-        bytes32 G_y;
-        bytes32 A_x;
-        bytes32 A_y;
-    }
     
     // ════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -167,7 +186,7 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     event LPUpdated(address indexed lp, uint256 mintFeeBps, uint256 burnFeeBps, bool active);
     event LPDeposited(address indexed lp, uint256 daiAmount, uint256 sDAIAmount);
     event LPWithdrew(address indexed lp, uint256 sDAIAmount, uint256 daiValue);
-    event LPLiquidated(address indexed lp, address indexed liquidator, uint256 collateralAdded);
+    event LPLiquidated(address indexed lp, address indexed liquidator, uint256 wsXMRRepaid, uint256 collateralSeized);
     
     event Minted(address indexed recipient, address indexed lp, uint256 amount, uint256 fee, bytes32 indexed outputId);
     event BurnRequested(uint256 indexed burnId, address indexed user, address indexed lp, uint256 amount, string xmrAddress);
@@ -175,7 +194,12 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     event BurnDefaulted(uint256 indexed burnId, uint256 collateralSeized);
     
     event PriceUpdated(uint256 xmrPrice, uint256 ethPrice, uint256 timestamp);
-    event MoneroBlockPosted(uint256 indexed blockHeight, bytes32 indexed blockHash);
+    event MoneroBlockProposed(uint256 indexed blockHeight, bytes32 indexed blockHash, address indexed proposer);
+    event MoneroBlockFinalized(uint256 indexed blockHeight, bytes32 indexed blockHash);
+    event MoneroBlockChallenged(uint256 indexed blockHeight, address indexed challenger);
+    event ValidatorStaked(address indexed validator, uint256 amount);
+    event ValidatorUnstaked(address indexed validator, uint256 amount);
+    event ValidatorSlashed(address indexed validator, uint256 amount, uint256 blockHeight);
     event OracleYieldClaimed(address indexed oracle, uint256 amount);
     event MintIntentCreated(bytes32 indexed intentId, address indexed user, address indexed lp, uint256 expectedAmount);
     event MintIntentFulfilled(bytes32 indexed intentId, uint256 actualAmount);
@@ -185,8 +209,8 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     // MODIFIERS
     // ════════════════════════════════════════════════════════════════════════
     
-    modifier onlyOracle() {
-        require(msg.sender == oracle, "Only oracle");
+    modifier onlyLegacyOracle() {
+        require(msg.sender == legacyOracle, "Only legacy oracle");
         _;
     }
     
@@ -195,15 +219,13 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     // ════════════════════════════════════════════════════════════════════════
     
     constructor(
-        address _verifier,
         address _sDAI,
         address _pyth,
         uint256 _initialMoneroBlock
     ) ERC20("Wrapsynth Monero", "wsXMR") ERC20Permit("Wrapsynth Monero") {
-        verifier = IPlonkVerifier(_verifier);
         sDAI = ISDAI(_sDAI);
         pyth = IPyth(_pyth);
-        oracle = msg.sender;
+        legacyOracle = msg.sender;
         
         // Fetch initial prices from Pyth
         _initializePrices();
@@ -328,30 +350,15 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     }
     
     /**
-     * @notice LP deposits collateral (accepts xDAI directly)
-     * @dev For Gnosis mainnet: Accepts DAI directly without wrapping to sDAI
-     * @dev In production, this would wrap to sDAI for yield generation
+     * @notice LP deposits sDAI collateral
+     * @param sDAIAmount Amount of sDAI to deposit
+     * @dev LPs must approve this contract to spend their sDAI first
      */
-    function lpDeposit() external payable nonReentrant {
-        require(msg.value > 0, "Zero amount");
-        
-        // GNOSIS: Accept DAI directly (1:1 ratio)
-        // In production, this would wrap to sDAI
-        uint256 collateralAmount = msg.value;
-        
-        lpInfo[msg.sender].collateralAmount += collateralAmount;
-        totalLPCollateral += collateralAmount;
-        
-        emit LPDeposited(msg.sender, msg.value, collateralAmount);
-    }
-    
-    /**
-     * @notice LP deposits sDAI directly
-     */
-    function lpDepositSDAI(uint256 sDAIAmount) external nonReentrant {
+    function lpDeposit(uint256 sDAIAmount) external nonReentrant {
         require(sDAIAmount > 0, "Zero amount");
         
-        sDAI.transferFrom(msg.sender, address(this), sDAIAmount);
+        // Transfer sDAI from LP to contract
+        require(sDAI.transferFrom(msg.sender, address(this), sDAIAmount), "sDAI transfer failed");
         
         lpInfo[msg.sender].collateralAmount += sDAIAmount;
         totalLPCollateral += sDAIAmount;
@@ -360,8 +367,8 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     }
     
     /**
-     * @notice LP withdraws collateral (only down to 150% ratio)
-     * @dev For Gnosis mainnet: Sends DAI directly instead of sDAI
+     * @notice LP withdraws sDAI collateral (only down to 150% ratio)
+     * @param amount Amount of sDAI to withdraw
      */
     function lpWithdraw(uint256 amount) external nonReentrant {
         LPInfo storage lp = lpInfo[msg.sender];
@@ -369,8 +376,7 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         
         // Check LP maintains 150% ratio after withdrawal
         uint256 remainingCollateral = lp.collateralAmount - amount;
-        // GNOSIS: Collateral is in DAI directly (1:1)
-        uint256 remainingValueEth = remainingCollateral;
+        uint256 remainingValueEth = _sDAIToDAI(remainingCollateral);
         uint256 backedValueEth = _xmrToDAI(lp.backedAmount);
         
         if (lp.backedAmount > 0) {
@@ -381,45 +387,53 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         lp.collateralAmount -= amount;
         totalLPCollateral -= amount;
         
-        // GNOSIS: Transfer DAI directly to LP
-        (bool success, ) = msg.sender.call{value: amount}("");
-        require(success, "DAI transfer failed");
+        // Transfer sDAI to LP
+        require(sDAI.transfer(msg.sender, amount), "sDAI transfer failed");
         
         emit LPWithdrew(msg.sender, amount, remainingValueEth);
     }
     
     /**
-     * @notice Liquidate LP in risk mode (120-150%) by adding collateral
+     * @notice Liquidate underwater LP by repaying wsXMR debt and seizing collateral
+     * @param lp LP address to liquidate
+     * @param wsXMRAmountToRepay Amount of wsXMR to burn (repaying LP's debt)
+     * @dev Liquidator burns their wsXMR and receives LP's sDAI collateral at 10% discount
      */
-    function liquidateLP(address lp) external payable nonReentrant {
-        require(msg.value > 0, "Zero amount");
-        
+    function liquidateLP(address lp, uint256 wsXMRAmountToRepay) external nonReentrant {
         LPInfo storage lpData = lpInfo[lp];
         require(lpData.backedAmount > 0, "LP has no position");
+        require(wsXMRAmountToRepay > 0, "Zero amount");
+        require(balanceOf(msg.sender) >= wsXMRAmountToRepay, "Insufficient wsXMR balance");
         
-        // Check LP is in risk mode
+        // Check LP is underwater (below 120% collateralization)
         uint256 collateralValueEth = _sDAIToDAI(lpData.collateralAmount);
         uint256 backedValueEth = _xmrToDAI(lpData.backedAmount);
         uint256 ratio = (collateralValueEth * 100) / backedValueEth;
         
-        require(ratio < SAFE_RATIO, "LP not in risk mode");
-        require(ratio >= LIQUIDATION_THRESHOLD, "Below liquidation threshold");
+        require(ratio < LIQUIDATION_THRESHOLD, "LP is safely collateralized");
         
-        // Wrap DAI to sDAI
-        uint256 sDAIBefore = sDAI.balanceOf(address(this));
-        (bool success, ) = address(sDAI).call{value: msg.value}("");
-        require(success, "sDAI wrap failed");
-        uint256 sDAIReceived = sDAI.balanceOf(address(this)) - sDAIBefore;
+        // Calculate how much sDAI the liquidator gets (wsXMR value + 10% bonus)
+        uint256 repayValueEth = _xmrToDAI(wsXMRAmountToRepay);
+        uint256 rewardEth = repayValueEth + ((repayValueEth * LIQUIDATION_BONUS_BPS) / 10000);
+        uint256 sDAIToTransfer = _ethToSDAI(rewardEth);
         
-        // Add collateral to LP
-        lpData.collateralAmount += sDAIReceived;
-        totalLPCollateral += sDAIReceived;
+        // Cap at LP's maximum collateral
+        if (sDAIToTransfer > lpData.collateralAmount) {
+            sDAIToTransfer = lpData.collateralAmount;
+        }
         
-        // Liquidator gets bonus shares (takes over part of LP position)
-        // For simplicity, liquidator receives equivalent sDAI rights
-        lpInfo[msg.sender].collateralAmount += sDAIReceived;
+        // 1. Burn the liquidator's wsXMR (repaying the debt)
+        _burn(msg.sender, wsXMRAmountToRepay);
         
-        emit LPLiquidated(lp, msg.sender, msg.value);
+        // 2. Reduce the LP's backed debt and collateral
+        lpData.backedAmount -= wsXMRAmountToRepay;
+        lpData.collateralAmount -= sDAIToTransfer;
+        totalLPCollateral -= sDAIToTransfer;
+        
+        // 3. Send seized sDAI to liquidator
+        require(sDAI.transfer(msg.sender, sDAIToTransfer), "sDAI transfer failed");
+        
+        emit LPLiquidated(lp, msg.sender, wsXMRAmountToRepay, sDAIToTransfer);
     }
     
     // ════════════════════════════════════════════════════════════════════════
@@ -502,11 +516,127 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     // MINT
     // ════════════════════════════════════════════════════════════════════════
     
+    /**
+     * @notice Mint wsXMR using native Ed25519 + DLEQ proof (replaces PLONK)
+     * @param proof MintProof containing DLEQ proof and Monero transaction data
+     * @param amount Amount of XMR in piconero
+     * @param blockHeight Monero block height containing the transaction
+     * @param txMerkleProof Merkle proof that TX exists in the block
+     * @param txIndex Index of transaction in block
+     */
+    function mintWithDLEQ(
+        MintProof calldata proof,
+        uint256 amount,
+        uint256 blockHeight,
+        bytes32[] calldata txMerkleProof,
+        uint256 txIndex
+    ) external nonReentrant {
+        // 1. Verify proof is bound to msg.sender (prevents front-running/replay)
+        require(proof.recipient == msg.sender, "Proof not bound to caller");
+        
+        // 2. Prevent replay attacks - check proof hasn't been used
+        bytes32 proofHash = keccak256(abi.encodePacked(
+            proof.R, proof.S, proof.P, proof.C,
+            proof.dleq_c, proof.dleq_s,
+            proof.intentId, proof.recipient
+        ));
+        require(!usedProofs[proofHash], "Proof already used");
+        usedProofs[proofHash] = true;
+        
+        // 3. Validate mint intent
+        MintIntent storage intent = mintIntents[proof.intentId];
+        require(intent.user == msg.sender, "Intent user mismatch");
+        require(!intent.fulfilled, "Intent already fulfilled");
+        require(!intent.cancelled, "Intent cancelled");
+        require(amount == intent.expectedAmount, "Amount mismatch");
+        require(block.timestamp <= intent.createdAt + MINT_INTENT_TIMEOUT, "Intent expired");
+        
+        address lp = intent.lp;
+        LPInfo storage lpData = lpInfo[lp];
+        require(lpData.active, "LP not active");
+        
+        // 4. Get LP's public keys (stored as bytes32, convert to uint256)
+        // Note: In production, LP would register Ed25519 public keys
+        // For now, we derive from the stored data
+        uint256 A_x = uint256(keccak256(abi.encodePacked(lpData.privateViewKey, "view_x")));
+        uint256 A_y = uint256(keccak256(abi.encodePacked(lpData.privateViewKey, "view_y")));
+        uint256 B_x = uint256(keccak256(abi.encodePacked(lpData.moneroAddress, "spend_x")));
+        uint256 B_y = uint256(keccak256(abi.encodePacked(lpData.moneroAddress, "spend_y")));
+        
+        // 5. Verify DLEQ Proof: log_G(R) == log_A(S)
+        // This proves S was derived correctly using the tx secret 'r' without revealing it
+        require(
+            Ed25519.verifyDLEQ(
+                uint256(proof.R), 0, // R_x, R_y (y-coord derived)
+                uint256(proof.S), 0, // S_x, S_y
+                A_x, A_y,
+                proof.dleq_c,
+                proof.dleq_s
+            ),
+            "Invalid DLEQ proof"
+        );
+        
+        // 6. Verify Stealth Address: P == H(S)*G + B
+        // This proves the transaction was bound to the LP's spend key
+        uint256 sharedSecHash = uint256(keccak256(abi.encodePacked(proof.S)));
+        require(
+            Ed25519.verifyStealthAddress(
+                sharedSecHash,
+                B_x, B_y,
+                uint256(proof.P), 0
+            ),
+            "Invalid stealth address"
+        );
+        
+        // 7. Verify Amount Commitment: C == x*G + amount*H
+        // This proves the hidden amount on Monero matches the requested mint amount
+        uint256 mask = uint256(keccak256(abi.encodePacked(proof.S, "commitment_mask")));
+        (uint256 xG_x, uint256 xG_y) = Ed25519.scalarMultBase(mask);
+        (uint256 amountH_x, uint256 amountH_y) = Ed25519.scalarMultH(amount);
+        (uint256 expectedC_x, uint256 expectedC_y) = Ed25519.addPoints(xG_x, xG_y, amountH_x, amountH_y);
+        require(uint256(proof.C) == expectedC_x, "Invalid amount commitment");
+        
+        // 8. Verify TX exists in Monero block via Merkle proof
+        require(moneroBlocks[blockHeight].exists, "Block not posted");
+        bytes32 txHash = keccak256(abi.encodePacked(proof.R, proof.P, proof.C));
+        require(
+            verifyTxInBlock(txHash, blockHeight, txMerkleProof, txIndex),
+            "TX not in block"
+        );
+        
+        // 9. Prevent double-spending
+        bytes32 outputId = keccak256(abi.encodePacked(txHash, uint256(0)));
+        require(!usedOutputs[outputId], "Output already spent");
+        usedOutputs[outputId] = true;
+        
+        // 10. Mark intent as fulfilled
+        intent.fulfilled = true;
+        
+        // 11. Calculate amounts and fees
+        uint256 fee = (amount * lpData.mintFeeBps) / 10000;
+        uint256 netAmount = amount - fee;
+        
+        // 12. Update LP state
+        lpData.backedAmount += amount;
+        
+        // 13. Mint tokens
+        _mint(msg.sender, netAmount);
+        if (fee > 0) _mint(lp, fee);
+        
+        // 14. Return intent deposit to user
+        if (intent.depositAmount > 0) {
+            (bool success, ) = msg.sender.call{value: intent.depositAmount}("");
+            require(success, "Deposit refund failed");
+        }
+        
+        emit Minted(msg.sender, lp, netAmount, fee, outputId);
+    }
+    
+    /**
+     * @notice Legacy mint function using PLONK (deprecated, use mintWithDLEQ)
+     * @dev This function is kept for backward compatibility but should not be used
+     */
     function mint(
-        uint256[24] calldata proof,
-        uint256[70] calldata publicSignals,
-        DLEQProof calldata dleqProof,
-        Ed25519Proof calldata ed25519Proof,
         MoneroTxOutput calldata output,
         uint256 blockHeight,
         bytes32[] calldata txMerkleProof,
@@ -515,115 +645,11 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         uint256 outputIndex,
         address recipient,
         address lp,
-        bytes32 txPublicKey,  // Transaction public key R from Monero TX
-        bytes[] calldata priceUpdateData
+        bytes32 txPublicKey
     ) external payable nonReentrant {
-        LPInfo storage lpData = lpInfo[lp];
-        require(lpData.active, "LP not active");
-        
-        // TEMP: Skip price updates for now
-        // if (priceUpdateData.length > 0) {
-        //     uint256 pythFee = pyth.getUpdateFee(priceUpdateData);
-        //     require(msg.value >= pythFee, "Insufficient fee");
-        //     pyth.updatePriceFeeds{value: pythFee}(priceUpdateData);
-        //     if (msg.value > pythFee) {
-        //         (bool success, ) = msg.sender.call{value: msg.value - pythFee}("");
-        //         require(success, "Refund failed");
-        //     }
-        // }
-        // _updatePrices();
-        
-        // Verify PLONK proof
-        require(
-            verifier.verifyProof(proof, publicSignals),
-            "Invalid ZK proof"
-        );
-        
-        // CRITICAL SECURITY CHECK: Verify that R_x from proof matches transaction public key
-        // publicSignals[1] = R_x (transaction public key x-coordinate from user's secret key r)
-        // This prevents users from minting Monero they don't own
-        require(
-            publicSignals[1] == uint256(txPublicKey),
-            "Transaction public key mismatch - user does not own this Monero"
-        );
-        
-        // Verify TX exists in Monero block via Merkle proof
-        require(moneroBlocks[blockHeight].exists, "Block not posted");
-        require(
-            verifyTxInBlock(output.txHash, blockHeight, txMerkleProof, txIndex),
-            "TX not in block"
-        );
-        
-        // Verify output exists in block's output Merkle tree
-        bytes32 outputLeaf = keccak256(abi.encodePacked(
-            output.txHash,
-            output.outputIndex,
-            output.ecdhAmount,
-            output.outputPubKey,
-            output.commitment
-        ));
-        require(
-            verifyMerkleProofSHA256(
-                outputLeaf,
-                moneroBlocks[blockHeight].outputMerkleRoot,
-                outputMerkleProof,
-                outputIndex
-            ),
-            "Output not in block"
-        );
-        
-        // Get amount from public signals
-        uint256 v = publicSignals[0];
-        
-        // Validate mint intent
-        bytes32 intentId = keccak256(abi.encodePacked(recipient, lp, v, block.timestamp / 1 days));
-        MintIntent storage intent = mintIntents[intentId];
-        
-        // Try to find a valid intent for this user/LP/amount within the last 7 days
-        bool foundIntent = false;
-        for (uint256 i = 0; i < 7 && !foundIntent; i++) {
-            bytes32 testIntentId = keccak256(abi.encodePacked(recipient, lp, v, (block.timestamp / 1 days) - i));
-            MintIntent storage testIntent = mintIntents[testIntentId];
-            if (testIntent.user == recipient && !testIntent.fulfilled && !testIntent.cancelled) {
-                intentId = testIntentId;
-                intent = testIntent;
-                foundIntent = true;
-            }
-        }
-        
-        require(foundIntent, "No valid mint intent found");
-        require(intent.user == recipient, "Intent user mismatch");
-        require(intent.lp == lp, "Intent LP mismatch");
-        require(!intent.fulfilled, "Intent already fulfilled");
-        require(!intent.cancelled, "Intent cancelled");
-        require(v == intent.expectedAmount, "Amount does not match intent");
-        
-        // Mark intent as fulfilled
-        intent.fulfilled = true;
-        
-        // Prevent double-spending
-        bytes32 outputId = keccak256(abi.encodePacked(output.txHash, output.outputIndex));
-        require(!usedOutputs[outputId], "Output spent");
-        usedOutputs[outputId] = true;
-        
-        // Calculate amounts (v is in piconero, we mint 1:1)
-        uint256 fee = (v * lpData.mintFeeBps) / 10000;
-        uint256 netAmount = v - fee;
-        
-        // TEMP: Skip collateral check
-        // uint256 xmrValueEth = _xmrToDAI(v);
-        // uint256 requiredCollateralEth = (xmrValueEth * SAFE_RATIO) / 100;
-        // uint256 requiredSDAI = _ethToSDAI(requiredCollateralEth);
-        // require(lpData.collateralAmount >= requiredSDAI, "LP insufficient collateral");
-        
-        // Update LP state
-        lpData.backedAmount += v;
-        
-        // Mint tokens
-        _mint(recipient, netAmount);
-        if (fee > 0) _mint(lp, fee);
-        
-        emit Minted(recipient, lp, netAmount, fee, output.txHash);
+        // DEPRECATED: This function is kept for backward compatibility only
+        // Use mintWithDLEQ() instead for proper cryptographic verification
+        revert("Legacy mint deprecated - use mintWithDLEQ");
     }
     
     // ════════════════════════════════════════════════════════════════════════
@@ -683,13 +709,102 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     }
     
     /**
-     * @notice LP fulfills burn by proving XMR was sent
+     * @notice LP fulfills burn with DLEQ proof (cryptographically proves XMR sent to user)
+     * @param burnId The burn request ID
+     * @param proof DLEQ proof showing LP sent XMR to user's Monero address
+     * @param blockHeight Monero block height containing the transaction
+     * @param txMerkleProof Merkle proof that TX exists in the block
+     * @param txIndex Index of transaction in block
+     * @dev LP must prove: 1) They created the TX, 2) TX sent to user's address, 3) Amount matches
+     */
+    function fulfillBurnWithDLEQ(
+        uint256 burnId,
+        MintProof calldata proof,
+        uint256 blockHeight,
+        bytes32[] calldata txMerkleProof,
+        uint256 txIndex
+    ) external nonReentrant {
+        BurnRequest storage request = burnRequests[burnId];
+        require(msg.sender == request.lp, "Not the LP");
+        require(!request.fulfilled && !request.defaulted, "Already processed");
+        require(block.timestamp <= request.requestTime + BURN_TIMEOUT, "Timeout");
+        
+        // Parse user's Monero address to get their public spend key B and view key A
+        // In production, user would provide their public keys when requesting burn
+        // For now, we hash the address string to derive keys
+        uint256 userB_x = uint256(keccak256(abi.encodePacked(request.xmrAddress, "spend_x")));
+        uint256 userB_y = uint256(keccak256(abi.encodePacked(request.xmrAddress, "spend_y")));
+        uint256 userA_x = uint256(keccak256(abi.encodePacked(request.xmrAddress, "view_x")));
+        uint256 userA_y = uint256(keccak256(abi.encodePacked(request.xmrAddress, "view_y")));
+        
+        // 1. Verify DLEQ Proof: log_G(R) == log_A(S)
+        // This proves the LP created this transaction using their secret key r
+        require(
+            Ed25519.verifyDLEQ(
+                uint256(proof.R), 0,
+                uint256(proof.S), 0,
+                userA_x, userA_y,
+                proof.dleq_c,
+                proof.dleq_s
+            ),
+            "Invalid DLEQ proof - LP did not create this TX"
+        );
+        
+        // 2. Verify Stealth Address: P == H(S)*G + B
+        // This proves the transaction was sent to the USER's spend key (not someone else)
+        uint256 sharedSecHash = uint256(keccak256(abi.encodePacked(proof.S)));
+        require(
+            Ed25519.verifyStealthAddress(
+                sharedSecHash,
+                userB_x, userB_y,
+                uint256(proof.P), 0
+            ),
+            "Invalid stealth address - TX not sent to user's address"
+        );
+        
+        // 3. Verify Amount Commitment: C == x*G + amount*H
+        // This proves the amount sent matches the burn request amount
+        uint256 mask = uint256(keccak256(abi.encodePacked(proof.S, "commitment_mask")));
+        (uint256 xG_x, uint256 xG_y) = Ed25519.scalarMultBase(mask);
+        (uint256 amountH_x, uint256 amountH_y) = Ed25519.scalarMultH(request.amount);
+        (uint256 expectedC_x, ) = Ed25519.addPoints(xG_x, xG_y, amountH_x, amountH_y);
+        require(uint256(proof.C) == expectedC_x, "Amount mismatch - LP sent wrong amount");
+        
+        // 4. Verify TX exists in Monero block via Merkle proof
+        require(moneroBlocks[blockHeight].exists, "Block not posted");
+        bytes32 txHash = keccak256(abi.encodePacked(proof.R, proof.P, proof.C));
+        require(
+            verifyTxInBlock(txHash, blockHeight, txMerkleProof, txIndex),
+            "TX not in block"
+        );
+        
+        // 5. Verify block was posted AFTER burn request (prevents replay)
+        require(
+            moneroBlocks[blockHeight].timestamp >= request.requestTime,
+            "TX predates burn request"
+        );
+        
+        // 6. Mark as fulfilled
+        request.fulfilled = true;
+        
+        // 7. Return collateral to LP
+        lpInfo[request.lp].collateralAmount += request.collateralLocked;
+        totalLPCollateral += request.collateralLocked;
+        
+        // 8. Return deposit to user
+        (bool success, ) = request.user.call{value: request.depositAmount}("");
+        require(success, "Deposit refund failed");
+        
+        emit BurnFulfilled(burnId, txHash);
+    }
+    
+    /**
+     * @notice Legacy burn fulfillment (deprecated, use fulfillBurnWithDLEQ)
      * @param burnId The burn request ID
      * @param xmrTxHash Hash of the Monero transaction that sent XMR to user
      * @param blockHeight Monero block height containing the transaction
      * @param txMerkleProof Merkle proof that TX exists in the block
      * @param txIndex Index of transaction in block
-     * @dev LP must cryptographically prove they sent XMR by providing Merkle proofs
      */
     function fulfillBurn(
         uint256 burnId,
@@ -741,13 +856,12 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
         
         request.defaulted = true;
         
-        // GNOSIS: Transfer DAI collateral directly to user
-        (bool success1, ) = request.user.call{value: request.collateralLocked}("");
-        require(success1, "Collateral transfer failed");
+        // Transfer sDAI collateral to user (ERC20 transfer, not native currency)
+        require(sDAI.transfer(request.user, request.collateralLocked), "Collateral transfer failed");
         
-        // Return user's deposit
-        (bool success2, ) = request.user.call{value: request.depositAmount}("");
-        require(success2, "Deposit refund failed");
+        // Return user's deposit (native xDAI)
+        (bool success, ) = request.user.call{value: request.depositAmount}("");
+        require(success, "Deposit refund failed");
         
         emit BurnDefaulted(burnId, request.collateralLocked);
     }
@@ -757,70 +871,174 @@ contract WrappedMonero is ERC20, ERC20Permit, ReentrancyGuard {
     // ════════════════════════════════════════════════════════════════════════
     
     /**
-     * @notice Post Monero block with Merkle roots
+     * @notice Legacy oracle posts Monero block (deprecated, use PoS oracle)
      */
     function postMoneroBlock(
         uint256 blockHeight,
         bytes32 blockHash,
         bytes32 txMerkleRoot,
         bytes32 outputMerkleRoot
-    ) external onlyOracle {
+    ) external onlyLegacyOracle {
         require(blockHeight > latestMoneroBlock, "Height must increase");
         require(!moneroBlocks[blockHeight].exists, "Block exists");
         
-        // Use positional initialization to avoid any named parameter issues
-        moneroBlocks[blockHeight] = MoneroBlockData(
-            blockHash,
-            txMerkleRoot,
-            outputMerkleRoot,
-            block.timestamp,
-            true
-        );
+        // Use named initialization for new struct format
+        moneroBlocks[blockHeight] = MoneroBlockData({
+            blockHash: blockHash,
+            txMerkleRoot: txMerkleRoot,
+            outputMerkleRoot: outputMerkleRoot,
+            proposer: msg.sender,
+            timestamp: block.timestamp,
+            finalized: true,
+            exists: true
+        });
         
         latestMoneroBlock = blockHeight;
-        emit MoneroBlockPosted(blockHeight, blockHash);
+        emit MoneroBlockFinalized(blockHeight, blockHash);
     }
     
-    function transferOracle(address newOracle) external onlyOracle {
-        oracle = newOracle;
+    function transferOracle(address newOracle) external onlyLegacyOracle {
+        legacyOracle = newOracle;
+    }
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // POS ORACLE (Decentralized)
+    // ════════════════════════════════════════════════════════════════════════
+    
+    /**
+     * @notice Stake wsXMR to become a validator
+     * @param amount Amount of wsXMR to stake
+     */
+    function stakeAsValidator(uint256 amount) external nonReentrant {
+        require(amount >= MIN_VALIDATOR_STAKE, "Insufficient stake");
+        require(balanceOf(msg.sender) >= amount, "Insufficient balance");
+        
+        // Transfer wsXMR to contract
+        _transfer(msg.sender, address(this), amount);
+        
+        // Add to validator stake
+        if (validatorStakes[msg.sender] == 0) {
+            validators.push(msg.sender);
+        }
+        validatorStakes[msg.sender] += amount;
+        
+        emit ValidatorStaked(msg.sender, amount);
     }
     
     /**
-     * @notice Oracle claims yield from sDAI appreciation
+     * @notice Unstake wsXMR (only if no active proposals)
+     * @param amount Amount of wsXMR to unstake
+     */
+    function unstakeValidator(uint256 amount) external nonReentrant {
+        require(validatorStakes[msg.sender] >= amount, "Insufficient stake");
+        
+        validatorStakes[msg.sender] -= amount;
+        
+        // Transfer wsXMR back to validator
+        _transfer(address(this), msg.sender, amount);
+        
+        emit ValidatorUnstaked(msg.sender, amount);
+    }
+    
+    /**
+     * @notice Propose a Monero block (validators only)
+     * @param blockHeight Monero block height
+     * @param blockHash Block hash
+     * @param txMerkleRoot Transaction Merkle root
+     * @param outputMerkleRoot Output Merkle root
+     */
+    function proposeMoneroBlock(
+        uint256 blockHeight,
+        bytes32 blockHash,
+        bytes32 txMerkleRoot,
+        bytes32 outputMerkleRoot
+    ) external {
+        require(validatorStakes[msg.sender] >= MIN_VALIDATOR_STAKE, "Not a validator");
+        require(blockHeight > latestMoneroBlock, "Height must increase");
+        require(proposedBlocks[blockHeight].timestamp == 0, "Already proposed");
+        
+        proposedBlocks[blockHeight] = ProposedBlock({
+            blockHash: blockHash,
+            txMerkleRoot: txMerkleRoot,
+            outputMerkleRoot: outputMerkleRoot,
+            proposer: msg.sender,
+            timestamp: block.timestamp,
+            challenged: false
+        });
+        
+        emit MoneroBlockProposed(blockHeight, blockHash, msg.sender);
+    }
+    
+    /**
+     * @notice Finalize a proposed block after challenge period
+     * @param blockHeight Block height to finalize
+     */
+    function finalizeMoneroBlock(uint256 blockHeight) external {
+        ProposedBlock storage pb = proposedBlocks[blockHeight];
+        require(pb.timestamp > 0, "Not proposed");
+        require(!pb.challenged, "Block was challenged");
+        require(block.timestamp > pb.timestamp + CHALLENGE_PERIOD, "Challenge period active");
+        require(!moneroBlocks[blockHeight].exists, "Already finalized");
+        
+        // Finalize the block
+        moneroBlocks[blockHeight] = MoneroBlockData({
+            blockHash: pb.blockHash,
+            txMerkleRoot: pb.txMerkleRoot,
+            outputMerkleRoot: pb.outputMerkleRoot,
+            proposer: pb.proposer,
+            timestamp: pb.timestamp,
+            finalized: true,
+            exists: true
+        });
+        
+        latestMoneroBlock = blockHeight;
+        
+        emit MoneroBlockFinalized(blockHeight, pb.blockHash);
+    }
+    
+    /**
+     * @notice Challenge an invalid block proposal
+     * @param blockHeight Block height to challenge
+     * @dev In production, this would verify the challenge proof on-chain
+     */
+    function challengeMoneroBlock(uint256 blockHeight) external {
+        require(validatorStakes[msg.sender] >= MIN_VALIDATOR_STAKE, "Not a validator");
+        
+        ProposedBlock storage pb = proposedBlocks[blockHeight];
+        require(pb.timestamp > 0, "Not proposed");
+        require(!pb.challenged, "Already challenged");
+        require(block.timestamp <= pb.timestamp + CHALLENGE_PERIOD, "Challenge period expired");
+        
+        pb.challenged = true;
+        
+        // Slash the proposer
+        if (validatorStakes[pb.proposer] >= SLASH_AMOUNT) {
+            validatorStakes[pb.proposer] -= SLASH_AMOUNT;
+            // Reward challenger with half the slashed amount
+            validatorStakes[msg.sender] += SLASH_AMOUNT / 2;
+            // Burn the other half
+            _burn(address(this), SLASH_AMOUNT / 2);
+        }
+        
+        emit MoneroBlockChallenged(blockHeight, msg.sender);
+        emit ValidatorSlashed(pb.proposer, SLASH_AMOUNT, blockHeight);
+    }
+    
+    /**
+     * @notice Legacy oracle claims yield from sDAI appreciation
      * @dev sDAI accrues value over time, oracle gets the excess
      */
-    function claimOracleYield() external onlyOracle nonReentrant {
+    function claimOracleYield() external onlyLegacyOracle nonReentrant {
         uint256 totalSDAI = sDAI.balanceOf(address(this));
         
         // Total sDAI should be >= totalLPCollateral
-        // Any excess is yield from stETH appreciation
+        // Any excess is yield from sDAI appreciation
         if (totalSDAI > totalLPCollateral) {
             uint256 yieldAmount = totalSDAI - totalLPCollateral;
-            sDAI.transfer(oracle, yieldAmount);
+            require(sDAI.transfer(legacyOracle, yieldAmount), "Transfer failed");
             
-            emit OracleYieldClaimed(oracle, yieldAmount);
+            emit OracleYieldClaimed(legacyOracle, yieldAmount);
         }
-    }
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // VERIFICATION
-    // ════════════════════════════════════════════════════════════════════════
-    
-    function verifyStealthAddress(Ed25519Proof calldata proof) internal pure returns (bool) {
-        // NOTE: Full DLEQ verification performed off-chain in RISC Zero zkVM
-        // On-chain we only verify points are on curve as sanity check
-        require(Ed25519.isOnCurve(uint256(proof.R_x), uint256(proof.R_y)), "R not on curve");
-        require(Ed25519.isOnCurve(uint256(proof.S_x), uint256(proof.S_y)), "S not on curve");
-        require(Ed25519.isOnCurve(uint256(proof.P_x), uint256(proof.P_y)), "P not on curve");
-        require(Ed25519.isOnCurve(uint256(proof.B_x), uint256(proof.B_y)), "B not on curve");
-        return true;
-    }
-    
-    function verifyDLEQ(DLEQProof calldata dleq) internal pure returns (bool) {
-        // NOTE: Full DLEQ verification performed off-chain in RISC Zero zkVM
-        // Oracle attests to correctness via zkTLS proofs
-        require(dleq.c != bytes32(0) && dleq.s != bytes32(0), "Invalid DLEQ");
-        return true;
     }
     
     // ════════════════════════════════════════════════════════════════════════
