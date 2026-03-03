@@ -10,22 +10,10 @@ module.exports = {
         enabled: true,
         runs: 200,
       },
-      viaIR: true, // Required for large contracts like the PLONK verifier
+      // viaIR disabled by default for faster compilation
+      // Enable only when compiling large contracts like PLONK verifier
+      viaIR: false,
     },
-  },
-  paths: {
-    sources: "./contracts",
-    tests: "./test",
-    cache: "./cache",
-    artifacts: "./artifacts",
-    // Tell Hardhat where to find external libraries
-    external: {
-      contracts: [
-        {
-          artifacts: "node_modules"
-        }
-      ]
-    }
   },
   networks: {
     hardhat: {
