@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WrapSynth | Zero-Knowledge Verified Permissionlessly Wrapped Monero</title>
+    <title>WrapSynth | Trustless Wrapped Monero via Atomic Swaps</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -729,8 +729,8 @@
         <div class="container">
             <div class="hero-grid">
                 <div class="hero-content">
-                    <h1>Bridge Monero to EVM with <span>Zero-Knowledge Proofs</span></h1>
-                    <p>The first trustless, permissionless wrapped Monero. Verify real XMR transactions on-chain without revealing your secrets.</p>
+                    <h1>Bridge Monero to EVM with <span>Atomic Swaps</span></h1>
+                    <p>Trustless, overcollateralized wrapped Monero. Exchange XMR for wsXMR backed by 150% collateral through cryptographic commitments.</p>
                     <div class="hero-buttons">
                         <a href="app/app.html" class="btn-primary">
                             Get Started →
@@ -741,12 +741,12 @@
                     </div>
                     <div class="hero-stats">
                         <div class="hero-stat">
-                            <div class="hero-stat-value">1,167</div>
-                            <div class="hero-stat-label">Constraints</div>
+                            <div class="hero-stat-value">150%</div>
+                            <div class="hero-stat-label">Collateral Ratio</div>
                         </div>
                         <div class="hero-stat">
-                            <div class="hero-stat-value">&lt;5s</div>
-                            <div class="hero-stat-label">Proof Time</div>
+                            <div class="hero-stat-value">24h</div>
+                            <div class="hero-stat-label">Swap Timeout</div>
                         </div>
                         <div class="hero-stat">
                             <div class="hero-stat-value highlight" id="total-txs-hero">0</div>
@@ -801,23 +801,23 @@
             <div class="section-header">
                 <span class="section-label">Features</span>
                 <h2 class="section-title">Why WrapSynth?</h2>
-                <p class="section-subtitle">Built for privacy, designed for everyone. Zero-knowledge proofs make trustless bridging possible.</p>
+                <p class="section-subtitle">Built for trust minimization, designed for everyone. Atomic swaps and overcollateralization make trustless bridging possible.</p>
             </div>
             <div class="features-grid">
                 <div class="feature-card">
                     <div class="feature-icon">⚡</div>
-                    <h3>Lightning Fast</h3>
-                    <p>Generate proofs in under 1 second with only ~1,167 constraints using our hybrid architecture</p>
+                    <h3>Instant Swaps</h3>
+                    <p>Exchange XMR for wsXMR through atomic swap protocol with cryptographic commitments</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">🔒</div>
-                    <h3>Cryptographically Secure</h3>
-                    <p>Ed25519 DLEQ proofs verified on-chain ensure your transaction secret never leaves your device</p>
+                    <h3>Overcollateralized</h3>
+                    <p>Every wsXMR backed by 150% collateral in LP vaults with real-time price feeds</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">🛡️</div>
-                    <h3>Replay Protected</h3>
-                    <p>Built-in double-spend prevention with transaction hash tracking for full transparency</p>
+                    <h3>Liquidation Protected</h3>
+                    <p>120% liquidation threshold with 10% bonus ensures system solvency at all times</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">✅</div>
@@ -849,29 +849,29 @@
                 <div class="step">
                     <div class="step-number">1</div>
                     <div class="step-content">
-                        <h3>Generate Ed25519 Operations</h3>
-                        <p>Compute R = r·G, S = 8·r·A, and P = H_s·G + B off-chain using @noble/ed25519</p>
+                        <h3>Initiate Swap</h3>
+                        <p>User creates mint request with secret commitment and sends XMR to LP's Monero address</p>
                     </div>
                 </div>
                 <div class="step">
                     <div class="step-number">2</div>
                     <div class="step-content">
-                        <h3>Create DLEQ Proof</h3>
-                        <p>Generate discrete log equality proof proving knowledge of r without revealing it</p>
+                        <h3>LP Confirms Receipt</h3>
+                        <p>LP verifies XMR receipt off-chain and marks mint request as READY on-chain</p>
                     </div>
                 </div>
                 <div class="step">
                     <div class="step-number">3</div>
                     <div class="step-content">
-                        <h3>Generate PLONK Proof</h3>
-                        <p>Create zero-knowledge proof binding all witness values with Poseidon commitment</p>
+                        <h3>Reveal Secret</h3>
+                        <p>User reveals secret to claim wsXMR - verified on-chain using secp256k1 operations</p>
                     </div>
                 </div>
                 <div class="step">
                     <div class="step-number">4</div>
                     <div class="step-content">
-                        <h3>Verify On-Chain</h3>
-                        <p>Smart contract verifies both DLEQ and PLONK proofs, then mints wrapped XMR</p>
+                        <h3>Receive wsXMR</h3>
+                        <p>Smart contract mints wsXMR to user, backed by LP's collateral in vault</p>
                     </div>
                 </div>
             </div>
@@ -920,14 +920,14 @@
             </div>
             <div class="deployment-grid">
                 <div class="deployment-card">
-                    <h3>MoneroBridgeDLEQ</h3>
-                    <p class="contract-address">0x3D50F6177E6589413A389f8a16314E2dA20a25Ff</p>
-                    <a href="https://gnosisscan.io/address/0x8a97101aB627af1B284e57f4dE89A9B3AC9D6782" target="_blank" class="btn-view" id="wrapped-monero-link">View on Gnosisscan</a>
+                    <h3>VaultManager</h3>
+                    <p class="contract-address">TBD - Deploying Soon</p>
+                    <a href="https://gnosisscan.io" target="_blank" class="btn-view" id="vault-manager-link">View on Gnosisscan</a>
                 </div>
                 <div class="deployment-card">
-                    <h3>PlonkVerifier</h3>
-                    <p class="contract-address">0x3139CB6fa4255591D7667361ab06Fdb155558853</p>
-                    <a href="https://gnosisscan.io/address/0x2cD729d7D6EfaC8559BBb1761d436C23a5f0CC4a" target="_blank" class="btn-view" id="plonk-verifier-link">View on Gnosisscan</a>
+                    <h3>wsXMR Token</h3>
+                    <p class="contract-address">TBD - Deploying Soon</p>
+                    <a href="https://gnosisscan.io" target="_blank" class="btn-view" id="wsxmr-token-link">View on Gnosisscan</a>
                 </div>
             </div>
             <div class="network-badge">
@@ -939,7 +939,7 @@
     <section class="cta">
         <div class="container">
             <h2>Ready to Bridge?</h2>
-            <p>Join the future of privacy-preserving cross-chain transfers</p>
+            <p>Join the future of trustless cross-chain transfers with overcollateralized vaults</p>
             <div class="cta-buttons">
                 <a href="app/app.html" class="btn-primary">Launch App →</a>
                 <a href="https://github.com/madschristensen99/wrapsynth/blob/main/SYNTHWRAP.md" target="_blank" class="btn-secondary">Read Documentation</a>
@@ -952,7 +952,7 @@
             <div class="footer-content">
                 <div class="footer-section">
                     <h4>WrapSynth</h4>
-                    <p>Zero-Knowledge Verified Permissionlessly Wrapped Monero. Bridging privacy to DeFi.</p>
+                    <p>Trustless Wrapped Monero via Atomic Swaps. Bringing Monero liquidity to DeFi.</p>
                 </div>
                 <div class="footer-section">
                     <h4>Resources</h4>
@@ -1088,18 +1088,23 @@
             const explorerUrl = CONFIG.EXPLORER_URL;
             
             if (contractCards.length >= 2) {
-                // Update WrappedMonero contract
-                const wrappedMoneroCard = contractCards[0];
-                wrappedMoneroCard.querySelector('h3').textContent = 'WrappedMonero';
-                wrappedMoneroCard.querySelector('.contract-address').textContent = CONFIG.CONTRACT_ADDRESS;
-                wrappedMoneroCard.querySelector('.btn-view').href = `${explorerUrl}/address/${CONFIG.CONTRACT_ADDRESS}`;
-                wrappedMoneroCard.querySelector('.btn-view').textContent = `View on ${NETWORKS[DEFAULT_NETWORK].blockExplorers.default.name}`;
+                // Update VaultManager contract
+                const vaultManagerCard = contractCards[0];
+                vaultManagerCard.querySelector('h3').textContent = 'VaultManager';
+                if (CONFIG.contracts?.vaultManager) {
+                    vaultManagerCard.querySelector('.contract-address').textContent = CONFIG.contracts.vaultManager;
+                    vaultManagerCard.querySelector('.btn-view').href = `${explorerUrl}/address/${CONFIG.contracts.vaultManager}`;
+                }
+                vaultManagerCard.querySelector('.btn-view').textContent = `View on ${NETWORKS[DEFAULT_NETWORK].blockExplorers.default.name}`;
                 
-                // Update PlonkVerifier contract
-                const verifierCard = contractCards[1];
-                verifierCard.querySelector('.contract-address').textContent = CONFIG.contracts.plonkVerifier;
-                verifierCard.querySelector('.btn-view').href = `${explorerUrl}/address/${CONFIG.contracts.plonkVerifier}`;
-                verifierCard.querySelector('.btn-view').textContent = `View on ${NETWORKS[DEFAULT_NETWORK].blockExplorers.default.name}`;
+                // Update wsXMR Token contract
+                const wsxmrCard = contractCards[1];
+                wsxmrCard.querySelector('h3').textContent = 'wsXMR Token';
+                if (CONFIG.contracts?.wsxmr) {
+                    wsxmrCard.querySelector('.contract-address').textContent = CONFIG.contracts.wsxmr;
+                    wsxmrCard.querySelector('.btn-view').href = `${explorerUrl}/address/${CONFIG.contracts.wsxmr}`;
+                }
+                wsxmrCard.querySelector('.btn-view').textContent = `View on ${NETWORKS[DEFAULT_NETWORK].blockExplorers.default.name}`;
             }
 
             // Update network badge
