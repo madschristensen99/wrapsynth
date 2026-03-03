@@ -1,0 +1,45 @@
+[package]
+name = "wrapsynth-lp-node"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.41", features = ["full"] }
+futures = "0.3"
+
+# EVM interaction with Alloy
+alloy = { version = "0.6", features = ["full", "node-bindings", "rpc-types-eth", "signer-local"] }
+alloy-primitives = "0.8"
+alloy-sol-types = "0.8"
+
+# Database
+sled = "0.34"
+
+# HTTP client for Monero RPC
+reqwest = { version = "0.12", features = ["json"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Cryptography
+rand = "0.8"
+sha2 = "0.10"
+k256 = { version = "0.13", features = ["ecdsa"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+hex = "0.4"
+chrono = "0.4"
+
+[dev-dependencies]
+tokio-test = "0.4"

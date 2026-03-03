@@ -1,0 +1,176 @@
+use crate::db::{BurnStatus, BurnTask, Database, MintStatus, MintTask};
+use crate::evm::EvmClient;
+use anyhow::{Context, Result};
+use futures::StreamExt;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::{error, info};
+
+/// Event listener that subscribes to EVM events and creates tasks
+pub struct EventListener {
+    db: Database,
+    evm: Arc<EvmClient>,
+    lp_vault_address: [u8; 20],
+}
+
+impl EventListener {
+    pub fn new(db: Database, evm: Arc<EvmClient>, lp_vault_address: [u8; 20]) -> Self {
+        Self {
+            db,
+            evm,
+            lp_vault_address,
+        }
+    }
+
+    /// Start listening for events
+    pub async fn start(self: Arc<Self>) -> Result<()> {
+        info!("Starting event listener");
+
+        // Spawn burn event listener
+        let listener = self.clone();
+        tokio::spawn(async move {
+            if let Err(e) = listener.listen_burn_events().await {
+                error!("Burn event listener error: {}", e);
+            }
+        });
+
+        // Spawn mint event listener
+        let listener = self.clone();
+        tokio::spawn(async move {
+            if let Err(e) = listener.listen_mint_events().await {
+                error!("Mint event listener error: {}", e);
+            }
+        });
+
+        info!("Event listeners started");
+        Ok(())
+    }
+
+    /// Listen for BurnRequested events
+    async fn listen_burn_events(&self) -> Result<()> {
+        info!("Listening for BurnRequested events");
+
+        let mut stream = self
+            .evm
+            .subscribe_burn_requested()
+            .await
+            .context("Failed to subscribe to BurnRequested events")?;
+
+        while let Some(log) = stream.next().await {
+            if let Err(e) = self.handle_burn_requested_event(&log).await {
+                error!("Error handling BurnRequested event: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Listen for MintInitiated events
+    async fn listen_mint_events(&self) -> Result<()> {
+        info!("Listening for MintInitiated events");
+
+        let mut stream = self
+            .evm
+            .subscribe_mint_initiated()
+            .await
+            .context("Failed to subscribe to MintInitiated events")?;
+
+        while let Some(log) = stream.next().await {
+            if let Err(e) = self.handle_mint_initiated_event(&log).await {
+                error!("Error handling MintInitiated event: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle a BurnRequested event
+    async fn handle_burn_requested_event(&self, log: &alloy::rpc::types::Log) -> Result<()> {
+        let event = self.evm.parse_burn_requested(log)?;
+
+        // Check if this burn is for our vault
+        let lp_vault_bytes: [u8; 20] = event.lpVault.into();
+        if lp_vault_bytes != self.lp_vault_address {
+            return Ok(());
+        }
+
+        info!(
+            "BurnRequested event: requestId={}, user={}, wsxmrAmount={}, xmrAmount={}",
+            hex::encode(event.requestId),
+            event.user,
+            event.wsxmrAmount,
+            event.xmrAmount
+        );
+
+        // Create a burn task
+        let task = BurnTask {
+            request_id: event.requestId.into(),
+            user: event.user.into(),
+            lp_vault: lp_vault_bytes,
+            wsxmr_amount: event.wsxmrAmount.to::<u64>(),
+            xmr_amount: event.xmrAmount.to::<u64>(),
+            locked_collateral: 0, // Will be calculated
+            deadline: current_timestamp() + (48 * 3600), // 48 hours
+            status: BurnStatus::Requested,
+            created_at: current_timestamp(),
+            updated_at: current_timestamp(),
+            secret: None,
+            secret_hash: None,
+            monero_lock_txid: None,
+            commit_tx_hash: None,
+        };
+
+        self.db.insert_burn_task(&task)?;
+        info!("Burn task created: {}", hex::encode(task.request_id));
+
+        Ok(())
+    }
+
+    /// Handle a MintInitiated event
+    async fn handle_mint_initiated_event(&self, log: &alloy::rpc::types::Log) -> Result<()> {
+        let event = self.evm.parse_mint_initiated(log)?;
+
+        // Check if this mint is for our vault
+        let lp_vault_bytes: [u8; 20] = event.lpVault.into();
+        if lp_vault_bytes != self.lp_vault_address {
+            return Ok(());
+        }
+
+        info!(
+            "MintInitiated event: requestId={}, user={}, xmrAmount={}, wsxmrAmount={}",
+            hex::encode(event.requestId),
+            event.user,
+            event.xmrAmount,
+            event.wsxmrAmount
+        );
+
+        // Create a mint task
+        let task = MintTask {
+            request_id: event.requestId.into(),
+            user: event.user.into(),
+            lp_vault: lp_vault_bytes,
+            xmr_amount: event.xmrAmount.to::<u64>(),
+            wsxmr_amount: event.wsxmrAmount.to::<u64>(),
+            claim_commitment: event.claimCommitment.into(),
+            timeout: event.timeout.to::<u64>(),
+            status: MintStatus::Pending,
+            created_at: current_timestamp(),
+            updated_at: current_timestamp(),
+            revealed_secret: None,
+            monero_claim_txid: None,
+        };
+
+        self.db.insert_mint_task(&task)?;
+        info!("Mint task created: {}", hex::encode(task.request_id));
+
+        Ok(())
+    }
+}
+
+/// Get current Unix timestamp
+fn current_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
