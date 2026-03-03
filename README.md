@@ -2,36 +2,42 @@
 
 # 🌉 WrapSynth
 
-**A privacy-preserving bridge bringing Monero to Ethereum using zero-knowledge proofs.**
+**A trustless bridge bringing Monero to EVM chains using atomic swaps and collateralized vaults.**
 
 🌐 **[wrapsynth.com](https://wrapsynth.com)**
 
-WrapSynth enables trustless, privacy-preserving bridging of Monero (XMR) to Ethereum and EVM chains. Users prove ownership of Monero transactions through PLONK zero-knowledge proofs without revealing sensitive transaction details on-chain.
+WrapSynth enables trustless bridging of Monero (XMR) to Ethereum and EVM chains through atomic swap mechanics and overcollateralized LP vaults. Users exchange XMR for wsXMR tokens backed by 150% collateral, with cryptographic commitments ensuring trustless execution.
 
 ---
 
 ## ✨ Key Features
 
 ### Core Technology
-- **Zero-Knowledge Proofs**: PLONK proofs (~3.8M constraints) verify Monero stealth address ownership
-- **Stealth Address Verification**: Full cryptographic verification of Monero transaction ownership
-- **Server-Side Proof Generation**: High-performance proof generation (3-10 minutes, 32-64GB RAM)
-- **Client-Side Witness Generation**: Fast witness calculation in browser (~1-4 seconds, <500MB RAM)
-- **Merkle Proof Verification**: On-chain verification of transaction and output inclusion
-- **Ed25519 & DLEQ Proofs**: Monero-compatible elliptic curve operations
+- **Atomic Swap Protocol**: HTLC-style secret commitments for trustless XMR ↔ wsXMR exchange
+- **Secp256k1 Verification**: Cryptographic verification of secret reveals using elliptic curve operations
+- **Vault-Based System**: Individual LP vaults with isolated collateral and debt tracking
+- **Multi-Collateral Support**: Accept ETH, wstETH, or any ERC20 token as collateral
+- **Real-Time Pricing**: Pyth Network oracle integration for accurate asset valuation
 
-### Privacy & Security
-- **Transaction Public Key Verification**: Prevents unauthorized minting of others' Monero
-- **Stealth Address Derivation**: Proves P = H_s·G + B without revealing private keys
-- **Double-Spend Prevention**: On-chain tracking of used outputs
-- **Collateralized Liquidity**: LPs provide wstETH collateral with 150% safe ratio
-- **Privacy Relayer System**: Anonymous minting without revealing recipient address on-chain
+### Vault-Based Architecture
+- **Individual LP Vaults**: Each liquidity provider manages their own collateralized vault
+- **Multi-Collateral Support**: Accept ETH, wstETH, or other ERC20 tokens as collateral
+- **Overcollateralization**: 150% collateral ratio ensures wsXMR is always backed
+- **Liquidation Protection**: 120% liquidation threshold with 110% liquidator bonus
+- **Pyth Oracle Integration**: Real-time price feeds for XMR and collateral assets
+
+### Security & Trust Model
+- **Overcollateralization**: 150% collateral ratio ensures wsXMR is always backed
+- **Atomic Swap Guarantees**: Cryptographic commitments prevent fund loss for both parties
+- **Liquidation System**: 120% threshold with 10% liquidator bonus protects solvency
+- **Timeout Protection**: 24-hour windows with slashing for non-compliance
+- **Griefing Protection**: Configurable deposits prevent spam attacks on LP vaults
 
 ### DeFi Integration
-- **Uniswap V4 Hooks**: Privacy-preserving swap hooks for anonymous trading
-- **Aave V3 Collateral**: Yield-bearing collateral backing for LPs
-- **Multi-Chain Support**: Designed for Unichain, Gnosis Chain, and other EVM chains
-- **ERC-20 Compatible**: Standard token interface for DeFi composability
+- **ERC-20 Compatible**: Standard token interface (8 decimals matching XMR)
+- **Multi-Chain Support**: Designed for Gnosis Chain, Unichain, and other EVM chains
+- **Composable Design**: Ready for DEX integration and DeFi protocols
+- **Price Oracle Ready**: Pyth Network integration for accurate pricing
 
 ---
 
@@ -44,13 +50,15 @@ WrapSynth enables trustless, privacy-preserving bridging of Monero (XMR) to Ethe
 - **Unichain Testnet** (ChainID: 1301) - Development and testing
 
 **Deployment Status:**
-- ✅ All 60 Solidity files compile successfully
+- ✅ VaultManager and wsXMR contracts implemented
+- ✅ Atomic swap mechanics with HTLC-style commitments
+- ✅ Pyth oracle integration for price feeds
 - ✅ Gnosis mainnet deployment scripts ready
-- ✅ PlonkVerifier and WrappedMonero contracts ready to deploy
+- ✅ Multi-collateral support (ETH, wstETH, etc.)
 
 **Next Steps:**
-1. Deploy WrappedMonero and PlonkVerifier to Gnosis mainnet
-2. Set up proof generation server infrastructure
+1. Deploy VaultManager and wsXMR to Gnosis mainnet
+2. Set up LP server infrastructure for vault management
 3. Integrate with frontend for testing
 4. Complete end-to-end testing with Monero stagenet
 5. Security audit before public launch
@@ -78,28 +86,10 @@ cd wrapsynth
 # Install Node.js dependencies
 npm install
 
-# Install circuit dependencies
-cd circuit
-npm install
-cd ..
-
 # Copy environment variables
 cp .env.example .env
 # Edit .env and add your PRIVATE_KEY and RPC URLs
 ```
-
-### Compile Circuit
-
-```bash
-cd circuit
-./compile.sh
-```
-
-This will:
-- Compile the Circom circuit
-- Generate PLONK proving/verification keys
-- Create Solidity verifier contract
-- Copy verifier to `contracts/MoneroBridgeVerifier.sol`
 
 ### Compile Contracts
 
@@ -108,7 +98,11 @@ This will:
 npx hardhat compile
 ```
 
-Should output: `Compiled 60 Solidity files successfully`
+This will compile:
+- `VaultManager.sol` - Core vault and atomic swap logic
+- `wsXMR.sol` - ERC-20 token contract
+- `Secp256k1.sol` - Elliptic curve verification library
+- Supporting interfaces and libraries
 
 ### Deploy Contracts
 
@@ -126,7 +120,7 @@ cp .env.example .env
 
 3. **Deploy contracts:**
 ```bash
-# Deploy WrappedMonero and PlonkVerifier to Gnosis mainnet
+# Deploy VaultManager and wsXMR to Gnosis mainnet
 npm run deploy:gnosis
 ```
 
@@ -141,11 +135,8 @@ npm run verify:gnosis
 
 2. **Deploy contracts:**
 ```bash
-# Deploy with real PLONK verifier
+# Deploy VaultManager and wsXMR to Unichain testnet
 npm run deploy:unichain
-
-# Or deploy with mock verifier for testing
-npm run deploy:mock
 ```
 
 3. **Verify contracts on Uniscan:**
@@ -180,21 +171,13 @@ npm run lp:setup:mock
 
 ```
 wrapsynth/
-├── circuit/                    # Circom ZK circuit
-│   ├── monero_bridge.circom   # Main circuit (PLONK, ~3.8M constraints)
-│   ├── compile.sh             # Circuit compilation script
-│   ├── build/                 # Generated circuit artifacts (gitignored)
-│   ├── package.json           # Circuit dependencies
-│   └── README.md              # Circuit documentation
-│
 ├── contracts/                  # Solidity smart contracts
-│   ├── WrappedMonero.sol      # Main bridge contract (ERC-20 + LP system)
-│   ├── MoneroBridgeVerifier.sol # PLONK verifier (auto-generated)
-│   ├── PrivacySwapHook.sol    # Uniswap V4 hook for private swaps
-│   ├── MintRelayer.sol        # Privacy-preserving mint relayer
-│   ├── HookMiner.sol          # Uniswap V4 hook address miner
+│   ├── VaultManager.sol       # Core vault system with atomic swap logic
+│   ├── wsXMR.sol              # ERC-20 token (8 decimals)
+│   ├── Secp256k1.sol          # Elliptic curve verification library
+│   ├── IPyth.sol              # Pyth oracle interface
+│   ├── IERC20Metadata.sol     # ERC20 metadata interface
 │   ├── interfaces/            # Contract interfaces
-│   ├── libraries/             # Ed25519 & cryptographic utilities
 │   ├── mocks/                 # Mock contracts for testing
 │   └── README.md              # Contract documentation
 │
@@ -202,49 +185,27 @@ wrapsynth/
 │   ├── deploy/                # Deployment scripts
 │   │   ├── deploy.js          # Unichain testnet deployment
 │   │   ├── deploy-gnosis.js   # Gnosis mainnet deployment
-│   │   ├── deploy-with-mock.js # Deploy with mock verifier
-│   │   ├── deploy-relayer.js  # Deploy privacy relayer
-│   │   ├── deploy-privacy-hook.js # Deploy Uniswap V4 hook
 │   │   └── verify.js          # Contract verification
 │   │
-│   ├── lpServer/              # LP and server-side operations
-│   │   ├── proofGeneration/   # ZK proof generation
-│   │   │   ├── generate_witness.js           # Witness generation
-│   │   │   ├── generate_proof_and_mint.js    # Full proof + mint flow
-│   │   │   ├── generate_proof_and_relay_mint.js # Private mint via relayer
-│   │   │   ├── compute_monero_keys.js        # Monero key derivation
-│   │   │   └── compute_merkle_proofs.js      # Merkle proof computation
-│   │   │
-│   │   ├── relayer/           # Privacy relayer system
-│   │   │   ├── signMintIntent.js  # EIP-712 intent signing
-│   │   │   ├── relayerService.js  # Background relayer service
-│   │   │   ├── privateMint.js     # User-facing private mint
-│   │   │   ├── registerRelayer.js # Register as relayer
-│   │   │   └── startRelayer.js    # Start relayer daemon
-│   │   │
-│   │   ├── check_lp.js        # Check LP status
-│   │   ├── lp-setup-mock.js   # LP setup for testing
-│   │   └── update_lp_registration.js # Update LP settings
-│   │
-│   ├── oracle/                # Oracle management
-│   │   ├── setup.sh           # Configure oracle
-│   │   └── run.sh             # Run oracle service
+│   ├── lpServer/              # LP vault management
+│   │   ├── createVault.js     # Create new LP vault
+│   │   ├── depositCollateral.js # Deposit collateral to vault
+│   │   ├── confirmMint.js     # LP confirms XMR receipt
+│   │   ├── finalizeBurn.js    # LP reveals secret for burn
+│   │   ├── testMint.js        # Test mint flow
+│   │   ├── testBurn.js        # Test burn flow
+│   │   └── testVault.js       # Test vault operations
 │   │
 │   └── utils/                 # Utility functions
-│       ├── compute_merkle_proof.js
-│       └── ed25519_utils.js
-│
-├── monero-oracle/              # Rust-based Monero oracle
-│   ├── src/main.rs            # Oracle service implementation
-│   ├── Cargo.toml             # Rust dependencies
-│   └── README.md              # Oracle documentation
+│       └── pyth_utils.js      # Pyth oracle helpers
 │
 ├── frontend/                   # Web interface
+│   ├── index.html             # Landing page
+│   ├── config.js              # Network configuration
+│   ├── styles.css             # Styling
 │   └── app/                   # Frontend application
-│       ├── app.html           # Main HTML
-│       ├── app.js             # Frontend logic
-│       ├── proof-gen.js       # Browser proof generation
-│       └── circuit/           # Circuit artifacts for browser
+│       ├── app.html           # Main app interface
+│       └── app.js             # Frontend logic
 │
 ├── deployments/                # Deployment records
 │   ├── unichain_testnet_latest.json
@@ -264,92 +225,97 @@ wrapsynth/
 ### High-Level Flow
 
 ```
-┌─────────────┐         ┌──────────────┐         ┌─────────────┐
-│   Monero    │         │   Ethereum   │         │   Unichain  │
-│  Mainnet    │         │   Mainnet    │         │   /Gnosis   │
-└──────┬──────┘         └──────────────┘         └──────┬──────┘
+┌──────────────┐                                  ┌─────────────┐
+│   Monero     │                                  │   Gnosis    │
+│   Mainnet    │                                  │   Chain     │
+└──────┬───────┘                                  └──────┬──────┘
        │                                                 │
-       │  1. User sends XMR                             │
-       │     to LP's address                            │
+       │  1. User sends XMR to LP's Monero address      │
+       │  ──────────────────────────────────────────►   │
        │                                                 │
-       │  2. Generate ZK proof                          │
-       │     of ownership                               │
+       │  2. User generates ZK proof of ownership        │
+       │     (Proves P = H_s·G + B without revealing r)  │
        │                                                 │
-       └─────────────────────────────────────────────────┤
-                                                         │
-                                                         │  3. Submit proof
-                                                         │     & mint wrapped XMR
-                                                         │
-                                                    ┌────▼─────┐
-                                                    │ Wrapped  │
-                                                    │  Monero  │
-                                                    │ Contract │
-                                                    └──────────┘
+       │  3. LP verifies proof & mints wsXMR        ┌────┴────┐
+       │  ◄──────────────────────────────────────  │VaultMgr │
+       │                                           │  Vault  │
+       │  4. User receives wsXMR tokens            │Collateral│
+       │  ◄──────────────────────────────────────  │  wsXMR  │
+       │                                           └────┬────┘
+       │                                                 │
+       │  5. To burn: User commits to XMR address        │
+       │  ──────────────────────────────────────────────►│
+       │                                                 │
+       │  6. LP sends XMR, reveals secret                │
+       │  ◄──────────────────────────────────────────────│
+       │                                                 │
+       │  7. User verifies & finalizes burn              │
+       │  ──────────────────────────────────────────────►│
 ```
 
 ### Components
 
-1. **Circom Circuit** (`circuit/`)
-   - Proves knowledge of Monero transaction private key
-   - Verifies stealth address derivation (P = H_s·G + B)
-   - Validates ECDH amount decryption
-   - Generates PLONK proofs (~3.8M constraints)
-   - Server-side proof generation (3-10 minutes)
+1. **Atomic Swap Protocol**
+   - HTLC-style secret commitments for trustless exchange
+   - Secp256k1 elliptic curve verification
+   - Timeout-based slashing for non-compliance
+   - No zero-knowledge proofs required
 
 2. **Smart Contracts** (`contracts/`)
-   - **WrappedMonero**: Main bridge logic, LP management, minting/burning
-   - **MoneroBridgeVerifier**: On-chain PLONK proof verification
-   - **PrivacySwapHook**: Uniswap V4 hook for anonymous swaps
-   - **MintRelayer**: Privacy-preserving relayer for anonymous minting
-   - **Ed25519 Library**: Monero cryptography verification
+   - **VaultManager.sol**: Core vault system managing LP collateral and mint/burn operations
+   - **wsXMR.sol**: ERC-20 token (8 decimals) representing wrapped Monero
+   - **Secp256k1.sol**: Elliptic curve verification for secret reveals
+   - **IPyth.sol**: Oracle integration for XMR and collateral price feeds
 
-3. **Monero Oracle** (`monero-oracle/`)
-   - Rust-based service for high performance
-   - Posts Monero block data and Merkle roots on-chain
-   - Enables trustless verification of transaction inclusion
-
-4. **Privacy Relayer** (`scripts/relayer/`)
-   - EIP-712 signed mint intents
-   - Anonymous minting without revealing recipient
-   - Relayer earns fees for privacy service
+3. **Vault System**
+   - Individual LP vaults with customizable collateral types (ETH, wstETH, etc.)
+   - 150% collateralization ratio ensures wsXMR is always backed
+   - 120% liquidation threshold with 110% liquidator bonus
+   - Atomic swap-based mint/burn with HTLC commitments
+   - Pyth oracle integration for real-time price feeds
 
 ---
 
 ## 📖 How It Works
 
-### Minting (Monero → Ethereum)
+### Minting (Monero → wsXMR)
 
-1. **Send Monero**: Transfer XMR to a liquidity provider's Monero address
-2. **Generate Witness**: Client-side witness generation (~1-4 seconds, <500MB RAM)
-3. **Generate Proof**: Server-side PLONK proof generation (3-10 minutes, 32-64GB RAM)
-   - Proves knowledge of transaction secret key `r`
-   - Verifies `R = r·G` matches transaction public key
-   - Proves stealth address derivation `P = H_s·G + B`
-   - Decrypts and verifies amount using LP's view key
-   - Generates Merkle proofs for transaction and output inclusion
-4. **Submit On-Chain**: Contract verifies all proofs and mints wrapped XMR
-5. **Receive Tokens**: Get wrapped XMR (ERC-20) in your Ethereum wallet
+1. **Create Vault** (LP): Liquidity provider creates a vault with collateral (ETH, wstETH, etc.)
+2. **Deposit Collateral** (LP): LP deposits collateral to back wsXMR (minimum 150% ratio)
+3. **Initiate Mint** (User): User initiates mint request on-chain
+   - Provides claim commitment (hash of secret for atomic swap)
+   - Pays griefing deposit (refunded on completion)
+   - LP's vault debt is reserved
+4. **Send XMR** (User): User sends XMR to LP's Monero address off-chain
+5. **Confirm Receipt** (LP): LP verifies XMR receipt and marks mint as READY
+6. **Finalize Mint** (User): User reveals secret to claim wsXMR
+   - Secret is verified against commitment using secp256k1
+   - wsXMR is minted to user
+   - Griefing deposit is refunded
 
-### Private Minting (via Relayer)
+### Burning (wsXMR → Monero)
 
-1. **Create Intent**: Sign EIP-712 mint intent with recipient address
-2. **Submit to Relayer**: Relayer submits proof on your behalf
-3. **Anonymous Mint**: Recipient address never appears in your transactions
-4. **Pay Fee**: Small fee paid to relayer for privacy service
-
-### Burning (Ethereum → Monero)
-
-1. **Request Burn**: Submit burn request with destination Monero address
-2. **Tokens Locked**: Wrapped XMR locked in contract
-3. **LP Fulfills**: Liquidity provider sends XMR to your Monero address
-4. **Completion**: Burn finalized after oracle confirmation
+1. **Request Burn** (User): User requests burn with Monero address and secret hash
+   - wsXMR tokens are reserved (not yet burned)
+   - LP's collateral is reserved for this burn
+   - 24-hour deadline is set
+2. **Send XMR** (LP): LP sends XMR to user's Monero address off-chain
+3. **Commit Burn** (User): User verifies XMR receipt and commits burn
+   - wsXMR is burned
+   - Collateral is escrowed
+4. **Finalize Burn** (LP): LP reveals secret to unlock escrowed collateral
+   - Secret is verified against hash
+   - Collateral is released back to LP
+5. **Timeout Protection**: If LP doesn't reveal secret within 24h, user can slash and seize collateral
 
 ### For Liquidity Providers
 
-1. **Register**: Set fees and provide Monero address + private view key
-2. **Deposit Collateral**: Lock wstETH (minimum 150% collateralization)
-3. **Earn Fees**: Collect fees from mints and burns
-4. **Earn Yield**: Automatic staking rewards on wstETH collateral
+1. **Create Vault**: Call `createVault()` with chosen collateral type
+2. **Deposit Collateral**: Lock ETH or ERC20 tokens (minimum 150% of debt value)
+3. **Set Parameters**: Configure griefing deposit amount for mint requests
+4. **Accept Mints**: Users can initiate mints against your vault
+5. **Manage Health**: Monitor collateral ratio to avoid liquidation (<120%)
+6. **Earn Fees**: Collect fees from mint/burn operations
 
 ---
 
@@ -357,25 +323,26 @@ wrapsynth/
 
 ### Cryptographic Guarantees
 
-- **PLONK Zero-Knowledge Proofs**: ~3.8M constraints verify transaction ownership
-- **Stealth Address Verification**: Proves P = H_s·G + B without revealing keys
-- **Transaction Public Key Matching**: Prevents minting of others' Monero
-- **Ed25519 Operations**: Native Monero elliptic curve cryptography
-- **DLEQ Proofs**: Discrete logarithm equality verification
-- **Poseidon Commitments**: ZK-friendly binding of private inputs
-- **Merkle Proofs**: Cryptographic proof of transaction inclusion
+- **Secp256k1 Verification**: Elliptic curve operations verify secret reveals match commitments
+- **Hash-Time-Locked Contracts**: HTLC-style atomic swaps prevent fund loss
+- **Timeout Enforcement**: 24-hour windows with on-chain slashing for non-compliance
+- **Commitment Binding**: Secrets are cryptographically bound to commitments
+- **Collateral Escrow**: Smart contract holds collateral during burn process
 
 ### Economic Security
 
-**Collateralization Tiers:**
-- **Safe Zone** (≥150%): LPs can accept new mints
-- **Warning Zone** (120-150%): No new mints allowed
-- **Liquidation** (<120%): Collateral can be claimed
+**Collateralization System:**
+- **Collateral Ratio**: 150% - Minimum collateral required to back wsXMR debt
+- **Liquidation Threshold**: 120% - Below this, vault can be liquidated
+- **Liquidation Bonus**: 110% - Liquidators receive 10% bonus from vault collateral
+- **Health Monitoring**: Real-time collateral ratio tracking per vault
+- **Multi-Asset Support**: Each collateral type has its own Pyth price feed
 
 **Oracle System:**
-- Rust-based oracle posts Monero block data on-chain
-- Merkle roots enable trustless verification
-- Future: Decentralized oracle network
+- **Pyth Network Integration**: Real-time price feeds for XMR/USD and collateral assets
+- **Price Staleness Check**: Maximum 5-minute age for price data
+- **Pull-Based Updates**: Prices pushed on-chain before critical operations
+- **Multi-Feed Support**: Separate feeds for XMR and each collateral type
 
 ### Security Considerations
 
@@ -400,14 +367,12 @@ Before production deployment:
 # Run contract tests
 npm test
 
-# Test circuit compilation
-cd circuit && ./compile.sh
+# Test mint/burn flows
+node scripts/lpServer/testMint.js
+node scripts/lpServer/testBurn.js
 
-# Test proof generation
-node scripts/proofGeneration/generate_proof_and_mint.js
-
-# Test private minting via relayer
-node scripts/relayer/privateMint.js
+# Test vault operations
+node scripts/lpServer/testVault.js
 ```
 
 ---
@@ -415,16 +380,15 @@ node scripts/relayer/privateMint.js
 ## 📚 Documentation
 
 ### Project Documentation
-- [Circuit Documentation](circuit/README.md) - Circom circuit implementation
+- [Technical Specification](SYNTHWRAP.md) - Complete protocol specification
 - [Contract Documentation](contracts/README.md) - Solidity smart contracts
-- [Relayer Documentation](RELAYER_README.md) - Privacy relayer system
-- [Oracle Documentation](monero-oracle/README.md) - Rust oracle service
+- [Deployment Guide](scripts/deploy/README.md) - Deployment instructions
 
 ### External Resources
-- [PLONK Paper](https://eprint.iacr.org/2019/953) - Zero-knowledge proof system
-- [Monero Documentation](https://www.getmonero.org/resources/developer-guides/) - Monero cryptography
-- [Circom Documentation](https://docs.circom.io/) - Circuit development
-- [snarkjs](https://github.com/iden3/snarkjs) - ZK proof generation library
+- [Monero Documentation](https://www.getmonero.org/resources/developer-guides/) - Monero protocol
+- [Pyth Network](https://pyth.network/) - Price oracle documentation
+- [Atomic Swaps](https://en.bitcoin.it/wiki/Atomic_swap) - Cross-chain atomic swap protocol
+- [HTLC](https://en.bitcoin.it/wiki/Hash_Time_Locked_Contracts) - Hash time-locked contracts
 - [Uniswap V4 Hooks](https://docs.uniswap.org/contracts/v4/overview) - Hook development
 
 ---
@@ -432,11 +396,11 @@ node scripts/relayer/privateMint.js
 ## 🔮 Roadmap
 
 ### Phase 1: Core Development (Current)
-- ✅ Circuit design and implementation
-- ✅ Smart contract development
-- ✅ Privacy relayer system
-- ✅ Uniswap V4 hooks integration
-- 🔄 Proof generation server infrastructure
+- ✅ VaultManager contract with atomic swap mechanics
+- ✅ wsXMR ERC-20 token implementation
+- ✅ Secp256k1 verification library
+- ✅ Pyth oracle integration
+- 🔄 LP server infrastructure for managing vaults
 - 🔄 Frontend development
 
 ### Phase 2: Testnet Deployment
