@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WrapSynth | Swap XMR ⇄ wsXMR</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <span class="logo-text">WrapSynth</span>
+                <span class="logo-badge">SWAP</span>
+            </div>
+            <p class="subtitle">Trustless Atomic Swaps • XMR ⇄ wsXMR</p>
+            <div id="wallet-status" class="wallet-status">
+                <button id="connect-wallet" class="btn btn-primary">Connect MetaMask</button>
+                <div id="connected-info" class="connected-info hidden">
+                    <span id="user-address"></span>
+                    <span id="user-balance"></span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Contracts Not Deployed Banner -->
+        <div id="contracts-banner" class="banner banner-warning hidden">
+            <p>⚠️ Contracts not yet deployed. Update addresses in <code>config.js</code> after deployment.</p>
+        </div>
+
+        <!-- Resume Active Swap Banner -->
+        <div id="resume-banner" class="banner banner-warning hidden">
+            <p>⚠️ Active swap detected! <button id="resume-swap" class="btn btn-small">Resume Swap</button></p>
+        </div>
+
+        <!-- Main Swap Interface -->
+        <main id="main-interface" class="hidden">
+            <div class="swap-selector">
+                <button id="tab-mint" class="tab-btn active">Mint wsXMR</button>
+                <button id="tab-burn" class="tab-btn">Burn wsXMR</button>
+            </div>
+
+            <!-- Mint Flow -->
+            <div id="mint-panel" class="swap-panel">
+                <h2>Mint wsXMR from XMR</h2>
+                <div class="form-group">
+                    <label>Amount (XMR)</label>
+                    <input type="number" id="mint-amount" placeholder="0.0" step="0.00000001" min="0">
+                    <span class="helper-text">Minimum: 0.01 XMR</span>
+                </div>
+                <div class="form-group">
+                    <label>Select LP Vault</label>
+                    <select id="mint-vault-select">
+                        <option value="">Loading vaults...</option>
+                    </select>
+                    <div id="mint-vault-info" class="vault-info hidden"></div>
+                </div>
+                <button id="start-mint" class="btn btn-primary btn-large">Start Mint</button>
+                
+                <!-- Mint Progress States -->
+                <div id="mint-progress" class="progress-container hidden">
+                    <div class="progress-step" data-step="init">
+                        <div class="step-indicator">1</div>
+                        <div class="step-content">
+                            <h3>Initialize Phantom Agent</h3>
+                            <p class="step-status">Waiting for signature...</p>
+                        </div>
+                    </div>
+                    <div class="progress-step" data-step="deposit">
+                        <div class="step-indicator">2</div>
+                        <div class="step-content">
+                            <h3>Deposit XMR</h3>
+                            <div id="mint-deposit-info" class="deposit-info hidden">
+                                <div class="qr-container">
+                                    <canvas id="mint-qr-code"></canvas>
+                                </div>
+                                <div class="address-display">
+                                    <code id="mint-xmr-address"></code>
+                                    <button class="btn-copy" data-copy="mint-xmr-address">📋</button>
+                                </div>
+                                <p class="amount-required">Send exactly: <strong id="mint-exact-amount"></strong> XMR</p>
+                                <p class="step-status">Monitoring blockchain...</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="progress-step" data-step="evm-init">
+                        <div class="step-indicator">3</div>
+                        <div class="step-content">
+                            <h3>Initiate on EVM</h3>
+                            <p class="step-status">Pending...</p>
+                        </div>
+                    </div>
+                    <div class="progress-step" data-step="lp-confirm">
+                        <div class="step-indicator">4</div>
+                        <div class="step-content">
+                            <h3>LP Confirmation</h3>
+                            <p class="step-status">Waiting for LP...</p>
+                        </div>
+                    </div>
+                    <div class="progress-step" data-step="finalize">
+                        <div class="step-indicator">5</div>
+                        <div class="step-content">
+                            <h3>Finalize Mint</h3>
+                            <p class="step-status">Pending...</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="action-buttons hidden" id="mint-actions">
+                    <button id="cancel-mint" class="btn btn-secondary">Cancel & Refund</button>
+                </div>
+            </div>
+
+            <!-- Burn Flow -->
+            <div id="burn-panel" class="swap-panel hidden">
+                <h2>Burn wsXMR to XMR</h2>
+                <div class="form-group">
+                    <label>Amount (wsXMR)</label>
+                    <input type="number" id="burn-amount" placeholder="0.0" step="0.00000001" min="0">
+                    <span class="helper-text">Your balance: <span id="burn-user-balance">0</span> wsXMR</span>
+                </div>
+                <div class="form-group">
+                    <label>Your Monero Address (CakeWallet, etc.)</label>
+                    <input type="text" id="burn-xmr-destination" placeholder="4...">
+                    <span class="helper-text">Where you'll receive XMR</span>
+                </div>
+                <div class="form-group">
+                    <label>Select LP Vault</label>
+                    <select id="burn-vault-select">
+                        <option value="">Loading vaults...</option>
+                    </select>
+                    <div id="burn-vault-info" class="vault-info hidden"></div>
+                </div>
+                <button id="start-burn" class="btn btn-primary btn-large">Start Burn</button>
+                
+                <!-- Burn Progress States -->
+                <div id="burn-progress" class="progress-container hidden">
+                    <div class="progress-step" data-step="init">
+                        <div class="step-indicator">1</div>
+                        <div class="step-content">
+                            <h3>Initialize Phantom Agent</h3>
+                            <p class="step-status">Waiting for signature...</p>
+                        </div>
+                    </div>
+                    <div class="progress-step" data-step="evm-request">
+                        <div class="step-indicator">2</div>
+                        <div class="step-content">
+                            <h3>Request Burn on EVM</h3>
+                            <p class="step-status">Pending...</p>
+                        </div>
+                    </div>
+                    <div class="progress-step" data-step="lp-commit">
+                        <div class="step-indicator">3</div>
+                        <div class="step-content">
+                            <h3>LP Commitment</h3>
+                            <p class="step-status">Waiting for LP to lock XMR...</p>
+                        </div>
+                    </div>
+                    <div class="progress-step" data-step="claim-xmr">
+                        <div class="step-indicator">4</div>
+                        <div class="step-content">
+                            <h3>Claim XMR</h3>
+                            <p class="step-status">Scanning Monero chain...</p>
+                        </div>
+                    </div>
+                    <div class="progress-step" data-step="finalize">
+                        <div class="step-indicator">5</div>
+                        <div class="step-content">
+                            <h3>Finalize on EVM</h3>
+                            <p class="step-status">Pending...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Success/Error Modals -->
+        <div id="modal-overlay" class="modal-overlay hidden">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3 id="modal-title"></h3>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body" id="modal-body"></div>
+                <div class="modal-footer">
+                    <button id="modal-close-btn" class="btn btn-primary">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="./js/main.js"></script>
+</body>
+</html>
