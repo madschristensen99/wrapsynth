@@ -1,0 +1,30 @@
+[Unit]
+Description=WrapSynth LP Node
+After=network.target monero-wallet-rpc.service
+Wants=monero-wallet-rpc.service
+
+[Service]
+Type=simple
+User=wrapsynth
+Group=wrapsynth
+WorkingDirectory=/opt/wrapsynth/lp-node
+Environment="RUST_LOG=info"
+EnvironmentFile=/opt/wrapsynth/lp-node/.env
+ExecStart=/opt/wrapsynth/lp-node/target/release/wrapsynth-lp-node
+Restart=always
+RestartSec=10
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/wrapsynth/lp-node/lp-node-db
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=2G
+CPUQuota=200%
+
+[Install]
+WantedBy=multi-user.target
