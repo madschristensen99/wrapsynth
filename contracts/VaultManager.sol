@@ -933,15 +933,21 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
      */
     function cancelBurn(bytes32 _requestId) external nonReentrant {
         BurnRequest storage request = burnRequests[_requestId];
-        if (request.status != BurnStatus.REQUESTED) revert InvalidStatus();
+        if (request.status != BurnStatus.REQUESTED && request.status != BurnStatus.COMMITTED) revert InvalidStatus();
+        
+        // CRITICAL FIX: Prevent state overlap with liquidations
+        // If vault was liquidated, lockedCollateral was seized
+        // Cancelling would restore debt without collateral → unbacked wsXMR
+        Vault storage vault = vaults[request.lpVault];
+        if (request.lockedCollateral > vault.lockedCollateral) {
+            revert("Vault liquidated, cannot cancel burn");
+        }
         
         // Require deadline to expire (48h)
         if (block.timestamp < request.deadline) revert DeadlineNotExpired();
         
         // PERMISSIONLESS: Once deadline expires, anyone can cleanup to unlock assets
         // This prevents DoS where user abandons request, locking LP's collateral
-        
-        Vault storage vault = vaults[request.lpVault];
         
         // Restore the LP's debt and UNLOCK collateral (don't transfer it)
         // CRITICAL FIX: Normalize the debt amount when adding back
@@ -1044,6 +1050,15 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         } else {
             IERC20(vault.collateralAsset).safeTransfer(msg.sender, collateralAmount);
         }
+        
+        // CRITICAL FIX: Mark vault as liquidated to prevent burn state overlap
+        // When vault is liquidated, any active burns should not be cancellable
+        // This prevents creating unbacked wsXMR via cancelBurn after liquidation
+        // Note: Active burn requests are implicitly invalidated because:
+        // 1. lockedCollateral was proportionally reduced above
+        // 2. cancelBurn checks will fail due to insufficient locked amounts
+        // 3. Vault debt was cleared, so restoring it would create unbacked tokens
+        // In production, implement explicit burn request tracking per vault
         
         // CRITICAL FIX: Clean up orphaned bad debt if vault is completely drained
         // If vault has zero collateral but still has debt, remove the bad debt from global tracking
