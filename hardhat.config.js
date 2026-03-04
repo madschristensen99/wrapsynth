@@ -10,9 +10,8 @@ module.exports = {
         enabled: true,
         runs: 200,
       },
-      // viaIR disabled by default for faster compilation
-      // Enable only when compiling large contracts like PLONK verifier
-      viaIR: false,
+      // viaIR enabled to resolve stack too deep errors in complex contracts
+      viaIR: true,
     },
   },
   networks: {

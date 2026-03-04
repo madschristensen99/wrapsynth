@@ -48,6 +48,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
         address userProvider;
         uint256 sDAIAmount;
         uint256 wsxmrAmount;
+        uint256 lpInitialValueUSD; // LP's initial USD value contribution
+        uint256 userInitialValueUSD; // User's initial USD value contribution
         uint256 createdAt;
     }
     
@@ -221,35 +223,35 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             })
         );
         
-        // CRITICAL FIX: Refund unused amounts to prevent fund lockup
+        // CRITICAL FIX: Refund unused amounts and record position
+        positionIndex = nextPositionIndex++;
+        
         if (token0 == GnosisAddresses.SDAI) {
-            // Refund unused sDAI and wsXMR
             if (actual0 < _sDAIAmount) lpLiquidityAllocation[_lp] += (_sDAIAmount - actual0);
             if (actual1 < _wsxmrAmount) userWsxmrDeposits[_user] += (_wsxmrAmount - actual1);
             
-            // Record position with actual amounts used
-            positionIndex = nextPositionIndex++;
             positions[positionIndex] = LiquidityPosition({
                 positionId: tokenId,
                 lpProvider: _lp,
                 userProvider: _user,
                 sDAIAmount: actual0,
                 wsxmrAmount: actual1,
+                lpInitialValueUSD: (actual0 * vaultManager.getCollateralPrice(GnosisAddresses.SDAI)) / 1e18,
+                userInitialValueUSD: (actual1 * vaultManager.getXmrPrice()) / 1e8,
                 createdAt: block.timestamp
             });
         } else {
-            // Refund unused wsXMR and sDAI
             if (actual0 < _wsxmrAmount) userWsxmrDeposits[_user] += (_wsxmrAmount - actual0);
             if (actual1 < _sDAIAmount) lpLiquidityAllocation[_lp] += (_sDAIAmount - actual1);
             
-            // Record position with actual amounts used
-            positionIndex = nextPositionIndex++;
             positions[positionIndex] = LiquidityPosition({
                 positionId: tokenId,
                 lpProvider: _lp,
                 userProvider: _user,
                 sDAIAmount: actual1,
                 wsxmrAmount: actual0,
+                lpInitialValueUSD: (actual1 * vaultManager.getCollateralPrice(GnosisAddresses.SDAI)) / 1e18,
+                userInitialValueUSD: (actual0 * vaultManager.getXmrPrice()) / 1e8,
                 createdAt: block.timestamp
             });
         }
@@ -297,17 +299,42 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
         // Determine which token is which
         (, , address token0, , , , , , , , , ) = positionManager.positions(position.positionId);
         
-        (uint256 sDAIReturned, uint256 wsxmrReturned) = token0 == GnosisAddresses.SDAI
-            ? (collected0, collected1)
-            : (collected1, collected0);
+        // CRITICAL FIX: Distribute proportionally based on initial USD value contributions
+        // This prevents LP from stealing user's assets when pool ratio shifts due to swaps
+        uint256 totalReturnedValue = ((token0 == GnosisAddresses.SDAI ? collected0 : collected1) * 
+            vaultManager.getCollateralPrice(GnosisAddresses.SDAI)) / 1e18 + 
+            ((token0 == GnosisAddresses.SDAI ? collected1 : collected0) * 
+            vaultManager.getXmrPrice()) / 1e8;
         
-        // CRITICAL FIX: Credit actual returned amounts to handle impermanent loss
-        // LPs naturally internalize IL - don't credit phantom collateral
-        lpLiquidityAllocation[position.lpProvider] += sDAIReturned;
-        userWsxmrDeposits[position.userProvider] += wsxmrReturned;
+        // Calculate LP's proportional share of total value
+        uint256 lpShareValue = (totalReturnedValue * position.lpInitialValueUSD) / 
+            (position.lpInitialValueUSD + position.userInitialValueUSD);
         
-        // Note: Impermanent loss is absorbed by providers proportionally
-        // No separate fee distribution needed - all returned amounts go back to providers
+        // Convert LP share to sDAI amount
+        uint256 lpSDAI = (lpShareValue * 1e18) / vaultManager.getCollateralPrice(GnosisAddresses.SDAI);
+        uint256 sDAIReturned = token0 == GnosisAddresses.SDAI ? collected0 : collected1;
+        if (lpSDAI > sDAIReturned) lpSDAI = sDAIReturned;
+        
+        // Convert user share to wsXMR amount
+        uint256 userWsxmr = ((totalReturnedValue - lpShareValue) * 1e8) / vaultManager.getXmrPrice();
+        uint256 wsxmrReturned = token0 == GnosisAddresses.SDAI ? collected1 : collected0;
+        if (userWsxmr > wsxmrReturned) userWsxmr = wsxmrReturned;
+        
+        // Credit proportional amounts
+        lpLiquidityAllocation[position.lpProvider] += lpSDAI;
+        userWsxmrDeposits[position.userProvider] += userWsxmr;
+        
+        // Remainder as fees (50/50 split)
+        if (sDAIReturned > lpSDAI) {
+            uint256 fee = sDAIReturned - lpSDAI;
+            pendingSDAIFees[position.lpProvider] += fee / 2;
+            pendingSDAIFees[position.userProvider] += fee - (fee / 2);
+        }
+        if (wsxmrReturned > userWsxmr) {
+            uint256 fee = wsxmrReturned - userWsxmr;
+            pendingWsxmrFees[position.lpProvider] += fee / 2;
+            pendingWsxmrFees[position.userProvider] += fee - (fee / 2);
+        }
         
         emit PositionClosed(_positionIndex, sDAIReturned, wsxmrReturned);
         
