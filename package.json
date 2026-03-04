@@ -14,6 +14,14 @@
     "lp:setup": "hardhat run scripts/lpServer/lp-setup.js --network unichain_testnet",
     "lp:setup:mock": "hardhat run scripts/lpServer/lp-setup-mock.js --network unichain_testnet",
     "test": "hardhat test",
+    "test:fork": "FORK_GNOSIS=true hardhat test",
+    "test:token": "FORK_GNOSIS=true hardhat test test/01-TokenAuthority.test.js",
+    "test:vault": "FORK_GNOSIS=true hardhat test test/02-VaultManagement.test.js",
+    "test:mint": "FORK_GNOSIS=true hardhat test test/03-MintingLifecycle.test.js",
+    "test:burn": "FORK_GNOSIS=true hardhat test test/04-BurningLifecycle.test.js",
+    "test:liquidation": "FORK_GNOSIS=true hardhat test test/05-Liquidation.test.js",
+    "test:buyburn": "FORK_GNOSIS=true hardhat test test/06-BuyAndBurn.test.js",
+    "test:router": "FORK_GNOSIS=true hardhat test test/07-RouterTests.test.js",
     "node": "hardhat node"
   },
   "keywords": [

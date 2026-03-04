@@ -17,6 +17,10 @@ module.exports = {
   networks: {
     hardhat: {
       chainId: 31337,
+      forking: {
+        url: process.env.GNOSIS_RPC_URL || "https://rpc.gnosischain.com",
+        enabled: process.env.FORK_GNOSIS === "true",
+      },
     },
     unichain_testnet: {
       url: process.env.UNICHAIN_RPC_URL || "https://sepolia.unichain.org",

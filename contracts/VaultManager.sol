@@ -507,7 +507,13 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             uint256 collateralValueUsd = (vault.collateralAmount * collateralPrice) / (10 ** collateralDecimals);
             uint256 maxTotalDebtCapacity = (collateralValueUsd * RATIO_PRECISION) / COLLATERAL_RATIO;
             uint256 maxMintAllowed = (maxTotalDebtCapacity * vault.maxMintBps) / BPS_DENOMINATOR;
-            if (wsxmrAmount > maxMintAllowed) revert InvalidValue();
+            
+            // CRITICAL FIX: Convert wsxmrAmount to USD value before comparison
+            // wsxmrAmount is in 8 decimals, maxMintAllowed is in USD with 18 decimals
+            uint256 xmrPrice = getXmrPrice(); // Returns price in 8 decimals
+            uint256 wsxmrValueUsd = (wsxmrAmount * xmrPrice) / 1e8; // Convert to USD (18 decimals)
+            
+            if (wsxmrValueUsd > maxMintAllowed) revert InvalidValue();
         }
         
         // Check capacity using Active + Pending Debt (prevents phantom debt DoS)
