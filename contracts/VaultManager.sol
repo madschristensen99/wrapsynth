@@ -513,9 +513,17 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // Check capacity using Active + Pending Debt (prevents phantom debt DoS)
         uint256 actualDebt = getActualDebt(vault.normalizedDebt);
         uint256 totalProjectedDebt = actualDebt + vault.pendingDebt + wsxmrAmount;
+        
+        // CRITICAL FIX: Exclude lockedCollateral from available collateral
+        // lockedCollateral is pledged to burn requests and cannot back new mints
+        // Without this check, LP can double-count collateral to mint unbacked wsXMR
+        uint256 availableCollateral = vault.collateralAmount > vault.lockedCollateral 
+            ? vault.collateralAmount - vault.lockedCollateral 
+            : 0;
+        
         uint256 ratio = calculateCollateralRatio(
             vault.collateralAsset,
-            vault.collateralAmount,
+            availableCollateral,
             totalProjectedDebt
         );
         if (ratio < COLLATERAL_RATIO) revert InsufficientCollateral();
@@ -786,17 +794,15 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         BurnRequest storage request = burnRequests[_requestId];
         if (request.status != BurnStatus.REQUESTED) revert InvalidStatus();
         
-        // CRITICAL: Only LP can propose hash
         Vault storage vault = vaults[request.lpVault];
         if (msg.sender != vault.lpAddress) revert Unauthorized();
         if (_secretHash == bytes32(0)) revert InvalidSecret();
         
-        // LP has locked XMR on Monero and now proposes the secretHash
-        // User will verify the Monero PTLC before confirming
-        // NOTE: Deadline is NOT updated yet - still under T1 request timeout
-        
         request.secretHash = _secretHash;
         request.status = BurnStatus.PROPOSED;
+        // CRITICAL FIX: Set deadline for user to confirm
+        // If user doesn't confirm within timeout, LP can cancel
+        request.deadline = block.timestamp + BURN_COMMIT_TIMEOUT;
         
         emit HashProposed(_requestId, _secretHash);
     }
@@ -848,20 +854,26 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         // Process the burn reward to the User
         if (request.rewardCollateral > 0) {
-            vault.collateralAmount -= request.rewardCollateral;
+            // CRITICAL FIX: Cap reward if vault was liquidated during burn
+            // Prevents underflow trap where static reward exceeds remaining collateral
+            uint256 safeReward = request.rewardCollateral > vault.collateralAmount 
+                ? vault.collateralAmount 
+                : request.rewardCollateral;
+            
+            vault.collateralAmount -= safeReward;
             
             // CRITICAL FIX: Decrement principal when collateral leaves the vault
             if (lpPrincipalDeposits[vault.lpAddress] > 0) {
-                uint256 principalReduction = (lpPrincipalDeposits[vault.lpAddress] * request.rewardCollateral) / 
-                    (vault.collateralAmount + request.rewardCollateral);
+                uint256 principalReduction = (lpPrincipalDeposits[vault.lpAddress] * safeReward) / 
+                    (vault.collateralAmount + safeReward);
                 lpPrincipalDeposits[vault.lpAddress] -= principalReduction;
                 globalLpPrincipal -= principalReduction;
             }
             
-            // CRITICAL FIX: request.rewardCollateral is already in sDAI shares
+            // CRITICAL FIX: safeReward is already in sDAI shares
             // Queue both ETH and ERC20 rewards to prevent DoS
-            pendingReturns[request.user][vault.collateralAsset] += request.rewardCollateral;
-            emit ReturnQueued(request.user, vault.collateralAsset, request.rewardCollateral);
+            pendingReturns[request.user][vault.collateralAsset] += safeReward;
+            emit ReturnQueued(request.user, vault.collateralAsset, safeReward);
         }
         
         request.status = BurnStatus.COMPLETED;
@@ -933,7 +945,16 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
      */
     function cancelBurn(bytes32 _requestId) external nonReentrant {
         BurnRequest storage request = burnRequests[_requestId];
-        if (request.status != BurnStatus.REQUESTED && request.status != BurnStatus.COMMITTED) revert InvalidStatus();
+        // CRITICAL FIX: Allow cancellation from REQUESTED or PROPOSED (after timeout)
+        // REQUESTED: User never engaged, LP can cancel
+        // PROPOSED: LP proposed hash but user didn't confirm within timeout
+        // COMMITTED: User confirmed Monero lock - LP must honor or be slashed
+        if (request.status != BurnStatus.REQUESTED && request.status != BurnStatus.PROPOSED) revert InvalidStatus();
+        
+        // CRITICAL FIX: For PROPOSED state, require timeout to prevent user griefing
+        if (request.status == BurnStatus.PROPOSED) {
+            if (block.timestamp < request.deadline) revert DeadlineNotExpired();
+        }
         
         // CRITICAL FIX: Prevent state overlap with liquidations
         // If vault was liquidated, lockedCollateral was seized
