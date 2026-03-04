@@ -60,8 +60,9 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
     mapping(address => uint256) public pendingSDAIFees; // LP fees
     mapping(address => uint256) public pendingWsxmrFees; // User fees
 
-    // CRITICAL FIX: LP approval system for user matchmaking
-    mapping(address => mapping(address => bool)) public lpApprovedUsers; // User fees
+    // CRITICAL FIX: Dual approval system for matchmaking
+    mapping(address => mapping(address => bool)) public lpApprovedUsers; // LP approves user
+    mapping(address => mapping(address => bool)) public userApprovedLps; // User approves LP
 
     // ========== EVENTS ==========
     
@@ -181,6 +182,15 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
     }
     
     /**
+     * @notice User approves an LP for liquidity pairing
+     * @param _lp Address of LP to approve
+     * @param _approved Whether to approve or revoke approval
+     */
+    function approveLpForPairing(address _lp, bool _approved) external {
+        userApprovedLps[msg.sender][_lp] = _approved;
+    }
+    
+    /**
      * @notice Create a matched liquidity position on Uniswap V3
      * @param _lp Address of LP providing sDAI
      * @param _user Address of user providing wsXMR
@@ -198,14 +208,16 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
         // Prevents user from forcing LP into manipulated positions
         if (msg.sender != _lp && msg.sender != _user) revert Unauthorized();
         
-        // CRITICAL FIX: Enforce LP approval system
-        // LP must have explicitly approved this user for pairing
+        // CRITICAL FIX: Enforce dual approval system
+        // BOTH parties must have explicitly approved each other
         if (!lpApprovedUsers[_lp][_user]) {
             revert("LP has not approved user for pairing");
         }
+        if (!userApprovedLps[_user][_lp]) {
+            revert("User has not approved LP for pairing");
+        }
         
-        // If msg.sender == _user, they are explicitly authorizing this pairing
-        // LP has pre-approved them via approveUserForPairing()
+        // Both parties have mutually approved this pairing
         
         // Validate balances
         if (lpLiquidityAllocation[_lp] < _sDAIAmount) revert InsufficientBalance();
