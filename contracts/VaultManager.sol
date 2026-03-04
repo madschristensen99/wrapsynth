@@ -71,10 +71,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     uint256 public globalTotalDebt; // Total wsXMR debt across all vaults
     uint256 public globalDebtIndex = 1e18; // Debt multiplier for O(1) proportional forgiveness
     uint256 public yieldWarChest; // Accumulated sDAI yield ready for buy-and-burn
-    
-    // Principal tracking for yield harvesting
     mapping(address => uint256) public lpPrincipalDeposits; // Track original DAI deposits per LP
-    
+    uint256 public globalLpPrincipal; // CRITICAL FIX: Global sum to avoid O(N) loop DoS   
     // ========== ENUMS ==========
     
     enum MintStatus {
@@ -87,11 +85,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     
     enum BurnStatus {
         INVALID,
-        REQUESTED,  // Step 1: User requested burn (debt reserved)
-        COMMITTED,  // Step 2: User verified XMR lock and committed (wsXMR burned, collateral escrowed)
-        COMPLETED,  // Step 3: LP revealed secret and unlocked collateral
-        SLASHED,    // LP failed to reveal secret, collateral slashed
-        CANCELLED   // User cancelled REQUESTED burn (LP never responded)
+        REQUESTED,  // Step 1: User requested burn, wsXMR burned, collateral locked
+        PROPOSED,   // Step 2: LP proposed secretHash (waiting for user confirmation)
+        COMMITTED,  // Step 3: User confirmed Monero lock (slashing timer T2 starts)
+        COMPLETED,  // Step 4: LP revealed secret and unlocked collateral
+        SLASHED,    // LP failed to reveal secret after user confirmation, collateral slashed
+        CANCELLED   // Cancelled before user confirmation (no slashing)
     }
     
     // ========== STRUCTS ==========
@@ -191,7 +190,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     event MintCancelled(bytes32 indexed requestId);
     event MintGriefingDepositUpdated(address indexed lpVault, uint256 newDeposit);
     
-    // Step 1: User requests burn (no funds locked)
+    // Step 1: User requests burn (wsXMR burned, collateral locked)
     event BurnRequested(
         bytes32 indexed requestId,
         address indexed user,
@@ -200,10 +199,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         uint256 xmrAmount,
         uint256 rewardCollateral
     );
-    // Step 2: User commits after verifying XMR lock (wsXMR burned, collateral escrowed)
+    // Step 2: LP proposes secretHash (waiting for user confirmation)
+    event HashProposed(bytes32 indexed requestId, bytes32 secretHash);
+    // Step 3: User confirms Monero lock (slashing timer T2 starts)
     event BurnCommitted(
         bytes32 indexed requestId,
-        bytes32 secretHash,
         uint256 deadline
     );
     // Step 3: LP reveals secret (collateral released)
@@ -328,6 +328,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             
             // Track principal DAI deposit for yield harvesting
             lpPrincipalDeposits[msg.sender] += _amount;
+            globalLpPrincipal += _amount; // CRITICAL FIX: Update global sum
             
             emit CollateralDeposited(msg.sender, vault.collateralAsset, sDAIShares);
         } else if (vault.collateralAsset == address(0)) {
@@ -387,6 +388,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             uint256 totalCollateral = vault.collateralAmount + _amount; // Before withdrawal
             uint256 principalToDeduct = (lpPrincipalDeposits[msg.sender] * _amount) / totalCollateral;
             lpPrincipalDeposits[msg.sender] -= principalToDeduct;
+            globalLpPrincipal -= principalToDeduct; // CRITICAL FIX: Update global sum
             
             emit CollateralWithdrawn(msg.sender, vault.collateralAsset, daiReceived);
         } else if (vault.collateralAsset == address(0)) {
@@ -766,33 +768,53 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     }
     
     /**
-     * @notice Step 2: LP commits burn by providing secretHash after locking XMR on Monero
-     * @dev CRITICAL: LP (not user) provides secretHash to prevent malicious hash attacks
-     * @dev LP locks XMR on Monero with PTLC using this secret, then registers hash on Ethereum
+     * @notice Step 2: LP proposes secretHash after locking XMR on Monero
+     * @dev LP locks XMR on Monero with PTLC, then proposes hash on Ethereum
+     * @dev User must verify and confirm before slashing timer starts
      * @param _requestId The burn request ID
      * @param _secretHash Hash of secret that LP generated for the Monero PTLC
      */
-    function commitBurn(bytes32 _requestId, bytes32 _secretHash) external nonReentrant {
+    function proposeHash(bytes32 _requestId, bytes32 _secretHash) external nonReentrant {
         BurnRequest storage request = burnRequests[_requestId];
         if (request.status != BurnStatus.REQUESTED) revert InvalidStatus();
         
-        // CRITICAL: Only LP can commit (prevents user from providing fake hash)
+        // CRITICAL: Only LP can propose hash
         Vault storage vault = vaults[request.lpVault];
         if (msg.sender != vault.lpAddress) revert Unauthorized();
         if (_secretHash == bytes32(0)) revert InvalidSecret();
         
-        // LP has locked XMR on Monero and now registers the secretHash
-        // User will verify the Monero PTLC matches this hash before claiming XMR
+        // LP has locked XMR on Monero and now proposes the secretHash
+        // User will verify the Monero PTLC before confirming
+        // NOTE: Deadline is NOT updated yet - still under T1 request timeout
         
         request.secretHash = _secretHash;
-        request.deadline = block.timestamp + BURN_COMMIT_TIMEOUT;
-        request.status = BurnStatus.COMMITTED;
+        request.status = BurnStatus.PROPOSED;
         
-        emit BurnCommitted(_requestId, _secretHash, request.deadline);
+        emit HashProposed(_requestId, _secretHash);
     }
     
     /**
-     * @notice Step 3: LP finalizes burn by revealing secret to unlock collateral
+     * @notice Step 3: User confirms Monero lock is valid (starts slashing timer T2)
+     * @dev User inspects Monero blockchain and explicitly opts-in
+     * @dev This starts the short BURN_COMMIT_TIMEOUT for LP to reveal secret
+     * @param _requestId The burn request ID
+     */
+    function confirmMoneroLock(bytes32 _requestId) external nonReentrant {
+        BurnRequest storage request = burnRequests[_requestId];
+        if (request.status != BurnStatus.PROPOSED) revert InvalidStatus();
+        if (msg.sender != request.user) revert Unauthorized();
+        
+        // User explicitly confirms the Monero lock is valid
+        // NOW the LP is on the clock to reveal the secret
+        // BURN_COMMIT_TIMEOUT must be shorter than Monero refund timelock
+        request.deadline = block.timestamp + BURN_COMMIT_TIMEOUT;
+        request.status = BurnStatus.COMMITTED;
+        
+        emit BurnCommitted(_requestId, request.deadline);
+    }
+    
+    /**
+     * @notice Step 4: LP finalizes burn by revealing secret to unlock collateral
      * @param _requestId The burn request ID
      * @param _secret The secret that LP generated (user saw this on Ethereum, used it to claim XMR)
      */
@@ -956,6 +978,14 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // CHECKS-EFFECTS-INTERACTIONS: Update state before external calls
         vault.collateralAmount -= collateralAmount;
         
+        // CRITICAL FIX: Proportionally reduce lpPrincipalDeposits to prevent yield harvesting from breaking
+        // When collateral is seized, the principal tracking must be reduced proportionally
+        if (lpPrincipalDeposits[_lpVault] > 0) {
+            uint256 principalReduction = (lpPrincipalDeposits[_lpVault] * collateralAmount) / (vault.collateralAmount + collateralAmount);
+            lpPrincipalDeposits[_lpVault] -= principalReduction;
+            globalLpPrincipal -= principalReduction; // CRITICAL FIX: Update global sum
+        }
+        
         // CRITICAL FIX: Normalize the debt amount when liquidating
         uint256 normalizedClear = (_debtToClear * 1e18) / globalDebtIndex;
         vault.normalizedDebt -= normalizedClear;
@@ -996,16 +1026,13 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         uint256 totalUnderlyingDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(totalSDAIShares);
         
-        // Calculate total principal across all LPs
-        uint256 totalPrincipal = 0;
-        for (uint256 i = 0; i < vaultList.length; i++) {
-            totalPrincipal += lpPrincipalDeposits[vaultList[i]];
-        }
+        // CRITICAL FIX: Use global principal sum to avoid O(N) loop DoS
+        // Attackers cannot grief by creating thousands of empty vaults
         
         // CRITICAL FIX: Include already-harvested war chest in total obligations
         // This prevents double-counting yield on subsequent calls
         uint256 warChestDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(yieldWarChest);
-        uint256 totalAssignedDAI = totalPrincipal + warChestDAI;
+        uint256 totalAssignedDAI = globalLpPrincipal + warChestDAI;
         
         // Yield = Total Underlying DAI - (Principal + War Chest)
         if (totalUnderlyingDAI <= totalAssignedDAI) return; // No yield to harvest
