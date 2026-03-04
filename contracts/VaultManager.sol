@@ -173,6 +173,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     event ReturnsWithdrawn(address indexed recipient, address indexed token, uint256 amount);
     
     event YieldHarvested(uint256 yieldInDAI, uint256 yieldInShares);
+    event BadDebtWrittenOff(address indexed lpVault, uint256 debtAmount);
     event BuyAndBurnExecuted(uint256 sDAISpent, uint256 wsxmrBurned, uint256 newGlobalDebtIndex);
     
     event MintInitiated(
@@ -1044,6 +1045,18 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             IERC20(vault.collateralAsset).safeTransfer(msg.sender, collateralAmount);
         }
         
+        // CRITICAL FIX: Clean up orphaned bad debt if vault is completely drained
+        // If vault has zero collateral but still has debt, remove the bad debt from global tracking
+        // This prevents yield dilution where buy-and-burn pays back ghost debt
+        if (vault.collateralAmount == 0 && vault.normalizedDebt > 0) {
+            uint256 remainingDebt = getActualDebt(vault.normalizedDebt);
+            if (remainingDebt > 0 && globalTotalDebt >= remainingDebt) {
+                globalTotalDebt -= remainingDebt;
+                vault.normalizedDebt = 0; // Clear the bad debt
+                emit BadDebtWrittenOff(_lpVault, remainingDebt);
+            }
+        }
+        
         emit VaultLiquidated(_lpVault, msg.sender, _debtToClear, collateralAmount);
     }
     
@@ -1105,13 +1118,17 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         lastBuyTimestamp = block.timestamp;
         
         // 4. MEV Protection: Calculate minimum output using oracle
-        // Convert sDAI to DAI value, then to wsXMR expected output
-        uint256 daiValue = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(spendAmount);
-        uint256 xmrPrice = getXmrPrice();
-        // CRITICAL FIX: Correct decimal normalization
-        // daiValue is in 18 decimals, xmrPrice is in 18 decimals
-        // Expected wsXMR in 8 decimals = (daiValue * 1e8) / xmrPrice
-        uint256 expectedWsxmr = (daiValue * 1e8) / xmrPrice;
+        // CRITICAL FIX: Use oracle price for sDAI, not hardcoded 1 DAI = 1 USD assumption
+        // This prevents DoS during DAI depeg events
+        uint256 sDAIPrice = getCollateralPrice(GnosisAddresses.SDAI); // USD per sDAI share (18 decimals)
+        uint256 xmrPrice = getXmrPrice(); // USD per XMR (18 decimals)
+        
+        // Calculate expected wsXMR output
+        // spendAmount is in sDAI shares (18 decimals)
+        // sDAIPrice is USD per share (18 decimals)
+        // xmrPrice is USD per XMR (18 decimals)
+        // Expected wsXMR in 8 decimals = (spendAmount * sDAIPrice / 1e18) * 1e8 / xmrPrice
+        uint256 expectedWsxmr = (spendAmount * sDAIPrice) / xmrPrice / 1e10; // Normalize to 8 decimals
         
         // Allow 2% slippage max to prevent sandwich attacks
         uint256 minWsxmrOut = (expectedWsxmr * (BPS_DENOMINATOR - MEV_SLIPPAGE_BPS)) / BPS_DENOMINATOR;
