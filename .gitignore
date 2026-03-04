@@ -93,6 +93,9 @@ broadcast/
 contracts/**/*.abi
 contracts/**/*.bin
 
+# External dependencies (should come from node_modules)
+contracts/@openzeppelin/
+
 # Deployment artifacts
 deployments/localhost/
 deployments/hardhat/
