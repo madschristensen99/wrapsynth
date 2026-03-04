@@ -26,9 +26,15 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     uint256 public constant LIQUIDATION_BONUS = 110; // 110% liquidator reward (must be < threshold)
     uint256 public constant RATIO_PRECISION = 100;
     uint256 public constant PRICE_PRECISION = 1e18;
-    uint256 public constant BURN_TIMEOUT = 24 hours; // LP must fulfill burn within 24h
-    uint256 public constant MAX_MINT_TIMEOUT = 7 days; // Maximum timeout for mint requests (prevents DoS)
-    // NOTE: Monero PTLC refund timelock MUST be < BURN_TIMEOUT (e.g., 12h) to prevent griefing
+    
+    // MINT TIMEOUTS
+    uint256 public constant MAX_MINT_TIMEOUT = 12 hours; // Reduced from 7 days
+    uint256 public constant MINT_READY_EXTENSION = 8 hours; // Time user has to claim after LP is ready
+    
+    // BURN TIMEOUTS
+    uint256 public constant BURN_REQUEST_TIMEOUT = 2 hours; // Time LP has to respond to a burn
+    // NOTE: BURN_COMMIT_TIMEOUT must be GREATER than the Monero PTLC refund timelock
+    uint256 public constant BURN_COMMIT_TIMEOUT = 8 hours; // Time LP has to reveal secret after committing
     
     // MARKET METRIC CONSTANTS
     uint256 public constant BPS_DENOMINATOR = 10000;
@@ -81,7 +87,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         address collateralAsset; // address(0) for ETH
         uint256 collateralAmount;
         uint256 lockedCollateral; // Collateral reserved for pending burns (still liquidatable!)
-        uint256 debtAmount; // Amount of wsXMR backed by this vault
+        uint256 debtAmount; // Active, finalized wsXMR minted (Liquidatable)
+        uint256 pendingDebt; // Reserved capacity for pending mints (NOT Liquidatable)
+        uint16 maxMintBps; // LP config limits single mint size (e.g. 1000 = 10%)
         uint256 mintGriefingDeposit; // ETH deposit required for mint requests (LP-configurable)
         uint16 mintFeeBps; // Fee LP charges for minting (paid in wsXMR)
         uint16 burnRewardBps; // Reward LP pays to incentivize burning (paid in Collateral)
@@ -133,8 +141,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     // Track all vault addresses
     address[] public vaultList;
     
-    // Track pending ETH withdrawals for users/LPs
-    mapping(address => uint256) public pendingReturns;
+    // Track pending withdrawals for users/LPs (user => token => amount)
+    // address(0) represents native ETH
+    mapping(address => mapping(address => uint256)) public pendingReturns;
     
     // ========== EVENTS ==========
     
@@ -144,8 +153,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     
     event VaultMarketMetricsUpdated(address indexed lpVault, uint16 mintFeeBps, uint16 burnRewardBps);
     
-    event ReturnQueued(address indexed recipient, uint256 amount);
-    event ReturnsWithdrawn(address indexed recipient, uint256 amount);
+    event ReturnQueued(address indexed recipient, address indexed token, uint256 amount);
+    event ReturnsWithdrawn(address indexed recipient, address indexed token, uint256 amount);
     
     event MintInitiated(
         bytes32 indexed requestId,
@@ -258,6 +267,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             collateralAmount: 0,
             lockedCollateral: 0,
             debtAmount: 0,
+            pendingDebt: 0,
+            maxMintBps: 0, // LP can set this later via setMaxMintBps (0 = no limit)
             mintGriefingDeposit: 0, // LP can set this later via setMintGriefingDeposit
             mintFeeBps: 0,
             burnRewardBps: 0,
@@ -309,11 +320,15 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         // Check if withdrawal would make vault unhealthy
         uint256 newCollateralAmount = vault.collateralAmount - _amount;
-        if (vault.debtAmount > 0) {
+        
+        // CRITICAL: Calculate safety based on BOTH active and pending debt
+        uint256 totalObligations = vault.debtAmount + vault.pendingDebt;
+        
+        if (totalObligations > 0) {
             uint256 ratio = calculateCollateralRatio(
                 vault.collateralAsset,
                 newCollateralAmount,
-                vault.debtAmount
+                totalObligations
             );
             if (ratio < COLLATERAL_RATIO) revert InsufficientCollateral();
         }
@@ -358,20 +373,38 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     }
     
     /**
-     * @notice Allows users or LPs to withdraw their queued ETH refunds/rewards
-     * @dev Replaces the push-payment pattern to prevent DoS attacks
+     * @notice LP sets the maximum wsXMR they are willing to accept in a single mint request
+     * @param _maxMintBps Value in basis points (1000 = 10% of total collateral capacity)
      */
-    function withdrawReturns() external nonReentrant {
-        uint256 amount = pendingReturns[msg.sender];
+    function setMaxMintBps(uint16 _maxMintBps) external {
+        if (!vaults[msg.sender].active) revert VaultDoesNotExist();
+        if (_maxMintBps > BPS_DENOMINATOR) revert InvalidValue();
+        
+        vaults[msg.sender].maxMintBps = _maxMintBps;
+    }
+    
+    /**
+     * @notice Allows users or LPs to withdraw their queued refunds/rewards
+     * @dev Replaces the push-payment pattern to prevent DoS attacks
+     * @param _token Token address to withdraw (address(0) for ETH)
+     */
+    function withdrawReturns(address _token) external nonReentrant {
+        uint256 amount = pendingReturns[msg.sender][_token];
         if (amount == 0) revert ZeroAmount();
         
         // CHECKS-EFFECTS-INTERACTIONS
-        pendingReturns[msg.sender] = 0;
+        pendingReturns[msg.sender][_token] = 0;
         
-        (bool success, ) = payable(msg.sender).call{value: amount}("");
-        require(success, "ETH transfer failed");
+        if (_token == address(0)) {
+            // Withdraw ETH
+            (bool success, ) = payable(msg.sender).call{value: amount}("");
+            require(success, "ETH transfer failed");
+        } else {
+            // Withdraw ERC20
+            IERC20(_token).safeTransfer(msg.sender, amount);
+        }
         
-        emit ReturnsWithdrawn(msg.sender, amount);
+        emit ReturnsWithdrawn(msg.sender, _token, amount);
     }
     
     // ========== MINTING FLOW ==========
@@ -406,12 +439,22 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // Calculate the LP's service fee in wsXMR
         uint256 feeAmount = (wsxmrAmount * vault.mintFeeBps) / BPS_DENOMINATOR;
         
-        // Check if LP has enough collateral capacity
-        uint256 newDebt = vault.debtAmount + wsxmrAmount;
+        // Enforce LP's chunk size limit (prevents single large mint from draining capacity)
+        if (vault.maxMintBps > 0) {
+            uint256 collateralPrice = getCollateralPrice(vault.collateralAsset);
+            uint256 collateralDecimals = vault.collateralAsset == address(0) ? 18 : IERC20Metadata(vault.collateralAsset).decimals();
+            uint256 collateralValueUsd = (vault.collateralAmount * collateralPrice) / (10 ** collateralDecimals);
+            uint256 maxTotalDebtCapacity = (collateralValueUsd * RATIO_PRECISION) / COLLATERAL_RATIO;
+            uint256 maxMintAllowed = (maxTotalDebtCapacity * vault.maxMintBps) / BPS_DENOMINATOR;
+            if (wsxmrAmount > maxMintAllowed) revert InvalidValue();
+        }
+        
+        // Check capacity using Active + Pending Debt (prevents phantom debt DoS)
+        uint256 totalProjectedDebt = vault.debtAmount + vault.pendingDebt + wsxmrAmount;
         uint256 ratio = calculateCollateralRatio(
             vault.collateralAsset,
             vault.collateralAmount,
-            newDebt
+            totalProjectedDebt
         );
         if (ratio < COLLATERAL_RATIO) revert InsufficientCollateral();
         
@@ -428,10 +471,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // Check for collision BEFORE modifying state
         if (mintRequests[requestId].status != MintStatus.INVALID) revert MintAlreadyExists();
         
-        // CRITICAL: Reserve debt immediately to prevent race conditions
-        // Multiple mints could pass the collateral check against the same capacity
-        // This mirrors the burn flow which escrows collateral immediately
-        vault.debtAmount = newDebt;
+        // CRITICAL: Add to pendingDebt (NOT debtAmount) to prevent phantom debt DoS
+        // Pending debt reserves capacity but does NOT count towards liquidation calculations
+        vault.pendingDebt += wsxmrAmount;
         
         mintRequests[requestId] = MintRequest({
             requestId: requestId,
@@ -487,18 +529,22 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             revert InvalidSecret();
         }
         
-        // Debt was already reserved in initiateMint, no need to update again
+        Vault storage vault = vaults[request.lpVault];
+        
+        // CRITICAL: Move debt from Pending state to Active state
+        vault.pendingDebt -= request.wsxmrAmount;
+        vault.debtAmount += request.wsxmrAmount; // NOW it can be liquidated
+        
         // Split mint execution between User and LP if a fee was configured
         wsxmrToken.mint(request.user, request.wsxmrAmount - request.feeAmount);
         if (request.feeAmount > 0) {
-            Vault storage vault = vaults[request.lpVault];
             wsxmrToken.mint(vault.lpAddress, request.feeAmount);
         }
         
         // Queue griefing deposit refund for user (pull-over-push pattern)
         if (request.griefingDeposit > 0) {
-            pendingReturns[request.user] += request.griefingDeposit;
-            emit ReturnQueued(request.user, request.griefingDeposit);
+            pendingReturns[request.user][address(0)] += request.griefingDeposit;
+            emit ReturnQueued(request.user, address(0), request.griefingDeposit);
         }
         
         // Mark as completed
@@ -520,9 +566,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             revert InvalidStatus();
         }
         
-        // For READY state, require extended timeout (48h from initiation)
+        // For READY state, require extended timeout
         uint256 requiredTimeout = request.status == MintStatus.READY 
-            ? request.timeout + 24 hours 
+            ? request.timeout + MINT_READY_EXTENSION 
             : request.timeout;
         
         if (block.timestamp < requiredTimeout) revert TimeoutNotReached();
@@ -531,9 +577,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // This prevents DoS where user locks LP's debt capacity forever
         
         // CHECKS-EFFECTS-INTERACTIONS: Update state BEFORE external calls
-        // Release the reserved debt back to the LP vault
+        // Release the reserved pending capacity
         Vault storage vault = vaults[request.lpVault];
-        vault.debtAmount -= request.wsxmrAmount;
+        vault.pendingDebt -= request.wsxmrAmount;
         
         // Mark as cancelled BEFORE transferring (prevents reentrancy)
         request.status = MintStatus.CANCELLED;
@@ -543,8 +589,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         // Queue griefing deposit for LP as compensation for locked capacity
         if (depositToTransfer > 0) {
-            pendingReturns[vault.lpAddress] += depositToTransfer;
-            emit ReturnQueued(vault.lpAddress, depositToTransfer);
+            pendingReturns[vault.lpAddress][address(0)] += depositToTransfer;
+            emit ReturnQueued(vault.lpAddress, address(0), depositToTransfer);
         }
     }
     
@@ -568,6 +614,15 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         Vault storage vault = vaults[_lpVault];
         if (vault.debtAmount < _wsxmrAmount) revert InsufficientDebt();
+        
+        // CRITICAL: Verify vault is healthy before allowing burn to be routed to it
+        // Prevents users from burning to unhealthy vaults that may be liquidated
+        uint256 vaultHealthRatio = calculateCollateralRatio(
+            vault.collateralAsset,
+            vault.collateralAmount,
+            vault.debtAmount
+        );
+        if (vaultHealthRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
         
         // 1. Calculate and verify collateral needed for this specific burn
         uint256 collateralValue = getCollateralValueForDebt(_wsxmrAmount);
@@ -606,7 +661,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         uint256 xmrAmount = _wsxmrAmount * 1e4;
         
         // Step 1: wsXMR burned, collateral locked (but still liquidatable)
-        // LP has 48h to lock XMR on Monero and provide secretHash
+        // LP has BURN_REQUEST_TIMEOUT to lock XMR on Monero and provide secretHash
         burnRequests[requestId] = BurnRequest({
             requestId: requestId,
             user: msg.sender,
@@ -616,7 +671,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             lockedCollateral: collateralToLock, // Base collateral locked
             rewardCollateral: rewardCollateral, // Extra reward collateral
             secretHash: bytes32(0), // Will be set in commitBurn
-            deadline: block.timestamp + 48 hours, // LP has 48h to lock Monero
+            deadline: block.timestamp + BURN_REQUEST_TIMEOUT,
             status: BurnStatus.REQUESTED
         });
         
@@ -652,7 +707,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // User will verify the Monero PTLC matches this hash before claiming XMR
         
         request.secretHash = _secretHash;
-        request.deadline = block.timestamp + BURN_TIMEOUT; // Start 24h timer for LP to reveal
+        request.deadline = block.timestamp + BURN_COMMIT_TIMEOUT;
         request.status = BurnStatus.COMMITTED;
         
         emit BurnCommitted(_requestId, _secretHash, request.deadline);
@@ -686,14 +741,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // Process the burn reward to the User
         if (request.rewardCollateral > 0) {
             vault.collateralAmount -= request.rewardCollateral;
-            if (vault.collateralAsset == address(0)) {
-                // Queue ETH rewards to prevent DoS
-                pendingReturns[request.user] += request.rewardCollateral;
-                emit ReturnQueued(request.user, request.rewardCollateral);
-            } else {
-                // ERC20 transfers are safe to push here because we expect standard implementations
-                IERC20(vault.collateralAsset).safeTransfer(request.user, request.rewardCollateral);
-            }
+            // Queue both ETH and ERC20 rewards to prevent DoS
+            pendingReturns[request.user][vault.collateralAsset] += request.rewardCollateral;
+            emit ReturnQueued(request.user, vault.collateralAsset, request.rewardCollateral);
         }
         
         request.status = BurnStatus.COMPLETED;
