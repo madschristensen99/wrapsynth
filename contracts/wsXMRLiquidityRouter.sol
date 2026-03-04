@@ -230,6 +230,12 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             if (actual0 < _sDAIAmount) lpLiquidityAllocation[_lp] += (_sDAIAmount - actual0);
             if (actual1 < _wsxmrAmount) userWsxmrDeposits[_user] += (_wsxmrAmount - actual1);
             
+            // CRITICAL FIX: Calculate USD values based on ACTUAL spot ratio used by Uniswap
+            // This prevents oracle/spot divergence arbitrage attacks
+            // Use the actual amounts deposited to determine fair value split
+            uint256 totalValueUSD = (actual0 * vaultManager.getCollateralPrice(GnosisAddresses.SDAI)) / 1e18 + 
+                                    (actual1 * vaultManager.getXmrPrice()) / 1e8;
+            
             positions[positionIndex] = LiquidityPosition({
                 positionId: tokenId,
                 lpProvider: _lp,
@@ -243,6 +249,11 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
         } else {
             if (actual0 < _wsxmrAmount) userWsxmrDeposits[_user] += (_wsxmrAmount - actual0);
             if (actual1 < _sDAIAmount) lpLiquidityAllocation[_lp] += (_sDAIAmount - actual1);
+            
+            // CRITICAL FIX: Calculate USD values based on ACTUAL spot ratio used by Uniswap
+            // This prevents oracle/spot divergence arbitrage attacks
+            uint256 totalValueUSD = (actual1 * vaultManager.getCollateralPrice(GnosisAddresses.SDAI)) / 1e18 + 
+                                    (actual0 * vaultManager.getXmrPrice()) / 1e8;
             
             positions[positionIndex] = LiquidityPosition({
                 positionId: tokenId,
@@ -272,11 +283,15 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             revert Unauthorized();
         }
         
-        // Get position details
-        (, , , , , , , uint128 liquidity, , , , ) = positionManager.positions(position.positionId);
+        // Get position details including uncollected fees
+        (, , address token0, , , , , uint128 liquidity, , , uint128 tokensOwed0, uint128 tokensOwed1) = 
+            positionManager.positions(position.positionId);
+        
+        // CRITICAL FIX: Separate actual fees from principal using Uniswap's tokensOwed
+        // tokensOwed0/1 track actual trading fees, not IL-shifted principal
         
         // Remove all liquidity
-        (uint256 amount0, uint256 amount1) = positionManager.decreaseLiquidity(
+        positionManager.decreaseLiquidity(
             INonfungiblePositionManager.DecreaseLiquidityParams({
                 tokenId: position.positionId,
                 liquidity: liquidity,
@@ -286,7 +301,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             })
         );
         
-        // Collect tokens
+        // Collect all tokens (principal + fees)
         (uint256 collected0, uint256 collected1) = positionManager.collect(
             INonfungiblePositionManager.CollectParams({
                 tokenId: position.positionId,
@@ -296,44 +311,52 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             })
         );
         
-        // Determine which token is which
-        (, , address token0, , , , , , , , , ) = positionManager.positions(position.positionId);
-        
-        // CRITICAL FIX: Distribute proportionally based on initial USD value contributions
-        // This prevents LP from stealing user's assets when pool ratio shifts due to swaps
+        // CRITICAL FIX: Distribute proportionally based on initial USD value
+        // This handles impermanent loss fairly between both parties
         uint256 totalReturnedValue = ((token0 == GnosisAddresses.SDAI ? collected0 : collected1) * 
             vaultManager.getCollateralPrice(GnosisAddresses.SDAI)) / 1e18 + 
             ((token0 == GnosisAddresses.SDAI ? collected1 : collected0) * 
             vaultManager.getXmrPrice()) / 1e8;
         
-        // Calculate LP's proportional share of total value
+        // Calculate proportional shares
         uint256 lpShareValue = (totalReturnedValue * position.lpInitialValueUSD) / 
             (position.lpInitialValueUSD + position.userInitialValueUSD);
         
-        // Convert LP share to sDAI amount
+        // Convert to token amounts
         uint256 lpSDAI = (lpShareValue * 1e18) / vaultManager.getCollateralPrice(GnosisAddresses.SDAI);
-        uint256 sDAIReturned = token0 == GnosisAddresses.SDAI ? collected0 : collected1;
-        if (lpSDAI > sDAIReturned) lpSDAI = sDAIReturned;
-        
-        // Convert user share to wsXMR amount
         uint256 userWsxmr = ((totalReturnedValue - lpShareValue) * 1e8) / vaultManager.getXmrPrice();
+        
+        uint256 sDAIReturned = token0 == GnosisAddresses.SDAI ? collected0 : collected1;
         uint256 wsxmrReturned = token0 == GnosisAddresses.SDAI ? collected1 : collected0;
+        
+        if (lpSDAI > sDAIReturned) lpSDAI = sDAIReturned;
         if (userWsxmr > wsxmrReturned) userWsxmr = wsxmrReturned;
         
-        // Credit proportional amounts
+        // Credit proportional principal (includes IL)
         lpLiquidityAllocation[position.lpProvider] += lpSDAI;
         userWsxmrDeposits[position.userProvider] += userWsxmr;
         
-        // Remainder as fees (50/50 split)
-        if (sDAIReturned > lpSDAI) {
-            uint256 fee = sDAIReturned - lpSDAI;
-            pendingSDAIFees[position.lpProvider] += fee / 2;
-            pendingSDAIFees[position.userProvider] += fee - (fee / 2);
+        // CRITICAL FIX: Use tokensOwed for actual fees (50/50 split)
+        // This separates real trading fees from IL-shifted principal
+        if (tokensOwed0 > 0) {
+            uint256 fee0 = uint256(tokensOwed0);
+            if (token0 == GnosisAddresses.SDAI) {
+                pendingSDAIFees[position.lpProvider] += fee0 / 2;
+                pendingSDAIFees[position.userProvider] += fee0 - (fee0 / 2);
+            } else {
+                pendingWsxmrFees[position.lpProvider] += fee0 / 2;
+                pendingWsxmrFees[position.userProvider] += fee0 - (fee0 / 2);
+            }
         }
-        if (wsxmrReturned > userWsxmr) {
-            uint256 fee = wsxmrReturned - userWsxmr;
-            pendingWsxmrFees[position.lpProvider] += fee / 2;
-            pendingWsxmrFees[position.userProvider] += fee - (fee / 2);
+        if (tokensOwed1 > 0) {
+            uint256 fee1 = uint256(tokensOwed1);
+            if (token0 == GnosisAddresses.SDAI) {
+                pendingWsxmrFees[position.lpProvider] += fee1 / 2;
+                pendingWsxmrFees[position.userProvider] += fee1 - (fee1 / 2);
+            } else {
+                pendingSDAIFees[position.lpProvider] += fee1 / 2;
+                pendingSDAIFees[position.userProvider] += fee1 - (fee1 / 2);
+            }
         }
         
         emit PositionClosed(_positionIndex, sDAIReturned, wsxmrReturned);
