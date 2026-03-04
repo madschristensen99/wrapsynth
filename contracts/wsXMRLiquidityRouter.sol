@@ -179,6 +179,9 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
         uint256 _sDAIAmount,
         uint256 _wsxmrAmount
     ) external nonReentrant returns (uint256 positionIndex) {
+        // CRITICAL FIX: Authorization - only LP or user can create their own positions
+        if (msg.sender != _lp && msg.sender != _user) revert Unauthorized();
+        
         // Validate balances
         if (lpLiquidityAllocation[_lp] < _sDAIAmount) revert InsufficientBalance();
         if (userWsxmrDeposits[_user] < _wsxmrAmount) revert InsufficientBalance();
@@ -201,7 +204,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             : (_wsxmrAmount, _sDAIAmount);
         
         // Create Uniswap V3 position
-        (uint256 tokenId, , , ) = positionManager.mint(
+        (uint256 tokenId, , uint256 actual0, uint256 actual1) = positionManager.mint(
             INonfungiblePositionManager.MintParams({
                 token0: token0,
                 token1: token1,
@@ -210,23 +213,45 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
                 tickUpper: TICK_UPPER,
                 amount0Desired: amount0,
                 amount1Desired: amount1,
-                amount0Min: (amount0 * 95) / 100, // 5% slippage tolerance
-                amount1Min: (amount1 * 95) / 100,
+                amount0Min: (amount0 * 98) / 100, // CRITICAL FIX: Tighter slippage for MEV protection
+                amount1Min: (amount1 * 98) / 100,
                 recipient: address(this),
                 deadline: block.timestamp
             })
         );
         
-        // Record position
-        positionIndex = nextPositionIndex++;
-        positions[positionIndex] = LiquidityPosition({
-            positionId: tokenId,
-            lpProvider: _lp,
-            userProvider: _user,
-            sDAIAmount: _sDAIAmount,
-            wsxmrAmount: _wsxmrAmount,
-            createdAt: block.timestamp
-        });
+        // CRITICAL FIX: Refund unused amounts to prevent fund lockup
+        if (token0 == GnosisAddresses.SDAI) {
+            // Refund unused sDAI and wsXMR
+            if (actual0 < _sDAIAmount) lpLiquidityAllocation[_lp] += (_sDAIAmount - actual0);
+            if (actual1 < _wsxmrAmount) userWsxmrDeposits[_user] += (_wsxmrAmount - actual1);
+            
+            // Record position with actual amounts used
+            positionIndex = nextPositionIndex++;
+            positions[positionIndex] = LiquidityPosition({
+                positionId: tokenId,
+                lpProvider: _lp,
+                userProvider: _user,
+                sDAIAmount: actual0,
+                wsxmrAmount: actual1,
+                createdAt: block.timestamp
+            });
+        } else {
+            // Refund unused wsXMR and sDAI
+            if (actual0 < _wsxmrAmount) userWsxmrDeposits[_user] += (_wsxmrAmount - actual0);
+            if (actual1 < _sDAIAmount) lpLiquidityAllocation[_lp] += (_sDAIAmount - actual1);
+            
+            // Record position with actual amounts used
+            positionIndex = nextPositionIndex++;
+            positions[positionIndex] = LiquidityPosition({
+                positionId: tokenId,
+                lpProvider: _lp,
+                userProvider: _user,
+                sDAIAmount: actual1,
+                wsxmrAmount: actual0,
+                createdAt: block.timestamp
+            });
+        }
         
         emit PositionCreated(positionIndex, tokenId, _lp, _user, _sDAIAmount, _wsxmrAmount);
     }
