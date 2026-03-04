@@ -117,7 +117,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
      */
     struct MintRequest {
         bytes32 requestId;
-        address user;
+        address initiator; // msg.sender who pays the ETH deposit
+        address recipient; // destination address for minted wsXMR
         address lpVault;
         uint256 xmrAmount; // Amount of XMR (in atomic units, 1e12 per XMR)
         uint256 wsxmrAmount; // Amount of wsXMR to mint (1e8 per wsXMR)
@@ -178,8 +179,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     
     event MintInitiated(
         bytes32 indexed requestId,
-        address indexed user,
-        address indexed lpVault,
+        address indexed initiator,
+        address indexed recipient,
+        address lpVault,
         uint256 xmrAmount,
         uint256 wsxmrAmount,
         uint256 feeAmount,
@@ -473,6 +475,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     /**
      * @notice User initiates a mint request
      * @param _lpVault Address of the LP vault to use
+     * @param _recipient Destination address for minted wsXMR tokens
      * @param _xmrAmount Amount of XMR to lock (atomic units)
      * @param _claimCommitment Hash of the secret LP will reveal
      * @param _timeoutDuration How long before request can be cancelled
@@ -480,11 +483,13 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
      */
     function initiateMint(
         address _lpVault,
+        address _recipient,
         uint256 _xmrAmount,
         bytes32 _claimCommitment,
         uint256 _timeoutDuration
     ) external payable returns (bytes32 requestId) {
         if (_lpVault == address(0)) revert ZeroAddress();
+        if (_recipient == address(0)) revert ZeroAddress();
         if (_xmrAmount == 0) revert ZeroAmount();
         if (_claimCommitment == bytes32(0)) revert InvalidSecret();
         if (_timeoutDuration == 0 || _timeoutDuration > MAX_MINT_TIMEOUT) revert InvalidValue();
@@ -553,7 +558,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         mintRequests[requestId] = MintRequest({
             requestId: requestId,
-            user: msg.sender,
+            initiator: msg.sender, // Track who paid the deposit
+            recipient: _recipient, // Track where tokens go
             lpVault: _lpVault,
             xmrAmount: _xmrAmount,
             wsxmrAmount: wsxmrAmount,
@@ -567,6 +573,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         emit MintInitiated(
             requestId,
             msg.sender,
+            _recipient,
             _lpVault,
             _xmrAmount,
             wsxmrAmount,
@@ -616,22 +623,23 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         vault.normalizedDebt += normalizedAmount;
         globalTotalDebt += request.wsxmrAmount; // Track global debt for buy-and-burn
         
-        // Split mint execution between User and LP if a fee was configured
-        wsxmrToken.mint(request.user, request.wsxmrAmount - request.feeAmount);
+        // Mint wsXMR to the RECIPIENT (enables gasless meta-txs and DeFi composability)
+        wsxmrToken.mint(request.recipient, request.wsxmrAmount - request.feeAmount);
         if (request.feeAmount > 0) {
             wsxmrToken.mint(vault.lpAddress, request.feeAmount);
         }
         
-        // CRITICAL FIX: Award griefing deposit based on who is at fault
+        // CRITICAL: Refund griefing deposit to INITIATOR (prevents griefing attack)
+        // If deposit goes to recipient, malicious users can farm LPs by abandoning mints
         if (request.griefingDeposit > 0) {
             if (request.status == MintStatus.PENDING) {
                 // User failed to lock XMR off-chain - compensate LP
                 pendingReturns[vault.lpAddress][address(0)] += request.griefingDeposit;
                 emit ReturnQueued(vault.lpAddress, address(0), request.griefingDeposit);
             } else if (request.status == MintStatus.READY) {
-                // LP confirmed but user failed to claim - return to user
-                pendingReturns[request.user][address(0)] += request.griefingDeposit;
-                emit ReturnQueued(request.user, address(0), request.griefingDeposit);
+                // LP confirmed but user failed to claim - return to INITIATOR
+                pendingReturns[request.initiator][address(0)] += request.griefingDeposit;
+                emit ReturnQueued(request.initiator, address(0), request.griefingDeposit);
             }
         }
         
@@ -687,9 +695,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
                 pendingReturns[vault.lpAddress][address(0)] += depositToTransfer;
                 emit ReturnQueued(vault.lpAddress, address(0), depositToTransfer);
             } else {
-                // LP confirmed but timeout expired - return to user
-                pendingReturns[request.user][address(0)] += depositToTransfer;
-                emit ReturnQueued(request.user, address(0), depositToTransfer);
+                // LP confirmed but timeout expired - return to INITIATOR
+                pendingReturns[request.initiator][address(0)] += depositToTransfer;
+                emit ReturnQueued(request.initiator, address(0), depositToTransfer);
             }
         }
     }
@@ -700,16 +708,20 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
      * @notice Step 1: User requests burn - LOCK WITHOUT ESCROW
      * @dev Burns user's wsXMR and LOCKS (not escrows) LP collateral
      * @dev CRITICAL: Collateral stays in vault and remains LIQUIDATABLE
+     * @dev Supports gasless meta-txs: Relayers can call on behalf of users via ERC-20 allowance
      * @param _wsxmrAmount Amount of wsXMR to burn
      * @param _lpVault LP vault to handle the burn
+     * @param _user Address whose wsXMR to burn (enables relayer composability)
      * @return requestId Unique identifier for this burn request
      */
     function requestBurn(
         uint256 _wsxmrAmount,
-        address _lpVault
+        address _lpVault,
+        address _user
     ) external returns (bytes32 requestId) {
         if (_wsxmrAmount == 0) revert ZeroAmount();
         if (_lpVault == address(0)) revert ZeroAddress();
+        if (_user == address(0)) revert ZeroAddress();
         if (!vaults[_lpVault].active) revert VaultDoesNotExist();
         
         Vault storage vault = vaults[_lpVault];
@@ -741,7 +753,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         if (availableCollateral < (collateralToLock + rewardCollateral)) revert InsufficientCollateral();
         
         requestId = keccak256(abi.encodePacked(
-            msg.sender,
+            _user,
             _lpVault,
             _wsxmrAmount,
             block.timestamp,
@@ -750,7 +762,18 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         if (burnRequests[requestId].status != BurnStatus.INVALID) revert BurnAlreadyExists();
         
         // 3. Burn the User's wsXMR
-        wsxmrToken.burn(msg.sender, _wsxmrAmount);
+        // If msg.sender == _user, this burns directly (VaultManager admin right)
+        // If msg.sender is a relayer, it securely takes tokens via user's allowance
+        if (msg.sender == _user) {
+            wsxmrToken.burn(_user, _wsxmrAmount);
+        } else {
+            // Reverts if the User hasn't approved the VaultManager (e.g., via ERC-2612 permit)
+            // This protects the User from unauthorized relayers burning their funds
+            IERC20(address(wsxmrToken)).safeTransferFrom(_user, address(this), _wsxmrAmount);
+            
+            // Burn the tokens the VaultManager just took custody of
+            wsxmrToken.burn(address(this), _wsxmrAmount);
+        }
         
         // 4. CRITICAL: LOCK collateral (don't escrow) and reduce debt
         // Collateral stays in vault.collateralAmount and remains LIQUIDATABLE
@@ -766,7 +789,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // LP has BURN_REQUEST_TIMEOUT to lock XMR on Monero and provide secretHash
         burnRequests[requestId] = BurnRequest({
             requestId: requestId,
-            user: msg.sender,
+            user: _user,
             lpVault: _lpVault,
             wsxmrAmount: _wsxmrAmount,
             xmrAmount: _wsxmrAmount * 1e4,
@@ -779,7 +802,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         emit BurnRequested(
             requestId,
-            msg.sender,
+            _user,
             _lpVault,
             _wsxmrAmount,
             _wsxmrAmount * 1e4,
