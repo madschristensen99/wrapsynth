@@ -1053,6 +1053,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             if (remainingDebt > 0 && globalTotalDebt >= remainingDebt) {
                 globalTotalDebt -= remainingDebt;
                 vault.normalizedDebt = 0; // Clear the bad debt
+                
+                // CRITICAL FIX: Burn corresponding wsXMR tokens to maintain supply accuracy
+                // Without burning, circulating supply exceeds backed collateral
+                // This ensures bad debt doesn't create unbacked wsXMR
+                wsxmrToken.burn(address(this), remainingDebt);
+                
                 emit BadDebtWrittenOff(_lpVault, remainingDebt);
             }
         }
@@ -1085,6 +1091,21 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // Calculate yield in DAI and convert to shares
         uint256 yieldInDAI = totalUnderlyingDAI - totalAssignedDAI;
         uint256 yieldInShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(yieldInDAI);
+        
+        // CRITICAL FIX: Deduct yield shares from LP vaults proportionally
+        // This prevents LP insolvency when war chest shares are spent
+        uint256 totalLpShares = totalSDAIShares - yieldWarChest;
+        if (totalLpShares > 0) {
+            // Iterate through all vaults and deduct proportionally
+            for (uint256 i = 0; i < vaultList.length; i++) {
+                Vault storage vault = vaults[vaultList[i]];
+                if (vault.collateralAsset == GnosisAddresses.SDAI && vault.collateralAmount > 0) {
+                    uint256 vaultReduction = (vault.collateralAmount * yieldInShares) / totalLpShares;
+                    if (vaultReduction > vault.collateralAmount) vaultReduction = vault.collateralAmount;
+                    vault.collateralAmount -= vaultReduction;
+                }
+            }
+        }
         
         // Add to war chest
         yieldWarChest += yieldInShares;

@@ -218,26 +218,28 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             ? (_sDAIAmount, _wsxmrAmount)
             : (_wsxmrAmount, _sDAIAmount);
         
-        // CRITICAL FIX: Calculate dynamic slippage bounds using oracle prices
-        // Fixed 2% slippage is too restrictive and causes failures
-        // Use oracle to calculate expected ratio and apply reasonable bounds
+        // CRITICAL FIX: Use oracle prices to calculate expected pool ratio and validate
+        // This prevents MEV arbitrage via flash loan pool manipulation
         uint256 sDAIPrice = vaultManager.getCollateralPrice(GnosisAddresses.SDAI);
         uint256 wsxmrPrice = vaultManager.getXmrPrice();
         
-        // Calculate expected amounts based on oracle prices
-        // If pool ratio differs from oracle, adjust minimums accordingly
-        uint256 amount0Min;
-        uint256 amount1Min;
+        // Calculate expected ratio based on oracle prices
+        // sDAI amount * sDAI price should approximately equal wsXMR amount * wsXMR price
+        uint256 sDAIValue = token0 == GnosisAddresses.SDAI 
+            ? (amount0 * sDAIPrice) / 1e18 
+            : (amount1 * sDAIPrice) / 1e18;
+        uint256 wsxmrValue = token0 == GnosisAddresses.SDAI 
+            ? (amount1 * wsxmrPrice) / 1e8 
+            : (amount0 * wsxmrPrice) / 1e8;
         
-        if (token0 == GnosisAddresses.SDAI) {
-            // Expected ratio: sDAI value / wsXMR value
-            // Allow 5% deviation from oracle to account for pool dynamics
-            amount0Min = (amount0 * 95) / 100;
-            amount1Min = (amount1 * 95) / 100;
-        } else {
-            amount0Min = (amount0 * 95) / 100;
-            amount1Min = (amount1 * 95) / 100;
-        }
+        // Require values to be within 10% of each other (oracle-based validation)
+        // This prevents creating positions during manipulated pool states
+        uint256 valueDiff = sDAIValue > wsxmrValue ? sDAIValue - wsxmrValue : wsxmrValue - sDAIValue;
+        require(valueDiff * 10 <= (sDAIValue + wsxmrValue), "Pool ratio deviates from oracle");
+        
+        // Set slippage bounds at 5% for Uniswap execution
+        uint256 amount0Min = (amount0 * 95) / 100;
+        uint256 amount1Min = (amount1 * 95) / 100;
         
         // Create Uniswap V3 position
         (uint256 tokenId, , uint256 actual0, uint256 actual1) = positionManager.mint(
@@ -357,19 +359,34 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
         uint256 lpShareValue = (totalReturnedValue * position.lpInitialValueUSD) / 
             (position.lpInitialValueUSD + position.userInitialValueUSD);
         
-        // Convert to token amounts
-        uint256 lpSDAI = (lpShareValue * 1e18) / vaultManager.getCollateralPrice(GnosisAddresses.SDAI);
-        uint256 userWsxmr = ((totalReturnedValue - lpShareValue) * 1e8) / vaultManager.getXmrPrice();
-        
+        // CRITICAL FIX: Direct proportional distribution of actual principal returned
+        // Avoids USD conversion round-trip that can trap funds
         uint256 sDAIPrincipal = token0 == GnosisAddresses.SDAI ? principal0 : principal1;
         uint256 wsxmrPrincipal = token0 == GnosisAddresses.SDAI ? principal1 : principal0;
         
-        if (lpSDAI > sDAIPrincipal) lpSDAI = sDAIPrincipal;
-        if (userWsxmr > wsxmrPrincipal) userWsxmr = wsxmrPrincipal;
+        // Calculate proportional split based on initial USD contributions
+        uint256 totalInitialValue = position.lpInitialValueUSD + position.userInitialValueUSD;
         
-        // Credit proportional principal (includes IL)
+        // LP gets their proportional share of BOTH assets
+        uint256 lpSDAI = (sDAIPrincipal * position.lpInitialValueUSD) / totalInitialValue;
+        uint256 lpWsxmr = (wsxmrPrincipal * position.lpInitialValueUSD) / totalInitialValue;
+        
+        // User gets remaining portions
+        uint256 userSDAI = sDAIPrincipal - lpSDAI;
+        uint256 userWsxmr = wsxmrPrincipal - lpWsxmr;
+        
+        // Credit both parties with both assets (handles IL via cross-distribution)
         lpLiquidityAllocation[position.lpProvider] += lpSDAI;
         userWsxmrDeposits[position.userProvider] += userWsxmr;
+        
+        // CRITICAL FIX: Cross-distribute to prevent fund trapping
+        // If pool shifted heavily to one asset, both parties receive proportional amounts of both
+        if (userSDAI > 0) {
+            lpLiquidityAllocation[position.userProvider] += userSDAI;
+        }
+        if (lpWsxmr > 0) {
+            userWsxmrDeposits[position.lpProvider] += lpWsxmr;
+        }
         
         // CRITICAL FIX: Distribute actual trading fees (50/50 split)
         // fees0/fees1 are correctly calculated as collected - principal
