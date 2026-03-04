@@ -10,6 +10,8 @@ import {Secp256k1} from "./Secp256k1.sol";
 import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {PythStructs} from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 import {wsXMR} from "./wsXMR.sol";
+import {ISavingsDAI} from "./interfaces/ISavingsDAI.sol";
+import {GnosisAddresses} from "./GnosisAddresses.sol";
 
 /**
  * @title VaultManager
@@ -49,8 +51,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     
     // Pyth price feed IDs
     bytes32 public constant XMR_USD_FEED_ID = 0x46b8cc9347f04391764a0361e0b17c3ba394b001e7c304f7650f6376e37c321d;
-    bytes32 public constant MON_USD_FEED_ID = 0x31491744e2dbf6df7fcf4ac0820d18a609b49076d45066d3568424e62f686cd1;
-    
+
     // Oracle staleness configuration (in seconds)
     uint256 public priceMaxAge = 5 minutes; // Configurable staleness threshold
     
@@ -245,10 +246,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         wsxmrToken = wsXMR(_wsxmrToken);
         pyth = IPyth(_pythContract);
         
-        // Enable native MON as default collateral
-        supportedCollateral[address(0)] = true;
-        collateralPriceFeeds[address(0)] = MON_USD_FEED_ID;
-        emit CollateralSupported(address(0), _pythContract);
+        // GNOSIS CHAIN: Enable sDAI as default yield-bearing collateral
+        supportedCollateral[GnosisAddresses.SDAI] = true;
+        collateralPriceFeeds[GnosisAddresses.SDAI] = GnosisAddresses.DAI_USD_FEED_ID;
+        emit CollateralSupported(GnosisAddresses.SDAI, _pythContract);
     }
     
     // ========== VAULT MANAGEMENT ==========
@@ -281,7 +282,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     
     /**
      * @notice Deposit collateral into vault
-     * @param _amount Amount of collateral to deposit
+     * @dev Auto-converts DAI/xDAI to sDAI for yield generation
+     * @param _amount Amount of collateral to deposit (in DAI if depositing to sDAI vault)
      */
     function depositCollateral(uint256 _amount) external payable nonReentrant {
         if (!vaults[msg.sender].active) revert VaultDoesNotExist();
@@ -289,18 +291,35 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         Vault storage vault = vaults[msg.sender];
         
-        if (vault.collateralAsset == address(0)) {
-            // ETH deposit
+        // GNOSIS CHAIN: Auto-convert DAI to sDAI for yield
+        if (vault.collateralAsset == GnosisAddresses.SDAI) {
+            if (msg.value != 0) revert InvalidValue();
+            
+            // Transfer DAI from user
+            IERC20(GnosisAddresses.XDAI).safeTransferFrom(msg.sender, address(this), _amount);
+            
+            // Approve sDAI contract to spend DAI
+            IERC20(GnosisAddresses.XDAI).approve(GnosisAddresses.SDAI, _amount);
+            
+            // Deposit DAI into sDAI vault and receive sDAI shares
+            uint256 sDAIShares = ISavingsDAI(GnosisAddresses.SDAI).deposit(_amount, address(this));
+            
+            // Track sDAI shares as collateral
+            vault.collateralAmount += sDAIShares;
+            
+            emit CollateralDeposited(msg.sender, vault.collateralAsset, sDAIShares);
+        } else if (vault.collateralAsset == address(0)) {
+            // Native ETH deposit (for other chains)
             if (msg.value != _amount) revert InvalidValue();
             vault.collateralAmount += _amount;
+            emit CollateralDeposited(msg.sender, vault.collateralAsset, _amount);
         } else {
-            // ERC20 deposit
+            // Direct ERC20 deposit
             if (msg.value != 0) revert InvalidValue();
             IERC20(vault.collateralAsset).safeTransferFrom(msg.sender, address(this), _amount);
             vault.collateralAmount += _amount;
+            emit CollateralDeposited(msg.sender, vault.collateralAsset, _amount);
         }
-        
-        emit CollateralDeposited(msg.sender, vault.collateralAsset, _amount);
     }
     
     /**
@@ -336,14 +355,18 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         vault.collateralAmount = newCollateralAmount;
         
         // Transfer collateral back to LP
-        if (vault.collateralAsset == address(0)) {
+        if (vault.collateralAsset == GnosisAddresses.SDAI) {
+            // Auto-convert sDAI back to DAI for withdrawal
+            uint256 daiReceived = ISavingsDAI(GnosisAddresses.SDAI).redeem(_amount, msg.sender, address(this));
+            emit CollateralWithdrawn(msg.sender, vault.collateralAsset, daiReceived);
+        } else if (vault.collateralAsset == address(0)) {
             (bool success, ) = payable(msg.sender).call{value: _amount}("");
             require(success, "ETH transfer failed");
+            emit CollateralWithdrawn(msg.sender, vault.collateralAsset, _amount);
         } else {
             IERC20(vault.collateralAsset).safeTransfer(msg.sender, _amount);
+            emit CollateralWithdrawn(msg.sender, vault.collateralAsset, _amount);
         }
-        
-        emit CollateralWithdrawn(msg.sender, vault.collateralAsset, _amount);
     }
     
     /**
