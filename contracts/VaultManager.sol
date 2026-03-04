@@ -48,6 +48,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     uint256 public constant BUY_CHUNK_PERCENT = 20; // 20% of war chest per execution
     uint256 public constant EMA_TRIGGER_THRESHOLD = 99; // 1% dip threshold (spot <= EMA * 0.99)
     uint256 public constant MEV_SLIPPAGE_BPS = 200; // 2% max slippage for MEV protection
+    uint256 public constant KEEPER_REWARD_BPS = 200; // 2% of the chunk paid to caller for gas
     
     // ========== STATE VARIABLES ==========
     
@@ -175,7 +176,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     
     event YieldHarvested(uint256 yieldInDAI, uint256 yieldInShares);
     event BadDebtWrittenOff(address indexed lpVault, uint256 debtAmount);
-    event BuyAndBurnExecuted(uint256 sDAISpent, uint256 wsxmrBurned, uint256 newGlobalDebtIndex);
+    event BuyAndBurnExecuted(uint256 sDAISpent, uint256 wsxmrBurned, uint256 keeperReward, uint256 newGlobalDebtIndex);
     
     event MintInitiated(
         bytes32 indexed requestId,
@@ -1178,7 +1179,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     
     /**
      * @notice Execute buy-and-burn when XMR dips 1% below EMA
-     * @dev Permissionless keeper function with MEV protection
+     * @dev Permissionless keeper function with MEV protection and keeper bounty
      */
     function triggerBuyAndBurn() external nonReentrant {
         // 1. Cooldown Check
@@ -1195,11 +1196,20 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         // 3. Calculate 20% chunk
         require(yieldWarChest > 0, "War chest is empty");
-        uint256 spendAmount = (yieldWarChest * BUY_CHUNK_PERCENT) / 100;
+        uint256 totalChunk = (yieldWarChest * BUY_CHUNK_PERCENT) / 100;
         
-        // Update state
-        yieldWarChest -= spendAmount;
+        // Calculate Keeper Bounty and Actual Swap Amount
+        uint256 keeperReward = (totalChunk * KEEPER_REWARD_BPS) / BPS_DENOMINATOR;
+        uint256 spendAmount = totalChunk - keeperReward;
+        
+        // Update state (deduct the full chunk from the war chest)
+        yieldWarChest -= totalChunk;
         lastBuyTimestamp = block.timestamp;
+        
+        // Transfer sDAI bounty to the caller to cover their gas
+        if (keeperReward > 0) {
+            IERC20(GnosisAddresses.SDAI).safeTransfer(msg.sender, keeperReward);
+        }
         
         // 4. MEV Protection: Calculate minimum output using oracle
         // CRITICAL FIX: Use oracle price for sDAI, not hardcoded 1 DAI = 1 USD assumption
@@ -1250,7 +1260,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             globalTotalDebt -= wsxmrBought;
         }
         
-        emit BuyAndBurnExecuted(spendAmount, wsxmrBought, globalDebtIndex);
+        emit BuyAndBurnExecuted(spendAmount, wsxmrBought, keeperReward, globalDebtIndex);
     }
     
     // ========== PRICE ORACLE FUNCTIONS ==========
