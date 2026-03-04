@@ -622,8 +622,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         // Mark as completed
         request.status = MintStatus.COMPLETED;
-        
         emit MintFinalized(_requestId, _secret);
+        
+        // CRITICAL FIX: Skim yield to war chest after mint completes
+        _skimYieldToWarChest();
     }
     
     /**
@@ -863,6 +865,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         request.status = BurnStatus.COMPLETED;
         emit BurnFinalized(_requestId, _secret, request.rewardCollateral);
+        
+        // CRITICAL FIX: Skim yield to war chest after burn completes
+        _skimYieldToWarChest();
     }
     
     /**
@@ -1045,14 +1050,34 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     // ========== BUY-AND-BURN STRATEGY ==========
     
     /**
-     * @notice DEPRECATED: Yield harvesting no longer needed
-     * @dev With the new DAI-value accounting system, yield automatically accrues
-     * @dev as the sDAI exchange rate grows. No manual harvesting required.
-     * @dev This eliminates the ERC4626 double-spending vulnerability.
+     * @notice Skim sDAI appreciation into yieldWarChest for buy-and-burn
+     * @dev Called internally when debt operations occur
+     * @dev Calculates yield as: (currentShareValue - principalDeposits)
      */
-    // function harvestGlobalYield() - REMOVED
-    // Yield now accrues automatically in vault.collateralAmount (DAI value)
-    // No phantom shares are created
+    function _skimYieldToWarChest() internal {
+        // Get total sDAI shares held by contract
+        uint256 totalSDAIShares = IERC20(GnosisAddresses.SDAI).balanceOf(address(this));
+        if (totalSDAIShares == 0) return;
+        
+        // Calculate current DAI value of all shares
+        uint256 totalUnderlyingDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(totalSDAIShares);
+        
+        // Calculate yield as: total value - (principal + existing war chest)
+        uint256 warChestDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(yieldWarChest);
+        uint256 totalAssignedDAI = globalLpPrincipal + warChestDAI;
+        
+        // If no yield available, return
+        if (totalUnderlyingDAI <= totalAssignedDAI) return;
+        
+        // Calculate yield in DAI and convert to shares
+        uint256 yieldInDAI = totalUnderlyingDAI - totalAssignedDAI;
+        uint256 yieldInShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(yieldInDAI);
+        
+        // Add to war chest
+        yieldWarChest += yieldInShares;
+        
+        emit YieldHarvested(yieldInDAI, yieldInShares);
+    }
     
     /**
      * @notice Execute buy-and-burn when XMR dips 1% below EMA
