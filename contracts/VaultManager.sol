@@ -600,10 +600,17 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             wsxmrToken.mint(vault.lpAddress, request.feeAmount);
         }
         
-        // Queue griefing deposit refund for user (pull-over-push pattern)
+        // CRITICAL FIX: Award griefing deposit based on who is at fault
         if (request.griefingDeposit > 0) {
-            pendingReturns[request.user][address(0)] += request.griefingDeposit;
-            emit ReturnQueued(request.user, address(0), request.griefingDeposit);
+            if (request.status == MintStatus.PENDING) {
+                // User failed to lock XMR off-chain - compensate LP
+                pendingReturns[vault.lpAddress][address(0)] += request.griefingDeposit;
+                emit ReturnQueued(vault.lpAddress, address(0), request.griefingDeposit);
+            } else if (request.status == MintStatus.READY) {
+                // LP confirmed but user failed to claim - return to user
+                pendingReturns[request.user][address(0)] += request.griefingDeposit;
+                emit ReturnQueued(request.user, address(0), request.griefingDeposit);
+            }
         }
         
         // Mark as completed
@@ -640,16 +647,26 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         Vault storage vault = vaults[request.lpVault];
         vault.pendingDebt -= request.wsxmrAmount;
         
+        // CRITICAL FIX: Save original status before marking as cancelled
+        MintStatus originalStatus = request.status;
+        uint256 depositToTransfer = request.griefingDeposit;
+        
         // Mark as cancelled BEFORE transferring (prevents reentrancy)
         request.status = MintStatus.CANCELLED;
-        uint256 depositToTransfer = request.griefingDeposit;
         
         emit MintCancelled(_requestId);
         
-        // Queue griefing deposit for LP as compensation for locked capacity
+        // Award griefing deposit based on fault state
         if (depositToTransfer > 0) {
-            pendingReturns[vault.lpAddress][address(0)] += depositToTransfer;
-            emit ReturnQueued(vault.lpAddress, address(0), depositToTransfer);
+            if (originalStatus == MintStatus.PENDING) {
+                // User failed to lock XMR - compensate LP
+                pendingReturns[vault.lpAddress][address(0)] += depositToTransfer;
+                emit ReturnQueued(vault.lpAddress, address(0), depositToTransfer);
+            } else {
+                // LP confirmed but timeout expired - return to user
+                pendingReturns[request.user][address(0)] += depositToTransfer;
+                emit ReturnQueued(request.user, address(0), depositToTransfer);
+            }
         }
     }
     
@@ -826,19 +843,25 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         uint256 totalSeized = request.lockedCollateral + request.rewardCollateral;
         
-        if (vault.lockedCollateral >= totalSeized) {
-            vault.lockedCollateral -= totalSeized;
+        // CRITICAL FIX: Cap seizure to available collateral to prevent underflow
+        // Vault may have been liquidated between burn request and slash claim
+        uint256 actualSeized = vault.collateralAmount < totalSeized 
+            ? vault.collateralAmount 
+            : totalSeized;
+        
+        if (vault.lockedCollateral >= actualSeized) {
+            vault.lockedCollateral -= actualSeized;
         } else {
             vault.lockedCollateral = 0; 
         }
-        vault.collateralAmount -= totalSeized;
+        vault.collateralAmount -= actualSeized;
         
         // Transfer collateral to user as penalty for LP failure
         if (vault.collateralAsset == address(0)) {
-            (bool success, ) = payable(request.user).call{value: totalSeized}("");
+            (bool success, ) = payable(request.user).call{value: actualSeized}("");
             require(success, "ETH transfer failed");
         } else {
-            IERC20(vault.collateralAsset).safeTransfer(request.user, totalSeized);
+            IERC20(vault.collateralAsset).safeTransfer(request.user, actualSeized);
         }
         
         request.lockedCollateral = 0;
@@ -979,10 +1002,15 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             totalPrincipal += lpPrincipalDeposits[vaultList[i]];
         }
         
-        // Yield = Total Underlying DAI - Total Principal
-        if (totalUnderlyingDAI <= totalPrincipal) return; // No yield to harvest
+        // CRITICAL FIX: Include already-harvested war chest in total obligations
+        // This prevents double-counting yield on subsequent calls
+        uint256 warChestDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(yieldWarChest);
+        uint256 totalAssignedDAI = totalPrincipal + warChestDAI;
         
-        uint256 yieldInDAI = totalUnderlyingDAI - totalPrincipal;
+        // Yield = Total Underlying DAI - (Principal + War Chest)
+        if (totalUnderlyingDAI <= totalAssignedDAI) return; // No yield to harvest
+        
+        uint256 yieldInDAI = totalUnderlyingDAI - totalAssignedDAI;
         
         // Convert yield DAI amount to sDAI shares
         uint256 yieldInShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(yieldInDAI);
@@ -1022,9 +1050,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // Convert sDAI to DAI value, then to wsXMR expected output
         uint256 daiValue = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(spendAmount);
         uint256 xmrPrice = getXmrPrice();
-        // DAI is $1, so daiValue in USD = daiValue * 1e18
-        // Expected wsXMR = (daiValue * 1e18) / xmrPrice / 1e8 (wsXMR has 8 decimals)
-        uint256 expectedWsxmr = (daiValue * 1e18) / xmrPrice / 1e8;
+        // CRITICAL FIX: Correct decimal normalization
+        // daiValue is in 18 decimals, xmrPrice is in 18 decimals
+        // Expected wsXMR in 8 decimals = (daiValue * 1e8) / xmrPrice
+        uint256 expectedWsxmr = (daiValue * 1e8) / xmrPrice;
         
         // Allow 2% slippage max to prevent sandwich attacks
         uint256 minWsxmrOut = (expectedWsxmr * (BPS_DENOMINATOR - MEV_SLIPPAGE_BPS)) / BPS_DENOMINATOR;
@@ -1111,16 +1140,29 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // Convert to 18 decimals
         int32 expo = priceData.expo;
         
+        uint256 normalizedPrice;
         if (expo >= 0) {
-            return price * (10 ** uint32(expo)) * 1e18;
+            normalizedPrice = price * (10 ** uint32(expo)) * 1e18;
         } else {
             uint32 absExpo = uint32(-expo);
             if (absExpo >= 18) {
-                return price / (10 ** (absExpo - 18));
+                normalizedPrice = price / (10 ** (absExpo - 18));
             } else {
-                return price * (10 ** (18 - absExpo));
+                normalizedPrice = price * (10 ** (18 - absExpo));
             }
         }
+        
+        // CRITICAL FIX: Account for ERC4626 share-to-asset exchange rate
+        // sDAI shares appreciate over time - 1 share > 1 DAI
+        // Without this, LPs are massively shortchanged on borrowing power
+        // and liquidators extract unintended bonuses
+        if (_asset == GnosisAddresses.SDAI) {
+            // Find how many underlying DAI exactly 1e18 sDAI shares are worth
+            uint256 underlyingPerShare = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(1e18);
+            return (normalizedPrice * underlyingPerShare) / 1e18;
+        }
+        
+        return normalizedPrice;
     }
     
     /**
