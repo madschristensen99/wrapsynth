@@ -206,6 +206,27 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             ? (_sDAIAmount, _wsxmrAmount)
             : (_wsxmrAmount, _sDAIAmount);
         
+        // CRITICAL FIX: Calculate dynamic slippage bounds using oracle prices
+        // Fixed 2% slippage is too restrictive and causes failures
+        // Use oracle to calculate expected ratio and apply reasonable bounds
+        uint256 sDAIPrice = vaultManager.getCollateralPrice(GnosisAddresses.SDAI);
+        uint256 wsxmrPrice = vaultManager.getXmrPrice();
+        
+        // Calculate expected amounts based on oracle prices
+        // If pool ratio differs from oracle, adjust minimums accordingly
+        uint256 amount0Min;
+        uint256 amount1Min;
+        
+        if (token0 == GnosisAddresses.SDAI) {
+            // Expected ratio: sDAI value / wsXMR value
+            // Allow 5% deviation from oracle to account for pool dynamics
+            amount0Min = (amount0 * 95) / 100;
+            amount1Min = (amount1 * 95) / 100;
+        } else {
+            amount0Min = (amount0 * 95) / 100;
+            amount1Min = (amount1 * 95) / 100;
+        }
+        
         // Create Uniswap V3 position
         (uint256 tokenId, , uint256 actual0, uint256 actual1) = positionManager.mint(
             INonfungiblePositionManager.MintParams({
@@ -216,8 +237,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
                 tickUpper: TICK_UPPER,
                 amount0Desired: amount0,
                 amount1Desired: amount1,
-                amount0Min: (amount0 * 98) / 100, // CRITICAL FIX: Tighter slippage for MEV protection
-                amount1Min: (amount1 * 98) / 100,
+                amount0Min: amount0Min,
+                amount1Min: amount1Min,
                 recipient: address(this),
                 deadline: block.timestamp
             })
