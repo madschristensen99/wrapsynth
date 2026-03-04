@@ -179,8 +179,9 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
         uint256 _sDAIAmount,
         uint256 _wsxmrAmount
     ) external nonReentrant returns (uint256 positionIndex) {
-        // CRITICAL FIX: Authorization - only LP or user can create their own positions
-        if (msg.sender != _lp && msg.sender != _user) revert Unauthorized();
+        // CRITICAL FIX: Authorization - only LP can create positions to prevent forced IL attacks
+        // User cannot force LP funds into positions at manipulated prices
+        if (msg.sender != _lp) revert Unauthorized();
         
         // Validate balances
         if (lpLiquidityAllocation[_lp] < _sDAIAmount) revert InsufficientBalance();
@@ -300,24 +301,13 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             ? (collected0, collected1)
             : (collected1, collected0);
         
-        // Return principal to providers
-        lpLiquidityAllocation[position.lpProvider] += position.sDAIAmount;
-        userWsxmrDeposits[position.userProvider] += position.wsxmrAmount;
+        // CRITICAL FIX: Credit actual returned amounts to handle impermanent loss
+        // LPs naturally internalize IL - don't credit phantom collateral
+        lpLiquidityAllocation[position.lpProvider] += sDAIReturned;
+        userWsxmrDeposits[position.userProvider] += wsxmrReturned;
         
-        // Distribute fees (anything above principal)
-        if (sDAIReturned > position.sDAIAmount) {
-            uint256 sDAIFees = sDAIReturned - position.sDAIAmount;
-            // Split fees 50/50 between LP and user
-            pendingSDAIFees[position.lpProvider] += sDAIFees / 2;
-            pendingSDAIFees[position.userProvider] += sDAIFees / 2;
-        }
-        
-        if (wsxmrReturned > position.wsxmrAmount) {
-            uint256 wsxmrFees = wsxmrReturned - position.wsxmrAmount;
-            // Split fees 50/50 between LP and user
-            pendingWsxmrFees[position.lpProvider] += wsxmrFees / 2;
-            pendingWsxmrFees[position.userProvider] += wsxmrFees / 2;
-        }
+        // Note: Impermanent loss is absorbed by providers proportionally
+        // No separate fee distribution needed - all returned amounts go back to providers
         
         emit PositionClosed(_positionIndex, sDAIReturned, wsxmrReturned);
         
