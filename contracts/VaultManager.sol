@@ -11,6 +11,7 @@ import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {PythStructs} from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 import {wsXMR} from "./wsXMR.sol";
 import {ISavingsDAI} from "./interfaces/ISavingsDAI.sol";
+import {ISwapRouter} from "./interfaces/ISwapRouter.sol";
 import {GnosisAddresses} from "./GnosisAddresses.sol";
 
 /**
@@ -42,6 +43,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     uint256 public constant BPS_DENOMINATOR = 10000;
     uint256 public constant MAX_MARGIN_BPS = 1000; // 10% maximum fee/reward to prevent abuse
     
+    // BUY-AND-BURN STRATEGY CONSTANTS
+    uint256 public constant COOLDOWN_PERIOD = 24 hours; // Minimum time between buy-and-burn executions
+    uint256 public constant BUY_CHUNK_PERCENT = 20; // 20% of war chest per execution
+    uint256 public constant EMA_TRIGGER_THRESHOLD = 99; // 1% dip threshold (spot <= EMA * 0.99)
+    uint256 public constant MEV_SLIPPAGE_BPS = 200; // 2% max slippage for MEV protection
+    
     // ========== STATE VARIABLES ==========
     
     wsXMR public immutable wsxmrToken;
@@ -58,6 +65,15 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     // Supported collateral tokens (address(0) = native MON)
     mapping(address => bool) public supportedCollateral;
     mapping(address => bytes32) public collateralPriceFeeds; // Maps collateral to Pyth feed ID
+    
+    // Buy-and-Burn Strategy State
+    uint256 public lastBuyTimestamp; // Last execution timestamp for cooldown enforcement
+    uint256 public globalTotalDebt; // Total wsXMR debt across all vaults
+    uint256 public globalDebtIndex = 1e18; // Debt multiplier for O(1) proportional forgiveness
+    uint256 public yieldWarChest; // Accumulated sDAI yield ready for buy-and-burn
+    
+    // Principal tracking for yield harvesting
+    mapping(address => uint256) public lpPrincipalDeposits; // Track original DAI deposits per LP
     
     // ========== ENUMS ==========
     
@@ -88,7 +104,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         address collateralAsset; // address(0) for ETH
         uint256 collateralAmount;
         uint256 lockedCollateral; // Collateral reserved for pending burns (still liquidatable!)
-        uint256 debtAmount; // Active, finalized wsXMR minted (Liquidatable)
+        uint256 normalizedDebt; // Normalized debt for O(1) proportional forgiveness (actualDebt = normalizedDebt * globalDebtIndex / 1e18)
         uint256 pendingDebt; // Reserved capacity for pending mints (NOT Liquidatable)
         uint16 maxMintBps; // LP config limits single mint size (e.g. 1000 = 10%)
         uint256 mintGriefingDeposit; // ETH deposit required for mint requests (LP-configurable)
@@ -156,6 +172,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     
     event ReturnQueued(address indexed recipient, address indexed token, uint256 amount);
     event ReturnsWithdrawn(address indexed recipient, address indexed token, uint256 amount);
+    
+    event YieldHarvested(uint256 yieldInDAI, uint256 yieldInShares);
+    event BuyAndBurnExecuted(uint256 sDAISpent, uint256 wsxmrBurned, uint256 newGlobalDebtIndex);
     
     event MintInitiated(
         bytes32 indexed requestId,
@@ -267,7 +286,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             collateralAsset: _collateralAsset,
             collateralAmount: 0,
             lockedCollateral: 0,
-            debtAmount: 0,
+            normalizedDebt: 0,
             pendingDebt: 0,
             maxMintBps: 0, // LP can set this later via setMaxMintBps (0 = no limit)
             mintGriefingDeposit: 0, // LP can set this later via setMintGriefingDeposit
@@ -307,6 +326,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             // Track sDAI shares as collateral
             vault.collateralAmount += sDAIShares;
             
+            // Track principal DAI deposit for yield harvesting
+            lpPrincipalDeposits[msg.sender] += _amount;
+            
             emit CollateralDeposited(msg.sender, vault.collateralAsset, sDAIShares);
         } else if (vault.collateralAsset == address(0)) {
             // Native ETH deposit (for other chains)
@@ -341,7 +363,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         uint256 newCollateralAmount = vault.collateralAmount - _amount;
         
         // CRITICAL: Calculate safety based on BOTH active and pending debt
-        uint256 totalObligations = vault.debtAmount + vault.pendingDebt;
+        uint256 actualDebt = getActualDebt(vault.normalizedDebt);
+        uint256 totalObligations = actualDebt + vault.pendingDebt;
         
         if (totalObligations > 0) {
             uint256 ratio = calculateCollateralRatio(
@@ -473,7 +496,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         }
         
         // Check capacity using Active + Pending Debt (prevents phantom debt DoS)
-        uint256 totalProjectedDebt = vault.debtAmount + vault.pendingDebt + wsxmrAmount;
+        uint256 actualDebt = getActualDebt(vault.normalizedDebt);
+        uint256 totalProjectedDebt = actualDebt + vault.pendingDebt + wsxmrAmount;
         uint256 ratio = calculateCollateralRatio(
             vault.collateralAsset,
             vault.collateralAmount,
@@ -556,7 +580,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         // CRITICAL: Move debt from Pending state to Active state
         vault.pendingDebt -= request.wsxmrAmount;
-        vault.debtAmount += request.wsxmrAmount; // NOW it can be liquidated
+        vault.normalizedDebt += request.wsxmrAmount; // Add to normalized debt
+        globalTotalDebt += request.wsxmrAmount; // Track global debt for buy-and-burn
         
         // Split mint execution between User and LP if a fee was configured
         wsxmrToken.mint(request.user, request.wsxmrAmount - request.feeAmount);
@@ -636,14 +661,15 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         if (!vaults[_lpVault].active) revert VaultDoesNotExist();
         
         Vault storage vault = vaults[_lpVault];
-        if (vault.debtAmount < _wsxmrAmount) revert InsufficientDebt();
+        uint256 actualDebt = getActualDebt(vault.normalizedDebt);
+        if (actualDebt < _wsxmrAmount) revert InsufficientDebt();
         
         // CRITICAL: Verify vault is healthy before allowing burn to be routed to it
         // Prevents users from burning to unhealthy vaults that may be liquidated
         uint256 vaultHealthRatio = calculateCollateralRatio(
             vault.collateralAsset,
             vault.collateralAmount,
-            vault.debtAmount
+            actualDebt
         );
         if (vaultHealthRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
         
@@ -679,7 +705,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // This prevents liquidation blind spot vulnerability
         // Lock both Base Liquidation Collateral and Reward Collateral
         vault.lockedCollateral += (collateralToLock + rewardCollateral);
-        vault.debtAmount -= _wsxmrAmount;
+        vault.normalizedDebt -= _wsxmrAmount;
+        globalTotalDebt -= _wsxmrAmount;
         
         uint256 xmrAmount = _wsxmrAmount * 1e4;
         
@@ -829,7 +856,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         Vault storage vault = vaults[request.lpVault];
         
         // Restore the LP's debt and UNLOCK collateral (don't transfer it)
-        vault.debtAmount += request.wsxmrAmount;
+        vault.normalizedDebt += request.wsxmrAmount;
+        globalTotalDebt += request.wsxmrAmount;
         
         uint256 totalUnlock = request.lockedCollateral + request.rewardCollateral;
         if (vault.lockedCollateral >= totalUnlock) {
@@ -857,9 +885,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         if (_debtToClear == 0) revert ZeroAmount();
         
         Vault storage vault = vaults[_lpVault];
-        if (vault.debtAmount == 0) revert InsufficientDebt();
-        if (_debtToClear > vault.debtAmount) {
-            _debtToClear = vault.debtAmount;
+        uint256 actualDebt = getActualDebt(vault.normalizedDebt);
+        if (actualDebt == 0) revert InsufficientDebt();
+        if (_debtToClear > actualDebt) {
+            _debtToClear = actualDebt;
         }
         
         // Check if vault is underwater
@@ -868,7 +897,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         uint256 ratio = calculateCollateralRatio(
             vault.collateralAsset,
             availableCollateral,
-            vault.debtAmount
+            actualDebt
         );
         if (ratio >= LIQUIDATION_RATIO) revert VaultHealthy();
         
@@ -890,7 +919,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         // CHECKS-EFFECTS-INTERACTIONS: Update state before external calls
         vault.collateralAmount -= collateralAmount;
-        vault.debtAmount -= _debtToClear;
+        vault.normalizedDebt -= _debtToClear;
+        globalTotalDebt -= _debtToClear;
         
         // CRITICAL FIX: Proportionally reduce lockedCollateral to prevent underflow
         // If we seized locked collateral, we must reduce the locked amount
@@ -912,6 +942,104 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         }
         
         emit VaultLiquidated(_lpVault, msg.sender, _debtToClear, collateralAmount);
+    }
+    
+    // ========== BUY-AND-BURN STRATEGY ==========
+    
+    /**
+     * @notice Harvest accumulated sDAI yield and add to war chest
+     * @dev Anyone can call this to skim profit from sDAI appreciation
+     */
+    function harvestGlobalYield() external nonReentrant {
+        // Calculate total underlying DAI value of all sDAI held
+        uint256 totalSDAIShares = IERC20(GnosisAddresses.SDAI).balanceOf(address(this));
+        if (totalSDAIShares == 0) return;
+        
+        uint256 totalUnderlyingDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(totalSDAIShares);
+        
+        // Calculate total principal across all LPs
+        uint256 totalPrincipal = 0;
+        for (uint256 i = 0; i < vaultList.length; i++) {
+            totalPrincipal += lpPrincipalDeposits[vaultList[i]];
+        }
+        
+        // Yield = Total Underlying DAI - Total Principal
+        if (totalUnderlyingDAI <= totalPrincipal) return; // No yield to harvest
+        
+        uint256 yieldInDAI = totalUnderlyingDAI - totalPrincipal;
+        
+        // Convert yield DAI amount to sDAI shares
+        uint256 yieldInShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(yieldInDAI);
+        
+        // Add to war chest
+        yieldWarChest += yieldInShares;
+        
+        emit YieldHarvested(yieldInDAI, yieldInShares);
+    }
+    
+    /**
+     * @notice Execute buy-and-burn when XMR dips 1% below EMA
+     * @dev Permissionless keeper function with MEV protection
+     */
+    function triggerBuyAndBurn() external nonReentrant {
+        // 1. Cooldown Check
+        require(block.timestamp >= lastBuyTimestamp + COOLDOWN_PERIOD, "Cooldown active");
+        
+        // 2. EMA vs Spot Check (Pyth provides both)
+        PythStructs.Price memory spotData = pyth.getPriceNoOlderThan(XMR_USD_FEED_ID, priceMaxAge);
+        PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(XMR_USD_FEED_ID, priceMaxAge);
+        
+        // Validate 1% dip: Spot <= EMA * 0.99
+        uint256 spotPrice = uint256(uint64(spotData.price));
+        uint256 emaPrice = uint256(uint64(emaData.price));
+        require(spotPrice <= (emaPrice * EMA_TRIGGER_THRESHOLD) / 100, "XMR has not dipped 1%");
+        
+        // 3. Calculate 20% chunk
+        require(yieldWarChest > 0, "War chest is empty");
+        uint256 spendAmount = (yieldWarChest * BUY_CHUNK_PERCENT) / 100;
+        
+        // Update state
+        yieldWarChest -= spendAmount;
+        lastBuyTimestamp = block.timestamp;
+        
+        // 4. MEV Protection: Calculate minimum output using oracle
+        // Convert sDAI to DAI value, then to wsXMR expected output
+        uint256 daiValue = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(spendAmount);
+        uint256 xmrPrice = getXmrPrice();
+        // DAI is $1, so daiValue in USD = daiValue * 1e18
+        // Expected wsXMR = (daiValue * 1e18) / xmrPrice / 1e8 (wsXMR has 8 decimals)
+        uint256 expectedWsxmr = (daiValue * 1e18) / xmrPrice / 1e8;
+        
+        // Allow 2% slippage max to prevent sandwich attacks
+        uint256 minWsxmrOut = (expectedWsxmr * (BPS_DENOMINATOR - MEV_SLIPPAGE_BPS)) / BPS_DENOMINATOR;
+        
+        // 5. Execute Uniswap Swap (sDAI -> wsXMR)
+        IERC20(GnosisAddresses.SDAI).approve(GnosisAddresses.UNISWAP_V3_ROUTER, spendAmount);
+        uint256 wsxmrBought = ISwapRouter(GnosisAddresses.UNISWAP_V3_ROUTER).exactInputSingle(
+            ISwapRouter.ExactInputSingleParams({
+                tokenIn: GnosisAddresses.SDAI,
+                tokenOut: address(wsxmrToken),
+                fee: 3000, // 0.3% pool
+                recipient: address(this),
+                deadline: block.timestamp,
+                amountIn: spendAmount,
+                amountOutMinimum: minWsxmrOut,
+                sqrtPriceLimitX96: 0
+            })
+        );
+        
+        // 6. Burn the bought wsXMR
+        wsxmrToken.burn(address(this), wsxmrBought);
+        
+        // 7. Erase LP debt (O(1) calculation)
+        // Reduce global index by exact percentage of total debt burned
+        if (globalTotalDebt > 0) {
+            uint256 reductionPercentage = (wsxmrBought * 1e18) / globalTotalDebt;
+            globalDebtIndex -= (globalDebtIndex * reductionPercentage) / 1e18;
+            globalTotalDebt -= wsxmrBought;
+        }
+        
+        emit BuyAndBurnExecuted(spendAmount, wsxmrBought, globalDebtIndex);
     }
     
     // ========== PRICE ORACLE FUNCTIONS ==========
@@ -980,6 +1108,24 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     }
     
     /**
+     * @notice Calculate actual debt from normalized debt using global index
+     * @param _normalizedDebt The normalized debt amount
+     * @return actualDebt The actual debt amount after applying global index
+     */
+    function getActualDebt(uint256 _normalizedDebt) public view returns (uint256 actualDebt) {
+        return (_normalizedDebt * globalDebtIndex) / 1e18;
+    }
+    
+    /**
+     * @notice Get actual debt for a specific vault
+     * @param _lpAddress The LP vault address
+     * @return actualDebt The vault's actual debt amount
+     */
+    function getVaultDebt(address _lpAddress) public view returns (uint256 actualDebt) {
+        return getActualDebt(vaults[_lpAddress].normalizedDebt);
+    }
+    
+    /**
      * @notice Calculate collateral ratio for a vault
      * @return ratio Collateral ratio (e.g., 150 for 150%)
      */
@@ -1035,13 +1181,14 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     /**
      * @notice Get current collateral ratio for a vault
      */
-    function getVaultCollateralRatio(address _lpAddress) external view returns (uint256) {
+    function getVaultHealth(address _lpAddress) external view returns (uint256 ratio) {
         Vault memory vault = vaults[_lpAddress];
         if (!vault.active) revert VaultDoesNotExist();
+        
         return calculateCollateralRatio(
             vault.collateralAsset,
             vault.collateralAmount,
-            vault.debtAmount
+            getVaultDebt(_lpAddress)
         );
     }
     
@@ -1050,12 +1197,13 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
      */
     function isVaultLiquidatable(address _lpAddress) external view returns (bool) {
         Vault memory vault = vaults[_lpAddress];
-        if (!vault.active || vault.debtAmount == 0) return false;
+        uint256 actualDebt = getVaultDebt(_lpAddress);
+        if (!vault.active || actualDebt == 0) return false;
         
         uint256 ratio = calculateCollateralRatio(
             vault.collateralAsset,
             vault.collateralAmount,
-            vault.debtAmount
+            actualDebt
         );
         return ratio < LIQUIDATION_RATIO;
     }
