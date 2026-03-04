@@ -133,6 +133,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     // Track all vault addresses
     address[] public vaultList;
     
+    // Track pending ETH withdrawals for users/LPs
+    mapping(address => uint256) public pendingReturns;
+    
     // ========== EVENTS ==========
     
     event VaultCreated(address indexed lpAddress, address indexed collateralAsset);
@@ -140,6 +143,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     event CollateralWithdrawn(address indexed lpAddress, address indexed asset, uint256 amount);
     
     event VaultMarketMetricsUpdated(address indexed lpVault, uint16 mintFeeBps, uint16 burnRewardBps);
+    
+    event ReturnQueued(address indexed recipient, uint256 amount);
+    event ReturnsWithdrawn(address indexed recipient, uint256 amount);
     
     event MintInitiated(
         bytes32 indexed requestId,
@@ -351,6 +357,23 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         emit VaultMarketMetricsUpdated(msg.sender, _mintFeeBps, _burnRewardBps);
     }
     
+    /**
+     * @notice Allows users or LPs to withdraw their queued ETH refunds/rewards
+     * @dev Replaces the push-payment pattern to prevent DoS attacks
+     */
+    function withdrawReturns() external nonReentrant {
+        uint256 amount = pendingReturns[msg.sender];
+        if (amount == 0) revert ZeroAmount();
+        
+        // CHECKS-EFFECTS-INTERACTIONS
+        pendingReturns[msg.sender] = 0;
+        
+        (bool success, ) = payable(msg.sender).call{value: amount}("");
+        require(success, "ETH transfer failed");
+        
+        emit ReturnsWithdrawn(msg.sender, amount);
+    }
+    
     // ========== MINTING FLOW ==========
     
     /**
@@ -472,13 +495,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             wsxmrToken.mint(vault.lpAddress, request.feeAmount);
         }
         
-        // Refund griefing deposit to user (successful mint)
-        // NOTE: Push pattern risk - if user is a contract without receive/fallback,
-        // this will revert and block mint finalization. User should use EOA or
-        // compatible contract. Future: implement pull-over-push with pendingRefunds mapping
+        // Queue griefing deposit refund for user (pull-over-push pattern)
         if (request.griefingDeposit > 0) {
-            (bool success, ) = payable(request.user).call{value: request.griefingDeposit}("");
-            require(success, "Deposit refund failed");
+            pendingReturns[request.user] += request.griefingDeposit;
+            emit ReturnQueued(request.user, request.griefingDeposit);
         }
         
         // Mark as completed
@@ -521,10 +541,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         emit MintCancelled(_requestId);
         
-        // Award griefing deposit to LP as compensation for locked capacity
+        // Queue griefing deposit for LP as compensation for locked capacity
         if (depositToTransfer > 0) {
-            (bool success, ) = payable(vault.lpAddress).call{value: depositToTransfer}("");
-            require(success, "Deposit transfer to LP failed");
+            pendingReturns[vault.lpAddress] += depositToTransfer;
+            emit ReturnQueued(vault.lpAddress, depositToTransfer);
         }
     }
     
@@ -663,13 +683,15 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             vault.lockedCollateral = 0; // Protection against liquidation underflows
         }
         
-        // Process the burn reward directly to the User
+        // Process the burn reward to the User
         if (request.rewardCollateral > 0) {
             vault.collateralAmount -= request.rewardCollateral;
             if (vault.collateralAsset == address(0)) {
-                (bool success, ) = payable(request.user).call{value: request.rewardCollateral}("");
-                require(success, "ETH transfer failed");
+                // Queue ETH rewards to prevent DoS
+                pendingReturns[request.user] += request.rewardCollateral;
+                emit ReturnQueued(request.user, request.rewardCollateral);
             } else {
+                // ERC20 transfers are safe to push here because we expect standard implementations
                 IERC20(vault.collateralAsset).safeTransfer(request.user, request.rewardCollateral);
             }
         }
