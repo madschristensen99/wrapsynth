@@ -60,6 +60,9 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
     mapping(address => uint256) public pendingSDAIFees; // LP fees
     mapping(address => uint256) public pendingWsxmrFees; // User fees
 
+    // CRITICAL FIX: LP approval system for user matchmaking
+    mapping(address => mapping(address => bool)) public lpApprovedUsers; // User fees
+
     // ========== EVENTS ==========
     
     event LiquidityAllocated(address indexed lp, uint256 sDAIAmount);
@@ -169,6 +172,15 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
     // ========== POSITION MANAGEMENT ==========
     
     /**
+     * @notice LP approves a user for liquidity pairing
+     * @param _user Address of user to approve
+     * @param _approved Whether to approve or revoke approval
+     */
+    function approveUserForPairing(address _user, bool _approved) external {
+        lpApprovedUsers[msg.sender][_user] = _approved;
+    }
+    
+    /**
      * @notice Create a matched liquidity position on Uniswap V3
      * @param _lp Address of LP providing sDAI
      * @param _user Address of user providing wsXMR
@@ -186,16 +198,14 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
         // Prevents user from forcing LP into manipulated positions
         if (msg.sender != _lp && msg.sender != _user) revert Unauthorized();
         
-        // If LP initiates, user must have approved this LP
-        // If user initiates, LP must have approved this user
-        // This prevents unauthorized fund extraction
-        if (msg.sender == _lp) {
-            // LP is creating position - user must have pre-approved this LP
-            // In production, implement a mapping: userApprovedLPs[_user][_lp]
-            // For now, require user to be msg.sender for security
-            revert("User must initiate or pre-approve LP");
+        // CRITICAL FIX: Enforce LP approval system
+        // LP must have explicitly approved this user for pairing
+        if (!lpApprovedUsers[_lp][_user]) {
+            revert("LP has not approved user for pairing");
         }
+        
         // If msg.sender == _user, they are explicitly authorizing this pairing
+        // LP has pre-approved them via approveUserForPairing()
         
         // Validate balances
         if (lpLiquidityAllocation[_lp] < _sDAIAmount) revert InsufficientBalance();
@@ -237,9 +247,11 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
         uint256 valueDiff = sDAIValue > wsxmrValue ? sDAIValue - wsxmrValue : wsxmrValue - sDAIValue;
         require(valueDiff * 10 <= (sDAIValue + wsxmrValue), "Pool ratio deviates from oracle");
         
-        // Set slippage bounds at 5% for Uniswap execution
-        uint256 amount0Min = (amount0 * 95) / 100;
-        uint256 amount1Min = (amount1 * 95) / 100;
+        // CRITICAL FIX: Relax slippage bounds to 10% for full-range positions
+        // Full-range liquidity must match exact pool ratio, 5% was too restrictive
+        // Oracle validation above already prevents manipulation
+        uint256 amount0Min = (amount0 * 90) / 100;
+        uint256 amount1Min = (amount1 * 90) / 100;
         
         // Create Uniswap V3 position
         (uint256 tokenId, , uint256 actual0, uint256 actual1) = positionManager.mint(

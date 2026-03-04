@@ -1054,10 +1054,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
                 globalTotalDebt -= remainingDebt;
                 vault.normalizedDebt = 0; // Clear the bad debt
                 
-                // CRITICAL FIX: Burn corresponding wsXMR tokens to maintain supply accuracy
-                // Without burning, circulating supply exceeds backed collateral
-                // This ensures bad debt doesn't create unbacked wsXMR
-                wsxmrToken.burn(address(this), remainingDebt);
+                // CRITICAL FIX: Do NOT burn tokens from address(this)
+                // VaultManager doesn't hold unbacked wsXMR tokens
+                // Attempting to burn will revert and DoS all liquidations
+                // Instead, emit event for off-chain tracking of protocol bad debt
+                // An insurance fund or governance mechanism should handle unbacked supply
                 
                 emit BadDebtWrittenOff(_lpVault, remainingDebt);
             }
@@ -1074,6 +1075,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
      * @dev Calculates yield as: (currentShareValue - principalDeposits)
      */
     function _skimYieldToWarChest() internal {
+        // CRITICAL FIX: Removed unbounded loop to prevent DoS
+        // Instead, use ERC4626 exchange rate tracking
+        // LPs maintain their share counts, yield accrues via exchange rate appreciation
+        // War chest is funded by explicitly skimming excess shares without touching LP balances
+        
         // Get total sDAI shares held by contract
         uint256 totalSDAIShares = IERC20(GnosisAddresses.SDAI).balanceOf(address(this));
         if (totalSDAIShares == 0) return;
@@ -1092,20 +1098,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         uint256 yieldInDAI = totalUnderlyingDAI - totalAssignedDAI;
         uint256 yieldInShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(yieldInDAI);
         
-        // CRITICAL FIX: Deduct yield shares from LP vaults proportionally
-        // This prevents LP insolvency when war chest shares are spent
-        uint256 totalLpShares = totalSDAIShares - yieldWarChest;
-        if (totalLpShares > 0) {
-            // Iterate through all vaults and deduct proportionally
-            for (uint256 i = 0; i < vaultList.length; i++) {
-                Vault storage vault = vaults[vaultList[i]];
-                if (vault.collateralAsset == GnosisAddresses.SDAI && vault.collateralAmount > 0) {
-                    uint256 vaultReduction = (vault.collateralAmount * yieldInShares) / totalLpShares;
-                    if (vaultReduction > vault.collateralAmount) vaultReduction = vault.collateralAmount;
-                    vault.collateralAmount -= vaultReduction;
-                }
-            }
-        }
+        // CRITICAL FIX: Do NOT deduct from vault.collateralAmount
+        // LPs keep their shares, which appreciate via ERC4626 exchange rate
+        // War chest accumulates the excess shares representing yield
+        // This prevents:
+        // 1. O(N) DoS via unbounded loop
+        // 2. Artificial insolvency by reducing LP collateral ratios
         
         // Add to war chest
         yieldWarChest += yieldInShares;
