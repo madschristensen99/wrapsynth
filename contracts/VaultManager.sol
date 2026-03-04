@@ -101,7 +101,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     struct Vault {
         address lpAddress;
         address collateralAsset; // address(0) for ETH
-        uint256 collateralAmount;
+        uint256 collateralAmount; // CRITICAL: For sDAI, this tracks underlying DAI VALUE, not shares (prevents ERC4626 double-spending)
         uint256 lockedCollateral; // Collateral reserved for pending burns (still liquidatable!)
         uint256 normalizedDebt; // Normalized debt for O(1) proportional forgiveness (actualDebt = normalizedDebt * globalDebtIndex / 1e18)
         uint256 pendingDebt; // Reserved capacity for pending mints (NOT Liquidatable)
@@ -321,16 +321,17 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             IERC20(GnosisAddresses.XDAI).approve(GnosisAddresses.SDAI, _amount);
             
             // Deposit DAI into sDAI vault and receive sDAI shares
-            uint256 sDAIShares = ISavingsDAI(GnosisAddresses.SDAI).deposit(_amount, address(this));
+            ISavingsDAI(GnosisAddresses.SDAI).deposit(_amount, address(this));
             
-            // Track sDAI shares as collateral
-            vault.collateralAmount += sDAIShares;
+            // CRITICAL FIX: Track underlying DAI VALUE, not sDAI shares
+            // This prevents ERC4626 double-spending where yield creates phantom shares
+            vault.collateralAmount += _amount;
             
             // Track principal DAI deposit for yield harvesting
             lpPrincipalDeposits[msg.sender] += _amount;
-            globalLpPrincipal += _amount; // CRITICAL FIX: Update global sum
+            globalLpPrincipal += _amount;
             
-            emit CollateralDeposited(msg.sender, vault.collateralAsset, sDAIShares);
+            emit CollateralDeposited(msg.sender, vault.collateralAsset, _amount);
         } else if (vault.collateralAsset == address(0)) {
             // Native ETH deposit (for other chains)
             if (msg.value != _amount) revert InvalidValue();
@@ -380,15 +381,19 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         // Transfer collateral back to LP
         if (vault.collateralAsset == GnosisAddresses.SDAI) {
-            // Auto-convert sDAI back to DAI for withdrawal
-            uint256 daiReceived = ISavingsDAI(GnosisAddresses.SDAI).redeem(_amount, msg.sender, address(this));
+            // CRITICAL FIX: Convert DAI value to sDAI shares for redemption
+            // vault.collateralAmount tracks DAI value, need to convert to shares
+            uint256 sharesToRedeem = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(_amount);
+            
+            // Redeem sDAI shares for DAI
+            uint256 daiReceived = ISavingsDAI(GnosisAddresses.SDAI).redeem(sharesToRedeem, msg.sender, address(this));
             
             // CRITICAL FIX: Decrement principal proportionally to prevent yield lockup
             // Calculate what portion of the LP's principal this withdrawal represents
             uint256 totalCollateral = vault.collateralAmount + _amount; // Before withdrawal
             uint256 principalToDeduct = (lpPrincipalDeposits[msg.sender] * _amount) / totalCollateral;
             lpPrincipalDeposits[msg.sender] -= principalToDeduct;
-            globalLpPrincipal -= principalToDeduct; // CRITICAL FIX: Update global sum
+            globalLpPrincipal -= principalToDeduct;
             
             emit CollateralWithdrawn(msg.sender, vault.collateralAsset, daiReceived);
         } else if (vault.collateralAsset == address(0)) {
@@ -841,9 +846,24 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // Process the burn reward to the User
         if (request.rewardCollateral > 0) {
             vault.collateralAmount -= request.rewardCollateral;
+            
+            // CRITICAL FIX: Decrement principal when collateral leaves the vault
+            if (lpPrincipalDeposits[vault.lpAddress] > 0) {
+                uint256 principalReduction = (lpPrincipalDeposits[vault.lpAddress] * request.rewardCollateral) / 
+                    (vault.collateralAmount + request.rewardCollateral);
+                lpPrincipalDeposits[vault.lpAddress] -= principalReduction;
+                globalLpPrincipal -= principalReduction;
+            }
+            
+            // CRITICAL FIX: For sDAI, convert DAI value to shares for transfer
+            uint256 amountToQueue = request.rewardCollateral;
+            if (vault.collateralAsset == GnosisAddresses.SDAI) {
+                amountToQueue = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(request.rewardCollateral);
+            }
+            
             // Queue both ETH and ERC20 rewards to prevent DoS
-            pendingReturns[request.user][vault.collateralAsset] += request.rewardCollateral;
-            emit ReturnQueued(request.user, vault.collateralAsset, request.rewardCollateral);
+            pendingReturns[request.user][vault.collateralAsset] += amountToQueue;
+            emit ReturnQueued(request.user, vault.collateralAsset, amountToQueue);
         }
         
         request.status = BurnStatus.COMPLETED;
@@ -878,8 +898,20 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         }
         vault.collateralAmount -= actualSeized;
         
+        // CRITICAL FIX: Decrement principal when collateral is slashed
+        if (lpPrincipalDeposits[vault.lpAddress] > 0) {
+            uint256 principalReduction = (lpPrincipalDeposits[vault.lpAddress] * actualSeized) / 
+                (vault.collateralAmount + actualSeized);
+            lpPrincipalDeposits[vault.lpAddress] -= principalReduction;
+            globalLpPrincipal -= principalReduction;
+        }
+        
         // Transfer collateral to user as penalty for LP failure
-        if (vault.collateralAsset == address(0)) {
+        if (vault.collateralAsset == GnosisAddresses.SDAI) {
+            // CRITICAL FIX: Convert DAI value to sDAI shares for transfer
+            uint256 sharesToTransfer = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(actualSeized);
+            IERC20(vault.collateralAsset).safeTransfer(request.user, sharesToTransfer);
+        } else if (vault.collateralAsset == address(0)) {
             (bool success, ) = payable(request.user).call{value: actualSeized}("");
             require(success, "ETH transfer failed");
         } else {
@@ -1002,8 +1034,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // Burn wsXMR from liquidator (interaction after state changes)
         wsxmrToken.burn(msg.sender, _debtToClear);
         
-        // Transfer collateral to liquidator
-        if (vault.collateralAsset == address(0)) {
+        // Transfer seized collateral to liquidator
+        if (vault.collateralAsset == GnosisAddresses.SDAI) {
+            // CRITICAL FIX: Convert DAI value to sDAI shares for transfer
+            uint256 sharesToTransfer = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(collateralAmount);
+            IERC20(vault.collateralAsset).safeTransfer(msg.sender, sharesToTransfer);
+        } else if (vault.collateralAsset == address(0)) {
             (bool success, ) = payable(msg.sender).call{value: collateralAmount}("");
             require(success, "ETH transfer failed");
         } else {
@@ -1016,37 +1052,14 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     // ========== BUY-AND-BURN STRATEGY ==========
     
     /**
-     * @notice Harvest accumulated sDAI yield and add to war chest
-     * @dev Anyone can call this to skim profit from sDAI appreciation
+     * @notice DEPRECATED: Yield harvesting no longer needed
+     * @dev With the new DAI-value accounting system, yield automatically accrues
+     * @dev as the sDAI exchange rate grows. No manual harvesting required.
+     * @dev This eliminates the ERC4626 double-spending vulnerability.
      */
-    function harvestGlobalYield() external nonReentrant {
-        // Calculate total underlying DAI value of all sDAI held
-        uint256 totalSDAIShares = IERC20(GnosisAddresses.SDAI).balanceOf(address(this));
-        if (totalSDAIShares == 0) return;
-        
-        uint256 totalUnderlyingDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(totalSDAIShares);
-        
-        // CRITICAL FIX: Use global principal sum to avoid O(N) loop DoS
-        // Attackers cannot grief by creating thousands of empty vaults
-        
-        // CRITICAL FIX: Include already-harvested war chest in total obligations
-        // This prevents double-counting yield on subsequent calls
-        uint256 warChestDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(yieldWarChest);
-        uint256 totalAssignedDAI = globalLpPrincipal + warChestDAI;
-        
-        // Yield = Total Underlying DAI - (Principal + War Chest)
-        if (totalUnderlyingDAI <= totalAssignedDAI) return; // No yield to harvest
-        
-        uint256 yieldInDAI = totalUnderlyingDAI - totalAssignedDAI;
-        
-        // Convert yield DAI amount to sDAI shares
-        uint256 yieldInShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(yieldInDAI);
-        
-        // Add to war chest
-        yieldWarChest += yieldInShares;
-        
-        emit YieldHarvested(yieldInDAI, yieldInShares);
-    }
+    // function harvestGlobalYield() - REMOVED
+    // Yield now accrues automatically in vault.collateralAmount (DAI value)
+    // No phantom shares are created
     
     /**
      * @notice Execute buy-and-burn when XMR dips 1% below EMA
@@ -1107,6 +1120,13 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // Reduce global index by exact percentage of total debt burned
         if (globalTotalDebt > 0) {
             uint256 reductionPercentage = (wsxmrBought * 1e18) / globalTotalDebt;
+            
+            // CRITICAL FIX: Prevent globalDebtIndex from reaching zero (division by zero protection)
+            // If reduction would drop index to zero, cap it at 1e18 - 1 to prevent protocol lockup
+            if (reductionPercentage >= 1e18) {
+                reductionPercentage = 1e18 - 1; // Maximum 99.9999...% reduction
+            }
+            
             globalDebtIndex -= (globalDebtIndex * reductionPercentage) / 1e18;
             globalTotalDebt -= wsxmrBought;
         }
