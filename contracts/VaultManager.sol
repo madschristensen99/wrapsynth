@@ -381,6 +381,13 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         if (vault.collateralAsset == GnosisAddresses.SDAI) {
             // Auto-convert sDAI back to DAI for withdrawal
             uint256 daiReceived = ISavingsDAI(GnosisAddresses.SDAI).redeem(_amount, msg.sender, address(this));
+            
+            // CRITICAL FIX: Decrement principal proportionally to prevent yield lockup
+            // Calculate what portion of the LP's principal this withdrawal represents
+            uint256 totalCollateral = vault.collateralAmount + _amount; // Before withdrawal
+            uint256 principalToDeduct = (lpPrincipalDeposits[msg.sender] * _amount) / totalCollateral;
+            lpPrincipalDeposits[msg.sender] -= principalToDeduct;
+            
             emit CollateralWithdrawn(msg.sender, vault.collateralAsset, daiReceived);
         } else if (vault.collateralAsset == address(0)) {
             (bool success, ) = payable(msg.sender).call{value: _amount}("");
@@ -580,7 +587,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         // CRITICAL: Move debt from Pending state to Active state
         vault.pendingDebt -= request.wsxmrAmount;
-        vault.normalizedDebt += request.wsxmrAmount; // Add to normalized debt
+        
+        // CRITICAL FIX: Normalize the debt amount by dividing by globalDebtIndex
+        // This prevents wealth generation when index < 1e18
+        uint256 normalizedAmount = (request.wsxmrAmount * 1e18) / globalDebtIndex;
+        vault.normalizedDebt += normalizedAmount;
         globalTotalDebt += request.wsxmrAmount; // Track global debt for buy-and-burn
         
         // Split mint execution between User and LP if a fee was configured
@@ -705,10 +716,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // This prevents liquidation blind spot vulnerability
         // Lock both Base Liquidation Collateral and Reward Collateral
         vault.lockedCollateral += (collateralToLock + rewardCollateral);
-        vault.normalizedDebt -= _wsxmrAmount;
-        globalTotalDebt -= _wsxmrAmount;
         
-        uint256 xmrAmount = _wsxmrAmount * 1e4;
+        // CRITICAL FIX: Normalize the debt amount when subtracting
+        vault.normalizedDebt -= (_wsxmrAmount * 1e18) / globalDebtIndex;
+        globalTotalDebt -= _wsxmrAmount;
         
         // Step 1: wsXMR burned, collateral locked (but still liquidatable)
         // LP has BURN_REQUEST_TIMEOUT to lock XMR on Monero and provide secretHash
@@ -717,10 +728,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             user: msg.sender,
             lpVault: _lpVault,
             wsxmrAmount: _wsxmrAmount,
-            xmrAmount: xmrAmount,
-            lockedCollateral: collateralToLock, // Base collateral locked
-            rewardCollateral: rewardCollateral, // Extra reward collateral
-            secretHash: bytes32(0), // Will be set in commitBurn
+            xmrAmount: _wsxmrAmount * 1e4,
+            lockedCollateral: collateralToLock,
+            rewardCollateral: rewardCollateral,
+            secretHash: bytes32(0),
             deadline: block.timestamp + BURN_REQUEST_TIMEOUT,
             status: BurnStatus.REQUESTED
         });
@@ -730,7 +741,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             msg.sender,
             _lpVault,
             _wsxmrAmount,
-            xmrAmount,
+            _wsxmrAmount * 1e4,
             rewardCollateral
         );
         
@@ -856,7 +867,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         Vault storage vault = vaults[request.lpVault];
         
         // Restore the LP's debt and UNLOCK collateral (don't transfer it)
-        vault.normalizedDebt += request.wsxmrAmount;
+        // CRITICAL FIX: Normalize the debt amount when adding back
+        uint256 normalizedAmount = (request.wsxmrAmount * 1e18) / globalDebtIndex;
+        vault.normalizedDebt += normalizedAmount;
         globalTotalDebt += request.wsxmrAmount;
         
         uint256 totalUnlock = request.lockedCollateral + request.rewardCollateral;
@@ -919,7 +932,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         // CHECKS-EFFECTS-INTERACTIONS: Update state before external calls
         vault.collateralAmount -= collateralAmount;
-        vault.normalizedDebt -= _debtToClear;
+        
+        // CRITICAL FIX: Normalize the debt amount when liquidating
+        uint256 normalizedClear = (_debtToClear * 1e18) / globalDebtIndex;
+        vault.normalizedDebt -= normalizedClear;
         globalTotalDebt -= _debtToClear;
         
         // CRITICAL FIX: Proportionally reduce lockedCollateral to prevent underflow
