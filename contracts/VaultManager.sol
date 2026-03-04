@@ -101,7 +101,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     struct Vault {
         address lpAddress;
         address collateralAsset; // address(0) for ETH
-        uint256 collateralAmount; // CRITICAL: For sDAI, this tracks underlying DAI VALUE, not shares (prevents ERC4626 double-spending)
+        uint256 collateralAmount; // For sDAI: tracks sDAI SHARES (not DAI value)
         uint256 lockedCollateral; // Collateral reserved for pending burns (still liquidatable!)
         uint256 normalizedDebt; // Normalized debt for O(1) proportional forgiveness (actualDebt = normalizedDebt * globalDebtIndex / 1e18)
         uint256 pendingDebt; // Reserved capacity for pending mints (NOT Liquidatable)
@@ -321,11 +321,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             IERC20(GnosisAddresses.XDAI).approve(GnosisAddresses.SDAI, _amount);
             
             // Deposit DAI into sDAI vault and receive sDAI shares
-            ISavingsDAI(GnosisAddresses.SDAI).deposit(_amount, address(this));
+            uint256 sDAIShares = ISavingsDAI(GnosisAddresses.SDAI).deposit(_amount, address(this));
             
-            // CRITICAL FIX: Track underlying DAI VALUE, not sDAI shares
-            // This prevents ERC4626 double-spending where yield creates phantom shares
-            vault.collateralAmount += _amount;
+            // CRITICAL FIX: Track sDAI SHARES consistently
+            vault.collateralAmount += sDAIShares;
             
             // Track principal DAI deposit for yield harvesting
             lpPrincipalDeposits[msg.sender] += _amount;
@@ -369,9 +368,14 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         uint256 totalObligations = actualDebt + vault.pendingDebt;
         
         if (totalObligations > 0) {
+            // CRITICAL FIX: Exclude lockedCollateral from health check
+            // Locked collateral backs burn requests, not active debt
+            uint256 availableForDebt = newCollateralAmount > vault.lockedCollateral 
+                ? newCollateralAmount - vault.lockedCollateral 
+                : 0;
             uint256 ratio = calculateCollateralRatio(
                 vault.collateralAsset,
-                newCollateralAmount,
+                availableForDebt,
                 totalObligations
             );
             if (ratio < COLLATERAL_RATIO) revert InsufficientCollateral();
@@ -381,12 +385,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         // Transfer collateral back to LP
         if (vault.collateralAsset == GnosisAddresses.SDAI) {
-            // CRITICAL FIX: Convert DAI value to sDAI shares for redemption
-            // vault.collateralAmount tracks DAI value, need to convert to shares
-            uint256 sharesToRedeem = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(_amount);
-            
-            // Redeem sDAI shares for DAI
-            uint256 daiReceived = ISavingsDAI(GnosisAddresses.SDAI).redeem(sharesToRedeem, msg.sender, address(this));
+            // CRITICAL FIX: _amount is in sDAI shares, redeem directly
+            uint256 daiReceived = ISavingsDAI(GnosisAddresses.SDAI).redeem(_amount, msg.sender, address(this));
             
             // CRITICAL FIX: Decrement principal proportionally to prevent yield lockup
             // Calculate what portion of the LP's principal this withdrawal represents
@@ -855,15 +855,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
                 globalLpPrincipal -= principalReduction;
             }
             
-            // CRITICAL FIX: For sDAI, convert DAI value to shares for transfer
-            uint256 amountToQueue = request.rewardCollateral;
-            if (vault.collateralAsset == GnosisAddresses.SDAI) {
-                amountToQueue = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(request.rewardCollateral);
-            }
-            
+            // CRITICAL FIX: request.rewardCollateral is already in sDAI shares
             // Queue both ETH and ERC20 rewards to prevent DoS
-            pendingReturns[request.user][vault.collateralAsset] += amountToQueue;
-            emit ReturnQueued(request.user, vault.collateralAsset, amountToQueue);
+            pendingReturns[request.user][vault.collateralAsset] += request.rewardCollateral;
+            emit ReturnQueued(request.user, vault.collateralAsset, request.rewardCollateral);
         }
         
         request.status = BurnStatus.COMPLETED;
@@ -908,9 +903,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         // Transfer collateral to user as penalty for LP failure
         if (vault.collateralAsset == GnosisAddresses.SDAI) {
-            // CRITICAL FIX: Convert DAI value to sDAI shares for transfer
-            uint256 sharesToTransfer = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(actualSeized);
-            IERC20(vault.collateralAsset).safeTransfer(request.user, sharesToTransfer);
+            // CRITICAL FIX: actualSeized is already in sDAI shares, transfer directly
+            IERC20(vault.collateralAsset).safeTransfer(request.user, actualSeized);
         } else if (vault.collateralAsset == address(0)) {
             (bool success, ) = payable(request.user).call{value: actualSeized}("");
             require(success, "ETH transfer failed");
@@ -1036,9 +1030,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         // Transfer seized collateral to liquidator
         if (vault.collateralAsset == GnosisAddresses.SDAI) {
-            // CRITICAL FIX: Convert DAI value to sDAI shares for transfer
-            uint256 sharesToTransfer = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(collateralAmount);
-            IERC20(vault.collateralAsset).safeTransfer(msg.sender, sharesToTransfer);
+            // CRITICAL FIX: collateralAmount is already in sDAI shares, transfer directly
+            IERC20(vault.collateralAsset).safeTransfer(msg.sender, collateralAmount);
         } else if (vault.collateralAsset == address(0)) {
             (bool success, ) = payable(msg.sender).call{value: collateralAmount}("");
             require(success, "ETH transfer failed");

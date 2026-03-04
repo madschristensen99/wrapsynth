@@ -232,10 +232,6 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             
             // CRITICAL FIX: Calculate USD values based on ACTUAL spot ratio used by Uniswap
             // This prevents oracle/spot divergence arbitrage attacks
-            // Use the actual amounts deposited to determine fair value split
-            uint256 totalValueUSD = (actual0 * vaultManager.getCollateralPrice(GnosisAddresses.SDAI)) / 1e18 + 
-                                    (actual1 * vaultManager.getXmrPrice()) / 1e8;
-            
             positions[positionIndex] = LiquidityPosition({
                 positionId: tokenId,
                 lpProvider: _lp,
@@ -252,9 +248,6 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             
             // CRITICAL FIX: Calculate USD values based on ACTUAL spot ratio used by Uniswap
             // This prevents oracle/spot divergence arbitrage attacks
-            uint256 totalValueUSD = (actual1 * vaultManager.getCollateralPrice(GnosisAddresses.SDAI)) / 1e18 + 
-                                    (actual0 * vaultManager.getXmrPrice()) / 1e8;
-            
             positions[positionIndex] = LiquidityPosition({
                 positionId: tokenId,
                 lpProvider: _lp,
@@ -283,12 +276,9 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             revert Unauthorized();
         }
         
-        // Get position details including uncollected fees
-        (, , address token0, , , , , uint128 liquidity, , , uint128 tokensOwed0, uint128 tokensOwed1) = 
+        // Get position details
+        (, , address token0, , , , , uint128 liquidity, , , , ) = 
             positionManager.positions(position.positionId);
-        
-        // CRITICAL FIX: Separate actual fees from principal using Uniswap's tokensOwed
-        // tokensOwed0/1 track actual trading fees, not IL-shifted principal
         
         // Remove all liquidity
         positionManager.decreaseLiquidity(
@@ -301,6 +291,11 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             })
         );
         
+        // CRITICAL FIX: Read tokensOwed AFTER decreaseLiquidity
+        // decreaseLiquidity updates tokensOwed with all accrued fees
+        (, , , , , , , , , , uint128 tokensOwed0, uint128 tokensOwed1) = 
+            positionManager.positions(position.positionId);
+        
         // Collect all tokens (principal + fees)
         (uint256 collected0, uint256 collected1) = positionManager.collect(
             INonfungiblePositionManager.CollectParams({
@@ -311,11 +306,16 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             })
         );
         
-        // CRITICAL FIX: Distribute proportionally based on initial USD value
+        // CRITICAL FIX: Subtract fees from collected amounts to get principal only
+        // This prevents fee double-counting vulnerability
+        uint256 principal0 = collected0 - uint256(tokensOwed0);
+        uint256 principal1 = collected1 - uint256(tokensOwed1);
+        
+        // CRITICAL FIX: Distribute principal proportionally based on initial USD value
         // This handles impermanent loss fairly between both parties
-        uint256 totalReturnedValue = ((token0 == GnosisAddresses.SDAI ? collected0 : collected1) * 
+        uint256 totalReturnedValue = ((token0 == GnosisAddresses.SDAI ? principal0 : principal1) * 
             vaultManager.getCollateralPrice(GnosisAddresses.SDAI)) / 1e18 + 
-            ((token0 == GnosisAddresses.SDAI ? collected1 : collected0) * 
+            ((token0 == GnosisAddresses.SDAI ? principal1 : principal0) * 
             vaultManager.getXmrPrice()) / 1e8;
         
         // Calculate proportional shares
@@ -326,18 +326,18 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
         uint256 lpSDAI = (lpShareValue * 1e18) / vaultManager.getCollateralPrice(GnosisAddresses.SDAI);
         uint256 userWsxmr = ((totalReturnedValue - lpShareValue) * 1e8) / vaultManager.getXmrPrice();
         
-        uint256 sDAIReturned = token0 == GnosisAddresses.SDAI ? collected0 : collected1;
-        uint256 wsxmrReturned = token0 == GnosisAddresses.SDAI ? collected1 : collected0;
+        uint256 sDAIPrincipal = token0 == GnosisAddresses.SDAI ? principal0 : principal1;
+        uint256 wsxmrPrincipal = token0 == GnosisAddresses.SDAI ? principal1 : principal0;
         
-        if (lpSDAI > sDAIReturned) lpSDAI = sDAIReturned;
-        if (userWsxmr > wsxmrReturned) userWsxmr = wsxmrReturned;
+        if (lpSDAI > sDAIPrincipal) lpSDAI = sDAIPrincipal;
+        if (userWsxmr > wsxmrPrincipal) userWsxmr = wsxmrPrincipal;
         
         // Credit proportional principal (includes IL)
         lpLiquidityAllocation[position.lpProvider] += lpSDAI;
         userWsxmrDeposits[position.userProvider] += userWsxmr;
         
-        // CRITICAL FIX: Use tokensOwed for actual fees (50/50 split)
-        // This separates real trading fees from IL-shifted principal
+        // CRITICAL FIX: Distribute actual trading fees (50/50 split)
+        // tokensOwed contains only real fees, not IL-shifted principal
         if (tokensOwed0 > 0) {
             uint256 fee0 = uint256(tokensOwed0);
             if (token0 == GnosisAddresses.SDAI) {
@@ -359,7 +359,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             }
         }
         
-        emit PositionClosed(_positionIndex, sDAIReturned, wsxmrReturned);
+        emit PositionClosed(_positionIndex, sDAIPrincipal, wsxmrPrincipal);
         
         // Clear position
         delete positions[_positionIndex];
