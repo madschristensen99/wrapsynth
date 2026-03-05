@@ -15,10 +15,11 @@ export const NETWORKS = {
     }
 };
 
-// Contract addresses - These will be populated after deployment
+// Contract addresses - Deployed on Gnosis Chain Mainnet
 export const CONTRACTS = {
-    vaultManager: '0x0000000000000000000000000000000000000000', // TODO: Update after deployment
-    wrappedMonero: '0x0000000000000000000000000000000000000000', // TODO: Update after deployment
+    vaultManager: '0x184fDC73f58B9b56e81CC150922661CF5A3d600F',
+    wrappedMonero: '0x3100aE36ce786EfE1D68BC3863139c59018e739c',
+    liquidityRouter: '0x8D8BE267BA4c326fFE02C4243a5261C7f0f9be81',
     pythOracle: '0x2880aB155794e7179c9eE2e38200202908C17B43' // Gnosis Pyth Oracle
 };
 
@@ -68,15 +69,17 @@ export const MONERO_CONFIG = {
 // Contract ABIs (minimal, only what we need)
 export const ABIS = {
     vaultManager: [
-        'function initiateMint(address lpVault, uint256 xmrAmount, bytes32 claimCommitment, uint256 timeout) external payable returns (bytes32 requestId)',
-        'function requestBurn(uint256 wsxmrAmount, address lpVault) external returns (bytes32 requestId)',
+        'function initiateMint(address lpVault, address recipient, uint256 xmrAmount, bytes32 claimCommitment, uint256 timeoutDuration) external payable returns (bytes32 requestId)',
+        'function requestBurn(uint256 wsxmrAmount, address lpVault, address user) external returns (bytes32 requestId)',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
         'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
         'function cancelMint(bytes32 requestId) external',
         'function updatePythPrices(bytes[] calldata priceUpdateData) external payable',
-        'function getVault(address lpVault) external view returns (tuple(uint256 totalXmrLocked, uint256 totalCollateral, address collateralToken, uint256 collateralizationRatio, uint256 mintGriefingDeposit, bool isActive))',
-        'function getMintRequest(bytes32 requestId) external view returns (tuple(address user, address lpVault, uint256 xmrAmount, bytes32 claimCommitment, uint256 griefingDeposit, uint256 timeout, uint8 status))',
-        'function getBurnRequest(bytes32 requestId) external view returns (tuple(address user, address lpVault, uint256 wsxmrAmount, bytes32 secretHash, uint256 timeout, uint8 status))',
+        'function vaults(address lpVault) external view returns (uint256 collateralAmount, uint256 normalizedDebt, uint256 pendingDebt, uint256 lockedCollateral, address collateralAsset, uint256 mintGriefingDeposit, uint256 mintFeeBps, uint256 burnFeeBps, uint256 maxMintBps, bool active)',
+        'function mintRequests(bytes32 requestId) external view returns (address user, address lpVault, address recipient, uint256 xmrAmount, bytes32 claimCommitment, uint256 griefingDeposit, uint256 deadline, uint8 status)',
+        'function burnRequests(bytes32 requestId) external view returns (address user, address lpVault, uint256 wsxmrAmount, bytes32 secretHash, uint256 collateralLocked, uint256 deadline, uint8 status)',
+        'function getXmrPrice() external view returns (uint256)',
+        'function getCollateralPrice(address collateralAsset) external view returns (uint256)',
         'event MintInitiated(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 xmrAmount, bytes32 claimCommitment)',
         'event MintReady(bytes32 indexed requestId, bytes32 secretHash)',
         'event MintFinalized(bytes32 indexed requestId, bytes32 secret)',

@@ -24,9 +24,15 @@ const elements = {
     // Tabs
     tabMint: null,
     tabBurn: null,
+    tabLp: null,
     
-    // Mint panel
+    // Panels
     mintPanel: null,
+    burnPanel: null,
+    lpPanel: null,
+    
+    // Mint panel elements
+    mintPanelContent: null,
     mintAmount: null,
     mintVaultSelect: null,
     mintVaultInfo: null,
@@ -77,9 +83,15 @@ export function initUI() {
     // Tabs
     elements.tabMint = document.getElementById('tab-mint');
     elements.tabBurn = document.getElementById('tab-burn');
+    elements.tabLp = document.getElementById('tab-lp');
     
-    // Mint panel
+    // Panels
     elements.mintPanel = document.getElementById('mint-panel');
+    elements.burnPanel = document.getElementById('burn-panel');
+    elements.lpPanel = document.getElementById('lp-panel');
+    
+    // Mint panel elements
+    elements.mintPanelContent = document.getElementById('mint-panel');
     elements.mintAmount = document.getElementById('mint-amount');
     elements.mintVaultSelect = document.getElementById('mint-vault-select');
     elements.mintVaultInfo = document.getElementById('mint-vault-info');
