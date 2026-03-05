@@ -9,7 +9,7 @@
     "deploy:gnosis": "hardhat run scripts/deploy/deploy-gnosis.js --network gnosis",
     "deploy:mock": "hardhat run scripts/deploy/deploy-with-mock.js --network unichain_testnet",
     "verify": "hardhat run scripts/deploy/verify.js --network unichain_testnet",
-    "verify:gnosis": "hardhat run scripts/deploy/verify.js --network gnosis",
+    "verify:gnosis": "hardhat run scripts/deploy/verify-gnosis.js --network gnosis",
     "verify:mock": "hardhat run scripts/deploy/verify-mock.js --network unichain_testnet",
     "lp:setup": "hardhat run scripts/lpServer/lp-setup.js --network unichain_testnet",
     "lp:setup:mock": "hardhat run scripts/lpServer/lp-setup-mock.js --network unichain_testnet",

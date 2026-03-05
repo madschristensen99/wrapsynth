@@ -43,21 +43,35 @@ WrapSynth enables trustless bridging of Monero (XMR) to Ethereum and EVM chains 
 
 ## 🚀 Current Status
 
-**Development Phase**: Active development, not yet deployed to mainnet
+**Development Phase**: ✅ **Deployed to Gnosis Chain Mainnet**
+
+### 🌐 Live Deployments
+
+#### Gnosis Chain (ChainID: 100)
+**Deployed Contracts:**
+- **wsXMR Token**: [`0x3100aE36ce786EfE1D68BC3863139c59018e739c`](https://gnosisscan.io/address/0x3100aE36ce786EfE1D68BC3863139c59018e739c#code)
+- **VaultManager**: [`0x184fDC73f58B9b56e81CC150922661CF5A3d600F`](https://gnosisscan.io/address/0x184fDC73f58B9b56e81CC150922661CF5A3d600F#code)
+- **wsXMRLiquidityRouter**: [`0x8D8BE267BA4c326fFE02C4243a5261C7f0f9be81`](https://gnosisscan.io/address/0x8D8BE267BA4c326fFE02C4243a5261C7f0f9be81#code)
+
+**Configuration:**
+- Collateral: sDAI (Savings DAI) - auto-converts from xDAI deposits
+- Oracle: Pyth Network (`0x2880aB155794e7179c9eE2e38200202908C17B43`)
+- Status: ✅ Verified on Gnosisscan
 
 **Target Networks:**
-- **Gnosis Chain** (ChainID: 100) - ✅ Ready for mainnet deployment (low gas costs)
+- **Gnosis Chain** (ChainID: 100) - ✅ **LIVE** (low gas costs)
 - **Unichain Testnet** (ChainID: 1301) - Development and testing
 
 **Deployment Status:**
 - ✅ VaultManager and wsXMR contracts implemented
 - ✅ Atomic swap mechanics with HTLC-style commitments
 - ✅ Pyth oracle integration for price feeds
-- ✅ Gnosis mainnet deployment scripts ready
-- ✅ Multi-collateral support (ETH, wstETH, etc.)
+- ✅ **Deployed to Gnosis Chain mainnet**
+- ✅ **Contracts verified on Gnosisscan**
+- ✅ Multi-collateral support (sDAI with auto-conversion from xDAI)
 
 **Next Steps:**
-1. Deploy VaultManager and wsXMR to Gnosis mainnet
+1. ✅ ~~Deploy VaultManager and wsXMR to Gnosis mainnet~~ **COMPLETE**
 2. Set up LP server infrastructure for vault management
 3. Integrate with frontend for testing
 4. Complete end-to-end testing with Monero stagenet
