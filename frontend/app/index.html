@@ -6,25 +6,65 @@
     <title>WrapSynth | Swap XMR ⇄ wsXMR</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+    <!-- Animated Background -->
+    <div class="bg-gradient"></div>
+    <div class="bg-orbs">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+    </div>
+
     <div class="container">
-        <header>
-            <div class="logo">
-                <span class="logo-text">WrapSynth</span>
-                <span class="logo-badge">SWAP</span>
+        <!-- Top Navigation -->
+        <nav class="top-nav">
+            <div class="nav-left">
+                <a href="../index.html" class="logo-main" style="text-decoration: none; color: inherit; display: flex; align-items: center; gap: 0.75rem;">
+                    <span class="logo-icon">🌉</span>
+                    <span class="logo-text">WrapSynth</span>
+                    <span class="logo-badge">LIVE</span>
+                </a>
             </div>
-            <p class="subtitle">Trustless Atomic Swaps • XMR ⇄ wsXMR</p>
-            <div id="wallet-status" class="wallet-status">
-                <button id="connect-wallet" class="btn btn-primary">Connect MetaMask</button>
-                <div id="connected-info" class="connected-info hidden">
-                    <span id="user-address"></span>
-                    <span id="user-balance"></span>
+            <div class="nav-right">
+                <button id="connect-wallet" class="btn-connect">
+                    <span class="btn-icon">🦊</span>
+                    <span class="btn-text">Connect Wallet</span>
+                </button>
+                <div id="connected-info" class="wallet-connected hidden">
+                    <div class="wallet-avatar"></div>
+                    <div class="wallet-details">
+                        <span id="user-address" class="wallet-address"></span>
+                        <span id="user-balance" class="wallet-balance"></span>
+                    </div>
                 </div>
             </div>
-        </header>
+        </nav>
+
+        <!-- Hero Stats Bar -->
+        <div class="stats-bar">
+            <div class="stat-item">
+                <span class="stat-label">TVL</span>
+                <span class="stat-value" id="tvl-stat">$147K</span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+                <span class="stat-label">Active Vaults</span>
+                <span class="stat-value" id="vaults-stat">0</span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+                <span class="stat-label">24h Volume</span>
+                <span class="stat-value" id="volume-stat">$0</span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+                <span class="stat-label">XMR Price</span>
+                <span class="stat-value" id="xmr-price-stat">$153.20</span>
+            </div>
+        </div>
 
         <!-- Contracts Not Deployed Banner -->
         <div id="contracts-banner" class="banner banner-warning hidden">
@@ -36,16 +76,34 @@
             <p>⚠️ Active swap detected! <button id="resume-swap" class="btn btn-small">Resume Swap</button></p>
         </div>
 
-        <!-- Main Swap Interface -->
-        <main id="main-interface" class="hidden">
-            <div class="swap-selector">
-                <button id="tab-mint" class="tab-btn active">Mint wsXMR</button>
-                <button id="tab-burn" class="tab-btn">Burn wsXMR</button>
-            </div>
+        <!-- Main Content Grid -->
+        <main id="main-interface" class="main-grid hidden">
+            <!-- Left Column: Swap Interface -->
+            <div class="swap-column">
+                <div class="mode-selector">
+                    <button id="tab-mint" class="mode-btn active">
+                        <span class="mode-icon">⚡</span>
+                        <span class="mode-text">Mint</span>
+                        <span class="mode-desc">XMR → wsXMR</span>
+                    </button>
+                    <button id="tab-burn" class="mode-btn">
+                        <span class="mode-icon">🔥</span>
+                        <span class="mode-text">Burn</span>
+                        <span class="mode-desc">wsXMR → XMR</span>
+                    </button>
+                    <button id="tab-lp" class="mode-btn">
+                        <span class="mode-icon">💎</span>
+                        <span class="mode-text">Become LP</span>
+                        <span class="mode-desc">Earn Fees</span>
+                    </button>
+                </div>
 
-            <!-- Mint Flow -->
-            <div id="mint-panel" class="swap-panel">
-                <h2>Mint wsXMR from XMR</h2>
+                <!-- Mint Flow -->
+                <div id="mint-panel" class="swap-card">
+                    <div class="card-header">
+                        <h2 class="card-title">⚡ Mint wsXMR</h2>
+                        <p class="card-subtitle">Bridge your Monero to Gnosis Chain</p>
+                    </div>
                 <div class="form-group">
                     <label>Amount (XMR)</label>
                     <input type="number" id="mint-amount" placeholder="0.0" step="0.00000001" min="0">
@@ -58,7 +116,13 @@
                     </select>
                     <div id="mint-vault-info" class="vault-info hidden"></div>
                 </div>
-                <button id="start-mint" class="btn btn-primary btn-large">Start Mint</button>
+                    <button id="start-mint" class="btn-action btn-mint">
+                        <span class="btn-shimmer"></span>
+                        <span class="btn-content">
+                            <span class="btn-icon">⚡</span>
+                            <span class="btn-text">Start Mint</span>
+                        </span>
+                    </button>
                 
                 <!-- Mint Progress States -->
                 <div id="mint-progress" class="progress-container hidden">
@@ -111,11 +175,14 @@
                 <div class="action-buttons hidden" id="mint-actions">
                     <button id="cancel-mint" class="btn btn-secondary">Cancel & Refund</button>
                 </div>
-            </div>
+                </div>
 
-            <!-- Burn Flow -->
-            <div id="burn-panel" class="swap-panel hidden">
-                <h2>Burn wsXMR to XMR</h2>
+                <!-- Burn Flow -->
+                <div id="burn-panel" class="swap-card hidden">
+                    <div class="card-header">
+                        <h2 class="card-title">🔥 Burn wsXMR</h2>
+                        <p class="card-subtitle">Redeem your tokens for Monero</p>
+                    </div>
                 <div class="form-group">
                     <label>Amount (wsXMR)</label>
                     <input type="number" id="burn-amount" placeholder="0.0" step="0.00000001" min="0">
@@ -133,7 +200,13 @@
                     </select>
                     <div id="burn-vault-info" class="vault-info hidden"></div>
                 </div>
-                <button id="start-burn" class="btn btn-primary btn-large">Start Burn</button>
+                    <button id="start-burn" class="btn-action btn-burn">
+                        <span class="btn-shimmer"></span>
+                        <span class="btn-content">
+                            <span class="btn-icon">🔥</span>
+                            <span class="btn-text">Start Burn</span>
+                        </span>
+                    </button>
                 
                 <!-- Burn Progress States -->
                 <div id="burn-progress" class="progress-container hidden">
@@ -170,6 +243,280 @@
                         <div class="step-content">
                             <h3>Finalize on EVM</h3>
                             <p class="step-status">Pending...</p>
+                        </div>
+                    </div>
+                </div>
+                </div>
+
+                <!-- LP Panel: Stats or Education -->
+                <div id="lp-panel" class="swap-card hidden">
+                    <!-- LP Stats View (shown if user is an LP) -->
+                    <div id="lp-stats-view" class="hidden">
+                        <div class="card-header">
+                            <h2 class="card-title">💎 Your LP Vault</h2>
+                            <p class="card-subtitle">Manage your liquidity position</p>
+                        </div>
+
+                        <div class="lp-vault-stats">
+                            <div class="vault-stat-card">
+                                <div class="stat-icon">💰</div>
+                                <div class="stat-details">
+                                    <span class="stat-label">Total Collateral</span>
+                                    <span class="stat-value" id="lp-collateral">0 xDAI</span>
+                                </div>
+                            </div>
+                            <div class="vault-stat-card">
+                                <div class="stat-icon">📊</div>
+                                <div class="stat-details">
+                                    <span class="stat-label">Active Debt</span>
+                                    <span class="stat-value" id="lp-debt">0 wsXMR</span>
+                                </div>
+                            </div>
+                            <div class="vault-stat-card">
+                                <div class="stat-icon">🛡️</div>
+                                <div class="stat-details">
+                                    <span class="stat-label">Health Ratio</span>
+                                    <span class="stat-value" id="lp-health">---%</span>
+                                </div>
+                            </div>
+                            <div class="vault-stat-card">
+                                <div class="stat-icon">💵</div>
+                                <div class="stat-details">
+                                    <span class="stat-label">Fees Earned</span>
+                                    <span class="stat-value" id="lp-fees">0 xDAI</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="lp-actions">
+                            <button class="btn-action btn-lp" id="deposit-collateral-btn">
+                                <span class="btn-content">
+                                    <span class="btn-icon">➕</span>
+                                    <span class="btn-text">Deposit Collateral</span>
+                                </span>
+                            </button>
+                            <button class="btn-secondary" id="withdraw-collateral-btn">
+                                <span class="btn-icon">➖</span>
+                                <span class="btn-text">Withdraw Collateral</span>
+                            </button>
+                        </div>
+
+                        <div class="lp-settings">
+                            <h3>Vault Settings</h3>
+                            <div class="settings-grid">
+                                <div class="setting-item">
+                                    <label>Mint Fee (bps)</label>
+                                    <input type="number" id="lp-mint-fee" value="50" min="0" max="1000">
+                                    <span class="helper-text">50 = 0.5%</span>
+                                </div>
+                                <div class="setting-item">
+                                    <label>Burn Fee (bps)</label>
+                                    <input type="number" id="lp-burn-fee" value="50" min="0" max="1000">
+                                    <span class="helper-text">50 = 0.5%</span>
+                                </div>
+                                <div class="setting-item">
+                                    <label>Griefing Deposit (xDAI)</label>
+                                    <input type="number" id="lp-griefing" value="0.1" min="0" step="0.01">
+                                    <span class="helper-text">Anti-spam protection</span>
+                                </div>
+                                <div class="setting-item">
+                                    <label>Max Mint Size (%)</label>
+                                    <input type="number" id="lp-max-mint" value="20" min="0" max="100">
+                                    <span class="helper-text">% of capacity per mint</span>
+                                </div>
+                            </div>
+                            <button class="btn-secondary" id="update-settings-btn">
+                                <span class="btn-icon">💾</span>
+                                <span class="btn-text">Update Settings</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- LP Education View (shown if user is NOT an LP) -->
+                    <div id="lp-education-view">
+                        <div class="card-header">
+                            <h2 class="card-title">💎 Become a Liquidity Provider</h2>
+                            <p class="card-subtitle">Earn fees by providing liquidity</p>
+                        </div>
+
+                    <div class="lp-info-grid">
+                        <div class="info-card">
+                            <div class="info-icon">💰</div>
+                            <h3>Earn Fees</h3>
+                            <p>Collect fees from every mint and burn operation through your vault</p>
+                        </div>
+                        <div class="info-card">
+                            <div class="info-icon">🛡️</div>
+                            <h3>Overcollateralized</h3>
+                            <p>150% collateral ratio ensures your position is always protected</p>
+                        </div>
+                        <div class="info-card">
+                            <div class="info-icon">⚙️</div>
+                            <h3>Full Control</h3>
+                            <p>Set your own fees, deposit limits, and manage your vault parameters</p>
+                        </div>
+                    </div>
+
+                    <div class="lp-steps">
+                        <h3 class="steps-title">How to Become an LP</h3>
+                        
+                        <div class="step-item">
+                            <div class="step-number">1</div>
+                            <div class="step-content">
+                                <h4>Set Up LP Server</h4>
+                                <p>Clone the repository and install the LP server (Rust-based)</p>
+                                <div class="code-block">
+                                    <code>git clone https://github.com/madschristensen99/wrapsynth.git
+cd wrapsynth/lp-node
+cargo build --release</code>
+                                    <button class="btn-copy-code" data-copy="git clone https://github.com/madschristensen99/wrapsynth.git\ncd wrapsynth/lp-node\ncargo build --release">📋</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="step-item">
+                            <div class="step-number">2</div>
+                            <div class="step-content">
+                                <h4>Configure Environment</h4>
+                                <p>Set up your Monero wallet and Gnosis Chain credentials</p>
+                                <div class="code-block">
+                                    <code>cp .env.example .env
+# Edit .env with your:
+# - PRIVATE_KEY (Gnosis wallet)
+# - MONERO_WALLET_RPC (your XMR wallet)
+# - GNOSIS_RPC_URL</code>
+                                    <button class="btn-copy-code">📋</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="step-item">
+                            <div class="step-number">3</div>
+                            <div class="step-content">
+                                <h4>Create Your Vault</h4>
+                                <p>Register your vault on-chain with collateral</p>
+                                <div class="code-block">
+                                    <code>node scripts/lpServer/createVault.js
+# This will:
+# - Create your LP vault on VaultManager
+# - Set your fee parameters
+# - Register your Monero address</code>
+                                    <button class="btn-copy-code">📋</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="step-item">
+                            <div class="step-number">4</div>
+                            <div class="step-content">
+                                <h4>Deposit Collateral</h4>
+                                <p>Lock xDAI as collateral (auto-converts to sDAI for yield)</p>
+                                <div class="code-block">
+                                    <code>node scripts/lpServer/depositCollateral.js
+# Minimum: 150% of intended debt capacity
+# Example: $15K collateral → $10K mint capacity</code>
+                                    <button class="btn-copy-code">📋</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="step-item">
+                            <div class="step-number">5</div>
+                            <div class="step-content">
+                                <h4>Start LP Server</h4>
+                                <p>Run the automated LP server to handle swaps</p>
+                                <div class="code-block">
+                                    <code>cargo run --release
+# Server will:
+# - Monitor mint/burn requests
+# - Automatically confirm XMR receipts
+# - Execute atomic swap protocols</code>
+                                    <button class="btn-copy-code">📋</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="lp-requirements">
+                        <h3 class="requirements-title">Requirements</h3>
+                        <div class="requirements-grid">
+                            <div class="req-item">
+                                <span class="req-icon">💰</span>
+                                <span class="req-text">Minimum $1,000 in xDAI collateral</span>
+                            </div>
+                            <div class="req-item">
+                                <span class="req-icon">🔐</span>
+                                <span class="req-text">Monero wallet with RPC access</span>
+                            </div>
+                            <div class="req-item">
+                                <span class="req-icon">⚡</span>
+                                <span class="req-text">Server with 99%+ uptime</span>
+                            </div>
+                            <div class="req-item">
+                                <span class="req-icon">🛠️</span>
+                                <span class="req-text">Basic Rust/Node.js knowledge</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="lp-cta">
+                        <a href="https://github.com/madschristensen99/wrapsynth" target="_blank" class="btn-action btn-lp">
+                            <span class="btn-content">
+                                <span class="btn-icon">📚</span>
+                                <span class="btn-text">View Full Documentation</span>
+                            </span>
+                        </a>
+                        <a href="https://github.com/madschristensen99/wrapsynth/tree/main/lp-node" target="_blank" class="btn-secondary">
+                            <span class="btn-icon">💻</span>
+                            <span class="btn-text">LP Server Code</span>
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Info & Stats -->
+            <div class="info-column">
+                <!-- Live Vaults -->
+                <div class="info-card-container">
+                    <div class="info-card-header">
+                        <h3>🏦 Active LP Vaults</h3>
+                        <span class="refresh-btn" id="refresh-vaults">🔄</span>
+                    </div>
+                    <div id="vaults-list" class="vaults-list">
+                        <div class="loading-spinner">Loading vaults...</div>
+                    </div>
+                </div>
+
+                <!-- Recent Activity -->
+                <div class="info-card-container">
+                    <div class="info-card-header">
+                        <h3>⚡ Recent Activity</h3>
+                    </div>
+                    <div id="activity-feed" class="activity-feed">
+                        <div class="activity-item">
+                            <span class="activity-icon">⚡</span>
+                            <span class="activity-text">Waiting for transactions...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Stats -->
+                <div class="info-card-container">
+                    <div class="info-card-header">
+                        <h3>📊 Protocol Stats</h3>
+                    </div>
+                    <div class="quick-stats">
+                        <div class="quick-stat">
+                            <span class="stat-label">Total Minted</span>
+                            <span class="stat-value" id="total-minted">0 wsXMR</span>
+                        </div>
+                        <div class="quick-stat">
+                            <span class="stat-label">Collateral Ratio</span>
+                            <span class="stat-value">150%</span>
+                        </div>
+                        <div class="quick-stat">
+                            <span class="stat-label">Avg Fee</span>
+                            <span class="stat-value" id="avg-fee">0.5%</span>
                         </div>
                     </div>
                 </div>

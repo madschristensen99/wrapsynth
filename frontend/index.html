@@ -65,9 +65,12 @@
         .navbar .container { display: flex; justify-content: space-between; align-items: center; }
         .nav-brand { 
             font-family: var(--font-mono);
-            font-size: 0.9rem; 
-            font-weight: 600;
+            font-size: 1rem; 
+            font-weight: 700;
             color: var(--accent-orange);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
         }
         .nav-links { display: flex; align-items: center; gap: 2rem; }
         .nav-links a { 
@@ -99,6 +102,7 @@
             align-items: center;
             background: linear-gradient(180deg, #fff 0%, var(--bg-primary) 100%);
             position: relative;
+            position: relative;
             overflow: hidden;
         }
         .hero::before {
@@ -110,6 +114,7 @@
             height: 800px;
             background: radial-gradient(circle, var(--accent-orange-light) 0%, transparent 70%);
             pointer-events: none;
+            animation: pulse-glow 4s ease-in-out infinite;
         }
         .hero::after {
             content: '';
@@ -118,8 +123,13 @@
             left: -10%;
             width: 600px;
             height: 600px;
-            background: radial-gradient(circle, rgba(59, 130, 246, 0.08) 0%, transparent 70%);
+            background: radial-gradient(circle, rgba(14, 165, 233, 0.1) 0%, transparent 70%);
             pointer-events: none;
+            animation: pulse-glow 4s ease-in-out infinite 2s;
+        }
+        @keyframes pulse-glow {
+            0%, 100% { opacity: 0.6; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.05); }
         }
         .hero-grid {
             display: grid;
@@ -132,18 +142,28 @@
 
         /* === Hero Content === */
         .hero-content h1 {
-            font-size: 3.2rem;
-            font-weight: 700;
+            font-size: 3.5rem;
+            font-weight: 800;
             line-height: 1.15;
             color: var(--text-primary);
             margin-bottom: 1.5rem;
             letter-spacing: -0.03em;
+            animation: slide-up 0.8s ease-out;
         }
         .hero-content h1 span {
             background: linear-gradient(135deg, var(--accent-orange) 0%, #ff8533 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
+            animation: gradient-shift 3s ease infinite;
+        }
+        @keyframes slide-up {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes gradient-shift {
+            0%, 100% { filter: hue-rotate(0deg); }
+            50% { filter: hue-rotate(10deg); }
         }
         .hero-content p {
             font-size: 1.15rem;
@@ -160,17 +180,33 @@
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            padding: 1rem 1.75rem;
-            background: var(--accent-orange);
+            padding: 1.1rem 2rem;
+            background: linear-gradient(135deg, var(--accent-orange) 0%, #ff8533 100%);
             color: #fff;
             text-decoration: none;
-            font-weight: 600;
-            font-size: 0.95rem;
-            border-radius: 10px;
-            transition: all 0.25s ease;
+            font-weight: 700;
+            font-size: 1rem;
+            border-radius: 12px;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            box-shadow: var(--shadow-md);
+        }
+        .btn-primary::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            transition: left 0.5s ease;
+        }
+        .btn-primary:hover::before {
+            left: 100%;
         }
         .btn-primary:hover {
-            transform: translateY(-2px);
+            transform: translateY(-3px) scale(1.02);
             box-shadow: var(--shadow-orange);
         }
         .btn-secondary {
@@ -225,13 +261,21 @@
             box-shadow: var(--shadow-lg);
             position: relative;
             overflow: hidden;
+            animation: slide-up 0.8s ease-out 0.2s both;
         }
         .tvl-card::before {
             content: '';
             position: absolute;
             top: 0; left: 0; right: 0;
             height: 4px;
-            background: linear-gradient(90deg, var(--accent-orange), var(--accent-purple));
+            background: linear-gradient(90deg, var(--accent-orange), #0ea5e9, var(--accent-green));
+            background-size: 200% 100%;
+            animation: gradient-flow 3s ease infinite;
+        }
+        @keyframes gradient-flow {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
         }
         .tvl-header {
             display: flex;
@@ -390,16 +434,31 @@
             gap: 24px;
         }
         .feature-card {
-            background: var(--bg-primary);
+            background: var(--bg-card);
             border: 1px solid var(--border-light);
             border-radius: 16px;
-            padding: 32px 28px;
+            padding: 32px;
             transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 107, 0, 0.05), transparent);
+            transition: left 0.5s ease;
+        }
+        .feature-card:hover::before {
+            left: 100%;
         }
         .feature-card:hover {
-            border-color: var(--accent-orange);
-            transform: translateY(-4px);
+            transform: translateY(-8px);
             box-shadow: var(--shadow-lg);
+            border-color: var(--accent-orange);
         }
         .feature-icon {
             width: 48px;
@@ -408,9 +467,13 @@
             align-items: center;
             justify-content: center;
             background: var(--accent-orange-light);
-            border-radius: 12px;
-            font-size: 1.5rem;
-            margin-bottom: 20px;
+            font-size: 2.5rem;
+            margin-bottom: 16px;
+            display: inline-block;
+            transition: transform 0.3s ease;
+        }
+        .feature-card:hover .feature-icon {
+            transform: scale(1.1) rotate(5deg);
         }
         .feature-card h3 {
             font-size: 1.1rem;
@@ -435,23 +498,33 @@
         }
         .step {
             display: flex;
-            gap: 28px;
-            padding: 28px 0;
-            border-bottom: 1px solid var(--border-light);
+            gap: 24px;
+            align-items: flex-start;
+            animation: slide-up 0.6s ease-out both;
         }
+        .step:nth-child(1) { animation-delay: 0.1s; }
+        .step:nth-child(2) { animation-delay: 0.2s; }
+        .step:nth-child(3) { animation-delay: 0.3s; }
+        .step:nth-child(4) { animation-delay: 0.4s; }
         .step:last-child { border-bottom: none; }
         .step-number {
             flex-shrink: 0;
             width: 48px;
             height: 48px;
+            background: linear-gradient(135deg, var(--accent-orange), #ff8533);
+            color: #fff;
+            border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: var(--accent-orange);
-            color: #fff;
-            font-size: 1.1rem;
             font-weight: 700;
-            border-radius: 50%;
+            font-size: 1.25rem;
+            box-shadow: 0 4px 12px rgba(255, 107, 0, 0.3);
+            animation: pulse-number 2s ease-in-out infinite;
+        }
+        @keyframes pulse-number {
+            0%, 100% { box-shadow: 0 4px 12px rgba(255, 107, 0, 0.3); }
+            50% { box-shadow: 0 4px 20px rgba(255, 107, 0, 0.5); }
         }
         .step-content h3 {
             font-size: 1.05rem;
@@ -498,15 +571,21 @@
             gap: 24px;
         }
         .stat-card {
-            background: var(--bg-primary);
+            background: var(--bg-card);
             border: 1px solid var(--border-light);
             border-radius: 16px;
-            padding: 32px 24px;
+            padding: 32px;
             text-align: center;
-            transition: all 0.25s ease;
+            transition: all 0.3s ease;
+            animation: slide-up 0.6s ease-out both;
         }
+        .stat-card:nth-child(1) { animation-delay: 0.1s; }
+        .stat-card:nth-child(2) { animation-delay: 0.2s; }
+        .stat-card:nth-child(3) { animation-delay: 0.3s; }
         .stat-card:hover {
+            transform: translateY(-4px);
             border-color: var(--accent-orange);
+            box-shadow: var(--shadow-md);
         }
         .stat-card-value {
             font-size: 2.25rem;
@@ -538,11 +617,20 @@
             margin-bottom: 32px;
         }
         .deployment-card {
-            background: var(--bg-secondary);
+            background: var(--bg-card);
             border: 1px solid var(--border-light);
             border-radius: 16px;
             padding: 32px;
             text-align: center;
+            transition: all 0.3s ease;
+            animation: slide-up 0.6s ease-out both;
+        }
+        .deployment-card:nth-child(1) { animation-delay: 0.1s; }
+        .deployment-card:nth-child(2) { animation-delay: 0.2s; }
+        .deployment-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--accent-orange);
+            box-shadow: var(--shadow-md);
         }
         .deployment-card h3 {
             font-size: 1.1rem;
@@ -720,7 +808,7 @@
                 <a href="#how-it-works">How It Works</a>
                 <a href="#stats">Stats</a>
                 <a href="https://github.com/madschristensen99/wrapsynth" target="_blank">GitHub</a>
-                <a href="https://gnosisscan.io/address/0x8a97101aB627af1B284e57f4dE89A9B3AC9D6782" target="_blank" class="btn-contract" id="hero-contract-link">View Contract ↗</a>
+                <a href="https://gnosisscan.io/address/0x184fDC73f58B9b56e81CC150922661CF5A3d600F" target="_blank" class="btn-contract" id="hero-contract-link">View Contract ↗</a>
             </div>
         </div>
     </nav>
@@ -733,7 +821,7 @@
                     <p>Trustless, overcollateralized wrapped Monero. Exchange XMR for wsXMR backed by 150% collateral through cryptographic commitments.</p>
                     <div class="hero-buttons">
                         <a href="app/index.html" class="btn-primary">
-                            Get Started →
+                            <span style="position: relative; z-index: 1;">Launch App →</span>
                         </a>
                         <a href="#how-it-works" class="btn-secondary">
                             Learn More
@@ -788,7 +876,7 @@
                         <div class="chart-bar" style="height: 100%"></div>
                     </div>
 
-                    <a href="https://gnosisscan.io/address/0x8a97101aB627af1B284e57f4dE89A9B3AC9D6782" target="_blank" class="tvl-cta" id="tvl-contract-link">
+                    <a href="https://gnosisscan.io/address/0x184fDC73f58B9b56e81CC150922661CF5A3d600F" target="_blank" class="tvl-cta" id="tvl-contract-link">
                         View Contract →
                     </a>
                 </div>
@@ -921,13 +1009,13 @@
             <div class="deployment-grid">
                 <div class="deployment-card">
                     <h3>VaultManager</h3>
-                    <p class="contract-address">TBD - Deploying Soon</p>
-                    <a href="https://gnosisscan.io" target="_blank" class="btn-view" id="vault-manager-link">View on Gnosisscan</a>
+                    <p class="contract-address">0x184fDC73f58B9b56e81CC150922661CF5A3d600F</p>
+                    <a href="https://gnosisscan.io/address/0x184fDC73f58B9b56e81CC150922661CF5A3d600F" target="_blank" class="btn-view" id="vault-manager-link">View on Gnosisscan</a>
                 </div>
                 <div class="deployment-card">
                     <h3>wsXMR Token</h3>
-                    <p class="contract-address">TBD - Deploying Soon</p>
-                    <a href="https://gnosisscan.io" target="_blank" class="btn-view" id="wsxmr-token-link">View on Gnosisscan</a>
+                    <p class="contract-address">0x3100aE36ce786EfE1D68BC3863139c59018e739c</p>
+                    <a href="https://gnosisscan.io/address/0x3100aE36ce786EfE1D68BC3863139c59018e739c" target="_blank" class="btn-view" id="wsxmr-token-link">View on Gnosisscan</a>
                 </div>
             </div>
             <div class="network-badge">
@@ -941,7 +1029,7 @@
             <h2>Ready to Bridge?</h2>
             <p>Join the future of trustless cross-chain transfers with overcollateralized vaults</p>
             <div class="cta-buttons">
-                <a href="app/app.html" class="btn-primary">Launch App →</a>
+                <a href="app/index.html" class="btn-primary"><span style="position: relative; z-index: 1;">Launch App →</span></a>
                 <a href="https://github.com/madschristensen99/wrapsynth/blob/main/SYNTHWRAP.md" target="_blank" class="btn-secondary">Read Documentation</a>
             </div>
         </div>
@@ -965,7 +1053,7 @@
                 <div class="footer-section">
                     <h4>Contract</h4>
                     <ul>
-                        <li><a href="https://gnosisscan.io/address/0x8a97101aB627af1B284e57f4dE89A9B3AC9D6782" target="_blank" id="footer-contract-link">Gnosis Chain</a></li>
+                        <li><a href="https://gnosisscan.io/address/0x184fDC73f58B9b56e81CC150922661CF5A3d600F" target="_blank" id="footer-contract-link">Gnosis Chain</a></li>
                     </ul>
                 </div>
             </div>

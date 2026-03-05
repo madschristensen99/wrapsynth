@@ -58,8 +58,9 @@ export const NETWORKS = {
 export const DEPLOYMENTS = {
     GNOSIS: {
         chainId: 100,
-        wrappedMonero: '0x7F43788Efb1b9E08AB0E51Cc9a6929b0a0430Fcf',
-        plonkVerifier: '0xdD304066AEfb841EdC40dF3A9743c29773950c66',
+        wrappedMonero: '0x3100aE36ce786EfE1D68BC3863139c59018e739c',
+        vaultManager: '0x184fDC73f58B9b56e81CC150922661CF5A3d600F',
+        liquidityRouter: '0x8D8BE267BA4c326fFE02C4243a5261C7f0f9be81',
         sDAI: '0xaf204776c7245bF4147c2612BF6e5972Ee483701', // Savings DAI on Gnosis
         pythOracle: '0x2880aB155794e7179c9eE2e38200202908C17B43',
         initialMoneroBlock: 3607954,

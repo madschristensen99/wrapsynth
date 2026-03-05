@@ -96,6 +96,7 @@ function setupEventHandlers() {
     // Tab switching
     elements.tabMint.addEventListener('click', () => showMintTab());
     elements.tabBurn.addEventListener('click', () => showBurnTab());
+    elements.tabLp.addEventListener('click', () => handleLpTab());
     
     // Mint flow
     elements.startMint.addEventListener('click', handleStartMint);
@@ -173,6 +174,93 @@ function checkForActiveSwap() {
         const swap = loadActiveSwap();
         console.log('Active swap detected:', swap);
         showResumeBanner();
+    }
+}
+
+/**
+ * Handle LP tab click - check if user is an LP and show appropriate view
+ */
+async function handleLpTab() {
+    const elements = getElements();
+    
+    // Hide other panels
+    elements.mintPanel.classList.add('hidden');
+    elements.burnPanel.classList.add('hidden');
+    elements.lpPanel.classList.remove('hidden');
+    
+    // Update tab buttons
+    elements.tabMint.classList.remove('active');
+    elements.tabBurn.classList.remove('active');
+    elements.tabLp.classList.add('active');
+    
+    // Check if user is connected
+    const userAddress = getUserAddress();
+    if (!userAddress) {
+        // Show education view if not connected
+        document.getElementById('lp-stats-view').classList.add('hidden');
+        document.getElementById('lp-education-view').classList.remove('hidden');
+        return;
+    }
+    
+    // Check if user has a vault
+    try {
+        const vaultData = await readVaultManager('vaults', [userAddress]);
+        
+        // Check if vault is active
+        if (vaultData && vaultData[9]) { // active is the 10th element (index 9)
+            // User is an LP - show stats view
+            await loadLpStats(userAddress, vaultData);
+            document.getElementById('lp-education-view').classList.add('hidden');
+            document.getElementById('lp-stats-view').classList.remove('hidden');
+        } else {
+            // User is not an LP - show education view
+            document.getElementById('lp-stats-view').classList.add('hidden');
+            document.getElementById('lp-education-view').classList.remove('hidden');
+        }
+    } catch (error) {
+        console.error('Error checking LP status:', error);
+        // Show education view on error
+        document.getElementById('lp-stats-view').classList.add('hidden');
+        document.getElementById('lp-education-view').classList.remove('hidden');
+    }
+}
+
+/**
+ * Load LP vault stats for the connected user
+ */
+async function loadLpStats(address, vaultData) {
+    try {
+        // Parse vault data
+        // vaultData structure: [collateralAmount, normalizedDebt, pendingDebt, lockedCollateral, 
+        //                       collateralAsset, mintGriefingDeposit, mintFeeBps, burnFeeBps, maxMintBps, active]
+        
+        const collateralAmount = vaultData[0];
+        const normalizedDebt = vaultData[1];
+        const mintFeeBps = vaultData[6];
+        const burnFeeBps = vaultData[7];
+        const maxMintBps = vaultData[8];
+        
+        // Update UI with vault stats
+        document.getElementById('lp-collateral').textContent = `${(Number(collateralAmount) / 1e18).toFixed(2)} xDAI`;
+        document.getElementById('lp-debt').textContent = `${(Number(normalizedDebt) / 1e8).toFixed(4)} wsXMR`;
+        
+        // Calculate health ratio (simplified - would need price data for accurate calculation)
+        const collateralValue = Number(collateralAmount) / 1e18;
+        const debtValue = Number(normalizedDebt) / 1e8;
+        const healthRatio = debtValue > 0 ? ((collateralValue / debtValue) * 100).toFixed(0) : '∞';
+        document.getElementById('lp-health').textContent = `${healthRatio}%`;
+        
+        // Update settings inputs
+        document.getElementById('lp-mint-fee').value = Number(mintFeeBps);
+        document.getElementById('lp-burn-fee').value = Number(burnFeeBps);
+        document.getElementById('lp-max-mint').value = Number(maxMintBps) / 100;
+        
+        // TODO: Fetch fees earned from events
+        document.getElementById('lp-fees').textContent = '0 xDAI';
+        
+        console.log('LP stats loaded for', address);
+    } catch (error) {
+        console.error('Error loading LP stats:', error);
     }
 }
 
