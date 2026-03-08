@@ -193,8 +193,10 @@ export function hideContractsBanner() {
 export function showMintTab() {
     elements.tabMint.classList.add('active');
     elements.tabBurn.classList.remove('active');
+    elements.tabLp.classList.remove('active');
     elements.mintPanel.classList.remove('hidden');
     elements.burnPanel.classList.add('hidden');
+    elements.lpPanel.classList.add('hidden');
 }
 
 /**
@@ -203,8 +205,10 @@ export function showMintTab() {
 export function showBurnTab() {
     elements.tabBurn.classList.add('active');
     elements.tabMint.classList.remove('active');
+    elements.tabLp.classList.remove('active');
     elements.burnPanel.classList.remove('hidden');
     elements.mintPanel.classList.add('hidden');
+    elements.lpPanel.classList.add('hidden');
 }
 
 /**
