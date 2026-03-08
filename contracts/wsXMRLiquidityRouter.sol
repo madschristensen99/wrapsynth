@@ -67,6 +67,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     
     event LiquidityAllocated(address indexed lp, uint256 sDAIAmount);
     event LiquidityDeallocated(address indexed lp, uint256 sDAIAmount);
+    event WsxmrDeallocated(address indexed account, uint256 amount);
     event UserDepositedWsxmr(address indexed user, uint256 amount);
     event UserWithdrewWsxmr(address indexed user, uint256 amount);
     event PositionCreated(
@@ -123,7 +124,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     }
     
     /**
-     * @notice LP deallocates sDAI collateral (if not in active positions)
+     * @notice LP deallocates sDAI from liquidity provision back to vault
      * @param _sDAIAmount Amount of sDAI shares to deallocate
      */
     function deallocateLiquidity(uint256 _sDAIAmount) external nonReentrant {
@@ -132,10 +133,40 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         
         lpLiquidityAllocation[msg.sender] -= _sDAIAmount;
         
-        // Return sDAI to LP
+        // Transfer sDAI back to LP
         IERC20(GnosisAddresses.SDAI).safeTransfer(msg.sender, _sDAIAmount);
         
         emit LiquidityDeallocated(msg.sender, _sDAIAmount);
+    }
+    
+    /**
+     * @notice Generic function to withdraw sDAI (for users who received sDAI from IL)
+     * @param _sDAIAmount Amount of sDAI shares to withdraw
+     * @dev Allows users to withdraw sDAI allocated to them from impermanent loss without needing LP role
+     */
+    function withdrawSDAI(uint256 _sDAIAmount) external nonReentrant {
+        if (_sDAIAmount == 0) revert InvalidAmount();
+        if (lpLiquidityAllocation[msg.sender] < _sDAIAmount) revert InsufficientBalance();
+        
+        lpLiquidityAllocation[msg.sender] -= _sDAIAmount;
+        IERC20(GnosisAddresses.SDAI).safeTransfer(msg.sender, _sDAIAmount);
+        
+        emit LiquidityDeallocated(msg.sender, _sDAIAmount);
+    }
+    
+    /**
+     * @notice Generic function to withdraw wsXMR (for LPs who received wsXMR from IL)
+     * @param _wsxmrAmount Amount of wsXMR to withdraw
+     * @dev Allows LPs to withdraw wsXMR allocated to them from impermanent loss without needing user role
+     */
+    function withdrawWsXMR(uint256 _wsxmrAmount) external nonReentrant {
+        if (_wsxmrAmount == 0) revert InvalidAmount();
+        if (userWsxmrDeposits[msg.sender] < _wsxmrAmount) revert InsufficientBalance();
+        
+        userWsxmrDeposits[msg.sender] -= _wsxmrAmount;
+        IERC20(address(wsxmrToken)).safeTransfer(msg.sender, _wsxmrAmount);
+        
+        emit WsxmrDeallocated(msg.sender, _wsxmrAmount);
     }
 
     // ========== USER FUNCTIONS ==========
@@ -350,10 +381,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
             })
         );
         
-        // CRITICAL FIX: Read tokensOwed BEFORE collect to get pre-existing fees
-        // These are fees that accumulated BEFORE we decreased liquidity
-        (, , , , , , , , , , uint128 tokensOwed0Before, uint128 tokensOwed1Before) = 
-            positionManager.positions(position.positionId);
+        // Note: We don't need to read tokensOwed before collect since we calculate fees
+        // as the difference between collected and principal amounts
         
         // Collect all tokens (principal + fees)
         (uint256 collected0, uint256 collected1) = positionManager.collect(
@@ -369,17 +398,6 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         // collected = principal (from decreaseLiquidity) + pre-existing fees
         uint256 fees0 = collected0 - principal0;
         uint256 fees1 = collected1 - principal1;
-        
-        // CRITICAL FIX: Distribute principal proportionally based on initial USD value
-        // This handles impermanent loss fairly between both parties
-        uint256 totalReturnedValue = ((token0 == GnosisAddresses.SDAI ? principal0 : principal1) * 
-            vaultManager.getCollateralPrice()) / 1e18 + 
-            ((token0 == GnosisAddresses.SDAI ? principal1 : principal0) * 
-            vaultManager.getXmrPrice()) / 1e8;
-        
-        // Calculate proportional shares
-        uint256 lpShareValue = (totalReturnedValue * position.lpInitialValueUSD) / 
-            (position.lpInitialValueUSD + position.userInitialValueUSD);
         
         // CRITICAL FIX: Direct proportional distribution of actual principal returned
         // Avoids USD conversion round-trip that can trap funds
