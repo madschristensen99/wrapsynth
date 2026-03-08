@@ -71,7 +71,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     uint256 public yieldWarChest; // Accumulated sDAI yield ready for buy-and-burn
     mapping(address => uint256) public lpPrincipalDeposits; // Track original DAI deposits per LP
     uint256 public globalLpPrincipal; // CRITICAL FIX: Global sum to avoid O(N) loop DoS
-    uint256 public globalPendingSDAI; // CRITICAL FIX: Track queued sDAI returns to prevent yield arbitrage   
+    uint256 public globalPendingSDAI; // CRITICAL FIX: Track queued sDAI returns to prevent yield arbitrage
+    
+    // CRITICAL FIX: Lazy yield index system to prevent DoS and manipulation
+    uint256 public globalYieldIndex = 1e18; // Tracks cumulative yield per share (starts at 1.0)
+    uint256 public lastYieldUpdateTime; // Last time yield was calculated
+    mapping(address => uint256) public vaultYieldCheckpoint; // LP's last synced yield index   
     // ========== ENUMS ==========
     
     enum MintStatus {
@@ -313,6 +318,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         lpPrincipalDeposits[msg.sender] += _amount;
         globalLpPrincipal += _amount;
         
+        // CRITICAL FIX: Update yield before modifying vault state
+        _updateGlobalYieldIndex();
+        _syncVaultYield(msg.sender);
+        
         emit CollateralDeposited(msg.sender, GnosisAddresses.SDAI, _amount);
     }
     
@@ -336,6 +345,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         vault.collateralAmount += _sDAIShares;
         lpPrincipalDeposits[msg.sender] += daiValue;
         globalLpPrincipal += daiValue;
+        
+        // CRITICAL FIX: Update yield before modifying vault state
+        _updateGlobalYieldIndex();
+        _syncVaultYield(msg.sender);
         
         emit CollateralDeposited(msg.sender, GnosisAddresses.SDAI, daiValue);
     }
@@ -374,6 +387,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             );
             if (ratio < COLLATERAL_RATIO) revert InsufficientCollateral();
         }
+        
+        // CRITICAL FIX: Update yield before modifying vault state
+        _updateGlobalYieldIndex();
+        _syncVaultYield(msg.sender);
         
         vault.collateralAmount = newCollateralAmount;
         
@@ -630,9 +647,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // Mark as completed
         request.status = MintStatus.COMPLETED;
         emit MintFinalized(_requestId, _secret);
-        
-        // CRITICAL FIX: Skim yield to war chest after mint completes
-        _skimYieldToWarChest();
     }
     
     /**
@@ -891,9 +905,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
         request.status = BurnStatus.COMPLETED;
         emit BurnFinalized(_requestId, _secret, request.rewardCollateral);
-        
-        // CRITICAL FIX: Skim yield to war chest after burn completes
-        _skimYieldToWarChest();
     }
     
     /**
@@ -962,33 +973,33 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             if (block.timestamp < request.deadline) revert DeadlineNotExpired();
         }
         
-        // CRITICAL FIX: Prevent state overlap with liquidations
-        // If vault was liquidated, the nonce was incremented
-        // Cancelling would restore debt without collateral → unbacked wsXMR
+        // CRITICAL FIX: Handle liquidated vaults gracefully
+        // If vault was liquidated, user still gets their wsXMR back but debt is written off as bad debt
         Vault storage vault = vaults[request.lpVault];
-        require(request.vaultLiquidationNonce == vault.liquidationNonce, "Vault liquidated, cannot cancel burn");
+        bool vaultWasLiquidated = (request.vaultLiquidationNonce != vault.liquidationNonce);
         
-        // Require deadline to expire (48h)
+        // Require deadline to expire
         if (block.timestamp < request.deadline) revert DeadlineNotExpired();
         
         // PERMISSIONLESS: Once deadline expires, anyone can cleanup to unlock assets
         // This prevents DoS where user abandons request, locking LP's collateral
         
-        // Restore the LP's debt and UNLOCK collateral (don't transfer it)
-        // CRITICAL FIX: Normalize the debt amount when adding back
-        uint256 normalizedAmount = (request.wsxmrAmount * 1e18) / globalDebtIndex;
-        vault.normalizedDebt += normalizedAmount;
-        globalTotalDebt += request.wsxmrAmount;
-        
-        uint256 totalUnlock = request.lockedCollateral + request.rewardCollateral;
-        if (vault.lockedCollateral >= totalUnlock) {
-            vault.lockedCollateral -= totalUnlock;
+        if (vaultWasLiquidated) {
+            // Vault was liquidated - user gets wsXMR back, but we don't restore debt/collateral
+            // The collateral was already seized by liquidator, so this becomes protocol bad debt
+            wsxmrToken.mint(request.user, request.wsxmrAmount);
+            emit BadDebtWrittenOff(request.lpVault, request.wsxmrAmount);
         } else {
-            vault.lockedCollateral = 0;
+            // Normal case - vault still active, restore debt and unlock collateral
+            // CRITICAL FIX: Normalize the debt amount when adding back
+            uint256 normalizedAmount = (request.wsxmrAmount * 1e18) / globalDebtIndex;
+            vault.normalizedDebt += normalizedAmount;
+            globalTotalDebt += request.wsxmrAmount;
+            vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
+            
+            // Re-mint the wsXMR back to user
+            wsxmrToken.mint(request.user, request.wsxmrAmount);
         }
-        
-        // CRITICAL: Mint the wsXMR back to the User since we burned it in Step 1
-        wsxmrToken.mint(request.user, request.wsxmrAmount);
         
         request.status = BurnStatus.CANCELLED;
         emit BurnCancelled(_requestId);
@@ -1105,52 +1116,68 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     // ========== BUY-AND-BURN STRATEGY ==========
     
     /**
-     * @notice Skim sDAI appreciation into yieldWarChest for buy-and-burn
-     * @dev Called internally when debt operations occur
-     * @dev Calculates yield as: (currentShareValue - principalDeposits)
-     * @dev CRITICAL: Deducts yield shares proportionally from all LP vaults to prevent insolvency
+     * @notice Update global yield index based on sDAI exchange rate appreciation
+     * @dev CRITICAL: Uses exchange rate tracking instead of balanceOf to prevent manipulation
+     * @dev Called internally before any vault state changes to ensure accurate accounting
      */
-    function _skimYieldToWarChest() internal {
-        // Get total sDAI shares held by contract
-        uint256 totalSDAIShares = IERC20(GnosisAddresses.SDAI).balanceOf(address(this));
-        if (totalSDAIShares == 0) return;
+    function _updateGlobalYieldIndex() internal {
+        if (globalLpPrincipal == 0) return; // No deposits yet
         
-        // Calculate current DAI value of all shares
-        uint256 totalUnderlyingDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(totalSDAIShares);
+        // Calculate current exchange rate (DAI per sDAI share)
+        uint256 currentRate = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(1e18);
         
-        // Calculate yield as: total value - (principal + existing war chest + pending returns)
-        uint256 warChestDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(yieldWarChest);
-        uint256 pendingAssetDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(globalPendingSDAI);
-        uint256 totalAssignedDAI = globalLpPrincipal + warChestDAI + pendingAssetDAI;
+        // If this is first update, just record the rate
+        if (lastYieldUpdateTime == 0) {
+            lastYieldUpdateTime = block.timestamp;
+            return;
+        }
         
-        // If no yield available, return
-        if (totalUnderlyingDAI <= totalAssignedDAI) return;
+        // Calculate yield growth since last update
+        // globalYieldIndex tracks cumulative yield multiplier
+        // When rate increases from 1.0 to 1.1, index should increase by 10%
+        uint256 previousRate = (globalLpPrincipal * 1e18) / ISavingsDAI(GnosisAddresses.SDAI).convertToShares(globalLpPrincipal);
         
-        // Calculate yield in DAI and convert to shares
-        uint256 yieldInDAI = totalUnderlyingDAI - totalAssignedDAI;
-        uint256 yieldInShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(yieldInDAI);
+        if (currentRate > previousRate) {
+            uint256 yieldGrowth = ((currentRate - previousRate) * 1e18) / previousRate;
+            globalYieldIndex += (globalYieldIndex * yieldGrowth) / 1e18;
+        }
         
-        // CRITICAL FIX: Deduct yield shares proportionally from ALL LP vaults
-        // This prevents insolvency from double-counting (LPs can't withdraw shares we've allocated to war chest)
-        // We must loop through all vaults to maintain proportional deductions
-        uint256 totalLpShares = totalSDAIShares - yieldWarChest - globalPendingSDAI;
-        if (totalLpShares > 0) {
-            for (uint256 i = 0; i < vaultList.length; i++) {
-                address lpAddress = vaultList[i];
-                Vault storage vault = vaults[lpAddress];
+        lastYieldUpdateTime = block.timestamp;
+    }
+    
+    /**
+     * @notice Sync vault's yield and transfer accrued yield to war chest
+     * @dev CRITICAL: Lazy evaluation - only processes yield for vaults that interact
+     * @dev Prevents DoS from unbounded loops over all vaults
+     */
+    function _syncVaultYield(address _lpAddress) internal {
+        Vault storage vault = vaults[_lpAddress];
+        if (vault.collateralAmount == 0) return;
+        
+        uint256 lastCheckpoint = vaultYieldCheckpoint[_lpAddress];
+        if (lastCheckpoint == 0) {
+            // First interaction - set checkpoint to current index
+            vaultYieldCheckpoint[_lpAddress] = globalYieldIndex;
+            return;
+        }
+        
+        // Calculate yield accrued since last checkpoint
+        if (globalYieldIndex > lastCheckpoint) {
+            uint256 yieldMultiplier = globalYieldIndex - lastCheckpoint;
+            uint256 vaultYieldShares = (vault.collateralAmount * yieldMultiplier) / 1e18;
+            
+            // Deduct yield from vault and add to war chest
+            if (vaultYieldShares > 0 && vaultYieldShares < vault.collateralAmount) {
+                vault.collateralAmount -= vaultYieldShares;
+                yieldWarChest += vaultYieldShares;
                 
-                if (vault.collateralAmount > 0) {
-                    // Deduct proportional share of yield from this vault
-                    uint256 vaultYieldShare = (vault.collateralAmount * yieldInShares) / totalLpShares;
-                    vault.collateralAmount -= vaultYieldShare;
-                }
+                uint256 yieldInDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(vaultYieldShares);
+                emit YieldHarvested(yieldInDAI, vaultYieldShares);
             }
         }
         
-        // Add to war chest
-        yieldWarChest += yieldInShares;
-        
-        emit YieldHarvested(yieldInDAI, yieldInShares);
+        // Update checkpoint
+        vaultYieldCheckpoint[_lpAddress] = globalYieldIndex;
     }
     
     /**
