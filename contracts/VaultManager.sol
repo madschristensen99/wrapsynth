@@ -5,7 +5,6 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Secp256k1} from "./Secp256k1.sol";
 import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {PythStructs} from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
@@ -19,7 +18,7 @@ import {GnosisAddresses} from "./GnosisAddresses.sol";
  * @notice Manages LP vaults, collateralization, and mint/burn operations for wsXMR
  * @dev Integrates cryptographic proofs from atomic swaps with CDP vault mechanics
  */
-contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
+contract VaultManager is Secp256k1, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // ========== CONSTANTS ==========
@@ -59,13 +58,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     
     // Pyth price feed IDs
     bytes32 public constant XMR_USD_FEED_ID = 0x46b8cc9347f04391764a0361e0b17c3ba394b001e7c304f7650f6376e37c321d;
+    bytes32 public constant SDAI_USD_FEED_ID = 0xb0948a5e5313200c632b51bb5ca32f6de0d36e9950a942d19751e833f70dabfd;
 
     // Oracle staleness configuration (in seconds)
-    uint256 public priceMaxAge = 5 minutes; // Configurable staleness threshold
-    
-    // Supported collateral tokens (address(0) = native MON)
-    mapping(address => bool) public supportedCollateral;
-    mapping(address => bytes32) public collateralPriceFeeds; // Maps collateral to Pyth feed ID
+    uint256 public constant PRICE_MAX_AGE = 5 minutes;
     
     // Buy-and-Burn Strategy State
     uint256 public lastBuyTimestamp; // Last execution timestamp for cooldown enforcement
@@ -101,8 +97,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
      */
     struct Vault {
         address lpAddress;
-        address collateralAsset; // address(0) for ETH
-        uint256 collateralAmount; // For sDAI: tracks sDAI SHARES (not DAI value)
+        uint256 collateralAmount; // sDAI SHARES (not DAI value)
         uint256 lockedCollateral; // Collateral reserved for pending burns (still liquidatable!)
         uint256 normalizedDebt; // Normalized debt for O(1) proportional forgiveness (actualDebt = normalizedDebt * globalDebtIndex / 1e18)
         uint256 pendingDebt; // Reserved capacity for pending mints (NOT Liquidatable)
@@ -257,37 +252,25 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     
     // ========== CONSTRUCTOR ==========
     
-    constructor(
-        address _wsxmrToken,
-        address _pythContract,
-        address _initialOwner
-    ) Ownable(_initialOwner) {
-        if (_wsxmrToken == address(0)) revert ZeroAddress();
+    constructor(address _pythContract) {
         if (_pythContract == address(0)) revert ZeroAddress();
-        if (_initialOwner == address(0)) revert ZeroAddress();
         
-        wsxmrToken = wsXMR(_wsxmrToken);
         pyth = IPyth(_pythContract);
         
-        // GNOSIS CHAIN: Enable sDAI as default yield-bearing collateral
-        supportedCollateral[GnosisAddresses.SDAI] = true;
-        collateralPriceFeeds[GnosisAddresses.SDAI] = GnosisAddresses.DAI_USD_FEED_ID;
-        emit CollateralSupported(GnosisAddresses.SDAI, _pythContract);
+        // Deploys the wsXMR token immutably on initialization
+        wsxmrToken = new wsXMR();
     }
     
     // ========== VAULT MANAGEMENT ==========
     
     /**
-     * @notice Create a new LP vault
-     * @param _collateralAsset Address of collateral token (address(0) for ETH)
+     * @notice Create a new LP vault (sDAI collateral only)
      */
-    function createVault(address _collateralAsset) external {
+    function createVault() external {
         if (vaults[msg.sender].active) revert VaultAlreadyExists();
-        if (!supportedCollateral[_collateralAsset]) revert InvalidCollateralAsset();
         
         vaults[msg.sender] = Vault({
             lpAddress: msg.sender,
-            collateralAsset: _collateralAsset,
             collateralAmount: 0,
             lockedCollateral: 0,
             normalizedDebt: 0,
@@ -300,53 +283,56 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         });
         
         vaultList.push(msg.sender);
-        emit VaultCreated(msg.sender, _collateralAsset);
+        emit VaultCreated(msg.sender, GnosisAddresses.SDAI);
     }
     
     /**
-     * @notice Deposit collateral into vault
-     * @dev Auto-converts DAI/xDAI to sDAI for yield generation
-     * @param _amount Amount of collateral to deposit (in DAI if depositing to sDAI vault)
+     * @notice Deposit collateral into vault (xDAI)
+     * @dev Auto-converts xDAI to sDAI for yield generation
+     * @param _amount Amount of xDAI to deposit
      */
-    function depositCollateral(uint256 _amount) external payable nonReentrant {
+    function depositCollateral(uint256 _amount) external nonReentrant {
         if (!vaults[msg.sender].active) revert VaultDoesNotExist();
         if (_amount == 0) revert ZeroAmount();
         
         Vault storage vault = vaults[msg.sender];
         
-        // GNOSIS CHAIN: Auto-convert DAI to sDAI for yield
-        if (vault.collateralAsset == GnosisAddresses.SDAI) {
-            if (msg.value != 0) revert InvalidValue();
-            
-            // Transfer DAI from user
-            IERC20(GnosisAddresses.XDAI).safeTransferFrom(msg.sender, address(this), _amount);
-            
-            // Approve sDAI contract to spend DAI
-            IERC20(GnosisAddresses.XDAI).approve(GnosisAddresses.SDAI, _amount);
-            
-            // Deposit DAI into sDAI vault and receive sDAI shares
-            uint256 sDAIShares = ISavingsDAI(GnosisAddresses.SDAI).deposit(_amount, address(this));
-            
-            // CRITICAL FIX: Track sDAI SHARES consistently
-            vault.collateralAmount += sDAIShares;
-            
-            // Track principal DAI deposit for yield harvesting
-            lpPrincipalDeposits[msg.sender] += _amount;
-            globalLpPrincipal += _amount;
-            
-            emit CollateralDeposited(msg.sender, vault.collateralAsset, _amount);
-        } else if (vault.collateralAsset == address(0)) {
-            // Native ETH deposit (for other chains)
-            if (msg.value != _amount) revert InvalidValue();
-            vault.collateralAmount += _amount;
-            emit CollateralDeposited(msg.sender, vault.collateralAsset, _amount);
-        } else {
-            // Direct ERC20 deposit
-            if (msg.value != 0) revert InvalidValue();
-            IERC20(vault.collateralAsset).safeTransferFrom(msg.sender, address(this), _amount);
-            vault.collateralAmount += _amount;
-            emit CollateralDeposited(msg.sender, vault.collateralAsset, _amount);
-        }
+        // 1. Transfer xDAI from user
+        IERC20(GnosisAddresses.XDAI).safeTransferFrom(msg.sender, address(this), _amount);
+        
+        // 2. Approve and deposit to sDAI
+        IERC20(GnosisAddresses.XDAI).approve(GnosisAddresses.SDAI, _amount);
+        uint256 sDAIShares = ISavingsDAI(GnosisAddresses.SDAI).deposit(_amount, address(this));
+        
+        vault.collateralAmount += sDAIShares;
+        lpPrincipalDeposits[msg.sender] += _amount;
+        globalLpPrincipal += _amount;
+        
+        emit CollateralDeposited(msg.sender, GnosisAddresses.SDAI, _amount);
+    }
+    
+    /**
+     * @notice Deposit sDAI shares directly into vault
+     * @dev For LPs who already hold sDAI and want to skip the xDAI conversion step
+     * @param _sDAIShares Amount of sDAI shares to deposit
+     */
+    function depositSDAI(uint256 _sDAIShares) external nonReentrant {
+        if (!vaults[msg.sender].active) revert VaultDoesNotExist();
+        if (_sDAIShares == 0) revert ZeroAmount();
+        
+        Vault storage vault = vaults[msg.sender];
+        
+        // Transfer sDAI shares directly from user
+        IERC20(GnosisAddresses.SDAI).safeTransferFrom(msg.sender, address(this), _sDAIShares);
+        
+        // Convert shares to underlying DAI value for principal tracking
+        uint256 daiValue = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(_sDAIShares);
+        
+        vault.collateralAmount += _sDAIShares;
+        lpPrincipalDeposits[msg.sender] += daiValue;
+        globalLpPrincipal += daiValue;
+        
+        emit CollateralDeposited(msg.sender, GnosisAddresses.SDAI, daiValue);
     }
     
     /**
@@ -378,7 +364,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
                 ? newCollateralAmount - vault.lockedCollateral 
                 : 0;
             uint256 ratio = calculateCollateralRatio(
-                vault.collateralAsset,
                 availableForDebt,
                 totalObligations
             );
@@ -387,27 +372,17 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         vault.collateralAmount = newCollateralAmount;
         
-        // Transfer collateral back to LP
-        if (vault.collateralAsset == GnosisAddresses.SDAI) {
-            // CRITICAL FIX: _amount is in sDAI shares, redeem directly
-            uint256 daiReceived = ISavingsDAI(GnosisAddresses.SDAI).redeem(_amount, msg.sender, address(this));
-            
-            // CRITICAL FIX: Decrement principal proportionally to prevent yield lockup
-            // Calculate what portion of the LP's principal this withdrawal represents
-            uint256 totalCollateral = vault.collateralAmount + _amount; // Before withdrawal
-            uint256 principalToDeduct = (lpPrincipalDeposits[msg.sender] * _amount) / totalCollateral;
-            lpPrincipalDeposits[msg.sender] -= principalToDeduct;
-            globalLpPrincipal -= principalToDeduct;
-            
-            emit CollateralWithdrawn(msg.sender, vault.collateralAsset, daiReceived);
-        } else if (vault.collateralAsset == address(0)) {
-            (bool success, ) = payable(msg.sender).call{value: _amount}("");
-            require(success, "ETH transfer failed");
-            emit CollateralWithdrawn(msg.sender, vault.collateralAsset, _amount);
-        } else {
-            IERC20(vault.collateralAsset).safeTransfer(msg.sender, _amount);
-            emit CollateralWithdrawn(msg.sender, vault.collateralAsset, _amount);
-        }
+        // CRITICAL FIX: _amount is in sDAI shares, redeem directly
+        uint256 daiReceived = ISavingsDAI(GnosisAddresses.SDAI).redeem(_amount, msg.sender, address(this));
+        
+        // CRITICAL FIX: Decrement principal proportionally to prevent yield lockup
+        // Calculate what portion of the LP's principal this withdrawal represents
+        uint256 totalCollateral = vault.collateralAmount + _amount; // Before withdrawal
+        uint256 principalToDeduct = (lpPrincipalDeposits[msg.sender] * _amount) / totalCollateral;
+        lpPrincipalDeposits[msg.sender] -= principalToDeduct;
+        globalLpPrincipal -= principalToDeduct;
+        
+        emit CollateralWithdrawn(msg.sender, GnosisAddresses.SDAI, daiReceived);
     }
     
     /**
@@ -508,15 +483,14 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         // Enforce LP's chunk size limit (prevents single large mint from draining capacity)
         if (vault.maxMintBps > 0) {
-            uint256 collateralPrice = getCollateralPrice(vault.collateralAsset);
-            uint256 collateralDecimals = vault.collateralAsset == address(0) ? 18 : IERC20Metadata(vault.collateralAsset).decimals();
-            uint256 collateralValueUsd = (vault.collateralAmount * collateralPrice) / (10 ** collateralDecimals);
+            uint256 collateralPrice = getCollateralPrice();
+            uint256 collateralValueUsd = (vault.collateralAmount * collateralPrice) / 1e18; // sDAI has 18 decimals
             uint256 maxTotalDebtCapacity = (collateralValueUsd * RATIO_PRECISION) / COLLATERAL_RATIO;
             uint256 maxMintAllowed = (maxTotalDebtCapacity * vault.maxMintBps) / BPS_DENOMINATOR;
             
             // CRITICAL FIX: Convert wsxmrAmount to USD value before comparison
             // wsxmrAmount is in 8 decimals, maxMintAllowed is in USD with 18 decimals
-            uint256 xmrPrice = getXmrPrice(); // Returns price in 8 decimals
+            uint256 xmrPrice = getXmrPrice(); // Returns price in 18 decimals
             uint256 wsxmrValueUsd = (wsxmrAmount * xmrPrice) / 1e8; // Convert to USD (18 decimals)
             
             if (wsxmrValueUsd > maxMintAllowed) revert InvalidValue();
@@ -534,7 +508,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             : 0;
         
         uint256 ratio = calculateCollateralRatio(
-            vault.collateralAsset,
             availableCollateral,
             totalProjectedDebt
         );
@@ -732,7 +705,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // CRITICAL: Verify vault is healthy before allowing burn to be routed to it
         // Prevents users from burning to unhealthy vaults that may be liquidated
         uint256 vaultHealthRatio = calculateCollateralRatio(
-            vault.collateralAsset,
             vault.collateralAmount,
             actualDebt
         );
@@ -741,13 +713,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // 1. Calculate and verify collateral needed for this specific burn
         uint256 collateralValue = getCollateralValueForDebt(_wsxmrAmount);
         uint256 collateralToLock = usdToCollateral(
-            vault.collateralAsset,
             (collateralValue * LIQUIDATION_RATIO) / RATIO_PRECISION
         );
         
         // Calculate User Reward in Vault's collateral asset
         uint256 rewardUsd = (collateralValue * vault.burnRewardBps) / BPS_DENOMINATOR;
-        uint256 rewardCollateral = usdToCollateral(vault.collateralAsset, rewardUsd);
+        uint256 rewardCollateral = usdToCollateral(rewardUsd);
         
         // 2. Check available (unlocked) collateral for both base + reward
         uint256 availableCollateral = vault.collateralAmount - vault.lockedCollateral;
@@ -901,9 +872,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             }
             
             // CRITICAL FIX: safeReward is already in sDAI shares
-            // Queue both ETH and ERC20 rewards to prevent DoS
-            pendingReturns[request.user][vault.collateralAsset] += safeReward;
-            emit ReturnQueued(request.user, vault.collateralAsset, safeReward);
+            // Queue sDAI rewards to prevent DoS
+            pendingReturns[request.user][GnosisAddresses.SDAI] += safeReward;
+            emit ReturnQueued(request.user, GnosisAddresses.SDAI, safeReward);
         }
         
         request.status = BurnStatus.COMPLETED;
@@ -950,15 +921,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         }
         
         // Transfer collateral to user as penalty for LP failure
-        if (vault.collateralAsset == GnosisAddresses.SDAI) {
-            // CRITICAL FIX: actualSeized is already in sDAI shares, transfer directly
-            IERC20(vault.collateralAsset).safeTransfer(request.user, actualSeized);
-        } else if (vault.collateralAsset == address(0)) {
-            (bool success, ) = payable(request.user).call{value: actualSeized}("");
-            require(success, "ETH transfer failed");
-        } else {
-            IERC20(vault.collateralAsset).safeTransfer(request.user, actualSeized);
-        }
+        // CRITICAL FIX: actualSeized is already in sDAI shares, transfer directly
+        IERC20(GnosisAddresses.SDAI).safeTransfer(request.user, actualSeized);
         
         request.lockedCollateral = 0;
         request.rewardCollateral = 0;
@@ -1042,7 +1006,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // CRITICAL: Only count available (unlocked) collateral to prevent ratio inflation
         uint256 availableCollateral = vault.collateralAmount - vault.lockedCollateral;
         uint256 ratio = calculateCollateralRatio(
-            vault.collateralAsset,
             availableCollateral,
             actualDebt
         );
@@ -1051,7 +1014,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // Calculate collateral to seize (at liquidation bonus, which is < threshold to prevent death spiral)
         uint256 collateralValue = getCollateralValueForDebt(_debtToClear);
         uint256 collateralToSeize = (collateralValue * LIQUIDATION_BONUS) / RATIO_PRECISION;
-        uint256 collateralAmount = usdToCollateral(vault.collateralAsset, collateralToSeize);
+        uint256 collateralAmount = usdToCollateral(collateralToSeize);
         
         // CRITICAL: Proportional bad-debt handling
         // If vault is severely underwater, scale down debt to maintain liquidator's 10% bonus
@@ -1092,15 +1055,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         wsxmrToken.burn(msg.sender, _debtToClear);
         
         // Transfer seized collateral to liquidator
-        if (vault.collateralAsset == GnosisAddresses.SDAI) {
-            // CRITICAL FIX: collateralAmount is already in sDAI shares, transfer directly
-            IERC20(vault.collateralAsset).safeTransfer(msg.sender, collateralAmount);
-        } else if (vault.collateralAsset == address(0)) {
-            (bool success, ) = payable(msg.sender).call{value: collateralAmount}("");
-            require(success, "ETH transfer failed");
-        } else {
-            IERC20(vault.collateralAsset).safeTransfer(msg.sender, collateralAmount);
-        }
+        // CRITICAL FIX: collateralAmount is already in sDAI shares, transfer directly
+        IERC20(GnosisAddresses.SDAI).safeTransfer(msg.sender, collateralAmount);
         
         // CRITICAL FIX: Mark vault as liquidated to prevent burn state overlap
         // When vault is liquidated, any active burns should not be cancellable
@@ -1179,15 +1135,16 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     
     /**
      * @notice Execute buy-and-burn when XMR dips 1% below EMA
+     * @param poolFeeTier The exact Uniswap V3 fee tier to route through (e.g. 500, 3000)
      * @dev Permissionless keeper function with MEV protection and keeper bounty
      */
-    function triggerBuyAndBurn() external nonReentrant {
+    function triggerBuyAndBurn(uint24 poolFeeTier) external nonReentrant {
         // 1. Cooldown Check
         require(block.timestamp >= lastBuyTimestamp + COOLDOWN_PERIOD, "Cooldown active");
         
         // 2. EMA vs Spot Check (Pyth provides both)
-        PythStructs.Price memory spotData = pyth.getPriceNoOlderThan(XMR_USD_FEED_ID, priceMaxAge);
-        PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(XMR_USD_FEED_ID, priceMaxAge);
+        PythStructs.Price memory spotData = pyth.getPriceNoOlderThan(XMR_USD_FEED_ID, PRICE_MAX_AGE);
+        PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(XMR_USD_FEED_ID, PRICE_MAX_AGE);
         
         // Validate 1% dip: Spot <= EMA * 0.99
         uint256 spotPrice = uint256(uint64(spotData.price));
@@ -1214,7 +1171,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // 4. MEV Protection: Calculate minimum output using oracle
         // CRITICAL FIX: Use oracle price for sDAI, not hardcoded 1 DAI = 1 USD assumption
         // This prevents DoS during DAI depeg events
-        uint256 sDAIPrice = getCollateralPrice(GnosisAddresses.SDAI); // USD per sDAI share (18 decimals)
+        uint256 sDAIPrice = getCollateralPrice(); // USD per sDAI share (18 decimals)
         uint256 xmrPrice = getXmrPrice(); // USD per XMR (18 decimals)
         
         // Calculate expected wsXMR output
@@ -1233,7 +1190,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             ISwapRouter.ExactInputSingleParams({
                 tokenIn: GnosisAddresses.SDAI,
                 tokenOut: address(wsxmrToken),
-                fee: 3000, // 0.3% pool
+                fee: poolFeeTier, // Dynamic input from the Keeper
                 recipient: address(this),
                 deadline: block.timestamp,
                 amountIn: spendAmount,
@@ -1269,8 +1226,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
      * @notice Get XMR price in USD (18 decimals)
      */
     function getXmrPrice() public view returns (uint256) {
-        uint256 maxAge = priceMaxAge;
-        PythStructs.Price memory priceData = pyth.getPriceNoOlderThan(XMR_USD_FEED_ID, maxAge);
+        PythStructs.Price memory priceData = pyth.getPriceNoOlderThan(XMR_USD_FEED_ID, PRICE_MAX_AGE);
         if (priceData.price <= 0) revert StalePrice();
         
         // CRITICAL: Validate confidence interval (reject if uncertainty > 10%)
@@ -1297,14 +1253,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     }
     
     /**
-     * @notice Get collateral asset price in USD (18 decimals)
+     * @notice Get sDAI price in USD (18 decimals)
      */
-    function getCollateralPrice(address _asset) public view returns (uint256) {
-        bytes32 feedId = collateralPriceFeeds[_asset];
-        if (feedId == bytes32(0)) revert InvalidAsset();
-        
-        uint256 maxAge = priceMaxAge;
-        PythStructs.Price memory priceData = pyth.getPriceNoOlderThan(feedId, maxAge);
+    function getCollateralPrice() public view returns (uint256) {
+        PythStructs.Price memory priceData = pyth.getPriceNoOlderThan(SDAI_USD_FEED_ID, PRICE_MAX_AGE);
         if (priceData.price <= 0) revert StalePrice();
         
         // CRITICAL: Validate confidence interval (reject if uncertainty > 10%)
@@ -1328,17 +1280,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             }
         }
         
-        // CRITICAL FIX: Account for ERC4626 share-to-asset exchange rate
-        // sDAI shares appreciate over time - 1 share > 1 DAI
-        // Without this, LPs are massively shortchanged on borrowing power
-        // and liquidators extract unintended bonuses
-        if (_asset == GnosisAddresses.SDAI) {
-            // Find how many underlying DAI exactly 1e18 sDAI shares are worth
-            uint256 underlyingPerShare = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(1e18);
-            return (normalizedPrice * underlyingPerShare) / 1e18;
-        }
-        
-        return normalizedPrice;
+        // sDAI multiplier logic
+        uint256 underlyingPerShare = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(1e18);
+        return (normalizedPrice * underlyingPerShare) / 1e18;
     }
     
     /**
@@ -1364,20 +1308,16 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
      * @return ratio Collateral ratio (e.g., 150 for 150%)
      */
     function calculateCollateralRatio(
-        address _collateralAsset,
         uint256 _collateralAmount,
         uint256 _debtAmount
     ) public view returns (uint256 ratio) {
         if (_debtAmount == 0) return type(uint256).max;
         
-        uint256 collateralPrice = getCollateralPrice(_collateralAsset);
+        uint256 collateralPrice = getCollateralPrice();
         uint256 xmrPrice = getXmrPrice();
         
-        // Get collateral decimals
-        uint8 collateralDecimals = _collateralAsset == address(0) ? 18 : IERC20Metadata(_collateralAsset).decimals();
-        
-        // Calculate collateral value in USD (18 decimals)
-        uint256 collateralValue = (_collateralAmount * collateralPrice) / (10 ** collateralDecimals);
+        // Calculate collateral value in USD (18 decimals) - sDAI has 18 decimals
+        uint256 collateralValue = (_collateralAmount * collateralPrice) / 1e18;
         
         // Calculate debt value in USD (wsXMR has 8 decimals)
         uint256 debtValue = (_debtAmount * xmrPrice) / 1e8;
@@ -1395,12 +1335,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     }
     
     /**
-     * @notice Convert USD value to collateral token amount
+     * @notice Convert USD value to sDAI amount
      */
-    function usdToCollateral(address _asset, uint256 _usdValue) internal view returns (uint256) {
-        uint256 collateralPrice = getCollateralPrice(_asset);
-        uint8 decimals = _asset == address(0) ? 18 : IERC20Metadata(_asset).decimals();
-        return (_usdValue * (10 ** decimals)) / collateralPrice;
+    function usdToCollateral(uint256 _usdValue) internal view returns (uint256) {
+        uint256 collateralPrice = getCollateralPrice();
+        return (_usdValue * 1e18) / collateralPrice; // sDAI has 18 decimals
     }
     
     // ========== VIEW FUNCTIONS ==========
@@ -1420,7 +1359,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         if (!vault.active) revert VaultDoesNotExist();
         
         return calculateCollateralRatio(
-            vault.collateralAsset,
             vault.collateralAmount,
             getVaultDebt(_lpAddress)
         );
@@ -1435,7 +1373,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         if (!vault.active || actualDebt == 0) return false;
         
         uint256 ratio = calculateCollateralRatio(
-            vault.collateralAsset,
             vault.collateralAmount,
             actualDebt
         );
@@ -1447,38 +1384,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
      */
     function getVaultCount() external view returns (uint256) {
         return vaultList.length;
-    }
-    
-    // ========== ADMIN FUNCTIONS ==========
-    
-    /**
-     * @notice Add support for new collateral type with Pyth price feed
-     * @param _asset Address of the collateral token (address(0) for native MON)
-     * @param _pythFeedId Pyth price feed ID for this asset
-     */
-    function addCollateralSupport(address _asset, bytes32 _pythFeedId) external onlyOwner {
-        if (_pythFeedId == bytes32(0)) revert InvalidAsset();
-        supportedCollateral[_asset] = true;
-        collateralPriceFeeds[_asset] = _pythFeedId;
-        emit CollateralSupported(_asset, address(pyth));
-    }
-    
-    /**
-     * @notice Remove support for collateral type
-     */
-    function removeCollateralSupport(address _asset) external onlyOwner {
-        supportedCollateral[_asset] = false;
-        delete collateralPriceFeeds[_asset];
-    }
-    
-    /**
-     * @notice Set maximum price age for oracle staleness check
-     * @param _maxAge Maximum age in seconds (recommended: 5 minutes)
-     */
-    function setPriceMaxAge(uint256 _maxAge) external onlyOwner {
-        if (_maxAge == 0 || _maxAge > 1 hours) revert InvalidValue();
-        priceMaxAge = _maxAge;
-        emit PriceMaxAgeUpdated(_maxAge);
     }
     
     /**
