@@ -136,7 +136,7 @@ body {
    ============================================ */
 
 .container {
-    max-width: 1600px;
+    max-width: 1800px;
     margin: 0 auto;
     padding: 2rem;
     position: relative;
@@ -164,6 +164,8 @@ body {
     display: flex;
     align-items: center;
     gap: 0.75rem;
+    text-decoration: none;
+    color: inherit;
 }
 
 .logo-icon {
@@ -308,6 +310,8 @@ body {
     grid-template-columns: 1fr 400px;
     gap: 2rem;
     margin-top: 2rem;
+    width: 100%;
+    max-width: 100%;
 }
 
 .swap-column {
@@ -942,18 +946,6 @@ body {
     }
 }
 
-@media (max-width: 1200px) {
-    .main-grid {
-        grid-template-columns: 1fr;
-    }
-    
-    .info-column {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 1.5rem;
-    }
-}
-
 @media (max-width: 900px) {
     .stats-bar {
         flex-wrap: wrap;
@@ -971,9 +963,17 @@ body {
     .lp-info-grid {
         grid-template-columns: 1fr;
     }
+}
+
+@media (max-width: 768px) {
+    .main-grid {
+        grid-template-columns: 1fr;
+    }
     
     .info-column {
+        display: grid;
         grid-template-columns: 1fr;
+        gap: 1.5rem;
     }
 }
 
