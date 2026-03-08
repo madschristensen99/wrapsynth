@@ -30,13 +30,13 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     uint256 public constant PRICE_PRECISION = 1e18;
     
     // MINT TIMEOUTS
-    uint256 public constant MAX_MINT_TIMEOUT = 12 hours; // Reduced from 7 days
-    uint256 public constant MINT_READY_EXTENSION = 8 hours; // Time user has to claim after LP is ready
+    uint256 public constant MAX_MINT_TIMEOUT = 2 hours;
+    uint256 public constant MINT_READY_EXTENSION = 2 hours; // Time user has to claim after LP is ready
     
     // BURN TIMEOUTS
-    uint256 public constant BURN_REQUEST_TIMEOUT = 2 hours; // Time LP has to respond to a burn
+    uint256 public constant BURN_REQUEST_TIMEOUT = 1 hours; // Time LP has to respond to a burn
     // NOTE: BURN_COMMIT_TIMEOUT must be GREATER than the Monero PTLC refund timelock
-    uint256 public constant BURN_COMMIT_TIMEOUT = 8 hours; // Time LP has to reveal secret after committing
+    uint256 public constant BURN_COMMIT_TIMEOUT = 2 hours; // Time LP has to reveal secret after committing
     
     // MARKET METRIC CONSTANTS
     uint256 public constant BPS_DENOMINATOR = 10000;
@@ -46,7 +46,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     uint256 public constant COOLDOWN_PERIOD = 24 hours; // Minimum time between buy-and-burn executions
     uint256 public constant BUY_CHUNK_PERCENT = 20; // 20% of war chest per execution
     uint256 public constant EMA_TRIGGER_THRESHOLD = 99; // 1% dip threshold (spot <= EMA * 0.99)
-    uint256 public constant MEV_SLIPPAGE_BPS = 200; // 2% max slippage for MEV protection
+    uint256 public constant MEV_SLIPPAGE_BPS = 1000; // 10% max slippage - higher tolerance needed during volatility when AMM lags oracle
     uint256 public constant KEEPER_REWARD_BPS = 200; // 2% of the chunk paid to caller for gas
     
     // ========== STATE VARIABLES ==========
@@ -1108,13 +1108,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
      * @notice Skim sDAI appreciation into yieldWarChest for buy-and-burn
      * @dev Called internally when debt operations occur
      * @dev Calculates yield as: (currentShareValue - principalDeposits)
+     * @dev CRITICAL: Deducts yield shares proportionally from all LP vaults to prevent insolvency
      */
     function _skimYieldToWarChest() internal {
-        // CRITICAL FIX: Removed unbounded loop to prevent DoS
-        // Instead, use ERC4626 exchange rate tracking
-        // LPs maintain their share counts, yield accrues via exchange rate appreciation
-        // War chest is funded by explicitly skimming excess shares without touching LP balances
-        
         // Get total sDAI shares held by contract
         uint256 totalSDAIShares = IERC20(GnosisAddresses.SDAI).balanceOf(address(this));
         if (totalSDAIShares == 0) return;
@@ -1134,12 +1130,22 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 yieldInDAI = totalUnderlyingDAI - totalAssignedDAI;
         uint256 yieldInShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(yieldInDAI);
         
-        // CRITICAL FIX: Do NOT deduct from vault.collateralAmount
-        // LPs keep their shares, which appreciate via ERC4626 exchange rate
-        // War chest accumulates the excess shares representing yield
-        // This prevents:
-        // 1. O(N) DoS via unbounded loop
-        // 2. Artificial insolvency by reducing LP collateral ratios
+        // CRITICAL FIX: Deduct yield shares proportionally from ALL LP vaults
+        // This prevents insolvency from double-counting (LPs can't withdraw shares we've allocated to war chest)
+        // We must loop through all vaults to maintain proportional deductions
+        uint256 totalLpShares = totalSDAIShares - yieldWarChest - globalPendingSDAI;
+        if (totalLpShares > 0) {
+            for (uint256 i = 0; i < vaultList.length; i++) {
+                address lpAddress = vaultList[i];
+                Vault storage vault = vaults[lpAddress];
+                
+                if (vault.collateralAmount > 0) {
+                    // Deduct proportional share of yield from this vault
+                    uint256 vaultYieldShare = (vault.collateralAmount * yieldInShares) / totalLpShares;
+                    vault.collateralAmount -= vaultYieldShare;
+                }
+            }
+        }
         
         // Add to war chest
         yieldWarChest += yieldInShares;
