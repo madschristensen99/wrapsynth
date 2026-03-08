@@ -49,6 +49,33 @@ let currentMintFlow = null;
 let currentBurnFlow = null;
 
 /**
+ * Fetch XMR price from CoinGecko free API
+ */
+async function fetchXmrPrice() {
+    try {
+        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd');
+        const data = await response.json();
+        
+        if (data.monero && data.monero.usd) {
+            const price = data.monero.usd;
+            const priceElement = document.getElementById('xmr-price-stat');
+            if (priceElement) {
+                priceElement.textContent = `$${price.toFixed(2)}`;
+            }
+            console.log('✅ XMR price updated:', price);
+            return price;
+        }
+    } catch (error) {
+        console.warn('Could not fetch XMR price from CoinGecko:', error);
+        const priceElement = document.getElementById('xmr-price-stat');
+        if (priceElement) {
+            priceElement.textContent = '$--';
+        }
+    }
+    return null;
+}
+
+/**
  * Initialize application
  */
 async function init() {
@@ -73,6 +100,12 @@ async function init() {
     
     // Check for active swap
     checkForActiveSwap();
+    
+    // Fetch XMR price
+    fetchXmrPrice();
+    
+    // Update XMR price every 60 seconds
+    setInterval(fetchXmrPrice, 60000);
     
     // Listen for account/chain changes
     onAccountsChanged(handleAccountChange);
