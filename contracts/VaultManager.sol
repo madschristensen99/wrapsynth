@@ -46,7 +46,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     uint256 public constant COOLDOWN_PERIOD = 24 hours; // Minimum time between buy-and-burn executions
     uint256 public constant BUY_CHUNK_PERCENT = 20; // 20% of war chest per execution
     uint256 public constant EMA_TRIGGER_THRESHOLD = 99; // 1% dip threshold (spot <= EMA * 0.99)
-    uint256 public constant MEV_SLIPPAGE_BPS = 1000; // 10% max slippage - higher tolerance needed during volatility when AMM lags oracle
+    uint256 public constant MEV_SLIPPAGE_BPS = 100; // 1% max slippage - prevents MEV extraction while allowing normal market variance
     uint256 public constant KEEPER_REWARD_BPS = 200; // 2% of the chunk paid to caller for gas
     
     // ========== STATE VARIABLES ==========
@@ -73,10 +73,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     uint256 public globalLpPrincipal; // CRITICAL FIX: Global sum to avoid O(N) loop DoS
     uint256 public globalPendingSDAI; // CRITICAL FIX: Track queued sDAI returns to prevent yield arbitrage
     
-    // CRITICAL FIX: Lazy yield index system to prevent DoS and manipulation
-    uint256 public globalYieldIndex = 1e18; // Tracks cumulative yield per share (starts at 1.0)
-    uint256 public lastYieldUpdateTime; // Last time yield was calculated
-    mapping(address => uint256) public vaultYieldCheckpoint; // LP's last synced yield index   
     // ========== ENUMS ==========
     
     enum MintStatus {
@@ -314,13 +310,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         IERC20(GnosisAddresses.XDAI).approve(GnosisAddresses.SDAI, _amount);
         uint256 sDAIShares = ISavingsDAI(GnosisAddresses.SDAI).deposit(_amount, address(this));
         
+        // CRITICAL FIX: Sync yield before modifying vault state
+        _syncVaultYield(msg.sender);
+        
         vault.collateralAmount += sDAIShares;
         lpPrincipalDeposits[msg.sender] += _amount;
         globalLpPrincipal += _amount;
-        
-        // CRITICAL FIX: Update yield before modifying vault state
-        _updateGlobalYieldIndex();
-        _syncVaultYield(msg.sender);
         
         emit CollateralDeposited(msg.sender, GnosisAddresses.SDAI, _amount);
     }
@@ -342,13 +337,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // Convert shares to underlying DAI value for principal tracking
         uint256 daiValue = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(_sDAIShares);
         
+        // CRITICAL FIX: Sync yield before modifying vault state
+        _syncVaultYield(msg.sender);
+        
         vault.collateralAmount += _sDAIShares;
         lpPrincipalDeposits[msg.sender] += daiValue;
         globalLpPrincipal += daiValue;
-        
-        // CRITICAL FIX: Update yield before modifying vault state
-        _updateGlobalYieldIndex();
-        _syncVaultYield(msg.sender);
         
         emit CollateralDeposited(msg.sender, GnosisAddresses.SDAI, daiValue);
     }
@@ -388,8 +382,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             if (ratio < COLLATERAL_RATIO) revert InsufficientCollateral();
         }
         
-        // CRITICAL FIX: Update yield before modifying vault state
-        _updateGlobalYieldIndex();
+        // CRITICAL FIX: Sync yield before modifying vault state
         _syncVaultYield(msg.sender);
         
         vault.collateralAmount = newCollateralAmount;
@@ -1116,68 +1109,39 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     // ========== BUY-AND-BURN STRATEGY ==========
     
     /**
-     * @notice Update global yield index based on sDAI exchange rate appreciation
-     * @dev CRITICAL: Uses exchange rate tracking instead of balanceOf to prevent manipulation
-     * @dev Called internally before any vault state changes to ensure accurate accounting
-     */
-    function _updateGlobalYieldIndex() internal {
-        if (globalLpPrincipal == 0) return; // No deposits yet
-        
-        // Calculate current exchange rate (DAI per sDAI share)
-        uint256 currentRate = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(1e18);
-        
-        // If this is first update, just record the rate
-        if (lastYieldUpdateTime == 0) {
-            lastYieldUpdateTime = block.timestamp;
-            return;
-        }
-        
-        // Calculate yield growth since last update
-        // globalYieldIndex tracks cumulative yield multiplier
-        // When rate increases from 1.0 to 1.1, index should increase by 10%
-        uint256 previousRate = (globalLpPrincipal * 1e18) / ISavingsDAI(GnosisAddresses.SDAI).convertToShares(globalLpPrincipal);
-        
-        if (currentRate > previousRate) {
-            uint256 yieldGrowth = ((currentRate - previousRate) * 1e18) / previousRate;
-            globalYieldIndex += (globalYieldIndex * yieldGrowth) / 1e18;
-        }
-        
-        lastYieldUpdateTime = block.timestamp;
-    }
-    
-    /**
      * @notice Sync vault's yield and transfer accrued yield to war chest
-     * @dev CRITICAL: Lazy evaluation - only processes yield for vaults that interact
+     * @dev CRITICAL: Uses DAI value difference instead of share percentage to prevent principal depletion
+     * @dev Lazy evaluation - only processes yield for vaults that interact
      * @dev Prevents DoS from unbounded loops over all vaults
      */
     function _syncVaultYield(address _lpAddress) internal {
         Vault storage vault = vaults[_lpAddress];
         if (vault.collateralAmount == 0) return;
         
-        uint256 lastCheckpoint = vaultYieldCheckpoint[_lpAddress];
-        if (lastCheckpoint == 0) {
-            // First interaction - set checkpoint to current index
-            vaultYieldCheckpoint[_lpAddress] = globalYieldIndex;
-            return;
-        }
+        // Get current exchange rate (DAI per sDAI share)
+        uint256 currentRate = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(1e18);
         
-        // Calculate yield accrued since last checkpoint
-        if (globalYieldIndex > lastCheckpoint) {
-            uint256 yieldMultiplier = globalYieldIndex - lastCheckpoint;
-            uint256 vaultYieldShares = (vault.collateralAmount * yieldMultiplier) / 1e18;
+        // Calculate current total DAI value of vault's shares
+        uint256 totalDaiValue = (vault.collateralAmount * currentRate) / 1e18;
+        
+        // Get LP's original principal deposit in DAI
+        uint256 principalDai = lpPrincipalDeposits[_lpAddress];
+        
+        // If current value exceeds principal, extract the yield
+        if (totalDaiValue > principalDai) {
+            uint256 yieldDai = totalDaiValue - principalDai;
             
-            // Deduct yield from vault and add to war chest
+            // Convert yield DAI back to sDAI shares to deduct
+            uint256 vaultYieldShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(yieldDai);
+            
+            // Safety check: don't deduct more than vault has
             if (vaultYieldShares > 0 && vaultYieldShares < vault.collateralAmount) {
                 vault.collateralAmount -= vaultYieldShares;
                 yieldWarChest += vaultYieldShares;
                 
-                uint256 yieldInDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(vaultYieldShares);
-                emit YieldHarvested(yieldInDAI, vaultYieldShares);
+                emit YieldHarvested(yieldDai, vaultYieldShares);
             }
         }
-        
-        // Update checkpoint
-        vaultYieldCheckpoint[_lpAddress] = globalYieldIndex;
     }
     
     /**
@@ -1254,13 +1218,20 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // CRITICAL FIX: Prevent underflow when wsxmrBought >= globalTotalDebt
         if (globalTotalDebt > 0) {
             if (wsxmrBought >= globalTotalDebt) {
-                // Bought more than total debt - reset to baseline
                 globalDebtIndex = 1e18; // Reset to standard baseline
                 globalTotalDebt = 0;
             } else {
-                // Normal case: reduce proportionally
                 uint256 reductionPercentage = (wsxmrBought * 1e18) / globalTotalDebt;
-                globalDebtIndex -= (globalDebtIndex * reductionPercentage) / 1e18;
+                uint256 indexReduction = (globalDebtIndex * reductionPercentage) / 1e18;
+                
+                // CRITICAL FIX: Prevent globalDebtIndex from reaching zero (minimum 1e9)
+                // This prevents division-by-zero errors in initiateMint
+                if (globalDebtIndex > indexReduction && globalDebtIndex - indexReduction >= 1e9) {
+                    globalDebtIndex -= indexReduction;
+                } else {
+                    globalDebtIndex = 1e9; // Set to minimum safe value
+                }
+                
                 globalTotalDebt -= wsxmrBought;
             }
         }

@@ -368,6 +368,27 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         (, , address token0, , , , , uint128 liquidity, , , , ) = 
             positionManager.positions(position.positionId);
         
+        // CRITICAL FIX: Calculate minimum bounds using oracle prices to prevent MEV attacks
+        // Get oracle prices
+        uint256 sDAIPrice = vaultManager.getCollateralPrice(); // USD per sDAI (18 decimals)
+        uint256 xmrPrice = vaultManager.getXmrPrice(); // USD per XMR (8 decimals)
+        
+        // Calculate expected total USD value of position
+        uint256 totalValueUSD = position.lpInitialValueUSD + position.userInitialValueUSD;
+        
+        // Calculate expected amounts based on oracle prices with 5% slippage tolerance
+        // This prevents MEV bots from sandwiching the withdrawal
+        uint256 expectedSDAI = (totalValueUSD * 1e18) / sDAIPrice;
+        uint256 expectedWsXMR = (totalValueUSD * 1e8) / xmrPrice;
+        
+        // Set minimums at 95% of oracle expectation (5% slippage for IL + fees)
+        uint256 minSDAI = (expectedSDAI * 9500) / 10000;
+        uint256 minWsXMR = (expectedWsXMR * 9500) / 10000;
+        
+        // Determine which token is which
+        uint256 amount0Min = token0 == GnosisAddresses.SDAI ? minSDAI : minWsXMR;
+        uint256 amount1Min = token0 == GnosisAddresses.SDAI ? minWsXMR : minSDAI;
+        
         // CRITICAL FIX: Capture principal amounts from decreaseLiquidity return
         // tokensOwed INCLUDES principal after decreaseLiquidity, so we can't use it
         // The return values from decreaseLiquidity are the actual principal amounts
@@ -375,8 +396,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
             INonfungiblePositionManager.DecreaseLiquidityParams({
                 tokenId: position.positionId,
                 liquidity: liquidity,
-                amount0Min: 0,
-                amount1Min: 0,
+                amount0Min: amount0Min,
+                amount1Min: amount1Min,
                 deadline: block.timestamp
             })
         );
