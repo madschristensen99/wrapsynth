@@ -49,9 +49,9 @@ WrapSynth enables trustless bridging of Monero (XMR) to Ethereum and EVM chains 
 
 #### Gnosis Chain (ChainID: 100)
 **Deployed Contracts:**
-- **wsXMR Token**: [`0x3100aE36ce786EfE1D68BC3863139c59018e739c`](https://gnosisscan.io/address/0x3100aE36ce786EfE1D68BC3863139c59018e739c#code)
-- **VaultManager**: [`0x184fDC73f58B9b56e81CC150922661CF5A3d600F`](https://gnosisscan.io/address/0x184fDC73f58B9b56e81CC150922661CF5A3d600F#code)
-- **wsXMRLiquidityRouter**: [`0x8D8BE267BA4c326fFE02C4243a5261C7f0f9be81`](https://gnosisscan.io/address/0x8D8BE267BA4c326fFE02C4243a5261C7f0f9be81#code)
+- **wsXMR Token**: [`0x46520da3212dA53A8e981641f82C261b36C78dDd`](https://gnosisscan.io/address/0x46520da3212dA53A8e981641f82C261b36C78dDd#code)
+- **VaultManager**: [`0xc5AF5A978ba0E33c29984Aa46f939a7Ff164A851`](https://gnosisscan.io/address/0xc5AF5A978ba0E33c29984Aa46f939a7Ff164A851#code)
+- **wsXMRLiquidityRouter**: [`0x5F824724cF668B0662Df4789F1Ce19De9281d415`](https://gnosisscan.io/address/0x5F824724cF668B0662Df4789F1Ce19De9281d415#code)
 
 **Configuration:**
 - Collateral: sDAI (Savings DAI) - auto-converts from xDAI deposits

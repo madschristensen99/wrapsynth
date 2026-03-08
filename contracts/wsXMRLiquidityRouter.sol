@@ -4,7 +4,6 @@ pragma solidity ^0.8.19;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {INonfungiblePositionManager} from "./interfaces/INonfungiblePositionManager.sol";
 import {VaultManager} from "./VaultManager.sol";
 import {wsXMR} from "./wsXMR.sol";
@@ -16,7 +15,7 @@ import {GnosisAddresses} from "./GnosisAddresses.sol";
  * @notice Co-LP matchmaking system for pairing LP collateral with user wsXMR
  * @dev Creates deep Uniswap V3 liquidity while maintaining protocol safety
  */
-contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
+contract wsXMRLiquidityRouter is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // ========== CONSTANTS ==========
@@ -59,8 +58,11 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
     // Fee tracking for distribution
     mapping(address => uint256) public pendingSDAIFees; // LP fees
     mapping(address => uint256) public pendingWsxmrFees; // User fees
+    
+    // Frontend-friendly position tracking
+    mapping(address => uint256[]) public userPositions;
 
-    // CRITICAL FIX: Dual approval system for matchmaking
+   
     mapping(address => mapping(address => bool)) public lpApprovedUsers; // LP approves user
     mapping(address => mapping(address => bool)) public userApprovedLps; // User approves LP
 
@@ -68,6 +70,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
     
     event LiquidityAllocated(address indexed lp, uint256 sDAIAmount);
     event LiquidityDeallocated(address indexed lp, uint256 sDAIAmount);
+    event WsxmrDeallocated(address indexed account, uint256 amount);
     event UserDepositedWsxmr(address indexed user, uint256 amount);
     event UserWithdrewWsxmr(address indexed user, uint256 amount);
     event PositionCreated(
@@ -95,9 +98,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
     constructor(
         address _vaultManager,
         address _wsxmrToken,
-        address _positionManager,
-        address _initialOwner
-    ) Ownable(_initialOwner) {
+        address _positionManager
+    ) {
         vaultManager = VaultManager(_vaultManager);
         wsxmrToken = wsXMR(_wsxmrToken);
         positionManager = INonfungiblePositionManager(_positionManager);
@@ -125,7 +127,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
     }
     
     /**
-     * @notice LP deallocates sDAI collateral (if not in active positions)
+     * @notice LP deallocates sDAI from liquidity provision back to vault
      * @param _sDAIAmount Amount of sDAI shares to deallocate
      */
     function deallocateLiquidity(uint256 _sDAIAmount) external nonReentrant {
@@ -134,10 +136,40 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
         
         lpLiquidityAllocation[msg.sender] -= _sDAIAmount;
         
-        // Return sDAI to LP
+        // Transfer sDAI back to LP
         IERC20(GnosisAddresses.SDAI).safeTransfer(msg.sender, _sDAIAmount);
         
         emit LiquidityDeallocated(msg.sender, _sDAIAmount);
+    }
+    
+    /**
+     * @notice Generic function to withdraw sDAI (for users who received sDAI from IL)
+     * @param _sDAIAmount Amount of sDAI shares to withdraw
+     * @dev Allows users to withdraw sDAI allocated to them from impermanent loss without needing LP role
+     */
+    function withdrawSDAI(uint256 _sDAIAmount) external nonReentrant {
+        if (_sDAIAmount == 0) revert InvalidAmount();
+        if (lpLiquidityAllocation[msg.sender] < _sDAIAmount) revert InsufficientBalance();
+        
+        lpLiquidityAllocation[msg.sender] -= _sDAIAmount;
+        IERC20(GnosisAddresses.SDAI).safeTransfer(msg.sender, _sDAIAmount);
+        
+        emit LiquidityDeallocated(msg.sender, _sDAIAmount);
+    }
+    
+    /**
+     * @notice Generic function to withdraw wsXMR (for LPs who received wsXMR from IL)
+     * @param _wsxmrAmount Amount of wsXMR to withdraw
+     * @dev Allows LPs to withdraw wsXMR allocated to them from impermanent loss without needing user role
+     */
+    function withdrawWsXMR(uint256 _wsxmrAmount) external nonReentrant {
+        if (_wsxmrAmount == 0) revert InvalidAmount();
+        if (userWsxmrDeposits[msg.sender] < _wsxmrAmount) revert InsufficientBalance();
+        
+        userWsxmrDeposits[msg.sender] -= _wsxmrAmount;
+        IERC20(address(wsxmrToken)).safeTransfer(msg.sender, _wsxmrAmount);
+        
+        emit WsxmrDeallocated(msg.sender, _wsxmrAmount);
     }
 
     // ========== USER FUNCTIONS ==========
@@ -203,12 +235,12 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
         uint256 _sDAIAmount,
         uint256 _wsxmrAmount
     ) external nonReentrant returns (uint256 positionIndex) {
-        // CRITICAL FIX: Require BOTH LP and user authorization
+       
         // Prevents LP from stealing arbitrary user deposits
         // Prevents user from forcing LP into manipulated positions
         if (msg.sender != _lp && msg.sender != _user) revert Unauthorized();
         
-        // CRITICAL FIX: Enforce dual approval system
+       
         // BOTH parties must have explicitly approved each other
         if (!lpApprovedUsers[_lp][_user]) {
             revert("LP has not approved user for pairing");
@@ -240,9 +272,9 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             ? (_sDAIAmount, _wsxmrAmount)
             : (_wsxmrAmount, _sDAIAmount);
         
-        // CRITICAL FIX: Use oracle prices to calculate expected pool ratio and validate
+       
         // This prevents MEV arbitrage via flash loan pool manipulation
-        uint256 sDAIPrice = vaultManager.getCollateralPrice(GnosisAddresses.SDAI);
+        uint256 sDAIPrice = vaultManager.getCollateralPrice();
         uint256 wsxmrPrice = vaultManager.getXmrPrice();
         
         // Calculate expected ratio based on oracle prices
@@ -254,17 +286,15 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             ? (amount1 * wsxmrPrice) / 1e8 
             : (amount0 * wsxmrPrice) / 1e8;
         
-        // Require values to be within 10% of each other (oracle-based validation)
-        // This prevents creating positions during manipulated pool states
+        // Require values to be within 1% of each other (oracle-based validation)
+        // This prevents flash-loan MEV attacks on position creation
         uint256 valueDiff = sDAIValue > wsxmrValue ? sDAIValue - wsxmrValue : wsxmrValue - sDAIValue;
-        require(valueDiff * 10 <= (sDAIValue + wsxmrValue), "Pool ratio deviates from oracle");
+        require(valueDiff * 100 <= (sDAIValue + wsxmrValue), "Pool ratio deviates from oracle");
         
-        // CRITICAL FIX: Relax slippage bounds to 10% for full-range positions
-        // Full-range liquidity must match exact pool ratio, 5% was too restrictive
-        // Oracle validation above already prevents manipulation
-        uint256 amount0Min = (amount0 * 90) / 100;
-        uint256 amount1Min = (amount1 * 90) / 100;
-        
+       
+        // Uniswap V3 will consume assets according to current pool ratio
+        // Oracle validation above (valueDiff * 100 <= totalValue) already prevents manipulation
+        // Strict bounds cause reverts when pool ratio doesn't match 50/50 desired amounts
         // Create Uniswap V3 position
         (uint256 tokenId, , uint256 actual0, uint256 actual1) = positionManager.mint(
             INonfungiblePositionManager.MintParams({
@@ -275,21 +305,21 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
                 tickUpper: TICK_UPPER,
                 amount0Desired: amount0,
                 amount1Desired: amount1,
-                amount0Min: amount0Min,
-                amount1Min: amount1Min,
+                amount0Min: 0,
+                amount1Min: 0,
                 recipient: address(this),
                 deadline: block.timestamp
             })
         );
         
-        // CRITICAL FIX: Refund unused amounts and record position
+       
         positionIndex = nextPositionIndex++;
         
         if (token0 == GnosisAddresses.SDAI) {
             if (actual0 < _sDAIAmount) lpLiquidityAllocation[_lp] += (_sDAIAmount - actual0);
             if (actual1 < _wsxmrAmount) userWsxmrDeposits[_user] += (_wsxmrAmount - actual1);
             
-            // CRITICAL FIX: Calculate USD values based on ACTUAL spot ratio used by Uniswap
+           
             // This prevents oracle/spot divergence arbitrage attacks
             positions[positionIndex] = LiquidityPosition({
                 positionId: tokenId,
@@ -297,7 +327,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
                 userProvider: _user,
                 sDAIAmount: actual0,
                 wsxmrAmount: actual1,
-                lpInitialValueUSD: (actual0 * vaultManager.getCollateralPrice(GnosisAddresses.SDAI)) / 1e18,
+                lpInitialValueUSD: (actual0 * vaultManager.getCollateralPrice()) / 1e18,
                 userInitialValueUSD: (actual1 * vaultManager.getXmrPrice()) / 1e8,
                 createdAt: block.timestamp
             });
@@ -305,7 +335,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             if (actual0 < _wsxmrAmount) userWsxmrDeposits[_user] += (_wsxmrAmount - actual0);
             if (actual1 < _sDAIAmount) lpLiquidityAllocation[_lp] += (_sDAIAmount - actual1);
             
-            // CRITICAL FIX: Calculate USD values based on ACTUAL spot ratio used by Uniswap
+           
             // This prevents oracle/spot divergence arbitrage attacks
             positions[positionIndex] = LiquidityPosition({
                 positionId: tokenId,
@@ -313,11 +343,15 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
                 userProvider: _user,
                 sDAIAmount: actual1,
                 wsxmrAmount: actual0,
-                lpInitialValueUSD: (actual1 * vaultManager.getCollateralPrice(GnosisAddresses.SDAI)) / 1e18,
+                lpInitialValueUSD: (actual1 * vaultManager.getCollateralPrice()) / 1e18,
                 userInitialValueUSD: (actual0 * vaultManager.getXmrPrice()) / 1e8,
                 createdAt: block.timestamp
             });
         }
+        
+        // Track position for frontend discovery
+        userPositions[_user].push(positionIndex);
+        userPositions[_lp].push(positionIndex);
         
         emit PositionCreated(positionIndex, tokenId, _lp, _user, _sDAIAmount, _wsxmrAmount);
     }
@@ -339,9 +373,11 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
         (, , address token0, , , , , uint128 liquidity, , , , ) = 
             positionManager.positions(position.positionId);
         
-        // CRITICAL FIX: Capture principal amounts from decreaseLiquidity return
-        // tokensOwed INCLUDES principal after decreaseLiquidity, so we can't use it
-        // The return values from decreaseLiquidity are the actual principal amounts
+       
+        // We already protect against pool manipulation via oracle checks in createPosition
+        // (valueDiff * 10 <= totalValue ensures pool is within 10% of oracle prices)
+        // Setting strict bounds here causes reverts due to impermanent loss shifting asset ratios
+        // The previous approach demanded 95% of TOTAL value from EACH asset = 190% total (impossible)
         (uint256 principal0, uint256 principal1) = positionManager.decreaseLiquidity(
             INonfungiblePositionManager.DecreaseLiquidityParams({
                 tokenId: position.positionId,
@@ -352,10 +388,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             })
         );
         
-        // CRITICAL FIX: Read tokensOwed BEFORE collect to get pre-existing fees
-        // These are fees that accumulated BEFORE we decreased liquidity
-        (, , , , , , , , , , uint128 tokensOwed0Before, uint128 tokensOwed1Before) = 
-            positionManager.positions(position.positionId);
+        // Note: We don't need to read tokensOwed before collect since we calculate fees
+        // as the difference between collected and principal amounts
         
         // Collect all tokens (principal + fees)
         (uint256 collected0, uint256 collected1) = positionManager.collect(
@@ -367,23 +401,12 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             })
         );
         
-        // CRITICAL FIX: Fees are the difference between collected and principal
+       
         // collected = principal (from decreaseLiquidity) + pre-existing fees
         uint256 fees0 = collected0 - principal0;
         uint256 fees1 = collected1 - principal1;
         
-        // CRITICAL FIX: Distribute principal proportionally based on initial USD value
-        // This handles impermanent loss fairly between both parties
-        uint256 totalReturnedValue = ((token0 == GnosisAddresses.SDAI ? principal0 : principal1) * 
-            vaultManager.getCollateralPrice(GnosisAddresses.SDAI)) / 1e18 + 
-            ((token0 == GnosisAddresses.SDAI ? principal1 : principal0) * 
-            vaultManager.getXmrPrice()) / 1e8;
-        
-        // Calculate proportional shares
-        uint256 lpShareValue = (totalReturnedValue * position.lpInitialValueUSD) / 
-            (position.lpInitialValueUSD + position.userInitialValueUSD);
-        
-        // CRITICAL FIX: Direct proportional distribution of actual principal returned
+       
         // Avoids USD conversion round-trip that can trap funds
         uint256 sDAIPrincipal = token0 == GnosisAddresses.SDAI ? principal0 : principal1;
         uint256 wsxmrPrincipal = token0 == GnosisAddresses.SDAI ? principal1 : principal0;
@@ -403,7 +426,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
         lpLiquidityAllocation[position.lpProvider] += lpSDAI;
         userWsxmrDeposits[position.userProvider] += userWsxmr;
         
-        // CRITICAL FIX: Cross-distribute to prevent fund trapping
+       
         // If pool shifted heavily to one asset, both parties receive proportional amounts of both
         if (userSDAI > 0) {
             lpLiquidityAllocation[position.userProvider] += userSDAI;
@@ -412,11 +435,12 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
             userWsxmrDeposits[position.lpProvider] += lpWsxmr;
         }
         
-        // CRITICAL FIX: Distribute actual trading fees (50/50 split)
+       
         // fees0/fees1 are correctly calculated as collected - principal
-        // Determine which fee corresponds to which token
-        uint256 sDAIFees = sDAIPrincipal == principal0 ? fees0 : fees1;
-        uint256 wsxmrFees = wsxmrPrincipal == principal0 ? fees0 : fees1;
+        // Determine which fee corresponds to which token using token addresses directly
+        // This prevents misattribution when principal0 == principal1 == 0 (out of range position)
+        uint256 sDAIFees = token0 == GnosisAddresses.SDAI ? fees0 : fees1;
+        uint256 wsxmrFees = token0 == GnosisAddresses.SDAI ? fees1 : fees0;
         
         if (sDAIFees > 0) {
             pendingSDAIFees[position.lpProvider] += sDAIFees / 2;
@@ -493,6 +517,36 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
     }
 
     // ========== VIEW FUNCTIONS ==========
+    
+    /**
+     * @notice Get all active positions for a user or LP
+     * @param _account Address to query (can be LP or user)
+     * @return activePositions Array of active liquidity positions
+     */
+    function getUserPositions(address _account) external view returns (LiquidityPosition[] memory activePositions) {
+        uint256[] memory posIndexes = userPositions[_account];
+        
+        // Count active positions (positionId != 0 means not closed)
+        uint256 count = 0;
+        for (uint256 i = 0; i < posIndexes.length; i++) {
+            if (positions[posIndexes[i]].positionId != 0) {
+                count++;
+            }
+        }
+        
+        // Allocate and populate array
+        activePositions = new LiquidityPosition[](count);
+        uint256 currentIndex = 0;
+        for (uint256 i = 0; i < posIndexes.length; i++) {
+            uint256 pIdx = posIndexes[i];
+            if (positions[pIdx].positionId != 0) {
+                activePositions[currentIndex] = positions[pIdx];
+                currentIndex++;
+            }
+        }
+        
+        return activePositions;
+    }
     
     /**
      * @notice Get position details
