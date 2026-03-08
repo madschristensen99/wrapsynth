@@ -5,7 +5,6 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Secp256k1} from "./Secp256k1.sol";
 import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {PythStructs} from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
@@ -19,7 +18,7 @@ import {GnosisAddresses} from "./GnosisAddresses.sol";
  * @notice Manages LP vaults, collateralization, and mint/burn operations for wsXMR
  * @dev Integrates cryptographic proofs from atomic swaps with CDP vault mechanics
  */
-contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
+contract VaultManager is Secp256k1, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // ========== CONSTANTS ==========
@@ -31,13 +30,13 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     uint256 public constant PRICE_PRECISION = 1e18;
     
     // MINT TIMEOUTS
-    uint256 public constant MAX_MINT_TIMEOUT = 12 hours; // Reduced from 7 days
-    uint256 public constant MINT_READY_EXTENSION = 8 hours; // Time user has to claim after LP is ready
+    uint256 public constant MAX_MINT_TIMEOUT = 2 hours;
+    uint256 public constant MINT_READY_EXTENSION = 2 hours; // Time user has to claim after LP is ready
     
     // BURN TIMEOUTS
-    uint256 public constant BURN_REQUEST_TIMEOUT = 2 hours; // Time LP has to respond to a burn
+    uint256 public constant BURN_REQUEST_TIMEOUT = 1 hours; // Time LP has to respond to a burn
     // NOTE: BURN_COMMIT_TIMEOUT must be GREATER than the Monero PTLC refund timelock
-    uint256 public constant BURN_COMMIT_TIMEOUT = 8 hours; // Time LP has to reveal secret after committing
+    uint256 public constant BURN_COMMIT_TIMEOUT = 2 hours; // Time LP has to reveal secret after committing
     
     // MARKET METRIC CONSTANTS
     uint256 public constant BPS_DENOMINATOR = 10000;
@@ -47,7 +46,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     uint256 public constant COOLDOWN_PERIOD = 24 hours; // Minimum time between buy-and-burn executions
     uint256 public constant BUY_CHUNK_PERCENT = 20; // 20% of war chest per execution
     uint256 public constant EMA_TRIGGER_THRESHOLD = 99; // 1% dip threshold (spot <= EMA * 0.99)
-    uint256 public constant MEV_SLIPPAGE_BPS = 200; // 2% max slippage for MEV protection
+    uint256 public constant MEV_SLIPPAGE_BPS = 100; // 1% max slippage - prevents MEV extraction while allowing normal market variance
     uint256 public constant KEEPER_REWARD_BPS = 200; // 2% of the chunk paid to caller for gas
     
     // ========== STATE VARIABLES ==========
@@ -59,13 +58,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     
     // Pyth price feed IDs
     bytes32 public constant XMR_USD_FEED_ID = 0x46b8cc9347f04391764a0361e0b17c3ba394b001e7c304f7650f6376e37c321d;
+   
+    bytes32 public constant SDAI_USD_FEED_ID = 0xb0948a5e5313200c632b51bb5ca32f6de0d36e9950a942d19751e833f70dabfd;
 
     // Oracle staleness configuration (in seconds)
-    uint256 public priceMaxAge = 5 minutes; // Configurable staleness threshold
-    
-    // Supported collateral tokens (address(0) = native MON)
-    mapping(address => bool) public supportedCollateral;
-    mapping(address => bytes32) public collateralPriceFeeds; // Maps collateral to Pyth feed ID
+    uint256 public constant PRICE_MAX_AGE = 5 minutes;
     
     // Buy-and-Burn Strategy State
     uint256 public lastBuyTimestamp; // Last execution timestamp for cooldown enforcement
@@ -73,7 +70,13 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     uint256 public globalDebtIndex = 1e18; // Debt multiplier for O(1) proportional forgiveness
     uint256 public yieldWarChest; // Accumulated sDAI yield ready for buy-and-burn
     mapping(address => uint256) public lpPrincipalDeposits; // Track original DAI deposits per LP
-    uint256 public globalLpPrincipal; // CRITICAL FIX: Global sum to avoid O(N) loop DoS   
+    uint256 public globalLpPrincipal;
+    uint256 public globalPendingSDAI;
+    
+    // Frontend-friendly request tracking
+    mapping(address => bytes32[]) public userMintRequests;
+    mapping(address => bytes32[]) public userBurnRequests;
+    
     // ========== ENUMS ==========
     
     enum MintStatus {
@@ -101,8 +104,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
      */
     struct Vault {
         address lpAddress;
-        address collateralAsset; // address(0) for ETH
-        uint256 collateralAmount; // For sDAI: tracks sDAI SHARES (not DAI value)
+        uint256 collateralAmount; // sDAI SHARES (not DAI value)
         uint256 lockedCollateral; // Collateral reserved for pending burns (still liquidatable!)
         uint256 normalizedDebt; // Normalized debt for O(1) proportional forgiveness (actualDebt = normalizedDebt * globalDebtIndex / 1e18)
         uint256 pendingDebt; // Reserved capacity for pending mints (NOT Liquidatable)
@@ -110,6 +112,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         uint256 mintGriefingDeposit; // ETH deposit required for mint requests (LP-configurable)
         uint16 mintFeeBps; // Fee LP charges for minting (paid in wsXMR)
         uint16 burnRewardBps; // Reward LP pays to incentivize burning (paid in Collateral)
+        uint256 liquidationNonce;
         bool active;
     }
     
@@ -147,6 +150,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         uint256 rewardCollateral; // Extra collateral added as a reward
         bytes32 secretHash; // Hash of secret that LP generates (set in commitBurn)
         uint256 deadline; // LP must respond/reveal before this
+        uint256 vaultLiquidationNonce;
         BurnStatus status;
     }
     
@@ -257,37 +261,25 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     
     // ========== CONSTRUCTOR ==========
     
-    constructor(
-        address _wsxmrToken,
-        address _pythContract,
-        address _initialOwner
-    ) Ownable(_initialOwner) {
-        if (_wsxmrToken == address(0)) revert ZeroAddress();
+    constructor(address _pythContract) {
         if (_pythContract == address(0)) revert ZeroAddress();
-        if (_initialOwner == address(0)) revert ZeroAddress();
         
-        wsxmrToken = wsXMR(_wsxmrToken);
         pyth = IPyth(_pythContract);
         
-        // GNOSIS CHAIN: Enable sDAI as default yield-bearing collateral
-        supportedCollateral[GnosisAddresses.SDAI] = true;
-        collateralPriceFeeds[GnosisAddresses.SDAI] = GnosisAddresses.DAI_USD_FEED_ID;
-        emit CollateralSupported(GnosisAddresses.SDAI, _pythContract);
+        // Deploys the wsXMR token immutably on initialization
+        wsxmrToken = new wsXMR();
     }
     
     // ========== VAULT MANAGEMENT ==========
     
     /**
-     * @notice Create a new LP vault
-     * @param _collateralAsset Address of collateral token (address(0) for ETH)
+     * @notice Create a new LP vault (sDAI collateral only)
      */
-    function createVault(address _collateralAsset) external {
+    function createVault() external {
         if (vaults[msg.sender].active) revert VaultAlreadyExists();
-        if (!supportedCollateral[_collateralAsset]) revert InvalidCollateralAsset();
         
         vaults[msg.sender] = Vault({
             lpAddress: msg.sender,
-            collateralAsset: _collateralAsset,
             collateralAmount: 0,
             lockedCollateral: 0,
             normalizedDebt: 0,
@@ -296,57 +288,67 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             mintGriefingDeposit: 0, // LP can set this later via setMintGriefingDeposit
             mintFeeBps: 0,
             burnRewardBps: 0,
+            liquidationNonce: 0,
             active: true
         });
         
         vaultList.push(msg.sender);
-        emit VaultCreated(msg.sender, _collateralAsset);
+        emit VaultCreated(msg.sender, GnosisAddresses.SDAI);
     }
     
     /**
-     * @notice Deposit collateral into vault
-     * @dev Auto-converts DAI/xDAI to sDAI for yield generation
-     * @param _amount Amount of collateral to deposit (in DAI if depositing to sDAI vault)
+     * @notice Deposit collateral into vault (xDAI)
+     * @dev Auto-converts xDAI to sDAI for yield generation
+     * @param _amount Amount of xDAI to deposit
      */
-    function depositCollateral(uint256 _amount) external payable nonReentrant {
+    function depositCollateral(uint256 _amount) external nonReentrant {
         if (!vaults[msg.sender].active) revert VaultDoesNotExist();
         if (_amount == 0) revert ZeroAmount();
         
         Vault storage vault = vaults[msg.sender];
         
-        // GNOSIS CHAIN: Auto-convert DAI to sDAI for yield
-        if (vault.collateralAsset == GnosisAddresses.SDAI) {
-            if (msg.value != 0) revert InvalidValue();
-            
-            // Transfer DAI from user
-            IERC20(GnosisAddresses.XDAI).safeTransferFrom(msg.sender, address(this), _amount);
-            
-            // Approve sDAI contract to spend DAI
-            IERC20(GnosisAddresses.XDAI).approve(GnosisAddresses.SDAI, _amount);
-            
-            // Deposit DAI into sDAI vault and receive sDAI shares
-            uint256 sDAIShares = ISavingsDAI(GnosisAddresses.SDAI).deposit(_amount, address(this));
-            
-            // CRITICAL FIX: Track sDAI SHARES consistently
-            vault.collateralAmount += sDAIShares;
-            
-            // Track principal DAI deposit for yield harvesting
-            lpPrincipalDeposits[msg.sender] += _amount;
-            globalLpPrincipal += _amount;
-            
-            emit CollateralDeposited(msg.sender, vault.collateralAsset, _amount);
-        } else if (vault.collateralAsset == address(0)) {
-            // Native ETH deposit (for other chains)
-            if (msg.value != _amount) revert InvalidValue();
-            vault.collateralAmount += _amount;
-            emit CollateralDeposited(msg.sender, vault.collateralAsset, _amount);
-        } else {
-            // Direct ERC20 deposit
-            if (msg.value != 0) revert InvalidValue();
-            IERC20(vault.collateralAsset).safeTransferFrom(msg.sender, address(this), _amount);
-            vault.collateralAmount += _amount;
-            emit CollateralDeposited(msg.sender, vault.collateralAsset, _amount);
-        }
+        // 1. Transfer xDAI from user
+        IERC20(GnosisAddresses.XDAI).safeTransferFrom(msg.sender, address(this), _amount);
+        
+        // 2. Approve and deposit to sDAI
+        IERC20(GnosisAddresses.XDAI).approve(GnosisAddresses.SDAI, _amount);
+        uint256 sDAIShares = ISavingsDAI(GnosisAddresses.SDAI).deposit(_amount, address(this));
+        
+       
+        _syncVaultYield(msg.sender);
+        
+        vault.collateralAmount += sDAIShares;
+        lpPrincipalDeposits[msg.sender] += _amount;
+        globalLpPrincipal += _amount;
+        
+        emit CollateralDeposited(msg.sender, GnosisAddresses.SDAI, _amount);
+    }
+    
+    /**
+     * @notice Deposit sDAI shares directly into vault
+     * @dev For LPs who already hold sDAI and want to skip the xDAI conversion step
+     * @param _sDAIShares Amount of sDAI shares to deposit
+     */
+    function depositSDAI(uint256 _sDAIShares) external nonReentrant {
+        if (!vaults[msg.sender].active) revert VaultDoesNotExist();
+        if (_sDAIShares == 0) revert ZeroAmount();
+        
+        Vault storage vault = vaults[msg.sender];
+        
+        // Transfer sDAI shares directly from user
+        IERC20(GnosisAddresses.SDAI).safeTransferFrom(msg.sender, address(this), _sDAIShares);
+        
+        // Convert shares to underlying DAI value for principal tracking
+        uint256 daiValue = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(_sDAIShares);
+        
+       
+        _syncVaultYield(msg.sender);
+        
+        vault.collateralAmount += _sDAIShares;
+        lpPrincipalDeposits[msg.sender] += daiValue;
+        globalLpPrincipal += daiValue;
+        
+        emit CollateralDeposited(msg.sender, GnosisAddresses.SDAI, daiValue);
     }
     
     /**
@@ -359,7 +361,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         Vault storage vault = vaults[msg.sender];
         
-        // CRITICAL: Check available (unlocked) collateral
+       
         // Cannot withdraw collateral that's locked for pending burns
         uint256 availableCollateral = vault.collateralAmount - vault.lockedCollateral;
         if (availableCollateral < _amount) revert InsufficientCollateral();
@@ -367,47 +369,39 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // Check if withdrawal would make vault unhealthy
         uint256 newCollateralAmount = vault.collateralAmount - _amount;
         
-        // CRITICAL: Calculate safety based on BOTH active and pending debt
+       
         uint256 actualDebt = getActualDebt(vault.normalizedDebt);
         uint256 totalObligations = actualDebt + vault.pendingDebt;
         
         if (totalObligations > 0) {
-            // CRITICAL FIX: Exclude lockedCollateral from health check
+           
             // Locked collateral backs burn requests, not active debt
             uint256 availableForDebt = newCollateralAmount > vault.lockedCollateral 
                 ? newCollateralAmount - vault.lockedCollateral 
                 : 0;
             uint256 ratio = calculateCollateralRatio(
-                vault.collateralAsset,
                 availableForDebt,
                 totalObligations
             );
             if (ratio < COLLATERAL_RATIO) revert InsufficientCollateral();
         }
         
+       
+        _syncVaultYield(msg.sender);
+        
         vault.collateralAmount = newCollateralAmount;
         
-        // Transfer collateral back to LP
-        if (vault.collateralAsset == GnosisAddresses.SDAI) {
-            // CRITICAL FIX: _amount is in sDAI shares, redeem directly
-            uint256 daiReceived = ISavingsDAI(GnosisAddresses.SDAI).redeem(_amount, msg.sender, address(this));
-            
-            // CRITICAL FIX: Decrement principal proportionally to prevent yield lockup
-            // Calculate what portion of the LP's principal this withdrawal represents
-            uint256 totalCollateral = vault.collateralAmount + _amount; // Before withdrawal
-            uint256 principalToDeduct = (lpPrincipalDeposits[msg.sender] * _amount) / totalCollateral;
-            lpPrincipalDeposits[msg.sender] -= principalToDeduct;
-            globalLpPrincipal -= principalToDeduct;
-            
-            emit CollateralWithdrawn(msg.sender, vault.collateralAsset, daiReceived);
-        } else if (vault.collateralAsset == address(0)) {
-            (bool success, ) = payable(msg.sender).call{value: _amount}("");
-            require(success, "ETH transfer failed");
-            emit CollateralWithdrawn(msg.sender, vault.collateralAsset, _amount);
-        } else {
-            IERC20(vault.collateralAsset).safeTransfer(msg.sender, _amount);
-            emit CollateralWithdrawn(msg.sender, vault.collateralAsset, _amount);
-        }
+       
+        uint256 daiReceived = ISavingsDAI(GnosisAddresses.SDAI).redeem(_amount, msg.sender, address(this));
+        
+       
+        // Calculate what portion of the LP's principal this withdrawal represents
+        uint256 totalCollateral = vault.collateralAmount + _amount; // Before withdrawal
+        uint256 principalToDeduct = (lpPrincipalDeposits[msg.sender] * _amount) / totalCollateral;
+        lpPrincipalDeposits[msg.sender] -= principalToDeduct;
+        globalLpPrincipal -= principalToDeduct;
+        
+        emit CollateralWithdrawn(msg.sender, GnosisAddresses.SDAI, daiReceived);
     }
     
     /**
@@ -459,6 +453,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // CHECKS-EFFECTS-INTERACTIONS
         pendingReturns[msg.sender][_token] = 0;
         
+       
+        if (_token == GnosisAddresses.SDAI) {
+            globalPendingSDAI -= amount;
+        }
+        
         if (_token == address(0)) {
             // Withdraw ETH
             (bool success, ) = payable(msg.sender).call{value: amount}("");
@@ -496,6 +495,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         if (_timeoutDuration == 0 || _timeoutDuration > MAX_MINT_TIMEOUT) revert InvalidValue();
         if (!vaults[_lpVault].active) revert VaultDoesNotExist();
         
+       
+        // XMR has 12 decimals, wsXMR has 8, so amounts < 1e4 would floor to 0
+        if (_xmrAmount < 1e4) revert ZeroAmount();
+        
         // ANTI-SPAM: Require griefing deposit set by LP
         Vault storage vault = vaults[_lpVault];
         if (msg.value < vault.mintGriefingDeposit) revert InsufficientDeposit();
@@ -508,15 +511,14 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         // Enforce LP's chunk size limit (prevents single large mint from draining capacity)
         if (vault.maxMintBps > 0) {
-            uint256 collateralPrice = getCollateralPrice(vault.collateralAsset);
-            uint256 collateralDecimals = vault.collateralAsset == address(0) ? 18 : IERC20Metadata(vault.collateralAsset).decimals();
-            uint256 collateralValueUsd = (vault.collateralAmount * collateralPrice) / (10 ** collateralDecimals);
+            uint256 collateralPrice = getCollateralPrice();
+            uint256 collateralValueUsd = (vault.collateralAmount * collateralPrice) / 1e18; // sDAI has 18 decimals
             uint256 maxTotalDebtCapacity = (collateralValueUsd * RATIO_PRECISION) / COLLATERAL_RATIO;
             uint256 maxMintAllowed = (maxTotalDebtCapacity * vault.maxMintBps) / BPS_DENOMINATOR;
             
-            // CRITICAL FIX: Convert wsxmrAmount to USD value before comparison
+           
             // wsxmrAmount is in 8 decimals, maxMintAllowed is in USD with 18 decimals
-            uint256 xmrPrice = getXmrPrice(); // Returns price in 8 decimals
+            uint256 xmrPrice = getXmrPrice(); // Returns price in 18 decimals
             uint256 wsxmrValueUsd = (wsxmrAmount * xmrPrice) / 1e8; // Convert to USD (18 decimals)
             
             if (wsxmrValueUsd > maxMintAllowed) revert InvalidValue();
@@ -526,7 +528,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         uint256 actualDebt = getActualDebt(vault.normalizedDebt);
         uint256 totalProjectedDebt = actualDebt + vault.pendingDebt + wsxmrAmount;
         
-        // CRITICAL FIX: Exclude lockedCollateral from available collateral
+       
         // lockedCollateral is pledged to burn requests and cannot back new mints
         // Without this check, LP can double-count collateral to mint unbacked wsXMR
         uint256 availableCollateral = vault.collateralAmount > vault.lockedCollateral 
@@ -534,7 +536,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             : 0;
         
         uint256 ratio = calculateCollateralRatio(
-            vault.collateralAsset,
             availableCollateral,
             totalProjectedDebt
         );
@@ -553,7 +554,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // Check for collision BEFORE modifying state
         if (mintRequests[requestId].status != MintStatus.INVALID) revert MintAlreadyExists();
         
-        // CRITICAL: Add to pendingDebt (NOT debtAmount) to prevent phantom debt DoS
+       
         // Pending debt reserves capacity but does NOT count towards liquidation calculations
         vault.pendingDebt += wsxmrAmount;
         
@@ -570,6 +571,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             griefingDeposit: msg.value, // Store deposit for refund/award
             status: MintStatus.PENDING
         });
+        
+        // Track request for frontend discovery
+        userMintRequests[msg.sender].push(requestId);
         
         emit MintInitiated(
             requestId,
@@ -615,10 +619,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         Vault storage vault = vaults[request.lpVault];
         
-        // CRITICAL: Move debt from Pending state to Active state
+       
         vault.pendingDebt -= request.wsxmrAmount;
         
-        // CRITICAL FIX: Normalize the debt amount by dividing by globalDebtIndex
+       
         // This prevents wealth generation when index < 1e18
         uint256 normalizedAmount = (request.wsxmrAmount * 1e18) / globalDebtIndex;
         vault.normalizedDebt += normalizedAmount;
@@ -630,26 +634,16 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             wsxmrToken.mint(vault.lpAddress, request.feeAmount);
         }
         
-        // CRITICAL: Refund griefing deposit to INITIATOR (prevents griefing attack)
-        // If deposit goes to recipient, malicious users can farm LPs by abandoning mints
+       
+        // Status is READY (checked at function entry), so return deposit to initiator
         if (request.griefingDeposit > 0) {
-            if (request.status == MintStatus.PENDING) {
-                // User failed to lock XMR off-chain - compensate LP
-                pendingReturns[vault.lpAddress][address(0)] += request.griefingDeposit;
-                emit ReturnQueued(vault.lpAddress, address(0), request.griefingDeposit);
-            } else if (request.status == MintStatus.READY) {
-                // LP confirmed but user failed to claim - return to INITIATOR
-                pendingReturns[request.initiator][address(0)] += request.griefingDeposit;
-                emit ReturnQueued(request.initiator, address(0), request.griefingDeposit);
-            }
+            pendingReturns[request.initiator][address(0)] += request.griefingDeposit;
+            emit ReturnQueued(request.initiator, address(0), request.griefingDeposit);
         }
         
         // Mark as completed
         request.status = MintStatus.COMPLETED;
         emit MintFinalized(_requestId, _secret);
-        
-        // CRITICAL FIX: Skim yield to war chest after mint completes
-        _skimYieldToWarChest();
     }
     
     /**
@@ -680,7 +674,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         Vault storage vault = vaults[request.lpVault];
         vault.pendingDebt -= request.wsxmrAmount;
         
-        // CRITICAL FIX: Save original status before marking as cancelled
+       
         MintStatus originalStatus = request.status;
         uint256 depositToTransfer = request.griefingDeposit;
         
@@ -729,10 +723,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         uint256 actualDebt = getActualDebt(vault.normalizedDebt);
         if (actualDebt < _wsxmrAmount) revert InsufficientDebt();
         
-        // CRITICAL: Verify vault is healthy before allowing burn to be routed to it
+       
         // Prevents users from burning to unhealthy vaults that may be liquidated
         uint256 vaultHealthRatio = calculateCollateralRatio(
-            vault.collateralAsset,
             vault.collateralAmount,
             actualDebt
         );
@@ -741,17 +734,15 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // 1. Calculate and verify collateral needed for this specific burn
         uint256 collateralValue = getCollateralValueForDebt(_wsxmrAmount);
         uint256 collateralToLock = usdToCollateral(
-            vault.collateralAsset,
             (collateralValue * LIQUIDATION_RATIO) / RATIO_PRECISION
         );
         
         // Calculate User Reward in Vault's collateral asset
         uint256 rewardUsd = (collateralValue * vault.burnRewardBps) / BPS_DENOMINATOR;
-        uint256 rewardCollateral = usdToCollateral(vault.collateralAsset, rewardUsd);
+        uint256 rewardCollateral = usdToCollateral(rewardUsd);
         
         // 2. Check available (unlocked) collateral for both base + reward
-        uint256 availableCollateral = vault.collateralAmount - vault.lockedCollateral;
-        if (availableCollateral < (collateralToLock + rewardCollateral)) revert InsufficientCollateral();
+        if (vault.collateralAmount < (collateralToLock + rewardCollateral)) revert InsufficientCollateral();
         
         requestId = keccak256(abi.encodePacked(
             _user,
@@ -776,13 +767,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             wsxmrToken.burn(address(this), _wsxmrAmount);
         }
         
-        // 4. CRITICAL: LOCK collateral (don't escrow) and reduce debt
-        // Collateral stays in vault.collateralAmount and remains LIQUIDATABLE
-        // This prevents liquidation blind spot vulnerability
-        // Lock both Base Liquidation Collateral and Reward Collateral
+        // 4. CRITICAL FIX: Physically segregate locked collateral from liquidatable balance
+        // Deduct from collateralAmount so liquidators cannot touch user burn escrow
+        vault.collateralAmount -= (collateralToLock + rewardCollateral);
         vault.lockedCollateral += (collateralToLock + rewardCollateral);
         
-        // CRITICAL FIX: Normalize the debt amount when subtracting
+       
         vault.normalizedDebt -= (_wsxmrAmount * 1e18) / globalDebtIndex;
         globalTotalDebt -= _wsxmrAmount;
         
@@ -798,8 +788,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             rewardCollateral: rewardCollateral,
             secretHash: bytes32(0),
             deadline: block.timestamp + BURN_REQUEST_TIMEOUT,
+            vaultLiquidationNonce: vault.liquidationNonce, // Snapshot current nonce
             status: BurnStatus.REQUESTED
         });
+        
+        // Track request for frontend discovery
+        userBurnRequests[_user].push(requestId);
         
         emit BurnRequested(
             requestId,
@@ -830,7 +824,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         request.secretHash = _secretHash;
         request.status = BurnStatus.PROPOSED;
-        // CRITICAL FIX: Set deadline for user to confirm
+       
         // If user doesn't confirm within timeout, LP can cancel
         request.deadline = block.timestamp + BURN_COMMIT_TIMEOUT;
         
@@ -884,7 +878,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         // Process the burn reward to the User
         if (request.rewardCollateral > 0) {
-            // CRITICAL FIX: Cap reward if vault was liquidated during burn
+           
             // Prevents underflow trap where static reward exceeds remaining collateral
             uint256 safeReward = request.rewardCollateral > vault.collateralAmount 
                 ? vault.collateralAmount 
@@ -892,7 +886,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             
             vault.collateralAmount -= safeReward;
             
-            // CRITICAL FIX: Decrement principal when collateral leaves the vault
+           
             if (lpPrincipalDeposits[vault.lpAddress] > 0) {
                 uint256 principalReduction = (lpPrincipalDeposits[vault.lpAddress] * safeReward) / 
                     (vault.collateralAmount + safeReward);
@@ -900,17 +894,19 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
                 globalLpPrincipal -= principalReduction;
             }
             
-            // CRITICAL FIX: safeReward is already in sDAI shares
-            // Queue both ETH and ERC20 rewards to prevent DoS
-            pendingReturns[request.user][vault.collateralAsset] += safeReward;
-            emit ReturnQueued(request.user, vault.collateralAsset, safeReward);
+           
+            // Queue sDAI rewards to prevent DoS
+            pendingReturns[request.user][GnosisAddresses.SDAI] += safeReward;
+            globalPendingSDAI += safeReward; // Track globally to prevent yield arbitrage
+            emit ReturnQueued(request.user, GnosisAddresses.SDAI, safeReward);
         }
+        
+       
+        vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
+        vault.collateralAmount += (request.lockedCollateral + request.rewardCollateral);
         
         request.status = BurnStatus.COMPLETED;
         emit BurnFinalized(_requestId, _secret, request.rewardCollateral);
-        
-        // CRITICAL FIX: Skim yield to war chest after burn completes
-        _skimYieldToWarChest();
     }
     
     /**
@@ -928,20 +924,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         
         uint256 totalSeized = request.lockedCollateral + request.rewardCollateral;
         
-        // CRITICAL FIX: Cap seizure to available collateral to prevent underflow
-        // Vault may have been liquidated between burn request and slash claim
-        uint256 actualSeized = vault.collateralAmount < totalSeized 
-            ? vault.collateralAmount 
-            : totalSeized;
+       
+        // Just unlock it from the tracker (no need to deduct from collateralAmount)
+        uint256 actualSeized = totalSeized;
+        vault.lockedCollateral -= actualSeized;
         
-        if (vault.lockedCollateral >= actualSeized) {
-            vault.lockedCollateral -= actualSeized;
-        } else {
-            vault.lockedCollateral = 0; 
-        }
-        vault.collateralAmount -= actualSeized;
-        
-        // CRITICAL FIX: Decrement principal when collateral is slashed
+       
         if (lpPrincipalDeposits[vault.lpAddress] > 0) {
             uint256 principalReduction = (lpPrincipalDeposits[vault.lpAddress] * actualSeized) / 
                 (vault.collateralAmount + actualSeized);
@@ -950,15 +938,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         }
         
         // Transfer collateral to user as penalty for LP failure
-        if (vault.collateralAsset == GnosisAddresses.SDAI) {
-            // CRITICAL FIX: actualSeized is already in sDAI shares, transfer directly
-            IERC20(vault.collateralAsset).safeTransfer(request.user, actualSeized);
-        } else if (vault.collateralAsset == address(0)) {
-            (bool success, ) = payable(request.user).call{value: actualSeized}("");
-            require(success, "ETH transfer failed");
-        } else {
-            IERC20(vault.collateralAsset).safeTransfer(request.user, actualSeized);
-        }
+       
+        IERC20(GnosisAddresses.SDAI).safeTransfer(request.user, actualSeized);
         
         request.lockedCollateral = 0;
         request.rewardCollateral = 0;
@@ -975,46 +956,52 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
      */
     function cancelBurn(bytes32 _requestId) external nonReentrant {
         BurnRequest storage request = burnRequests[_requestId];
-        // CRITICAL FIX: Allow cancellation from REQUESTED or PROPOSED (after timeout)
+       
         // REQUESTED: User never engaged, LP can cancel
         // PROPOSED: LP proposed hash but user didn't confirm within timeout
         // COMMITTED: User confirmed Monero lock - LP must honor or be slashed
         if (request.status != BurnStatus.REQUESTED && request.status != BurnStatus.PROPOSED) revert InvalidStatus();
         
-        // CRITICAL FIX: For PROPOSED state, require timeout to prevent user griefing
+       
         if (request.status == BurnStatus.PROPOSED) {
             if (block.timestamp < request.deadline) revert DeadlineNotExpired();
         }
         
-        // CRITICAL FIX: Prevent state overlap with liquidations
-        // If vault was liquidated, lockedCollateral was seized
-        // Cancelling would restore debt without collateral → unbacked wsXMR
+       
+        // If vault was liquidated, user still gets their wsXMR back but debt is written off as bad debt
         Vault storage vault = vaults[request.lpVault];
-        if (request.lockedCollateral > vault.lockedCollateral) {
-            revert("Vault liquidated, cannot cancel burn");
-        }
+        bool vaultWasLiquidated = (request.vaultLiquidationNonce != vault.liquidationNonce);
         
-        // Require deadline to expire (48h)
+        // Require deadline to expire
         if (block.timestamp < request.deadline) revert DeadlineNotExpired();
         
         // PERMISSIONLESS: Once deadline expires, anyone can cleanup to unlock assets
         // This prevents DoS where user abandons request, locking LP's collateral
         
-        // Restore the LP's debt and UNLOCK collateral (don't transfer it)
-        // CRITICAL FIX: Normalize the debt amount when adding back
-        uint256 normalizedAmount = (request.wsxmrAmount * 1e18) / globalDebtIndex;
-        vault.normalizedDebt += normalizedAmount;
-        globalTotalDebt += request.wsxmrAmount;
-        
-        uint256 totalUnlock = request.lockedCollateral + request.rewardCollateral;
-        if (vault.lockedCollateral >= totalUnlock) {
+        if (vaultWasLiquidated) {
+            // Vault was liquidated - user gets wsXMR back, but we don't restore debt
+            // Locked collateral was already segregated, so it wasn't seized
+            // Return it to vault's liquidatable balance
+            uint256 totalUnlock = request.lockedCollateral + request.rewardCollateral;
             vault.lockedCollateral -= totalUnlock;
+            vault.collateralAmount += totalUnlock;
+            wsxmrToken.mint(request.user, request.wsxmrAmount);
+            emit BadDebtWrittenOff(request.lpVault, request.wsxmrAmount);
         } else {
-            vault.lockedCollateral = 0;
+            // Normal case - vault still active, restore debt and unlock collateral
+           
+            uint256 normalizedAmount = (request.wsxmrAmount * 1e18) / globalDebtIndex;
+            vault.normalizedDebt += normalizedAmount;
+            globalTotalDebt += request.wsxmrAmount;
+            
+            // Return locked collateral to liquidatable balance
+            uint256 totalUnlock = request.lockedCollateral + request.rewardCollateral;
+            vault.lockedCollateral -= totalUnlock;
+            vault.collateralAmount += totalUnlock;
+            
+            // Re-mint the wsXMR back to user
+            wsxmrToken.mint(request.user, request.wsxmrAmount);
         }
-        
-        // CRITICAL: Mint the wsXMR back to the User since we burned it in Step 1
-        wsxmrToken.mint(request.user, request.wsxmrAmount);
         
         request.status = BurnStatus.CANCELLED;
         emit BurnCancelled(_requestId);
@@ -1039,10 +1026,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         }
         
         // Check if vault is underwater
-        // CRITICAL: Only count available (unlocked) collateral to prevent ratio inflation
+       
         uint256 availableCollateral = vault.collateralAmount - vault.lockedCollateral;
         uint256 ratio = calculateCollateralRatio(
-            vault.collateralAsset,
             availableCollateral,
             actualDebt
         );
@@ -1051,13 +1037,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // Calculate collateral to seize (at liquidation bonus, which is < threshold to prevent death spiral)
         uint256 collateralValue = getCollateralValueForDebt(_debtToClear);
         uint256 collateralToSeize = (collateralValue * LIQUIDATION_BONUS) / RATIO_PRECISION;
-        uint256 collateralAmount = usdToCollateral(vault.collateralAsset, collateralToSeize);
+        uint256 collateralAmount = usdToCollateral(collateralToSeize);
         
-        // CRITICAL: Proportional bad-debt handling
-        // If vault is severely underwater, scale down debt to maintain liquidator's 10% bonus
-        // This ensures liquidators remain profitable and bad debt gets cleaned up
-        // NOTE: This may seize collateral locked for pending burns - users accept this risk
-        // Users should monitor vault health before requesting burns
+       
+        // lockedCollateral is physically segregated and protected from liquidation
         if (collateralAmount > vault.collateralAmount) {
             // Proportionally scale down the exacted debt to maintain the Liquidator's 10% bonus
             _debtToClear = (_debtToClear * vault.collateralAmount) / collateralAmount;
@@ -1065,22 +1048,23 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         }
         
         // CHECKS-EFFECTS-INTERACTIONS: Update state before external calls
+        // Deduct from vault (lockedCollateral is separate and untouchable)
         vault.collateralAmount -= collateralAmount;
         
-        // CRITICAL FIX: Proportionally reduce lpPrincipalDeposits to prevent yield harvesting from breaking
+       
         // When collateral is seized, the principal tracking must be reduced proportionally
         if (lpPrincipalDeposits[_lpVault] > 0) {
             uint256 principalReduction = (lpPrincipalDeposits[_lpVault] * collateralAmount) / (vault.collateralAmount + collateralAmount);
             lpPrincipalDeposits[_lpVault] -= principalReduction;
-            globalLpPrincipal -= principalReduction; // CRITICAL FIX: Update global sum
+            globalLpPrincipal -= principalReduction;
         }
         
-        // CRITICAL FIX: Normalize the debt amount when liquidating
+       
         uint256 normalizedClear = (_debtToClear * 1e18) / globalDebtIndex;
         vault.normalizedDebt -= normalizedClear;
         globalTotalDebt -= _debtToClear;
         
-        // CRITICAL FIX: Proportionally reduce lockedCollateral to prevent underflow
+       
         // If we seized locked collateral, we must reduce the locked amount
         if (vault.lockedCollateral > 0 && collateralAmount > 0) {
             // Calculate how much of the seized collateral was locked
@@ -1092,17 +1076,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         wsxmrToken.burn(msg.sender, _debtToClear);
         
         // Transfer seized collateral to liquidator
-        if (vault.collateralAsset == GnosisAddresses.SDAI) {
-            // CRITICAL FIX: collateralAmount is already in sDAI shares, transfer directly
-            IERC20(vault.collateralAsset).safeTransfer(msg.sender, collateralAmount);
-        } else if (vault.collateralAsset == address(0)) {
-            (bool success, ) = payable(msg.sender).call{value: collateralAmount}("");
-            require(success, "ETH transfer failed");
-        } else {
-            IERC20(vault.collateralAsset).safeTransfer(msg.sender, collateralAmount);
-        }
+       
+        IERC20(GnosisAddresses.SDAI).safeTransfer(msg.sender, collateralAmount);
         
-        // CRITICAL FIX: Mark vault as liquidated to prevent burn state overlap
+       
         // When vault is liquidated, any active burns should not be cancellable
         // This prevents creating unbacked wsXMR via cancelBurn after liquidation
         // Note: Active burn requests are implicitly invalidated because:
@@ -1111,7 +1088,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         // 3. Vault debt was cleared, so restoring it would create unbacked tokens
         // In production, implement explicit burn request tracking per vault
         
-        // CRITICAL FIX: Clean up orphaned bad debt if vault is completely drained
+       
         // If vault has zero collateral but still has debt, remove the bad debt from global tracking
         // This prevents yield dilution where buy-and-burn pays back ghost debt
         if (vault.collateralAmount == 0 && vault.normalizedDebt > 0) {
@@ -1120,7 +1097,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
                 globalTotalDebt -= remainingDebt;
                 vault.normalizedDebt = 0; // Clear the bad debt
                 
-                // CRITICAL FIX: Do NOT burn tokens from address(this)
+               
                 // VaultManager doesn't hold unbacked wsXMR tokens
                 // Attempting to burn will revert and DoS all liquidations
                 // Instead, emit event for off-chain tracking of protocol bad debt
@@ -1130,64 +1107,62 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             }
         }
         
+       
+        vault.liquidationNonce++;
+        
         emit VaultLiquidated(_lpVault, msg.sender, _debtToClear, collateralAmount);
     }
     
     // ========== BUY-AND-BURN STRATEGY ==========
     
     /**
-     * @notice Skim sDAI appreciation into yieldWarChest for buy-and-burn
-     * @dev Called internally when debt operations occur
-     * @dev Calculates yield as: (currentShareValue - principalDeposits)
+     * @notice Sync vault's yield and transfer accrued yield to war chest
+     * @dev CRITICAL: Uses DAI value difference instead of share percentage to prevent principal depletion
+     * @dev Lazy evaluation - only processes yield for vaults that interact
+     * @dev Prevents DoS from unbounded loops over all vaults
      */
-    function _skimYieldToWarChest() internal {
-        // CRITICAL FIX: Removed unbounded loop to prevent DoS
-        // Instead, use ERC4626 exchange rate tracking
-        // LPs maintain their share counts, yield accrues via exchange rate appreciation
-        // War chest is funded by explicitly skimming excess shares without touching LP balances
+    function _syncVaultYield(address _lpAddress) internal {
+        Vault storage vault = vaults[_lpAddress];
+        if (vault.collateralAmount == 0) return;
         
-        // Get total sDAI shares held by contract
-        uint256 totalSDAIShares = IERC20(GnosisAddresses.SDAI).balanceOf(address(this));
-        if (totalSDAIShares == 0) return;
+        // Get current exchange rate (DAI per sDAI share)
+        uint256 currentRate = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(1e18);
         
-        // Calculate current DAI value of all shares
-        uint256 totalUnderlyingDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(totalSDAIShares);
+        // Calculate current total DAI value of vault's shares
+        uint256 totalDaiValue = (vault.collateralAmount * currentRate) / 1e18;
         
-        // Calculate yield as: total value - (principal + existing war chest)
-        uint256 warChestDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(yieldWarChest);
-        uint256 totalAssignedDAI = globalLpPrincipal + warChestDAI;
+        // Get LP's original principal deposit in DAI
+        uint256 principalDai = lpPrincipalDeposits[_lpAddress];
         
-        // If no yield available, return
-        if (totalUnderlyingDAI <= totalAssignedDAI) return;
-        
-        // Calculate yield in DAI and convert to shares
-        uint256 yieldInDAI = totalUnderlyingDAI - totalAssignedDAI;
-        uint256 yieldInShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(yieldInDAI);
-        
-        // CRITICAL FIX: Do NOT deduct from vault.collateralAmount
-        // LPs keep their shares, which appreciate via ERC4626 exchange rate
-        // War chest accumulates the excess shares representing yield
-        // This prevents:
-        // 1. O(N) DoS via unbounded loop
-        // 2. Artificial insolvency by reducing LP collateral ratios
-        
-        // Add to war chest
-        yieldWarChest += yieldInShares;
-        
-        emit YieldHarvested(yieldInDAI, yieldInShares);
+        // If current value exceeds principal, extract the yield
+        if (totalDaiValue > principalDai) {
+            uint256 yieldDai = totalDaiValue - principalDai;
+            
+            // Convert yield DAI back to sDAI shares to deduct
+            uint256 vaultYieldShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(yieldDai);
+            
+            // Safety check: don't deduct more than vault has
+            if (vaultYieldShares > 0 && vaultYieldShares < vault.collateralAmount) {
+                vault.collateralAmount -= vaultYieldShares;
+                yieldWarChest += vaultYieldShares;
+                
+                emit YieldHarvested(yieldDai, vaultYieldShares);
+            }
+        }
     }
     
     /**
      * @notice Execute buy-and-burn when XMR dips 1% below EMA
+     * @param poolFeeTier The exact Uniswap V3 fee tier to route through (e.g. 500, 3000)
      * @dev Permissionless keeper function with MEV protection and keeper bounty
      */
-    function triggerBuyAndBurn() external nonReentrant {
+    function triggerBuyAndBurn(uint24 poolFeeTier) external nonReentrant {
         // 1. Cooldown Check
         require(block.timestamp >= lastBuyTimestamp + COOLDOWN_PERIOD, "Cooldown active");
         
         // 2. EMA vs Spot Check (Pyth provides both)
-        PythStructs.Price memory spotData = pyth.getPriceNoOlderThan(XMR_USD_FEED_ID, priceMaxAge);
-        PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(XMR_USD_FEED_ID, priceMaxAge);
+        PythStructs.Price memory spotData = pyth.getPriceNoOlderThan(XMR_USD_FEED_ID, PRICE_MAX_AGE);
+        PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(XMR_USD_FEED_ID, PRICE_MAX_AGE);
         
         // Validate 1% dip: Spot <= EMA * 0.99
         uint256 spotPrice = uint256(uint64(spotData.price));
@@ -1212,9 +1187,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         }
         
         // 4. MEV Protection: Calculate minimum output using oracle
-        // CRITICAL FIX: Use oracle price for sDAI, not hardcoded 1 DAI = 1 USD assumption
+       
         // This prevents DoS during DAI depeg events
-        uint256 sDAIPrice = getCollateralPrice(GnosisAddresses.SDAI); // USD per sDAI share (18 decimals)
+        uint256 sDAIPrice = getCollateralPrice(); // USD per sDAI share (18 decimals)
         uint256 xmrPrice = getXmrPrice(); // USD per XMR (18 decimals)
         
         // Calculate expected wsXMR output
@@ -1233,7 +1208,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             ISwapRouter.ExactInputSingleParams({
                 tokenIn: GnosisAddresses.SDAI,
                 tokenOut: address(wsxmrToken),
-                fee: 3000, // 0.3% pool
+                fee: poolFeeTier, // Dynamic input from the Keeper
                 recipient: address(this),
                 deadline: block.timestamp,
                 amountIn: spendAmount,
@@ -1246,18 +1221,24 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         wsxmrToken.burn(address(this), wsxmrBought);
         
         // 7. Erase LP debt (O(1) calculation)
-        // Reduce global index by exact percentage of total debt burned
+       
+        // New index = Old Index * (Remaining Debt / Existing Total Debt)
         if (globalTotalDebt > 0) {
-            uint256 reductionPercentage = (wsxmrBought * 1e18) / globalTotalDebt;
-            
-            // CRITICAL FIX: Prevent globalDebtIndex from reaching zero (division by zero protection)
-            // If reduction would drop index to zero, cap it at 1e18 - 1 to prevent protocol lockup
-            if (reductionPercentage >= 1e18) {
-                reductionPercentage = 1e18 - 1; // Maximum 99.9999...% reduction
+            if (wsxmrBought >= globalTotalDebt) {
+                globalDebtIndex = 1e18; // Reset to standard baseline
+                globalTotalDebt = 0;
+            } else {
+                // Single-step calculation prevents cumulative rounding errors
+                uint256 remainingDebt = globalTotalDebt - wsxmrBought;
+                globalDebtIndex = (globalDebtIndex * remainingDebt) / globalTotalDebt;
+                
+               
+                if (globalDebtIndex < 1e9) {
+                    globalDebtIndex = 1e9;
+                }
+                
+                globalTotalDebt = remainingDebt;
             }
-            
-            globalDebtIndex -= (globalDebtIndex * reductionPercentage) / 1e18;
-            globalTotalDebt -= wsxmrBought;
         }
         
         emit BuyAndBurnExecuted(spendAmount, wsxmrBought, keeperReward, globalDebtIndex);
@@ -1269,11 +1250,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
      * @notice Get XMR price in USD (18 decimals)
      */
     function getXmrPrice() public view returns (uint256) {
-        uint256 maxAge = priceMaxAge;
-        PythStructs.Price memory priceData = pyth.getPriceNoOlderThan(XMR_USD_FEED_ID, maxAge);
+        PythStructs.Price memory priceData = pyth.getPriceNoOlderThan(XMR_USD_FEED_ID, PRICE_MAX_AGE);
         if (priceData.price <= 0) revert StalePrice();
         
-        // CRITICAL: Validate confidence interval (reject if uncertainty > 10%)
+       
         // During high volatility or exchange outages, Pyth emits wide confidence intervals
         // Using such prices could enable manipulation or unfair liquidations
         uint256 price = uint256(uint64(priceData.price));
@@ -1297,17 +1277,13 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     }
     
     /**
-     * @notice Get collateral asset price in USD (18 decimals)
+     * @notice Get sDAI price in USD (18 decimals)
      */
-    function getCollateralPrice(address _asset) public view returns (uint256) {
-        bytes32 feedId = collateralPriceFeeds[_asset];
-        if (feedId == bytes32(0)) revert InvalidAsset();
-        
-        uint256 maxAge = priceMaxAge;
-        PythStructs.Price memory priceData = pyth.getPriceNoOlderThan(feedId, maxAge);
+    function getCollateralPrice() public view returns (uint256) {
+        PythStructs.Price memory priceData = pyth.getPriceNoOlderThan(SDAI_USD_FEED_ID, PRICE_MAX_AGE);
         if (priceData.price <= 0) revert StalePrice();
         
-        // CRITICAL: Validate confidence interval (reject if uncertainty > 10%)
+       
         uint256 price = uint256(uint64(priceData.price));
         uint256 conf = uint256(uint64(priceData.conf));
         if (conf * 10 > price) revert StalePrice(); // Confidence > 10% of price
@@ -1328,17 +1304,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
             }
         }
         
-        // CRITICAL FIX: Account for ERC4626 share-to-asset exchange rate
-        // sDAI shares appreciate over time - 1 share > 1 DAI
-        // Without this, LPs are massively shortchanged on borrowing power
-        // and liquidators extract unintended bonuses
-        if (_asset == GnosisAddresses.SDAI) {
-            // Find how many underlying DAI exactly 1e18 sDAI shares are worth
-            uint256 underlyingPerShare = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(1e18);
-            return (normalizedPrice * underlyingPerShare) / 1e18;
-        }
-        
-        return normalizedPrice;
+        // sDAI multiplier logic
+        uint256 underlyingPerShare = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(1e18);
+        return (normalizedPrice * underlyingPerShare) / 1e18;
     }
     
     /**
@@ -1364,20 +1332,16 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
      * @return ratio Collateral ratio (e.g., 150 for 150%)
      */
     function calculateCollateralRatio(
-        address _collateralAsset,
         uint256 _collateralAmount,
         uint256 _debtAmount
     ) public view returns (uint256 ratio) {
         if (_debtAmount == 0) return type(uint256).max;
         
-        uint256 collateralPrice = getCollateralPrice(_collateralAsset);
+        uint256 collateralPrice = getCollateralPrice();
         uint256 xmrPrice = getXmrPrice();
         
-        // Get collateral decimals
-        uint8 collateralDecimals = _collateralAsset == address(0) ? 18 : IERC20Metadata(_collateralAsset).decimals();
-        
-        // Calculate collateral value in USD (18 decimals)
-        uint256 collateralValue = (_collateralAmount * collateralPrice) / (10 ** collateralDecimals);
+        // Calculate collateral value in USD (18 decimals) - sDAI has 18 decimals
+        uint256 collateralValue = (_collateralAmount * collateralPrice) / 1e18;
         
         // Calculate debt value in USD (wsXMR has 8 decimals)
         uint256 debtValue = (_debtAmount * xmrPrice) / 1e8;
@@ -1395,12 +1359,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
     }
     
     /**
-     * @notice Convert USD value to collateral token amount
+     * @notice Convert USD value to sDAI amount
      */
-    function usdToCollateral(address _asset, uint256 _usdValue) internal view returns (uint256) {
-        uint256 collateralPrice = getCollateralPrice(_asset);
-        uint8 decimals = _asset == address(0) ? 18 : IERC20Metadata(_asset).decimals();
-        return (_usdValue * (10 ** decimals)) / collateralPrice;
+    function usdToCollateral(uint256 _usdValue) internal view returns (uint256) {
+        uint256 collateralPrice = getCollateralPrice();
+        return (_usdValue * 1e18) / collateralPrice; // sDAI has 18 decimals
     }
     
     // ========== VIEW FUNCTIONS ==========
@@ -1420,7 +1383,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         if (!vault.active) revert VaultDoesNotExist();
         
         return calculateCollateralRatio(
-            vault.collateralAsset,
             vault.collateralAmount,
             getVaultDebt(_lpAddress)
         );
@@ -1435,7 +1397,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         if (!vault.active || actualDebt == 0) return false;
         
         uint256 ratio = calculateCollateralRatio(
-            vault.collateralAsset,
             vault.collateralAmount,
             actualDebt
         );
@@ -1449,36 +1410,130 @@ contract VaultManager is Secp256k1, ReentrancyGuard, Ownable {
         return vaultList.length;
     }
     
-    // ========== ADMIN FUNCTIONS ==========
-    
     /**
-     * @notice Add support for new collateral type with Pyth price feed
-     * @param _asset Address of the collateral token (address(0) for native MON)
-     * @param _pythFeedId Pyth price feed ID for this asset
+     * @notice Paginated fetch for all vaults (useful for frontends and liquidators)
+     * @param _cursor Starting index in the vaultList
+     * @param _limit Maximum number of vaults to return
+     * @return batch Array of vaults
+     * @return nextCursor Next cursor position for pagination
      */
-    function addCollateralSupport(address _asset, bytes32 _pythFeedId) external onlyOwner {
-        if (_pythFeedId == bytes32(0)) revert InvalidAsset();
-        supportedCollateral[_asset] = true;
-        collateralPriceFeeds[_asset] = _pythFeedId;
-        emit CollateralSupported(_asset, address(pyth));
+    function getVaultsPaginated(uint256 _cursor, uint256 _limit) 
+        external 
+        view 
+        returns (Vault[] memory batch, uint256 nextCursor) 
+    {
+        uint256 length = _limit;
+        if (_cursor + length > vaultList.length) {
+            length = vaultList.length - _cursor;
+        }
+
+        batch = new Vault[](length);
+        for (uint256 i = 0; i < length; i++) {
+            batch[i] = vaults[vaultList[_cursor + i]];
+        }
+
+        return (batch, _cursor + length);
     }
     
     /**
-     * @notice Remove support for collateral type
+     * @notice Get all active mint requests for a user
+     * @param _user User address to query
+     * @return activeMints Array of active mint requests
      */
-    function removeCollateralSupport(address _asset) external onlyOwner {
-        supportedCollateral[_asset] = false;
-        delete collateralPriceFeeds[_asset];
+    function getUserActiveMints(address _user) external view returns (MintRequest[] memory activeMints) {
+        bytes32[] memory requestIds = userMintRequests[_user];
+        
+        // Count active requests
+        uint256 count = 0;
+        for (uint256 i = 0; i < requestIds.length; i++) {
+            MintStatus status = mintRequests[requestIds[i]].status;
+            if (status != MintStatus.COMPLETED && status != MintStatus.CANCELLED && status != MintStatus.INVALID) {
+                count++;
+            }
+        }
+        
+        // Allocate and populate array
+        activeMints = new MintRequest[](count);
+        uint256 index = 0;
+        for (uint256 i = 0; i < requestIds.length; i++) {
+            MintRequest memory req = mintRequests[requestIds[i]];
+            if (req.status != MintStatus.COMPLETED && req.status != MintStatus.CANCELLED && req.status != MintStatus.INVALID) {
+                activeMints[index] = req;
+                index++;
+            }
+        }
+        
+        return activeMints;
     }
     
     /**
-     * @notice Set maximum price age for oracle staleness check
-     * @param _maxAge Maximum age in seconds (recommended: 5 minutes)
+     * @notice Get all active burn requests for a user
+     * @param _user User address to query
+     * @return activeBurns Array of active burn requests
      */
-    function setPriceMaxAge(uint256 _maxAge) external onlyOwner {
-        if (_maxAge == 0 || _maxAge > 1 hours) revert InvalidValue();
-        priceMaxAge = _maxAge;
-        emit PriceMaxAgeUpdated(_maxAge);
+    function getUserActiveBurns(address _user) external view returns (BurnRequest[] memory activeBurns) {
+        bytes32[] memory requestIds = userBurnRequests[_user];
+        
+        // Count active requests
+        uint256 count = 0;
+        for (uint256 i = 0; i < requestIds.length; i++) {
+            BurnStatus status = burnRequests[requestIds[i]].status;
+            if (status != BurnStatus.COMPLETED && status != BurnStatus.CANCELLED && 
+                status != BurnStatus.SLASHED && status != BurnStatus.INVALID) {
+                count++;
+            }
+        }
+        
+        // Allocate and populate array
+        activeBurns = new BurnRequest[](count);
+        uint256 index = 0;
+        for (uint256 i = 0; i < requestIds.length; i++) {
+            BurnRequest memory req = burnRequests[requestIds[i]];
+            if (req.status != BurnStatus.COMPLETED && req.status != BurnStatus.CANCELLED && 
+                req.status != BurnStatus.SLASHED && req.status != BurnStatus.INVALID) {
+                activeBurns[index] = req;
+                index++;
+            }
+        }
+        
+        return activeBurns;
+    }
+    
+    /**
+     * @notice Calculates exactly how much wsXMR a user can currently mint from a specific vault
+     * @param _lpVault The LP vault to query
+     * @return maxMintableWsxmr Exact amount in 8 decimals
+     */
+    function getVaultAvailableMintCapacity(address _lpVault) external view returns (uint256 maxMintableWsxmr) {
+        Vault memory vault = vaults[_lpVault];
+        if (!vault.active) return 0;
+
+        uint256 actualDebt = getActualDebt(vault.normalizedDebt);
+        uint256 totalObligations = actualDebt + vault.pendingDebt;
+        uint256 availableCollateral = vault.collateralAmount > vault.lockedCollateral 
+            ? vault.collateralAmount - vault.lockedCollateral 
+            : 0;
+
+        // Calculate maximum debt allowed for this available collateral
+        uint256 collateralPrice = getCollateralPrice();
+        uint256 xmrPrice = getXmrPrice();
+        
+        // Max Debt Value (USD) = (Collateral Value / 150) * 100
+        uint256 collateralValueUsd = (availableCollateral * collateralPrice) / 1e18;
+        uint256 maxDebtValueUsd = (collateralValueUsd * RATIO_PRECISION) / COLLATERAL_RATIO;
+        uint256 maxTotalDebt = (maxDebtValueUsd * 1e8) / xmrPrice;
+
+        if (maxTotalDebt <= totalObligations) return 0;
+        
+        uint256 capacity = maxTotalDebt - totalObligations;
+
+        // Apply the LP's maxMintBps single-mint constraint if set
+        if (vault.maxMintBps > 0) {
+            uint256 maxPerMint = (maxTotalDebt * vault.maxMintBps) / BPS_DENOMINATOR;
+            if (capacity > maxPerMint) capacity = maxPerMint;
+        }
+
+        return capacity;
     }
     
     /**

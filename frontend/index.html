@@ -148,7 +148,15 @@
             color: var(--text-primary);
             margin-bottom: 1.5rem;
             letter-spacing: -0.03em;
-            animation: slide-up 0.8s ease-out;
+            animation: slide-up 0.8s ease-out, hero-pulse 6s ease-in-out infinite;
+        }
+        @keyframes hero-pulse {
+            0%, 100% { 
+                transform: translateY(0) scale(1); 
+            }
+            50% { 
+                transform: translateY(-4px) scale(1.02); 
+            }
         }
         .hero-content h1 span {
             background: linear-gradient(135deg, var(--accent-orange) 0%, #ff8533 100%);
@@ -156,6 +164,28 @@
             -webkit-text-fill-color: transparent;
             background-clip: text;
             animation: gradient-shift 3s ease infinite;
+            position: relative;
+            display: inline-block;
+        }
+        .hero-content h1 span::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, 
+                transparent 0%, 
+                rgba(255, 255, 255, 0.8) 50%, 
+                transparent 100%);
+            animation: light-sweep 8s ease-in-out infinite;
+            pointer-events: none;
+        }
+        @keyframes light-sweep {
+            0%, 100% { left: -100%; opacity: 0; }
+            10% { opacity: 1; }
+            20% { left: 100%; opacity: 0; }
+            100% { left: 100%; opacity: 0; }
         }
         @keyframes slide-up {
             from { opacity: 0; transform: translateY(30px); }
@@ -889,7 +919,7 @@
             <div class="section-header">
                 <span class="section-label">Features</span>
                 <h2 class="section-title">Why WrapSynth?</h2>
-                <p class="section-subtitle">Built for trust minimization, designed for everyone. Atomic liquidity and overcollateralization make trustless bridging possible.</p>
+                <p class="section-subtitle">Built for trust minimization, designed for everyone. Atomic liquidity and overcollateralization make ferrying Monero to DeFi possible.</p>
             </div>
             <div class="features-grid">
                 <div class="feature-card">
@@ -931,7 +961,7 @@
             <div class="section-header">
                 <span class="section-label">Process</span>
                 <h2 class="section-title">How It Works</h2>
-                <p class="section-subtitle">Four simple steps to bridge your Monero trustlessly</p>
+                <p class="section-subtitle">Four simple steps to ferry your Monero to DeFi</p>
             </div>
             <div class="steps">
                 <div class="step">

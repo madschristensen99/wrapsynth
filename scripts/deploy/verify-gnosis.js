@@ -27,11 +27,13 @@ async function main() {
   console.log("=".repeat(60));
   console.log("Verifying wsXMR Token");
   console.log("=".repeat(60));
+  console.log("Note: wsXMR is deployed by VaultManager constructor");
+  console.log("Constructor args: none (VaultManager is set as deployer)");
   
   try {
     await hre.run("verify:verify", {
       address: deployment.contracts.wsXMR,
-      constructorArguments: [deployment.deployer],
+      constructorArguments: [],
     });
     console.log("✓ wsXMR verified successfully\n");
   } catch (error) {
@@ -49,11 +51,7 @@ async function main() {
   try {
     await hre.run("verify:verify", {
       address: deployment.contracts.VaultManager,
-      constructorArguments: [
-        deployment.contracts.wsXMR,
-        PYTH_ORACLE,
-        deployment.deployer
-      ],
+      constructorArguments: [PYTH_ORACLE],
     });
     console.log("✓ VaultManager verified successfully\n");
   } catch (error) {
@@ -74,8 +72,7 @@ async function main() {
       constructorArguments: [
         deployment.contracts.VaultManager,
         deployment.contracts.wsXMR,
-        UNISWAP_V3_POSITION_MANAGER,
-        deployment.deployer
+        UNISWAP_V3_POSITION_MANAGER
       ],
     });
     console.log("✓ wsXMRLiquidityRouter verified successfully\n");

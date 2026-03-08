@@ -19,32 +19,14 @@ async function main() {
   const DAI_USD_FEED_ID = "0xb0948a5e5313200c632b51bb5ca32f6de0d36e9950a942d19751e833f70dabfd";
 
   console.log("=".repeat(60));
-  console.log("STEP 1: Deploying wsXMR Token");
-  console.log("=".repeat(60));
-  
-  const WsXMR = await hre.ethers.getContractFactory("wsXMR");
-  const wsxmr = await WsXMR.deploy(deployer.address);
-  await wsxmr.waitForDeployment();
-  const wsxmrAddress = await wsxmr.getAddress();
-  
-  console.log("✓ wsXMR deployed to:", wsxmrAddress);
-  console.log();
-
-  console.log("=".repeat(60));
-  console.log("STEP 2: Deploying VaultManager");
+  console.log("STEP 1: Deploying VaultManager (deploys wsXMR automatically)");
   console.log("=".repeat(60));
   
   const VaultManager = await hre.ethers.getContractFactory("VaultManager");
   console.log("Deploying with parameters:");
-  console.log("  - wsXMR:", wsxmrAddress);
   console.log("  - Pyth Oracle:", PYTH_ORACLE);
-  console.log("  - Deployer:", deployer.address);
   
-  const vaultManager = await VaultManager.deploy(
-    wsxmrAddress,
-    PYTH_ORACLE,
-    deployer.address
-  );
+  const vaultManager = await VaultManager.deploy(PYTH_ORACLE);
   await vaultManager.waitForDeployment();
   const vaultManagerAddress = await vaultManager.getAddress();
   
@@ -52,17 +34,17 @@ async function main() {
   console.log();
 
   console.log("=".repeat(60));
-  console.log("STEP 3: Linking wsXMR to VaultManager");
+  console.log("STEP 2: Reading wsXMR Token Address");
   console.log("=".repeat(60));
   
-  const tx = await wsxmr.setVaultManager(vaultManagerAddress);
-  await tx.wait();
-  console.log("✓ wsXMR.setVaultManager() completed");
-  console.log("✓ sDAI collateral automatically configured in constructor");
+  const wsxmrAddress = await vaultManager.wsxmrToken();
+  console.log("✓ wsXMR automatically deployed to:", wsxmrAddress);
+  console.log("✓ wsXMR immutably linked to VaultManager");
+  console.log("✓ sDAI is the only supported collateral (hardcoded)");
   console.log();
 
   console.log("=".repeat(60));
-  console.log("STEP 4: Deploying wsXMRLiquidityRouter");
+  console.log("STEP 3: Deploying wsXMRLiquidityRouter");
   console.log("=".repeat(60));
   
   const UNISWAP_V3_POSITION_MANAGER = "0xC36442b4a4522E871399CD717aBDD847Ab11FE88";
@@ -71,8 +53,7 @@ async function main() {
   const router = await Router.deploy(
     vaultManagerAddress,
     wsxmrAddress,
-    UNISWAP_V3_POSITION_MANAGER,
-    deployer.address
+    UNISWAP_V3_POSITION_MANAGER
   );
   await router.waitForDeployment();
   const routerAddress = await router.getAddress();
