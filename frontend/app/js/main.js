@@ -53,20 +53,31 @@ let currentBurnFlow = null;
  */
 async function fetchXmrPrice() {
     try {
+        console.log('Fetching XMR price from CoinGecko...');
         const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd');
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
         const data = await response.json();
+        console.log('CoinGecko response:', data);
         
         if (data.monero && data.monero.usd) {
             const price = data.monero.usd;
             const priceElement = document.getElementById('xmr-price-stat');
             if (priceElement) {
                 priceElement.textContent = `$${price.toFixed(2)}`;
+                console.log('✅ XMR price updated:', price);
+            } else {
+                console.error('Price element not found!');
             }
-            console.log('✅ XMR price updated:', price);
             return price;
+        } else {
+            console.error('Invalid data structure from CoinGecko:', data);
         }
     } catch (error) {
-        console.warn('Could not fetch XMR price from CoinGecko:', error);
+        console.error('Could not fetch XMR price from CoinGecko:', error);
         const priceElement = document.getElementById('xmr-price-stat');
         if (priceElement) {
             priceElement.textContent = '$--';
