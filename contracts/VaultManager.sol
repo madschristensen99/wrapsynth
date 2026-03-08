@@ -361,7 +361,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
         Vault storage vault = vaults[msg.sender];
         
-       
+        // CRITICAL FIX: Sync yield FIRST before reading vault state
+        // This prevents stale state overwrite where newCollateralAmount computed before sync
+        // gets written after sync, undoing the yield harvest
+        _syncVaultYield(msg.sender);
+        
         // Cannot withdraw collateral that's locked for pending burns
         uint256 availableCollateral = vault.collateralAmount - vault.lockedCollateral;
         if (availableCollateral < _amount) revert InsufficientCollateral();
@@ -385,9 +389,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             );
             if (ratio < COLLATERAL_RATIO) revert InsufficientCollateral();
         }
-        
-       
-        _syncVaultYield(msg.sender);
         
         vault.collateralAmount = newCollateralAmount;
         
@@ -767,9 +768,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             wsxmrToken.burn(address(this), _wsxmrAmount);
         }
         
-        // 4. CRITICAL FIX: Physically segregate locked collateral from liquidatable balance
-        // Deduct from collateralAmount so liquidators cannot touch user burn escrow
-        vault.collateralAmount -= (collateralToLock + rewardCollateral);
+        // 4. Lock collateral for burn escrow
+        // INVARIANT: collateralAmount = total collateral, lockedCollateral = reserved for burns
+        // Available collateral = collateralAmount - lockedCollateral
         vault.lockedCollateral += (collateralToLock + rewardCollateral);
         
        
@@ -901,10 +902,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             emit ReturnQueued(request.user, GnosisAddresses.SDAI, safeReward);
         }
         
-       
-        vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
-        vault.collateralAmount += (request.lockedCollateral + request.rewardCollateral);
-        
         request.status = BurnStatus.COMPLETED;
         emit BurnFinalized(_requestId, _secret, request.rewardCollateral);
     }
@@ -1026,7 +1023,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         }
         
         // Check if vault is underwater
-       
+        // INVARIANT: Only unlocked collateral can be liquidated
         uint256 availableCollateral = vault.collateralAmount - vault.lockedCollateral;
         uint256 ratio = calculateCollateralRatio(
             availableCollateral,
@@ -1039,12 +1036,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 collateralToSeize = (collateralValue * LIQUIDATION_BONUS) / RATIO_PRECISION;
         uint256 collateralAmount = usdToCollateral(collateralToSeize);
         
-       
-        // lockedCollateral is physically segregated and protected from liquidation
-        if (collateralAmount > vault.collateralAmount) {
+        // Cap seizure to available (unlocked) collateral only
+        // Locked collateral is reserved for burns and cannot be liquidated
+        if (collateralAmount > availableCollateral) {
             // Proportionally scale down the exacted debt to maintain the Liquidator's 10% bonus
-            _debtToClear = (_debtToClear * vault.collateralAmount) / collateralAmount;
-            collateralAmount = vault.collateralAmount;
+            _debtToClear = (_debtToClear * availableCollateral) / collateralAmount;
+            collateralAmount = availableCollateral;
         }
         
         // CHECKS-EFFECTS-INTERACTIONS: Update state before external calls
@@ -1063,14 +1060,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 normalizedClear = (_debtToClear * 1e18) / globalDebtIndex;
         vault.normalizedDebt -= normalizedClear;
         globalTotalDebt -= _debtToClear;
-        
-       
-        // If we seized locked collateral, we must reduce the locked amount
-        if (vault.lockedCollateral > 0 && collateralAmount > 0) {
-            // Calculate how much of the seized collateral was locked
-            uint256 lockedReduction = (vault.lockedCollateral * collateralAmount) / (vault.collateralAmount + collateralAmount);
-            vault.lockedCollateral -= lockedReduction;
-        }
         
         // Burn wsXMR from liquidator (interaction after state changes)
         wsxmrToken.burn(msg.sender, _debtToClear);
@@ -1225,8 +1214,20 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // New index = Old Index * (Remaining Debt / Existing Total Debt)
         if (globalTotalDebt > 0) {
             if (wsxmrBought >= globalTotalDebt) {
-                globalDebtIndex = 1e18; // Reset to standard baseline
-                globalTotalDebt = 0;
+                // CRITICAL FIX: Never reset globalDebtIndex to 1e18 when forgiving all debt
+                // Doing so would revive old normalized debts (actualDebt = normalizedDebt * 1e18 / 1e18)
+                // Instead, cap forgiveness at 99.99% to maintain debt index continuity
+                uint256 minDebt = globalTotalDebt / 10000; // 0.01% minimum
+                if (minDebt == 0) minDebt = 1; // Ensure non-zero
+                uint256 remainingDebt = minDebt;
+                globalDebtIndex = (globalDebtIndex * remainingDebt) / globalTotalDebt;
+                
+                // Floor protection
+                if (globalDebtIndex < 1e9) {
+                    globalDebtIndex = 1e9;
+                }
+                
+                globalTotalDebt = remainingDebt;
             } else {
                 // Single-step calculation prevents cumulative rounding errors
                 uint256 remainingDebt = globalTotalDebt - wsxmrBought;
