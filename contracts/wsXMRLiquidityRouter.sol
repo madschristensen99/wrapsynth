@@ -430,9 +430,10 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         
         // CRITICAL FIX: Distribute actual trading fees (50/50 split)
         // fees0/fees1 are correctly calculated as collected - principal
-        // Determine which fee corresponds to which token
-        uint256 sDAIFees = sDAIPrincipal == principal0 ? fees0 : fees1;
-        uint256 wsxmrFees = wsxmrPrincipal == principal0 ? fees0 : fees1;
+        // Determine which fee corresponds to which token using token addresses directly
+        // This prevents misattribution when principal0 == principal1 == 0 (out of range position)
+        uint256 sDAIFees = token0 == GnosisAddresses.SDAI ? fees0 : fees1;
+        uint256 wsxmrFees = token0 == GnosisAddresses.SDAI ? fees1 : fees0;
         
         if (sDAIFees > 0) {
             pendingSDAIFees[position.lpProvider] += sDAIFees / 2;
