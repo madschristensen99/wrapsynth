@@ -624,17 +624,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         }
         
         // CRITICAL: Refund griefing deposit to INITIATOR (prevents griefing attack)
-        // If deposit goes to recipient, malicious users can farm LPs by abandoning mints
+        // Status is READY (checked at function entry), so return deposit to initiator
         if (request.griefingDeposit > 0) {
-            if (request.status == MintStatus.PENDING) {
-                // User failed to lock XMR off-chain - compensate LP
-                pendingReturns[vault.lpAddress][address(0)] += request.griefingDeposit;
-                emit ReturnQueued(vault.lpAddress, address(0), request.griefingDeposit);
-            } else if (request.status == MintStatus.READY) {
-                // LP confirmed but user failed to claim - return to INITIATOR
-                pendingReturns[request.initiator][address(0)] += request.griefingDeposit;
-                emit ReturnQueued(request.initiator, address(0), request.griefingDeposit);
-            }
+            pendingReturns[request.initiator][address(0)] += request.griefingDeposit;
+            emit ReturnQueued(request.initiator, address(0), request.griefingDeposit);
         }
         
         // Mark as completed

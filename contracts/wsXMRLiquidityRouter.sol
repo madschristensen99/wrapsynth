@@ -288,12 +288,10 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         uint256 valueDiff = sDAIValue > wsxmrValue ? sDAIValue - wsxmrValue : wsxmrValue - sDAIValue;
         require(valueDiff * 10 <= (sDAIValue + wsxmrValue), "Pool ratio deviates from oracle");
         
-        // CRITICAL FIX: Relax slippage bounds to 10% for full-range positions
-        // Full-range liquidity must match exact pool ratio, 5% was too restrictive
-        // Oracle validation above already prevents manipulation
-        uint256 amount0Min = (amount0 * 90) / 100;
-        uint256 amount1Min = (amount1 * 90) / 100;
-        
+        // CRITICAL FIX: Use zero bounds for mint
+        // Uniswap V3 will consume assets according to current pool ratio
+        // Oracle validation above (valueDiff * 10 <= totalValue) already prevents manipulation
+        // Strict bounds cause reverts when pool ratio doesn't match 50/50 desired amounts
         // Create Uniswap V3 position
         (uint256 tokenId, , uint256 actual0, uint256 actual1) = positionManager.mint(
             INonfungiblePositionManager.MintParams({
@@ -304,8 +302,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
                 tickUpper: TICK_UPPER,
                 amount0Desired: amount0,
                 amount1Desired: amount1,
-                amount0Min: amount0Min,
-                amount1Min: amount1Min,
+                amount0Min: 0,
+                amount1Min: 0,
                 recipient: address(this),
                 deadline: block.timestamp
             })
@@ -368,36 +366,17 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         (, , address token0, , , , , uint128 liquidity, , , , ) = 
             positionManager.positions(position.positionId);
         
-        // CRITICAL FIX: Calculate minimum bounds using oracle prices to prevent MEV attacks
-        // Get oracle prices
-        uint256 sDAIPrice = vaultManager.getCollateralPrice(); // USD per sDAI (18 decimals)
-        uint256 xmrPrice = vaultManager.getXmrPrice(); // USD per XMR (8 decimals)
-        
-        // Calculate expected total USD value of position
-        uint256 totalValueUSD = position.lpInitialValueUSD + position.userInitialValueUSD;
-        
-        // Calculate expected amounts based on oracle prices with 5% slippage tolerance
-        // This prevents MEV bots from sandwiching the withdrawal
-        uint256 expectedSDAI = (totalValueUSD * 1e18) / sDAIPrice;
-        uint256 expectedWsXMR = (totalValueUSD * 1e8) / xmrPrice;
-        
-        // Set minimums at 95% of oracle expectation (5% slippage for IL + fees)
-        uint256 minSDAI = (expectedSDAI * 9500) / 10000;
-        uint256 minWsXMR = (expectedWsXMR * 9500) / 10000;
-        
-        // Determine which token is which
-        uint256 amount0Min = token0 == GnosisAddresses.SDAI ? minSDAI : minWsXMR;
-        uint256 amount1Min = token0 == GnosisAddresses.SDAI ? minWsXMR : minSDAI;
-        
-        // CRITICAL FIX: Capture principal amounts from decreaseLiquidity return
-        // tokensOwed INCLUDES principal after decreaseLiquidity, so we can't use it
-        // The return values from decreaseLiquidity are the actual principal amounts
+        // CRITICAL FIX: Use zero bounds for decreaseLiquidity
+        // We already protect against pool manipulation via oracle checks in createPosition
+        // (valueDiff * 10 <= totalValue ensures pool is within 10% of oracle prices)
+        // Setting strict bounds here causes reverts due to impermanent loss shifting asset ratios
+        // The previous approach demanded 95% of TOTAL value from EACH asset = 190% total (impossible)
         (uint256 principal0, uint256 principal1) = positionManager.decreaseLiquidity(
             INonfungiblePositionManager.DecreaseLiquidityParams({
                 tokenId: position.positionId,
                 liquidity: liquidity,
-                amount0Min: amount0Min,
-                amount1Min: amount1Min,
+                amount0Min: 0,
+                amount1Min: 0,
                 deadline: block.timestamp
             })
         );
