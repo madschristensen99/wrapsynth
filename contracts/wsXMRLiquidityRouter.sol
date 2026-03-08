@@ -283,14 +283,14 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
             ? (amount1 * wsxmrPrice) / 1e8 
             : (amount0 * wsxmrPrice) / 1e8;
         
-        // Require values to be within 10% of each other (oracle-based validation)
-        // This prevents creating positions during manipulated pool states
+        // Require values to be within 1% of each other (oracle-based validation)
+        // This prevents flash-loan MEV attacks on position creation
         uint256 valueDiff = sDAIValue > wsxmrValue ? sDAIValue - wsxmrValue : wsxmrValue - sDAIValue;
-        require(valueDiff * 10 <= (sDAIValue + wsxmrValue), "Pool ratio deviates from oracle");
+        require(valueDiff * 100 <= (sDAIValue + wsxmrValue), "Pool ratio deviates from oracle");
         
         // CRITICAL FIX: Use zero bounds for mint
         // Uniswap V3 will consume assets according to current pool ratio
-        // Oracle validation above (valueDiff * 10 <= totalValue) already prevents manipulation
+        // Oracle validation above (valueDiff * 100 <= totalValue) already prevents manipulation
         // Strict bounds cause reverts when pool ratio doesn't match 50/50 desired amounts
         // Create Uniswap V3 position
         (uint256 tokenId, , uint256 actual0, uint256 actual1) = positionManager.mint(

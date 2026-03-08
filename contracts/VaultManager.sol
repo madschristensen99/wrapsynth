@@ -491,6 +491,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         if (_timeoutDuration == 0 || _timeoutDuration > MAX_MINT_TIMEOUT) revert InvalidValue();
         if (!vaults[_lpVault].active) revert VaultDoesNotExist();
         
+        // CRITICAL FIX: Reject dust amounts that would result in zero wsXMR
+        // XMR has 12 decimals, wsXMR has 8, so amounts < 1e4 would floor to 0
+        if (_xmrAmount < 1e4) revert ZeroAmount();
+        
         // ANTI-SPAM: Require griefing deposit set by LP
         Vault storage vault = vaults[_lpVault];
         if (msg.value < vault.mintGriefingDeposit) revert InsufficientDeposit();
@@ -731,8 +735,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 rewardCollateral = usdToCollateral(rewardUsd);
         
         // 2. Check available (unlocked) collateral for both base + reward
-        uint256 availableCollateral = vault.collateralAmount - vault.lockedCollateral;
-        if (availableCollateral < (collateralToLock + rewardCollateral)) revert InsufficientCollateral();
+        if (vault.collateralAmount < (collateralToLock + rewardCollateral)) revert InsufficientCollateral();
         
         requestId = keccak256(abi.encodePacked(
             _user,
@@ -757,10 +760,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             wsxmrToken.burn(address(this), _wsxmrAmount);
         }
         
-        // 4. CRITICAL: LOCK collateral (don't escrow) and reduce debt
-        // Collateral stays in vault.collateralAmount and remains LIQUIDATABLE
-        // This prevents liquidation blind spot vulnerability
-        // Lock both Base Liquidation Collateral and Reward Collateral
+        // 4. CRITICAL FIX: Physically segregate locked collateral from liquidatable balance
+        // Deduct from collateralAmount so liquidators cannot touch user burn escrow
+        vault.collateralAmount -= (collateralToLock + rewardCollateral);
         vault.lockedCollateral += (collateralToLock + rewardCollateral);
         
         // CRITICAL FIX: Normalize the debt amount when subtracting
@@ -889,6 +891,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             emit ReturnQueued(request.user, GnosisAddresses.SDAI, safeReward);
         }
         
+        // CRITICAL FIX: Return locked collateral back to liquidatable balance
+        vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
+        vault.collateralAmount += (request.lockedCollateral + request.rewardCollateral);
+        
         request.status = BurnStatus.COMPLETED;
         emit BurnFinalized(_requestId, _secret, request.rewardCollateral);
     }
@@ -908,18 +914,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
         uint256 totalSeized = request.lockedCollateral + request.rewardCollateral;
         
-        // CRITICAL FIX: Cap seizure to available collateral to prevent underflow
-        // Vault may have been liquidated between burn request and slash claim
-        uint256 actualSeized = vault.collateralAmount < totalSeized 
-            ? vault.collateralAmount 
-            : totalSeized;
-        
-        if (vault.lockedCollateral >= actualSeized) {
-            vault.lockedCollateral -= actualSeized;
-        } else {
-            vault.lockedCollateral = 0; 
-        }
-        vault.collateralAmount -= actualSeized;
+        // CRITICAL FIX: Locked collateral was already segregated from collateralAmount
+        // Just unlock it from the tracker (no need to deduct from collateralAmount)
+        uint256 actualSeized = totalSeized;
+        vault.lockedCollateral -= actualSeized;
         
         // CRITICAL FIX: Decrement principal when collateral is slashed
         if (lpPrincipalDeposits[vault.lpAddress] > 0) {
@@ -971,8 +969,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // This prevents DoS where user abandons request, locking LP's collateral
         
         if (vaultWasLiquidated) {
-            // Vault was liquidated - user gets wsXMR back, but we don't restore debt/collateral
-            // The collateral was already seized by liquidator, so this becomes protocol bad debt
+            // Vault was liquidated - user gets wsXMR back, but we don't restore debt
+            // Locked collateral was already segregated, so it wasn't seized
+            // Return it to vault's liquidatable balance
+            uint256 totalUnlock = request.lockedCollateral + request.rewardCollateral;
+            vault.lockedCollateral -= totalUnlock;
+            vault.collateralAmount += totalUnlock;
             wsxmrToken.mint(request.user, request.wsxmrAmount);
             emit BadDebtWrittenOff(request.lpVault, request.wsxmrAmount);
         } else {
@@ -981,7 +983,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             uint256 normalizedAmount = (request.wsxmrAmount * 1e18) / globalDebtIndex;
             vault.normalizedDebt += normalizedAmount;
             globalTotalDebt += request.wsxmrAmount;
-            vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
+            
+            // Return locked collateral to liquidatable balance
+            uint256 totalUnlock = request.lockedCollateral + request.rewardCollateral;
+            vault.lockedCollateral -= totalUnlock;
+            vault.collateralAmount += totalUnlock;
             
             // Re-mint the wsXMR back to user
             wsxmrToken.mint(request.user, request.wsxmrAmount);
@@ -1023,11 +1029,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 collateralToSeize = (collateralValue * LIQUIDATION_BONUS) / RATIO_PRECISION;
         uint256 collateralAmount = usdToCollateral(collateralToSeize);
         
-        // CRITICAL: Proportional bad-debt handling
-        // If vault is severely underwater, scale down debt to maintain liquidator's 10% bonus
-        // This ensures liquidators remain profitable and bad debt gets cleaned up
-        // NOTE: This may seize collateral locked for pending burns - users accept this risk
-        // Users should monitor vault health before requesting burns
+        // CRITICAL FIX: Can only seize from liquidatable balance (not locked escrow)
+        // lockedCollateral is physically segregated and protected from liquidation
         if (collateralAmount > vault.collateralAmount) {
             // Proportionally scale down the exacted debt to maintain the Liquidator's 10% bonus
             _debtToClear = (_debtToClear * vault.collateralAmount) / collateralAmount;
@@ -1035,6 +1038,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         }
         
         // CHECKS-EFFECTS-INTERACTIONS: Update state before external calls
+        // Deduct from vault (lockedCollateral is separate and untouchable)
         vault.collateralAmount -= collateralAmount;
         
         // CRITICAL FIX: Proportionally reduce lpPrincipalDeposits to prevent yield harvesting from breaking
@@ -1207,25 +1211,23 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         wsxmrToken.burn(address(this), wsxmrBought);
         
         // 7. Erase LP debt (O(1) calculation)
-        // Reduce global index by exact percentage of total debt burned
-        // CRITICAL FIX: Prevent underflow when wsxmrBought >= globalTotalDebt
+        // CRITICAL FIX: Use single-step calculation to prevent precision drift
+        // New index = Old Index * (Remaining Debt / Existing Total Debt)
         if (globalTotalDebt > 0) {
             if (wsxmrBought >= globalTotalDebt) {
                 globalDebtIndex = 1e18; // Reset to standard baseline
                 globalTotalDebt = 0;
             } else {
-                uint256 reductionPercentage = (wsxmrBought * 1e18) / globalTotalDebt;
-                uint256 indexReduction = (globalDebtIndex * reductionPercentage) / 1e18;
+                // Single-step calculation prevents cumulative rounding errors
+                uint256 remainingDebt = globalTotalDebt - wsxmrBought;
+                globalDebtIndex = (globalDebtIndex * remainingDebt) / globalTotalDebt;
                 
                 // CRITICAL FIX: Prevent globalDebtIndex from reaching zero (minimum 1e9)
-                // This prevents division-by-zero errors in initiateMint
-                if (globalDebtIndex > indexReduction && globalDebtIndex - indexReduction >= 1e9) {
-                    globalDebtIndex -= indexReduction;
-                } else {
-                    globalDebtIndex = 1e9; // Set to minimum safe value
+                if (globalDebtIndex < 1e9) {
+                    globalDebtIndex = 1e9;
                 }
                 
-                globalTotalDebt -= wsxmrBought;
+                globalTotalDebt = remainingDebt;
             }
         }
         
