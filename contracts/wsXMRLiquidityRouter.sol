@@ -4,7 +4,6 @@ pragma solidity ^0.8.19;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {INonfungiblePositionManager} from "./interfaces/INonfungiblePositionManager.sol";
 import {VaultManager} from "./VaultManager.sol";
 import {wsXMR} from "./wsXMR.sol";
@@ -16,7 +15,7 @@ import {GnosisAddresses} from "./GnosisAddresses.sol";
  * @notice Co-LP matchmaking system for pairing LP collateral with user wsXMR
  * @dev Creates deep Uniswap V3 liquidity while maintaining protocol safety
  */
-contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
+contract wsXMRLiquidityRouter is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // ========== CONSTANTS ==========
@@ -95,9 +94,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
     constructor(
         address _vaultManager,
         address _wsxmrToken,
-        address _positionManager,
-        address _initialOwner
-    ) Ownable(_initialOwner) {
+        address _positionManager
+    ) {
         vaultManager = VaultManager(_vaultManager);
         wsxmrToken = wsXMR(_wsxmrToken);
         positionManager = INonfungiblePositionManager(_positionManager);
@@ -113,7 +111,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
         if (_sDAIAmount == 0) revert InvalidAmount();
         
         // Verify LP has an active vault
-        (, , , , , , , , , , bool active) = vaultManager.vaults(msg.sender);
+        (, , , , , , , , , bool active) = vaultManager.vaults(msg.sender);
         if (!active) revert VaultNotActive();
         
         // Transfer sDAI from LP's vault (requires VaultManager approval)
@@ -242,7 +240,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
         
         // CRITICAL FIX: Use oracle prices to calculate expected pool ratio and validate
         // This prevents MEV arbitrage via flash loan pool manipulation
-        uint256 sDAIPrice = vaultManager.getCollateralPrice(GnosisAddresses.SDAI);
+        uint256 sDAIPrice = vaultManager.getCollateralPrice();
         uint256 wsxmrPrice = vaultManager.getXmrPrice();
         
         // Calculate expected ratio based on oracle prices
@@ -297,7 +295,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
                 userProvider: _user,
                 sDAIAmount: actual0,
                 wsxmrAmount: actual1,
-                lpInitialValueUSD: (actual0 * vaultManager.getCollateralPrice(GnosisAddresses.SDAI)) / 1e18,
+                lpInitialValueUSD: (actual0 * vaultManager.getCollateralPrice()) / 1e18,
                 userInitialValueUSD: (actual1 * vaultManager.getXmrPrice()) / 1e8,
                 createdAt: block.timestamp
             });
@@ -313,7 +311,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
                 userProvider: _user,
                 sDAIAmount: actual1,
                 wsxmrAmount: actual0,
-                lpInitialValueUSD: (actual1 * vaultManager.getCollateralPrice(GnosisAddresses.SDAI)) / 1e18,
+                lpInitialValueUSD: (actual1 * vaultManager.getCollateralPrice()) / 1e18,
                 userInitialValueUSD: (actual0 * vaultManager.getXmrPrice()) / 1e8,
                 createdAt: block.timestamp
             });
@@ -375,7 +373,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, Ownable {
         // CRITICAL FIX: Distribute principal proportionally based on initial USD value
         // This handles impermanent loss fairly between both parties
         uint256 totalReturnedValue = ((token0 == GnosisAddresses.SDAI ? principal0 : principal1) * 
-            vaultManager.getCollateralPrice(GnosisAddresses.SDAI)) / 1e18 + 
+            vaultManager.getCollateralPrice()) / 1e18 + 
             ((token0 == GnosisAddresses.SDAI ? principal1 : principal0) * 
             vaultManager.getXmrPrice()) / 1e8;
         
