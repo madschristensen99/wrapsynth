@@ -58,6 +58,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     
     // Pyth price feed IDs
     bytes32 public constant XMR_USD_FEED_ID = 0x46b8cc9347f04391764a0361e0b17c3ba394b001e7c304f7650f6376e37c321d;
+    // CRITICAL: This MUST be DAI/USD (not sDAI/USD) since getCollateralPrice() multiplies by sDAI conversion rate
     bytes32 public constant SDAI_USD_FEED_ID = 0xb0948a5e5313200c632b51bb5ca32f6de0d36e9950a942d19751e833f70dabfd;
 
     // Oracle staleness configuration (in seconds)
@@ -69,7 +70,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     uint256 public globalDebtIndex = 1e18; // Debt multiplier for O(1) proportional forgiveness
     uint256 public yieldWarChest; // Accumulated sDAI yield ready for buy-and-burn
     mapping(address => uint256) public lpPrincipalDeposits; // Track original DAI deposits per LP
-    uint256 public globalLpPrincipal; // CRITICAL FIX: Global sum to avoid O(N) loop DoS   
+    uint256 public globalLpPrincipal; // CRITICAL FIX: Global sum to avoid O(N) loop DoS
+    uint256 public globalPendingSDAI; // CRITICAL FIX: Track queued sDAI returns to prevent yield arbitrage   
     // ========== ENUMS ==========
     
     enum MintStatus {
@@ -105,6 +107,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 mintGriefingDeposit; // ETH deposit required for mint requests (LP-configurable)
         uint16 mintFeeBps; // Fee LP charges for minting (paid in wsXMR)
         uint16 burnRewardBps; // Reward LP pays to incentivize burning (paid in Collateral)
+        uint256 liquidationNonce; // CRITICAL FIX: Incremented on liquidation to invalidate stale burns
         bool active;
     }
     
@@ -142,6 +145,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 rewardCollateral; // Extra collateral added as a reward
         bytes32 secretHash; // Hash of secret that LP generates (set in commitBurn)
         uint256 deadline; // LP must respond/reveal before this
+        uint256 vaultLiquidationNonce; // CRITICAL FIX: Snapshot of vault's nonce at creation
         BurnStatus status;
     }
     
@@ -279,6 +283,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             mintGriefingDeposit: 0, // LP can set this later via setMintGriefingDeposit
             mintFeeBps: 0,
             burnRewardBps: 0,
+            liquidationNonce: 0,
             active: true
         });
         
@@ -433,6 +438,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
         // CHECKS-EFFECTS-INTERACTIONS
         pendingReturns[msg.sender][_token] = 0;
+        
+        // CRITICAL FIX: Decrement global pending tracker when sDAI is withdrawn
+        if (_token == GnosisAddresses.SDAI) {
+            globalPendingSDAI -= amount;
+        }
         
         if (_token == address(0)) {
             // Withdraw ETH
@@ -769,6 +779,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             rewardCollateral: rewardCollateral,
             secretHash: bytes32(0),
             deadline: block.timestamp + BURN_REQUEST_TIMEOUT,
+            vaultLiquidationNonce: vault.liquidationNonce, // Snapshot current nonce
             status: BurnStatus.REQUESTED
         });
         
@@ -874,6 +885,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             // CRITICAL FIX: safeReward is already in sDAI shares
             // Queue sDAI rewards to prevent DoS
             pendingReturns[request.user][GnosisAddresses.SDAI] += safeReward;
+            globalPendingSDAI += safeReward; // Track globally to prevent yield arbitrage
             emit ReturnQueued(request.user, GnosisAddresses.SDAI, safeReward);
         }
         
@@ -951,12 +963,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         }
         
         // CRITICAL FIX: Prevent state overlap with liquidations
-        // If vault was liquidated, lockedCollateral was seized
+        // If vault was liquidated, the nonce was incremented
         // Cancelling would restore debt without collateral → unbacked wsXMR
         Vault storage vault = vaults[request.lpVault];
-        if (request.lockedCollateral > vault.lockedCollateral) {
-            revert("Vault liquidated, cannot cancel burn");
-        }
+        require(request.vaultLiquidationNonce == vault.liquidationNonce, "Vault liquidated, cannot cancel burn");
         
         // Require deadline to expire (48h)
         if (block.timestamp < request.deadline) revert DeadlineNotExpired();
@@ -1086,6 +1096,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             }
         }
         
+        // CRITICAL FIX: Increment liquidation nonce to invalidate all pending burns
+        vault.liquidationNonce++;
+        
         emit VaultLiquidated(_lpVault, msg.sender, _debtToClear, collateralAmount);
     }
     
@@ -1109,9 +1122,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // Calculate current DAI value of all shares
         uint256 totalUnderlyingDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(totalSDAIShares);
         
-        // Calculate yield as: total value - (principal + existing war chest)
+        // Calculate yield as: total value - (principal + existing war chest + pending returns)
         uint256 warChestDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(yieldWarChest);
-        uint256 totalAssignedDAI = globalLpPrincipal + warChestDAI;
+        uint256 pendingAssetDAI = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(globalPendingSDAI);
+        uint256 totalAssignedDAI = globalLpPrincipal + warChestDAI + pendingAssetDAI;
         
         // If no yield available, return
         if (totalUnderlyingDAI <= totalAssignedDAI) return;
@@ -1204,17 +1218,18 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
         // 7. Erase LP debt (O(1) calculation)
         // Reduce global index by exact percentage of total debt burned
+        // CRITICAL FIX: Prevent underflow when wsxmrBought >= globalTotalDebt
         if (globalTotalDebt > 0) {
-            uint256 reductionPercentage = (wsxmrBought * 1e18) / globalTotalDebt;
-            
-            // CRITICAL FIX: Prevent globalDebtIndex from reaching zero (division by zero protection)
-            // If reduction would drop index to zero, cap it at 1e18 - 1 to prevent protocol lockup
-            if (reductionPercentage >= 1e18) {
-                reductionPercentage = 1e18 - 1; // Maximum 99.9999...% reduction
+            if (wsxmrBought >= globalTotalDebt) {
+                // Bought more than total debt - reset to baseline
+                globalDebtIndex = 1e18; // Reset to standard baseline
+                globalTotalDebt = 0;
+            } else {
+                // Normal case: reduce proportionally
+                uint256 reductionPercentage = (wsxmrBought * 1e18) / globalTotalDebt;
+                globalDebtIndex -= (globalDebtIndex * reductionPercentage) / 1e18;
+                globalTotalDebt -= wsxmrBought;
             }
-            
-            globalDebtIndex -= (globalDebtIndex * reductionPercentage) / 1e18;
-            globalTotalDebt -= wsxmrBought;
         }
         
         emit BuyAndBurnExecuted(spendAmount, wsxmrBought, keeperReward, globalDebtIndex);

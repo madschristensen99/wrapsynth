@@ -111,7 +111,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         if (_sDAIAmount == 0) revert InvalidAmount();
         
         // Verify LP has an active vault
-        (, , , , , , , , , bool active) = vaultManager.vaults(msg.sender);
+        (, , , , , , , , , , bool active) = vaultManager.vaults(msg.sender);
         if (!active) revert VaultNotActive();
         
         // Transfer sDAI from LP's vault (requires VaultManager approval)
