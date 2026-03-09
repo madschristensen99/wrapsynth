@@ -59,6 +59,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     // Pyth price feed IDs
     bytes32 public constant XMR_USD_FEED_ID = 0x46b8cc9347f04391764a0361e0b17c3ba394b001e7c304f7650f6376e37c321d;
    
+    // NOTE: This is actually DAI/USD feed - we multiply by convertToAssets() to get sDAI value
     bytes32 public constant SDAI_USD_FEED_ID = 0xb0948a5e5313200c632b51bb5ca32f6de0d36e9950a942d19751e833f70dabfd;
 
     // Oracle staleness configuration (in seconds)
@@ -72,6 +73,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     mapping(address => uint256) public lpPrincipalDeposits; // Track original DAI deposits per LP
     uint256 public globalLpPrincipal;
     uint256 public globalPendingSDAI;
+    
+    // Request ID nonce to prevent same-block collisions
+    uint256 private requestNonce;
     
     // Frontend-friendly request tracking
     mapping(address => bytes32[]) public userMintRequests;
@@ -542,14 +546,15 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         );
         if (ratio < COLLATERAL_RATIO) revert InsufficientCollateral();
         
-        // Generate unique request ID
+        // Generate unique request ID with nonce to prevent same-block collisions
         requestId = keccak256(abi.encodePacked(
             msg.sender,
             _lpVault,
             _xmrAmount,
             _claimCommitment,
             block.timestamp,
-            block.number
+            block.number,
+            requestNonce++
         ));
         
         // Check for collision BEFORE modifying state
@@ -750,7 +755,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             _lpVault,
             _wsxmrAmount,
             block.timestamp,
-            block.number
+            block.number,
+            requestNonce++
         ));
         if (burnRequests[requestId].status != BurnStatus.INVALID) revert BurnAlreadyExists();
         
