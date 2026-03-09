@@ -12,7 +12,7 @@ import {GnosisAddresses} from "./GnosisAddresses.sol";
 
 /**
  * @title wsXMRLiquidityRouter
- * @notice Co-LP matchmaking system for pairing LP collateral with user wsXMR
+ * @notice Co-LP matchmaking system for pairing LP-provided sDAI with user wsXMR
  * @dev Creates deep Uniswap V3 liquidity while maintaining protocol safety
  */
 contract wsXMRLiquidityRouter is ReentrancyGuard {
@@ -34,7 +34,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     wsXMR public immutable wsxmrToken;
     INonfungiblePositionManager public immutable positionManager;
     
-    // LP Configuration: How much collateral each LP allocates for liquidity
+    // LP wallet deposits: sDAI deposited into the router for liquidity provision
     mapping(address => uint256) public lpLiquidityAllocation; // sDAI shares allocated
     
     // User Deposits: wsXMR deposited by users for liquidity provision
@@ -91,7 +91,6 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     error InvalidAmount();
     error InsufficientBalance();
     error PositionNotFound();
-    error VaultNotActive();
 
     // ========== CONSTRUCTOR ==========
     
@@ -108,17 +107,13 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     // ========== LP FUNCTIONS ==========
     
     /**
-     * @notice LP allocates sDAI collateral for liquidity provision
+     * @notice LP deposits wallet-held sDAI for liquidity provision
      * @param _sDAIAmount Amount of sDAI shares to allocate
      */
     function allocateLiquidity(uint256 _sDAIAmount) external nonReentrant {
         if (_sDAIAmount == 0) revert InvalidAmount();
         
-        // Verify LP has an active vault
-        (, , , , , , , , , , bool active) = vaultManager.vaults(msg.sender);
-        if (!active) revert VaultNotActive();
-        
-        // Transfer sDAI from LP's vault (requires VaultManager approval)
+        // Transfer wallet-held sDAI from LP to router
         IERC20(GnosisAddresses.SDAI).safeTransferFrom(msg.sender, address(this), _sDAIAmount);
         
         lpLiquidityAllocation[msg.sender] += _sDAIAmount;

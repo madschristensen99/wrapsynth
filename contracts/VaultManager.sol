@@ -99,7 +99,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         COMMITTED,  // Step 3: User confirmed Monero lock (slashing timer T2 starts)
         COMPLETED,  // Step 4: LP revealed secret and unlocked collateral
         SLASHED,    // LP failed to reveal secret after user confirmation, collateral slashed
-        CANCELLED   // Cancelled before user confirmation (no slashing)
+        CANCELLED,  // Cancelled before user confirmation (no slashing)
+        LIQUIDATED  // Vault was liquidated after burn started, user claims locked collateral
     }
     
     // ========== STRUCTS ==========
@@ -157,6 +158,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         bytes32 secretHash; // Hash of secret that LP generates (set in commitBurn)
         uint256 deadline; // LP must respond/reveal before this
         BurnStatus status;
+        uint256 liquidationNonceAtRequest; // Snapshot of vault liquidationNonce when burn started
     }
     
     // ========== MAPPINGS ==========
@@ -186,6 +188,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     event YieldHarvested(uint256 yieldInDAI, uint256 yieldInShares);
     event BadDebtWrittenOff(address indexed lpVault, uint256 debtAmount);
     event BuyAndBurnExecuted(uint256 sDAISpent, uint256 wsxmrBurned, uint256 debtForgiven, uint256 keeperReward, uint256 newGlobalDebtIndex);
+    event BurnLiquidated(bytes32 indexed requestId, address indexed user, uint256 collateralPaid);
     
     event MintInitiated(
         bytes32 indexed requestId,
@@ -256,6 +259,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     error TimeoutNotReached();
     error DeadlineExpired();
     error DeadlineNotExpired();
+    error BurnInvalidatedByLiquidation();
     error VaultHealthy();
     error InsufficientDebt();
     error Unauthorized();
@@ -805,7 +809,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             rewardCollateral: rewardCollateral,
             secretHash: bytes32(0),
             deadline: block.timestamp + BURN_REQUEST_TIMEOUT,
-            status: BurnStatus.REQUESTED
+            status: BurnStatus.REQUESTED,
+            liquidationNonceAtRequest: vault.liquidationNonce
         });
         
         // Track request for frontend discovery
@@ -959,6 +964,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
      * @notice Cancel REQUESTED or PROPOSED burn - PERMISSIONLESS CLEANUP
      * @dev After deadline expires, ANYONE can call this to unlock LP's collateral
      * @dev Prevents DoS where user abandons burn, locking LP's collateral forever
+     * @dev CRITICAL: Only works if vault was NOT liquidated since burn started
      * @param _requestId The burn request ID
      */
     function cancelBurn(bytes32 _requestId) external nonReentrant {
@@ -971,10 +977,16 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // Require deadline to expire
         if (block.timestamp < request.deadline) revert DeadlineNotExpired();
         
+        Vault storage vault = vaults[request.lpVault];
+        
+        // CRITICAL: Block cancellation if vault was liquidated after burn started
+        // User must use claimLiquidatedBurn() instead to get their locked collateral
+        if (vault.liquidationNonce != request.liquidationNonceAtRequest) {
+            revert BurnInvalidatedByLiquidation();
+        }
+        
         // PERMISSIONLESS: Once deadline expires, anyone can cleanup to unlock assets
         // This prevents DoS where user abandons request, locking LP's collateral
-        
-        Vault storage vault = vaults[request.lpVault];
         
         // Unlock collateral (only decrease lockedCollateral, don't touch collateralAmount)
         // INVARIANT: locking only increased lockedCollateral, so unlocking only decreases it
@@ -982,9 +994,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         if (vault.lockedCollateral < totalUnlock) revert InsufficientCollateral();
         vault.lockedCollateral -= totalUnlock;
         
-        // Restore debt (always, regardless of liquidation state)
-        // If this makes vault unhealthy, it can be liquidated normally afterward
-        // This is safe because liquidate() only seizes unlocked collateral
+        // Restore debt (safe because vault was not liquidated)
         uint256 normalizedAmount = (request.wsxmrAmount * 1e18) / globalDebtIndex;
         vault.normalizedDebt += normalizedAmount;
         globalTotalDebt += request.wsxmrAmount;
@@ -994,6 +1004,66 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
         request.status = BurnStatus.CANCELLED;
         emit BurnCancelled(_requestId);
+    }
+    
+    /**
+     * @notice Claim locked collateral when vault was liquidated after burn started
+     * @dev User gets the burn-locked collateral instead of re-minting wsXMR
+     * @dev This is the ONLY safe resolution when vault was liquidated mid-burn
+     * @param _requestId The burn request ID
+     */
+    function claimLiquidatedBurn(bytes32 _requestId) external nonReentrant {
+        BurnRequest storage request = burnRequests[_requestId];
+        
+        // Only REQUESTED or PROPOSED burns can be resolved this way
+        if (
+            request.status != BurnStatus.REQUESTED &&
+            request.status != BurnStatus.PROPOSED
+        ) revert InvalidStatus();
+        
+        // Only the user who initiated the burn can claim
+        if (msg.sender != request.user) revert Unauthorized();
+        
+        Vault storage vault = vaults[request.lpVault];
+        
+        // Verify vault WAS liquidated after burn started
+        if (vault.liquidationNonce == request.liquidationNonceAtRequest) {
+            revert BurnInvalidatedByLiquidation();
+        }
+        
+        // Calculate total collateral to pay out
+        uint256 totalSeized = request.lockedCollateral + request.rewardCollateral;
+        
+        // Verify vault has the locked collateral
+        if (vault.lockedCollateral < totalSeized) revert InsufficientCollateral();
+        if (vault.collateralAmount < totalSeized) revert InsufficientCollateral();
+        
+        uint256 preSeizeCollateral = vault.collateralAmount;
+        
+        // Reduce both locked and total collateral since tokens are leaving the contract
+        vault.lockedCollateral -= totalSeized;
+        vault.collateralAmount -= totalSeized;
+        
+        // Reduce LP principal proportionally
+        if (lpPrincipalDeposits[vault.lpAddress] > 0) {
+            uint256 principalReduction =
+                (lpPrincipalDeposits[vault.lpAddress] * totalSeized) /
+                preSeizeCollateral;
+            lpPrincipalDeposits[vault.lpAddress] -= principalReduction;
+            globalLpPrincipal -= principalReduction;
+        }
+        
+        // Clear the locked amounts
+        request.lockedCollateral = 0;
+        request.rewardCollateral = 0;
+        request.status = BurnStatus.LIQUIDATED;
+        
+        // Queue collateral for user withdrawal
+        pendingReturns[request.user][GnosisAddresses.SDAI] += totalSeized;
+        globalPendingSDAI += totalSeized;
+        
+        emit ReturnQueued(request.user, GnosisAddresses.SDAI, totalSeized);
+        emit BurnLiquidated(_requestId, request.user, totalSeized);
     }
     
     // ========== LIQUIDATION ==========
@@ -1500,7 +1570,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         for (uint256 i = 0; i < requestIds.length; i++) {
             BurnStatus status = burnRequests[requestIds[i]].status;
             if (status != BurnStatus.COMPLETED && status != BurnStatus.CANCELLED && 
-                status != BurnStatus.SLASHED && status != BurnStatus.INVALID) {
+                status != BurnStatus.SLASHED && status != BurnStatus.LIQUIDATED && 
+                status != BurnStatus.INVALID) {
                 count++;
             }
         }
@@ -1511,7 +1582,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         for (uint256 i = 0; i < requestIds.length; i++) {
             BurnRequest memory req = burnRequests[requestIds[i]];
             if (req.status != BurnStatus.COMPLETED && req.status != BurnStatus.CANCELLED && 
-                req.status != BurnStatus.SLASHED && req.status != BurnStatus.INVALID) {
+                req.status != BurnStatus.SLASHED && req.status != BurnStatus.LIQUIDATED && 
+                req.status != BurnStatus.INVALID) {
                 activeBurns[index] = req;
                 index++;
             }
