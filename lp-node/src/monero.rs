@@ -9,9 +9,11 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 /// Monero client with native key management using monero-rs
+/// Uses monero-wallet-rpc for transaction operations
 #[derive(Clone)]
 pub struct MoneroClient {
     daemon_url: String,
+    wallet_rpc_url: Option<String>,
     http_client: Arc<Client>,
     private_spend_key: PrivateKey,
     private_view_key: PrivateKey,
@@ -29,7 +31,19 @@ pub struct IncomingTransfer {
 
 impl MoneroClient {
     /// Create a new Monero client with private key
+    /// 
+    /// For production use, also provide wallet_rpc_url for transaction operations.
+    /// If wallet_rpc_url is None, transaction operations will use placeholders.
     pub fn new(daemon_url: String, private_spend_key_hex: String) -> Result<Self> {
+        Self::new_with_wallet_rpc(daemon_url, private_spend_key_hex, None)
+    }
+
+    /// Create a new Monero client with wallet RPC support
+    pub fn new_with_wallet_rpc(
+        daemon_url: String,
+        private_spend_key_hex: String,
+        wallet_rpc_url: Option<String>,
+    ) -> Result<Self> {
         // Parse the private spend key from hex
         let spend_key_bytes = hex::decode(private_spend_key_hex.trim_start_matches("0x"))
             .context("Invalid Monero private key hex")?;
@@ -59,14 +73,56 @@ impl MoneroClient {
         info!("Monero wallet initialized");
         info!("Address: {}", address);
         
+        if let Some(ref rpc_url) = wallet_rpc_url {
+            info!("Wallet RPC enabled at: {}", rpc_url);
+        } else {
+            warn!("Wallet RPC not configured - transaction operations will be limited");
+        }
+
         Ok(Self {
             daemon_url,
+            wallet_rpc_url,
             http_client: Arc::new(Client::new()),
             private_spend_key,
             private_view_key,
             address,
             network,
         })
+    }
+
+    /// Call wallet RPC method
+    async fn call_wallet_rpc<T: serde::de::DeserializeOwned>(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<T> {
+        let wallet_url = self.wallet_rpc_url.as_ref()
+            .ok_or_else(|| anyhow!("Wallet RPC not configured"))?;
+
+        let response = self.http_client
+            .post(wallet_url)
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "0",
+                "method": method,
+                "params": params
+            }))
+            .send()
+            .await
+            .context("Failed to call wallet RPC")?;
+
+        let result: serde_json::Value = response.json().await
+            .context("Failed to parse wallet RPC response")?;
+
+        if let Some(error) = result.get("error") {
+            anyhow::bail!("Wallet RPC error: {}", error);
+        }
+
+        let data = result.get("result")
+            .ok_or_else(|| anyhow!("Missing result in wallet RPC response"))?;
+
+        serde_json::from_value(data.clone())
+            .context("Failed to deserialize wallet RPC result")
     }
 
     /// Get the Monero address
@@ -99,9 +155,6 @@ impl MoneroClient {
     }
 
     /// Send XMR to an address
-    /// 
-    /// NOTE: This creates a standard Monero transaction.
-    /// For atomic swaps, you would need PTLC/adaptor signature support.
     pub async fn send_xmr(
         &self,
         destination: &str,
@@ -113,22 +166,56 @@ impl MoneroClient {
             destination
         );
 
-        // Parse destination address
-        let _dest_address = Address::from_str(destination)
+        // Validate destination address
+        Address::from_str(destination)
             .map_err(|e| anyhow!("Invalid destination address: {:?}", e))?;
 
-        // TODO: Implement transaction construction using monero-rs
-        // This requires:
-        // 1. Scanning for unspent outputs
-        // 2. Constructing transaction with ring signatures
-        // 3. Signing with private keys
-        // 4. Broadcasting to network
-        
-        warn!("Transaction construction not yet implemented - using placeholder");
-        
-        // For now, return a placeholder
-        // In production, this would construct and broadcast a real transaction
-        Ok("placeholder_tx_hash".to_string())
+        if self.wallet_rpc_url.is_none() {
+            warn!("Wallet RPC not configured - returning placeholder");
+            return Ok("placeholder_tx_hash".to_string());
+        }
+
+        // Call wallet RPC transfer method
+        let result: serde_json::Value = self.call_wallet_rpc(
+            "transfer",
+            serde_json::json!({
+                "destinations": [{
+                    "amount": amount,
+                    "address": destination
+                }],
+                "priority": 1,
+                "get_tx_key": true,
+                "get_tx_hex": false,
+            })
+        ).await?;
+
+        let tx_hash = result.get("tx_hash")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing tx_hash in transfer result"))?;
+
+        info!("Transaction sent: {}", tx_hash);
+        Ok(tx_hash.to_string())
+    }
+
+    /// Get wallet balance
+    pub async fn get_balance(&self) -> Result<(u64, u64)> {
+        if self.wallet_rpc_url.is_none() {
+            return Ok((0, 0));
+        }
+
+        let result: serde_json::Value = self.call_wallet_rpc(
+            "get_balance",
+            serde_json::json!({})
+        ).await?;
+
+        let balance = result.get("balance")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let unlocked_balance = result.get("unlocked_balance")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
+        Ok((balance, unlocked_balance))
     }
 
     /// Create a PTLC (Point Time Locked Contract) on Monero
@@ -151,18 +238,68 @@ impl MoneroClient {
 
 
     /// Scan for incoming transfers
-    /// TODO: Implement wallet scanning using monero-rs
-    pub async fn get_incoming_transfers(&self, _min_height: u64) -> Result<Vec<IncomingTransfer>> {
-        debug!("Scanning for incoming transfers from height {}", _min_height);
+    pub async fn get_incoming_transfers(&self, min_height: u64) -> Result<Vec<IncomingTransfer>> {
+        debug!("Scanning for incoming transfers from height {}", min_height);
         
-        // TODO: Implement using monero-rs wallet scanning
-        // This requires:
-        // 1. Fetching blocks from daemon
-        // 2. Scanning outputs with view key
-        // 3. Identifying owned outputs
+        if self.wallet_rpc_url.is_none() {
+            return Ok(Vec::new());
+        }
+
+        let result: serde_json::Value = self.call_wallet_rpc(
+            "get_transfers",
+            serde_json::json!({
+                "in": true,
+                "pending": false,
+                "failed": false,
+                "pool": false,
+                "filter_by_height": true,
+                "min_height": min_height,
+            })
+        ).await?;
+
+        let mut transfers = Vec::new();
         
-        warn!("Wallet scanning not yet implemented");
-        Ok(Vec::new())
+        if let Some(in_transfers) = result.get("in").and_then(|v| v.as_array()) {
+            let current_height = self.get_height().await.unwrap_or(0);
+            
+            for transfer in in_transfers {
+                if let (Some(amount), Some(tx_hash), Some(height)) = (
+                    transfer.get("amount").and_then(|v| v.as_u64()),
+                    transfer.get("txid").and_then(|v| v.as_str()),
+                    transfer.get("height").and_then(|v| v.as_u64()),
+                ) {
+                    let confirmations = if current_height > height {
+                        current_height - height
+                    } else {
+                        0
+                    };
+
+                    transfers.push(IncomingTransfer {
+                        amount,
+                        tx_hash: tx_hash.to_string(),
+                        confirmations,
+                        block_height: height,
+                    });
+                }
+            }
+        }
+
+        debug!("Found {} incoming transfers", transfers.len());
+        Ok(transfers)
+    }
+
+    /// Refresh wallet to sync with blockchain
+    pub async fn refresh_wallet(&self) -> Result<()> {
+        if self.wallet_rpc_url.is_none() {
+            return Ok(());
+        }
+
+        let _: serde_json::Value = self.call_wallet_rpc(
+            "refresh",
+            serde_json::json!({})
+        ).await?;
+
+        Ok(())
     }
 
     /// Scan for a revealed secret in Monero transactions
@@ -187,7 +324,7 @@ impl MoneroClient {
         &self,
         expected_amount: u64,
         claim_commitment: &[u8; 32],
-        _min_confirmations: u64,
+        min_confirmations: u64,
     ) -> Result<bool> {
         info!(
             "Verifying mint lock: {} XMR with commitment {}",
@@ -195,8 +332,29 @@ impl MoneroClient {
             hex::encode(claim_commitment)
         );
 
-        // TODO: Implement wallet scanning to verify incoming XMR
-        warn!("Mint verification not yet implemented");
+        // Refresh wallet first
+        self.refresh_wallet().await?;
+
+        // Get recent incoming transfers
+        let current_height = self.get_height().await?;
+        let min_height = current_height.saturating_sub(100);
+        
+        let transfers = self.get_incoming_transfers(min_height).await?;
+
+        // Look for matching transfer
+        for transfer in transfers {
+            if transfer.amount >= expected_amount
+                && transfer.confirmations >= min_confirmations
+            {
+                info!(
+                    "Found matching transfer: {} with {} confirmations",
+                    transfer.tx_hash, transfer.confirmations
+                );
+                return Ok(true);
+            }
+        }
+
+        debug!("No matching transfer found");
         Ok(false)
     }
 

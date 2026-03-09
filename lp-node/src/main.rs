@@ -111,10 +111,12 @@ async fn main() -> Result<()> {
             info!("EVM client initialized");
 
             // Initialize Monero client
+            let wallet_rpc_url = env::var("MONERO_WALLET_RPC_URL").ok();
             let monero = Arc::new(
-                monero::MoneroClient::new(
+                monero::MoneroClient::new_with_wallet_rpc(
                     config.monero_config.daemon_url.clone(),
                     config.monero_private_key.clone(),
+                    wallet_rpc_url,
                 )
                 .context("Failed to initialize Monero client")?
             );

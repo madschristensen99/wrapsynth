@@ -33,16 +33,25 @@ cp .env.example .env
 # - LP_VAULT_ADDRESS (your address derived from the private key)
 ```
 
-### 3. Start Monero Wallet RPC
+### 3. Start Monero Wallet RPC (Production Only)
+
+**For production transaction operations**, run monero-wallet-rpc:
 
 ```bash
+# Create wallet from your private keys first (one-time setup)
+monero-wallet-cli --generate-from-spend-key /path/to/wallet
+
+# Then start wallet RPC
 monero-wallet-rpc \
   --rpc-bind-port 18082 \
   --wallet-file /path/to/wallet \
   --password "your-password" \
   --disable-rpc-login \
-  --daemon-address node.moneroworld.com:18089
+  --daemon-address node.moneroworld.com:18089 \
+  --trusted-daemon
 ```
+
+**For development/testing**, you can skip this step. The LP node will use placeholders for Monero operations.
 
 ### 4. Run the LP Node
 
@@ -204,15 +213,30 @@ MONERO_RPC_URL=http://127.0.0.1:18082/json_rpc  # Override config.toml
 - `MONERO_RPC_URL`: Override Monero RPC URL from config.toml
 - `RUST_LOG`: Logging level (error, warn, info, debug, trace)
 
-## Running
+## Production Deployment
+
+### Prerequisites
+
+1. **Monero Wallet Setup**
+   - Install Monero CLI tools from [getmonero.org](https://www.getmonero.org/downloads/)
+   - Create wallet from your private spend key
+   - Run monero-wallet-rpc (see setup above)
+
+2. **Environment Configuration**
+   - Set `MONERO_WALLET_RPC_URL=http://127.0.0.1:18082/json_rpc` in `.env`
+   - Ensure wallet RPC is running and synced
+
+3. **Vault Setup**
+   - Create vault on VaultManager contract
+   - Deposit sufficient collateral (sDAI)
+   - Note your vault address
+
+### Running in Production
 
 ```bash
-# With environment variables
-export EVM_WS_URL=wss://...
-export PRIVATE_KEY=0x...
-# ... other vars
-
-cargo run --release
+# Ensure monero-wallet-rpc is running
+# Then start the LP node
+cargo run --release start
 
 # Or with .env file
 cargo install dotenv-cli
