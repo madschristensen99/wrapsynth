@@ -48,6 +48,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     uint256 public constant EMA_TRIGGER_THRESHOLD = 99; // 1% dip threshold (spot <= EMA * 0.99)
     uint256 public constant MEV_SLIPPAGE_BPS = 100; // 1% max slippage - prevents MEV extraction while allowing normal market variance
     uint256 public constant KEEPER_REWARD_BPS = 200; // 2% of the chunk paid to caller for gas
+    uint256 public constant MIN_DEBT_INDEX = 1e9; // Minimum debt index to prevent accounting drift
     
     // ========== STATE VARIABLES ==========
     
@@ -133,6 +134,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 feeAmount; // Portion of wsxmrAmount that goes to LP as fee
         bytes32 claimCommitment; // Hash of secret that LP will reveal
         uint256 timeout;
+        uint256 readyDeadline; // Deadline after LP sets READY status
         uint256 griefingDeposit; // ETH deposit to prevent spam (refunded on finalize, awarded to LP on cancel)
         MintStatus status;
     }
@@ -154,7 +156,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 rewardCollateral; // Extra collateral added as a reward
         bytes32 secretHash; // Hash of secret that LP generates (set in commitBurn)
         uint256 deadline; // LP must respond/reveal before this
-        uint256 vaultLiquidationNonce;
         BurnStatus status;
     }
     
@@ -184,7 +185,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     
     event YieldHarvested(uint256 yieldInDAI, uint256 yieldInShares);
     event BadDebtWrittenOff(address indexed lpVault, uint256 debtAmount);
-    event BuyAndBurnExecuted(uint256 sDAISpent, uint256 wsxmrBurned, uint256 keeperReward, uint256 newGlobalDebtIndex);
+    event BuyAndBurnExecuted(uint256 sDAISpent, uint256 wsxmrBurned, uint256 debtForgiven, uint256 keeperReward, uint256 newGlobalDebtIndex);
     
     event MintInitiated(
         bytes32 indexed requestId,
@@ -574,6 +575,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             feeAmount: feeAmount,
             claimCommitment: _claimCommitment,
             timeout: block.timestamp + _timeoutDuration,
+            readyDeadline: 0,
             griefingDeposit: msg.value, // Store deposit for refund/award
             status: MintStatus.PENDING
         });
@@ -604,8 +606,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         MintRequest storage request = mintRequests[_requestId];
         if (request.status != MintStatus.PENDING) revert InvalidStatus();
         if (msg.sender != request.lpVault) revert Unauthorized();
+        if (block.timestamp > request.timeout) revert DeadlineExpired();
         
         request.status = MintStatus.READY;
+        request.readyDeadline = block.timestamp + MINT_READY_EXTENSION;
         emit MintReady(_requestId);
     }
     
@@ -617,6 +621,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     function finalizeMint(bytes32 _requestId, bytes32 _secret) external nonReentrant {
         MintRequest storage request = mintRequests[_requestId];
         if (request.status != MintStatus.READY) revert InvalidStatus(); // MUST be READY, not PENDING
+        if (block.timestamp > request.readyDeadline) revert DeadlineExpired();
         
         // Verify the secret matches the commitment using secp256k1 verification
         if (!mulVerify(uint256(_secret), uint256(request.claimCommitment))) {
@@ -665,12 +670,13 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             revert InvalidStatus();
         }
         
-        // For READY state, require extended timeout
-        uint256 requiredTimeout = request.status == MintStatus.READY 
-            ? request.timeout + MINT_READY_EXTENSION 
-            : request.timeout;
-        
-        if (block.timestamp < requiredTimeout) revert TimeoutNotReached();
+        // Check appropriate deadline based on status
+        if (request.status == MintStatus.PENDING) {
+            if (block.timestamp < request.timeout) revert TimeoutNotReached();
+        } else {
+            // READY state
+            if (block.timestamp < request.readyDeadline) revert TimeoutNotReached();
+        }
         
         // PERMISSIONLESS: Once timeout expires, anyone can cleanup to free LP capacity
         // This prevents DoS where user locks LP's debt capacity forever
@@ -799,7 +805,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             rewardCollateral: rewardCollateral,
             secretHash: bytes32(0),
             deadline: block.timestamp + BURN_REQUEST_TIMEOUT,
-            vaultLiquidationNonce: vault.liquidationNonce, // Snapshot current nonce
             status: BurnStatus.REQUESTED
         });
         
@@ -832,6 +837,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         Vault storage vault = vaults[request.lpVault];
         if (msg.sender != vault.lpAddress) revert Unauthorized();
         if (_secretHash == bytes32(0)) revert InvalidSecret();
+        if (block.timestamp > request.deadline) revert DeadlineExpired();
         
         request.secretHash = _secretHash;
         request.status = BurnStatus.PROPOSED;
@@ -852,6 +858,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         BurnRequest storage request = burnRequests[_requestId];
         if (request.status != BurnStatus.PROPOSED) revert InvalidStatus();
         if (msg.sender != request.user) revert Unauthorized();
+        if (block.timestamp > request.deadline) revert DeadlineExpired();
         
         // User explicitly confirms the Monero lock is valid
         // NOW the LP is on the clock to reveal the secret
@@ -949,7 +956,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     }
     
     /**
-     * @notice Cancel REQUESTED burn if LP never locked XMR - PERMISSIONLESS CLEANUP
+     * @notice Cancel REQUESTED or PROPOSED burn - PERMISSIONLESS CLEANUP
      * @dev After deadline expires, ANYONE can call this to unlock LP's collateral
      * @dev Prevents DoS where user abandons burn, locking LP's collateral forever
      * @param _requestId The burn request ID
@@ -957,20 +964,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     function cancelBurn(bytes32 _requestId) external nonReentrant {
         BurnRequest storage request = burnRequests[_requestId];
        
-        // REQUESTED: User never engaged, LP can cancel
-        // PROPOSED: LP proposed hash but user didn't confirm within timeout
+        // Only REQUESTED or PROPOSED can be cancelled
         // COMMITTED: User confirmed Monero lock - LP must honor or be slashed
         if (request.status != BurnStatus.REQUESTED && request.status != BurnStatus.PROPOSED) revert InvalidStatus();
-        
-       
-        if (request.status == BurnStatus.PROPOSED) {
-            if (block.timestamp < request.deadline) revert DeadlineNotExpired();
-        }
-        
-       
-        // If vault was liquidated, user still gets their wsXMR back but debt is written off as bad debt
-        Vault storage vault = vaults[request.lpVault];
-        bool vaultWasLiquidated = (request.vaultLiquidationNonce != vault.liquidationNonce);
         
         // Require deadline to expire
         if (block.timestamp < request.deadline) revert DeadlineNotExpired();
@@ -978,25 +974,23 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // PERMISSIONLESS: Once deadline expires, anyone can cleanup to unlock assets
         // This prevents DoS where user abandons request, locking LP's collateral
         
+        Vault storage vault = vaults[request.lpVault];
+        
         // Unlock collateral (only decrease lockedCollateral, don't touch collateralAmount)
         // INVARIANT: locking only increased lockedCollateral, so unlocking only decreases it
         uint256 totalUnlock = request.lockedCollateral + request.rewardCollateral;
         if (vault.lockedCollateral < totalUnlock) revert InsufficientCollateral();
         vault.lockedCollateral -= totalUnlock;
         
-        if (vaultWasLiquidated) {
-            // Vault was liquidated - user gets wsXMR back, but we don't restore debt
-            wsxmrToken.mint(request.user, request.wsxmrAmount);
-            emit BadDebtWrittenOff(request.lpVault, request.wsxmrAmount);
-        } else {
-            // Normal case - vault still active, restore debt and mint wsXMR back to user
-            uint256 normalizedAmount = (request.wsxmrAmount * 1e18) / globalDebtIndex;
-            vault.normalizedDebt += normalizedAmount;
-            globalTotalDebt += request.wsxmrAmount;
-            
-            // Re-mint the wsXMR back to user
-            wsxmrToken.mint(request.user, request.wsxmrAmount);
-        }
+        // Restore debt (always, regardless of liquidation state)
+        // If this makes vault unhealthy, it can be liquidated normally afterward
+        // This is safe because liquidate() only seizes unlocked collateral
+        uint256 normalizedAmount = (request.wsxmrAmount * 1e18) / globalDebtIndex;
+        vault.normalizedDebt += normalizedAmount;
+        globalTotalDebt += request.wsxmrAmount;
+        
+        // Re-mint the wsXMR back to user
+        wsxmrToken.mint(request.user, request.wsxmrAmount);
         
         request.status = BurnStatus.CANCELLED;
         emit BurnCancelled(_requestId);
@@ -1110,7 +1104,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     
     /**
      * @notice Sync vault's yield and transfer accrued yield to war chest
-     * @dev CRITICAL: Uses DAI value difference instead of share percentage to prevent principal depletion
+     * @dev CRITICAL: Only harvests surplus collateral beyond solvency requirements
      * @dev Lazy evaluation - only processes yield for vaults that interact
      * @dev Prevents DoS from unbounded loops over all vaults
      */
@@ -1118,39 +1112,46 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         Vault storage vault = vaults[_lpAddress];
         if (vault.collateralAmount == 0) return;
         
-        // Never harvest if all collateral is locked
-        if (vault.collateralAmount <= vault.lockedCollateral) return;
-        
-        // Get current exchange rate (DAI per sDAI share)
-        uint256 currentRate = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(1e18);
-        
-        // Calculate current total DAI value of vault's shares
-        uint256 totalDaiValue = (vault.collateralAmount * currentRate) / 1e18;
-        
-        // Get LP's original principal deposit in DAI
         uint256 principalDai = lpPrincipalDeposits[_lpAddress];
+        uint256 totalDaiValue = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(vault.collateralAmount);
         
-        // If current value exceeds principal, extract the yield
-        if (totalDaiValue > principalDai) {
-            uint256 yieldDai = totalDaiValue - principalDai;
+        if (totalDaiValue <= principalDai) return;
+        
+        uint256 principalBasedYieldDai = totalDaiValue - principalDai;
+        uint256 principalBasedHarvestShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(principalBasedYieldDai);
+        
+        uint256 actualDebt = getActualDebt(vault.normalizedDebt);
+        uint256 totalObligations = actualDebt + vault.pendingDebt;
+        
+        uint256 solvencyCapShares;
+        if (totalObligations == 0) {
+            if (vault.collateralAmount <= vault.lockedCollateral) return;
+            solvencyCapShares = vault.collateralAmount - vault.lockedCollateral;
+        } else {
+            uint256 debtUsd = (totalObligations * getXmrPrice()) / 1e8;
+            uint256 requiredAvailableCollateralUsd = (debtUsd * COLLATERAL_RATIO) / RATIO_PRECISION;
+            uint256 requiredAvailableCollateralShares = usdToCollateral(requiredAvailableCollateralUsd);
             
-            // Convert yield DAI back to sDAI shares to deduct
-            uint256 vaultYieldShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(yieldDai);
+            uint256 minTotalSharesToKeep = vault.lockedCollateral + requiredAvailableCollateralShares;
             
-            // Cap harvest to available (unlocked) collateral
-            uint256 maxHarvestShares = vault.collateralAmount - vault.lockedCollateral;
-            if (vaultYieldShares > maxHarvestShares) {
-                vaultYieldShares = maxHarvestShares;
-            }
+            if (vault.collateralAmount <= minTotalSharesToKeep) return;
             
-            // Harvest yield if any
-            if (vaultYieldShares > 0) {
-                vault.collateralAmount -= vaultYieldShares;
-                yieldWarChest += vaultYieldShares;
-                
-                emit YieldHarvested(yieldDai, vaultYieldShares);
-            }
+            solvencyCapShares = vault.collateralAmount - minTotalSharesToKeep;
         }
+        
+        uint256 harvestShares = principalBasedHarvestShares;
+        if (harvestShares > solvencyCapShares) {
+            harvestShares = solvencyCapShares;
+        }
+        
+        if (harvestShares == 0) return;
+        
+        vault.collateralAmount -= harvestShares;
+        yieldWarChest += harvestShares;
+        
+        uint256 harvestedDai = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(harvestShares);
+        
+        emit YieldHarvested(harvestedDai, harvestShares);
     }
     
     /**
@@ -1222,40 +1223,34 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // 6. Burn the bought wsXMR
         wsxmrToken.burn(address(this), wsxmrBought);
         
-        // 7. Erase LP debt (O(1) calculation)
-       
-        // New index = Old Index * (Remaining Debt / Existing Total Debt)
+        // 7. Erase LP debt (O(1) calculation with MIN_DEBT_INDEX floor)
+        uint256 debtForgiven = 0;
         if (globalTotalDebt > 0) {
-            if (wsxmrBought >= globalTotalDebt) {
-                // CRITICAL FIX: Never reset globalDebtIndex to 1e18 when forgiving all debt
-                // Doing so would revive old normalized debts (actualDebt = normalizedDebt * 1e18 / 1e18)
-                // Instead, cap forgiveness at 99.99% to maintain debt index continuity
-                uint256 minDebt = globalTotalDebt / 10000; // 0.01% minimum
-                if (minDebt == 0) minDebt = 1; // Ensure non-zero
-                uint256 remainingDebt = minDebt;
-                globalDebtIndex = (globalDebtIndex * remainingDebt) / globalTotalDebt;
-                
-                // Floor protection
-                if (globalDebtIndex < 1e9) {
-                    globalDebtIndex = 1e9;
-                }
-                
-                globalTotalDebt = remainingDebt;
-            } else {
-                // Single-step calculation prevents cumulative rounding errors
-                uint256 remainingDebt = globalTotalDebt - wsxmrBought;
-                globalDebtIndex = (globalDebtIndex * remainingDebt) / globalTotalDebt;
-                
-               
-                if (globalDebtIndex < 1e9) {
-                    globalDebtIndex = 1e9;
-                }
-                
+            uint256 oldTotalDebt = globalTotalDebt;
+            uint256 oldIndex = globalDebtIndex;
+            
+            // Calculate minimum remaining debt that keeps index >= MIN_DEBT_INDEX
+            uint256 minRemainingDebt = (oldTotalDebt * MIN_DEBT_INDEX + oldIndex - 1) / oldIndex; // ceil div
+            
+            if (minRemainingDebt > oldTotalDebt) {
+                minRemainingDebt = oldTotalDebt;
+            }
+            
+            uint256 maxForgivableDebt = oldTotalDebt - minRemainingDebt;
+            
+            debtForgiven = wsxmrBought;
+            if (debtForgiven > maxForgivableDebt) {
+                debtForgiven = maxForgivableDebt;
+            }
+            
+            if (debtForgiven > 0) {
+                uint256 remainingDebt = oldTotalDebt - debtForgiven;
+                globalDebtIndex = (oldIndex * remainingDebt) / oldTotalDebt;
                 globalTotalDebt = remainingDebt;
             }
         }
         
-        emit BuyAndBurnExecuted(spendAmount, wsxmrBought, keeperReward, globalDebtIndex);
+        emit BuyAndBurnExecuted(spendAmount, wsxmrBought, debtForgiven, keeperReward, globalDebtIndex);
     }
     
     // ========== PRICE ORACLE FUNCTIONS ==========
@@ -1444,6 +1439,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         view 
         returns (Vault[] memory batch, uint256 nextCursor) 
     {
+        if (_cursor >= vaultList.length) {
+            return (new Vault[](0), vaultList.length);
+        }
+        
         uint256 length = _limit;
         if (_cursor + length > vaultList.length) {
             length = vaultList.length - _cursor;
