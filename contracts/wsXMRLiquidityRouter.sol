@@ -259,8 +259,11 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         lpLiquidityAllocation[_lp] -= _sDAIAmount;
         userWsxmrDeposits[_user] -= _wsxmrAmount;
         
-        // Approve Uniswap Position Manager
+        // Approve Uniswap Position Manager (use forceApprove pattern for compatibility)
+        IERC20(GnosisAddresses.SDAI).approve(address(positionManager), 0);
         IERC20(GnosisAddresses.SDAI).approve(address(positionManager), _sDAIAmount);
+        
+        IERC20(address(wsxmrToken)).approve(address(positionManager), 0);
         IERC20(address(wsxmrToken)).approve(address(positionManager), _wsxmrAmount);
         
         // Determine token order (Uniswap requires token0 < token1)
@@ -292,13 +295,9 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         require(valueDiff * 100 <= (sDAIValue + wsxmrValue), "Pool ratio deviates from oracle");
         
        
-        // Calculate minimum amounts with 2% slippage tolerance
-        // This protects against MEV/sandwich attacks during position creation
-        // Oracle validation above ensures we're near fair value, but pool can still be slightly skewed
-        uint256 amount0Min = (amount0 * 98) / 100; // 2% slippage tolerance
-        uint256 amount1Min = (amount1 * 98) / 100; // 2% slippage tolerance
-        
-        // Create Uniswap V3 position
+        // Create Uniswap V3 position with zero min amounts
+        // V3 full-range mints may legitimately consume much less than 98% of one side
+        // if desired amounts don't match current spot ratio
         (uint256 tokenId, , uint256 actual0, uint256 actual1) = positionManager.mint(
             INonfungiblePositionManager.MintParams({
                 token0: token0,
@@ -308,12 +307,25 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
                 tickUpper: TICK_UPPER,
                 amount0Desired: amount0,
                 amount1Desired: amount1,
-                amount0Min: amount0Min,
-                amount1Min: amount1Min,
+                amount0Min: 0,
+                amount1Min: 0,
                 recipient: address(this),
                 deadline: block.timestamp
             })
         );
+        
+        // Validate execution quality after mint
+        uint256 actualSDAI = token0 == GnosisAddresses.SDAI ? actual0 : actual1;
+        uint256 actualWsxmr = token0 == GnosisAddresses.SDAI ? actual1 : actual0;
+        
+        uint256 actualSDAIValue = (actualSDAI * sDAIPrice) / 1e18;
+        uint256 actualWsxmrValue = (actualWsxmr * wsxmrPrice) / 1e8;
+        
+        uint256 diff = actualSDAIValue > actualWsxmrValue
+            ? actualSDAIValue - actualWsxmrValue
+            : actualWsxmrValue - actualSDAIValue;
+        
+        require(diff * 100 <= (actualSDAIValue + actualWsxmrValue), "Execution deviates from oracle");
         
        
         positionIndex = nextPositionIndex++;
@@ -489,15 +501,15 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
             ? (collected0, collected1)
             : (collected1, collected0);
         
-        // Split fees 50/50 between LP and user
+        // Split fees 50/50 between LP and user (avoid losing 1 unit on odd fees)
         if (sDAIFees > 0) {
             pendingSDAIFees[position.lpProvider] += sDAIFees / 2;
-            pendingSDAIFees[position.userProvider] += sDAIFees / 2;
+            pendingSDAIFees[position.userProvider] += sDAIFees - (sDAIFees / 2);
         }
         
         if (wsxmrFees > 0) {
             pendingWsxmrFees[position.lpProvider] += wsxmrFees / 2;
-            pendingWsxmrFees[position.userProvider] += wsxmrFees / 2;
+            pendingWsxmrFees[position.userProvider] += wsxmrFees - (wsxmrFees / 2);
         }
         
         emit FeesCollected(_positionIndex, sDAIFees, wsxmrFees);
