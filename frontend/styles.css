@@ -1408,18 +1408,21 @@ body.app-page .container {
     margin-top: 2rem;
     width: 100%;
     max-width: 100%;
+    min-width: 0;
 }
 
 .swap-column {
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
+    min-width: 0;
 }
 
 .info-column {
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
+    min-width: 0;
 }
 
 /* Mode Selector */
@@ -1864,6 +1867,7 @@ body.app-page .container {
     border: 1px solid var(--border-color);
     border-radius: 12px;
     margin-top: 1rem;
+    overflow-x: auto;
 }
 
 .code-block code {
@@ -1873,6 +1877,8 @@ body.app-page .container {
     color: #10b981;
     line-height: 1.6;
     white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: break-word;
 }
 
 .btn-copy-code {
@@ -2213,6 +2219,14 @@ body.app-page .container {
 }
 
 @media (max-width: 900px) {
+    .main-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .info-column {
+        width: 100%;
+    }
+    
     .stats-bar {
         flex-wrap: wrap;
         gap: 1rem;
@@ -2233,13 +2247,14 @@ body.app-page .container {
 
 @media (max-width: 768px) {
     .main-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: 1fr !important;
     }
     
     .info-column {
         display: grid;
         grid-template-columns: 1fr;
         gap: 1.5rem;
+        width: 100%;
     }
     
     body.app-page .container {
