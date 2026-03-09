@@ -184,32 +184,38 @@ class PhantomAgent {
                 }
             },
             
-            async claimPTLC(secretHash, revealedSecret) {
-                // Claim PTLC by revealing secret
-                // Build transaction that spends the PTLC output
-                console.log('Claiming PTLC with secretHash:', secretHash);
+            async claimPTLC(commitment, revealedSecret, destinationAddress) {
+                // Claim PTLC by revealing secret and forward to destination
+                console.log('Claiming PTLC with commitment:', commitment);
                 console.log('Using revealed secret:', revealedSecret);
+                console.log('Forwarding to:', destinationAddress);
                 
                 try {
-                    // In production, this would:
-                    // 1. Scan for PTLC output with matching secretHash
-                    // 2. Build transaction spending that output
-                    // 3. Include revealed secret in transaction
-                    // 4. Sign and broadcast
+                    // Import PTLC builder
+                    const { claimPTLC } = await import('./moneroPTLC.js');
                     
-                    // For now, this requires custom PTLC transaction builder
-                    // which is not standard in monero-javascript
+                    // Claim PTLC and send directly to destination address
+                    const result = await claimPTLC(
+                        wallet,
+                        rpc,
+                        commitment,
+                        revealedSecret,
+                        destinationAddress
+                    );
                     
-                    console.error('PTLC claiming requires custom transaction builder');
-                    console.error('This functionality needs to be implemented with:');
-                    console.error('1. Custom output scanner for PTLC format');
-                    console.error('2. Transaction builder that includes secret reveal');
-                    console.error('3. Daemon connection for broadcasting');
-                    
-                    throw new Error('PTLC claiming not yet implemented - requires custom Monero transaction builder');
+                    console.log('PTLC claimed and forwarded!');
+                    return result;
                 } catch (error) {
                     console.error('PTLC claiming error:', error);
-                    throw error;
+                    
+                    // Provide helpful error messages
+                    if (error.message.includes('not found')) {
+                        throw new Error('PTLC not found on Monero chain - LP may not have created it yet');
+                    } else if (error.message.includes('daemon')) {
+                        throw new Error('Cannot connect to Monero daemon - user must configure RPC endpoint');
+                    } else {
+                        throw error;
+                    }
                 }
             },
             

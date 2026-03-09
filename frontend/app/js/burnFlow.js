@@ -287,71 +287,61 @@ export class BurnFlow {
 
     /**
      * Step 6: Claim PTLC on Monero using revealed secret
+     * The PTLC builder claims the PTLC and forwards directly to destination
      */
     async claimPTLC() {
         this.state = 'claim-ptlc';
         updateSwapState({ state: this.state });
 
-        console.log('Claiming PTLC on Monero with revealed secret...');
-        console.log('Ephemeral wallet address:', this.agent.getMoneroAddress());
-        console.log('Using secret:', this.revealedSecret);
+        console.log('Claiming PTLC and forwarding to destination...');
+        console.log('Commitment (secretHash):', this.secretHash);
+        console.log('Revealed secret:', this.revealedSecret);
+        console.log('Destination address:', this.destination);
 
         const moneroWallet = this.agent.moneroWallet;
         
-        // Claim PTLC using the revealed secret
-        // This transfers XMR from PTLC to ephemeral wallet
         try {
-            const claimTx = await moneroWallet.claimPTLC(this.secretHash, this.revealedSecret);
-            console.log('PTLC claimed! TX:', claimTx.txHash);
-            console.log('XMR now in ephemeral wallet');
-
-            updateSwapState({
-                state: 'forward-xmr',
-                claimTxHash: claimTx.txHash
-            });
-
-            this.state = 'forward-xmr';
-        } catch (claimError) {
-            console.error('Error claiming PTLC:', claimError);
-            throw new Error('Failed to claim PTLC - browser needs Monero wallet functionality');
-        }
-    }
-
-    /**
-     * Step 7: Forward XMR from ephemeral wallet to user's destination address
-     */
-    async forwardToDestination() {
-        this.state = 'forward-xmr';
-        updateSwapState({ state: this.state });
-
-        console.log('Forwarding XMR to destination:', this.destination);
-
-        const moneroWallet = this.agent.moneroWallet;
-        
-        // Calculate amount in atomic units
-        const xmrAtomicUnits = BigInt(Math.floor(
-            this.wsxmrAmount * Math.pow(10, DECIMALS.XMR)
-        ));
-
-        try {
-            const forwardTx = await moneroWallet.sendTransaction(
-                this.destination,
-                xmrAtomicUnits
+            // Claim PTLC and forward to destination in one transaction
+            // This is more efficient and reduces fees
+            const result = await moneroWallet.claimPTLC(
+                this.secretHash,
+                this.revealedSecret,
+                this.destination
             );
             
-            console.log('XMR forwarded! TX:', forwardTx.txHash);
+            console.log('PTLC claimed and XMR forwarded!');
+            console.log('Transaction hash:', result.txHash);
             console.log('Burn complete - XMR sent to:', this.destination);
 
             updateSwapState({
                 state: 'complete',
-                forwardTxHash: forwardTx.txHash
+                claimTxHash: result.txHash
             });
 
             this.state = 'complete';
-        } catch (forwardError) {
-            console.error('Error forwarding XMR:', forwardError);
-            throw new Error('Failed to forward XMR - browser needs Monero wallet functionality');
+            this.complete();
+        } catch (claimError) {
+            console.error('Error claiming PTLC:', claimError);
+            
+            // Provide helpful error messages
+            if (claimError.message.includes('daemon')) {
+                throw new Error('Cannot connect to Monero daemon. Please configure Monero RPC endpoint in settings.');
+            } else if (claimError.message.includes('not found')) {
+                throw new Error('PTLC not found on Monero chain. LP may not have created it yet or you may need to wait for confirmations.');
+            } else {
+                throw new Error(`Failed to claim PTLC: ${claimError.message}`);
+            }
         }
+    }
+
+    /**
+     * Step 7 is now combined with Step 6
+     * The PTLC claim transaction sends directly to destination
+     */
+    async forwardToDestination() {
+        // This step is now handled by claimPTLC()
+        // Keeping this method for backwards compatibility
+        console.log('Forwarding handled by PTLC claim transaction');
     }
 
     /**

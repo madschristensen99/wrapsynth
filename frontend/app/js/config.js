@@ -43,6 +43,38 @@ export const DECIMALS = {
     USD: 18        // Pyth price decimals
 };
 
+// Monero Network Configuration
+export const MONERO_CONFIG = {
+    // Default to public stagenet node for testing
+    // Users should configure their own node for privacy
+    rpcUrl: 'http://stagenet.xmr-tw.org:38081',
+    
+    // Network type
+    networkType: 'stagenet', // 'mainnet', 'testnet', or 'stagenet'
+    
+    // Public nodes (users can select or add their own)
+    publicNodes: {
+        mainnet: [
+            'https://xmr-node.cakewallet.com:18081',
+            'https://node.moneroworld.com:18089',
+            'https://nodes.hashvault.pro:18081'
+        ],
+        stagenet: [
+            'http://stagenet.xmr-tw.org:38081',
+            'http://stagenet.community.xmr.to:38081'
+        ],
+        testnet: [
+            'http://testnet.xmr-tw.org:28081'
+        ]
+    },
+    
+    // Wallet refresh interval (ms)
+    refreshInterval: 10000, // 10 seconds
+    
+    // Transaction confirmation blocks
+    confirmations: 10
+};
+
 // Swap parameters
 export const SWAP_CONFIG = {
     minMintAmount: 0.01, // Minimum XMR to mint
@@ -57,13 +89,6 @@ export const STORAGE_KEYS = {
     activeSwap: 'phantom_active_swap',
     swapHistory: 'phantom_swap_history',
     userPreferences: 'phantom_preferences'
-};
-
-// Monero RPC configuration (for monitoring)
-export const MONERO_CONFIG = {
-    // This would typically point to a public Monero node or your own
-    rpcUrl: 'https://xmr-node.cakewallet.com:18081',
-    stagenetRpcUrl: 'https://stagenet.xmr-node.cakewallet.com:38081'
 };
 
 // Contract ABIs (minimal, only what we need)
