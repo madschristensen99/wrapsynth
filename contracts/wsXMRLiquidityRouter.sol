@@ -292,9 +292,12 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         require(valueDiff * 100 <= (sDAIValue + wsxmrValue), "Pool ratio deviates from oracle");
         
        
-        // Uniswap V3 will consume assets according to current pool ratio
-        // Oracle validation above (valueDiff * 100 <= totalValue) already prevents manipulation
-        // Strict bounds cause reverts when pool ratio doesn't match 50/50 desired amounts
+        // Calculate minimum amounts with 2% slippage tolerance
+        // This protects against MEV/sandwich attacks during position creation
+        // Oracle validation above ensures we're near fair value, but pool can still be slightly skewed
+        uint256 amount0Min = (amount0 * 98) / 100; // 2% slippage tolerance
+        uint256 amount1Min = (amount1 * 98) / 100; // 2% slippage tolerance
+        
         // Create Uniswap V3 position
         (uint256 tokenId, , uint256 actual0, uint256 actual1) = positionManager.mint(
             INonfungiblePositionManager.MintParams({
@@ -305,8 +308,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
                 tickUpper: TICK_UPPER,
                 amount0Desired: amount0,
                 amount1Desired: amount1,
-                amount0Min: 0,
-                amount1Min: 0,
+                amount0Min: amount0Min,
+                amount1Min: amount1Min,
                 recipient: address(this),
                 deadline: block.timestamp
             })
@@ -452,6 +455,10 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         }
         
         emit PositionClosed(_positionIndex, sDAIPrincipal, wsxmrPrincipal);
+        
+        // Burn the NFT to prevent NFT buildup
+        // After decreaseLiquidity(all) and collect(all), the NFT has zero liquidity and zero fees
+        positionManager.burn(position.positionId);
         
         // Clear position
         delete positions[_positionIndex];
