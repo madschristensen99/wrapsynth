@@ -107,6 +107,72 @@ impl LpCli {
         
         Ok(())
     }
+
+    /// Create a new LP vault (onboarding step 1)
+    pub async fn create_vault(&self) -> Result<()> {
+        info!("Creating new LP vault...");
+        
+        println!("\n╔════════════════════════════════════════════════════════════╗");
+        println!("║                   CREATE LP VAULT                          ║");
+        println!("╠════════════════════════════════════════════════════════════╣");
+        println!("║                                                            ║");
+        
+        match self.evm.create_vault().await {
+            Ok(tx_hash) => {
+                println!("║ ✅ Vault created successfully!                            ║");
+                println!("║                                                            ║");
+                println!("║ Transaction: {:<42} ║", format!("{:?}", tx_hash));
+                println!("║                                                            ║");
+                println!("║ Next step: Deposit collateral                             ║");
+                println!("║   ./lp deposit-collateral --amount <amount>               ║");
+            }
+            Err(e) => {
+                println!("║ ❌ Failed to create vault                                  ║");
+                println!("╚════════════════════════════════════════════════════════════╝");
+                println!("\nFull error:");
+                println!("{:#}", e);
+                return Ok(());
+            }
+        }
+        
+        println!("╚════════════════════════════════════════════════════════════╝\n");
+        
+        Ok(())
+    }
+
+    /// Deposit collateral into vault (onboarding step 2)
+    pub async fn deposit_collateral(&self, amount: &str) -> Result<()> {
+        info!("Depositing collateral: {}", amount);
+        
+        println!("\n╔════════════════════════════════════════════════════════════╗");
+        println!("║                  DEPOSIT COLLATERAL                        ║");
+        println!("╠════════════════════════════════════════════════════════════╣");
+        println!("║                                                            ║");
+        
+        match self.evm.deposit_collateral(amount).await {
+            Ok(tx_hash) => {
+                println!("║ ✅ Collateral deposited successfully!                     ║");
+                println!("║                                                            ║");
+                println!("║ Amount: {:<50} ║", amount);
+                println!("║ Transaction: {:<42} ║", format!("{:?}", tx_hash));
+                println!("║                                                            ║");
+                println!("║ Your vault is now ready!                                  ║");
+                println!("║   ./lp info    - View vault details                       ║");
+                println!("║   ./lp start   - Start the LP server                      ║");
+            }
+            Err(e) => {
+                println!("║ ❌ Failed to deposit collateral                            ║");
+                println!("╚════════════════════════════════════════════════════════════╝");
+                println!("\nFull error:");
+                println!("{:#}", e);
+                return Ok(());
+            }
+        }
+        
+        println!("╚════════════════════════════════════════════════════════════╝\n");
+        
+        Ok(())
+    }
 }
 
 fn format_u256(value: U256) -> String {

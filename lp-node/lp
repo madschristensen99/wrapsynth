@@ -3,6 +3,11 @@
 
 cd "$(dirname "$0")"
 
+# Load environment variables from .env if it exists
+if [ -f ".env" ]; then
+    export $(grep -v '^#' .env | xargs)
+fi
+
 # Check if binary exists
 if [ ! -f "target/release/wrapsynth-lp-node" ]; then
     echo "Binary not found. Building..."
