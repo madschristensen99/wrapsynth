@@ -34,7 +34,7 @@ export class BurnFlow {
      * Start the burn flow
      * @param {string} lpVault - LP vault address
      * @param {number} wsxmrAmount - Amount in wsXMR (human-readable)
-     * @param {string} destination - User's Monero address (CakeWallet, etc.)
+     * @param {string} destination - User's final Monero address (CakeWallet, etc.)
      */
     async start(lpVault, wsxmrAmount, destination) {
         console.log('Starting burn flow:', { lpVault, wsxmrAmount, destination });
@@ -52,20 +52,26 @@ export class BurnFlow {
         this.wsxmrAmount = wsxmrAmount;
         this.destination = destination;
 
-        // Step 1: Initialize Phantom Agent
+        // Step 1: Initialize Phantom Agent (generates ephemeral Monero wallet)
         await this.initializeAgent();
 
         // Step 2: Request burn on EVM
         await this.requestBurnOnEVM();
 
-        // Step 3: Wait for LP commitment
-        await this.waitForLPCommitment();
+        // Step 3: Wait for LP to propose secretHash (LP creates PTLC on Monero)
+        await this.waitForLPProposal();
 
-        // Step 4: Claim XMR on Monero chain
-        await this.claimXMR();
+        // Step 4: User confirms Monero PTLC is valid
+        await this.confirmMoneroLock();
 
-        // Step 5: Finalize on EVM
-        await this.finalizeOnEVM();
+        // Step 5: Wait for LP to reveal secret on EVM
+        await this.waitForSecretReveal();
+
+        // Step 6: Claim PTLC on Monero using revealed secret
+        await this.claimPTLC();
+
+        // Step 7: Forward XMR to user's destination address
+        await this.forwardToDestination();
     }
 
     /**
@@ -162,25 +168,29 @@ export class BurnFlow {
     }
 
     /**
-     * Step 3: Wait for LP commitment (BurnCommitted event)
+     * Step 3: Wait for LP to propose secretHash (HashProposed event)
+     * LP creates PTLC on Monero and proposes the hash on EVM
      */
-    async waitForLPCommitment() {
-        console.log('Waiting for LP to commit XMR lock...');
+    async waitForLPProposal() {
+        console.log('Waiting for LP to propose secretHash...');
 
         return new Promise((resolve, reject) => {
-            // Watch for BurnCommitted event
+            // Watch for HashProposed event
             const unwatch = watchContractEvent(
-                'BurnCommitted',
+                'HashProposed',
                 (logs) => {
                     for (const log of logs) {
                         const requestId = log.args.requestId;
                         if (requestId === this.requestId) {
                             this.secretHash = log.args.secretHash;
-                            console.log('LP committed! SecretHash:', this.secretHash);
+                            console.log('LP proposed secretHash:', this.secretHash);
+                            console.log('Ephemeral Monero address:', this.agent.getMoneroAddress());
+                            console.log('User should verify PTLC on Monero chain before confirming');
                             
                             updateSwapState({
-                                state: 'claim-xmr',
-                                secretHash: this.secretHash
+                                state: 'verify-ptlc',
+                                secretHash: this.secretHash,
+                                ephemeralAddress: this.agent.getMoneroAddress()
                             });
                             
                             unwatch();
@@ -192,122 +202,162 @@ export class BurnFlow {
 
             this.eventWatchers.push(unwatch);
 
-            // Timeout after 30 minutes
+            // Timeout after 1 hour (BURN_REQUEST_TIMEOUT)
             setTimeout(() => {
                 unwatch();
-                reject(new Error('LP commitment timeout'));
-            }, 1800000);
+                reject(new Error('LP proposal timeout - LP did not create PTLC'));
+            }, 3600000);
         });
     }
 
     /**
-     * Step 4: Claim XMR on Monero chain
-     * Note: PTLC scanning and claiming requires LP server with full wallet
-     * Browser can attempt but will need to rely on LP server for actual execution
+     * Step 4: User confirms Monero PTLC is valid
+     * User checks Monero blockchain to verify LP created valid PTLC
      */
-    async claimXMR() {
-        this.state = 'claim-xmr';
+    async confirmMoneroLock() {
+        this.state = 'confirm-lock';
         updateSwapState({ state: this.state });
 
-        console.log('Scanning Monero chain for PTLC with secretHash:', this.secretHash);
+        console.log('User should verify PTLC on Monero blockchain:');
+        console.log('- Check that PTLC exists with secretHash:', this.secretHash);
+        console.log('- Verify amount matches:', this.wsxmrAmount, 'wsXMR');
+        console.log('- Confirm PTLC recipient is ephemeral address:', this.agent.getMoneroAddress());
+        
+        // In production UI, show user the PTLC details and ask them to confirm
+        // For now, we'll call confirmMoneroLock on the contract
+        
+        console.log('Calling confirmMoneroLock on contract...');
+        const receipt = await writeVaultManager(
+            'confirmMoneroLock',
+            [this.requestId]
+        );
 
-        // Get current Monero blockchain height
+        console.log('Monero lock confirmed, tx:', receipt.transactionHash);
+        
+        updateSwapState({
+            state: 'wait-secret',
+            confirmTxHash: receipt.transactionHash
+        });
+
+        this.state = 'wait-secret';
+    }
+
+    /**
+     * Step 5: Wait for LP to reveal secret (BurnFinalized event)
+     * LP must reveal secret within BURN_COMMIT_TIMEOUT or get slashed
+     */
+    async waitForSecretReveal() {
+        console.log('Waiting for LP to reveal secret...');
+
+        return new Promise((resolve, reject) => {
+            // Watch for BurnFinalized event (contains revealed secret)
+            const unwatch = watchContractEvent(
+                'BurnFinalized',
+                (logs) => {
+                    for (const log of logs) {
+                        const requestId = log.args.requestId;
+                        if (requestId === this.requestId) {
+                            const revealedSecret = log.args.secret;
+                            console.log('LP revealed secret:', revealedSecret);
+                            
+                            // Store the revealed secret
+                            this.revealedSecret = revealedSecret;
+                            
+                            updateSwapState({
+                                state: 'claim-ptlc',
+                                revealedSecret: revealedSecret
+                            });
+                            
+                            unwatch();
+                            resolve();
+                        }
+                    }
+                }
+            );
+
+            this.eventWatchers.push(unwatch);
+
+            // Timeout after 2 hours (BURN_COMMIT_TIMEOUT)
+            setTimeout(() => {
+                unwatch();
+                reject(new Error('LP did not reveal secret - can claim slashed collateral'));
+            }, 7200000);
+        });
+    }
+
+    /**
+     * Step 6: Claim PTLC on Monero using revealed secret
+     */
+    async claimPTLC() {
+        this.state = 'claim-ptlc';
+        updateSwapState({ state: this.state });
+
+        console.log('Claiming PTLC on Monero with revealed secret...');
+        console.log('Ephemeral wallet address:', this.agent.getMoneroAddress());
+        console.log('Using secret:', this.revealedSecret);
+
         const moneroWallet = this.agent.moneroWallet;
-        let startHeight;
         
+        // Claim PTLC using the revealed secret
+        // This transfers XMR from PTLC to ephemeral wallet
         try {
-            startHeight = await moneroWallet.getHeight();
-            console.log('Current Monero height:', startHeight);
-        } catch (error) {
-            console.error('Error getting Monero height:', error);
-            startHeight = null;
-        }
-
-        // Poll for PTLC with matching secretHash
-        let ptlc = null;
-        let attempts = 0;
-        const maxAttempts = 120; // 10 minutes with 5-second intervals
-
-        while (!ptlc && attempts < maxAttempts) {
-            try {
-                // Try to scan for PTLC (will fail in browser, succeed with LP server)
-                ptlc = await moneroWallet.scanForPTLC(this.secretHash, startHeight);
-                
-                if (ptlc) {
-                    console.log('PTLC found!', ptlc);
-                    break;
-                }
-            } catch (scanError) {
-                // Expected to fail in browser - LP server handles this
-                if (attempts === 0) {
-                    console.warn('Browser cannot scan for PTLC - waiting for LP to create it');
-                    console.warn('In production, LP server monitors and claims automatically');
-                }
-            }
-
-            attempts++;
-            await new Promise(resolve => setTimeout(resolve, SWAP_CONFIG.pollInterval));
-        }
-
-        if (!ptlc) {
-            console.error('PTLC not found after', attempts, 'attempts');
-            throw new Error('PTLC not found on Monero chain - LP may not have created it yet');
-        }
-
-        // Claim the PTLC using our secret
-        console.log('Claiming PTLC...');
-        
-        try {
-            const claimTx = await moneroWallet.claimPTLC(ptlc.txHash, this.agent.getSecret());
-            console.log('PTLC claimed, tx:', claimTx.txHash);
-
-            // In production, the claimed XMR goes directly to user's destination address
-            // The PTLC is created with the destination address as the recipient
-            console.log('XMR will be sent to destination:', this.destination);
+            const claimTx = await moneroWallet.claimPTLC(this.secretHash, this.revealedSecret);
+            console.log('PTLC claimed! TX:', claimTx.txHash);
+            console.log('XMR now in ephemeral wallet');
 
             updateSwapState({
-                state: 'finalize',
+                state: 'forward-xmr',
                 claimTxHash: claimTx.txHash
             });
 
-            this.state = 'finalize';
+            this.state = 'forward-xmr';
         } catch (claimError) {
             console.error('Error claiming PTLC:', claimError);
-            console.warn('PTLC claiming requires full wallet - LP server handles this');
-            
-            // In production, user just needs to wait for LP to finalize
-            // The LP will reveal the secret on-chain when they claim the PTLC
-            console.log('Waiting for LP to claim PTLC and reveal secret...');
-            
-            // User can still finalize on EVM once LP reveals the secret
-            // The secret will be visible in the BurnCommitted event
-            this.state = 'finalize';
-            updateSwapState({ state: this.state });
+            throw new Error('Failed to claim PTLC - browser needs Monero wallet functionality');
         }
     }
 
     /**
-     * Step 5: Finalize on EVM
+     * Step 7: Forward XMR from ephemeral wallet to user's destination address
      */
-    async finalizeOnEVM() {
-        console.log('Finalizing burn on EVM...');
+    async forwardToDestination() {
+        this.state = 'forward-xmr';
+        updateSwapState({ state: this.state });
 
-        // Get the secret from agent
-        const secret = this.agent.getSecret();
+        console.log('Forwarding XMR to destination:', this.destination);
 
-        // Verify secret matches hash
-        const computedHash = keccak256(secret);
-        if (computedHash !== this.secretHash) {
-            console.warn('Secret hash mismatch!', { computed: computedHash, expected: this.secretHash });
+        const moneroWallet = this.agent.moneroWallet;
+        
+        // Calculate amount in atomic units
+        const xmrAtomicUnits = BigInt(Math.floor(
+            this.wsxmrAmount * Math.pow(10, DECIMALS.XMR)
+        ));
+
+        try {
+            const forwardTx = await moneroWallet.sendTransaction(
+                this.destination,
+                xmrAtomicUnits
+            );
+            
+            console.log('XMR forwarded! TX:', forwardTx.txHash);
+            console.log('Burn complete - XMR sent to:', this.destination);
+
+            updateSwapState({
+                state: 'complete',
+                forwardTxHash: forwardTx.txHash
+            });
+
+            this.state = 'complete';
+        } catch (forwardError) {
+            console.error('Error forwarding XMR:', forwardError);
+            throw new Error('Failed to forward XMR - browser needs Monero wallet functionality');
         }
+    }
 
-        // Call finalizeBurn with the secret
-        const receipt = await writeVaultManager(
-            'finalizeBurn',
-            [this.requestId, secret]
-        );
-
-        console.log('Burn finalized on EVM, tx:', receipt.transactionHash);
+    /**
+     * Note: finalizeBurn is called by the LP, not the user
+     * LP calls it to reveal the secret and unlock their collateral
+     * User doesn't need to do anything on EVM after confirming the lock
 
         this.complete();
     }
