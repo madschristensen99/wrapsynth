@@ -271,8 +271,6 @@ export function onChainChanged(callback) {
     if (window.ethereum) {
         window.ethereum.on('chainChanged', (chainId) => {
             callback(chainId);
-            // Reload page on chain change as recommended by MetaMask
-            window.location.reload();
         });
     }
 }
