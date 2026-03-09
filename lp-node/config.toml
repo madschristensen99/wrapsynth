@@ -32,8 +32,10 @@ explorer = "https://sepolia.uniscan.xyz"
 # wsxmr_token = ""
 
 [monero]
-# Monero wallet RPC configuration
-rpc_url = "http://127.0.0.1:18082/json_rpc"
+# Monero daemon RPC configuration
+# The LP node connects to a Monero daemon (monerod) for blockchain data
+# You can use a public node or run your own
+daemon_url = "http://node.moneroworld.com:18089"
 network = "mainnet"  # or "stagenet" for testing
 
 [lp_node]
