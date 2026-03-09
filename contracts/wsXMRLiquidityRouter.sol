@@ -235,6 +235,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         uint256 _sDAIAmount,
         uint256 _wsxmrAmount
     ) external nonReentrant returns (uint256 positionIndex) {
+        if (_sDAIAmount == 0 || _wsxmrAmount == 0) revert InvalidAmount();
+        
        
         // Prevents LP from stealing arbitrary user deposits
         // Prevents user from forcing LP into manipulated positions
@@ -368,7 +370,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         userPositions[_user].push(positionIndex);
         userPositions[_lp].push(positionIndex);
         
-        emit PositionCreated(positionIndex, tokenId, _lp, _user, _sDAIAmount, _wsxmrAmount);
+        emit PositionCreated(positionIndex, tokenId, _lp, _user, actualSDAI, actualWsxmr);
     }
     
     /**
