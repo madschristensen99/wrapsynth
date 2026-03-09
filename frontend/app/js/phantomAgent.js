@@ -13,8 +13,9 @@ class PhantomAgent {
     constructor() {
         this.secret = null;          // 32-byte swap secret
         this.commitment = null;      // secp256k1 public key commitment
-        this.moneroWallet = null;    // WASM Monero wallet instance
+        this.moneroWallet = null;    // Monero wallet instance (ephemeral or user's wallet)
         this.isInitialized = false;
+        this.userWalletConnected = false; // Track if user connected their own wallet
     }
 
     /**
@@ -96,12 +97,8 @@ class PhantomAgent {
         // Import monero-javascript dynamically
         const monerojs = await import('https://cdn.jsdelivr.net/npm/monero-javascript@0.8.4/+esm');
         
-        // Convert secret (32-byte hex) to mnemonic seed
-        // Monero uses 25-word mnemonic, we'll derive it from our secret
-        const secretBytes = hexToBytes(this.secret);
-        
-        // Create wallet from private keys derived from secret
-        // For browser-based wallet, we use MoneroWalletKeys (view-only capabilities)
+        // Create full wallet from private spend key (derived from signature)
+        // This gives us ability to sign transactions
         const wallet = await monerojs.createWalletKeys({
             privateSpendKey: this.secret.slice(2), // Remove 0x prefix
             networkType: 'stagenet', // Use stagenet for testing, mainnet for production
@@ -110,6 +107,7 @@ class PhantomAgent {
         
         const primaryAddress = await wallet.getPrimaryAddress();
         console.log('Monero wallet initialized:', primaryAddress);
+        console.log('This ephemeral wallet can sign transactions');
         
         // Import Monero RPC client
         const { getMoneroRpc } = await import('./moneroRpc.js');
@@ -138,10 +136,30 @@ class PhantomAgent {
             },
             
             async sendTransaction(destination, amount) {
-                // Transaction sending requires full wallet with spend key
-                // This should be done by LP server, not browser
-                console.error('Transaction sending must be done by LP server with full wallet');
-                throw new Error('Browser cannot send transactions - LP server handles this');
+                // Build and broadcast Monero transaction
+                // User needs to connect to a Monero daemon for this to work
+                console.log(`Building transaction: ${amount} atomic units to ${destination}`);
+                
+                try {
+                    // Create transaction using monero-javascript
+                    // This requires daemon connection to get outputs and broadcast
+                    const tx = await wallet.createTx({
+                        accountIndex: 0,
+                        address: destination,
+                        amount: amount.toString(),
+                        relay: true // Broadcast immediately
+                    });
+                    
+                    return {
+                        txHash: tx.getHash(),
+                        success: true
+                    };
+                } catch (error) {
+                    console.error('Transaction creation failed:', error);
+                    console.error('User needs to connect to Monero daemon');
+                    console.error('Set daemon URL in config or use public node');
+                    throw new Error('Cannot send transaction - no daemon connection. User must configure Monero RPC endpoint.');
+                }
             },
             
             async scanForDeposit(expectedAmount, startHeight) {
@@ -166,14 +184,31 @@ class PhantomAgent {
                 }
             },
             
-            async claimPTLC(ptlcTxHash, secret) {
+            async claimPTLC(secretHash, revealedSecret) {
                 // Claim PTLC by revealing secret
-                // This requires building and signing a transaction
+                // Build transaction that spends the PTLC output
+                console.log('Claiming PTLC with secretHash:', secretHash);
+                console.log('Using revealed secret:', revealedSecret);
+                
                 try {
-                    return await rpc.claimPTLC(ptlcTxHash, secret);
+                    // In production, this would:
+                    // 1. Scan for PTLC output with matching secretHash
+                    // 2. Build transaction spending that output
+                    // 3. Include revealed secret in transaction
+                    // 4. Sign and broadcast
+                    
+                    // For now, this requires custom PTLC transaction builder
+                    // which is not standard in monero-javascript
+                    
+                    console.error('PTLC claiming requires custom transaction builder');
+                    console.error('This functionality needs to be implemented with:');
+                    console.error('1. Custom output scanner for PTLC format');
+                    console.error('2. Transaction builder that includes secret reveal');
+                    console.error('3. Daemon connection for broadcasting');
+                    
+                    throw new Error('PTLC claiming not yet implemented - requires custom Monero transaction builder');
                 } catch (error) {
                     console.error('PTLC claiming error:', error);
-                    console.warn('PTLC claiming requires LP server with full wallet');
                     throw error;
                 }
             },
