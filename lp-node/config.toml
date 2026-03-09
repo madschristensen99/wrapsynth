@@ -27,9 +27,11 @@ rpc_url = "https://sepolia.unichain.org"
 ws_url = "wss://sepolia.unichain.org/ws"
 explorer = "https://sepolia.uniscan.xyz"
 
-# Add your Unichain testnet addresses here when deployed
-# vault_manager = ""
-# wsxmr_token = ""
+# Placeholder addresses - update when deployed to Unichain
+vault_manager = "0x0000000000000000000000000000000000000000"
+wsxmr_token = "0x0000000000000000000000000000000000000000"
+pyth_oracle = "0x0000000000000000000000000000000000000000"
+pyth_hermes_url = "https://hermes.pyth.network"
 
 [monero]
 # Monero daemon RPC configuration

@@ -27,6 +27,14 @@ struct Cli {
 enum Commands {
     /// Start the LP node server
     Start,
+    /// Create a new LP vault (onboarding step 1)
+    CreateVault,
+    /// Deposit collateral into your vault (onboarding step 2)
+    DepositCollateral {
+        /// Amount of collateral to deposit (in sDAI)
+        #[arg(short, long)]
+        amount: String,
+    },
     /// Show vault information
     Info,
     /// Check vault health and collateralization ratio
@@ -79,6 +87,14 @@ async fn main() -> Result<()> {
 
     // Handle CLI commands
     match cli.command {
+        Some(Commands::CreateVault) => {
+            let cli_handler = cli::LpCli::new(evm);
+            cli_handler.create_vault().await?;
+        }
+        Some(Commands::DepositCollateral { amount }) => {
+            let cli_handler = cli::LpCli::new(evm);
+            cli_handler.deposit_collateral(&amount).await?;
+        }
         Some(Commands::Info) => {
             let cli_handler = cli::LpCli::new(evm);
             cli_handler.vault_info().await?;
@@ -233,10 +249,15 @@ impl Config {
         // Load sensitive data from environment variables
         let private_key = env::var("PRIVATE_KEY")
             .context("PRIVATE_KEY environment variable not set")?;
-        let lp_vault_address = env::var("LP_VAULT_ADDRESS")
-            .context("LP_VAULT_ADDRESS environment variable not set")?
-            .parse()
-            .context("Invalid LP_VAULT_ADDRESS")?;
+        
+        // Derive LP vault address from private key
+        let lp_vault_address = {
+            use alloy::signers::local::PrivateKeySigner;
+            let signer: PrivateKeySigner = private_key.parse()
+                .context("Invalid PRIVATE_KEY format")?;
+            signer.address()
+        };
+        
         let monero_private_key = env::var("MONERO_PRIVATE_KEY")
             .context("MONERO_PRIVATE_KEY environment variable not set")?;
 

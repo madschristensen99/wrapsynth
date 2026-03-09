@@ -55,6 +55,8 @@ sol! {
         );
 
         // Functions
+        function createVault() external;
+        function depositCollateral(uint256 _amount) external;
         function commitBurn(bytes32 requestId, bytes32 secretHash) external;
         function finalizeBurn(bytes32 requestId, bytes32 secret) external;
         function setMintReady(bytes32 requestId) external;
@@ -78,7 +80,19 @@ sol! {
 pub struct EvmClient {
     provider: alloy::providers::fillers::FillProvider<
         alloy::providers::fillers::JoinFill<
-            alloy::providers::Identity,
+            alloy::providers::fillers::JoinFill<
+                alloy::providers::Identity,
+                alloy::providers::fillers::JoinFill<
+                    alloy::providers::fillers::GasFiller,
+                    alloy::providers::fillers::JoinFill<
+                        alloy::providers::fillers::BlobGasFiller,
+                        alloy::providers::fillers::JoinFill<
+                            alloy::providers::fillers::NonceFiller,
+                            alloy::providers::fillers::ChainIdFiller,
+                        >,
+                    >,
+                >,
+            >,
             alloy::providers::fillers::WalletFiller<EthereumWallet>,
         >,
         alloy::providers::RootProvider<alloy::pubsub::PubSubFrontend>,
@@ -112,6 +126,7 @@ impl EvmClient {
         // Connect to WebSocket
         let ws = WsConnect::new(ws_url);
         let provider = ProviderBuilder::new()
+            .with_recommended_fillers()
             .wallet(wallet.clone())
             .on_ws(ws)
             .await
@@ -461,6 +476,102 @@ impl EvmClient {
             mint_griefing_deposit: result.mintGriefingDeposit,
             active: result.active,
         })
+    }
+
+    /// Create a new LP vault
+    pub async fn create_vault(&self) -> Result<FixedBytes<32>> {
+        // First check if vault already exists
+        let contract = VaultManager::new(self.vault_manager, &self.provider);
+        
+        match contract.getVault(self.lp_vault_address).call().await {
+            Ok(vault) if vault.active => {
+                anyhow::bail!("Vault already exists for this address. Use './lp info' to view it.");
+            }
+            _ => {
+                // Vault doesn't exist or is inactive, proceed with creation
+            }
+        }
+        
+        // Check balance
+        let balance = self.provider.get_balance(self.lp_vault_address).await
+            .context("Failed to get account balance")?;
+        
+        if balance.is_zero() {
+            anyhow::bail!("Account has no xDAI balance. Please fund your address: {}", self.lp_vault_address);
+        }
+        
+        info!("Creating vault for address: {}", self.lp_vault_address);
+        info!("Account balance: {} xDAI", balance.to::<u128>() as f64 / 1e18);
+        
+        let tx_builder = contract.createVault()
+            .gas(500_000); // Set explicit gas limit
+        
+        // Send transaction with better error context
+        let pending_tx = tx_builder.send().await.map_err(|e| {
+            anyhow::anyhow!("Transaction failed: {}. This might be a network issue or the vault may already exist.", e)
+        })?;
+        
+        info!("Transaction sent, waiting for confirmation...");
+        
+        let receipt = pending_tx.get_receipt().await
+            .context("Failed to get transaction receipt")?;
+        
+        info!("Vault created! Transaction: {:?}", receipt.transaction_hash);
+        Ok(receipt.transaction_hash)
+    }
+
+    /// Deposit collateral into vault
+    pub async fn deposit_collateral(&self, amount_str: &str) -> Result<FixedBytes<32>> {
+        let contract = VaultManager::new(self.vault_manager, &self.provider);
+        
+        // Check if vault exists
+        match contract.getVault(self.lp_vault_address).call().await {
+            Ok(vault) if !vault.active => {
+                anyhow::bail!("Vault does not exist. Run './lp create-vault' first.");
+            }
+            Err(_) => {
+                anyhow::bail!("Vault does not exist. Run './lp create-vault' first.");
+            }
+            _ => {}
+        }
+        
+        // Parse amount (assuming it's in whole units, convert to wei/smallest unit)
+        let amount: f64 = amount_str.parse().context("Invalid amount format. Use a number like '100' or '100.5'")?;
+        if amount <= 0.0 {
+            anyhow::bail!("Amount must be greater than 0");
+        }
+        
+        let amount_wei = U256::from((amount * 1e18) as u128);
+        
+        // Check balance
+        let balance = self.provider.get_balance(self.lp_vault_address).await
+            .context("Failed to get account balance")?;
+        
+        if balance < amount_wei {
+            let balance_dai = balance.to::<u128>() as f64 / 1e18;
+            anyhow::bail!(
+                "Insufficient balance. You have {:.4} xDAI but trying to deposit {} xDAI",
+                balance_dai, amount
+            );
+        }
+        
+        info!("Depositing {} xDAI as collateral", amount);
+        info!("Account balance: {} xDAI", balance.to::<u128>() as f64 / 1e18);
+        
+        let pending_tx = contract.depositCollateral(amount_wei)
+            .value(amount_wei) // Send xDAI value
+            .gas(500_000) // Set explicit gas limit
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Transaction failed: {}. Check gas and balance.", e))?;
+        
+        info!("Transaction sent, waiting for confirmation...");
+        
+        let receipt = pending_tx.get_receipt().await
+            .context("Failed to get transaction receipt")?;
+        
+        info!("Collateral deposited! Transaction: {:?}", receipt.transaction_hash);
+        Ok(receipt.transaction_hash)
     }
 }
 
