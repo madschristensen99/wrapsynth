@@ -12,7 +12,7 @@ import {GnosisAddresses} from "./GnosisAddresses.sol";
 
 /**
  * @title wsXMRLiquidityRouter
- * @notice Co-LP matchmaking system for pairing LP-provided sDAI with user wsXMR
+ * @notice Co-LP matchmaking system for pairing LP vault collateral with user wsXMR
  * @dev Creates deep Uniswap V3 liquidity while maintaining protocol safety
  */
 contract wsXMRLiquidityRouter is ReentrancyGuard {
@@ -34,8 +34,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     wsXMR public immutable wsxmrToken;
     INonfungiblePositionManager public immutable positionManager;
     
-    // LP wallet deposits: sDAI deposited into the router for liquidity provision
-    mapping(address => uint256) public lpLiquidityAllocation; // sDAI shares allocated
+    // LP vault collateral reserved for liquidity provision
+    mapping(address => uint256) public lpLiquidityAllocation; // sDAI shares reserved from vault
     
     // User Deposits: wsXMR deposited by users for liquidity provision
     mapping(address => uint256) public userWsxmrDeposits;
@@ -91,6 +91,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     error InvalidAmount();
     error InsufficientBalance();
     error PositionNotFound();
+    error VaultNotActive();
 
     // ========== CONSTRUCTOR ==========
     
@@ -107,14 +108,18 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     // ========== LP FUNCTIONS ==========
     
     /**
-     * @notice LP deposits wallet-held sDAI for liquidity provision
-     * @param _sDAIAmount Amount of sDAI shares to allocate
+     * @notice LP reserves vault collateral for liquidity provision
+     * @param _sDAIAmount Amount of sDAI shares to reserve from vault
      */
     function allocateLiquidity(uint256 _sDAIAmount) external nonReentrant {
         if (_sDAIAmount == 0) revert InvalidAmount();
         
-        // Transfer wallet-held sDAI from LP to router
-        IERC20(GnosisAddresses.SDAI).safeTransferFrom(msg.sender, address(this), _sDAIAmount);
+        // Verify LP has an active vault
+        (, , , , , , , , , bool active) = vaultManager.vaults(msg.sender);
+        if (!active) revert VaultNotActive();
+        
+        // Reserve collateral from LP's vault (does not transfer, just reserves)
+        vaultManager.reserveCollateralForRouter(msg.sender, _sDAIAmount);
         
         lpLiquidityAllocation[msg.sender] += _sDAIAmount;
         
@@ -122,8 +127,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     }
     
     /**
-     * @notice LP deallocates sDAI from liquidity provision back to vault
-     * @param _sDAIAmount Amount of sDAI shares to deallocate
+     * @notice LP releases reserved collateral back to vault
+     * @param _sDAIAmount Amount of sDAI shares to release
      */
     function deallocateLiquidity(uint256 _sDAIAmount) external nonReentrant {
         if (_sDAIAmount == 0) revert InvalidAmount();
@@ -131,8 +136,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         
         lpLiquidityAllocation[msg.sender] -= _sDAIAmount;
         
-        // Transfer sDAI back to LP
-        IERC20(GnosisAddresses.SDAI).safeTransfer(msg.sender, _sDAIAmount);
+        // Release collateral back to LP's vault
+        vaultManager.releaseCollateralFromRouter(msg.sender, _sDAIAmount);
         
         emit LiquidityDeallocated(msg.sender, _sDAIAmount);
     }

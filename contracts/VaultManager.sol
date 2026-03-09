@@ -57,6 +57,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     // Pyth oracle
     IPyth public immutable pyth;
     
+    // Router address (authorized to reserve/release collateral)
+    address public router;
+    
     // Pyth price feed IDs
     bytes32 public constant XMR_USD_FEED_ID = 0x46b8cc9347f04391764a0361e0b17c3ba394b001e7c304f7650f6376e37c321d;
    
@@ -111,14 +114,13 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     struct Vault {
         address lpAddress;
         uint256 collateralAmount; // sDAI SHARES (not DAI value)
-        uint256 lockedCollateral; // Collateral reserved for pending burns (still liquidatable!)
-        uint256 normalizedDebt; // Normalized debt for O(1) proportional forgiveness (actualDebt = normalizedDebt * globalDebtIndex / 1e18)
-        uint256 pendingDebt; // Reserved capacity for pending mints (NOT Liquidatable)
-        uint16 maxMintBps; // LP config limits single mint size (e.g. 1000 = 10%)
-        uint256 mintGriefingDeposit; // ETH deposit required for mint requests (LP-configurable)
-        uint16 mintFeeBps; // Fee LP charges for minting (paid in wsXMR)
-        uint16 burnRewardBps; // Reward LP pays to incentivize burning (paid in Collateral)
-        uint256 liquidationNonce;
+        uint256 lockedCollateral; // Collateral locked for pending burns (still liquidatable)
+        uint256 routerReservedCollateral; // Collateral reserved by router for Uniswap V3 positions
+        uint256 normalizedDebt; // Normalized debt (actualDebt = normalizedDebt * globalDebtIndex / 1e18)
+        uint256 pendingDebt; // Reserved capacity for pending mints (not yet minted)
+        uint256 liquidationNonce; // Incremented on each liquidation to invalidate stale burn requests
+        uint16 mintFeeBps; // LP's mint fee in basis points (max 10%)
+        uint16 burnRewardBps; // LP's burn reward in basis points (max 10%)
         bool active;
     }
     
@@ -189,6 +191,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     event BadDebtWrittenOff(address indexed lpVault, uint256 debtAmount);
     event BuyAndBurnExecuted(uint256 sDAISpent, uint256 wsxmrBurned, uint256 debtForgiven, uint256 keeperReward, uint256 newGlobalDebtIndex);
     event BurnLiquidated(bytes32 indexed requestId, address indexed user, uint256 collateralPaid);
+    event RouterSet(address indexed router);
+    event RouterCollateralReserved(address indexed lpVault, uint256 amount);
+    event RouterCollateralReleased(address indexed lpVault, uint256 amount);
     
     event MintInitiated(
         bytes32 indexed requestId,
@@ -267,16 +272,89 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     error StalePrice();
     error InvalidAsset();
     error InsufficientDeposit();
+    error OnlyRouter();
     
     // ========== CONSTRUCTOR ==========
     
-    constructor(address _pythContract) {
-        if (_pythContract == address(0)) revert ZeroAddress();
-        
-        pyth = IPyth(_pythContract);
-        
-        // Deploys the wsXMR token immutably on initialization
+    constructor(address _pyth) {
+        pyth = IPyth(_pyth);
         wsxmrToken = new wsXMR();
+        
+        globalDebtIndex = 1e18;
+    }
+    
+    /**
+     * @notice Set the router address (one-time only)
+     * @param _router Address of the wsXMRLiquidityRouter contract
+     */
+    function setRouter(address _router) external {
+        if (msg.sender != address(this)) revert Unauthorized();
+        if (router != address(0)) revert Unauthorized();
+        router = _router;
+        emit RouterSet(_router);
+    }
+    
+    modifier onlyRouter() {
+        if (msg.sender != router) revert OnlyRouter();
+        _;
+    }
+    
+    // ========== ROUTER INTEGRATION ==========
+    
+    /**
+     * @notice Reserve collateral from LP vault for router liquidity provision
+     * @param _lpVault LP vault address
+     * @param _shares Amount of sDAI shares to reserve
+     */
+    function reserveCollateralForRouter(address _lpVault, uint256 _shares) external onlyRouter {
+        Vault storage vault = vaults[_lpVault];
+        if (!vault.active) revert VaultDoesNotExist();
+        
+        // Calculate available collateral (total - locked - already reserved)
+        uint256 availableCollateral = vault.collateralAmount;
+        if (availableCollateral < vault.lockedCollateral + vault.routerReservedCollateral) {
+            revert InsufficientCollateral();
+        }
+        availableCollateral = availableCollateral - vault.lockedCollateral - vault.routerReservedCollateral;
+        
+        if (_shares > availableCollateral) revert InsufficientCollateral();
+        
+        vault.routerReservedCollateral += _shares;
+        emit RouterCollateralReserved(_lpVault, _shares);
+    }
+    
+    /**
+     * @notice Release collateral back to LP vault from router
+     * @param _lpVault LP vault address
+     * @param _shares Amount of sDAI shares to release
+     */
+    function releaseCollateralFromRouter(address _lpVault, uint256 _shares) external onlyRouter {
+        Vault storage vault = vaults[_lpVault];
+        if (!vault.active) revert VaultDoesNotExist();
+        if (vault.routerReservedCollateral < _shares) revert InsufficientCollateral();
+        
+        vault.routerReservedCollateral -= _shares;
+        emit RouterCollateralReleased(_lpVault, _shares);
+    }
+    
+    /**
+     * @notice Credit sDAI settlement to account from router position closure
+     * @param _account Account to credit
+     * @param _shares Amount of sDAI shares
+     */
+    function creditRouterSettlementSDAI(address _account, uint256 _shares) external onlyRouter {
+        pendingReturns[_account][GnosisAddresses.SDAI] += _shares;
+        globalPendingSDAI += _shares;
+        emit ReturnQueued(_account, GnosisAddresses.SDAI, _shares);
+    }
+    
+    /**
+     * @notice Credit wsXMR settlement to account from router position closure
+     * @param _account Account to credit
+     * @param _amount Amount of wsXMR (8 decimals)
+     */
+    function creditRouterSettlementWsxmr(address _account, uint256 _amount) external onlyRouter {
+        wsxmrToken.mint(_account, _amount);
     }
     
     // ========== VAULT MANAGEMENT ==========
@@ -291,13 +369,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             lpAddress: msg.sender,
             collateralAmount: 0,
             lockedCollateral: 0,
+            routerReservedCollateral: 0,
             normalizedDebt: 0,
             pendingDebt: 0,
-            maxMintBps: 0, // LP can set this later via setMaxMintBps (0 = no limit)
-            mintGriefingDeposit: 0, // LP can set this later via setMintGriefingDeposit
+            liquidationNonce: 0,
             mintFeeBps: 0,
             burnRewardBps: 0,
-            liquidationNonce: 0,
             active: true
         });
         
@@ -375,8 +452,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // gets written after sync, undoing the yield harvest
         _syncVaultYield(msg.sender);
         
-        // Cannot withdraw collateral that's locked for pending burns
-        uint256 availableCollateral = vault.collateralAmount - vault.lockedCollateral;
+        // Cannot withdraw collateral that's locked for pending burns or reserved by router
+        uint256 reservedCollateral = vault.lockedCollateral + vault.routerReservedCollateral;
+        if (vault.collateralAmount < reservedCollateral) revert InsufficientCollateral();
+        uint256 availableCollateral = vault.collateralAmount - reservedCollateral;
         if (availableCollateral < _amount) revert InsufficientCollateral();
         
         // Check if withdrawal would make vault unhealthy
@@ -415,18 +494,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     }
     
     /**
-     * @notice LP sets griefing deposit required for mint requests
-     * @dev Higher deposits prevent spam but may reduce user demand
-     * @param _deposit ETH amount required (0 to disable)
-     */
-    function setMintGriefingDeposit(uint256 _deposit) external {
-        if (!vaults[msg.sender].active) revert VaultDoesNotExist();
-        
-        vaults[msg.sender].mintGriefingDeposit = _deposit;
-        emit MintGriefingDepositUpdated(msg.sender, _deposit);
-    }
-    
-    /**
      * @notice Allows LP to set Minting Fees and Burning Rewards to manage vault flow
      * @param _mintFeeBps Fee charged for minting (in basis points, max 1000 = 10%)
      * @param _burnRewardBps Reward paid for burning (in basis points, max 1000 = 10%)
@@ -440,16 +507,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         emit VaultMarketMetricsUpdated(msg.sender, _mintFeeBps, _burnRewardBps);
     }
     
-    /**
-     * @notice LP sets the maximum wsXMR they are willing to accept in a single mint request
-     * @param _maxMintBps Value in basis points (1000 = 10% of total collateral capacity)
-     */
-    function setMaxMintBps(uint16 _maxMintBps) external {
-        if (!vaults[msg.sender].active) revert VaultDoesNotExist();
-        if (_maxMintBps > BPS_DENOMINATOR) revert InvalidValue();
-        
-        vaults[msg.sender].maxMintBps = _maxMintBps;
-    }
     
     /**
      * @notice Allows users or LPs to withdraw their queued refunds/rewards
@@ -509,9 +566,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // XMR has 12 decimals, wsXMR has 8, so amounts < 1e4 would floor to 0
         if (_xmrAmount < 1e4) revert ZeroAmount();
         
-        // ANTI-SPAM: Require griefing deposit set by LP
         Vault storage vault = vaults[_lpVault];
-        if (msg.value < vault.mintGriefingDeposit) revert InsufficientDeposit();
         
         // Convert XMR amount to wsXMR amount (XMR has 12 decimals, wsXMR has 8)
         uint256 wsxmrAmount = _xmrAmount / 1e4;
@@ -519,30 +574,17 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // Calculate the LP's service fee in wsXMR
         uint256 feeAmount = (wsxmrAmount * vault.mintFeeBps) / BPS_DENOMINATOR;
         
-        // Enforce LP's chunk size limit (prevents single large mint from draining capacity)
-        if (vault.maxMintBps > 0) {
-            uint256 collateralPrice = getCollateralPrice();
-            uint256 collateralValueUsd = (vault.collateralAmount * collateralPrice) / 1e18; // sDAI has 18 decimals
-            uint256 maxTotalDebtCapacity = (collateralValueUsd * RATIO_PRECISION) / COLLATERAL_RATIO;
-            uint256 maxMintAllowed = (maxTotalDebtCapacity * vault.maxMintBps) / BPS_DENOMINATOR;
-            
-           
-            // wsxmrAmount is in 8 decimals, maxMintAllowed is in USD with 18 decimals
-            uint256 xmrPrice = getXmrPrice(); // Returns price in 18 decimals
-            uint256 wsxmrValueUsd = (wsxmrAmount * xmrPrice) / 1e8; // Convert to USD (18 decimals)
-            
-            if (wsxmrValueUsd > maxMintAllowed) revert InvalidValue();
-        }
         
         // Check capacity using Active + Pending Debt (prevents phantom debt DoS)
         uint256 actualDebt = getActualDebt(vault.normalizedDebt);
         uint256 totalProjectedDebt = actualDebt + vault.pendingDebt + wsxmrAmount;
         
        
-        // lockedCollateral is pledged to burn requests and cannot back new mints
+        // lockedCollateral and routerReservedCollateral cannot back new mints
         // Without this check, LP can double-count collateral to mint unbacked wsXMR
-        uint256 availableCollateral = vault.collateralAmount > vault.lockedCollateral 
-            ? vault.collateralAmount - vault.lockedCollateral 
+        uint256 reservedCollateral = vault.lockedCollateral + vault.routerReservedCollateral;
+        uint256 availableCollateral = vault.collateralAmount > reservedCollateral 
+            ? vault.collateralAmount - reservedCollateral 
             : 0;
         
         uint256 ratio = calculateCollateralRatio(
@@ -739,9 +781,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 actualDebt = getActualDebt(vault.normalizedDebt);
         if (actualDebt < _wsxmrAmount) revert InsufficientDebt();
         
-        // Calculate available (unlocked) collateral
-        uint256 availableCollateral = vault.collateralAmount > vault.lockedCollateral
-            ? vault.collateralAmount - vault.lockedCollateral
+        // Calculate available (unlocked and not router-reserved) collateral
+        uint256 reservedCollateral = vault.lockedCollateral + vault.routerReservedCollateral;
+        uint256 availableCollateral = vault.collateralAmount > reservedCollateral
+            ? vault.collateralAmount - reservedCollateral
             : 0;
         
         // Prevents users from burning to unhealthy vaults that may be liquidated
@@ -1085,9 +1128,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         }
         
         // Check if vault is underwater
-        // INVARIANT: Only unlocked collateral can be liquidated
-        uint256 availableCollateral = vault.collateralAmount > vault.lockedCollateral
-            ? vault.collateralAmount - vault.lockedCollateral
+        // INVARIANT: Only unlocked and non-router-reserved collateral can be liquidated
+        uint256 reservedCollateral = vault.lockedCollateral + vault.routerReservedCollateral;
+        uint256 availableCollateral = vault.collateralAmount > reservedCollateral
+            ? vault.collateralAmount - reservedCollateral
             : 0;
         
         uint256 ratio = calculateCollateralRatio(
@@ -1195,14 +1239,15 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
         uint256 solvencyCapShares;
         if (totalObligations == 0) {
-            if (vault.collateralAmount <= vault.lockedCollateral) return;
-            solvencyCapShares = vault.collateralAmount - vault.lockedCollateral;
+            uint256 reservedCollateral = vault.lockedCollateral + vault.routerReservedCollateral;
+            if (vault.collateralAmount <= reservedCollateral) return;
+            solvencyCapShares = vault.collateralAmount - reservedCollateral;
         } else {
             uint256 debtUsd = (totalObligations * getXmrPrice()) / 1e8;
             uint256 requiredAvailableCollateralUsd = (debtUsd * COLLATERAL_RATIO) / RATIO_PRECISION;
             uint256 requiredAvailableCollateralShares = usdToCollateral(requiredAvailableCollateralUsd);
             
-            uint256 minTotalSharesToKeep = vault.lockedCollateral + requiredAvailableCollateralShares;
+            uint256 minTotalSharesToKeep = vault.lockedCollateral + vault.routerReservedCollateral + requiredAvailableCollateralShares;
             
             if (vault.collateralAmount <= minTotalSharesToKeep) return;
             
@@ -1461,8 +1506,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         Vault memory vault = vaults[_lpAddress];
         if (!vault.active) revert VaultDoesNotExist();
         
-        uint256 availableCollateral = vault.collateralAmount > vault.lockedCollateral
-            ? vault.collateralAmount - vault.lockedCollateral
+        uint256 reservedCollateral = vault.lockedCollateral + vault.routerReservedCollateral;
+        uint256 availableCollateral = vault.collateralAmount > reservedCollateral
+            ? vault.collateralAmount - reservedCollateral
             : 0;
         
         return calculateCollateralRatio(
@@ -1479,8 +1525,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 actualDebt = getVaultDebt(_lpAddress);
         if (!vault.active || actualDebt == 0) return false;
         
-        uint256 availableCollateral = vault.collateralAmount > vault.lockedCollateral
-            ? vault.collateralAmount - vault.lockedCollateral
+        uint256 reservedCollateral = vault.lockedCollateral + vault.routerReservedCollateral;
+        uint256 availableCollateral = vault.collateralAmount > reservedCollateral
+            ? vault.collateralAmount - reservedCollateral
             : 0;
         
         uint256 ratio = calculateCollateralRatio(
@@ -1603,8 +1650,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
 
         uint256 actualDebt = getActualDebt(vault.normalizedDebt);
         uint256 totalObligations = actualDebt + vault.pendingDebt;
-        uint256 availableCollateral = vault.collateralAmount > vault.lockedCollateral 
-            ? vault.collateralAmount - vault.lockedCollateral 
+        uint256 reservedCollateral = vault.lockedCollateral + vault.routerReservedCollateral;
+        uint256 availableCollateral = vault.collateralAmount > reservedCollateral 
+            ? vault.collateralAmount - reservedCollateral 
             : 0;
 
         // Calculate maximum debt allowed for this available collateral
@@ -1619,12 +1667,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         if (maxTotalDebt <= totalObligations) return 0;
         
         uint256 capacity = maxTotalDebt - totalObligations;
-
-        // Apply the LP's maxMintBps single-mint constraint if set
-        if (vault.maxMintBps > 0) {
-            uint256 maxPerMint = (maxTotalDebt * vault.maxMintBps) / BPS_DENOMINATOR;
-            if (capacity > maxPerMint) capacity = maxPerMint;
-        }
 
         return capacity;
     }
