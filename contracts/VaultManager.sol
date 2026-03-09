@@ -729,10 +729,14 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 actualDebt = getActualDebt(vault.normalizedDebt);
         if (actualDebt < _wsxmrAmount) revert InsufficientDebt();
         
-       
+        // Calculate available (unlocked) collateral
+        uint256 availableCollateral = vault.collateralAmount > vault.lockedCollateral
+            ? vault.collateralAmount - vault.lockedCollateral
+            : 0;
+        
         // Prevents users from burning to unhealthy vaults that may be liquidated
         uint256 vaultHealthRatio = calculateCollateralRatio(
-            vault.collateralAmount,
+            availableCollateral,
             actualDebt
         );
         if (vaultHealthRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
@@ -748,7 +752,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 rewardCollateral = usdToCollateral(rewardUsd);
         
         // 2. Check available (unlocked) collateral for both base + reward
-        if (vault.collateralAmount < (collateralToLock + rewardCollateral)) revert InsufficientCollateral();
+        if (availableCollateral < (collateralToLock + rewardCollateral)) revert InsufficientCollateral();
         
         requestId = keccak256(abi.encodePacked(
             _user,
@@ -875,37 +879,29 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
         Vault storage vault = vaults[request.lpVault];
         
-        // Safely adjust vault locked collateral
+        // Enforce strict invariants
         uint256 totalUnlock = request.lockedCollateral + request.rewardCollateral;
-        if (vault.lockedCollateral >= totalUnlock) {
-            vault.lockedCollateral -= totalUnlock;
-        } else {
-            vault.lockedCollateral = 0; // Protection against liquidation underflows
+        if (vault.lockedCollateral < totalUnlock) revert InsufficientCollateral();
+        if (vault.collateralAmount < request.rewardCollateral) revert InsufficientCollateral();
+        
+        uint256 preRewardCollateral = vault.collateralAmount;
+        
+        // Unlock collateral and pay out reward
+        vault.lockedCollateral -= totalUnlock;
+        vault.collateralAmount -= request.rewardCollateral;
+        
+        // Reduce LP principal proportionally
+        if (lpPrincipalDeposits[vault.lpAddress] > 0 && request.rewardCollateral > 0) {
+            uint256 principalReduction = (lpPrincipalDeposits[vault.lpAddress] * request.rewardCollateral) / preRewardCollateral;
+            lpPrincipalDeposits[vault.lpAddress] -= principalReduction;
+            globalLpPrincipal -= principalReduction;
         }
         
-        // Process the burn reward to the User
+        // Queue sDAI reward to user
         if (request.rewardCollateral > 0) {
-           
-            // Prevents underflow trap where static reward exceeds remaining collateral
-            uint256 safeReward = request.rewardCollateral > vault.collateralAmount 
-                ? vault.collateralAmount 
-                : request.rewardCollateral;
-            
-            vault.collateralAmount -= safeReward;
-            
-           
-            if (lpPrincipalDeposits[vault.lpAddress] > 0) {
-                uint256 principalReduction = (lpPrincipalDeposits[vault.lpAddress] * safeReward) / 
-                    (vault.collateralAmount + safeReward);
-                lpPrincipalDeposits[vault.lpAddress] -= principalReduction;
-                globalLpPrincipal -= principalReduction;
-            }
-            
-           
-            // Queue sDAI rewards to prevent DoS
-            pendingReturns[request.user][GnosisAddresses.SDAI] += safeReward;
-            globalPendingSDAI += safeReward; // Track globally to prevent yield arbitrage
-            emit ReturnQueued(request.user, GnosisAddresses.SDAI, safeReward);
+            pendingReturns[request.user][GnosisAddresses.SDAI] += request.rewardCollateral;
+            globalPendingSDAI += request.rewardCollateral;
+            emit ReturnQueued(request.user, GnosisAddresses.SDAI, request.rewardCollateral);
         }
         
         request.status = BurnStatus.COMPLETED;
@@ -926,27 +922,28 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         Vault storage vault = vaults[request.lpVault];
         
         uint256 totalSeized = request.lockedCollateral + request.rewardCollateral;
+        if (vault.lockedCollateral < totalSeized) revert InsufficientCollateral();
+        if (vault.collateralAmount < totalSeized) revert InsufficientCollateral();
         
-       
-        // Just unlock it from the tracker (no need to deduct from collateralAmount)
-        uint256 actualSeized = totalSeized;
-        vault.lockedCollateral -= actualSeized;
+        uint256 preSeizeCollateral = vault.collateralAmount;
         
-       
+        // Reduce both locked and total collateral since tokens are leaving the contract
+        vault.lockedCollateral -= totalSeized;
+        vault.collateralAmount -= totalSeized;
+        
+        // Reduce LP principal proportionally
         if (lpPrincipalDeposits[vault.lpAddress] > 0) {
-            uint256 principalReduction = (lpPrincipalDeposits[vault.lpAddress] * actualSeized) / 
-                (vault.collateralAmount + actualSeized);
+            uint256 principalReduction = (lpPrincipalDeposits[vault.lpAddress] * totalSeized) / preSeizeCollateral;
             lpPrincipalDeposits[vault.lpAddress] -= principalReduction;
             globalLpPrincipal -= principalReduction;
         }
         
-        // Transfer collateral to user as penalty for LP failure
-       
-        IERC20(GnosisAddresses.SDAI).safeTransfer(request.user, actualSeized);
-        
         request.lockedCollateral = 0;
         request.rewardCollateral = 0;
         request.status = BurnStatus.SLASHED;
+        
+        // Transfer collateral to user as penalty for LP failure
+        IERC20(GnosisAddresses.SDAI).safeTransfer(request.user, totalSeized);
         
         emit BurnSlashed(_requestId, request.user, totalSeized);
     }
@@ -981,26 +978,21 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // PERMISSIONLESS: Once deadline expires, anyone can cleanup to unlock assets
         // This prevents DoS where user abandons request, locking LP's collateral
         
+        // Unlock collateral (only decrease lockedCollateral, don't touch collateralAmount)
+        // INVARIANT: locking only increased lockedCollateral, so unlocking only decreases it
+        uint256 totalUnlock = request.lockedCollateral + request.rewardCollateral;
+        if (vault.lockedCollateral < totalUnlock) revert InsufficientCollateral();
+        vault.lockedCollateral -= totalUnlock;
+        
         if (vaultWasLiquidated) {
             // Vault was liquidated - user gets wsXMR back, but we don't restore debt
-            // Locked collateral was already segregated, so it wasn't seized
-            // Return it to vault's liquidatable balance
-            uint256 totalUnlock = request.lockedCollateral + request.rewardCollateral;
-            vault.lockedCollateral -= totalUnlock;
-            vault.collateralAmount += totalUnlock;
             wsxmrToken.mint(request.user, request.wsxmrAmount);
             emit BadDebtWrittenOff(request.lpVault, request.wsxmrAmount);
         } else {
-            // Normal case - vault still active, restore debt and unlock collateral
-           
+            // Normal case - vault still active, restore debt and mint wsXMR back to user
             uint256 normalizedAmount = (request.wsxmrAmount * 1e18) / globalDebtIndex;
             vault.normalizedDebt += normalizedAmount;
             globalTotalDebt += request.wsxmrAmount;
-            
-            // Return locked collateral to liquidatable balance
-            uint256 totalUnlock = request.lockedCollateral + request.rewardCollateral;
-            vault.lockedCollateral -= totalUnlock;
-            vault.collateralAmount += totalUnlock;
             
             // Re-mint the wsXMR back to user
             wsxmrToken.mint(request.user, request.wsxmrAmount);
@@ -1030,7 +1022,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
         // Check if vault is underwater
         // INVARIANT: Only unlocked collateral can be liquidated
-        uint256 availableCollateral = vault.collateralAmount - vault.lockedCollateral;
+        uint256 availableCollateral = vault.collateralAmount > vault.lockedCollateral
+            ? vault.collateralAmount - vault.lockedCollateral
+            : 0;
+        
         uint256 ratio = calculateCollateralRatio(
             availableCollateral,
             actualDebt
@@ -1049,6 +1044,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             _debtToClear = (_debtToClear * availableCollateral) / collateralAmount;
             collateralAmount = availableCollateral;
         }
+        
+        // Prevent zero-effect liquidations from incrementing liquidationNonce
+        if (_debtToClear == 0 || collateralAmount == 0) revert InsufficientCollateral();
         
         // CHECKS-EFFECTS-INTERACTIONS: Update state before external calls
         // Deduct from vault (lockedCollateral is separate and untouchable)
@@ -1120,6 +1118,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         Vault storage vault = vaults[_lpAddress];
         if (vault.collateralAmount == 0) return;
         
+        // Never harvest if all collateral is locked
+        if (vault.collateralAmount <= vault.lockedCollateral) return;
+        
         // Get current exchange rate (DAI per sDAI share)
         uint256 currentRate = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(1e18);
         
@@ -1136,8 +1137,14 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             // Convert yield DAI back to sDAI shares to deduct
             uint256 vaultYieldShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(yieldDai);
             
-            // Safety check: don't deduct more than vault has
-            if (vaultYieldShares > 0 && vaultYieldShares < vault.collateralAmount) {
+            // Cap harvest to available (unlocked) collateral
+            uint256 maxHarvestShares = vault.collateralAmount - vault.lockedCollateral;
+            if (vaultYieldShares > maxHarvestShares) {
+                vaultYieldShares = maxHarvestShares;
+            }
+            
+            // Harvest yield if any
+            if (vaultYieldShares > 0) {
                 vault.collateralAmount -= vaultYieldShares;
                 yieldWarChest += vaultYieldShares;
                 
@@ -1389,8 +1396,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         Vault memory vault = vaults[_lpAddress];
         if (!vault.active) revert VaultDoesNotExist();
         
+        uint256 availableCollateral = vault.collateralAmount > vault.lockedCollateral
+            ? vault.collateralAmount - vault.lockedCollateral
+            : 0;
+        
         return calculateCollateralRatio(
-            vault.collateralAmount,
+            availableCollateral,
             getVaultDebt(_lpAddress)
         );
     }
@@ -1403,8 +1414,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 actualDebt = getVaultDebt(_lpAddress);
         if (!vault.active || actualDebt == 0) return false;
         
+        uint256 availableCollateral = vault.collateralAmount > vault.lockedCollateral
+            ? vault.collateralAmount - vault.lockedCollateral
+            : 0;
+        
         uint256 ratio = calculateCollateralRatio(
-            vault.collateralAmount,
+            availableCollateral,
             actualDebt
         );
         return ratio < LIQUIDATION_RATIO;
