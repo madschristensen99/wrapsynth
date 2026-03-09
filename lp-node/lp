@@ -1,0 +1,13 @@
+#!/bin/bash
+# WrapSynth LP Node CLI wrapper
+
+cd "$(dirname "$0")"
+
+# Check if binary exists
+if [ ! -f "target/release/wrapsynth-lp-node" ]; then
+    echo "Binary not found. Building..."
+    cargo build --release
+fi
+
+# Run the CLI
+./target/release/wrapsynth-lp-node "$@"

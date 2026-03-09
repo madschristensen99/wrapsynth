@@ -2,6 +2,87 @@
 
 A highly concurrent, crash-safe Liquidity Provider (LP) Node for facilitating cross-chain atomic swaps between EVM networks and Monero (XMR).
 
+## 🚀 Quick Start
+
+### 1. Install Dependencies
+
+```bash
+cd lp-node
+cargo build --release
+```
+
+### 2. Configure Your LP Node
+
+The LP node uses `config.toml` for network/contract addresses and `.env` for sensitive data.
+
+**Deployed Contracts (Gnosis Chain):**
+- VaultManager: `0xc5AF5A978ba0E33c29984Aa46f939a7Ff164A851`
+- wsXMR Token: `0x46520da3212dA53A8e981641f82C261b36C78dDd`
+- Liquidity Router: `0x5F824724cF668B0662Df4789F1Ce19De9281d415`
+
+**Setup using the script:**
+```bash
+./setup.sh
+```
+
+**Or manually create `.env`:**
+```bash
+cp .env.example .env
+# Edit .env and add:
+# - PRIVATE_KEY (your LP account private key)
+# - LP_VAULT_ADDRESS (your address derived from the private key)
+```
+
+### 3. Start Monero Wallet RPC
+
+```bash
+monero-wallet-rpc \
+  --rpc-bind-port 18082 \
+  --wallet-file /path/to/wallet \
+  --password "your-password" \
+  --disable-rpc-login \
+  --daemon-address node.moneroworld.com:18089
+```
+
+### 4. Run the LP Node
+
+```bash
+# Start the server
+cargo run --release start
+
+# Or use the wrapper script
+./lp start
+```
+
+The node will:
+- Connect to Gnosis Chain via WebSocket
+- Listen for mint/burn events on your vault
+- Automatically process atomic swaps
+- Monitor your vault's collateralization ratio
+
+### CLI Commands
+
+```bash
+# Show vault info (collateral, debt, health ratio)
+./lp info
+
+# Check vault health status
+./lp health
+
+# Show pending mint/burn requests
+./lp pending
+
+# Show swap history (last 10 by default)
+./lp history
+./lp history --limit 20
+
+# Show database statistics
+./lp db-stats
+
+# Start the LP server
+./lp start
+```
+
 ## Features
 
 - **Crash-Safe**: All critical state is persisted to an embedded `sled` database before broadcasting transactions
@@ -73,31 +154,55 @@ cargo build --release
 
 ## Configuration
 
-Create a `.env` file or set environment variables:
+The LP node uses a two-tier configuration system:
+
+### 1. `config.toml` - Network & Contract Addresses
+
+Contract addresses and network settings are stored in `config.toml`. This file is **committed to git** and contains the deployed contract addresses:
+
+```toml
+[gnosis]
+chain_id = 100
+name = "Gnosis Chain"
+ws_url = "wss://rpc.gnosischain.com/wss"
+vault_manager = "0xc5AF5A978ba0E33c29984Aa46f939a7Ff164A851"
+wsxmr_token = "0x46520da3212dA53A8e981641f82C261b36C78dDd"
+pyth_oracle = "0x2880aB155794e7179c9eE2e38200202908C17B43"
+pyth_hermes_url = "https://hermes.pyth.network"
+
+[monero]
+rpc_url = "http://127.0.0.1:18082/json_rpc"
+network = "mainnet"
+
+[lp_node]
+db_path = "./lp-node-db"
+log_level = "info"
+```
+
+### 2. `.env` - Sensitive Data Only
+
+Private keys and account-specific data go in `.env` (gitignored):
 
 ```bash
 # Required
-EVM_WS_URL=wss://rpc.gnosischain.com/wss
-PRIVATE_KEY=0x1234...  # Your LP private key (keep secure!)
-VAULT_MANAGER_ADDRESS=0x...  # VaultManager contract address
-LP_VAULT_ADDRESS=0x...  # Your LP vault address (same as derived from PRIVATE_KEY)
+PRIVATE_KEY=0x1234...  # Your LP private key (KEEP SECURE!)
+LP_VAULT_ADDRESS=0x...  # Your vault address
 
 # Optional
-DB_PATH=./lp-node-db  # Database path (default: ./lp-node-db)
-MONERO_RPC_URL=http://127.0.0.1:18082/json_rpc  # Monero wallet RPC
-PYTH_HERMES_URL=https://hermes.pyth.network  # Pyth price feed API
+NETWORK=gnosis  # Which network config to use (default: gnosis)
+DB_PATH=./lp-node-db  # Override config.toml value
+MONERO_RPC_URL=http://127.0.0.1:18082/json_rpc  # Override config.toml
 ```
 
-### Gnosis Mainnet Example
+### Environment Variables
 
-```bash
-EVM_WS_URL=wss://rpc.gnosischain.com/wss
-PRIVATE_KEY=0xYOUR_PRIVATE_KEY_HERE
-VAULT_MANAGER_ADDRESS=0xYOUR_DEPLOYED_VAULT_MANAGER
-LP_VAULT_ADDRESS=0xYOUR_LP_ADDRESS
-MONERO_RPC_URL=http://127.0.0.1:18082/json_rpc
-PYTH_HERMES_URL=https://hermes.pyth.network
-```
+- `NETWORK`: Choose which network config to use (`gnosis` or `unichain`)
+- `CONFIG_PATH`: Path to config file (default: `config.toml`)
+- `PRIVATE_KEY`: **Required** - Your LP account private key
+- `LP_VAULT_ADDRESS`: **Required** - Your vault address
+- `DB_PATH`: Override database path from config.toml
+- `MONERO_RPC_URL`: Override Monero RPC URL from config.toml
+- `RUST_LOG`: Logging level (error, warn, info, debug, trace)
 
 ## Running
 

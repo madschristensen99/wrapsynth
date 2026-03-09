@@ -1,0 +1,52 @@
+# WrapSynth LP Node Configuration
+# Network and contract addresses
+
+[gnosis]
+chain_id = 100
+name = "Gnosis Chain"
+rpc_url = "https://rpc.gnosischain.com"
+ws_url = "wss://rpc.gnosischain.com/wss"
+explorer = "https://gnosisscan.io"
+
+# Deployed contract addresses
+vault_manager = "0xc5AF5A978ba0E33c29984Aa46f939a7Ff164A851"
+wsxmr_token = "0x46520da3212dA53A8e981641f82C261b36C78dDd"
+liquidity_router = "0x5F824724cF668B0662Df4789F1Ce19De9281d415"
+
+# Oracle configuration
+pyth_oracle = "0x2880aB155794e7179c9eE2e38200202908C17B43"
+pyth_hermes_url = "https://hermes.pyth.network"
+
+# Collateral token (sDAI on Gnosis)
+collateral_token = "0xaf204776c7245bF4147c2612BF6e5972Ee483701"
+
+[unichain_testnet]
+chain_id = 1301
+name = "Unichain Sepolia Testnet"
+rpc_url = "https://sepolia.unichain.org"
+ws_url = "wss://sepolia.unichain.org/ws"
+explorer = "https://sepolia.uniscan.xyz"
+
+# Add your Unichain testnet addresses here when deployed
+# vault_manager = ""
+# wsxmr_token = ""
+
+[monero]
+# Monero wallet RPC configuration
+rpc_url = "http://127.0.0.1:18082/json_rpc"
+network = "mainnet"  # or "stagenet" for testing
+
+[lp_node]
+# Database path
+db_path = "./lp-node-db"
+
+# Logging level (error, warn, info, debug, trace)
+log_level = "info"
+
+# Health check interval (seconds)
+health_check_interval = 300
+
+# Collateral ratio targets
+min_collateral_ratio = 150  # 150%
+liquidation_threshold = 120  # 120%
+target_collateral_ratio = 180  # 180% (safety buffer)

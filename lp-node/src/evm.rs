@@ -441,6 +441,27 @@ impl EvmClient {
             .await
             .context("Failed to get block number")
     }
+
+    /// Get vault information for the LP
+    pub async fn get_vault_info(&self) -> Result<VaultInfo> {
+        let contract = VaultManager::new(self.vault_manager, &self.provider);
+        
+        let result = contract
+            .getVault(self.lp_vault_address)
+            .call()
+            .await
+            .context("Failed to call getVault")?;
+
+        Ok(VaultInfo {
+            lp_address: result.lpAddress,
+            collateral_asset: result.collateralAsset,
+            collateral_amount: result.collateralAmount,
+            locked_collateral: result.lockedCollateral,
+            debt_amount: result.debtAmount,
+            mint_griefing_deposit: result.mintGriefingDeposit,
+            active: result.active,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
