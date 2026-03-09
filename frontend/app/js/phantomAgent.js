@@ -88,84 +88,108 @@ class PhantomAgent {
     }
 
     /**
-     * Initialize Monero WASM wallet from secret
+     * Initialize Monero wallet from secret using monero-javascript
      */
     async initializeMoneroWallet() {
-        // TODO: Integrate actual monerolib-wasm
-        // For now, we'll create a mock implementation
-        
         console.log('Initializing Monero wallet from seed...');
         
-        // In production, this would be:
-        // const MoneroLib = await import('monerolib-wasm');
-        // this.moneroWallet = await MoneroLib.createWalletFromSeed(this.secret);
+        // Import monero-javascript dynamically
+        const monerojs = await import('https://cdn.jsdelivr.net/npm/monero-javascript@0.8.4/+esm');
         
-        // Mock implementation
+        // Convert secret (32-byte hex) to mnemonic seed
+        // Monero uses 25-word mnemonic, we'll derive it from our secret
+        const secretBytes = hexToBytes(this.secret);
+        
+        // Create wallet from private keys derived from secret
+        // For browser-based wallet, we use MoneroWalletKeys (view-only capabilities)
+        const wallet = await monerojs.createWalletKeys({
+            privateSpendKey: this.secret.slice(2), // Remove 0x prefix
+            networkType: 'stagenet', // Use stagenet for testing, mainnet for production
+            language: 'English'
+        });
+        
+        const primaryAddress = await wallet.getPrimaryAddress();
+        console.log('Monero wallet initialized:', primaryAddress);
+        
+        // Import Monero RPC client
+        const { getMoneroRpc } = await import('./moneroRpc.js');
+        const rpc = getMoneroRpc();
+        
+        // Store wallet instance with helper methods
         this.moneroWallet = {
-            seed: this.secret,
-            primaryAddress: this.generateMockMoneroAddress(),
-            balance: 0n,
+            wallet: wallet,
+            primaryAddress: primaryAddress,
+            rpc: rpc,
             
             async getBalance() {
-                // In production: return actual balance from Monero network
-                return this.balance;
+                // Browser can check balance via RPC daemon
+                // Note: This requires the daemon to have the wallet's view key
+                // For privacy, users should run their own node or use trusted node
+                try {
+                    // This is a placeholder - actual balance checking requires wallet RPC
+                    // with view key to scan outputs
+                    console.warn('Balance checking requires wallet RPC with view key');
+                    console.warn('For production, users should connect to their own Monero node');
+                    return 0n;
+                } catch (error) {
+                    console.error('Error checking balance:', error);
+                    return 0n;
+                }
             },
             
             async sendTransaction(destination, amount) {
-                // In production: create and broadcast Monero transaction
-                console.log(`Mock: Sending ${amount} XMR to ${destination}`);
-                return {
-                    txHash: '0x' + Array(64).fill(0).map(() => 
-                        Math.floor(Math.random() * 16).toString(16)
-                    ).join(''),
-                    success: true
-                };
+                // Transaction sending requires full wallet with spend key
+                // This should be done by LP server, not browser
+                console.error('Transaction sending must be done by LP server with full wallet');
+                throw new Error('Browser cannot send transactions - LP server handles this');
             },
             
-            async scanForPTLC(secretHash) {
-                // In production: scan Monero chain for PTLC with matching hash
-                console.log(`Mock: Scanning for PTLC with hash ${secretHash}`);
-                return null;
+            async scanForDeposit(expectedAmount, startHeight) {
+                // Scan for incoming transaction to this wallet's address
+                try {
+                    return await rpc.scanForDeposit(primaryAddress, expectedAmount, startHeight);
+                } catch (error) {
+                    console.error('Deposit scanning error:', error);
+                    console.warn('Deposit scanning requires LP server with wallet RPC');
+                    throw error;
+                }
             },
             
-            async claimPTLC(ptlc, secret) {
-                // In production: claim PTLC using secret
-                console.log(`Mock: Claiming PTLC with secret`);
-                return {
-                    txHash: '0x' + Array(64).fill(0).map(() => 
-                        Math.floor(Math.random() * 16).toString(16)
-                    ).join(''),
-                    success: true
-                };
+            async scanForPTLC(secretHash, startHeight) {
+                // Scan for PTLC transaction with matching secretHash
+                try {
+                    return await rpc.scanForPTLC(secretHash, startHeight);
+                } catch (error) {
+                    console.error('PTLC scanning error:', error);
+                    console.warn('PTLC scanning requires LP server with wallet RPC');
+                    throw error;
+                }
+            },
+            
+            async claimPTLC(ptlcTxHash, secret) {
+                // Claim PTLC by revealing secret
+                // This requires building and signing a transaction
+                try {
+                    return await rpc.claimPTLC(ptlcTxHash, secret);
+                } catch (error) {
+                    console.error('PTLC claiming error:', error);
+                    console.warn('PTLC claiming requires LP server with full wallet');
+                    throw error;
+                }
+            },
+            
+            async getPrivateSpendKey() {
+                return await wallet.getPrivateSpendKey();
+            },
+            
+            async getPrivateViewKey() {
+                return await wallet.getPrivateViewKey();
+            },
+            
+            async getHeight() {
+                return await rpc.getHeight();
             }
         };
-        
-        console.log('Monero wallet initialized:', this.moneroWallet.primaryAddress);
-    }
-
-    /**
-     * Generate mock Monero address from secret
-     * In production, this would be derived from the actual WASM library
-     */
-    generateMockMoneroAddress() {
-        // Monero addresses start with '4' for mainnet
-        const secretBytes = hexToBytes(this.secret);
-        const addressBytes = new Uint8Array(95); // Standard Monero address length
-        addressBytes[0] = 52; // '4' in ASCII
-        
-        // Fill with deterministic data from secret
-        for (let i = 1; i < 95; i++) {
-            addressBytes[i] = secretBytes[i % 32] ^ (i * 7);
-        }
-        
-        // Convert to base58-like string (simplified)
-        const base58Chars = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-        let address = '4';
-        for (let i = 1; i < 95; i++) {
-            address += base58Chars[addressBytes[i] % base58Chars.length];
-        }
-        
-        return address;
     }
 
     /**
