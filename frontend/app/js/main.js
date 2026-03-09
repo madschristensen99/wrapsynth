@@ -205,9 +205,30 @@ async function handleAccountChange(newAddress) {
 /**
  * Handle chain change
  */
-function handleChainChange(chainId) {
+async function handleChainChange(chainId) {
     console.log('Chain changed to:', chainId);
-    // Page will reload automatically
+    
+    // Reinitialize clients with new chain
+    try {
+        await initializeClients();
+        
+        // If user was connected, reconnect
+        const currentAddress = getUserAddress();
+        if (currentAddress) {
+            const address = await connectWallet();
+            let balance = 0n;
+            try {
+                balance = await getWsXmrBalance(address);
+            } catch (error) {
+                console.warn('Could not fetch balance:', error.message);
+            }
+            showWalletConnected(address, balance);
+            await loadVaults();
+        }
+    } catch (error) {
+        console.error('Error handling chain change:', error);
+        showError('Network Error', 'Failed to switch network. Please try reconnecting your wallet.');
+    }
 }
 
 /**
