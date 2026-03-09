@@ -111,15 +111,20 @@ async fn main() -> Result<()> {
             info!("EVM client initialized");
 
             // Initialize Monero client
-            let monero = Arc::new(monero::MoneroClient::new(config.monero_config.rpc_url.clone()));
+            let monero = Arc::new(
+                monero::MoneroClient::new(
+                    config.monero_config.daemon_url.clone(),
+                    config.monero_private_key.clone(),
+                )
+                .context("Failed to initialize Monero client")?
+            );
             info!("Monero client initialized");
 
-            // Test Monero connection
-            match monero.get_address().await {
+            // Display Monero address
+            match monero.get_address() {
                 Ok(address) => info!("Monero wallet address: {}", address),
                 Err(e) => {
-                    tracing::warn!("Failed to connect to Monero wallet: {}", e);
-                    tracing::warn!("Make sure monero-wallet-rpc is running");
+                    tracing::warn!("Failed to get Monero address: {}", e);
                 }
             }
 
@@ -184,7 +189,7 @@ struct NetworkConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 struct MoneroConfig {
-    rpc_url: String,
+    daemon_url: String,
     network: String,
 }
 
@@ -201,6 +206,7 @@ struct Config {
     db_path: String,
     private_key: String,
     lp_vault_address: Address,
+    monero_private_key: String,
 }
 
 impl Config {
@@ -229,11 +235,13 @@ impl Config {
             .context("LP_VAULT_ADDRESS environment variable not set")?
             .parse()
             .context("Invalid LP_VAULT_ADDRESS")?;
+        let monero_private_key = env::var("MONERO_PRIVATE_KEY")
+            .context("MONERO_PRIVATE_KEY environment variable not set")?;
 
         // Allow overriding config file values with environment variables
         let monero_config = MoneroConfig {
-            rpc_url: env::var("MONERO_RPC_URL")
-                .unwrap_or(config_file.monero.rpc_url),
+            daemon_url: env::var("MONERO_DAEMON_URL")
+                .unwrap_or(config_file.monero.daemon_url),
             network: config_file.monero.network,
         };
 
@@ -246,6 +254,7 @@ impl Config {
             db_path,
             private_key,
             lp_vault_address,
+            monero_private_key,
         })
     }
 
@@ -259,8 +268,12 @@ impl Config {
             anyhow::bail!("WebSocket URL must start with ws:// or wss://");
         }
 
-        if !self.monero_config.rpc_url.starts_with("http://") && !self.monero_config.rpc_url.starts_with("https://") {
-            anyhow::bail!("MONERO_RPC_URL must start with http:// or https://");
+        if !self.monero_config.daemon_url.starts_with("http://") && !self.monero_config.daemon_url.starts_with("https://") {
+            anyhow::bail!("MONERO_DAEMON_URL must start with http:// or https://");
+        }
+
+        if self.monero_private_key.is_empty() {
+            anyhow::bail!("MONERO_PRIVATE_KEY cannot be empty");
         }
 
         Ok(())

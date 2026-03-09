@@ -16,8 +16,11 @@ alloy-sol-types = "0.8"
 # Database
 sled = "0.34"
 
-# HTTP client for Monero RPC
+# HTTP client
 reqwest = { version = "0.12", features = ["json"] }
+
+# Monero library
+monero = "0.20"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
