@@ -649,7 +649,7 @@ impl EvmClient {
     }
 
     /// Withdraw collateral from vault
-    pub async fn withdraw_collateral(&self, amount_str: &str) -> Result<FixedBytes<32>> {
+    pub async fn withdraw_collateral(&self, amount_str: &str, unwrap_to_native: bool) -> Result<FixedBytes<32>> {
         let contract = VaultManager::new(self.vault_manager, &self.provider);
         
         // Check if vault exists
@@ -691,6 +691,32 @@ impl EvmClient {
             .context("Failed to get transaction receipt")?;
         
         info!("Collateral withdrawn! Transaction: {:?}", receipt.transaction_hash);
+        
+        // Optionally unwrap wxDAI to native xDAI
+        if unwrap_to_native {
+            info!("Unwrapping wxDAI to native xDAI...");
+            let wxdai_address = Address::from([0xe9, 0x1D, 0x15, 0x3E, 0x0b, 0x41, 0x51, 0x8A, 0x2C, 0xe8, 0xDd, 0x3D, 0x79, 0x44, 0xFa, 0x86, 0x34, 0x63, 0xa9, 0x7d]);
+            let wxdai = ERC20::new(wxdai_address, &self.provider);
+            
+            // Check wxDAI balance to unwrap
+            let wxdai_balance = wxdai.balanceOf(self.lp_vault_address).call().await
+                .context("Failed to check wxDAI balance")?._0;
+            
+            if wxdai_balance > U256::ZERO {
+                let weth = WETH9::new(wxdai_address, &self.provider);
+                let unwrap_tx = weth.withdraw(wxdai_balance)
+                    .gas(100_000)
+                    .send()
+                    .await
+                    .context("Failed to unwrap wxDAI")?;
+                
+                let unwrap_receipt = unwrap_tx.get_receipt().await
+                    .context("Failed to get unwrap receipt")?;
+                
+                info!("Unwrapped wxDAI to native xDAI: {:?}", unwrap_receipt.transaction_hash);
+            }
+        }
+        
         Ok(receipt.transaction_hash)
     }
 }

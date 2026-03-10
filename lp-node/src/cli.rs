@@ -175,7 +175,7 @@ impl LpCli {
     }
 
     /// Withdraw collateral from vault
-    pub async fn withdraw_collateral(&self, amount: &str) -> Result<()> {
+    pub async fn withdraw_collateral(&self, amount: &str, unwrap: bool) -> Result<()> {
         info!("Withdrawing collateral: {}", amount);
         
         println!("\n╔════════════════════════════════════════════════════════════╗");
@@ -183,7 +183,7 @@ impl LpCli {
         println!("╠════════════════════════════════════════════════════════════╣");
         println!("║                                                            ║");
         
-        match self.evm.withdraw_collateral(amount).await {
+        match self.evm.withdraw_collateral(amount, unwrap).await {
             Ok(tx_hash) => {
                 println!("║ ✅ Collateral withdrawn successfully!                     ║");
                 println!("║                                                            ║");
