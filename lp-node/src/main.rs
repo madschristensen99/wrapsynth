@@ -40,6 +40,9 @@ enum Commands {
         /// Amount of collateral to withdraw (in sDAI)
         #[arg(short, long)]
         amount: String,
+        /// Unwrap wxDAI to native xDAI after withdrawal
+        #[arg(long, default_value_t = false)]
+        unwrap: bool,
     },
     /// Show vault information
     Info,
@@ -103,9 +106,9 @@ async fn main() -> Result<()> {
             let cli_handler = cli::LpCli::new(evm);
             cli_handler.deposit_collateral(&amount).await?;
         }
-        Some(Commands::WithdrawCollateral { amount }) => {
+        Some(Commands::WithdrawCollateral { amount, unwrap }) => {
             let cli_handler = cli::LpCli::new(evm);
-            cli_handler.withdraw_collateral(&amount).await?;
+            cli_handler.withdraw_collateral(&amount, unwrap).await?;
         }
         Some(Commands::Info) => {
             let cli_handler = cli::LpCli::new(evm);
