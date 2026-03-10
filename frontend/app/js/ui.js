@@ -223,6 +223,34 @@ export function populateVaults(vaults) {
     
     elements.mintVaultSelect.innerHTML = mintOptions;
     elements.burnVaultSelect.innerHTML = burnOptions;
+    
+    // Also populate the Active LP Vaults display
+    const vaultsList = document.getElementById('vaults-list');
+    if (vaultsList) {
+        if (vaults.length === 0) {
+            vaultsList.innerHTML = '<div class="no-data">No active LP vaults found</div>';
+        } else {
+            const vaultsHtml = vaults.map(v => {
+                const shortAddr = `${v.address.slice(0, 6)}...${v.address.slice(-4)}`;
+                const collateralAmount = v.collateral ? formatBalance(v.collateral, 18) : '0';
+                const debtAmount = v.debt ? formatBalance(v.debt, 8) : '0';
+                
+                return `
+                <div class="vault-item">
+                    <div class="vault-header">
+                        <strong>LP Vault ${shortAddr}</strong>
+                        <span class="vault-collateral">${collateralAmount} sDAI</span>
+                    </div>
+                    ${v.collateral ? `<div class="vault-stats">
+                        <span>💰 Collateral: ${collateralAmount} sDAI</span>
+                        <span>📊 Debt: ${debtAmount} wsXMR</span>
+                    </div>` : ''}
+                </div>
+            `;
+            }).join('');
+            vaultsList.innerHTML = vaultsHtml;
+        }
+    }
 }
 
 /**

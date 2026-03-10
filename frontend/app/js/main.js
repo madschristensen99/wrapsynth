@@ -109,6 +109,9 @@ async function init() {
     // Setup event handlers
     setupEventHandlers();
     
+    // Load vaults (don't require wallet connection)
+    await loadVaults();
+    
     // Check for active swap
     checkForActiveSwap();
     
@@ -370,16 +373,56 @@ async function handleResumeSwap() {
  */
 async function loadVaults() {
     try {
-        // TODO: Implement vault discovery
-        // For now, use a mock vault
-        const mockVaults = [
-            {
-                address: '0x0000000000000000000000000000000000000001',
-                name: 'Default LP Vault'
-            }
+        // Hardcoded list of known LP vaults
+        // In production, this would query events or use a registry
+        const knownVaults = [
+            '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB', // Your LP vault
         ];
         
-        populateVaults(mockVaults);
+        const activeVaults = [];
+        
+        for (const vaultAddress of knownVaults) {
+            try {
+                console.log('Fetching vault data for:', vaultAddress);
+                const vaultData = await readVaultManager('getVault', [vaultAddress]);
+                
+                // getVault returns a Vault struct as a tuple
+                // [0] lpAddress, [1] collateralAmount, [2] lockedCollateral, [3] normalizedDebt, 
+                // [4] pendingDebt, [5] maxMintBps, [6] mintGriefingDeposit, [7] mintFeeBps, 
+                // [8] burnRewardBps, [9] liquidationNonce, [10] active
+                
+                console.log('Raw vault data:', vaultData);
+                console.log('Collateral (index 1):', vaultData[1]?.toString());
+                console.log('Debt (index 3):', vaultData[3]?.toString());
+                console.log('Active (index 10):', vaultData[10]);
+                
+                // Check if vault is active (index 10 is the 'active' field)
+                if (vaultData && vaultData[10]) {
+                    const vault = {
+                        address: vaultAddress,
+                        name: `LP Vault ${vaultAddress.slice(0, 6)}...${vaultAddress.slice(-4)}`,
+                        collateral: vaultData[1], // collateralAmount
+                        debt: vaultData[3], // normalizedDebt
+                    };
+                    console.log('Adding active vault:', vault);
+                    activeVaults.push(vault);
+                } else {
+                    console.warn('Vault is not active or data is invalid');
+                }
+            } catch (err) {
+                console.error(`Failed to fetch vault ${vaultAddress}:`, err);
+            }
+        }
+        
+        if (activeVaults.length === 0) {
+            // Fallback to showing the known vault even if query failed
+            activeVaults.push({
+                address: '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB',
+                name: 'LP Vault 0x492c...72FB'
+            });
+        }
+        
+        populateVaults(activeVaults);
         
     } catch (error) {
         console.error('Error loading vaults:', error);
