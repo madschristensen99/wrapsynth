@@ -24,7 +24,7 @@ impl LpCli {
         println!("║                    VAULT INFORMATION                       ║");
         println!("╠════════════════════════════════════════════════════════════╣");
         println!("║ Collateral Amount:  {:>38} ║", format_u256(vault.collateral_amount));
-        println!("║ Debt Amount:        {:>38} ║", format_u256(vault.debt_amount));
+        println!("║ Normalized Debt:    {:>38} ║", format_u256(vault.normalized_debt));
         println!("║ Health Ratio:       {:>38} ║", calculate_health_ratio(&vault));
         println!("╚════════════════════════════════════════════════════════════╝\n");
         
@@ -42,7 +42,7 @@ impl LpCli {
         println!("║                     HEALTH CHECK                           ║");
         println!("╠════════════════════════════════════════════════════════════╣");
         
-        if vault.debt_amount.is_zero() {
+        if vault.normalized_debt.is_zero() {
             println!("║ Status:             {:>38} ║", "NO DEBT");
             println!("║ Collateral Ratio:   {:>38} ║", "N/A");
         } else {
@@ -173,6 +173,39 @@ impl LpCli {
         
         Ok(())
     }
+
+    /// Withdraw collateral from vault
+    pub async fn withdraw_collateral(&self, amount: &str) -> Result<()> {
+        info!("Withdrawing collateral: {}", amount);
+        
+        println!("\n╔════════════════════════════════════════════════════════════╗");
+        println!("║                 WITHDRAW COLLATERAL                        ║");
+        println!("╠════════════════════════════════════════════════════════════╣");
+        println!("║                                                            ║");
+        
+        match self.evm.withdraw_collateral(amount).await {
+            Ok(tx_hash) => {
+                println!("║ ✅ Collateral withdrawn successfully!                     ║");
+                println!("║                                                            ║");
+                println!("║ Amount: {:<50} ║", amount);
+                println!("║ Transaction: {:<42} ║", format!("{:?}", tx_hash));
+                println!("║                                                            ║");
+                println!("║ Check your vault status with:                             ║");
+                println!("║   ./lp info    - View vault details                       ║");
+            }
+            Err(e) => {
+                println!("║ ❌ Failed to withdraw collateral                           ║");
+                println!("╚════════════════════════════════════════════════════════════╝");
+                println!("\nFull error:");
+                println!("{:#}", e);
+                return Ok(());
+            }
+        }
+        
+        println!("╚════════════════════════════════════════════════════════════╝\n");
+        
+        Ok(())
+    }
 }
 
 fn format_u256(value: U256) -> String {
@@ -191,18 +224,18 @@ fn format_u256(value: U256) -> String {
 }
 
 fn calculate_ratio(vault: &crate::evm::VaultInfo) -> f64 {
-    if vault.debt_amount.is_zero() {
+    if vault.normalized_debt.is_zero() {
         return 0.0;
     }
     
     let collateral = vault.collateral_amount.to::<u128>() as f64;
-    let debt = vault.debt_amount.to::<u128>() as f64;
+    let debt = vault.normalized_debt.to::<u128>() as f64;
     
     (collateral / debt) * 100.0
 }
 
 fn calculate_health_ratio(vault: &crate::evm::VaultInfo) -> String {
-    if vault.debt_amount.is_zero() {
+    if vault.normalized_debt.is_zero() {
         "N/A (No Debt)".to_string()
     } else {
         format!("{:.2}%", calculate_ratio(vault))

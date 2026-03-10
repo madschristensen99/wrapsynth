@@ -11,8 +11,21 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-// Define the VaultManager contract ABI using Alloy's sol! macro
+// Define contract ABIs using Alloy's sol! macro
 sol! {
+    #[sol(rpc)]
+    contract ERC20 {
+        function approve(address spender, uint256 amount) external returns (bool);
+        function allowance(address owner, address spender) external view returns (uint256);
+        function balanceOf(address account) external view returns (uint256);
+    }
+    
+    #[sol(rpc)]
+    contract WETH9 {
+        function deposit() external payable;
+        function withdraw(uint256 amount) external;
+    }
+    
     #[sol(rpc)]
     contract VaultManager {
         // Events
@@ -57,22 +70,30 @@ sol! {
         // Functions
         function createVault() external;
         function depositCollateral(uint256 _amount) external;
+        function withdrawCollateral(uint256 _amount) external;
         function commitBurn(bytes32 requestId, bytes32 secretHash) external;
         function finalizeBurn(bytes32 requestId, bytes32 secret) external;
         function setMintReady(bytes32 requestId) external;
         function finalizeMint(bytes32 requestId, bytes32 secret) external;
         function updatePythPrices(bytes[] calldata pythUpdateData) external payable;
         
+        // Structs
+        struct Vault {
+            address lpAddress;
+            uint256 collateralAmount;
+            uint256 lockedCollateral;
+            uint256 normalizedDebt;
+            uint256 pendingDebt;
+            uint16 maxMintBps;
+            uint256 mintGriefingDeposit;
+            uint16 mintFeeBps;
+            uint16 burnRewardBps;
+            uint256 liquidationNonce;
+            bool active;
+        }
+        
         // View functions
-        function getVault(address lpAddress) external view returns (
-            address lpAddress,
-            address collateralAsset,
-            uint256 collateralAmount,
-            uint256 lockedCollateral,
-            uint256 debtAmount,
-            uint256 mintGriefingDeposit,
-            bool active
-        );
+        function getVault(address lpAddress) external view returns (Vault memory);
     }
 }
 
@@ -432,20 +453,24 @@ impl EvmClient {
     pub async fn get_vault(&self) -> Result<VaultInfo> {
         let contract = VaultManager::new(self.vault_manager, &self.provider);
         
-        let result = contract
+        let vault = contract
             .getVault(self.lp_vault_address)
             .call()
             .await
-            .context("Failed to call getVault")?;
+            .context("Failed to call getVault")?._0;
 
         Ok(VaultInfo {
-            lp_address: result.lpAddress,
-            collateral_asset: result.collateralAsset,
-            collateral_amount: result.collateralAmount,
-            locked_collateral: result.lockedCollateral,
-            debt_amount: result.debtAmount,
-            mint_griefing_deposit: result.mintGriefingDeposit,
-            active: result.active,
+            lp_address: vault.lpAddress,
+            collateral_amount: vault.collateralAmount,
+            locked_collateral: vault.lockedCollateral,
+            normalized_debt: vault.normalizedDebt,
+            pending_debt: vault.pendingDebt,
+            max_mint_bps: vault.maxMintBps,
+            mint_griefing_deposit: vault.mintGriefingDeposit,
+            mint_fee_bps: vault.mintFeeBps,
+            burn_reward_bps: vault.burnRewardBps,
+            liquidation_nonce: vault.liquidationNonce,
+            active: vault.active,
         })
     }
 
@@ -461,20 +486,24 @@ impl EvmClient {
     pub async fn get_vault_info(&self) -> Result<VaultInfo> {
         let contract = VaultManager::new(self.vault_manager, &self.provider);
         
-        let result = contract
+        let vault = contract
             .getVault(self.lp_vault_address)
             .call()
             .await
-            .context("Failed to call getVault")?;
+            .context("Failed to call getVault")?._0;
 
         Ok(VaultInfo {
-            lp_address: result.lpAddress,
-            collateral_asset: result.collateralAsset,
-            collateral_amount: result.collateralAmount,
-            locked_collateral: result.lockedCollateral,
-            debt_amount: result.debtAmount,
-            mint_griefing_deposit: result.mintGriefingDeposit,
-            active: result.active,
+            lp_address: vault.lpAddress,
+            collateral_amount: vault.collateralAmount,
+            locked_collateral: vault.lockedCollateral,
+            normalized_debt: vault.normalizedDebt,
+            pending_debt: vault.pendingDebt,
+            max_mint_bps: vault.maxMintBps,
+            mint_griefing_deposit: vault.mintGriefingDeposit,
+            mint_fee_bps: vault.mintFeeBps,
+            burn_reward_bps: vault.burnRewardBps,
+            liquidation_nonce: vault.liquidationNonce,
+            active: vault.active,
         })
     }
 
@@ -484,7 +513,7 @@ impl EvmClient {
         let contract = VaultManager::new(self.vault_manager, &self.provider);
         
         match contract.getVault(self.lp_vault_address).call().await {
-            Ok(vault) if vault.active => {
+            Ok(result) if result._0.active => {
                 anyhow::bail!("Vault already exists for this address. Use './lp info' to view it.");
             }
             _ => {
@@ -526,7 +555,7 @@ impl EvmClient {
         
         // Check if vault exists
         match contract.getVault(self.lp_vault_address).call().await {
-            Ok(vault) if !vault.active => {
+            Ok(result) if !result._0.active => {
                 anyhow::bail!("Vault does not exist. Run './lp create-vault' first.");
             }
             Err(_) => {
@@ -543,23 +572,68 @@ impl EvmClient {
         
         let amount_wei = U256::from((amount * 1e18) as u128);
         
-        // Check balance
-        let balance = self.provider.get_balance(self.lp_vault_address).await
-            .context("Failed to get account balance")?;
+        // wxDAI address on Gnosis
+        let wxdai_address = Address::from([0xe9, 0x1D, 0x15, 0x3E, 0x0b, 0x41, 0x51, 0x8A, 0x2C, 0xe8, 0xDd, 0x3D, 0x79, 0x44, 0xFa, 0x86, 0x34, 0x63, 0xa9, 0x7d]);
+        let wxdai = ERC20::new(wxdai_address, &self.provider);
         
-        if balance < amount_wei {
-            let balance_dai = balance.to::<u128>() as f64 / 1e18;
-            anyhow::bail!(
-                "Insufficient balance. You have {:.4} xDAI but trying to deposit {} xDAI",
-                balance_dai, amount
-            );
+        // Check wxDAI balance
+        let wxdai_balance = wxdai.balanceOf(self.lp_vault_address).call().await
+            .context("Failed to check wxDAI balance")?._0;
+        
+        // If insufficient wxDAI, try to wrap native xDAI
+        if wxdai_balance < amount_wei {
+            let needed = amount_wei - wxdai_balance;
+            let native_balance = self.provider.get_balance(self.lp_vault_address).await
+                .context("Failed to get native xDAI balance")?;
+            
+            if native_balance < needed {
+                let balance_dai = wxdai_balance.to::<u128>() as f64 / 1e18;
+                let native_dai = native_balance.to::<u128>() as f64 / 1e18;
+                anyhow::bail!(
+                    "Insufficient balance. You have {:.4} wxDAI + {:.4} native xDAI = {:.4} total, but need {} wxDAI",
+                    balance_dai, native_dai, balance_dai + native_dai, amount
+                );
+            }
+            
+            // Wrap the needed amount
+            info!("Wrapping {:.4} native xDAI to wxDAI...", needed.to::<u128>() as f64 / 1e18);
+            let weth = WETH9::new(wxdai_address, &self.provider);
+            let wrap_tx = weth.deposit()
+                .value(needed)
+                .gas(100_000)
+                .send()
+                .await
+                .context("Failed to wrap xDAI")?;
+            
+            let wrap_receipt = wrap_tx.get_receipt().await
+                .context("Failed to get wrap receipt")?;
+            
+            info!("Wrapped xDAI to wxDAI: {:?}", wrap_receipt.transaction_hash);
         }
         
-        info!("Depositing {} xDAI as collateral", amount);
-        info!("Account balance: {} xDAI", balance.to::<u128>() as f64 / 1e18);
+        // Check allowance
+        let allowance = wxdai.allowance(self.lp_vault_address, self.vault_manager).call().await
+            .context("Failed to check allowance")?._0;
+        
+        // Approve if needed
+        if allowance < amount_wei {
+            info!("Approving VaultManager to spend {} wxDAI...", amount);
+            let approve_tx = wxdai.approve(self.vault_manager, amount_wei)
+                .gas(100_000)
+                .send()
+                .await
+                .context("Failed to send approval transaction")?;
+            
+            let approve_receipt = approve_tx.get_receipt().await
+                .context("Failed to get approval receipt")?;
+            
+            info!("Approval confirmed: {:?}", approve_receipt.transaction_hash);
+        }
+        
+        info!("Depositing {} wxDAI as collateral", amount);
+        info!("wxDAI balance: {:.4}", wxdai_balance.to::<u128>() as f64 / 1e18);
         
         let pending_tx = contract.depositCollateral(amount_wei)
-            .value(amount_wei) // Send xDAI value
             .gas(500_000) // Set explicit gas limit
             .send()
             .await
@@ -573,30 +647,82 @@ impl EvmClient {
         info!("Collateral deposited! Transaction: {:?}", receipt.transaction_hash);
         Ok(receipt.transaction_hash)
     }
+
+    /// Withdraw collateral from vault
+    pub async fn withdraw_collateral(&self, amount_str: &str) -> Result<FixedBytes<32>> {
+        let contract = VaultManager::new(self.vault_manager, &self.provider);
+        
+        // Check if vault exists
+        let vault_info = self.get_vault().await?;
+        if !vault_info.active {
+            anyhow::bail!("Vault does not exist.");
+        }
+        
+        // Parse amount
+        let amount: f64 = amount_str.parse().context("Invalid amount format. Use a number like '100' or '100.5'")?;
+        if amount <= 0.0 {
+            anyhow::bail!("Amount must be greater than 0");
+        }
+        
+        let amount_wei = U256::from((amount * 1e18) as u128);
+        
+        // Check available collateral (total - locked)
+        let available = vault_info.collateral_amount - vault_info.locked_collateral;
+        if available < amount_wei {
+            let available_dai = available.to::<u128>() as f64 / 1e18;
+            let locked_dai = vault_info.locked_collateral.to::<u128>() as f64 / 1e18;
+            anyhow::bail!(
+                "Insufficient available collateral. You have {:.4} available ({:.4} locked for burns)",
+                available_dai, locked_dai
+            );
+        }
+        
+        info!("Withdrawing {} collateral...", amount);
+        
+        let pending_tx = contract.withdrawCollateral(amount_wei)
+            .gas(500_000)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Transaction failed: {}. Check health ratio.", e))?;
+        
+        info!("Transaction sent, waiting for confirmation...");
+        
+        let receipt = pending_tx.get_receipt().await
+            .context("Failed to get transaction receipt")?;
+        
+        info!("Collateral withdrawn! Transaction: {:?}", receipt.transaction_hash);
+        Ok(receipt.transaction_hash)
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct VaultInfo {
     pub lp_address: Address,
-    pub collateral_asset: Address,
     pub collateral_amount: U256,
     pub locked_collateral: U256,
-    pub debt_amount: U256,
+    pub normalized_debt: U256,
+    pub pending_debt: U256,
+    pub max_mint_bps: u16,
     pub mint_griefing_deposit: U256,
+    pub mint_fee_bps: u16,
+    pub burn_reward_bps: u16,
+    pub liquidation_nonce: U256,
     pub active: bool,
 }
 
 impl VaultInfo {
     /// Calculate the collateralization ratio (percentage)
+    /// Note: This uses normalized_debt. To get actual debt, multiply by globalDebtIndex / 1e18
     pub fn collateralization_ratio(&self, xmr_price_usd: f64, collateral_price_usd: f64) -> f64 {
-        if self.debt_amount.is_zero() {
+        if self.normalized_debt.is_zero() {
             return f64::INFINITY;
         }
 
-        // Convert debt to USD (wsXMR has 8 decimals)
-        let debt_usd = (self.debt_amount.to::<u128>() as f64 / 1e8) * xmr_price_usd;
+        // Convert normalized debt to USD (wsXMR has 8 decimals)
+        // TODO: Should multiply by globalDebtIndex for actual debt
+        let debt_usd = (self.normalized_debt.to::<u128>() as f64 / 1e8) * xmr_price_usd;
 
-        // Convert collateral to USD (assuming 18 decimals for ETH/wstETH)
+        // Convert collateral to USD (sDAI has 18 decimals)
         let collateral_usd =
             (self.collateral_amount.to::<u128>() as f64 / 1e18) * collateral_price_usd;
 
