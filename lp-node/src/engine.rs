@@ -436,8 +436,8 @@ impl SwapEngine {
         let ratio = vault.collateralization_ratio(xmr_price_usd, collateral_price_usd);
 
         info!(
-            "Vault health - Collateral: {}, Debt: {}, Ratio: {:.2}%",
-            vault.collateral_amount, vault.debt_amount, ratio
+            "Vault health - Collateral: {}, Normalized Debt: {}, Ratio: {:.2}%",
+            vault.collateral_amount, vault.normalized_debt, ratio
         );
 
         if ratio < 150.0 {

@@ -35,6 +35,12 @@ enum Commands {
         #[arg(short, long)]
         amount: String,
     },
+    /// Withdraw collateral from your vault
+    WithdrawCollateral {
+        /// Amount of collateral to withdraw (in sDAI)
+        #[arg(short, long)]
+        amount: String,
+    },
     /// Show vault information
     Info,
     /// Check vault health and collateralization ratio
@@ -52,6 +58,8 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenv::dotenv().ok();
+    
     let cli = Cli::parse();
 
     // Initialize logging
@@ -94,6 +102,10 @@ async fn main() -> Result<()> {
         Some(Commands::DepositCollateral { amount }) => {
             let cli_handler = cli::LpCli::new(evm);
             cli_handler.deposit_collateral(&amount).await?;
+        }
+        Some(Commands::WithdrawCollateral { amount }) => {
+            let cli_handler = cli::LpCli::new(evm);
+            cli_handler.withdraw_collateral(&amount).await?;
         }
         Some(Commands::Info) => {
             let cli_handler = cli::LpCli::new(evm);
