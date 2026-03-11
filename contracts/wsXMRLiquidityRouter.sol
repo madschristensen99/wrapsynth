@@ -148,6 +148,75 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
         // Accept ETH for Pyth fee refunds
     }
 
+    // ========== POOL INITIALIZATION ==========
+    
+    /**
+     * @notice FIX M-7: Initialize the Uniswap V3 pool with oracle-derived price
+     * @dev Must be called before any positions can be created
+     * @param _pythUpdateData Pyth price update data for fresh oracle prices
+     * @return pool Address of the created/initialized pool
+     */
+    function initializePool(bytes[] calldata _pythUpdateData) external payable nonReentrant returns (address pool) {
+        // Update Pyth prices first
+        uint256 pythFee = IPyth(address(vaultManager.pyth())).getUpdateFee(_pythUpdateData);
+        IPyth(address(vaultManager.pyth())).updatePriceFeeds{value: pythFee}(_pythUpdateData);
+        
+        // Refund excess ETH
+        if (msg.value > pythFee) {
+            (bool success, ) = payable(msg.sender).call{value: msg.value - pythFee}("");
+            require(success, "Refund failed");
+        }
+        
+        // Get oracle prices with tight staleness
+        uint256 sDAIPrice = vaultManager.getCollateralPriceForLiquidity();
+        uint256 wsxmrPrice = vaultManager.getXmrPriceForLiquidity();
+        
+        // Calculate sqrtPriceX96 from oracle prices
+        // price = (token1/token0) = (wsxmrPrice/sDAIPrice) if sDAI is token0
+        // sqrtPriceX96 = sqrt(price) * 2^96
+        uint256 priceRatio;
+        if (sDAIIsToken0) {
+            // price = wsxmr/sDAI, need to adjust for decimals
+            // wsxmrPrice is USD per wsXMR (18 decimals), sDAIPrice is USD per sDAI (18 decimals)
+            // price = (wsxmrPrice / sDAIPrice) * (10^18 / 10^8) to account for token decimals
+            priceRatio = (wsxmrPrice * 1e18) / (sDAIPrice * 1e8);
+        } else {
+            // price = sDAI/wsxmr
+            priceRatio = (sDAIPrice * 1e8) / (wsxmrPrice * 1e18);
+        }
+        
+        // Calculate sqrtPriceX96 = sqrt(priceRatio) * 2^96
+        // Use Babylonian method for square root
+        uint256 sqrtPrice = sqrt(priceRatio);
+        uint160 sqrtPriceX96 = uint160((sqrtPrice * (2 ** 96)) / 1e9); // Normalize from 1e18
+        
+        // Create pool if it doesn't exist
+        pool = uniswapFactory.getPool(token0, token1, POOL_FEE);
+        if (pool == address(0)) {
+            pool = uniswapFactory.createPool(token0, token1, POOL_FEE);
+        }
+        
+        // Initialize pool with oracle price
+        IUniswapV3Pool(pool).initialize(sqrtPriceX96);
+        
+        return pool;
+    }
+    
+    /**
+     * @notice Helper function to calculate square root using Babylonian method
+     * @param x Value to calculate square root of
+     * @return y Square root of x
+     */
+    function sqrt(uint256 x) internal pure returns (uint256 y) {
+        if (x == 0) return 0;
+        uint256 z = (x + 1) / 2;
+        y = x;
+        while (z < y) {
+            y = z;
+            z = (x / z + z) / 2;
+        }
+    }
+
     // ========== LP FUNCTIONS ==========
     
     /**
@@ -171,7 +240,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
     }
     
     /**
-     * @notice LP deallocates sDAI - DEPRECATED, use withdrawSDAI instead
+     * @notice DEPRECATED: Use withdrawSDAI instead
+     * @dev FIX I-5: This function is redundant with withdrawSDAI but kept for backwards compatibility
      * @param _sDAIAmount Amount of sDAI shares to deallocate
      */
     function deallocateLiquidity(uint256 _sDAIAmount) external nonReentrant {
@@ -179,8 +249,6 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
         if (lpLiquidityAllocation[msg.sender] < _sDAIAmount) revert InsufficientBalance();
         
         lpLiquidityAllocation[msg.sender] -= _sDAIAmount;
-        
-        // Transfer sDAI back to LP
         IERC20(GnosisAddresses.SDAI).safeTransfer(msg.sender, _sDAIAmount);
         
         emit LiquidityDeallocated(msg.sender, _sDAIAmount);
@@ -215,6 +283,46 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
         
         emit UserWithdrewWsxmr(msg.sender, _wsxmrAmount);
         emit WsxmrDeallocated(msg.sender, _wsxmrAmount);
+    }
+    
+    /**
+     * @notice FIX C-3: Burn wsXMR from internal deposits to reduce vault debt
+     * @dev Allows LPs who received wsXMR from IL to burn it against their vault
+     * @param _wsxmrAmount Amount of wsXMR to burn from internal balance
+     * @param _lpVault LP vault to handle the burn
+     * @return requestId Unique identifier for this burn request
+     */
+    function burnFromInternalBalance(
+        uint256 _wsxmrAmount,
+        address _lpVault
+    ) external nonReentrant returns (bytes32 requestId) {
+        if (_wsxmrAmount == 0) revert InvalidAmount();
+        if (userWsxmrDeposits[msg.sender] < _wsxmrAmount) revert InsufficientBalance();
+        
+        // Deduct from internal balance
+        userWsxmrDeposits[msg.sender] -= _wsxmrAmount;
+        
+        // Burn the wsXMR tokens
+        wsxmrToken.burn(address(this), _wsxmrAmount);
+        
+        // Request burn through VaultManager (router is authorized caller)
+        requestId = vaultManager.requestBurnFromRouter(_wsxmrAmount, _lpVault, msg.sender);
+        
+        emit WsxmrDeallocated(msg.sender, _wsxmrAmount);
+        
+        return requestId;
+    }
+    
+    /**
+     * @notice FIX I-3: Withdraw accumulated ETH from router contract
+     * @dev ETH can accumulate from Pyth fee refunds
+     */
+    function withdrawETH() external nonReentrant {
+        uint256 balance = address(this).balance;
+        if (balance == 0) revert InvalidAmount();
+        
+        (bool success, ) = payable(msg.sender).call{value: balance}("");
+        require(success, "ETH transfer failed");
     }
 
     // ========== USER FUNCTIONS ==========
@@ -383,9 +491,10 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
             : (_wsxmrAmount, _sDAIAmount);
         
        
+        // FIX H-2: Use tighter staleness window for liquidity operations
         // This prevents MEV arbitrage via flash loan pool manipulation
-        uint256 sDAIPrice = vaultManager.getCollateralPrice();
-        uint256 wsxmrPrice = vaultManager.getXmrPrice();
+        uint256 sDAIPrice = vaultManager.getCollateralPriceForLiquidity();
+        uint256 wsxmrPrice = vaultManager.getXmrPriceForLiquidity();
         
         // Calculate expected ratio based on oracle prices
         // sDAI amount * sDAI price should approximately equal wsXMR amount * wsXMR price
@@ -515,9 +624,9 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
             "Position too young to close"
         );
         
-        // Calculate oracle-based minimum outputs for MEV protection
-        uint256 currentSDAIPrice = vaultManager.getCollateralPrice();
-        uint256 currentXmrPrice = vaultManager.getXmrPrice();
+        // FIX H-2: Calculate oracle-based minimum outputs with tight staleness for MEV protection
+        uint256 currentSDAIPrice = vaultManager.getCollateralPriceForLiquidity();
+        uint256 currentXmrPrice = vaultManager.getXmrPriceForLiquidity();
         
         // Determine token order
         (, , , , , , , uint128 liquidity, , , , ) = 
@@ -576,9 +685,11 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
             + (wsxmrPrincipal * currentXmrPrice) / 1e8;
         uint256 expectedValueUSD = position.lpInitialValueUSD + position.userInitialValueUSD;
         
-        // 80% floor as safety net for extreme IL scenarios
+        // FIX M-1: 50% floor to accommodate extreme but legitimate IL scenarios
+        // Full-range positions can experience >20% IL during significant price movements
+        // A 90% price drop results in ~42% IL, so 50% floor is more appropriate
         require(
-            withdrawnValueUSD >= (expectedValueUSD * 80) / 100,
+            withdrawnValueUSD >= (expectedValueUSD * 50) / 100,
             "Withdrawal value too low - possible manipulation"
         );
         
@@ -696,26 +807,11 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
         
         if (collected0 == 0 && collected1 == 0) return;
 
-        // Sanity check: fees should not exceed a reasonable percentage of
-        // the position's original value. Cap at 100% of original deposit
-        // to prevent manipulation via pool state attacks.
-        uint256 maxReasonableFee0;
-        uint256 maxReasonableFee1;
-        if (sDAIIsToken0) {
-            maxReasonableFee0 = position.sDAIAmount;
-            maxReasonableFee1 = position.wsxmrAmount;
-        } else {
-            maxReasonableFee0 = position.wsxmrAmount;
-            maxReasonableFee1 = position.sDAIAmount;
-        }
-
-        // Cap collected amounts to prevent manipulation
-        if (collected0 > maxReasonableFee0) {
-            collected0 = maxReasonableFee0;
-        }
-        if (collected1 > maxReasonableFee1) {
-            collected1 = maxReasonableFee1;
-        }
+        // CRITICAL FIX C-1 & M-3: Remove arbitrary fee cap
+        // Uniswap V3 fees are legitimate by definition and can legitimately exceed
+        // 100% of original deposit for high-volume pools or long-lived positions.
+        // Capping causes permanent token loss since tokens are already transferred.
+        // The oracle validation in createPosition already prevents manipulation.
         
         // Determine token mapping using immutable sDAIIsToken0
         uint256 sDAIFees = sDAIIsToken0 ? collected0 : collected1;
@@ -922,14 +1018,38 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
     /**
      * @notice Handle receipt of NFT positions from Uniswap V3
      * @dev Required to receive ERC721 tokens (Uniswap V3 positions)
+     * @dev FIX L-1: Validates sender to prevent arbitrary NFT lockup
      */
     function onERC721Received(
         address,
-        address,
-        uint256,
+        address /* from */,
+        uint256 tokenId,
         bytes calldata
     ) external override returns (bytes4) {
         require(msg.sender == address(positionManager), "Only Uniswap V3 NFTs");
+        
+        // FIX L-1: Verify the NFT is for our pool to prevent arbitrary NFT deposits
+        // This prevents users from accidentally or maliciously locking random NFTs
+        (
+            ,
+            ,
+            address nftToken0,
+            address nftToken1,
+            uint24 nftFee,
+            ,
+            ,
+            ,
+            ,
+            ,
+            ,
+        ) = positionManager.positions(tokenId);
+        
+        require(
+            (nftToken0 == token0 && nftToken1 == token1 && nftFee == POOL_FEE) ||
+            (nftToken0 == token1 && nftToken1 == token0 && nftFee == POOL_FEE),
+            "NFT not for this pool"
+        );
+        
         return IERC721Receiver.onERC721Received.selector;
     }
 }
