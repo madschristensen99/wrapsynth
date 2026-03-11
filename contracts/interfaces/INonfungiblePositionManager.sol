@@ -90,4 +90,6 @@ interface INonfungiblePositionManager {
             uint128 tokensOwed0,
             uint128 tokensOwed1
         );
+
+    function burn(uint256 tokenId) external payable;
 }
