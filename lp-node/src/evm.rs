@@ -50,10 +50,12 @@ sol! {
 
         event MintInitiated(
             bytes32 indexed requestId,
-            address indexed user,
-            address indexed lpVault,
+            address indexed initiator,
+            address indexed recipient,
+            address lpVault,
             uint256 xmrAmount,
             uint256 wsxmrAmount,
+            uint256 feeAmount,
             bytes32 claimCommitment,
             uint256 timeout
         );
@@ -300,6 +302,38 @@ impl EvmClient {
             .context("Failed to subscribe to MintInitiated events")?;
 
         Ok(stream.into_stream())
+    }
+
+    /// Query historical MintInitiated events for this LP vault
+    pub async fn get_historical_mint_events(&self, from_block: u64) -> Result<Vec<Log>> {
+        let filter = Filter::new()
+            .address(self.vault_manager)
+            .event_signature(VaultManager::MintInitiated::SIGNATURE_HASH)
+            .from_block(from_block);
+
+        let logs = self
+            .provider
+            .get_logs(&filter)
+            .await
+            .context("Failed to query historical MintInitiated events")?;
+
+        Ok(logs)
+    }
+
+    /// Query historical BurnRequested events for this LP vault
+    pub async fn get_historical_burn_events(&self, from_block: u64) -> Result<Vec<Log>> {
+        let filter = Filter::new()
+            .address(self.vault_manager)
+            .event_signature(VaultManager::BurnRequested::SIGNATURE_HASH)
+            .from_block(from_block);
+
+        let logs = self
+            .provider
+            .get_logs(&filter)
+            .await
+            .context("Failed to query historical BurnRequested events")?;
+
+        Ok(logs)
     }
 
     /// Parse a BurnRequested event

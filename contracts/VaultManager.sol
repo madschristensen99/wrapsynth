@@ -473,11 +473,44 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     // ========== MINTING FLOW ==========
     
     /**
-     * @notice User initiates a mint request
-     * @param _lpVault Address of the LP vault to use
-     * @param _recipient Destination address for minted wsXMR tokens
-     * @param _xmrAmount Amount of XMR to lock (atomic units)
-     * @param _claimCommitment Hash of the secret LP will reveal
+     * @notice Initiate a mint request with automatic Pyth price update (one-click UX)
+     * @dev Combines updatePythPrices and initiateMint into a single transaction
+     * @param _lpVault Address of the LP vault to handle this mint
+     * @param _recipient Address to receive the minted wsXMR
+     * @param _xmrAmount Amount of XMR (in atomic units, 12 decimals)
+     * @param _claimCommitment secp256k1 commitment to user's secret
+     * @param _timeoutDuration How long before request can be cancelled
+     * @param _pythUpdateData Pyth price update data from Hermes API
+     * @return requestId Unique identifier for this mint request
+     */
+    function initiateMintWithPriceUpdate(
+        address _lpVault,
+        address _recipient,
+        uint256 _xmrAmount,
+        bytes32 _claimCommitment,
+        uint256 _timeoutDuration,
+        bytes[] calldata _pythUpdateData
+    ) external payable returns (bytes32 requestId) {
+        // Calculate Pyth update fee
+        uint256 pythFee = pyth.getUpdateFee(_pythUpdateData);
+        
+        // Update Pyth prices first
+        pyth.updatePriceFeeds{value: pythFee}(_pythUpdateData);
+        
+        // Calculate griefing deposit (msg.value - pythFee)
+        uint256 griefingDeposit = msg.value - pythFee;
+        
+        // Call internal mint function with adjusted value
+        return _initiateMint(_lpVault, _recipient, _xmrAmount, _claimCommitment, _timeoutDuration, griefingDeposit);
+    }
+    
+    /**
+     * @notice Initiate a mint request
+     * @dev User provides commitment, LP will lock XMR on Monero chain
+     * @param _lpVault Address of the LP vault to handle this mint
+     * @param _recipient Address to receive the minted wsXMR
+     * @param _xmrAmount Amount of XMR (in atomic units, 12 decimals)
+     * @param _claimCommitment secp256k1 commitment to user's secret
      * @param _timeoutDuration How long before request can be cancelled
      * @return requestId Unique identifier for this mint request
      */
@@ -488,6 +521,20 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         bytes32 _claimCommitment,
         uint256 _timeoutDuration
     ) external payable returns (bytes32 requestId) {
+        return _initiateMint(_lpVault, _recipient, _xmrAmount, _claimCommitment, _timeoutDuration, msg.value);
+    }
+    
+    /**
+     * @notice Internal function to initiate mint
+     */
+    function _initiateMint(
+        address _lpVault,
+        address _recipient,
+        uint256 _xmrAmount,
+        bytes32 _claimCommitment,
+        uint256 _timeoutDuration,
+        uint256 _griefingDeposit
+    ) internal returns (bytes32 requestId) {
         if (_lpVault == address(0)) revert ZeroAddress();
         if (_recipient == address(0)) revert ZeroAddress();
         if (_xmrAmount == 0) revert ZeroAmount();
@@ -501,7 +548,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
         // ANTI-SPAM: Require griefing deposit set by LP
         Vault storage vault = vaults[_lpVault];
-        if (msg.value < vault.mintGriefingDeposit) revert InsufficientDeposit();
+        if (_griefingDeposit < vault.mintGriefingDeposit) revert InsufficientDeposit();
         
         // Convert XMR amount to wsXMR amount (XMR has 12 decimals, wsXMR has 8)
         uint256 wsxmrAmount = _xmrAmount / 1e4;
@@ -568,7 +615,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             feeAmount: feeAmount,
             claimCommitment: _claimCommitment,
             timeout: block.timestamp + _timeoutDuration,
-            griefingDeposit: msg.value, // Store deposit for refund/award
+            griefingDeposit: _griefingDeposit, // Store deposit for refund/award
             status: MintStatus.PENDING
         });
         

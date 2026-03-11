@@ -468,16 +468,10 @@ async function handleStartMint() {
     const elements = getElements();
     
     const amount = parseFloat(elements.mintAmount.value);
-    const vaultAddress = elements.mintVaultSelect.value;
     
     // Validate inputs
     if (!amount || amount <= 0) {
         showError('Invalid Input', 'Please enter a valid amount');
-        return;
-    }
-    
-    if (!vaultAddress) {
-        showError('Invalid Input', 'Please select a vault');
         return;
     }
     
@@ -490,8 +484,11 @@ async function handleStartMint() {
         // Setup progress tracking
         trackMintProgress(currentMintFlow);
         
-        // Start the flow
-        await currentMintFlow.start(vaultAddress, amount);
+        // Use the default LP vault from config
+        const { CONTRACTS } = await import('./config.js');
+        
+        // Start the flow with the LP vault that has the running LP node
+        await currentMintFlow.start(CONTRACTS.defaultLpVault, amount);
         
         // Success
         showSuccess('Mint Complete', `Successfully minted ${amount} wsXMR!`);
