@@ -4,6 +4,7 @@ pragma solidity ^0.8.19;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {INonfungiblePositionManager} from "./interfaces/INonfungiblePositionManager.sol";
 import {IUniswapV3Factory} from "./interfaces/IUniswapV3Factory.sol";
 import {VaultManager} from "./VaultManager.sol";
@@ -16,7 +17,7 @@ import {GnosisAddresses} from "./GnosisAddresses.sol";
  * @notice Co-LP matchmaking system for pairing LP collateral with user wsXMR
  * @dev Creates deep Uniswap V3 liquidity while maintaining protocol safety
  */
-contract wsXMRLiquidityRouter is ReentrancyGuard {
+contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
     using SafeERC20 for IERC20;
 
     // ========== CONSTANTS ==========
@@ -24,6 +25,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     uint24 public constant POOL_FEE = 3000; // 0.3% fee tier
     int24 public constant TICK_SPACING = 60; // For 0.3% pools
     uint256 public constant BPS_DENOMINATOR = 10000;
+    uint256 public constant MAX_ACTIVE_POSITIONS_PER_USER = 50;
     
     // Full range position (approximately -887272 to 887272 for full range)
     int24 public constant TICK_LOWER = -887220; // Divisible by 60
@@ -52,8 +54,6 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         uint256 lpInitialValueUSD; // LP's initial USD value contribution
         uint256 userInitialValueUSD; // User's initial USD value contribution
         uint256 createdAt;
-        uint256 feesCollected0; // Cumulative token0 fees already collected
-        uint256 feesCollected1; // Cumulative token1 fees already collected
     }
     
     mapping(uint256 => LiquidityPosition) public positions;
@@ -216,23 +216,45 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     // ========== POSITION MANAGEMENT ==========
     
     /**
-     * @notice LP approves a user for liquidity pairing
+     * @notice LP increases approval amount for a user
      * @param _user Address of user to approve
-     * @param _maxSDAI Maximum sDAI amount to approve for pairing
+     * @param _additionalSDAI Additional sDAI amount to approve
      */
-    function approveUserForPairing(address _user, uint256 _maxSDAI) external {
-        lpApprovalAmount[msg.sender][_user] = _maxSDAI;
-        emit LpApprovedUser(msg.sender, _user, _maxSDAI);
+    function increaseUserApproval(address _user, uint256 _additionalSDAI) external {
+        lpApprovalAmount[msg.sender][_user] += _additionalSDAI;
+        emit LpApprovedUser(msg.sender, _user, lpApprovalAmount[msg.sender][_user]);
     }
     
     /**
-     * @notice User approves an LP for liquidity pairing
-     * @param _lp Address of LP to approve
-     * @param _maxWsxmr Maximum wsXMR amount to approve for pairing
+     * @notice LP decreases approval amount for a user
+     * @param _user Address of user
+     * @param _reduceSDAI Amount to reduce approval by
      */
-    function approveLpForPairing(address _lp, uint256 _maxWsxmr) external {
-        userApprovalAmount[msg.sender][_lp] = _maxWsxmr;
-        emit UserApprovedLp(msg.sender, _lp, _maxWsxmr);
+    function decreaseUserApproval(address _user, uint256 _reduceSDAI) external {
+        uint256 current = lpApprovalAmount[msg.sender][_user];
+        lpApprovalAmount[msg.sender][_user] = _reduceSDAI > current ? 0 : current - _reduceSDAI;
+        emit LpApprovedUser(msg.sender, _user, lpApprovalAmount[msg.sender][_user]);
+    }
+    
+    /**
+     * @notice User increases approval amount for an LP
+     * @param _lp Address of LP to approve
+     * @param _additionalWsxmr Additional wsXMR amount to approve
+     */
+    function increaseLpApproval(address _lp, uint256 _additionalWsxmr) external {
+        userApprovalAmount[msg.sender][_lp] += _additionalWsxmr;
+        emit UserApprovedLp(msg.sender, _lp, userApprovalAmount[msg.sender][_lp]);
+    }
+    
+    /**
+     * @notice User decreases approval amount for an LP
+     * @param _lp Address of LP
+     * @param _reduceWsxmr Amount to reduce approval by
+     */
+    function decreaseLpApproval(address _lp, uint256 _reduceWsxmr) external {
+        uint256 current = userApprovalAmount[msg.sender][_lp];
+        userApprovalAmount[msg.sender][_lp] = _reduceWsxmr > current ? 0 : current - _reduceWsxmr;
+        emit UserApprovedLp(msg.sender, _lp, userApprovalAmount[msg.sender][_lp]);
     }
     
     /**
@@ -269,6 +291,12 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         // Decrement approval amounts
         lpApprovalAmount[_lp][_user] -= _sDAIAmount;
         userApprovalAmount[_user][_lp] -= _wsxmrAmount;
+        
+        // Check position limits to prevent unbounded array growth
+        uint256 lpActiveCount = _countActivePositions(_lp);
+        uint256 userActiveCount = _countActivePositions(_user);
+        require(lpActiveCount < MAX_ACTIVE_POSITIONS_PER_USER, "LP max positions reached");
+        require(userActiveCount < MAX_ACTIVE_POSITIONS_PER_USER, "User max positions reached");
         
         // Both parties have mutually approved this pairing
         
@@ -358,9 +386,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
                 wsxmrAmount: actual1,
                 lpInitialValueUSD: (actual0 * sDAIPrice) / 1e18,
                 userInitialValueUSD: (actual1 * wsxmrPrice) / 1e8,
-                createdAt: block.timestamp,
-                feesCollected0: 0,
-                feesCollected1: 0
+                createdAt: block.timestamp
             });
         } else {
             if (actual0 < _wsxmrAmount) userWsxmrDeposits[_user] += (_wsxmrAmount - actual0);
@@ -376,9 +402,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
                 wsxmrAmount: actual0,
                 lpInitialValueUSD: (actual1 * sDAIPrice) / 1e18,
                 userInitialValueUSD: (actual0 * wsxmrPrice) / 1e8,
-                createdAt: block.timestamp,
-                feesCollected0: 0,
-                feesCollected1: 0
+                createdAt: block.timestamp
             });
         }
         
@@ -392,8 +416,10 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     /**
      * @notice Close a liquidity position and return assets
      * @param _positionIndex Index of the position to close
+     * @param _deadline Transaction deadline timestamp
+     * @param _minTotalValueUSD Minimum total USD value to receive (caller-specified based on oracle prices)
      */
-    function closePosition(uint256 _positionIndex, uint256 _deadline) external nonReentrant {
+    function closePosition(uint256 _positionIndex, uint256 _deadline, uint256 _minTotalValueUSD) external nonReentrant {
         require(block.timestamp <= _deadline, "Transaction expired");
         LiquidityPosition storage position = positions[_positionIndex];
         if (position.positionId == 0) revert PositionNotFound();
@@ -447,16 +473,19 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         uint256 sDAIPrincipal = token0 == GnosisAddresses.SDAI ? principal0 : principal1;
         uint256 wsxmrPrincipal = token0 == GnosisAddresses.SDAI ? principal1 : principal0;
 
-        // Validate total withdrawn value is within acceptable range (tightened to 95%)
+        // Validate total withdrawn value is within acceptable range (tightened to 97%)
         uint256 withdrawnValueUSD = (sDAIPrincipal * vaultManager.getCollateralPrice()) / 1e18
             + (wsxmrPrincipal * vaultManager.getXmrPrice()) / 1e8;
         uint256 expectedValueUSD = position.lpInitialValueUSD + position.userInitialValueUSD;
-        // Tightened from 50% to 95% to better protect against sandwich attacks
-        // IL on full-range positions is bounded; >5% loss may indicate manipulation
+        // Tightened from 50% to 97% to better protect against sandwich attacks
+        // IL on full-range positions is bounded; >3% loss may indicate manipulation
         require(
-            withdrawnValueUSD >= (expectedValueUSD * 95) / 100,
+            withdrawnValueUSD >= (expectedValueUSD * 97) / 100,
             "Withdrawal value too low - possible manipulation"
         );
+        
+        // Additional caller-specified minimum to prevent frontrunning
+        require(withdrawnValueUSD >= _minTotalValueUSD, "Below caller minimum");
 
         // Calculate proportional split based on initial USD contributions
         uint256 totalInitialValue = position.lpInitialValueUSD + position.userInitialValueUSD;
@@ -502,6 +531,10 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         
         // Clear position
         delete positions[_positionIndex];
+        
+        // Automatically clean up stale positions for both parties
+        _cleanupStalePositions(position.lpProvider);
+        _cleanupStalePositions(position.userProvider);
     }
     
     /**
@@ -527,10 +560,6 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
                 amount1Max: type(uint128).max
             })
         );
-        
-        // Track cumulative fees collected for this position
-        position.feesCollected0 += collected0;
-        position.feesCollected1 += collected1;
         
         // Determine which token is which
         (, , address token0, , , , , , , , , ) = positionManager.positions(position.positionId);
@@ -632,6 +661,13 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
      * @dev Removes closed positions from the tracking array
      */
     function cleanupStalePositions(address _account) external {
+        _cleanupStalePositions(_account);
+    }
+    
+    /**
+     * @dev Internal function to clean up stale positions
+     */
+    function _cleanupStalePositions(address _account) internal {
         uint256[] storage posIndexes = userPositions[_account];
         uint256 writeIndex = 0;
         
@@ -647,6 +683,18 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         // Trim array
         while (posIndexes.length > writeIndex) {
             posIndexes.pop();
+        }
+    }
+    
+    /**
+     * @dev Count active positions for an account
+     */
+    function _countActivePositions(address _account) internal view returns (uint256 count) {
+        uint256[] storage posIndexes = userPositions[_account];
+        for (uint256 i = 0; i < posIndexes.length; i++) {
+            if (positions[posIndexes[i]].positionId != 0) {
+                count++;
+            }
         }
     }
     
@@ -669,5 +717,18 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
      */
     function getUserAvailableWsxmr(address _user) external view returns (uint256) {
         return userWsxmrDeposits[_user];
+    }
+    
+    /**
+     * @notice Handle receipt of NFT positions from Uniswap V3
+     * @dev Required to receive ERC721 tokens (Uniswap V3 positions)
+     */
+    function onERC721Received(
+        address,
+        address,
+        uint256,
+        bytes calldata
+    ) external pure override returns (bytes4) {
+        return IERC721Receiver.onERC721Received.selector;
     }
 }
