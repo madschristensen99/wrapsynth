@@ -182,26 +182,27 @@ export class MintFlow {
         // Calculate total value to send (griefing deposit + pyth fee)
         const totalValue = this.griefingDeposit + pythFee;
 
-        console.log('Initiating mint with params:', {
-            lpVault: this.lpVault,
-            xmrAmount: xmrAmountContract.toString(),
-            commitment,
-            timeoutDuration: this.timeoutDuration,
-            value: totalValue.toString()
-        });
-
-        // First update Pyth prices
-        await writeVaultManager('updatePythPrices', [updateData], pythFee);
-
-        // Then initiate mint
         // Get user's address for recipient
         const { getUserAddress } = await import('./viemClient.js');
         const userAddress = getUserAddress();
         
+        console.log('Initiating mint with params:', {
+            lpVault: this.lpVault,
+            recipient: userAddress,
+            xmrAmount: xmrAmountContract.toString(),
+            commitment,
+            timeoutDuration: this.timeoutDuration,
+            pythFee: pythFee.toString(),
+            griefingDeposit: this.griefingDeposit.toString(),
+            totalValue: totalValue.toString()
+        });
+
+        // One-click UX: Single transaction combines Pyth price update + mint initiation
+        console.log('Initiating mint with automatic price update (one-click)...');
         const receipt = await writeVaultManager(
-            'initiateMint',
-            [this.lpVault, userAddress, xmrAmountContract, commitment, BigInt(this.timeoutDuration)],
-            this.griefingDeposit
+            'initiateMintWithPriceUpdate',
+            [this.lpVault, userAddress, xmrAmountContract, commitment, BigInt(this.timeoutDuration), updateData],
+            totalValue // Total value = pythFee + griefingDeposit
         );
 
         console.log('Mint initiated, tx:', receipt.transactionHash);
