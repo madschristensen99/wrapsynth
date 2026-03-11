@@ -95,6 +95,7 @@ export const STORAGE_KEYS = {
 export const ABIS = {
     vaultManager: [
         'function initiateMint(address lpVault, address recipient, uint256 xmrAmount, bytes32 claimCommitment, uint256 timeoutDuration) external payable returns (bytes32 requestId)',
+        'function initiateMintWithPriceUpdate(address lpVault, address recipient, uint256 xmrAmount, bytes32 claimCommitment, uint256 timeoutDuration, bytes[] calldata pythUpdateData) external payable returns (bytes32 requestId)',
         'function requestBurn(uint256 wsxmrAmount, address lpVault, address user) external returns (bytes32 requestId)',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
         'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
