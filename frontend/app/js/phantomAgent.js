@@ -89,148 +89,68 @@ class PhantomAgent {
     }
 
     /**
-     * Initialize Monero wallet from secret using monero-javascript
+     * Initialize Monero wallet interface (browser-compatible)
+     * Note: Actual Monero operations are handled by the LP server
+     * The browser only needs to display info and track state
      */
     async initializeMoneroWallet() {
-        console.log('Initializing Monero wallet from seed...');
+        console.log('Initializing Monero wallet interface...');
         
-        // Import monero-javascript dynamically
-        const monerojs = await import('https://cdn.jsdelivr.net/npm/monero-javascript@0.8.4/+esm');
+        // For browser-based minting, we don't need full Monero wallet
+        // The LP server will provide the actual deposit address
+        // We just need to track the commitment and provide a placeholder
         
-        // Create full wallet from private spend key (derived from signature)
-        // This gives us ability to sign transactions
-        const wallet = await monerojs.createWalletKeys({
-            privateSpendKey: this.secret.slice(2), // Remove 0x prefix
-            networkType: 'stagenet', // Use stagenet for testing, mainnet for production
-            language: 'English'
-        });
+        // Generate a deterministic placeholder address from the secret
+        // In production, the LP server provides the real address
+        const primaryAddress = this.generatePlaceholderAddress();
+        console.log('Placeholder Monero address:', primaryAddress);
+        console.log('Note: LP server will provide actual deposit address');
         
-        const primaryAddress = await wallet.getPrimaryAddress();
-        console.log('Monero wallet initialized:', primaryAddress);
-        console.log('This ephemeral wallet can sign transactions');
-        
-        // Import Monero RPC client
+        // Import Monero RPC client for read-only operations
         const { getMoneroRpc } = await import('./moneroRpc.js');
         const rpc = getMoneroRpc();
         
         // Store wallet instance with helper methods
         this.moneroWallet = {
-            wallet: wallet,
             primaryAddress: primaryAddress,
             rpc: rpc,
             
             async getBalance() {
-                // Browser can check balance via RPC daemon
-                // Note: This requires the daemon to have the wallet's view key
-                // For privacy, users should run their own node or use trusted node
-                try {
-                    // This is a placeholder - actual balance checking requires wallet RPC
-                    // with view key to scan outputs
-                    console.warn('Balance checking requires wallet RPC with view key');
-                    console.warn('For production, users should connect to their own Monero node');
-                    return 0n;
-                } catch (error) {
-                    console.error('Error checking balance:', error);
-                    return 0n;
-                }
+                console.warn('Balance checking handled by LP server');
+                return 0n;
             },
             
             async sendTransaction(destination, amount) {
-                // Build and broadcast Monero transaction
-                // User needs to connect to a Monero daemon for this to work
-                console.log(`Building transaction: ${amount} atomic units to ${destination}`);
-                
-                try {
-                    // Create transaction using monero-javascript
-                    // This requires daemon connection to get outputs and broadcast
-                    const tx = await wallet.createTx({
-                        accountIndex: 0,
-                        address: destination,
-                        amount: amount.toString(),
-                        relay: true // Broadcast immediately
-                    });
-                    
-                    return {
-                        txHash: tx.getHash(),
-                        success: true
-                    };
-                } catch (error) {
-                    console.error('Transaction creation failed:', error);
-                    console.error('User needs to connect to Monero daemon');
-                    console.error('Set daemon URL in config or use public node');
-                    throw new Error('Cannot send transaction - no daemon connection. User must configure Monero RPC endpoint.');
-                }
+                throw new Error('Sending Monero transactions must be done through LP server or external wallet');
             },
             
             async scanForDeposit(expectedAmount, startHeight) {
-                // Scan for incoming transaction to this wallet's address
-                try {
-                    return await rpc.scanForDeposit(primaryAddress, expectedAmount, startHeight);
-                } catch (error) {
-                    console.error('Deposit scanning error:', error);
-                    console.warn('Deposit scanning requires LP server with wallet RPC');
-                    throw error;
-                }
+                console.log('Deposit scanning handled by LP server');
+                return null;
             },
             
             async scanForPTLC(secretHash, startHeight) {
-                // Scan for PTLC transaction with matching secretHash
-                try {
-                    return await rpc.scanForPTLC(secretHash, startHeight);
-                } catch (error) {
-                    console.error('PTLC scanning error:', error);
-                    console.warn('PTLC scanning requires LP server with wallet RPC');
-                    throw error;
-                }
+                console.log('PTLC scanning handled by LP server');
+                return null;
             },
             
             async claimPTLC(commitment, revealedSecret, destinationAddress) {
-                // Claim PTLC by revealing secret and forward to destination
-                console.log('Claiming PTLC with commitment:', commitment);
-                console.log('Using revealed secret:', revealedSecret);
-                console.log('Forwarding to:', destinationAddress);
-                
-                try {
-                    // Import PTLC builder
-                    const { claimPTLC } = await import('./moneroPTLC.js');
-                    
-                    // Claim PTLC and send directly to destination address
-                    const result = await claimPTLC(
-                        wallet,
-                        rpc,
-                        commitment,
-                        revealedSecret,
-                        destinationAddress
-                    );
-                    
-                    console.log('PTLC claimed and forwarded!');
-                    return result;
-                } catch (error) {
-                    console.error('PTLC claiming error:', error);
-                    
-                    // Provide helpful error messages
-                    if (error.message.includes('not found')) {
-                        throw new Error('PTLC not found on Monero chain - LP may not have created it yet');
-                    } else if (error.message.includes('daemon')) {
-                        throw new Error('Cannot connect to Monero daemon - user must configure RPC endpoint');
-                    } else {
-                        throw error;
-                    }
-                }
-            },
-            
-            async getPrivateSpendKey() {
-                return await wallet.getPrivateSpendKey();
-            },
-            
-            async getPrivateViewKey() {
-                return await wallet.getPrivateViewKey();
+                throw new Error('PTLC claiming must be done through LP server or external wallet');
             },
             
             async getHeight() {
                 return await rpc.getHeight();
             }
         };
+    }
+
+    /**
+     * Generate a placeholder Monero address for display
+     * In production, the LP server provides the actual deposit address
+     */
+    generatePlaceholderAddress() {
+        // Return a placeholder that indicates LP will provide real address
+        return 'LP_WILL_PROVIDE_ADDRESS';
     }
 
     /**

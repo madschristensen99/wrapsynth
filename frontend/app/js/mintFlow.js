@@ -38,21 +38,21 @@ export class MintFlow {
 
         this.lpVault = lpVault;
         this.xmrAmount = xmrAmount;
-        this.timeout = Math.floor(Date.now() / 1000) + SWAP_CONFIG.defaultTimeout;
+        this.timeoutDuration = SWAP_CONFIG.defaultTimeout; // Duration in seconds, not timestamp
 
-        // Step 1: Initialize Phantom Agent
+        // Step 1: Initialize Phantom Agent (generate commitment)
         await this.initializeAgent();
 
-        // Step 2: Display deposit info and monitor
-        await this.monitorDeposit();
-
-        // Step 3: Initiate on EVM
+        // Step 2: Initiate on EVM (call contract with commitment)
         await this.initiateOnEVM();
 
-        // Step 4: Wait for LP confirmation
+        // Step 3: Display deposit info and monitor (LP provides address, user deposits)
+        await this.monitorDeposit();
+
+        // Step 4: Wait for LP confirmation (LP confirms XMR lock)
         await this.waitForLPConfirmation();
 
-        // Step 5: Wait for finalization
+        // Step 5: Wait for finalization (LP reveals secret)
         await this.waitForFinalization();
     }
 
@@ -186,7 +186,7 @@ export class MintFlow {
             lpVault: this.lpVault,
             xmrAmount: xmrAmountContract.toString(),
             commitment,
-            timeout: this.timeout,
+            timeoutDuration: this.timeoutDuration,
             value: totalValue.toString()
         });
 
@@ -194,19 +194,25 @@ export class MintFlow {
         await writeVaultManager('updatePythPrices', [updateData], pythFee);
 
         // Then initiate mint
+        // Get user's address for recipient
+        const { getUserAddress } = await import('./viemClient.js');
+        const userAddress = getUserAddress();
+        
         const receipt = await writeVaultManager(
             'initiateMint',
-            [this.lpVault, xmrAmountContract, commitment, BigInt(this.timeout)],
+            [this.lpVault, userAddress, xmrAmountContract, commitment, BigInt(this.timeoutDuration)],
             this.griefingDeposit
         );
 
         console.log('Mint initiated, tx:', receipt.transactionHash);
 
         // Extract requestId from events
+        // MintInitiated event signature: MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, uint256 timeout)
+        const mintInitiatedEventSig = '0xb2dfbb26df226ffe3b99f8ca997b1758298208a9f9ba18dd035e3ee1539e6950';
+        
         const mintInitiatedEvent = receipt.logs.find(log => {
             try {
-                // Check if this is a MintInitiated event
-                return log.topics[0] === '0x...'; // TODO: Calculate event signature
+                return log.topics[0] === mintInitiatedEventSig;
             } catch {
                 return false;
             }

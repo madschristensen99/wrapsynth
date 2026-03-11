@@ -11,8 +11,8 @@ import { parseAbi } from 'https://esm.sh/viem@2.7.0';
  * @returns {Object} Price update data
  */
 export async function fetchPythPriceUpdate(priceIds) {
-    // Construct URL with price IDs
-    const url = new URL(`${PYTH_CONFIG.hermesUrl}/v2/updates/price/latest`);
+    // Use Hermes v2 API - returns hex-encoded data in binary.data field
+    const url = new URL('https://hermes.pyth.network/v2/updates/price/latest');
     priceIds.forEach(id => {
         url.searchParams.append('ids[]', id);
     });
@@ -28,7 +28,11 @@ export async function fetchPythPriceUpdate(priceIds) {
 
         const data = await response.json();
         
-        if (!data.binary || !data.binary.data || data.binary.data.length === 0) {
+        // Check for data in either binary.data or direct data array
+        const hasData = (data.binary && data.binary.data && data.binary.data.length > 0) ||
+                       (data.data && data.data.length > 0);
+        
+        if (!hasData) {
             throw new Error('No price data received from Pyth');
         }
 
@@ -48,29 +52,19 @@ export async function fetchPythPriceUpdate(priceIds) {
  */
 export function formatPythUpdateData(pythData) {
     if (!pythData.binary || !pythData.binary.data) {
-        throw new Error('Invalid Pyth data format');
+        throw new Error('Invalid Pyth data format - missing binary.data');
     }
 
-    // The binary.data field contains base64-encoded VAA (Verifiable Action Approval)
+    // According to Pyth docs, binary.data contains hex-encoded strings
+    // The encoding field tells us the format (should be "hex")
     const updateData = pythData.binary.data;
     
-    // Convert base64 to hex bytes
-    const hexData = updateData.map(base64Data => {
-        // Decode base64
-        const binaryString = atob(base64Data);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-        }
-        
-        // Convert to hex string with 0x prefix
-        return '0x' + Array.from(bytes)
-            .map(b => b.toString(16).padStart(2, '0'))
-            .join('');
+    // Ensure each hex string has 0x prefix
+    const hexData = updateData.map(hexStr => {
+        return hexStr.startsWith('0x') ? hexStr : '0x' + hexStr;
     });
 
     console.log('Formatted Pyth update data:', hexData);
-
     return hexData;
 }
 
@@ -104,14 +98,14 @@ export async function getPythUpdateFee(updateData, pythOracleAddress) {
 }
 
 /**
- * Fetch and format price updates for XMR and ETH
+ * Fetch and format price updates for XMR and sDAI
  * @returns {Object} Formatted update data and fee
  */
 export async function getPriceUpdates() {
-    // Fetch updates for both XMR/USD and ETH/USD
+    // Fetch updates for both XMR/USD and sDAI/USD (contract collateral)
     const priceIds = [
         PYTH_CONFIG.priceIds.xmrUsd,
-        PYTH_CONFIG.priceIds.ethUsd
+        PYTH_CONFIG.priceIds.sdaiUsd
     ];
 
     const pythData = await fetchPythPriceUpdate(priceIds);

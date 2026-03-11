@@ -25,12 +25,12 @@ export const CONTRACTS = {
 
 // Pyth Network Configuration
 export const PYTH_CONFIG = {
-    hermesUrl: 'https://hermes.pyth.network',
+    hermesUrl: 'https://hermes.pyth.network/api',
     priceIds: {
         // XMR/USD price feed ID
         xmrUsd: '0x46b8cc9347f04391764a0361e0b17c3ba394b001e7c304f7650f6376e37c321d',
-        // ETH/USD price feed ID  
-        ethUsd: '0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace'
+        // sDAI/USD price feed ID (collateral asset)
+        sdaiUsd: '0xb0948a5e5313200c632b51bb5ca32f6de0d36e9950a942d19751e833f70dabfd'
     },
     updateFee: 1n // Wei, will be calculated dynamically
 };
@@ -79,7 +79,7 @@ export const MONERO_CONFIG = {
 export const SWAP_CONFIG = {
     minMintAmount: 0.01, // Minimum XMR to mint
     minBurnAmount: 0.01, // Minimum wsXMR to burn
-    defaultTimeout: 86400, // 24 hours in seconds
+    defaultTimeout: 7200, // 2 hours in seconds (matches MAX_MINT_TIMEOUT)
     pollInterval: 5000, // 5 seconds
     maxRetries: 3
 };
