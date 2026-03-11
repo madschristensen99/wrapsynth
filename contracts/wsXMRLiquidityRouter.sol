@@ -67,8 +67,11 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     mapping(address => uint256[]) public userPositions;
 
    
-    mapping(address => mapping(address => bool)) public lpApprovedUsers; // LP approves user
-    mapping(address => mapping(address => bool)) public userApprovedLps; // User approves LP
+    // Mutual approval system with amount limits
+    // LP approves max sDAI amount to pair with specific user
+    mapping(address => mapping(address => uint256)) public lpApprovalAmount;
+    // User approves max wsXMR amount to pair with specific LP
+    mapping(address => mapping(address => uint256)) public userApprovalAmount; // User approves LP
 
     // ========== EVENTS ==========
     
@@ -88,8 +91,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     event PositionClosed(uint256 indexed positionIndex, uint256 sDAIReturned, uint256 wsxmrReturned);
     event FeesCollected(uint256 indexed positionIndex, uint256 sDAIFees, uint256 wsxmrFees);
     event FeesWithdrawn(address indexed recipient, uint256 sDAIAmount, uint256 wsxmrAmount);
-    event LpApprovedUser(address indexed lp, address indexed user, bool approved);
-    event UserApprovedLp(address indexed user, address indexed lp, bool approved);
+    event LpApprovedUser(address indexed lp, address indexed user, uint256 amount);
+    event UserApprovedLp(address indexed user, address indexed lp, uint256 amount);
 
     // ========== ERRORS ==========
     
@@ -215,21 +218,21 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     /**
      * @notice LP approves a user for liquidity pairing
      * @param _user Address of user to approve
-     * @param _approved Whether to approve or revoke approval
+     * @param _maxSDAI Maximum sDAI amount to approve for pairing
      */
-    function approveUserForPairing(address _user, bool _approved) external {
-        lpApprovedUsers[msg.sender][_user] = _approved;
-        emit LpApprovedUser(msg.sender, _user, _approved);
+    function approveUserForPairing(address _user, uint256 _maxSDAI) external {
+        lpApprovalAmount[msg.sender][_user] = _maxSDAI;
+        emit LpApprovedUser(msg.sender, _user, _maxSDAI);
     }
     
     /**
      * @notice User approves an LP for liquidity pairing
      * @param _lp Address of LP to approve
-     * @param _approved Whether to approve or revoke approval
+     * @param _maxWsxmr Maximum wsXMR amount to approve for pairing
      */
-    function approveLpForPairing(address _lp, bool _approved) external {
-        userApprovedLps[msg.sender][_lp] = _approved;
-        emit UserApprovedLp(msg.sender, _lp, _approved);
+    function approveLpForPairing(address _lp, uint256 _maxWsxmr) external {
+        userApprovalAmount[msg.sender][_lp] = _maxWsxmr;
+        emit UserApprovedLp(msg.sender, _lp, _maxWsxmr);
     }
     
     /**
@@ -243,21 +246,29 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         address _lp,
         address _user,
         uint256 _sDAIAmount,
-        uint256 _wsxmrAmount
+        uint256 _wsxmrAmount,
+        uint256 _deadline
     ) external nonReentrant returns (uint256 positionIndex) {
+        require(block.timestamp <= _deadline, "Transaction expired");
        
         // Prevents LP from stealing arbitrary user deposits
         // Prevents user from forcing LP into manipulated positions
         if (msg.sender != _lp && msg.sender != _user) revert Unauthorized();
         
        
-        // BOTH parties must have explicitly approved each other
-        if (!lpApprovedUsers[_lp][_user]) {
-            revert("LP has not approved user for pairing");
-        }
-        if (!userApprovedLps[_user][_lp]) {
-            revert("User has not approved LP for pairing");
-        }
+        // BOTH parties must have explicitly approved each other with sufficient amounts
+        require(
+            lpApprovalAmount[_lp][_user] >= _sDAIAmount,
+            "LP approval insufficient"
+        );
+        require(
+            userApprovalAmount[_user][_lp] >= _wsxmrAmount,
+            "User approval insufficient"
+        );
+        
+        // Decrement approval amounts
+        lpApprovalAmount[_lp][_user] -= _sDAIAmount;
+        userApprovalAmount[_user][_lp] -= _wsxmrAmount;
         
         // Both parties have mutually approved this pairing
         
@@ -326,7 +337,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
                 amount0Min: amount0Min,
                 amount1Min: amount1Min,
                 recipient: address(this),
-                deadline: block.timestamp
+                deadline: _deadline
             })
         );
         
@@ -382,7 +393,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
      * @notice Close a liquidity position and return assets
      * @param _positionIndex Index of the position to close
      */
-    function closePosition(uint256 _positionIndex) external nonReentrant {
+    function closePosition(uint256 _positionIndex, uint256 _deadline) external nonReentrant {
+        require(block.timestamp <= _deadline, "Transaction expired");
         LiquidityPosition storage position = positions[_positionIndex];
         if (position.positionId == 0) revert PositionNotFound();
         
@@ -406,7 +418,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
                 liquidity: liquidity,
                 amount0Min: 0,
                 amount1Min: 0,
-                deadline: block.timestamp
+                deadline: _deadline
             })
         );
         
@@ -435,14 +447,14 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         uint256 sDAIPrincipal = token0 == GnosisAddresses.SDAI ? principal0 : principal1;
         uint256 wsxmrPrincipal = token0 == GnosisAddresses.SDAI ? principal1 : principal0;
 
-        // Validate total withdrawn value is within acceptable range (5% slippage)
+        // Validate total withdrawn value is within acceptable range (tightened to 95%)
         uint256 withdrawnValueUSD = (sDAIPrincipal * vaultManager.getCollateralPrice()) / 1e18
             + (wsxmrPrincipal * vaultManager.getXmrPrice()) / 1e8;
         uint256 expectedValueUSD = position.lpInitialValueUSD + position.userInitialValueUSD;
-        // Allow up to 50% loss from IL but protect against sandwich attacks
-        // IL on full-range positions is bounded; >50% loss indicates manipulation
+        // Tightened from 50% to 95% to better protect against sandwich attacks
+        // IL on full-range positions is bounded; >5% loss may indicate manipulation
         require(
-            withdrawnValueUSD >= (expectedValueUSD * 50) / 100,
+            withdrawnValueUSD >= (expectedValueUSD * 95) / 100,
             "Withdrawal value too low - possible manipulation"
         );
 
@@ -499,6 +511,11 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     function collectFees(uint256 _positionIndex) external nonReentrant {
         LiquidityPosition storage position = positions[_positionIndex];
         if (position.positionId == 0) revert PositionNotFound();
+        
+        // Only position participants can collect fees
+        if (msg.sender != position.lpProvider && msg.sender != position.userProvider) {
+            revert Unauthorized();
+        }
         
         // Collect accumulated fees (this only collects fees, not principal,
         // because we haven't called decreaseLiquidity)
@@ -559,33 +576,78 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     // ========== VIEW FUNCTIONS ==========
     
     /**
-     * @notice Get all active positions for a user or LP
+     * @notice Get paginated positions for a user or LP
      * @param _account Address to query (can be LP or user)
+     * @param _cursor Starting index in the user's position array
+     * @param _limit Maximum number of positions to return
      * @return activePositions Array of active liquidity positions
+     * @return nextCursor Next cursor value (0 if no more positions)
      */
-    function getUserPositions(address _account) external view returns (LiquidityPosition[] memory activePositions) {
+    function getUserPositions(
+        address _account,
+        uint256 _cursor,
+        uint256 _limit
+    ) external view returns (
+        LiquidityPosition[] memory activePositions,
+        uint256 nextCursor
+    ) {
         uint256[] memory posIndexes = userPositions[_account];
         
-        // Count active positions (positionId != 0 means not closed)
+        if (_cursor >= posIndexes.length) {
+            return (new LiquidityPosition[](0), 0);
+        }
+        
+        // Count active positions within the limit
         uint256 count = 0;
-        for (uint256 i = 0; i < posIndexes.length; i++) {
+        uint256 i = _cursor;
+        while (i < posIndexes.length && count < _limit) {
             if (positions[posIndexes[i]].positionId != 0) {
                 count++;
             }
+            i++;
         }
         
         // Allocate and populate array
         activePositions = new LiquidityPosition[](count);
         uint256 currentIndex = 0;
-        for (uint256 i = 0; i < posIndexes.length; i++) {
+        i = _cursor;
+        while (i < posIndexes.length && currentIndex < count) {
             uint256 pIdx = posIndexes[i];
             if (positions[pIdx].positionId != 0) {
                 activePositions[currentIndex] = positions[pIdx];
                 currentIndex++;
             }
+            i++;
         }
         
-        return activePositions;
+        // Set next cursor
+        nextCursor = i < posIndexes.length ? i : 0;
+        
+        return (activePositions, nextCursor);
+    }
+    
+    /**
+     * @notice Clean up stale position references for a user
+     * @param _account Address to clean up
+     * @dev Removes closed positions from the tracking array
+     */
+    function cleanupStalePositions(address _account) external {
+        uint256[] storage posIndexes = userPositions[_account];
+        uint256 writeIndex = 0;
+        
+        for (uint256 readIndex = 0; readIndex < posIndexes.length; readIndex++) {
+            if (positions[posIndexes[readIndex]].positionId != 0) {
+                if (writeIndex != readIndex) {
+                    posIndexes[writeIndex] = posIndexes[readIndex];
+                }
+                writeIndex++;
+            }
+        }
+        
+        // Trim array
+        while (posIndexes.length > writeIndex) {
+            posIndexes.pop();
+        }
     }
     
     /**
