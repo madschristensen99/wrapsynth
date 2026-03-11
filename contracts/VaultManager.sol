@@ -52,6 +52,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     uint256 public constant LIQUIDATION_BURN_BATCH_SIZE = 20;
     uint256 public constant MAX_VAULT_COUNT = 10000;
     uint256 public constant MIN_BURN_AMOUNT = 1e6; // 0.01 wsXMR minimum (8 decimals)
+    uint256 public constant BURN_LOCK_RATIO = 130; // 130% lock for price movement buffer
     
     // Decimal and conversion constants
     uint256 public constant XMR_TO_WSXMR_DIVISOR = 1e4; // XMR 12 decimals -> wsXMR 8 decimals
@@ -442,12 +443,30 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 daiReceived = ISavingsDAI(GnosisAddresses.SDAI).redeem(_amount, msg.sender, address(this));
         
        
-        // Calculate what portion of the LP's principal this withdrawal represents
-        uint256 principalToDeduct = (lpPrincipalDeposits[msg.sender] * _amount) / collateralAfterSync;
+        // Calculate what proportion of the vault this withdrawal represents
+        // Use shares-to-shares ratio for consistency (both are in sDAI share units)
+        uint256 withdrawalProportion = (_amount * 1e18) / collateralAfterSync; // 18 decimal proportion
+
+        // Deduct principal deposits proportionally
+        uint256 principalToDeduct = (lpPrincipalDeposits[msg.sender] * withdrawalProportion) / 1e18;
+        if (principalToDeduct > lpPrincipalDeposits[msg.sender]) {
+            principalToDeduct = lpPrincipalDeposits[msg.sender];
+        }
         lpPrincipalDeposits[msg.sender] -= principalToDeduct;
+        if (principalToDeduct > globalLpPrincipal) {
+            principalToDeduct = globalLpPrincipal;
+        }
         globalLpPrincipal -= principalToDeduct;
-        uint256 sharesToDeduct = (lpPrincipalShares[msg.sender] * _amount) / collateralAfterSync;
+
+        // Deduct principal shares proportionally
+        uint256 sharesToDeduct = (lpPrincipalShares[msg.sender] * withdrawalProportion) / 1e18;
+        if (sharesToDeduct > lpPrincipalShares[msg.sender]) {
+            sharesToDeduct = lpPrincipalShares[msg.sender];
+        }
         lpPrincipalShares[msg.sender] -= sharesToDeduct;
+        if (sharesToDeduct > globalLpPrincipalShares) {
+            sharesToDeduct = globalLpPrincipalShares;
+        }
         globalLpPrincipalShares -= sharesToDeduct;
         
         emit CollateralWithdrawn(msg.sender, GnosisAddresses.SDAI, daiReceived);
@@ -921,8 +940,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // Check that vault will remain healthy AFTER locking collateral for this burn
         // Calculate collateral needed first
         uint256 collateralValue = getCollateralValueForDebt(_wsxmrAmount);
+        // Lock at 130% of debt value (higher than LIQUIDATION_RATIO of 120%)
+        // to provide a buffer against price movements during the burn handshake.
+        // The extra 10% buffer protects users if XMR price rises before settlement.
         uint256 collateralToLock = usdToCollateral(
-            (collateralValue * LIQUIDATION_RATIO) / RATIO_PRECISION
+            (collateralValue * BURN_LOCK_RATIO) / RATIO_PRECISION
         );
         uint256 rewardUsd = (collateralValue * vault.burnRewardBps) / BPS_DENOMINATOR;
         uint256 rewardCollateral = usdToCollateral(rewardUsd);
@@ -1066,30 +1088,21 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
         Vault storage vault = vaults[request.lpVault];
         
-        // Safely adjust vault locked collateral
-        uint256 totalUnlock = request.lockedCollateral + request.rewardCollateral;
-        if (vault.lockedCollateral >= totalUnlock) {
-            vault.lockedCollateral -= totalUnlock;
-        } else {
-            vault.lockedCollateral = 0; // Protection against liquidation underflows
-        }
-        
-        // Return the base locked collateral back to vault
-        vault.collateralAmount += request.lockedCollateral;
-        
-        // Process reward
-        if (request.rewardCollateral > 0) {
-            uint256 safeReward = request.rewardCollateral > vault.collateralAmount 
-                ? vault.collateralAmount 
-                : request.rewardCollateral;
-            
-            vault.collateralAmount -= safeReward;
+        // Safely adjust vault locked collateral (already done above, keep as is)
 
-            // Ensure vault remains above liquidation ratio after reward payment
+        // Process reward from the locked collateral before returning base to vault
+        uint256 safeReward = 0;
+        if (request.rewardCollateral > 0) {
+            safeReward = request.rewardCollateral;
+            
+            // After giving the reward, check if remaining vault would be healthy
+            // Return base locked collateral to vault first for calculation
+            uint256 projectedCollateral = vault.collateralAmount + request.lockedCollateral;
             uint256 remainingDebt = getActualDebt(vault.normalizedDebt);
+            
             if (remainingDebt > 0) {
-                uint256 availableForDebt = vault.collateralAmount > vault.lockedCollateral
-                    ? vault.collateralAmount - vault.lockedCollateral
+                uint256 availableForDebt = projectedCollateral > vault.lockedCollateral
+                    ? projectedCollateral - vault.lockedCollateral
                     : 0;
                 uint256 ratioAfterReward = calculateCollateralRatio(
                     availableForDebt,
@@ -1097,42 +1110,47 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
                 );
                 if (ratioAfterReward < LIQUIDATION_RATIO) {
                     // Reduce reward to maintain health
-                    uint256 excessReward = safeReward;
-                    vault.collateralAmount += excessReward; // Give back the reward
-                    
-                    // Recalculate max safe reward
                     uint256 collateralPrice = getCollateralPrice();
                     uint256 xmrPrice = getXmrPrice();
                     uint256 debtValueUSD = ((remainingDebt + vault.pendingDebt) * xmrPrice) / 1e8;
                     uint256 minCollateralUSD = (debtValueUSD * LIQUIDATION_RATIO) / RATIO_PRECISION;
                     uint256 minCollateralShares = (minCollateralUSD * 1e18) / collateralPrice + vault.lockedCollateral;
                     
-                    if (vault.collateralAmount > minCollateralShares) {
-                        safeReward = vault.collateralAmount - minCollateralShares;
-                        vault.collateralAmount -= safeReward;
+                    if (projectedCollateral > minCollateralShares) {
+                        safeReward = projectedCollateral - minCollateralShares;
                     } else {
                         safeReward = 0;
                     }
                     
-                    emit BurnRewardShortfall(_requestId, request.rewardCollateral, safeReward);
+                    if (safeReward < request.rewardCollateral) {
+                        emit BurnRewardShortfall(_requestId, request.rewardCollateral, safeReward);
+                    }
                 }
             }
-            
-            if (safeReward < request.rewardCollateral && safeReward > 0) {
-                emit BurnRewardShortfall(_requestId, request.rewardCollateral, safeReward);
+        }
+
+        // Unlock from lockedCollateral tracker
+        uint256 totalUnlock = request.lockedCollateral + request.rewardCollateral;
+        if (vault.lockedCollateral >= totalUnlock) {
+            vault.lockedCollateral -= totalUnlock;
+        } else {
+            vault.lockedCollateral = 0; // Protection against liquidation underflows
+        }
+
+        // Return base locked collateral to vault
+        vault.collateralAmount += request.lockedCollateral;
+
+        // Principal tracking for the reward portion
+        if (safeReward > 0 && lpPrincipalDeposits[vault.lpAddress] > 0) {
+            uint256 totalVaultAssets = vault.collateralAmount + vault.lockedCollateral;
+            uint256 principalReduction = totalVaultAssets > 0
+                ? (lpPrincipalDeposits[vault.lpAddress] * safeReward) / totalVaultAssets
+                : 0;
+            if (principalReduction > lpPrincipalDeposits[vault.lpAddress]) {
+                principalReduction = lpPrincipalDeposits[vault.lpAddress];
             }
-            
-            // Principal reduction should be based on total vault assets
-            // including locked collateral, not just the post-manipulation amount
-            if (lpPrincipalDeposits[vault.lpAddress] > 0) {
-                uint256 totalVaultAssets = vault.collateralAmount + vault.lockedCollateral + safeReward;
-                uint256 principalReduction = (lpPrincipalDeposits[vault.lpAddress] * safeReward) / totalVaultAssets;
-                if (principalReduction > lpPrincipalDeposits[vault.lpAddress]) {
-                    principalReduction = lpPrincipalDeposits[vault.lpAddress];
-                }
-                lpPrincipalDeposits[vault.lpAddress] -= principalReduction;
-                globalLpPrincipal -= principalReduction;
-            }
+            lpPrincipalDeposits[vault.lpAddress] -= principalReduction;
+            globalLpPrincipal -= principalReduction;
             
             pendingReturns[request.user][GnosisAddresses.SDAI] += safeReward;
             globalPendingSDAI += safeReward;
@@ -1173,6 +1191,22 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
                 : 0;
             lpPrincipalDeposits[vault.lpAddress] -= principalReduction;
             globalLpPrincipal -= principalReduction;
+        }
+
+        // Reduce principal shares proportionally
+        if (lpPrincipalShares[vault.lpAddress] > 0) {
+            uint256 totalVaultAssets = vault.collateralAmount + vault.lockedCollateral + actualSeized;
+            uint256 sharesReduction = totalVaultAssets > 0
+                ? (lpPrincipalShares[vault.lpAddress] * actualSeized) / totalVaultAssets
+                : 0;
+            if (sharesReduction > lpPrincipalShares[vault.lpAddress]) {
+                sharesReduction = lpPrincipalShares[vault.lpAddress];
+            }
+            lpPrincipalShares[vault.lpAddress] -= sharesReduction;
+            if (sharesReduction > globalLpPrincipalShares) {
+                sharesReduction = globalLpPrincipalShares;
+            }
+            globalLpPrincipalShares -= sharesReduction;
         }
         
         // Queue collateral for user withdrawal (pull pattern prevents DoS)
@@ -1231,18 +1265,47 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             );
             
             if (ratioAfter < COLLATERAL_RATIO) {
-                // Vault cannot safely absorb the restored debt
-                // The user's wsXMR was already burned in requestBurn, so no unbacked supply exists
-                // Give user their locked collateral as compensation
-                // Do NOT add to globalBadDebt - there is no unbacked wsXMR
+                // Vault cannot safely absorb the restored debt.
+                // The user's wsXMR was already burned in requestBurn, so no
+                // unbacked supply exists. Compensate user with collateral equal
+                // to the VALUE of their burned wsXMR, not the full lock amount
+                // (which includes the 120% ratio buffer).
+                
+                // Calculate fair compensation: value of burned wsXMR in collateral
+                uint256 fairCompensationUsd = getCollateralValueForDebt(request.wsxmrAmount);
+                uint256 fairCompensationCollateral = usdToCollateral(fairCompensationUsd);
+                
+                // Cap at available locked amount
+                if (fairCompensationCollateral > totalUnlock) {
+                    fairCompensationCollateral = totalUnlock;
+                }
                 
                 // Release locked collateral
                 vault.lockedCollateral -= totalUnlock;
                 
-                // Send locked collateral to user as compensation
-                pendingReturns[request.user][GnosisAddresses.SDAI] += totalUnlock;
-                globalPendingSDAI += totalUnlock;
-                emit ReturnQueued(request.user, GnosisAddresses.SDAI, totalUnlock);
+                // Give user fair compensation
+                pendingReturns[request.user][GnosisAddresses.SDAI] += fairCompensationCollateral;
+                globalPendingSDAI += fairCompensationCollateral;
+                emit ReturnQueued(request.user, GnosisAddresses.SDAI, fairCompensationCollateral);
+                
+                // Return excess to vault (the 120% buffer minus user's fair share)
+                uint256 excessCollateral = totalUnlock - fairCompensationCollateral;
+                if (excessCollateral > 0) {
+                    vault.collateralAmount += excessCollateral;
+                }
+                
+                // Update principal tracking for the portion given to user
+                if (lpPrincipalDeposits[vault.lpAddress] > 0 && fairCompensationCollateral > 0) {
+                    uint256 totalVaultAssets = vault.collateralAmount + vault.lockedCollateral + fairCompensationCollateral;
+                    uint256 principalReduction = totalVaultAssets > 0
+                        ? (lpPrincipalDeposits[vault.lpAddress] * fairCompensationCollateral) / totalVaultAssets
+                        : 0;
+                    if (principalReduction > lpPrincipalDeposits[vault.lpAddress]) {
+                        principalReduction = lpPrincipalDeposits[vault.lpAddress];
+                    }
+                    lpPrincipalDeposits[vault.lpAddress] -= principalReduction;
+                    globalLpPrincipal -= principalReduction;
+                }
                 
                 request.status = BurnStatus.CANCELLED;
                 emit BurnCancelled(_requestId);
@@ -1354,11 +1417,18 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // If there are remaining unprocessed burn requests, they stay active
         // Subsequent liquidation calls will process the next batch
         
-        // After resolving burn requests, add any remaining locked collateral to collateralAmount
-        if (vault.lockedCollateral > 0) {
-            vault.collateralAmount += vault.lockedCollateral;
-            vault.lockedCollateral = 0;
+        // Only move remaining locked collateral to collateralAmount if ALL
+        // burn requests were processed. If there are unprocessed burns beyond
+        // the batch limit, their lockedCollateral references must remain valid.
+        if (burnBatchEnd >= vaultBurns.length) {
+            // All burn requests were processed — safe to zero out
+            if (vault.lockedCollateral > 0) {
+                vault.collateralAmount += vault.lockedCollateral;
+                vault.lockedCollateral = 0;
+            }
         }
+        // If not all burns were processed, lockedCollateral retains the
+        // unprocessed amounts. Subsequent liquidation calls will handle them.
         
         // Re-read actual debt after burn resolution (debt may have increased from restored burns)
         actualDebt = getActualDebt(vault.normalizedDebt);
@@ -1368,8 +1438,15 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         }
 
         // Re-verify vault is still liquidatable after burn resolution
+        // vault.collateralAmount excludes lockedCollateral (deducted in requestBurn)
+        // actualDebt excludes debt cleared by burns (normalizedDebt was reduced in requestBurn)
+        // Therefore this ratio correctly measures: unlocked collateral vs unbacked debt
         ratio = calculateCollateralRatio(vault.collateralAmount, actualDebt);
         if (ratio >= LIQUIDATION_RATIO) revert VaultHealthy();
+        
+        // Warn: if there are still unprocessed burn requests, the seized
+        // collateral amount may be less than expected because some collateral
+        // remains locked for those burns. This is correct behavior.
         
         // Calculate collateral to seize (at liquidation bonus, which is < threshold to prevent death spiral)
         uint256 collateralValue = getCollateralValueForDebt(_debtToClear);
@@ -1394,6 +1471,19 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             uint256 principalReduction = (lpPrincipalDeposits[_lpVault] * collateralAmount) / (vault.collateralAmount + collateralAmount);
             lpPrincipalDeposits[_lpVault] -= principalReduction;
             globalLpPrincipal -= principalReduction;
+        }
+
+        // Also reduce principal shares proportionally to keep yield tracking consistent
+        if (lpPrincipalShares[_lpVault] > 0) {
+            uint256 sharesReduction = (lpPrincipalShares[_lpVault] * collateralAmount) / (vault.collateralAmount + collateralAmount);
+            if (sharesReduction > lpPrincipalShares[_lpVault]) {
+                sharesReduction = lpPrincipalShares[_lpVault];
+            }
+            lpPrincipalShares[_lpVault] -= sharesReduction;
+            if (sharesReduction > globalLpPrincipalShares) {
+                sharesReduction = globalLpPrincipalShares;
+            }
+            globalLpPrincipalShares -= sharesReduction;
         }
         
        
@@ -1423,7 +1513,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // 3. Vault debt was cleared, so restoring it would create unbacked tokens
         // In production, implement explicit burn request tracking per vault
         
-       
         // If vault has zero collateral but still has debt, track as bad debt
         if (vault.collateralAmount == 0 && vault.normalizedDebt > 0) {
             uint256 remainingDebt = getActualDebt(vault.normalizedDebt);
@@ -1437,8 +1526,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             }
         }
         
-       
-        vault.liquidationNonce++;
+        // Only increment liquidation nonce if all burn requests were resolved.
+        // Otherwise, unprocessed burns still reference the current nonce and
+        // must remain valid for future resolution.
+        if (burnBatchEnd >= vaultBurns.length) {
+            vault.liquidationNonce++;
+        }
         vault.mintNonce++; // Invalidate all pending mints
         vault.pendingDebt = 0; // Zero pending debt since all mints are now invalid
         
@@ -1595,10 +1688,21 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
                     globalDebtIndex = 1e18;
                     globalTotalDebt = 0;
                 } else if (globalDebtIndex < 1e10) {
-                    // Index is dangerously low - cap further reduction but don't zero all debt
-                    // This prevents sudden evaporation of legitimate debt
+                    // Index is dangerously low - cap further reduction
+                    // Calculate the ratio between old and floored index to scale
+                    // globalTotalDebt without iterating all vaults
+                    uint256 previousIndex = globalDebtIndex; // Already set above
                     globalDebtIndex = 1e10;
-                    // Recompute globalTotalDebt to match the floored index
+                    
+                    // Scale globalTotalDebt proportionally: since all normalized debts
+                    // stay the same but the index changed, total debt scales linearly.
+                    // newTotalDebt = oldTotalDebt * newIndex / oldIndex
+                    // This is O(1) and works regardless of vault count.
+                    if (previousIndex > 0) {
+                        globalTotalDebt = (globalTotalDebt * 1e10) / previousIndex;
+                    }
+                    
+                    // Still do exact reconciliation when feasible
                     if (vaultList.length <= 200) {
                         uint256 computedDebt = 0;
                         for (uint256 i = 0; i < vaultList.length; i++) {
@@ -1621,7 +1725,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             }
         }
         
-        // Periodic reconciliation when feasible
+        // Periodic reconciliation when feasible.
+        // For >200 vaults, globalTotalDebt was already scaled proportionally
+        // above, so drift is bounded to rounding errors per cycle.
         if (vaultList.length <= 200) {
             uint256 computedDebt = 0;
             for (uint256 i = 0; i < vaultList.length; i++) {
@@ -1726,11 +1832,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
      * @dev Anyone can call this to correct drift in globalTotalDebt tracking
      */
     function reconcileGlobalDebt() external {
-        // Only allow reconciliation when it won't affect buy-and-burn timing
-        // Prevent strategic calls right before triggerBuyAndBurn
+        // Prevent strategic reconciliation near buy-and-burn windows.
+        // Blocked from 2 hours before eligibility through 30 minutes after.
+        uint256 nextEligible = lastBuyTimestamp + COOLDOWN_PERIOD;
         require(
-            block.timestamp >= lastBuyTimestamp + COOLDOWN_PERIOD || 
-            block.timestamp + 1 hours < lastBuyTimestamp + COOLDOWN_PERIOD,
+            block.timestamp >= nextEligible + 30 minutes ||
+            block.timestamp + 2 hours < nextEligible,
             "Cannot reconcile near buy-and-burn window"
         );
         
