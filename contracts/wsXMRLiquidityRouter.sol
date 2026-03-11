@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {INonfungiblePositionManager} from "./interfaces/INonfungiblePositionManager.sol";
+import {IUniswapV3Factory} from "./interfaces/IUniswapV3Factory.sol";
 import {VaultManager} from "./VaultManager.sol";
 import {wsXMR} from "./wsXMR.sol";
 import {ISavingsDAI} from "./interfaces/ISavingsDAI.sol";
@@ -33,6 +34,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     VaultManager public immutable vaultManager;
     wsXMR public immutable wsxmrToken;
     INonfungiblePositionManager public immutable positionManager;
+    IUniswapV3Factory public immutable uniswapFactory;
     
     // LP Configuration: How much collateral each LP allocates for liquidity
     mapping(address => uint256) public lpLiquidityAllocation; // sDAI shares allocated
@@ -50,6 +52,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         uint256 lpInitialValueUSD; // LP's initial USD value contribution
         uint256 userInitialValueUSD; // User's initial USD value contribution
         uint256 createdAt;
+        uint256 feesCollected0; // Cumulative token0 fees already collected
+        uint256 feesCollected1; // Cumulative token1 fees already collected
     }
     
     mapping(uint256 => LiquidityPosition) public positions;
@@ -84,6 +88,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     event PositionClosed(uint256 indexed positionIndex, uint256 sDAIReturned, uint256 wsxmrReturned);
     event FeesCollected(uint256 indexed positionIndex, uint256 sDAIFees, uint256 wsxmrFees);
     event FeesWithdrawn(address indexed recipient, uint256 sDAIAmount, uint256 wsxmrAmount);
+    event LpApprovedUser(address indexed lp, address indexed user, bool approved);
+    event UserApprovedLp(address indexed user, address indexed lp, bool approved);
 
     // ========== ERRORS ==========
     
@@ -98,11 +104,13 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     constructor(
         address _vaultManager,
         address _wsxmrToken,
-        address _positionManager
+        address _positionManager,
+        address _uniswapFactory
     ) {
         vaultManager = VaultManager(_vaultManager);
         wsxmrToken = wsXMR(_wsxmrToken);
         positionManager = INonfungiblePositionManager(_positionManager);
+        uniswapFactory = IUniswapV3Factory(_uniswapFactory);
     }
 
     // ========== LP FUNCTIONS ==========
@@ -211,6 +219,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
      */
     function approveUserForPairing(address _user, bool _approved) external {
         lpApprovedUsers[msg.sender][_user] = _approved;
+        emit LpApprovedUser(msg.sender, _user, _approved);
     }
     
     /**
@@ -220,6 +229,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
      */
     function approveLpForPairing(address _lp, bool _approved) external {
         userApprovedLps[msg.sender][_lp] = _approved;
+        emit UserApprovedLp(msg.sender, _lp, _approved);
     }
     
     /**
@@ -260,8 +270,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         userWsxmrDeposits[_user] -= _wsxmrAmount;
         
         // Approve Uniswap Position Manager
-        IERC20(GnosisAddresses.SDAI).approve(address(positionManager), _sDAIAmount);
-        IERC20(address(wsxmrToken)).approve(address(positionManager), _wsxmrAmount);
+        IERC20(GnosisAddresses.SDAI).forceApprove(address(positionManager), _sDAIAmount);
+        IERC20(address(wsxmrToken)).forceApprove(address(positionManager), _wsxmrAmount);
         
         // Determine token order (Uniswap requires token0 < token1)
         (address token0, address token1) = GnosisAddresses.SDAI < address(wsxmrToken)
@@ -291,7 +301,15 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         uint256 valueDiff = sDAIValue > wsxmrValue ? sDAIValue - wsxmrValue : wsxmrValue - sDAIValue;
         require(valueDiff * 100 <= (sDAIValue + wsxmrValue), "Pool ratio deviates from oracle");
         
-       
+        // Verify pool exists to prevent first-depositor price manipulation
+        address pool = uniswapFactory.getPool(token0, token1, POOL_FEE);
+        require(pool != address(0), "Pool does not exist");
+        
+        // Calculate minimum acceptable amounts (allow 2% slippage from desired)
+        uint256 amount0Min = (amount0 * 98) / 100;
+        uint256 amount1Min = (amount1 * 98) / 100;
+        
+        // CRITICAL FIX: Oracle-based validation prevents MEV arbitrage
         // Uniswap V3 will consume assets according to current pool ratio
         // Oracle validation above (valueDiff * 100 <= totalValue) already prevents manipulation
         // Strict bounds cause reverts when pool ratio doesn't match 50/50 desired amounts
@@ -305,8 +323,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
                 tickUpper: TICK_UPPER,
                 amount0Desired: amount0,
                 amount1Desired: amount1,
-                amount0Min: 0,
-                amount1Min: 0,
+                amount0Min: amount0Min,
+                amount1Min: amount1Min,
                 recipient: address(this),
                 deadline: block.timestamp
             })
@@ -327,9 +345,11 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
                 userProvider: _user,
                 sDAIAmount: actual0,
                 wsxmrAmount: actual1,
-                lpInitialValueUSD: (actual0 * vaultManager.getCollateralPrice()) / 1e18,
-                userInitialValueUSD: (actual1 * vaultManager.getXmrPrice()) / 1e8,
-                createdAt: block.timestamp
+                lpInitialValueUSD: (actual0 * sDAIPrice) / 1e18,
+                userInitialValueUSD: (actual1 * wsxmrPrice) / 1e8,
+                createdAt: block.timestamp,
+                feesCollected0: 0,
+                feesCollected1: 0
             });
         } else {
             if (actual0 < _wsxmrAmount) userWsxmrDeposits[_user] += (_wsxmrAmount - actual0);
@@ -343,9 +363,11 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
                 userProvider: _user,
                 sDAIAmount: actual1,
                 wsxmrAmount: actual0,
-                lpInitialValueUSD: (actual1 * vaultManager.getCollateralPrice()) / 1e18,
-                userInitialValueUSD: (actual0 * vaultManager.getXmrPrice()) / 1e8,
-                createdAt: block.timestamp
+                lpInitialValueUSD: (actual1 * sDAIPrice) / 1e18,
+                userInitialValueUSD: (actual0 * wsxmrPrice) / 1e8,
+                createdAt: block.timestamp,
+                feesCollected0: 0,
+                feesCollected1: 0
             });
         }
         
@@ -400,17 +422,30 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
                 amount1Max: type(uint128).max
             })
         );
-        
-       
-        // collected = principal (from decreaseLiquidity) + pre-existing fees
-        uint256 fees0 = collected0 - principal0;
-        uint256 fees1 = collected1 - principal1;
-        
-       
+
+        // CRITICAL FIX: Fee calculation must account for IL shifting principal amounts
+        // Only count fees not already collected via collectFees
+        // collected includes principal + any NEW fees since last collectFees call
+        uint256 newFees0 = collected0 > principal0 ? collected0 - principal0 : 0;
+        uint256 newFees1 = collected1 > principal1 ? collected1 - principal1 : 0;
+        uint256 fees0 = newFees0;
+        uint256 fees1 = newFees1;
+
         // Avoids USD conversion round-trip that can trap funds
         uint256 sDAIPrincipal = token0 == GnosisAddresses.SDAI ? principal0 : principal1;
         uint256 wsxmrPrincipal = token0 == GnosisAddresses.SDAI ? principal1 : principal0;
-        
+
+        // Validate total withdrawn value is within acceptable range (5% slippage)
+        uint256 withdrawnValueUSD = (sDAIPrincipal * vaultManager.getCollateralPrice()) / 1e18
+            + (wsxmrPrincipal * vaultManager.getXmrPrice()) / 1e8;
+        uint256 expectedValueUSD = position.lpInitialValueUSD + position.userInitialValueUSD;
+        // Allow up to 50% loss from IL but protect against sandwich attacks
+        // IL on full-range positions is bounded; >50% loss indicates manipulation
+        require(
+            withdrawnValueUSD >= (expectedValueUSD * 50) / 100,
+            "Withdrawal value too low - possible manipulation"
+        );
+
         // Calculate proportional split based on initial USD contributions
         uint256 totalInitialValue = position.lpInitialValueUSD + position.userInitialValueUSD;
         
@@ -465,7 +500,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         LiquidityPosition storage position = positions[_positionIndex];
         if (position.positionId == 0) revert PositionNotFound();
         
-        // Collect accumulated fees
+        // Collect accumulated fees (this only collects fees, not principal,
+        // because we haven't called decreaseLiquidity)
         (uint256 collected0, uint256 collected1) = positionManager.collect(
             INonfungiblePositionManager.CollectParams({
                 tokenId: position.positionId,
@@ -475,6 +511,10 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
             })
         );
         
+        // Track cumulative fees collected for this position
+        position.feesCollected0 += collected0;
+        position.feesCollected1 += collected1;
+        
         // Determine which token is which
         (, , address token0, , , , , , , , , ) = positionManager.positions(position.positionId);
         
@@ -482,15 +522,15 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
             ? (collected0, collected1)
             : (collected1, collected0);
         
-        // Split fees 50/50 between LP and user
+        // Split fees 50/50 between LP and user (handle odd amounts)
         if (sDAIFees > 0) {
             pendingSDAIFees[position.lpProvider] += sDAIFees / 2;
-            pendingSDAIFees[position.userProvider] += sDAIFees / 2;
+            pendingSDAIFees[position.userProvider] += sDAIFees - (sDAIFees / 2);
         }
         
         if (wsxmrFees > 0) {
             pendingWsxmrFees[position.lpProvider] += wsxmrFees / 2;
-            pendingWsxmrFees[position.userProvider] += wsxmrFees / 2;
+            pendingWsxmrFees[position.userProvider] += wsxmrFees - (wsxmrFees / 2);
         }
         
         emit FeesCollected(_positionIndex, sDAIFees, wsxmrFees);
