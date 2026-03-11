@@ -20,7 +20,9 @@ export const CONTRACTS = {
     vaultManager: '0xc5AF5A978ba0E33c29984Aa46f939a7Ff164A851',
     wrappedMonero: '0x46520da3212dA53A8e981641f82C261b36C78dDd',
     liquidityRouter: '0x5F824724cF668B0662Df4789F1Ce19De9281d415',
-    pythOracle: '0x2880aB155794e7179c9eE2e38200202908C17B43' // Gnosis Pyth Oracle
+    pythOracle: '0x2880aB155794e7179c9eE2e38200202908C17B43', // Gnosis Pyth Oracle
+    // Default LP vault to use for mints (the active LP running the LP node)
+    defaultLpVault: '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB'
 };
 
 // Pyth Network Configuration

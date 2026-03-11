@@ -57,6 +57,12 @@ enum Commands {
     },
     /// Show database statistics
     DbStats,
+    /// Scan for pending requests and process them
+    ProcessPending {
+        /// Number of hours to look back (default: 3)
+        #[arg(short, long, default_value_t = 3)]
+        hours: u64,
+    },
 }
 
 #[tokio::main]
@@ -129,6 +135,51 @@ async fn main() -> Result<()> {
         Some(Commands::DbStats) => {
             let cli_handler = cli::LpCli::new(evm);
             cli_handler.db_stats(&db).await?;
+        }
+        Some(Commands::ProcessPending { hours }) => {
+            info!("Scanning for pending requests from the last {} hours", hours);
+            
+            // Initialize Monero client
+            let wallet_rpc_url = env::var("MONERO_WALLET_RPC_URL").ok();
+            let monero = Arc::new(
+                monero::MoneroClient::new_with_wallet_rpc(
+                    config.monero_config.daemon_url.clone(),
+                    config.monero_private_key.clone(),
+                    wallet_rpc_url,
+                )
+                .context("Failed to initialize Monero client")?
+            );
+            
+            // Initialize event listener
+            let lp_vault_bytes: [u8; 20] = config.lp_vault_address.into();
+            let event_listener = Arc::new(events::EventListener::new(
+                db.clone(),
+                evm.clone(),
+                lp_vault_bytes,
+            ));
+            
+            // Initialize swap engine
+            let swap_engine = Arc::new(engine::SwapEngine::new(db.clone(), evm.clone(), monero.clone()));
+            
+            // Calculate from_block based on hours
+            let current_block = evm.get_block_number().await.unwrap_or(0);
+            let blocks_per_hour = 720; // ~5 second blocks on Gnosis
+            let from_block = current_block.saturating_sub(blocks_per_hour * hours);
+            
+            info!("Scanning from block {} to current block {}", from_block, current_block);
+            
+            // Scan historical events
+            event_listener.scan_historical_events(from_block).await?;
+            
+            // Start swap engine to process the tasks
+            swap_engine.start().await?;
+            
+            info!("Processing pending requests...");
+            
+            // Give it some time to process
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            
+            info!("✅ Pending request scan complete");
         }
         Some(Commands::Start) | None => {
             // Start the LP node server

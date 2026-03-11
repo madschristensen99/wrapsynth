@@ -173,8 +173,8 @@ export class MintFlow {
 
         console.log('Pyth update fee:', pythFee.toString());
 
-        // Convert XMR amount to contract format (8 decimals for wsXMR)
-        const xmrAmountContract = BigInt(Math.floor(this.xmrAmount * Math.pow(10, DECIMALS.wsXMR)));
+        // Convert XMR amount to contract format (12 decimals for XMR atomic units)
+        const xmrAmountContract = BigInt(Math.floor(this.xmrAmount * Math.pow(10, DECIMALS.XMR)));
 
         // Get commitment from agent
         const commitment = this.agent.getCommitment();
