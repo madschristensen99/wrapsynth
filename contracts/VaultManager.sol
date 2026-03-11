@@ -66,6 +66,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     
     wsXMR public immutable wsxmrToken;
     
+    // FIX C-1: Track deployer for one-time router setup
+    address public immutable deployer;
+    
     // FIX C-3: Track authorized router for internal balance burns
     address public liquidityRouter;
     
@@ -305,6 +308,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     constructor(address _pythContract) {
         if (_pythContract == address(0)) revert ZeroAddress();
         
+        deployer = msg.sender; // FIX C-1: Store deployer for router setup
         pyth = IPyth(_pythContract);
         
         // Deploys the wsXMR token immutably on initialization
@@ -614,6 +618,46 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     }
     
     /**
+     * @notice FIX M-3: Verify sDAI accounting invariant
+     * @dev Total sDAI held must cover all obligations
+     * @return isHealthy Whether invariant holds
+     * @return actualBalance Contract's actual sDAI balance
+     * @return totalObligations Sum of all sDAI claims
+     */
+    function verifySDAIInvariant() public view returns (
+        bool isHealthy, 
+        uint256 actualBalance, 
+        uint256 totalObligations
+    ) {
+        actualBalance = IERC20(GnosisAddresses.SDAI).balanceOf(address(this));
+        
+        // Sum all vault collateral + locked + pending + war chest
+        uint256 totalVaultCollateral = 0;
+        uint256 totalVaultLocked = 0;
+        for (uint256 i = 0; i < vaultList.length; i++) {
+            Vault memory v = vaults[vaultList[i]];
+            totalVaultCollateral += v.collateralAmount;
+            totalVaultLocked += v.lockedCollateral;
+        }
+        
+        totalObligations = totalVaultCollateral + 
+            totalVaultLocked + 
+            globalPendingSDAI + 
+            yieldWarChest;
+        
+        isHealthy = actualBalance >= totalObligations;
+    }
+    
+    /**
+     * @notice FIX M-3: Internal lightweight check for critical paths
+     * @dev At minimum, pending withdrawals must be covered
+     */
+    function _checkSDAISolvency() internal view {
+        uint256 balance = IERC20(GnosisAddresses.SDAI).balanceOf(address(this));
+        require(balance >= globalPendingSDAI, "sDAI accounting violation");
+    }
+    
+    /**
      * @notice Allows users or LPs to withdraw their queued refunds/rewards
      * @dev Replaces the push-payment pattern to prevent DoS attacks
      * @param _token Token address to withdraw (address(0) for ETH)
@@ -720,6 +764,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
         // ANTI-SPAM: Require griefing deposit set by LP
         Vault storage vault = vaults[_lpVault];
+        
+        // FIX M-2: Sync yield before reading collateral amounts
+        _syncVaultYield(_lpVault);
+        
         if (_griefingDeposit < vault.mintGriefingDeposit) revert InsufficientDeposit();
         
         // Convert XMR amount to wsXMR amount (XMR has 12 decimals, wsXMR has 8)
@@ -823,6 +871,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         Vault storage vault = vaults[request.lpVault];
         if (request.vaultMintNonce != vault.mintNonce) revert InvalidStatus();
         
+        // FIX M-2: Sync yield for accurate collateral check
+        _syncVaultYield(request.lpVault);
+        
         // FIX M-6: Verify vault can support THIS mint, not all pending debt
         // Checking against all pending debt creates deadlock when other mints are abandoned
         uint256 actualDebt = getActualDebt(vault.normalizedDebt);
@@ -854,6 +905,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         }
         
         Vault storage vault = vaults[request.lpVault];
+        
+        // FIX M-2: Sync yield before modifying debt
+        _syncVaultYield(request.lpVault);
         
         // Check if vault was liquidated after this mint was initiated
         if (request.vaultMintNonce != vault.mintNonce) {
@@ -990,10 +1044,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     
     /**
      * @notice Set the authorized liquidity router address (one-time setup)
+     * @dev FIX C-1: Only deployer can call this to prevent front-running
      * @dev Should be called immediately after router deployment
      * @param _router Address of the wsXMRLiquidityRouter contract
      */
     function setLiquidityRouter(address _router) external {
+        require(msg.sender == deployer, "Only deployer"); // FIX C-1
         require(liquidityRouter == address(0), "Router already set");
         require(_router != address(0), "Zero address");
         liquidityRouter = _router;
@@ -1221,13 +1277,17 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             uint256 remainingDebt = getActualDebt(vault.normalizedDebt);
             
             if (remainingDebt > 0) {
-                uint256 availableForDebt = projectedCollateral > vault.lockedCollateral
-                    ? projectedCollateral - vault.lockedCollateral
-                    : 0;
-                uint256 ratioAfterReward = calculateCollateralRatio(
-                    availableForDebt,
-                    remainingDebt + vault.pendingDebt
-                );
+            // FIX M-5: Subtract OTHER locked collateral (not this request's lock)
+            uint256 otherLockedCollateral = vault.lockedCollateral - 
+                (request.lockedCollateral + request.rewardCollateral);
+            
+            uint256 availableForDebt = projectedCollateral > otherLockedCollateral
+                ? projectedCollateral - otherLockedCollateral
+                : 0;
+            uint256 ratioAfterReward = calculateCollateralRatio(
+                availableForDebt - safeReward,
+                remainingDebt + vault.pendingDebt
+            );
                 if (ratioAfterReward < LIQUIDATION_RATIO) {
                     // Reduce reward to maintain health
                     uint256 collateralPrice = getCollateralPrice();
@@ -1286,6 +1346,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         }
         
         request.status = BurnStatus.COMPLETED;
+        
+        // FIX M-3: Verify sDAI solvency after state changes
+        _checkSDAISolvency();
+        
         emit BurnFinalized(_requestId, _secret, request.rewardCollateral);
     }
     
@@ -1353,6 +1417,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         }
         
         request.status = BurnStatus.SLASHED;
+        
+        // FIX M-3: Verify sDAI solvency after state changes
+        _checkSDAISolvency();
         
         emit BurnSlashed(_requestId, request.user, totalSeized);
     }
@@ -1454,10 +1521,20 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         }
         
         // Vault is healthy enough - restore debt and re-mint
-        // CRITICAL FIX C-2: Recompute normalized debt at current index to prevent inflation
-        // The stored normalizedDebtAmount was computed with the old index and may be stale
-        uint256 freshNormalizedAmount = (request.wsxmrAmount * 1e18 + globalDebtIndex - 1) / globalDebtIndex;
-        vault.normalizedDebt += freshNormalizedAmount;
+        // FIX H-2: Use the ORIGINAL normalized amount to prevent inflation
+        // from index changes between requestBurn and cancelBurn
+        uint256 restoredNormalized = request.normalizedDebtAmount;
+        
+        // Safety: cap at what would produce the original wsxmrAmount
+        // at the current index to prevent over-restoration
+        uint256 maxNormalized = (request.wsxmrAmount * 1e18 + globalDebtIndex - 1) / globalDebtIndex;
+        
+        // Use the SMALLER of stored vs fresh to prevent inflation
+        if (restoredNormalized > maxNormalized) {
+            restoredNormalized = maxNormalized;
+        }
+        
+        vault.normalizedDebt += restoredNormalized;
         globalTotalDebt += request.wsxmrAmount;
         
         // FIX H-4: Remove from pending burn debt tracking since we're restoring it
