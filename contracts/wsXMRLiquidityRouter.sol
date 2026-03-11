@@ -12,6 +12,7 @@ import {VaultManager} from "./VaultManager.sol";
 import {wsXMR} from "./wsXMR.sol";
 import {ISavingsDAI} from "./interfaces/ISavingsDAI.sol";
 import {GnosisAddresses} from "./GnosisAddresses.sol";
+import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 
 /**
  * @title wsXMRLiquidityRouter
@@ -141,6 +142,10 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
             token1 = GnosisAddresses.SDAI;
             sDAIIsToken0 = false;
         }
+    }
+
+    receive() external payable {
+        // Accept ETH for Pyth fee refunds
     }
 
     // ========== LP FUNCTIONS ==========
@@ -274,6 +279,38 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
     }
     
     /**
+     * @notice Create position with fresh Pyth price update (one-click UX)
+     * @dev Forwards Pyth update data to VaultManager before creating position
+     * @param _lp Address of LP providing sDAI
+     * @param _user Address of user providing wsXMR
+     * @param _sDAIAmount Amount of sDAI to pair
+     * @param _wsxmrAmount Amount of wsXMR to pair
+     * @param _deadline Transaction deadline
+     * @param _pythUpdateData Pyth price update data
+     */
+    function createPositionWithPriceUpdate(
+        address _lp,
+        address _user,
+        uint256 _sDAIAmount,
+        uint256 _wsxmrAmount,
+        uint256 _deadline,
+        bytes[] calldata _pythUpdateData
+    ) external payable nonReentrant returns (uint256 positionIndex) {
+        // Update prices first
+        uint256 pythFee = IPyth(address(vaultManager.pyth())).getUpdateFee(_pythUpdateData);
+        IPyth(address(vaultManager.pyth())).updatePriceFeeds{value: pythFee}(_pythUpdateData);
+        
+        // Refund excess ETH
+        if (msg.value > pythFee) {
+            (bool success, ) = payable(msg.sender).call{value: msg.value - pythFee}("");
+            require(success, "Refund failed");
+        }
+        
+        // Delegate to internal creation logic
+        return _createPosition(_lp, _user, _sDAIAmount, _wsxmrAmount, _deadline);
+    }
+
+    /**
      * @notice Create a matched liquidity position on Uniswap V3
      * @param _lp Address of LP providing sDAI
      * @param _user Address of user providing wsXMR
@@ -287,6 +324,16 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
         uint256 _wsxmrAmount,
         uint256 _deadline
     ) external nonReentrant returns (uint256 positionIndex) {
+        return _createPosition(_lp, _user, _sDAIAmount, _wsxmrAmount, _deadline);
+    }
+
+    function _createPosition(
+        address _lp,
+        address _user,
+        uint256 _sDAIAmount,
+        uint256 _wsxmrAmount,
+        uint256 _deadline
+    ) internal returns (uint256 positionIndex) {
         require(block.timestamp <= _deadline, "Transaction expired");
         require(_deadline <= block.timestamp + 30 minutes, "Deadline too far in future");
        
@@ -360,6 +407,12 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
         // Verify pool has meaningful liquidity to prevent first-depositor manipulation
         uint128 poolLiquidity = IUniswapV3Pool(pool).liquidity();
         require(poolLiquidity >= 1e12, "Pool liquidity too low");
+
+        // Note: Explicit pool price vs oracle comparison is not needed because:
+        // 1. Oracle tolerance validates input amounts are correctly priced (0.5%)
+        // 2. Uniswap mint's amount0Min/amount1Min enforce 0.5% slippage
+        // 3. If pool price deviates from oracle by >1%, either the oracle check
+        //    or the slippage check will revert the transaction.
         
         // Slippage must be equal to or tighter than oracle tolerance (0.5%)
         // to prevent sandwich attacks exploiting the gap
@@ -431,6 +484,11 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
         activePositionCount[_lp]++;
         activePositionCount[_user]++;
         
+        // After position is stored, clear any remaining approvals
+        // (positionManager.mint may not have consumed the full approval)
+        IERC20(GnosisAddresses.SDAI).forceApprove(address(positionManager), 0);
+        IERC20(address(wsxmrToken)).forceApprove(address(positionManager), 0);
+        
         emit PositionCreated(positionIndex, tokenId, _lp, _user, _sDAIAmount, _wsxmrAmount);
     }
     
@@ -461,12 +519,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
         uint256 currentSDAIPrice = vaultManager.getCollateralPrice();
         uint256 currentXmrPrice = vaultManager.getXmrPrice();
         
-        // Estimate expected output from oracle prices
-        // Use position's recorded amounts as baseline, apply 5% tolerance for IL
-        uint256 totalExpectedValueUSD = position.lpInitialValueUSD + position.userInitialValueUSD;
-        
         // Determine token order
-        (, , address token0, , , , , uint128 liquidity, , , , ) = 
+        (, , , , , , , uint128 liquidity, , , , ) = 
             positionManager.positions(position.positionId);
         
         // Calculate minimum amounts based on 85% of expected value
@@ -492,8 +546,16 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
             })
         );
 
-        // Burn the empty NFT position to clean up
-        positionManager.burn(position.positionId);
+        // Burn the empty NFT position to clean up.
+        // Use try-catch so that a failed burn does not block position closure.
+        // The NFT becomes orphaned but holds no economic value after full
+        // liquidity removal and fee collection.
+        try positionManager.burn(position.positionId) {
+            // NFT burned successfully
+        } catch {
+            // NFT burn failed (e.g., dust tokens remaining).
+            // Position closure continues — the orphaned NFT is harmless.
+        }
 
         // Total fees = fees already collected via collectFees() + new fees from this close
         // New fees from this close = collected amounts - principal amounts
@@ -506,8 +568,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
         uint256 fees1 = newFees1;
 
         // Determine sDAI and wsXMR principal amounts
-        uint256 sDAIPrincipal = token0 == GnosisAddresses.SDAI ? principal0 : principal1;
-        uint256 wsxmrPrincipal = token0 == GnosisAddresses.SDAI ? principal1 : principal0;
+        uint256 sDAIPrincipal = sDAIIsToken0 ? principal0 : principal1;
+        uint256 wsxmrPrincipal = sDAIIsToken0 ? principal1 : principal0;
         
         // Oracle-based total value check
         uint256 withdrawnValueUSD = (sDAIPrincipal * currentSDAIPrice) / 1e18
@@ -554,7 +616,6 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
         lpLiquidityAllocation[position.lpProvider] += lpSDAI;
         userWsxmrDeposits[position.userProvider] += userWsxmr;
         
-       
         // If pool shifted heavily to one asset, both parties receive proportional amounts of both
         if (userSDAI > 0) {
             lpLiquidityAllocation[position.userProvider] += userSDAI;
@@ -563,12 +624,11 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
             userWsxmrDeposits[position.lpProvider] += lpWsxmr;
         }
         
-       
         // fees0/fees1 are correctly calculated as collected - principal
-        // Determine which fee corresponds to which token using token addresses directly
+        // Determine which fee corresponds to which token using sDAIIsToken0
         // This prevents misattribution when principal0 == principal1 == 0 (out of range position)
-        uint256 sDAIFees = token0 == GnosisAddresses.SDAI ? fees0 : fees1;
-        uint256 wsxmrFees = token0 == GnosisAddresses.SDAI ? fees1 : fees0;
+        uint256 sDAIFees = sDAIIsToken0 ? fees0 : fees1;
+        uint256 wsxmrFees = sDAIIsToken0 ? fees1 : fees0;
         
         _splitFees(
             sDAIFees,
@@ -635,14 +695,31 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
         );
         
         if (collected0 == 0 && collected1 == 0) return;
+
+        // Sanity check: fees should not exceed a reasonable percentage of
+        // the position's original value. Cap at 100% of original deposit
+        // to prevent manipulation via pool state attacks.
+        uint256 maxReasonableFee0;
+        uint256 maxReasonableFee1;
+        if (sDAIIsToken0) {
+            maxReasonableFee0 = position.sDAIAmount;
+            maxReasonableFee1 = position.wsxmrAmount;
+        } else {
+            maxReasonableFee0 = position.wsxmrAmount;
+            maxReasonableFee1 = position.sDAIAmount;
+        }
+
+        // Cap collected amounts to prevent manipulation
+        if (collected0 > maxReasonableFee0) {
+            collected0 = maxReasonableFee0;
+        }
+        if (collected1 > maxReasonableFee1) {
+            collected1 = maxReasonableFee1;
+        }
         
-        // Determine token mapping
-        (, , address token0, , , , , , , , , ) = 
-            positionManager.positions(position.positionId);
-        
-        (uint256 sDAIFees, uint256 wsxmrFees) = token0 == GnosisAddresses.SDAI
-            ? (collected0, collected1)
-            : (collected1, collected0);
+        // Determine token mapping using immutable sDAIIsToken0
+        uint256 sDAIFees = sDAIIsToken0 ? collected0 : collected1;
+        uint256 wsxmrFees = sDAIIsToken0 ? collected1 : collected0;
         
         _splitFees(
             sDAIFees,
@@ -753,7 +830,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
      * @dev Internal function to clean up stale positions (default limit)
      */
     function _cleanupStalePositions(address _account) internal {
-        _cleanupStalePositionsLimited(_account, 100); // Default limit for internal calls
+        _cleanupStalePositionsLimited(_account, 200); // Default limit for internal calls
     }
 
     /**
@@ -763,9 +840,19 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
         uint256[] storage posIndexes = userPositions[_account];
         if (posIndexes.length == 0) return;
         
-        // Only perform cleanup if we can process the entire array
-        // Partial cleanup causes index corruption
-        if (posIndexes.length > _maxIterations) return;
+        // If array is too large for full compaction, do tail-trimming instead:
+        // Remove stale entries from the end of the array (safe, no index shift)
+        if (posIndexes.length > _maxIterations) {
+            while (posIndexes.length > 0 && posIndexes.length > _maxIterations / 2) {
+                uint256 lastIdx = posIndexes.length - 1;
+                if (positions[posIndexes[lastIdx]].positionId == 0) {
+                    posIndexes.pop();
+                } else {
+                    break; // Stop at the first active position from the end
+                }
+            }
+            return;
+        }
         
         uint256 writeIndex = 0;
         
@@ -783,18 +870,6 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
         }
     }
     
-    /**
-     * @dev Count active positions for an account
-     */
-    function _countActivePositions(address _account) internal view returns (uint256 count) {
-        uint256[] storage posIndexes = userPositions[_account];
-        for (uint256 i = 0; i < posIndexes.length; i++) {
-            if (positions[posIndexes[i]].positionId != 0) {
-                count++;
-            }
-        }
-    }
-
     /**
      * @dev Split fees proportionally based on value contribution
      */
