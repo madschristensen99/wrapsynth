@@ -223,6 +223,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     );
     // Step 3: LP reveals secret (collateral released)
     event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 rewardPaid);
+    event BurnRewardShortfall(bytes32 indexed requestId, uint256 expectedReward, uint256 actualReward);
     // LP failed to reveal secret (collateral slashed)
     event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 collateralSeized);
     // User cancelled REQUESTED burn (LP never responded)
@@ -973,6 +974,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
                 ? vault.collateralAmount 
                 : request.rewardCollateral;
             
+            // Emit shortfall event if actual reward is less than expected
+            if (safeReward < request.rewardCollateral) {
+                emit BurnRewardShortfall(_requestId, request.rewardCollateral, safeReward);
+            }
+            
             vault.collateralAmount -= safeReward;
             
            
@@ -1016,8 +1022,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
        
         if (lpPrincipalDeposits[vault.lpAddress] > 0) {
-            uint256 principalReduction = (lpPrincipalDeposits[vault.lpAddress] * actualSeized) / 
-                (vault.collateralAmount + actualSeized);
+            uint256 totalVaultAssets = vault.collateralAmount + vault.lockedCollateral + actualSeized;
+            uint256 principalReduction = totalVaultAssets > 0
+                ? (lpPrincipalDeposits[vault.lpAddress] * actualSeized) / totalVaultAssets
+                : 0;
             lpPrincipalDeposits[vault.lpAddress] -= principalReduction;
             globalLpPrincipal -= principalReduction;
         }
@@ -1625,6 +1633,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         if (maxTotalDebt <= totalObligations) return 0;
         
         uint256 capacity = maxTotalDebt - totalObligations;
+        
+        // Adjust for LP mint fee (user receives less than they request)
+        // If fee is 1%, user gets 99% of minted amount, so capacity is reduced
+        if (vault.mintFeeBps > 0) {
+            capacity = (capacity * BPS_DENOMINATOR) / (BPS_DENOMINATOR + vault.mintFeeBps);
+        }
 
         // Apply the LP's maxMintBps single-mint constraint if set
         if (vault.maxMintBps > 0) {
