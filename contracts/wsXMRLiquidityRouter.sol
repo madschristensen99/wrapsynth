@@ -102,7 +102,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
     // ========== CONSTRUCTOR ==========
     
     constructor(
-        address _vaultManager,
+        address payable _vaultManager,
         address _wsxmrToken,
         address _positionManager,
         address _uniswapFactory
@@ -123,7 +123,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard {
         if (_sDAIAmount == 0) revert InvalidAmount();
         
         // Verify LP has an active vault
-        (, , , , , , , , , , bool active) = vaultManager.vaults(msg.sender);
+        (, , , , , , , , , , , bool active) = vaultManager.vaults(msg.sender);
         if (!active) revert VaultNotActive();
         
         // Transfer sDAI from LP's vault (requires VaultManager approval)

@@ -78,6 +78,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     // Frontend-friendly request tracking
     mapping(address => bytes32[]) public userMintRequests;
     mapping(address => bytes32[]) public userBurnRequests;
+    mapping(address => bytes32[]) public vaultBurnRequests; // Track burn requests per vault
     
     // ========== ENUMS ==========
     
@@ -115,6 +116,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint16 mintFeeBps; // Fee LP charges for minting (paid in wsXMR)
         uint16 burnRewardBps; // Reward LP pays to incentivize burning (paid in Collateral)
         uint256 liquidationNonce;
+        uint256 mintNonce; // Incremented on liquidation to invalidate pending mints
         bool active;
     }
     
@@ -133,6 +135,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 timeout;
         uint256 griefingDeposit; // ETH deposit to prevent spam (refunded on finalize, awarded to LP on cancel)
         uint256 normalizedDebtAmount; // Store exact normalized amount for consistent accounting
+        uint256 vaultMintNonce; // Snapshot of vault's mintNonce at creation
         MintStatus status;
     }
     
@@ -278,6 +281,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         allowedPoolFeeTiers[10000] = true;  // 1%
     }
     
+    receive() external payable {
+        // Accept ETH from Pyth refunds and griefing deposits
+    }
+    
     // ========== VAULT MANAGEMENT ==========
     
     /**
@@ -297,6 +304,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             mintFeeBps: 0,
             burnRewardBps: 0,
             liquidationNonce: 0,
+            mintNonce: 0,
             active: true
         });
         
@@ -369,7 +377,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
         Vault storage vault = vaults[msg.sender];
         
-        uint256 collateralBeforeSync = vault.collateralAmount;
+        // Sync yield FIRST before any state reads
+        _syncVaultYield(msg.sender);
+        
+        // Now read the synced collateral amount
+        uint256 collateralAfterSync = vault.collateralAmount;
         
         // Cannot withdraw collateral that's locked for pending burns
         uint256 availableCollateral = vault.collateralAmount - vault.lockedCollateral;
@@ -395,17 +407,15 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             if (ratio < COLLATERAL_RATIO) revert InsufficientCollateral();
         }
         
-       
-        _syncVaultYield(msg.sender);
-        
-        vault.collateralAmount = newCollateralAmount;
+        // Subtract withdrawal amount
+        vault.collateralAmount -= _amount;
         
        
         uint256 daiReceived = ISavingsDAI(GnosisAddresses.SDAI).redeem(_amount, msg.sender, address(this));
         
        
         // Calculate what portion of the LP's principal this withdrawal represents
-        uint256 principalToDeduct = (lpPrincipalDeposits[msg.sender] * _amount) / collateralBeforeSync;
+        uint256 principalToDeduct = (lpPrincipalDeposits[msg.sender] * _amount) / collateralAfterSync;
         lpPrincipalDeposits[msg.sender] -= principalToDeduct;
         globalLpPrincipal -= principalToDeduct;
         
@@ -624,6 +634,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             timeout: block.timestamp + _timeoutDuration,
             griefingDeposit: _griefingDeposit, // Store deposit for refund/award
             normalizedDebtAmount: 0,
+            vaultMintNonce: vault.mintNonce,
             status: MintStatus.PENDING
         });
         
@@ -654,6 +665,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         if (request.status != MintStatus.PENDING) revert InvalidStatus();
         if (msg.sender != request.lpVault) revert Unauthorized();
         
+        // Check if vault was liquidated
+        Vault storage vault = vaults[request.lpVault];
+        if (request.vaultMintNonce != vault.mintNonce) revert InvalidStatus();
+        
         request.status = MintStatus.READY;
         emit MintReady(_requestId);
     }
@@ -673,6 +688,18 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         }
         
         Vault storage vault = vaults[request.lpVault];
+        
+        // Check if vault was liquidated after this mint was initiated
+        if (request.vaultMintNonce != vault.mintNonce) {
+            // Vault was liquidated. Refund griefing deposit, cancel request.
+            request.status = MintStatus.CANCELLED;
+            if (request.griefingDeposit > 0) {
+                pendingReturns[request.initiator][address(0)] += request.griefingDeposit;
+                emit ReturnQueued(request.initiator, address(0), request.griefingDeposit);
+            }
+            emit MintCancelled(request.requestId);
+            return; // Do not mint, do not add debt
+        }
         
        
         vault.pendingDebt -= request.wsxmrAmount;
@@ -725,9 +752,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // This prevents DoS where user locks LP's debt capacity forever
         
         // CHECKS-EFFECTS-INTERACTIONS: Update state BEFORE external calls
-        // Release the reserved pending capacity
+        // Release the reserved pending capacity (only if vault wasn't liquidated)
         Vault storage vault = vaults[request.lpVault];
-        vault.pendingDebt -= request.wsxmrAmount;
+        if (request.vaultMintNonce == vault.mintNonce) {
+            vault.pendingDebt -= request.wsxmrAmount;
+        }
         
        
         MintStatus originalStatus = request.status;
@@ -778,13 +807,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 actualDebt = getActualDebt(vault.normalizedDebt);
         if (actualDebt < _wsxmrAmount) revert InsufficientDebt();
         
-        // CRITICAL FIX: Locked collateral is physically segregated and protected
-        // Prevents users from burning to unhealthy vaults that may be liquidated
-        // Use total collateral (including locked) for health check since locked collateral
-        // still backs the protocol (just earmarked for specific burn requests)
-        uint256 totalCollateral = vault.collateralAmount + vault.lockedCollateral;
+        // Check vault health using unlocked collateral only
+        // lockedCollateral has already been physically segregated from collateralAmount by prior burn requests
         uint256 vaultHealthRatio = calculateCollateralRatio(
-            totalCollateral,
+            vault.collateralAmount,  // Already excludes prior lockedCollateral
             actualDebt
         );
         if (vaultHealthRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
@@ -853,6 +879,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
         // Track request for frontend discovery
         userBurnRequests[_user].push(requestId);
+        vaultBurnRequests[_lpVault].push(requestId);
         
         emit BurnRequested(
             requestId,
@@ -1082,11 +1109,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             _debtToClear = actualDebt;
         }
         
-        // Check if vault is underwater
-       
-        uint256 availableCollateral = vault.collateralAmount - vault.lockedCollateral;
+        // Check if vault is underwater (use only unlocked collateral for health check)
         uint256 ratio = calculateCollateralRatio(
-            availableCollateral,
+            vault.collateralAmount,
             actualDebt
         );
         if (ratio >= LIQUIDATION_RATIO) revert VaultHealthy();
@@ -1096,17 +1121,23 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 collateralToSeize = (collateralValue * LIQUIDATION_BONUS) / RATIO_PRECISION;
         uint256 collateralAmount = usdToCollateral(collateralToSeize);
         
-        // CRITICAL FIX: Locked collateral is physically segregated from liquidatable balance
-        uint256 seizable = vault.collateralAmount;
-        if (collateralAmount > seizable) {
+        // Can seize from BOTH unlocked and locked collateral
+        uint256 totalSeizable = vault.collateralAmount + vault.lockedCollateral;
+        if (collateralAmount > totalSeizable) {
             // Proportionally scale down the exacted debt to maintain the Liquidator's 10% bonus
-            _debtToClear = (_debtToClear * seizable) / collateralAmount;
-            collateralAmount = seizable;
+            _debtToClear = (_debtToClear * totalSeizable) / collateralAmount;
+            collateralAmount = totalSeizable;
         }
         
         // CHECKS-EFFECTS-INTERACTIONS: Update state before external calls
-        // Deduct from vault (lockedCollateral is separate and untouchable)
-        vault.collateralAmount -= collateralAmount;
+        // Draw from collateralAmount first, then from lockedCollateral if needed
+        if (collateralAmount <= vault.collateralAmount) {
+            vault.collateralAmount -= collateralAmount;
+        } else {
+            uint256 fromLocked = collateralAmount - vault.collateralAmount;
+            vault.collateralAmount = 0;
+            vault.lockedCollateral -= fromLocked;
+        }
         
        
         // When collateral is seized, the principal tracking must be reduced proportionally
@@ -1158,6 +1189,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
        
         vault.liquidationNonce++;
+        vault.mintNonce++; // Invalidate all pending mints
+        vault.pendingDebt = 0; // Zero pending debt since all mints are now invalid
         
         emit VaultLiquidated(_lpVault, msg.sender, _debtToClear, collateralAmount);
     }
@@ -1190,8 +1223,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             // Convert yield DAI back to sDAI shares to deduct
             uint256 vaultYieldShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(yieldDai);
             
-            // Safety check: don't deduct more than vault has
-            if (vaultYieldShares > 0 && vaultYieldShares < vault.collateralAmount) {
+            // Safety check: don't deduct more than vault has, and avoid dust amounts
+            if (vaultYieldShares > 100 && vaultYieldShares <= vault.collateralAmount) {
                 vault.collateralAmount -= vaultYieldShares;
                 yieldWarChest += vaultYieldShares;
                 
@@ -1282,13 +1315,13 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
                 // Single-step calculation prevents cumulative rounding errors
                 uint256 remainingDebt = globalTotalDebt - wsxmrBought;
                 globalDebtIndex = (globalDebtIndex * remainingDebt) / globalTotalDebt;
-                
-               
-                if (globalDebtIndex < 1e9) {
-                    globalDebtIndex = 1e9;
-                }
-                
                 globalTotalDebt = remainingDebt;
+                
+                // If debt is negligible, reset to prevent precision issues
+                if (globalTotalDebt < 1e4) {
+                    globalDebtIndex = 1e18;
+                    globalTotalDebt = 0;
+                }
             }
         }
         
@@ -1307,8 +1340,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
        
         // During high volatility or exchange outages, Pyth emits wide confidence intervals
         // Using such prices could enable manipulation or unfair liquidations
-        uint256 price = uint256(uint64(priceData.price));
-        uint256 conf = uint256(uint64(priceData.conf));
+        uint256 price = uint256(int256(priceData.price));
+        uint256 conf = uint256(priceData.conf);
         if (conf * 10 > price) revert StalePrice(); // Confidence > 10% of price
         
         // Pyth prices have expo (e.g., -8 means divide by 1e8)
@@ -1335,8 +1368,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         if (priceData.price <= 0) revert StalePrice();
         
        
-        uint256 price = uint256(uint64(priceData.price));
-        uint256 conf = uint256(uint64(priceData.conf));
+        uint256 price = uint256(int256(priceData.price));
+        uint256 conf = uint256(priceData.conf);
         if (conf * 10 > price) revert StalePrice(); // Confidence > 10% of price
         
         // Pyth prices have expo (e.g., -8 means divide by 1e8)
@@ -1376,6 +1409,17 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
      */
     function getVaultDebt(address _lpAddress) public view returns (uint256 actualDebt) {
         return getActualDebt(vaults[_lpAddress].normalizedDebt);
+    }
+    
+    /**
+     * @notice Compute actual total debt by summing all vaults (for off-chain monitoring)
+     * @dev Used to verify globalTotalDebt accuracy and detect drift
+     * @return total The sum of all vault debts
+     */
+    function computeActualGlobalDebt() external view returns (uint256 total) {
+        for (uint256 i = 0; i < vaultList.length; i++) {
+            total += getActualDebt(vaults[vaultList[i]].normalizedDebt);
+        }
     }
     
     /**
