@@ -22,9 +22,46 @@ impl EventListener {
         }
     }
 
+    /// Scan for historical events and process pending requests
+    pub async fn scan_historical_events(&self, from_block: u64) -> Result<()> {
+        info!("Scanning for historical events from block {}", from_block);
+
+        // Query historical mint events
+        let mint_logs = self.evm.get_historical_mint_events(from_block).await?;
+        info!("Found {} historical MintInitiated events", mint_logs.len());
+        
+        for log in &mint_logs {
+            if let Err(e) = self.handle_mint_initiated_event(log).await {
+                error!("Error processing historical MintInitiated event: {}", e);
+            }
+        }
+
+        // Query historical burn events
+        let burn_logs = self.evm.get_historical_burn_events(from_block).await?;
+        info!("Found {} historical BurnRequested events", burn_logs.len());
+        
+        for log in &burn_logs {
+            if let Err(e) = self.handle_burn_requested_event(log).await {
+                error!("Error processing historical BurnRequested event: {}", e);
+            }
+        }
+
+        info!("Historical event scan complete");
+        Ok(())
+    }
+
     /// Start listening for events
     pub async fn start(self: Arc<Self>) -> Result<()> {
         info!("Starting event listener");
+
+        // Scan for historical events from the last 3 hours (max mint timeout is 2 hours)
+        let current_block = self.evm.get_block_number().await.unwrap_or(0);
+        let blocks_per_hour = 720; // ~5 second blocks on Gnosis
+        let from_block = current_block.saturating_sub(blocks_per_hour * 3);
+        
+        if let Err(e) = self.scan_historical_events(from_block).await {
+            error!("Error scanning historical events: {}", e);
+        }
 
         // Spawn burn event listener
         let listener = self.clone();
@@ -137,9 +174,9 @@ impl EventListener {
         }
 
         info!(
-            "MintInitiated event: requestId={}, user={}, xmrAmount={}, wsxmrAmount={}",
+            "MintInitiated event: requestId={}, initiator={}, xmrAmount={}, wsxmrAmount={}",
             hex::encode(event.requestId),
-            event.user,
+            event.initiator,
             event.xmrAmount,
             event.wsxmrAmount
         );
@@ -147,7 +184,7 @@ impl EventListener {
         // Create a mint task
         let task = MintTask {
             request_id: event.requestId.into(),
-            user: event.user.into(),
+            user: event.initiator.into(),
             lp_vault: lp_vault_bytes,
             xmr_amount: event.xmrAmount.to::<u64>(),
             wsxmr_amount: event.wsxmrAmount.to::<u64>(),

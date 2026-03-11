@@ -37,7 +37,7 @@ pyth_hermes_url = "https://hermes.pyth.network"
 # Monero daemon RPC configuration
 # The LP node connects to a Monero daemon (monerod) for blockchain data
 # You can use a public node or run your own
-daemon_url = "http://node.moneroworld.com:18089"
+daemon_url = "http://xmr-node.cakewallet.com:18081"
 network = "mainnet"  # or "stagenet" for testing
 
 [lp_node]

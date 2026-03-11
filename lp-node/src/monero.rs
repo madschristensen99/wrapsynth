@@ -79,10 +79,16 @@ impl MoneroClient {
             warn!("Wallet RPC not configured - transaction operations will be limited");
         }
 
+        // Create HTTP client with longer timeout for Monero daemon
+        let http_client = Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .context("Failed to create HTTP client")?;
+
         Ok(Self {
             daemon_url,
             wallet_rpc_url,
-            http_client: Arc::new(Client::new()),
+            http_client: Arc::new(http_client),
             private_spend_key,
             private_view_key,
             address,
@@ -133,8 +139,11 @@ impl MoneroClient {
     /// Get current blockchain height from daemon
     pub async fn get_height(&self) -> Result<u64> {
         // Call get_block_count RPC method
+        let url = format!("{}/json_rpc", self.daemon_url);
+        tracing::debug!("Calling Monero daemon at: {}", url);
+        
         let response = self.http_client
-            .post(format!("{}/json_rpc", self.daemon_url))
+            .post(&url)
             .json(&serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": "0",
@@ -142,10 +151,15 @@ impl MoneroClient {
             }))
             .send()
             .await
-            .context("Failed to call Monero daemon")?;
+            .with_context(|| format!("Failed to call Monero daemon at {}", url))?;
+        
+        let status = response.status();
+        tracing::debug!("Monero daemon response status: {}", status);
         
         let result: serde_json::Value = response.json().await
             .context("Failed to parse daemon response")?;
+        
+        tracing::debug!("Monero daemon response: {:?}", result);
         
         let height = result["result"]["count"]
             .as_u64()
