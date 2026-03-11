@@ -24,6 +24,13 @@ contract wsXMR is ERC20, ERC20Permit {
         _mint(_to, _amount);
     }
 
+    /**
+     * @notice Admin burn - only callable by VaultManager
+     * @dev This is NOT related to ERC20Permit. The permit extension enables
+     *      gasless ERC-20 approve() via signatures. This burn() is an admin function.
+     * @param _from Address to burn from
+     * @param _amount Amount to burn
+     */
     function burn(address _from, uint256 _amount) external {
         if (msg.sender != vaultManager) revert OnlyVaultManager();
         _burn(_from, _amount);
