@@ -72,6 +72,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     mapping(address => uint256) public lpPrincipalDeposits; // Track original DAI deposits per LP
     uint256 public globalLpPrincipal;
     uint256 public globalPendingSDAI;
+    uint256 private _requestNonce;
+    mapping(uint24 => bool) public allowedPoolFeeTiers;
     
     // Frontend-friendly request tracking
     mapping(address => bytes32[]) public userMintRequests;
@@ -130,6 +132,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         bytes32 claimCommitment; // Hash of secret that LP will reveal
         uint256 timeout;
         uint256 griefingDeposit; // ETH deposit to prevent spam (refunded on finalize, awarded to LP on cancel)
+        uint256 normalizedDebtAmount; // Store exact normalized amount for consistent accounting
         MintStatus status;
     }
     
@@ -151,6 +154,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         bytes32 secretHash; // Hash of secret that LP generates (set in commitBurn)
         uint256 deadline; // LP must respond/reveal before this
         uint256 vaultLiquidationNonce;
+        uint256 normalizedDebtAmount; // Exact normalized amount deducted
         BurnStatus status;
     }
     
@@ -268,6 +272,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
         // Deploys the wsXMR token immutably on initialization
         wsxmrToken = new wsXMR();
+        
+        allowedPoolFeeTiers[500] = true;    // 0.05%
+        allowedPoolFeeTiers[3000] = true;   // 0.3%
+        allowedPoolFeeTiers[10000] = true;  // 1%
     }
     
     // ========== VAULT MANAGEMENT ==========
@@ -311,7 +319,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         IERC20(GnosisAddresses.XDAI).safeTransferFrom(msg.sender, address(this), _amount);
         
         // 2. Approve and deposit to sDAI
-        IERC20(GnosisAddresses.XDAI).approve(GnosisAddresses.SDAI, _amount);
+        IERC20(GnosisAddresses.XDAI).forceApprove(GnosisAddresses.SDAI, _amount);
         uint256 sDAIShares = ISavingsDAI(GnosisAddresses.SDAI).deposit(_amount, address(this));
         
        
@@ -361,7 +369,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
         Vault storage vault = vaults[msg.sender];
         
-       
+        uint256 collateralBeforeSync = vault.collateralAmount;
+        
         // Cannot withdraw collateral that's locked for pending burns
         uint256 availableCollateral = vault.collateralAmount - vault.lockedCollateral;
         if (availableCollateral < _amount) revert InsufficientCollateral();
@@ -396,8 +405,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
        
         // Calculate what portion of the LP's principal this withdrawal represents
-        uint256 totalCollateral = vault.collateralAmount + _amount; // Before withdrawal
-        uint256 principalToDeduct = (lpPrincipalDeposits[msg.sender] * _amount) / totalCollateral;
+        uint256 principalToDeduct = (lpPrincipalDeposits[msg.sender] * _amount) / collateralBeforeSync;
         lpPrincipalDeposits[msg.sender] -= principalToDeduct;
         globalLpPrincipal -= principalToDeduct;
         
@@ -594,8 +602,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             _lpVault,
             _xmrAmount,
             _claimCommitment,
-            block.timestamp,
-            block.number
+            ++_requestNonce
         ));
         
         // Check for collision BEFORE modifying state
@@ -616,6 +623,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             claimCommitment: _claimCommitment,
             timeout: block.timestamp + _timeoutDuration,
             griefingDeposit: _griefingDeposit, // Store deposit for refund/award
+            normalizedDebtAmount: 0,
             status: MintStatus.PENDING
         });
         
@@ -668,11 +676,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         
        
         vault.pendingDebt -= request.wsxmrAmount;
-        
-       
+        // CRITICAL FIX: Convert to normalized debt using current index
         // This prevents wealth generation when index < 1e18
-        uint256 normalizedAmount = (request.wsxmrAmount * 1e18) / globalDebtIndex;
+        uint256 normalizedAmount = (request.wsxmrAmount * 1e18 + globalDebtIndex - 1) / globalDebtIndex;
         vault.normalizedDebt += normalizedAmount;
+        request.normalizedDebtAmount = normalizedAmount;
         globalTotalDebt += request.wsxmrAmount; // Track global debt for buy-and-burn
         
         // Mint wsXMR to the RECIPIENT (enables gasless meta-txs and DeFi composability)
@@ -770,10 +778,13 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 actualDebt = getActualDebt(vault.normalizedDebt);
         if (actualDebt < _wsxmrAmount) revert InsufficientDebt();
         
-       
+        // CRITICAL FIX: Locked collateral is physically segregated and protected
         // Prevents users from burning to unhealthy vaults that may be liquidated
+        // Use total collateral (including locked) for health check since locked collateral
+        // still backs the protocol (just earmarked for specific burn requests)
+        uint256 totalCollateral = vault.collateralAmount + vault.lockedCollateral;
         uint256 vaultHealthRatio = calculateCollateralRatio(
-            vault.collateralAmount,
+            totalCollateral,
             actualDebt
         );
         if (vaultHealthRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
@@ -795,8 +806,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             _user,
             _lpVault,
             _wsxmrAmount,
-            block.timestamp,
-            block.number
+            ++_requestNonce
         ));
         if (burnRequests[requestId].status != BurnStatus.INVALID) revert BurnAlreadyExists();
         
@@ -814,13 +824,14 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             wsxmrToken.burn(address(this), _wsxmrAmount);
         }
         
-        // 4. CRITICAL FIX: Physically segregate locked collateral from liquidatable balance
+        // CRITICAL FIX: Physically segregate locked collateral from liquidatable balance
         // Deduct from collateralAmount so liquidators cannot touch user burn escrow
         vault.collateralAmount -= (collateralToLock + rewardCollateral);
         vault.lockedCollateral += (collateralToLock + rewardCollateral);
         
-       
-        vault.normalizedDebt -= (_wsxmrAmount * 1e18) / globalDebtIndex;
+        // CRITICAL FIX: Reduce normalized debt when wsXMR is burned
+        uint256 normalizedBurnAmount = (_wsxmrAmount * 1e18) / globalDebtIndex;
+        vault.normalizedDebt -= normalizedBurnAmount;
         globalTotalDebt -= _wsxmrAmount;
         
         // Step 1: wsXMR burned, collateral locked (but still liquidatable)
@@ -836,6 +847,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             secretHash: bytes32(0),
             deadline: block.timestamp + BURN_REQUEST_TIMEOUT,
             vaultLiquidationNonce: vault.liquidationNonce, // Snapshot current nonce
+            normalizedDebtAmount: normalizedBurnAmount,
             status: BurnStatus.REQUESTED
         });
         
@@ -923,6 +935,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             vault.lockedCollateral = 0; // Protection against liquidation underflows
         }
         
+        // Return the base locked collateral (not the reward) back to the vault's available balance
+        vault.collateralAmount += request.lockedCollateral;
+        
         // Process the burn reward to the User
         if (request.rewardCollateral > 0) {
            
@@ -947,10 +962,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
             globalPendingSDAI += safeReward; // Track globally to prevent yield arbitrage
             emit ReturnQueued(request.user, GnosisAddresses.SDAI, safeReward);
         }
-        
-       
-        vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
-        vault.collateralAmount += (request.lockedCollateral + request.rewardCollateral);
         
         request.status = BurnStatus.COMPLETED;
         emit BurnFinalized(_requestId, _secret, request.rewardCollateral);
@@ -1026,9 +1037,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         // This prevents DoS where user abandons request, locking LP's collateral
         
         if (vaultWasLiquidated) {
-            // Vault was liquidated - user gets wsXMR back, but we don't restore debt
-            // Locked collateral was already segregated, so it wasn't seized
-            // Return it to vault's liquidatable balance
+            // Vault was liquidated - user gets wsXMR back
+            // Debt was cleared during liquidation, so we don't restore it
+            // The normalized amount stored in the request is stale and must not be used
             uint256 totalUnlock = request.lockedCollateral + request.rewardCollateral;
             vault.lockedCollateral -= totalUnlock;
             vault.collateralAmount += totalUnlock;
@@ -1037,8 +1048,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         } else {
             // Normal case - vault still active, restore debt and unlock collateral
            
-            uint256 normalizedAmount = (request.wsxmrAmount * 1e18) / globalDebtIndex;
-            vault.normalizedDebt += normalizedAmount;
+            vault.normalizedDebt += request.normalizedDebtAmount;
             globalTotalDebt += request.wsxmrAmount;
             
             // Return locked collateral to liquidatable balance
@@ -1086,12 +1096,12 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 collateralToSeize = (collateralValue * LIQUIDATION_BONUS) / RATIO_PRECISION;
         uint256 collateralAmount = usdToCollateral(collateralToSeize);
         
-       
-        // lockedCollateral is physically segregated and protected from liquidation
-        if (collateralAmount > vault.collateralAmount) {
+        // CRITICAL FIX: Locked collateral is physically segregated from liquidatable balance
+        uint256 seizable = vault.collateralAmount;
+        if (collateralAmount > seizable) {
             // Proportionally scale down the exacted debt to maintain the Liquidator's 10% bonus
-            _debtToClear = (_debtToClear * vault.collateralAmount) / collateralAmount;
-            collateralAmount = vault.collateralAmount;
+            _debtToClear = (_debtToClear * seizable) / collateralAmount;
+            collateralAmount = seizable;
         }
         
         // CHECKS-EFFECTS-INTERACTIONS: Update state before external calls
@@ -1110,14 +1120,6 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 normalizedClear = (_debtToClear * 1e18) / globalDebtIndex;
         vault.normalizedDebt -= normalizedClear;
         globalTotalDebt -= _debtToClear;
-        
-       
-        // If we seized locked collateral, we must reduce the locked amount
-        if (vault.lockedCollateral > 0 && collateralAmount > 0) {
-            // Calculate how much of the seized collateral was locked
-            uint256 lockedReduction = (vault.lockedCollateral * collateralAmount) / (vault.collateralAmount + collateralAmount);
-            vault.lockedCollateral -= lockedReduction;
-        }
         
         // Burn wsXMR from liquidator (interaction after state changes)
         wsxmrToken.burn(msg.sender, _debtToClear);
@@ -1204,6 +1206,8 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
      * @dev Permissionless keeper function with MEV protection and keeper bounty
      */
     function triggerBuyAndBurn(uint24 poolFeeTier) external nonReentrant {
+        require(allowedPoolFeeTiers[poolFeeTier], "Invalid pool fee tier");
+        
         // 1. Cooldown Check
         require(block.timestamp >= lastBuyTimestamp + COOLDOWN_PERIOD, "Cooldown active");
         
@@ -1250,7 +1254,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 minWsxmrOut = (expectedWsxmr * (BPS_DENOMINATOR - MEV_SLIPPAGE_BPS)) / BPS_DENOMINATOR;
         
         // 5. Execute Uniswap Swap (sDAI -> wsXMR)
-        IERC20(GnosisAddresses.SDAI).approve(GnosisAddresses.UNISWAP_V3_ROUTER, spendAmount);
+        IERC20(GnosisAddresses.SDAI).forceApprove(GnosisAddresses.UNISWAP_V3_ROUTER, spendAmount);
         uint256 wsxmrBought = ISwapRouter(GnosisAddresses.UNISWAP_V3_ROUTER).exactInputSingle(
             ISwapRouter.ExactInputSingleParams({
                 tokenIn: GnosisAddresses.SDAI,
@@ -1469,6 +1473,10 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         view 
         returns (Vault[] memory batch, uint256 nextCursor) 
     {
+        if (_cursor >= vaultList.length) {
+            return (new Vault[](0), vaultList.length);
+        }
+        
         uint256 length = _limit;
         if (_cursor + length > vaultList.length) {
             length = vaultList.length - _cursor;
