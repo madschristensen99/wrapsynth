@@ -91,6 +91,8 @@ sol! {
             uint16 mintFeeBps;
             uint16 burnRewardBps;
             uint256 liquidationNonce;
+            uint256 mintNonce;
+            uint256 minBurnAmount;
             bool active;
         }
         
