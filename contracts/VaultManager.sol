@@ -12,6 +12,10 @@ import {wsXMR} from "./wsXMR.sol";
 import {ISavingsDAI} from "./interfaces/ISavingsDAI.sol";
 import {ISwapRouter} from "./interfaces/ISwapRouter.sol";
 import {GnosisAddresses} from "./GnosisAddresses.sol";
+import "./interfaces/INonfungiblePositionManager.sol";
+import "./libraries/CollateralLogic.sol";
+import "./libraries/YieldLogic.sol";
+import "./libraries/BurnLogic.sol";
 
 /**
  * @title VaultManager
@@ -1576,52 +1580,16 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         Vault storage vault = vaults[_lpAddress];
         if (vault.collateralAmount == 0) return;
         
-        // CRITICAL FIX H-1: Compare DAI values, not share counts
-        // sDAI is rebasing-by-value: shares stay constant but their DAI value increases
-        uint256 principalShares = lpPrincipalShares[_lpAddress];
-        if (principalShares == 0) return; // No principal deposited yet
-        
-        // Convert both to DAI values for comparison
-        uint256 currentDaiValue = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(vault.collateralAmount);
-        uint256 principalDaiValue = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(principalShares);
-        
-        if (currentDaiValue <= principalDaiValue) return; // No yield
-        
-        uint256 yieldDaiValue = currentDaiValue - principalDaiValue;
-        
-        // Convert yield DAI value back to shares for extraction
-        // Use convertToShares to get exact shares needed for the yield DAI amount
-        uint256 yieldShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(yieldDaiValue);
-        
-        // Safety check: don't extract more shares than available
-        if (yieldShares > vault.collateralAmount - principalShares) {
-            yieldShares = vault.collateralAmount - principalShares;
-        }
-        
-        if (yieldShares < 100) return;
-        
         uint256 actualDebt = getActualDebt(vault.normalizedDebt);
-        uint256 totalObligations = actualDebt + vault.pendingDebt;
-        
-        if (totalObligations > 0) {
-            uint256 cachedXmrPrice = getXmrPrice();
-            uint256 cachedCollateralPrice = getCollateralPrice();
-            
-            // Add 5% buffer above collateral ratio to prevent yield extraction
-            // from making subsequent operations fail
-            uint256 YIELD_BUFFER_RATIO = 155; // 155% instead of 150%
-            uint256 debtValueUSD = (totalObligations * cachedXmrPrice) / 1e8;
-            uint256 minCollateralUSD = (debtValueUSD * YIELD_BUFFER_RATIO) / 100;
-            uint256 minCollateralShares = (minCollateralUSD * 1e18) / cachedCollateralPrice;
-            minCollateralShares += vault.lockedCollateral;
-            
-            if (vault.collateralAmount <= minCollateralShares) return;
-            
-            uint256 maxExtractable = vault.collateralAmount - minCollateralShares;
-            if (yieldShares > maxExtractable) {
-                yieldShares = maxExtractable;
-            }
-        }
+        uint256 yieldShares = YieldLogic.calculateExtractableYield(
+            vault.collateralAmount,
+            vault.lockedCollateral,
+            lpPrincipalDeposits[_lpAddress],
+            actualDebt,
+            vault.pendingDebt,
+            getXmrPrice(),
+            getCollateralPrice()
+        );
         
         if (yieldShares > 0) {
             vault.collateralAmount -= yieldShares;
@@ -1834,50 +1802,27 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         uint256 collateralPrice = getCollateralPrice();
         uint256 xmrPrice = getXmrPrice();
         
-        // Calculate collateral value in USD (18 decimals) - sDAI has 18 decimals
-        uint256 collateralValue = (_collateralAmount * collateralPrice) / 1e18;
+        uint256 collateralValueUsd = CollateralLogic.collateralToUsd(_collateralAmount, collateralPrice);
+        uint256 debtValueUsd = (_debtAmount * xmrPrice) / 1e8;
         
-        // Calculate debt value in USD (wsXMR has 8 decimals)
-        uint256 debtValue = (_debtAmount * xmrPrice) / 1e8;
-        
-        // Return ratio as percentage
-        ratio = (collateralValue * RATIO_PRECISION) / debtValue;
+        ratio = CollateralLogic.calculateCollateralRatio(collateralValueUsd, debtValueUsd);
     }
     
-    /**
-     * @notice Get USD value of collateral needed for debt amount
-     */
     function getCollateralValueForDebt(uint256 _debtAmount) internal view returns (uint256) {
-        uint256 xmrPrice = getXmrPrice();
-        return (_debtAmount * xmrPrice) / 1e8;
+        return CollateralLogic.getCollateralValueForDebt(_debtAmount, getXmrPrice(), COLLATERAL_RATIO);
     }
     
-    /**
-     * @notice Convert USD value to sDAI amount
-     */
+    function collateralToUsd(uint256 _collateralAmount) internal view returns (uint256) {
+        return CollateralLogic.collateralToUsd(_collateralAmount, getCollateralPrice());
+    }
+    
     function usdToCollateral(uint256 _usdValue) internal view returns (uint256) {
-        uint256 collateralPrice = getCollateralPrice();
-        return (_usdValue * 1e18) / collateralPrice; // sDAI has 18 decimals
+        return CollateralLogic.usdToCollateral(_usdValue, getCollateralPrice());
     }
     
-    // ========== VIEW FUNCTIONS ==========
-    
-    /**
-     * @notice Get vault information
-     */
-    function getVault(address _lpAddress) external view returns (Vault memory) {
-        return vaults[_lpAddress];
-    }
-    
-    /**
-     * @notice Get current collateral ratio for a vault
-     */
-    function getVaultHealth(address _lpAddress) external view returns (uint256 ratio) {
-        Vault memory vault = vaults[_lpAddress];
-        if (!vault.active) revert VaultDoesNotExist();
-        
+    function getVaultHealth(address _lpAddress) external view returns (uint256) {
         return calculateCollateralRatio(
-            vault.collateralAmount,
+            vaults[_lpAddress].collateralAmount,
             getVaultDebt(_lpAddress)
         );
     }
