@@ -1,5 +1,6 @@
 use crate::db::{BurnStatus, BurnTask, Database, MintStatus, MintTask};
 use crate::evm::EvmClient;
+use crate::monero::MoneroClient;
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use std::sync::Arc;
@@ -10,14 +11,16 @@ use tracing::{error, info};
 pub struct EventListener {
     db: Database,
     evm: Arc<EvmClient>,
+    monero: Arc<MoneroClient>,
     lp_vault_address: [u8; 20],
 }
 
 impl EventListener {
-    pub fn new(db: Database, evm: Arc<EvmClient>, lp_vault_address: [u8; 20]) -> Self {
+    pub fn new(db: Database, evm: Arc<EvmClient>, monero: Arc<MoneroClient>, lp_vault_address: [u8; 20]) -> Self {
         Self {
             db,
             evm,
+            monero,
             lp_vault_address,
         }
     }
@@ -181,20 +184,48 @@ impl EventListener {
             event.wsxmrAmount
         );
 
-        // Create a mint task
+        // Generate atomic swap keys for Farcaster protocol
+        let claim_commitment: [u8; 32] = event.claimCommitment.into();
+        let swap_keys = self.monero.generate_swap_keys(&claim_commitment)?;
+        
+        info!(
+            "Generated swap keys - Deposit address: {}",
+            swap_keys.deposit_address
+        );
+
+        // Create a mint task with swap keys
         let task = MintTask {
             request_id: event.requestId.into(),
             user: event.initiator.into(),
             lp_vault: lp_vault_bytes,
             xmr_amount: event.xmrAmount.to::<u64>(),
             wsxmr_amount: event.wsxmrAmount.to::<u64>(),
-            claim_commitment: event.claimCommitment.into(),
+            claim_commitment,
             timeout: event.timeout.to::<u64>(),
             status: MintStatus::Pending,
             created_at: current_timestamp(),
             updated_at: current_timestamp(),
             revealed_secret: None,
             monero_claim_txid: None,
+            lp_private_spend: {
+                let bytes = swap_keys.lp_private_spend.as_bytes();
+                let mut array = [0u8; 32];
+                array.copy_from_slice(bytes);
+                Some(array)
+            },
+            lp_private_view: {
+                let bytes = swap_keys.lp_private_view.as_bytes();
+                let mut array = [0u8; 32];
+                array.copy_from_slice(bytes);
+                Some(array)
+            },
+            lp_public_spend: {
+                let bytes = swap_keys.lp_public_spend.as_bytes();
+                let mut array = [0u8; 32];
+                array.copy_from_slice(bytes);
+                Some(array)
+            },
+            deposit_address: Some(swap_keys.deposit_address.to_string()),
         };
 
         self.db.insert_mint_task(&task)?;

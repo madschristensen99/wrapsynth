@@ -540,8 +540,17 @@ async function handleStartMint() {
  * Track mint flow progress
  */
 function trackMintProgress(flow) {
+    let lastState = null;
+    
     // Monitor state changes
     const checkState = setInterval(() => {
+        // Only update UI if state actually changed
+        if (flow.state === lastState) {
+            return;
+        }
+        
+        lastState = flow.state;
+        
         switch (flow.state) {
             case 'init':
                 updateMintProgress('init', 'Requesting signature...');
@@ -549,7 +558,8 @@ function trackMintProgress(flow) {
             case 'deposit':
                 completeMintStep('init');
                 updateMintProgress('deposit', 'Waiting for XMR deposit...');
-                showMintDepositInfo(flow.agent.getMoneroAddress(), flow.xmrAmount);
+                const depositAddr = flow.depositAddress || flow.agent.getMoneroAddress();
+                showMintDepositInfo(depositAddr, flow.xmrAmount);
                 break;
             case 'evm-init':
                 completeMintStep('deposit');
