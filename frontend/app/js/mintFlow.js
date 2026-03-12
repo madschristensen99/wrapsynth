@@ -1,11 +1,13 @@
 // Mint Flow - XMR to wsXMR
 // Handles the complete minting process
 
-import { getPhantomAgent } from './phantomAgent.js';
-import { writeVaultManager, readVaultManager, watchContractEvent, getPastEvents, getBlockNumber } from './viemClient.js';
+import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG } from './config.js';
+import { readVaultManager, writeVaultManager, watchContractEvent } from './contractInteraction.js';
+import { PhantomAgent } from './phantomAgent.js';
+import { updateSwapState } from './storage.js';
 import { getPriceUpdates, getPythUpdateFee } from './pythOracle.js';
+import { computeDepositAddress } from './moneroCrypto.js';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
-import { SWAP_CONFIG, DECIMALS, CONTRACTS } from './config.js';
 import { pad, toHex, parseEther } from 'https://esm.sh/viem@2.7.0';
 
 /**
@@ -308,17 +310,24 @@ export class MintFlow {
     
     /**
      * Compute Monero deposit address from P_a + P_b
-     * This is a placeholder - actual implementation requires Monero crypto library
      */
     async computeDepositAddress(lpPublicKey) {
-        // TODO: Implement actual Ed25519 point addition and Monero address derivation
-        // For now, return placeholder that indicates we have the LP key
-        console.warn('Client-side address computation not yet implemented');
-        console.log('User commitment (P_a):', this.agent.getCommitment());
-        console.log('LP public key (P_b):', lpPublicKey);
-        
-        // Return a placeholder for now
-        return 'COMPUTED_FROM_P_A_PLUS_P_B_' + lpPublicKey.slice(2, 10);
+        try {
+            const userCommitment = this.agent.getCommitment();
+            console.log('Computing deposit address:');
+            console.log('  User commitment (P_a):', userCommitment);
+            console.log('  LP public key (P_b):', lpPublicKey);
+            
+            // Compute P_a + P_b and derive Monero address
+            const depositAddress = await computeDepositAddress(userCommitment, lpPublicKey);
+            
+            console.log('  Deposit address:', depositAddress);
+            return depositAddress;
+        } catch (error) {
+            console.error('Error computing deposit address:', error);
+            // Fallback to placeholder if crypto library fails
+            return 'ERROR_COMPUTING_ADDRESS_' + lpPublicKey.slice(2, 10);
+        }
     }
 
     /**
