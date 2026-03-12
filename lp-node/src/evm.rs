@@ -60,6 +60,11 @@ sol! {
             uint256 timeout
         );
 
+        event LPKeyProvided(
+            bytes32 indexed requestId,
+            bytes32 lpPublicKey
+        );
+
         event MintReady(
             bytes32 indexed requestId
         );
@@ -72,6 +77,7 @@ sol! {
         // Functions
         function createVault() external;
         function depositCollateral(uint256 _amount) external;
+        function provideLPKey(bytes32 _requestId, bytes32 _lpPublicKey) external;
         function withdrawCollateral(uint256 _amount) external;
         function commitBurn(bytes32 requestId, bytes32 secretHash) external;
         function finalizeBurn(bytes32 requestId, bytes32 secret) external;
@@ -430,6 +436,28 @@ impl EvmClient {
             .context("Failed to get finalizeBurn receipt")?;
 
         info!("Burn finalized in tx: {:?}", receipt.transaction_hash);
+        Ok(receipt.transaction_hash)
+    }
+
+    /// Provide LP's public key for Farcaster atomic swap
+    pub async fn provide_lp_key(&self, request_id: FixedBytes<32>, lp_public_key: FixedBytes<32>) -> Result<FixedBytes<32>> {
+        info!("Providing LP key for request {}", hex::encode(request_id));
+
+        let contract = VaultManager::new(self.vault_manager, &self.provider);
+        
+        let call = contract.provideLPKey(request_id, lp_public_key);
+        
+        let pending_tx = call
+            .send()
+            .await
+            .context("Failed to send provideLPKey transaction")?;
+
+        let receipt = pending_tx
+            .get_receipt()
+            .await
+            .context("Failed to get provideLPKey receipt")?;
+
+        info!("LP key provided in tx: {:?}", receipt.transaction_hash);
         Ok(receipt.transaction_hash)
     }
 

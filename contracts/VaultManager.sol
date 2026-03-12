@@ -190,6 +190,9 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
     mapping(bytes32 => MintRequest) public mintRequests;
     mapping(bytes32 => BurnRequest) public burnRequests;
     
+    // Farcaster atomic swap: LP's public key for each mint request
+    mapping(bytes32 => bytes32) public lpPublicKeys; // requestId => P_b (LP's public spend key)
+    
     // Track all vault addresses
     address[] public vaultList;
     
@@ -223,6 +226,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         bytes32 claimCommitment,
         uint256 timeout
     );
+    event LPKeyProvided(bytes32 indexed requestId, bytes32 lpPublicKey);
     event MintReady(bytes32 indexed requestId);
     event MintFinalized(bytes32 indexed requestId, bytes32 secret);
     event MintCancelled(bytes32 indexed requestId);
@@ -717,6 +721,21 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         );
         
         return requestId;
+    }
+    
+    /**
+     * @notice LP provides their public key for Farcaster atomic swap
+     * @param _requestId The mint request ID
+     * @param _lpPublicKey LP's public spend key (P_b) for this swap
+     */
+    function provideLPKey(bytes32 _requestId, bytes32 _lpPublicKey) external {
+        MintRequest storage request = mintRequests[_requestId];
+        if (request.status != MintStatus.PENDING) revert InvalidStatus();
+        if (msg.sender != request.lpVault) revert Unauthorized();
+        if (_lpPublicKey == bytes32(0)) revert InvalidValue();
+        
+        lpPublicKeys[_requestId] = _lpPublicKey;
+        emit LPKeyProvided(_requestId, _lpPublicKey);
     }
     
     /**

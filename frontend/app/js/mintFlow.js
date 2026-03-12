@@ -236,28 +236,16 @@ export class MintFlow {
             this.requestId = mintInitiatedEvent.topics[1]; // requestId is first indexed param
             console.log('Request ID:', this.requestId);
             
-            // Fetch deposit address from LP node API
-            console.log('Fetching deposit address from LP node...');
-            const swapInfo = await this.fetchSwapInfo(this.requestId);
+            // Wait for LP to provide their public key on-chain
+            console.log('Waiting for LP to provide public key on-chain...');
+            await this.waitForLPKey();
             
-            if (swapInfo && swapInfo.deposit_address) {
-                this.depositAddress = swapInfo.deposit_address;
-                console.log('Deposit address:', this.depositAddress);
-                
-                updateSwapState({
-                    state: 'lp-confirm',
-                    requestId: this.requestId,
-                    txHash: receipt.transactionHash,
-                    depositAddress: this.depositAddress
-                });
-            } else {
-                console.warn('Could not fetch deposit address from LP node');
-                updateSwapState({
-                    state: 'lp-confirm',
-                    requestId: this.requestId,
-                    txHash: receipt.transactionHash
-                });
-            }
+            updateSwapState({
+                state: 'lp-confirm',
+                requestId: this.requestId,
+                txHash: receipt.transactionHash,
+                depositAddress: this.depositAddress
+            });
         } else {
             throw new Error('Could not extract requestId from transaction');
         }
@@ -266,29 +254,71 @@ export class MintFlow {
     }
     
     /**
-     * Fetch swap information from LP node API
+     * Wait for LP to provide their public key and compute deposit address
      */
-    async fetchSwapInfo(requestId) {
-        try {
-            // Remove 0x prefix from requestId
-            const requestIdHex = requestId.startsWith('0x') ? requestId.slice(2) : requestId;
+    async waitForLPKey() {
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                reject(new Error('Timeout waiting for LP key'));
+            }, 60000); // 60 second timeout
             
-            // LP node API endpoint (configurable)
-            const apiUrl = 'http://localhost:3030';
-            const response = await fetch(`${apiUrl}/swap/${requestIdHex}`);
+            // Watch for LPKeyProvided event
+            const unwatch = watchContractEvent(
+                CONTRACTS.vaultManager,
+                ABIS.vaultManager,
+                'LPKeyProvided',
+                {
+                    requestId: this.requestId
+                },
+                async (log) => {
+                    clearTimeout(timeout);
+                    unwatch();
+                    
+                    const lpPublicKey = log.args.lpPublicKey;
+                    console.log('LP public key received:', lpPublicKey);
+                    
+                    // Compute deposit address from P_a + P_b
+                    this.depositAddress = await this.computeDepositAddress(lpPublicKey);
+                    console.log('Deposit address computed:', this.depositAddress);
+                    
+                    resolve();
+                }
+            );
             
-            if (!response.ok) {
-                console.error('LP node API error:', response.status);
-                return null;
-            }
-            
-            const swapInfo = await response.json();
-            console.log('Swap info from LP node:', swapInfo);
-            return swapInfo;
-        } catch (error) {
-            console.error('Error fetching swap info from LP node:', error);
-            return null;
-        }
+            // Also try reading from contract in case event already fired
+            setTimeout(async () => {
+                try {
+                    const lpPublicKey = await readVaultManager('lpPublicKeys', [this.requestId]);
+                    if (lpPublicKey && lpPublicKey !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
+                        clearTimeout(timeout);
+                        unwatch();
+                        
+                        console.log('LP public key read from contract:', lpPublicKey);
+                        this.depositAddress = await this.computeDepositAddress(lpPublicKey);
+                        console.log('Deposit address computed:', this.depositAddress);
+                        
+                        resolve();
+                    }
+                } catch (error) {
+                    console.error('Error reading LP public key:', error);
+                }
+            }, 2000);
+        });
+    }
+    
+    /**
+     * Compute Monero deposit address from P_a + P_b
+     * This is a placeholder - actual implementation requires Monero crypto library
+     */
+    async computeDepositAddress(lpPublicKey) {
+        // TODO: Implement actual Ed25519 point addition and Monero address derivation
+        // For now, return placeholder that indicates we have the LP key
+        console.warn('Client-side address computation not yet implemented');
+        console.log('User commitment (P_a):', this.agent.getCommitment());
+        console.log('LP public key (P_b):', lpPublicKey);
+        
+        // Return a placeholder for now
+        return 'COMPUTED_FROM_P_A_PLUS_P_B_' + lpPublicKey.slice(2, 10);
     }
 
     /**

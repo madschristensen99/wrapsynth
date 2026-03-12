@@ -193,6 +193,25 @@ impl EventListener {
             swap_keys.deposit_address
         );
 
+        // Submit LP's public key on-chain so user can compute deposit address
+        let request_id_bytes: [u8; 32] = event.requestId.into();
+        let lp_public_spend_bytes = swap_keys.lp_public_spend.as_bytes();
+        let mut lp_public_key_array = [0u8; 32];
+        lp_public_key_array.copy_from_slice(lp_public_spend_bytes);
+        
+        match self.evm.provide_lp_key(
+            request_id_bytes.into(),
+            lp_public_key_array.into()
+        ).await {
+            Ok(tx_hash) => {
+                info!("LP key submitted on-chain: {:?}", tx_hash);
+            }
+            Err(e) => {
+                tracing::error!("Failed to submit LP key on-chain: {}", e);
+                // Continue anyway - we still store it in DB for API fallback
+            }
+        }
+
         // Create a mint task with swap keys
         let task = MintTask {
             request_id: event.requestId.into(),
