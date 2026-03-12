@@ -8,7 +8,7 @@ module.exports = {
     settings: {
       optimizer: {
         enabled: true,
-        runs: 200,
+        runs: 1,
       },
       // viaIR enabled to resolve stack too deep errors in complex contracts
       viaIR: true,

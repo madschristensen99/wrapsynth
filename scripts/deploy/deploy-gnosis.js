@@ -48,12 +48,14 @@ async function main() {
   console.log("=".repeat(60));
   
   const UNISWAP_V3_POSITION_MANAGER = "0xC36442b4a4522E871399CD717aBDD847Ab11FE88";
+  const UNISWAP_V3_FACTORY = "0xf78031CBCA409F2FB6876BDFDBc1b2df24cF9bEf";
   
   const Router = await hre.ethers.getContractFactory("wsXMRLiquidityRouter");
   const router = await Router.deploy(
     vaultManagerAddress,
     wsxmrAddress,
-    UNISWAP_V3_POSITION_MANAGER
+    UNISWAP_V3_POSITION_MANAGER,
+    UNISWAP_V3_FACTORY
   );
   await router.waitForDeployment();
   const routerAddress = await router.getAddress();
