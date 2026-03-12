@@ -31,9 +31,9 @@ export class MintFlow {
     async start(lpVault, xmrAmount) {
         console.log('Starting mint flow:', { lpVault, xmrAmount });
 
-        // Validate inputs
-        if (xmrAmount < SWAP_CONFIG.minMintAmount) {
-            throw new Error(`Minimum mint amount is ${SWAP_CONFIG.minMintAmount} XMR`);
+        // Validate inputs - contract enforces minimum of 1e4 piconeros (0.00000001 XMR)
+        if (xmrAmount <= 0) {
+            throw new Error('Amount must be greater than 0');
         }
 
         this.lpVault = lpVault;
@@ -163,18 +163,22 @@ export class MintFlow {
 
         // Get vault info to determine griefing deposit
         const vaultInfo = await readVaultManager('getVault', [this.lpVault]);
-        this.griefingDeposit = vaultInfo[4]; // mintGriefingDeposit
-
+        this.griefingDeposit = vaultInfo[6]; // mintGriefingDeposit (index 6)
+        
         console.log('Griefing deposit required:', this.griefingDeposit.toString());
+        
+        // Note: We skip pre-flight capacity validation here because:
+        // 1. It requires fresh Pyth prices which may be stale
+        // 2. We're about to update Pyth prices as part of the mint transaction
+        // 3. The contract will validate capacity on-chain with fresh prices
+        // If capacity is insufficient, the transaction will revert with InsufficientCollateral()
+
+        // Convert XMR amount to contract format (12 decimals for XMR atomic units)
+        const xmrAmountContract = BigInt(Math.floor(this.xmrAmount * Math.pow(10, DECIMALS.XMR)));
 
         // Fetch Pyth price updates
         const { updateData } = await getPriceUpdates();
         const pythFee = await getPythUpdateFee(updateData, CONTRACTS.pythOracle);
-
-        console.log('Pyth update fee:', pythFee.toString());
-
-        // Convert XMR amount to contract format (12 decimals for XMR atomic units)
-        const xmrAmountContract = BigInt(Math.floor(this.xmrAmount * Math.pow(10, DECIMALS.XMR)));
 
         // Get commitment from agent
         const commitment = this.agent.getCommitment();
@@ -197,12 +201,21 @@ export class MintFlow {
             totalValue: totalValue.toString()
         });
 
-        // One-click UX: Single transaction combines Pyth price update + mint initiation
-        console.log('Initiating mint with automatic price update (one-click)...');
+        // Step 1: Update Pyth prices first
+        console.log('Updating Pyth prices...');
+        await writeVaultManager(
+            'updatePythPrices',
+            [updateData],
+            pythFee // Pay the Pyth update fee
+        );
+        
+        console.log('Pyth prices updated, now initiating mint...');
+        
+        // Step 2: Initiate the mint
         const receipt = await writeVaultManager(
-            'initiateMintWithPriceUpdate',
-            [this.lpVault, userAddress, xmrAmountContract, commitment, BigInt(this.timeoutDuration), updateData],
-            totalValue // Total value = pythFee + griefingDeposit
+            'initiateMint',
+            [this.lpVault, userAddress, xmrAmountContract, commitment, BigInt(this.timeoutDuration)],
+            this.griefingDeposit // Pay the griefing deposit
         );
 
         console.log('Mint initiated, tx:', receipt.transactionHash);
@@ -223,16 +236,59 @@ export class MintFlow {
             this.requestId = mintInitiatedEvent.topics[1]; // requestId is first indexed param
             console.log('Request ID:', this.requestId);
             
-            updateSwapState({
-                state: 'lp-confirm',
-                requestId: this.requestId,
-                txHash: receipt.transactionHash
-            });
+            // Fetch deposit address from LP node API
+            console.log('Fetching deposit address from LP node...');
+            const swapInfo = await this.fetchSwapInfo(this.requestId);
+            
+            if (swapInfo && swapInfo.deposit_address) {
+                this.depositAddress = swapInfo.deposit_address;
+                console.log('Deposit address:', this.depositAddress);
+                
+                updateSwapState({
+                    state: 'lp-confirm',
+                    requestId: this.requestId,
+                    txHash: receipt.transactionHash,
+                    depositAddress: this.depositAddress
+                });
+            } else {
+                console.warn('Could not fetch deposit address from LP node');
+                updateSwapState({
+                    state: 'lp-confirm',
+                    requestId: this.requestId,
+                    txHash: receipt.transactionHash
+                });
+            }
         } else {
             throw new Error('Could not extract requestId from transaction');
         }
 
         this.state = 'lp-confirm';
+    }
+    
+    /**
+     * Fetch swap information from LP node API
+     */
+    async fetchSwapInfo(requestId) {
+        try {
+            // Remove 0x prefix from requestId
+            const requestIdHex = requestId.startsWith('0x') ? requestId.slice(2) : requestId;
+            
+            // LP node API endpoint (configurable)
+            const apiUrl = 'http://localhost:3030';
+            const response = await fetch(`${apiUrl}/swap/${requestIdHex}`);
+            
+            if (!response.ok) {
+                console.error('LP node API error:', response.status);
+                return null;
+            }
+            
+            const swapInfo = await response.json();
+            console.log('Swap info from LP node:', swapInfo);
+            return swapInfo;
+        } catch (error) {
+            console.error('Error fetching swap info from LP node:', error);
+            return null;
+        }
     }
 
     /**
