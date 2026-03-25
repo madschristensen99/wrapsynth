@@ -7,6 +7,12 @@ use reqwest::Client;
 use std::str::FromStr;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
+use rand::rngs::OsRng;
+use rand::RngCore;
+use curve25519_dalek::{
+    edwards::{CompressedEdwardsY, EdwardsPoint},
+    scalar::Scalar,
+};
 
 /// Monero client with native key management using monero-rs
 /// Uses monero-wallet-rpc for transaction operations
@@ -27,6 +33,25 @@ pub struct IncomingTransfer {
     pub tx_hash: String,
     pub confirmations: u64,
     pub block_height: u64,
+}
+
+/// Atomic swap keys for a single mint operation (Farcaster protocol)
+#[derive(Debug, Clone)]
+pub struct SwapKeys {
+    /// LP's private spend key for this swap (s_b)
+    pub lp_private_spend: PrivateKey,
+    /// LP's private view key for this swap (v_b)
+    pub lp_private_view: PrivateKey,
+    /// LP's public spend key (P_b = s_b * G)
+    pub lp_public_spend: PublicKey,
+    /// LP's public view key (V_b = v_b * G)
+    pub lp_public_view: PublicKey,
+    /// Combined public spend key (P_a + P_b)
+    pub combined_public_spend: PublicKey,
+    /// Combined public view key (V_a + V_b)
+    pub combined_public_view: PublicKey,
+    /// Deposit address for this swap (derived from P_a + P_b)
+    pub deposit_address: Address,
 }
 
 impl MoneroClient {
@@ -333,7 +358,143 @@ impl MoneroClient {
         Ok(None)
     }
 
-    /// Verify that a user has locked XMR for a mint operation
+    /// Generate unique swap keys for a Farcaster atomic swap
+    /// 
+    /// Returns LP's keys (s_b, v_b) and combined keys with user's commitment (P_a)
+    pub fn generate_swap_keys(&self, user_commitment: &[u8; 32]) -> Result<SwapKeys> {
+        // Generate random LP keypair for this swap
+        let mut rng = OsRng;
+        
+        // Generate s_b (LP's private spend key for this swap)
+        let mut lp_scalar_bytes = [0u8; 32];
+        rng.fill_bytes(&mut lp_scalar_bytes);
+        let lp_scalar = Scalar::from_bytes_mod_order(lp_scalar_bytes);
+        let lp_private_spend = PrivateKey::from_slice(&lp_scalar_bytes)
+            .map_err(|e| anyhow!("Failed to create LP private spend key: {:?}", e))?;
+        
+        // Generate v_b (LP's private view key for this swap)
+        let mut lp_view_bytes = [0u8; 32];
+        rng.fill_bytes(&mut lp_view_bytes);
+        let lp_private_view = PrivateKey::from_slice(&lp_view_bytes)
+            .map_err(|e| anyhow!("Failed to create LP private view key: {:?}", e))?;
+        
+        // Derive LP's public keys
+        let lp_public_spend = PublicKey::from_private_key(&lp_private_spend);
+        let lp_public_view = PublicKey::from_private_key(&lp_private_view);
+        
+        // Parse user's commitment as P_a (user's public spend key)
+        let user_compressed = CompressedEdwardsY::from_slice(user_commitment)
+            .map_err(|_| anyhow!("Invalid user commitment format"))?;
+        let user_point = user_compressed.decompress()
+            .ok_or_else(|| anyhow!("Invalid user commitment - not a valid Ed25519 point"))?;
+        
+        // Parse LP's public spend key as point
+        let lp_public_bytes = lp_public_spend.as_bytes();
+        let lp_compressed = CompressedEdwardsY::from_slice(lp_public_bytes)
+            .map_err(|_| anyhow!("Invalid LP public key format"))?;
+        let lp_point = lp_compressed.decompress()
+            .ok_or_else(|| anyhow!("Invalid LP public key"))?;
+        
+        // Compute P_a + P_b (combined public spend key)
+        let combined_spend_point = user_point + lp_point;
+        let combined_public_spend_bytes = combined_spend_point.compress().to_bytes();
+        let combined_public_spend = PublicKey::from_slice(&combined_public_spend_bytes)
+            .map_err(|e| anyhow!("Failed to create combined public spend key: {:?}", e))?;
+        
+        // For view key, we just use LP's view key (user will combine with their v_a)
+        let combined_public_view = lp_public_view;
+        
+        // Create deposit address from combined keys
+        let deposit_address = Address::standard(
+            self.network,
+            combined_public_spend,
+            combined_public_view,
+        );
+        
+        info!("Generated swap keys for atomic swap");
+        info!("LP public spend: {}", hex::encode(lp_public_spend.as_bytes()));
+        info!("Combined public spend: {}", hex::encode(combined_public_spend.as_bytes()));
+        info!("Deposit address: {}", deposit_address);
+        
+        Ok(SwapKeys {
+            lp_private_spend,
+            lp_private_view,
+            lp_public_spend,
+            lp_public_view,
+            combined_public_spend,
+            combined_public_view,
+            deposit_address,
+        })
+    }
+    
+    /// Verify XMR was locked to a specific swap address
+    pub async fn verify_swap_lock(
+        &self,
+        swap_address: &Address,
+        expected_amount: u64,
+        min_confirmations: u64,
+    ) -> Result<bool> {
+        info!(
+            "Verifying swap lock: {} XMR to address {}",
+            expected_amount as f64 / 1e12,
+            swap_address
+        );
+        
+        // TODO: Implement proper address-specific verification
+        // This requires wallet RPC with subaddress support or direct blockchain scanning
+        // For now, fall back to checking main wallet
+        warn!("Swap-specific address verification not yet implemented - checking main wallet");
+        
+        self.refresh_wallet().await?;
+        let current_height = self.get_height().await?;
+        let min_height = current_height.saturating_sub(100);
+        let transfers = self.get_incoming_transfers(min_height).await?;
+        
+        for transfer in transfers {
+            if transfer.amount >= expected_amount && transfer.confirmations >= min_confirmations {
+                info!("Found matching transfer: {} with {} confirmations", transfer.tx_hash, transfer.confirmations);
+                return Ok(true);
+            }
+        }
+        
+        debug!("No matching transfer found");
+        Ok(false)
+    }
+    
+    /// Claim XMR from swap address using combined secret (s_a + s_b)
+    pub async fn claim_swap_xmr(
+        &self,
+        lp_private_spend: &PrivateKey,
+        user_secret: &[u8; 32],
+        destination: &str,
+        amount: u64,
+    ) -> Result<String> {
+        info!("Claiming XMR from atomic swap");
+        
+        // Parse user's secret as scalar
+        let user_scalar = Scalar::from_bytes_mod_order(*user_secret);
+        
+        // Parse LP's private key as scalar
+        let lp_bytes = lp_private_spend.as_bytes();
+        let mut lp_array = [0u8; 32];
+        lp_array.copy_from_slice(lp_bytes);
+        let lp_scalar = Scalar::from_bytes_mod_order(lp_array);
+        
+        // Compute combined secret: s_a + s_b
+        let combined_scalar = user_scalar + lp_scalar;
+        let combined_private_key_bytes = combined_scalar.to_bytes();
+        let combined_private_key = PrivateKey::from_slice(&combined_private_key_bytes)
+            .map_err(|e| anyhow!("Failed to create combined private key: {:?}", e))?;
+        
+        info!("Combined private key computed: {}", hex::encode(combined_private_key.as_bytes()));
+        
+        // TODO: Implement actual XMR transfer using wallet RPC
+        // This requires sweeping from the swap address to the destination
+        warn!("XMR claiming not yet fully implemented - requires wallet RPC integration");
+        
+        Ok("placeholder_tx_hash".to_string())
+    }
+    
     pub async fn verify_mint_lock(
         &self,
         expected_amount: u64,

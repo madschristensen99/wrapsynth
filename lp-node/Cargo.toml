@@ -16,8 +16,11 @@ alloy-sol-types = "0.8"
 # Database
 sled = "0.34"
 
-# HTTP client
+# HTTP client and server
 reqwest = { version = "0.12", features = ["json"] }
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
 
 # Monero library
 monero = "0.20"
@@ -36,6 +39,7 @@ thiserror = "1.0"
 rand = "0.8"
 sha2 = "0.10"
 k256 = { version = "0.13", features = ["ecdsa"] }
+curve25519-dalek = "4.1"
 
 # Logging
 tracing = "0.1"

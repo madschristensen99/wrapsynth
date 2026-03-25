@@ -23,6 +23,7 @@ async function main() {
 
   const PYTH_ORACLE = deployment.external.pythOracle;
   const UNISWAP_V3_POSITION_MANAGER = "0xC36442b4a4522E871399CD717aBDD847Ab11FE88";
+  const UNISWAP_V3_FACTORY = "0xf78031CBCA409F2FB6876BDFDBc1b2df24cF9bEf";
 
   console.log("=".repeat(60));
   console.log("Verifying wsXMR Token");
@@ -72,7 +73,8 @@ async function main() {
       constructorArguments: [
         deployment.contracts.VaultManager,
         deployment.contracts.wsXMR,
-        UNISWAP_V3_POSITION_MANAGER
+        UNISWAP_V3_POSITION_MANAGER,
+        UNISWAP_V3_FACTORY
       ],
     });
     console.log("✓ wsXMRLiquidityRouter verified successfully\n");

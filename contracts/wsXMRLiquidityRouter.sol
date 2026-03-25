@@ -190,8 +190,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
         }
         
         // Get oracle prices with tight staleness
-        uint256 sDAIPrice = vaultManager.getCollateralPriceForLiquidity();
-        uint256 wsxmrPrice = vaultManager.getXmrPriceForLiquidity();
+        uint256 sDAIPrice = vaultManager.getCollateralPriceWithAge(30 seconds);
+        uint256 wsxmrPrice = vaultManager.getXmrPriceWithAge(30 seconds);
         
         // FIX C-4: Calculate sqrtPriceX96 correctly
         // Uniswap V3 price = token1_amount / token0_amount (in raw units)
@@ -572,8 +572,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
        
         // FIX H-2: Use tighter staleness window for liquidity operations
         // This prevents MEV arbitrage via flash loan pool manipulation
-        uint256 sDAIPrice = vaultManager.getCollateralPriceForLiquidity();
-        uint256 wsxmrPrice = vaultManager.getXmrPriceForLiquidity();
+        uint256 sDAIPrice = vaultManager.getCollateralPriceWithAge(30 seconds);
+        uint256 wsxmrPrice = vaultManager.getXmrPriceWithAge(30 seconds);
         
         // Calculate expected ratio based on oracle prices
         // sDAI amount * sDAI price should approximately equal wsXMR amount * wsXMR price
@@ -704,8 +704,8 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
         );
         
         // FIX H-2: Calculate oracle-based minimum outputs with tight staleness for MEV protection
-        uint256 currentSDAIPrice = vaultManager.getCollateralPriceForLiquidity();
-        uint256 currentXmrPrice = vaultManager.getXmrPriceForLiquidity();
+        uint256 currentSDAIPrice = vaultManager.getCollateralPriceWithAge(30 seconds);
+        uint256 currentXmrPrice = vaultManager.getXmrPriceWithAge(30 seconds);
         
         // Determine token order
         (, , , , , , , uint128 liquidity, , , , ) = 

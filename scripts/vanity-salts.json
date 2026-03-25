@@ -1,0 +1,10 @@
+{
+  "vaultManager": {
+    "address": "0xb00F0A53074De7747be8cb659E64B5BE2cc4cD7b",
+    "salt": "0x53db97a79d70f1506255db4d34e515c471e1451e8c861a49eefa3cb535898fdb"
+  },
+  "wsxmr": {
+    "address": "0x4209A33C707ce1cF39269B1a98b41803eAB3e4d4",
+    "salt": "0x6652e40e8a7b78ac17e31cc48819f058c6bf91350edbf43005f841e9d19856cb"
+  }
+}
