@@ -1,11 +1,13 @@
 // Mint Flow - XMR to wsXMR
 // Handles the complete minting process
 
-import { getPhantomAgent } from './phantomAgent.js';
-import { writeVaultManager, readVaultManager, watchContractEvent, getPastEvents, getBlockNumber } from './viemClient.js';
+import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG } from './config.js';
+import { readVaultManager, writeVaultManager, watchContractEvent } from './contractInteraction.js';
+import { PhantomAgent } from './phantomAgent.js';
+import { updateSwapState } from './storage.js';
 import { getPriceUpdates, getPythUpdateFee } from './pythOracle.js';
+import { computeDepositAddress } from './moneroCrypto.js';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
-import { SWAP_CONFIG, DECIMALS, CONTRACTS } from './config.js';
 import { pad, toHex, parseEther } from 'https://esm.sh/viem@2.7.0';
 
 /**
@@ -31,9 +33,9 @@ export class MintFlow {
     async start(lpVault, xmrAmount) {
         console.log('Starting mint flow:', { lpVault, xmrAmount });
 
-        // Validate inputs
-        if (xmrAmount < SWAP_CONFIG.minMintAmount) {
-            throw new Error(`Minimum mint amount is ${SWAP_CONFIG.minMintAmount} XMR`);
+        // Validate inputs - contract enforces minimum of 1e4 piconeros (0.00000001 XMR)
+        if (xmrAmount <= 0) {
+            throw new Error('Amount must be greater than 0');
         }
 
         this.lpVault = lpVault;
@@ -163,18 +165,22 @@ export class MintFlow {
 
         // Get vault info to determine griefing deposit
         const vaultInfo = await readVaultManager('getVault', [this.lpVault]);
-        this.griefingDeposit = vaultInfo[4]; // mintGriefingDeposit
-
+        this.griefingDeposit = vaultInfo[6]; // mintGriefingDeposit (index 6)
+        
         console.log('Griefing deposit required:', this.griefingDeposit.toString());
+        
+        // Note: We skip pre-flight capacity validation here because:
+        // 1. It requires fresh Pyth prices which may be stale
+        // 2. We're about to update Pyth prices as part of the mint transaction
+        // 3. The contract will validate capacity on-chain with fresh prices
+        // If capacity is insufficient, the transaction will revert with InsufficientCollateral()
+
+        // Convert XMR amount to contract format (12 decimals for XMR atomic units)
+        const xmrAmountContract = BigInt(Math.floor(this.xmrAmount * Math.pow(10, DECIMALS.XMR)));
 
         // Fetch Pyth price updates
         const { updateData } = await getPriceUpdates();
         const pythFee = await getPythUpdateFee(updateData, CONTRACTS.pythOracle);
-
-        console.log('Pyth update fee:', pythFee.toString());
-
-        // Convert XMR amount to contract format (12 decimals for XMR atomic units)
-        const xmrAmountContract = BigInt(Math.floor(this.xmrAmount * Math.pow(10, DECIMALS.XMR)));
 
         // Get commitment from agent
         const commitment = this.agent.getCommitment();
@@ -197,12 +203,21 @@ export class MintFlow {
             totalValue: totalValue.toString()
         });
 
-        // One-click UX: Single transaction combines Pyth price update + mint initiation
-        console.log('Initiating mint with automatic price update (one-click)...');
+        // Step 1: Update Pyth prices first
+        console.log('Updating Pyth prices...');
+        await writeVaultManager(
+            'updatePythPrices',
+            [updateData],
+            pythFee // Pay the Pyth update fee
+        );
+        
+        console.log('Pyth prices updated, now initiating mint...');
+        
+        // Step 2: Initiate the mint
         const receipt = await writeVaultManager(
-            'initiateMintWithPriceUpdate',
-            [this.lpVault, userAddress, xmrAmountContract, commitment, BigInt(this.timeoutDuration), updateData],
-            totalValue // Total value = pythFee + griefingDeposit
+            'initiateMint',
+            [this.lpVault, userAddress, xmrAmountContract, commitment, BigInt(this.timeoutDuration)],
+            this.griefingDeposit // Pay the griefing deposit
         );
 
         console.log('Mint initiated, tx:', receipt.transactionHash);
@@ -223,16 +238,96 @@ export class MintFlow {
             this.requestId = mintInitiatedEvent.topics[1]; // requestId is first indexed param
             console.log('Request ID:', this.requestId);
             
+            // Wait for LP to provide their public key on-chain
+            console.log('Waiting for LP to provide public key on-chain...');
+            await this.waitForLPKey();
+            
             updateSwapState({
                 state: 'lp-confirm',
                 requestId: this.requestId,
-                txHash: receipt.transactionHash
+                txHash: receipt.transactionHash,
+                depositAddress: this.depositAddress
             });
         } else {
             throw new Error('Could not extract requestId from transaction');
         }
 
         this.state = 'lp-confirm';
+    }
+    
+    /**
+     * Wait for LP to provide their public key and compute deposit address
+     */
+    async waitForLPKey() {
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                reject(new Error('Timeout waiting for LP key'));
+            }, 60000); // 60 second timeout
+            
+            // Watch for LPKeyProvided event
+            const unwatch = watchContractEvent(
+                CONTRACTS.vaultManager,
+                ABIS.vaultManager,
+                'LPKeyProvided',
+                {
+                    requestId: this.requestId
+                },
+                async (log) => {
+                    clearTimeout(timeout);
+                    unwatch();
+                    
+                    const lpPublicKey = log.args.lpPublicKey;
+                    console.log('LP public key received:', lpPublicKey);
+                    
+                    // Compute deposit address from P_a + P_b
+                    this.depositAddress = await this.computeDepositAddress(lpPublicKey);
+                    console.log('Deposit address computed:', this.depositAddress);
+                    
+                    resolve();
+                }
+            );
+            
+            // Also try reading from contract in case event already fired
+            setTimeout(async () => {
+                try {
+                    const lpPublicKey = await readVaultManager('lpPublicKeys', [this.requestId]);
+                    if (lpPublicKey && lpPublicKey !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
+                        clearTimeout(timeout);
+                        unwatch();
+                        
+                        console.log('LP public key read from contract:', lpPublicKey);
+                        this.depositAddress = await this.computeDepositAddress(lpPublicKey);
+                        console.log('Deposit address computed:', this.depositAddress);
+                        
+                        resolve();
+                    }
+                } catch (error) {
+                    console.error('Error reading LP public key:', error);
+                }
+            }, 2000);
+        });
+    }
+    
+    /**
+     * Compute Monero deposit address from P_a + P_b
+     */
+    async computeDepositAddress(lpPublicKey) {
+        try {
+            const userCommitment = this.agent.getCommitment();
+            console.log('Computing deposit address:');
+            console.log('  User commitment (P_a):', userCommitment);
+            console.log('  LP public key (P_b):', lpPublicKey);
+            
+            // Compute P_a + P_b and derive Monero address
+            const depositAddress = await computeDepositAddress(userCommitment, lpPublicKey);
+            
+            console.log('  Deposit address:', depositAddress);
+            return depositAddress;
+        } catch (error) {
+            console.error('Error computing deposit address:', error);
+            // Fallback to placeholder if crypto library fails
+            return 'ERROR_COMPUTING_ADDRESS_' + lpPublicKey.slice(2, 10);
+        }
     }
 
     /**

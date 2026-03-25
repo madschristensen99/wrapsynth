@@ -54,6 +54,11 @@ pub struct MintTask {
     pub revealed_secret: Option<[u8; 32]>,
     /// Monero transaction ID where we claimed XMR
     pub monero_claim_txid: Option<String>,
+    /// Atomic swap keys for Farcaster protocol
+    pub lp_private_spend: Option<[u8; 32]>,
+    pub lp_private_view: Option<[u8; 32]>,
+    pub lp_public_spend: Option<[u8; 32]>,
+    pub deposit_address: Option<String>,
 }
 
 /// Burn task tracking

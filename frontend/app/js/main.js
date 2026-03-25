@@ -380,6 +380,7 @@ async function loadVaults() {
         ];
         
         const activeVaults = [];
+        let totalCollateralWei = 0n;
         
         for (const vaultAddress of knownVaults) {
             try {
@@ -396,8 +397,10 @@ async function loadVaults() {
                 console.log('Debt (index 3):', vaultData[3]?.toString());
                 console.log('Active (index 10):', vaultData[10]);
                 
-                // Check if vault is active (index 10 is the 'active' field)
-                if (vaultData && vaultData[10]) {
+                // Check if vault has collateral (more reliable than active flag due to decoding issues)
+                const hasCollateral = vaultData && vaultData[1] && BigInt(vaultData[1].toString()) > 0n;
+                
+                if (hasCollateral || (vaultData && vaultData[10])) {
                     const vault = {
                         address: vaultAddress,
                         name: `LP Vault ${vaultAddress.slice(0, 6)}...${vaultAddress.slice(-4)}`,
@@ -406,12 +409,37 @@ async function loadVaults() {
                     };
                     console.log('Adding active vault:', vault);
                     activeVaults.push(vault);
+                    
+                    // Add to total collateral (sDAI shares)
+                    totalCollateralWei += BigInt(vaultData[1].toString());
                 } else {
-                    console.warn('Vault is not active or data is invalid');
+                    console.warn('Vault has no collateral and is not active');
                 }
             } catch (err) {
                 console.error(`Failed to fetch vault ${vaultAddress}:`, err);
             }
+        }
+        
+        // Update stats bar with dynamic values
+        const vaultsStatEl = document.getElementById('vaults-stat');
+        if (vaultsStatEl) {
+            vaultsStatEl.textContent = activeVaults.length.toString();
+        }
+        
+        // Update TVL (convert sDAI shares to approximate USD value)
+        // sDAI is roughly 1:1 with DAI, so we can approximate
+        const tvlStatEl = document.getElementById('tvl-stat');
+        if (tvlStatEl && totalCollateralWei > 0n) {
+            const collateralInDai = Number(totalCollateralWei) / 1e18;
+            // Assuming DAI ≈ $1
+            const tvlUsd = collateralInDai;
+            if (tvlUsd >= 1000) {
+                tvlStatEl.textContent = `$${(tvlUsd / 1000).toFixed(1)}K`;
+            } else {
+                tvlStatEl.textContent = `$${tvlUsd.toFixed(2)}`;
+            }
+        } else if (tvlStatEl) {
+            tvlStatEl.textContent = '$0';
         }
         
         if (activeVaults.length === 0) {
@@ -512,8 +540,17 @@ async function handleStartMint() {
  * Track mint flow progress
  */
 function trackMintProgress(flow) {
+    let lastState = null;
+    
     // Monitor state changes
     const checkState = setInterval(() => {
+        // Only update UI if state actually changed
+        if (flow.state === lastState) {
+            return;
+        }
+        
+        lastState = flow.state;
+        
         switch (flow.state) {
             case 'init':
                 updateMintProgress('init', 'Requesting signature...');
@@ -521,7 +558,8 @@ function trackMintProgress(flow) {
             case 'deposit':
                 completeMintStep('init');
                 updateMintProgress('deposit', 'Waiting for XMR deposit...');
-                showMintDepositInfo(flow.agent.getMoneroAddress(), flow.xmrAmount);
+                const depositAddr = flow.depositAddress || flow.agent.getMoneroAddress();
+                showMintDepositInfo(depositAddr, flow.xmrAmount);
                 break;
             case 'evm-init':
                 completeMintStep('deposit');

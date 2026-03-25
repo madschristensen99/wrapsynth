@@ -48,15 +48,24 @@ WrapSynth enables trustless bridging of Monero (XMR) to Ethereum and EVM chains 
 ### 🌐 Live Deployments
 
 #### Gnosis Chain (ChainID: 100)
-**Deployed Contracts:**
-- **wsXMR Token**: [`0x46520da3212dA53A8e981641f82C261b36C78dDd`](https://gnosisscan.io/address/0x46520da3212dA53A8e981641f82C261b36C78dDd#code)
-- **VaultManager**: [`0xc5AF5A978ba0E33c29984Aa46f939a7Ff164A851`](https://gnosisscan.io/address/0xc5AF5A978ba0E33c29984Aa46f939a7Ff164A851#code)
-- **wsXMRLiquidityRouter**: [`0x5F824724cF668B0662Df4789F1Ce19De9281d415`](https://gnosisscan.io/address/0x5F824724cF668B0662Df4789F1Ce19De9281d415#code)
+
+**Latest Deployment (Vanity Addresses):**
+- **wsXMR Token**: [`0x4206580496249266945A5aED42E41b6CE9cd8DAD`](https://gnosisscan.io/address/0x4206580496249266945A5aED42E41b6CE9cd8DAD) (0x420...)
+- **VaultManager**: [`0xB00fed5E2F06187369f5bbF2fcFF065FA188D1a5`](https://gnosisscan.io/address/0xB00fed5E2F06187369f5bbF2fcFF065FA188D1a5) (0xB00F...)
+- **CREATE2 Factory**: [`0x5bCaA55651c71ec49b29feCAFA8a3D654F9f87e7`](https://gnosisscan.io/address/0x5bCaA55651c71ec49b29feCAFA8a3D654F9f87e7)
+- Deployed: March 12, 2026
+- Status: ✅ Deployed with vanity addresses
+
+**Previous Deployment:**
+- **wsXMR Token**: [`0xf0114924F8e3d1D4dca68DEf1F3Ea402EF5B32a2`](https://gnosisscan.io/address/0xf0114924F8e3d1D4dca68DEf1F3Ea402EF5B32a2#code)
+- **VaultManager**: [`0x839257DE37b22B377e545514e2eD0b4f92266F88`](https://gnosisscan.io/address/0x839257DE37b22B377e545514e2eD0b4f92266F88#code)
+- **wsXMRLiquidityRouter**: [`0x7Ed870F86ae9c7ecE955185792FFF1Ac57dc743a`](https://gnosisscan.io/address/0x7Ed870F86ae9c7ecE955185792FFF1Ac57dc743a#code)
 
 **Configuration:**
 - Collateral: sDAI (Savings DAI) - auto-converts from xDAI deposits
 - Oracle: Pyth Network (`0x2880aB155794e7179c9eE2e38200202908C17B43`)
-- Status: ✅ Verified on Gnosisscan
+- Contract Size: VaultManager optimized to 24,026 bytes (under 24KB limit)
+- Modular Architecture: Uses CollateralLogic, YieldLogic, and BurnLogic libraries
 
 **Target Networks:**
 - **Gnosis Chain** (ChainID: 100) - ✅ **LIVE** (low gas costs)
@@ -136,12 +145,21 @@ cp .env.example .env
 ```bash
 # Deploy VaultManager and wsXMR to Gnosis mainnet
 npm run deploy:gnosis
+
+# Or deploy with vanity addresses (0xB00F, 0x420, 0x247)
+npx hardhat run scripts/deploy/deploy-vanity-fixed.js --network gnosis
 ```
 
 4. **Verify contracts on Gnosisscan:**
 ```bash
 npm run verify:gnosis
 ```
+
+**Vanity Address Deployment:**
+The latest deployment uses CREATE2 for deterministic vanity addresses:
+- VaultManager starts with `0xB00F`
+- wsXMR token starts with `0x420`
+- Contract size optimized to 24,026 bytes using modular libraries
 
 #### Deploy to Unichain Testnet
 
@@ -189,8 +207,13 @@ wrapsynth/
 │   ├── VaultManager.sol       # Core vault system with atomic swap logic
 │   ├── wsXMR.sol              # ERC-20 token (8 decimals)
 │   ├── Secp256k1.sol          # Elliptic curve verification library
+│   ├── Create2Deployer.sol    # CREATE2 factory for vanity addresses
 │   ├── IPyth.sol              # Pyth oracle interface
 │   ├── IERC20Metadata.sol     # ERC20 metadata interface
+│   ├── libraries/             # Modular logic libraries
+│   │   ├── CollateralLogic.sol # Collateral ratio calculations
+│   │   ├── YieldLogic.sol     # Yield harvesting logic
+│   │   └── BurnLogic.sol      # Burn request logic
 │   ├── interfaces/            # Contract interfaces
 │   ├── mocks/                 # Mock contracts for testing
 │   └── README.md              # Contract documentation
@@ -199,7 +222,9 @@ wrapsynth/
 │   ├── deploy/                # Deployment scripts
 │   │   ├── deploy.js          # Unichain testnet deployment
 │   │   ├── deploy-gnosis.js   # Gnosis mainnet deployment
-│   │   └── verify.js          # Contract verification
+│   │   ├── deploy-vanity-fixed.js # Vanity address deployment
+│   │   └── verify-gnosis.js   # Contract verification
+│   ├── vanity-address.js      # Vanity address generator
 │   │
 │   ├── lpServer/              # LP vault management
 │   │   ├── createVault.js     # Create new LP vault

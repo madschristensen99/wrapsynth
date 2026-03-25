@@ -1,3 +1,4 @@
+mod api;
 mod cli;
 mod db;
 mod engine;
@@ -155,6 +156,7 @@ async fn main() -> Result<()> {
             let event_listener = Arc::new(events::EventListener::new(
                 db.clone(),
                 evm.clone(),
+                monero.clone(),
                 lp_vault_bytes,
             ));
             
@@ -217,11 +219,21 @@ async fn main() -> Result<()> {
             let event_listener = Arc::new(events::EventListener::new(
                 db.clone(),
                 evm.clone(),
+                monero.clone(),
                 lp_vault_bytes,
             ));
 
             // Initialize swap engine
             let swap_engine = Arc::new(engine::SwapEngine::new(db.clone(), evm.clone(), monero.clone()));
+
+            // Start API server in background
+            let api_db = Arc::new(db.clone());
+            tokio::spawn(async move {
+                if let Err(e) = api::start_api_server(api_db, 3030).await {
+                    tracing::error!("API server error: {}", e);
+                }
+            });
+            info!("API server started on port 3030");
 
             // Start event listener
             event_listener

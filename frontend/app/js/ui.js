@@ -309,7 +309,12 @@ export function completeMintStep(step) {
  * Show mint deposit info
  */
 export function showMintDepositInfo(address, amount) {
-    elements.mintXmrAddress.textContent = address;
+    // If address is still placeholder, show loading message
+    if (address === 'LP_WILL_PROVIDE_ADDRESS') {
+        elements.mintXmrAddress.textContent = 'Fetching deposit address from LP node...';
+    } else {
+        elements.mintXmrAddress.textContent = address;
+    }
     elements.mintExactAmount.textContent = amount.toFixed(8);
     
     // Generate QR code

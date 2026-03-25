@@ -58,13 +58,13 @@ export const NETWORKS = {
 export const DEPLOYMENTS = {
     GNOSIS: {
         chainId: 100,
-        wrappedMonero: '0x46520da3212dA53A8e981641f82C261b36C78dDd',
-        vaultManager: '0xc5AF5A978ba0E33c29984Aa46f939a7Ff164A851',
-        liquidityRouter: '0x5F824724cF668B0662Df4789F1Ce19De9281d415',
+        wrappedMonero: '0xf0114924F8e3d1D4dca68DEf1F3Ea402EF5B32a2',
+        vaultManager: '0x839257DE37b22B377e545514e2eD0b4f92266F88',
+        liquidityRouter: '0x7Ed870F86ae9c7ecE955185792FFF1Ac57dc743a',
         sDAI: '0xaf204776c7245bF4147c2612BF6e5972Ee483701', // Savings DAI on Gnosis
         pythOracle: '0x2880aB155794e7179c9eE2e38200202908C17B43',
         initialMoneroBlock: 3607954,
-        deployedAt: '2026-03-08T22:22:00.000Z',
+        deployedAt: '2026-03-12T17:52:00.000Z',
     },
     UNICHAIN_SEPOLIA: {
         chainId: 1301,
