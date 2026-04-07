@@ -2,7 +2,7 @@
 // Derives Monero wallet from EVM signature
 
 import { keccak256, toHex, pad, hexToBytes } from 'https://esm.sh/viem@2.7.0';
-import * as secp256k1 from 'https://esm.sh/@noble/secp256k1@2.0.0';
+import { Point } from 'https://esm.sh/noble-ed25519@2.0.0';
 import { getWalletClient, getUserAddress } from './viemClient.js';
 import { createSwapMessage } from './config.js';
 
@@ -12,7 +12,7 @@ import { createSwapMessage } from './config.js';
 class PhantomAgent {
     constructor() {
         this.secret = null;          // 32-byte swap secret
-        this.commitment = null;      // secp256k1 public key commitment
+        this.commitment = null;      // Ed25519 public key commitment (for Monero compatibility)
         this.moneroWallet = null;    // Monero wallet instance (ephemeral or user's wallet)
         this.isInitialized = false;
         this.userWalletConnected = false; // Track if user connected their own wallet
@@ -49,7 +49,7 @@ class PhantomAgent {
         
         console.log('Derived secret:', this.secret);
 
-        // Generate secp256k1 commitment (G * secret)
+        // Generate Ed25519 commitment (keccak256 of public key)
         this.commitment = await this.generateCommitment();
 
         console.log('Generated commitment:', this.commitment);
@@ -67,23 +67,36 @@ class PhantomAgent {
     }
 
     /**
-     * Generate secp256k1 public key commitment
-     * commitment = G * secret (where G is the generator point)
+     * Generate Ed25519 public key commitment
+     * commitment = keccak256(publicKey) where publicKey = G * secret on Ed25519 curve
+     * This matches the VaultManager contract's Ed25519.scalarMultBase verification
      */
     async generateCommitment() {
-        // Convert secret to bytes for secp256k1
-        const secretBytes = hexToBytes(this.secret);
+        // Convert secret hex to BigInt for Ed25519
+        const secretBigInt = BigInt(this.secret);
         
-        // Generate public key (compressed format)
-        const publicKey = secp256k1.getPublicKey(secretBytes, true);
+        // Ed25519 group order
+        const ED25519_L = 2n**252n + 27742317777372353535851937790883648493n;
         
-        // Convert to hex and pad to 32 bytes (remove 0x04 prefix for uncompressed or use compressed)
-        // For the contract, we need the 32-byte x-coordinate
-        const publicKeyHex = toHex(publicKey);
+        // Reduce secret modulo group order
+        const secretReduced = secretBigInt % ED25519_L;
         
-        // For secp256k1 compressed format (33 bytes), we take the x-coordinate (32 bytes)
-        // The first byte is 0x02 or 0x03 indicating y-coordinate parity
-        const commitment = pad(publicKeyHex.slice(0, 66), { size: 32 });
+        // Generate Ed25519 public key: P = secret * G
+        const publicKeyPoint = Point.BASE.multiply(secretReduced);
+        
+        // Get raw bytes of the public key point
+        const publicKeyBytes = publicKeyPoint.toRawBytes();
+        
+        // Convert to hex for hashing
+        const publicKeyHex = toHex(publicKeyBytes);
+        
+        // Extract x and y coordinates (32 bytes each)
+        const px = publicKeyHex.slice(0, 66); // First 32 bytes (0x + 64 hex chars)
+        const py = '0x' + publicKeyHex.slice(66); // Next 32 bytes
+        
+        // Generate commitment as keccak256(abi.encodePacked(px, py))
+        // This matches the contract: keccak256(abi.encodePacked(px, py))
+        const commitment = keccak256(px + py.slice(2));
         
         return commitment;
     }
