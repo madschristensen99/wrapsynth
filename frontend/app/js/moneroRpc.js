@@ -122,7 +122,7 @@ class MoneroRpcClient {
         const { 
             amount,           // Amount in atomic units
             recipientAddress, // Recipient's Monero address
-            secretHash,       // Hash of the secret (secp256k1 point)
+            secretHash,       // Ed25519 commitment (keccak256 hash of public key)
             lockTime          // Timelock in blocks
         } = params;
 

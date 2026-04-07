@@ -2,18 +2,18 @@
 // Handles creation and claiming of PTLCs for atomic swaps
 
 import { keccak256, toHex, hexToBytes } from 'https://esm.sh/viem@2.7.0';
-import * as secp256k1 from 'https://esm.sh/@noble/secp256k1@2.0.0';
+import { Point } from 'https://esm.sh/noble-ed25519@2.0.0';
 
 /**
  * PTLC Transaction Builder for Monero
  * 
  * A PTLC is a Monero transaction output that can be spent by revealing a secret
- * that corresponds to a secp256k1 point (commitment).
+ * that corresponds to an Ed25519 point (commitment).
  * 
  * Structure:
  * - Standard Monero output with additional data in tx_extra
- * - tx_extra contains the secp256k1 point (commitment)
- * - To claim: provide secret s such that G*s = commitment
+ * - tx_extra contains the Ed25519 point commitment (keccak256 hash)
+ * - To claim: provide secret s such that keccak256(G*s) = commitment
  */
 class MoneroPTLCBuilder {
     constructor(moneroWallet, rpcClient) {
@@ -23,7 +23,7 @@ class MoneroPTLCBuilder {
 
     /**
      * Scan for PTLC output with matching commitment (secretHash)
-     * @param {string} commitment - secp256k1 point (32 bytes hex)
+     * @param {string} commitment - Ed25519 commitment (keccak256 hash of public key)
      * @param {number} startHeight - Block height to start scanning from
      * @returns {Object} PTLC details if found
      */
@@ -84,7 +84,7 @@ class MoneroPTLCBuilder {
      * Parse PTLC data from transaction extra field
      * PTLC marker format in tx_extra:
      * - Tag: 0xDE (PTLC marker)
-     * - Commitment: 32 bytes (secp256k1 point)
+     * - Commitment: 32 bytes (Ed25519 commitment hash)
      * - Lock time: 4 bytes (block height)
      */
     parsePTLCFromTxExtra(txExtra) {
@@ -168,16 +168,37 @@ class MoneroPTLCBuilder {
 
     /**
      * Verify that secret satisfies the PTLC commitment
-     * Check: G * secret = commitment
+     * Check: keccak256(abi.encodePacked(px, py)) = commitment where (px, py) = G * secret on Ed25519
      */
     verifySecret(secret, commitment) {
         try {
-            const secretBytes = hexToBytes(secret);
-            const computedPoint = secp256k1.getPublicKey(secretBytes, true);
-            const computedCommitment = toHex(computedPoint);
-
-            // Compare first 32 bytes (x-coordinate)
-            return computedCommitment.slice(0, 66) === commitment.slice(0, 66);
+            // Convert secret to BigInt
+            const secretBigInt = BigInt(secret);
+            
+            // Ed25519 group order
+            const ED25519_L = 2n**252n + 27742317777372353535851937790883648493n;
+            
+            // Reduce secret modulo group order
+            const secretReduced = secretBigInt % ED25519_L;
+            
+            // Generate Ed25519 public key: P = secret * G
+            const publicKeyPoint = Point.BASE.multiply(secretReduced);
+            
+            // Get raw bytes of the public key point
+            const publicKeyBytes = publicKeyPoint.toRawBytes();
+            
+            // Convert to hex
+            const publicKeyHex = toHex(publicKeyBytes);
+            
+            // Extract x and y coordinates (32 bytes each)
+            const px = publicKeyHex.slice(0, 66);
+            const py = '0x' + publicKeyHex.slice(66);
+            
+            // Compute commitment as keccak256(abi.encodePacked(px, py))
+            const computedCommitment = keccak256(px + py.slice(2));
+            
+            // Compare commitments
+            return computedCommitment.toLowerCase() === commitment.toLowerCase();
         } catch (error) {
             console.error('Error verifying secret:', error);
             return false;
@@ -316,26 +337,32 @@ class MoneroPTLCBuilder {
      * Create proof that secret matches commitment
      */
     createSecretProof(secret, commitment) {
-        // Create zero-knowledge proof: "I know s such that G*s = commitment"
-        // This is a Schnorr signature-like proof
+        // Create zero-knowledge proof: "I know s such that keccak256(G*s) = commitment"
+        // This is a Schnorr signature-like proof on Ed25519
 
-        const secretBytes = hexToBytes(secret);
-        const r = secp256k1.utils.randomPrivateKey(); // Random nonce
-        const R = secp256k1.getPublicKey(r, true); // R = G*r
+        const secretBigInt = BigInt(secret);
+        const ED25519_L = 2n**252n + 27742317777372353535851937790883648493n;
+        
+        // Generate random nonce
+        const r = BigInt('0x' + Array.from(crypto.getRandomValues(new Uint8Array(32)))
+            .map(b => b.toString(16).padStart(2, '0')).join(''));
+        const rReduced = r % ED25519_L;
+        
+        // R = G*r on Ed25519
+        const R = Point.BASE.multiply(rReduced);
+        const RBytes = R.toRawBytes();
 
         // Challenge: e = H(R || commitment || message)
         const message = 'PTLC_CLAIM';
-        const e = keccak256(toHex(R) + commitment + toHex(message));
+        const e = keccak256(toHex(RBytes) + commitment.slice(2) + toHex(message).slice(2));
         const eNum = BigInt(e);
-        const sNum = BigInt('0x' + secret.slice(2));
-        const rNum = BigInt('0x' + toHex(r).slice(2));
+        const sNum = secretBigInt % ED25519_L;
 
-        // Response: s = r + e*secret (mod n)
-        const n = secp256k1.CURVE.n;
-        const response = (rNum + eNum * sNum) % n;
+        // Response: s = r + e*secret (mod L)
+        const response = (rReduced + eNum * sNum) % ED25519_L;
 
         return {
-            R: toHex(R),
+            R: toHex(RBytes),
             response: '0x' + response.toString(16).padStart(64, '0')
         };
     }
