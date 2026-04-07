@@ -5,7 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Secp256k1} from "./Secp256k1.sol";
+import {Ed25519} from "./Ed25519.sol";
 import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {PythStructs} from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 import {wsXMR} from "./wsXMR.sol";
@@ -22,7 +22,7 @@ import "./libraries/BurnLogic.sol";
  * @notice Manages LP vaults, collateralization, and mint/burn operations for wsXMR
  * @dev Integrates cryptographic proofs from atomic swaps with CDP vault mechanics
  */
-contract VaultManager is Secp256k1, ReentrancyGuard {
+contract VaultManager is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // ========== CONSTANTS ==========
@@ -595,7 +595,7 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
      * @param _lpVault Address of the LP vault to handle this mint
      * @param _recipient Address to receive the minted wsXMR
      * @param _xmrAmount Amount of XMR (in atomic units, 12 decimals)
-     * @param _claimCommitment secp256k1 commitment to user's secret
+     * @param _claimCommitment Ed25519 commitment to user's secret (keccak256 hash of public key P = secret * G)
      * @param _timeoutDuration How long before request can be cancelled
      * @return requestId Unique identifier for this mint request
      */
@@ -783,8 +783,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         MintRequest storage request = mintRequests[_requestId];
         if (request.status != MintStatus.READY) revert InvalidStatus(); // MUST be READY, not PENDING
         
-        // Verify the secret matches the commitment using secp256k1 verification
-        if (!mulVerify(uint256(_secret), uint256(request.claimCommitment))) {
+        // Verify the secret matches the commitment using Ed25519 verification
+        // Compute public key from secret: P = secret * G
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(_secret));
+        bytes32 computedCommitment = bytes32(keccak256(abi.encodePacked(px, py)));
+        if (computedCommitment != request.claimCommitment) {
             revert InvalidSecret();
         }
         
@@ -1135,8 +1138,11 @@ contract VaultManager is Secp256k1, ReentrancyGuard {
         if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
         if (block.timestamp >= request.deadline) revert DeadlineExpired();
         
-        // Verify the secret matches the hash using secp256k1 verification
-        if (!mulVerify(uint256(_secret), uint256(request.secretHash))) {
+        // Verify the secret matches the hash using Ed25519 verification
+        // Compute public key from secret: P = secret * G
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(_secret));
+        bytes32 computedHash = bytes32(keccak256(abi.encodePacked(px, py)));
+        if (computedHash != request.secretHash) {
             revert InvalidSecret();
         }
         
