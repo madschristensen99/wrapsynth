@@ -1,60 +1,68 @@
-// Phantom Agent - Deterministic Ephemeral Browser Wallet
-// Derives Monero wallet from EVM signature
+// Phantom Agent - Seed-Based Wallet for WrapSynth
+// Uses BIP-39 seed phrases with encrypted browser storage
+// EIP-7702 safe: seed phrases are true user-controlled secrets
 
-import { keccak256, toHex, pad, hexToBytes } from 'https://esm.sh/viem@2.7.0';
-import { Point } from 'https://esm.sh/noble-ed25519@2.0.0';
-import { getWalletClient, getUserAddress } from './viemClient.js';
-import { createSwapMessage } from './config.js';
+import { toHex } from 'https://esm.sh/viem@2.7.0';
+import { getUserAddress } from './viemClient.js';
+import { createKeySet } from './seedManager.js';
+import { storeSeed, loadSeed, hasStoredSeed } from './seedStorage.js';
+import { showSeedGenerationModal, showSeedInputModal } from './seedUI.js';
 
 /**
  * Phantom Agent State
  */
 class PhantomAgent {
     constructor() {
-        this.secret = null;          // 32-byte swap secret
-        this.commitment = null;      // Ed25519 public key commitment (for Monero compatibility)
-        this.moneroWallet = null;    // Monero wallet instance (ephemeral or user's wallet)
+        this.seed = null;            // BIP-39 seed phrase
+        this.keySet = null;          // Derived keys (spend, view, message)
+        this.secret = null;          // Private spend key (for contract)
+        this.commitment = null;      // Ed25519 public key commitment
+        this.moneroWallet = null;    // Monero wallet instance
         this.isInitialized = false;
-        this.userWalletConnected = false; // Track if user connected their own wallet
+        this.userWalletConnected = false;
     }
 
     /**
-     * Initialize the Phantom Agent by requesting user signature
+     * Initialize the Phantom Agent with seed phrase
      * @param {string} action - 'MINT' or 'BURN'
      * @param {string} amount - Amount in human-readable format
      * @param {string} destination - Optional destination address for burns
+     * @param {string} existingSeed - Optional existing seed phrase
      */
-    async initialize(action, amount, destination = null) {
+    async initialize(action, amount, destination = null, existingSeed = null) {
         const address = getUserAddress();
         if (!address) {
             throw new Error('Wallet not connected');
         }
 
-        // Create deterministic message
-        const message = createSwapMessage(address, action, amount, destination);
+        console.log('Initializing Phantom Agent for', action);
+
+        let seedData;
         
-        console.log('Requesting signature for message:', message);
+        if (existingSeed) {
+            // Use provided seed
+            console.log('Using provided seed phrase');
+            this.seed = existingSeed;
+            this.keySet = createKeySet(existingSeed);
+            seedData = { seed: existingSeed, keySet: this.keySet };
+        } else {
+            // Check if we have a stored seed for this user
+            // For new operations, we'll generate a new seed each time
+            // Users can optionally store it for convenience
+            console.log('Generating new seed phrase...');
+            seedData = await showSeedGenerationModal();
+            this.seed = seedData.seed;
+            this.keySet = seedData.keySet;
+        }
 
-        // Request EIP-191 signature from MetaMask
-        const walletClient = getWalletClient();
-        const signature = await walletClient.signMessage({
-            account: address,
-            message
-        });
-
-        console.log('Signature received:', signature);
-
-        // Derive 32-byte secret from signature hash
-        this.secret = keccak256(signature);
+        // Extract secret and commitment from keySet
+        this.secret = this.keySet.secret;
+        this.commitment = this.keySet.commitment;
         
-        console.log('Derived secret:', this.secret);
+        console.log('Commitment generated:', this.commitment);
+        console.log('Public spend key:', '0x' + this.keySet.publicSpendKey.toString(16));
 
-        // Generate Ed25519 commitment (keccak256 of public key)
-        this.commitment = await this.generateCommitment();
-
-        console.log('Generated commitment:', this.commitment);
-
-        // Initialize Monero wallet from secret
+        // Initialize Monero wallet interface
         await this.initializeMoneroWallet();
 
         this.isInitialized = true;
@@ -62,43 +70,42 @@ class PhantomAgent {
         return {
             secret: this.secret,
             commitment: this.commitment,
-            moneroAddress: this.getMoneroAddress()
+            moneroAddress: this.getMoneroAddress(),
+            publicSpendKey: this.keySet.publicSpendKey,
+            publicViewKey: this.keySet.publicViewKey
         };
     }
 
     /**
-     * Generate Ed25519 public key commitment
-     * commitment = keccak256(publicKey) where publicKey = G * secret on Ed25519 curve
-     * This matches the VaultManager contract's Ed25519.scalarMultBase verification
+     * Load existing seed from encrypted storage or prompt user
+     * @param {string} publicSpendKey - Public key to identify stored seed
      */
-    async generateCommitment() {
-        // Convert secret hex to BigInt for Ed25519
-        const secretBigInt = BigInt(this.secret);
+    async loadExistingSeed(publicSpendKey = null) {
+        console.log('Attempting to load existing seed...');
         
-        // Ed25519 group order
-        const ED25519_L = 2n**252n + 27742317777372353535851937790883648493n;
+        // Try to load from encrypted storage
+        if (publicSpendKey && hasStoredSeed(publicSpendKey.toString(16))) {
+            console.log('Found stored seed, requesting decryption...');
+            const seed = await loadSeed(publicSpendKey.toString(16));
+            if (seed) {
+                this.seed = seed;
+                this.keySet = createKeySet(seed);
+                this.secret = this.keySet.secret;
+                this.commitment = this.keySet.commitment;
+                this.isInitialized = true;
+                return true;
+            }
+        }
         
-        // Reduce secret modulo group order
-        const secretReduced = secretBigInt % ED25519_L;
-        
-        // Generate Ed25519 public key: P = secret * G
-        const publicKeyPoint = Point.BASE.multiply(secretReduced);
-        
-        // Get raw bytes of the public key point
-        const publicKeyBytes = publicKeyPoint.toRawBytes();
-        
-        // Convert to hex for hashing
-        const publicKeyHex = toHex(publicKeyBytes);
-        
-        // Extract x and y coordinates (32 bytes each)
-        const px = publicKeyHex.slice(0, 66); // First 32 bytes (0x + 64 hex chars)
-        const py = '0x' + publicKeyHex.slice(66); // Next 32 bytes
-        
-        // Generate commitment as keccak256(abi.encodePacked(px, py))
-        // This matches the contract: keccak256(abi.encodePacked(px, py))
-        const commitment = keccak256(px + py.slice(2));
-        
-        return commitment;
+        // Prompt user to input seed
+        console.log('Prompting user for seed phrase...');
+        const seedData = await showSeedInputModal(publicSpendKey);
+        this.seed = seedData.seed;
+        this.keySet = seedData.keySet;
+        this.secret = this.keySet.secret;
+        this.commitment = this.keySet.commitment;
+        this.isInitialized = true;
+        return true;
     }
 
     /**
@@ -158,12 +165,36 @@ class PhantomAgent {
     }
 
     /**
-     * Generate a placeholder Monero address for display
-     * In production, the LP server provides the actual deposit address
+     * Generate Monero address from keys
+     * Note: This is a simplified placeholder
+     * In production, use proper Monero address encoding
      */
     generatePlaceholderAddress() {
-        // Return a placeholder that indicates LP will provide real address
+        if (this.keySet) {
+            return this.keySet.moneroAddress;
+        }
         return 'LP_WILL_PROVIDE_ADDRESS';
+    }
+
+    /**
+     * Get the seed phrase (for backup/export)
+     * WARNING: Only expose this when user explicitly requests it
+     */
+    getSeedPhrase() {
+        if (!this.seed) {
+            throw new Error('Agent not initialized');
+        }
+        return this.seed;
+    }
+
+    /**
+     * Get the key set
+     */
+    getKeySet() {
+        if (!this.keySet) {
+            throw new Error('Agent not initialized');
+        }
+        return this.keySet;
     }
 
     /**
@@ -247,18 +278,22 @@ class PhantomAgent {
     }
 
     /**
-     * Resume from existing secret (for recovery)
+     * Resume from existing seed phrase (for recovery)
      */
-    async resumeFromSecret(secret) {
-        this.secret = secret;
-        this.commitment = await this.generateCommitment();
+    async resumeFromSeed(seed) {
+        this.seed = seed;
+        this.keySet = createKeySet(seed);
+        this.secret = this.keySet.secret;
+        this.commitment = this.keySet.commitment;
         await this.initializeMoneroWallet();
         this.isInitialized = true;
         
         return {
             secret: this.secret,
             commitment: this.commitment,
-            moneroAddress: this.getMoneroAddress()
+            moneroAddress: this.getMoneroAddress(),
+            publicSpendKey: this.keySet.publicSpendKey,
+            publicViewKey: this.keySet.publicViewKey
         };
     }
 }
