@@ -26,7 +26,7 @@ pub fn reconcile_global_debt(ctx: Context<ReconcileGlobalDebt>) -> Result<()> {
         if data.len() < 8 {
             continue;
         }
-        let vault = Vault::try_deserialize(&mut &data[8..])
+        let vault = Vault::try_deserialize(&mut &data[..])
             .map_err(|_| WrapSynthError::VaultDoesNotExist)?;
 
         let actual = get_actual_debt(vault.normalized_debt, global.global_debt_index);

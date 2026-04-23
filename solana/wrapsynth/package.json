@@ -1,7 +1,10 @@
 {
   "license": "ISC",
   "scripts": {
-    "test": "ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts",
+    "pretest": "node scripts/gen-mock-pyth.js",
+    "test": "anchor test --skip-build",
+    "test:mocha": "ts-mocha -p ./tsconfig.json -t 1000000 tests/vault_manager.ts",
+    "build": "anchor build",
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"
   },
