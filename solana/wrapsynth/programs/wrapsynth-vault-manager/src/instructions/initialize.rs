@@ -1,13 +1,18 @@
 use anchor_lang::prelude::*;
+use anchor_lang::system_program::{CreateAccount, create_account};
 use anchor_spl::token_2022::{self, Token2022, InitializeMint2};
-use anchor_spl::token_interface::Mint;
 
 use crate::constants::*;
 use crate::errors::WrapSynthError;
 use crate::state::GlobalState;
 
-/// Initialize the protocol: create GlobalState PDA and wsXMR Token 2022 mint.
-/// Equivalent to VaultManager constructor.
+/// Initialize the protocol: create GlobalState PDA and wsXMR Token-2022 mint.
+///
+/// NOTE: We allocate + initialize the wsXMR mint manually (create_account CPI then
+/// initialize_mint2 CPI) instead of using Anchor's `init` + `mint::*` constraints on
+/// InterfaceAccount<Mint>. Anchor 0.30 with Token-2022 calls InitializeMint2 twice when
+/// those constraints are used (once from the constraint framework, once from mint:: helper),
+/// causing error 0x6 ("account already in use"). The manual approach avoids this.
 pub fn handler(
     ctx: Context<Initialize>,
     pyth_xmr_feed: Pubkey,
@@ -22,7 +27,7 @@ pub fn handler(
     global.authority = ctx.accounts.authority.key();
     global.wsxmr_mint = ctx.accounts.wsxmr_mint.key();
     global.collateral_mint = collateral_mint;
-    global.liquidity_router = Pubkey::default(); // Set later via set_liquidity_router
+    global.liquidity_router = Pubkey::default();
     global.pyth_xmr_feed = pyth_xmr_feed;
     global.pyth_collateral_feed = pyth_collateral_feed;
     global.global_total_debt = 0;
@@ -39,24 +44,39 @@ pub fn handler(
     global.request_nonce = 0;
     global.bump = ctx.bumps.global_state;
 
-    // Initialize wsXMR mint with 8 decimals.
-    // Mint authority and freeze authority = vault_manager program (via PDA).
-    let bump = ctx.bumps.global_state;
-    let seeds: &[&[u8]] = &[GLOBAL_STATE_SEED, &[bump]];
-    let signer_seeds = &[seeds];
+    // ── Mint allocation: SystemProgram::create_account ─────────────────────────
+    let mint_bump = ctx.bumps.wsxmr_mint;
+    let mint_seeds: &[&[u8]] = &[WSXMR_MINT_SEED, &[mint_bump]];
+    let mint_signer = &[mint_seeds];
 
-    let cpi_ctx = CpiContext::new_with_signer(
-        ctx.accounts.token_program.to_account_info(),
-        InitializeMint2 {
-            mint: ctx.accounts.wsxmr_mint.to_account_info(),
-        },
-        signer_seeds,
-    );
+    // Token-2022 base Mint is 82 bytes (same as spl-token Mint, no extensions).
+    let mint_space: u64 = 82;
+    let mint_rent = Rent::get()?.minimum_balance(mint_space as usize);
+
+    create_account(
+        CpiContext::new_with_signer(
+            ctx.accounts.system_program.to_account_info(),
+            CreateAccount {
+                from: ctx.accounts.authority.to_account_info(),
+                to:   ctx.accounts.wsxmr_mint.to_account_info(),
+            },
+            mint_signer,
+        ),
+        mint_rent,
+        mint_space,
+        ctx.accounts.token_program.key,
+    )?;
+
+    // ── Mint initialization: Token-2022 initialize_mint2 ──────────────────────
+    let global_key = ctx.accounts.global_state.key();
     token_2022::initialize_mint2(
-        cpi_ctx,
-        8, // decimals — matches wsXMR.sol
-        &global.key(),
-        Some(&global.key()),
+        CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            InitializeMint2 { mint: ctx.accounts.wsxmr_mint.to_account_info() },
+        ),
+        8,              // decimals
+        &global_key,    // mint authority = GlobalState PDA
+        Some(&global_key),
     )?;
 
     msg!("WrapSynth initialized. wsXMR mint: {}", ctx.accounts.wsxmr_mint.key());
@@ -64,7 +84,6 @@ pub fn handler(
 }
 
 /// Set the liquidity router — one-time, deployer only.
-/// Equivalent to setLiquidityRouter in VaultManager.sol.
 pub fn set_liquidity_router(ctx: Context<SetLiquidityRouter>, router: Pubkey) -> Result<()> {
     let global = &mut ctx.accounts.global_state;
     require!(
@@ -94,19 +113,15 @@ pub struct Initialize<'info> {
     )]
     pub global_state: Account<'info, GlobalState>,
 
-    /// wsXMR Token 2022 mint — allocated by caller, initialized by this instruction.
-    /// seeds = [WSXMR_MINT_SEED] so the program controls the address.
+    /// wsXMR Token-2022 mint PDA. Allocated and initialized manually in handler
+    /// to avoid Anchor 0.30 double-init bug with InterfaceAccount<Mint> + Token-2022.
     #[account(
-        init,
-        payer = authority,
+        mut,
         seeds = [WSXMR_MINT_SEED],
         bump,
-        mint::decimals = 8,
-        mint::authority = global_state,
-        mint::freeze_authority = global_state,
-        mint::token_program = token_program,
     )]
-    pub wsxmr_mint: InterfaceAccount<'info, Mint>,
+    /// CHECK: allocated and initialized as a Token-2022 mint inside the handler
+    pub wsxmr_mint: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
