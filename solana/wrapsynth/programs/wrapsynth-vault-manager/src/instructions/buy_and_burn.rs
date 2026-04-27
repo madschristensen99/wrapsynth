@@ -44,8 +44,12 @@ pub fn trigger_buy_and_burn(
     // 2. EMA vs Spot: spot <= ema * 99/100
     let spot = get_xmr_price(&ctx.accounts.pyth_xmr, 3600)?;
     let ema = get_xmr_ema_price(&ctx.accounts.pyth_xmr, 3600)?;
+    let ema_threshold = (ema as u128)
+        .checked_mul(EMA_TRIGGER_THRESHOLD as u128)
+        .ok_or(WrapSynthError::MathOverflow)?
+        / 100;
     require!(
-        spot <= ema * EMA_TRIGGER_THRESHOLD / 100,
+        (spot as u128) <= ema_threshold,
         WrapSynthError::XMRNotDipped
     );
 
