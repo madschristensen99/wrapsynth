@@ -38,6 +38,10 @@ pub mod wrapsynth_vault_manager {
         vault_management::create_vault(ctx)
     }
 
+    pub fn initialize_vault_collateral(ctx: Context<InitializeVaultCollateral>) -> Result<()> {
+        vault_management::initialize_vault_collateral(ctx)
+    }
+
     pub fn deposit_collateral_shares(
         ctx: Context<DepositCollateral>,
         amount: u64,

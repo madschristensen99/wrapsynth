@@ -450,6 +450,23 @@ describe("WrapSynth VaultManager — Full Integration", () => {
       assert.equal(vault.maxMintBps, 2000);
     });
 
+    it("initializes vault collateral ATA", async () => {
+      [vaultCollateralAta] = deriveVaultCollateral(vaultPda, programId);
+      await program.methods
+        .initializeVaultCollateral()
+        .accounts({
+          lp: lp.publicKey,
+          vault: vaultPda,
+          collateralMint,
+          vaultCollateralAta,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        } as any)
+        .signers([lp])
+        .rpc();
+      console.log("    ✓ Vault collateral ATA initialized:", vaultCollateralAta.toBase58());
+    });
+
     it("deposits collateral into the vault", async () => {
       // Mint collateral to LP
       lpCollateralAta = await createAta(provider, admin, collateralMint, lp.publicKey);
@@ -464,8 +481,6 @@ describe("WrapSynth VaultManager — Full Integration", () => {
         )
       );
       await provider.sendAndConfirm(mintColTx, [admin]);
-
-      [vaultCollateralAta] = deriveVaultCollateral(vaultPda, programId);
 
       // Note: deposit_collateral_shares calls sync_vault_yield which reads pyth.
       // Since we have no real Pyth data, this will fail if oracle validation is strict.

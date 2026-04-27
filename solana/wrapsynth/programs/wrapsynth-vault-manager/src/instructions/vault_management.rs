@@ -350,6 +350,42 @@ pub struct DepositCollateral<'info> {
     pub system_program: Program<'info, System>,
 }
 
+// ─── initialize_vault_collateral ─────────────────────────────────────────────
+
+pub fn initialize_vault_collateral(ctx: Context<InitializeVaultCollateral>) -> Result<()> {
+    msg!("Vault collateral ATA initialized for vault: {}", ctx.accounts.vault.key());
+    Ok(())
+}
+
+#[derive(Accounts)]
+pub struct InitializeVaultCollateral<'info> {
+    #[account(mut)]
+    pub lp: Signer<'info>,
+
+    #[account(
+        seeds = [VAULT_SEED, lp.key().as_ref()],
+        bump = vault.bump,
+        constraint = vault.lp_address == lp.key() @ WrapSynthError::Unauthorized,
+    )]
+    pub vault: Account<'info, Vault>,
+
+    pub collateral_mint: InterfaceAccount<'info, Mint>,
+
+    #[account(
+        init,
+        payer = lp,
+        seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = vault,
+        token::token_program = token_program,
+    )]
+    pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token2022>,
+    pub system_program: Program<'info, System>,
+}
+
 #[derive(Accounts)]
 pub struct WithdrawCollateral<'info> {
     #[account(mut)]

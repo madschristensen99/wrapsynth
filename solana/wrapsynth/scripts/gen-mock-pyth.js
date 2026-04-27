@@ -86,8 +86,8 @@ function toAccountJson(pubkey, data, lamports) {
 const nowTs = Math.floor(Date.now() / 1000);
 const lamports = 2_000_000_000;
 
-// XMR = $150 (exp -8 → 15_000_000_000)
-const xmrData = buildPythAccount(XMR_FEED_ID, 15_000_000_000, 15_000_000_000, -8, nowTs);
+// XMR = $15 (exp -8 → 1_500_000_000) — avoids u64 overflow in normalization
+const xmrData = buildPythAccount(XMR_FEED_ID, 1_500_000_000, 1_500_000_000, -8, nowTs);
 // Collateral = $1.00 (exp -8 → 100_000_000)
 const colData = buildPythAccount(COL_FEED_ID, 100_000_000, 100_000_000, -8, nowTs);
 

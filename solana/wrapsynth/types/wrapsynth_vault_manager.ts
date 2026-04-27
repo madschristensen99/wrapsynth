@@ -57,6 +57,19 @@ export const IDL: any = {
       args: [],
     },
     {
+      name: "initializeVaultCollateral",
+      discriminator: [64,160,30,204,90,27,120,130],
+      accounts: [
+        { name: "lp",                writable: true, signer: true },
+        { name: "vault" },
+        { name: "collateralMint" },
+        { name: "vaultCollateralAta",writable: true },
+        { name: "tokenProgram" },
+        { name: "systemProgram" },
+      ],
+      args: [],
+    },
+    {
       name: "depositCollateralShares",
       discriminator: [20,240,179,194,143,85,84,23],
       accounts: [
