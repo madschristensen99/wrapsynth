@@ -58,18 +58,24 @@ pub fn initiate_mint(
 
     // Enforce max mint bps limit
     if vault.max_mint_bps > 0 {
+        msg!("DEBUG: Getting XMR price");
         let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
+        msg!("DEBUG: XMR price = {}", xmr_price);
+        msg!("DEBUG: Getting collateral price");
         let col_price = get_collateral_price(
             &ctx.accounts.pyth_collateral,
             PRICE_MAX_AGE,
             &global.pyth_collateral_feed.to_bytes(),
         )?;
+        msg!("DEBUG: Collateral price = {}", col_price);
         let col_val_usd = collateral_to_usd(vault.collateral_amount, col_price);
+        msg!("DEBUG: Collateral value USD = {}", col_val_usd);
         let max_debt_capacity = (col_val_usd as u128 * RATIO_PRECISION as u128)
             / COLLATERAL_RATIO as u128;
         let max_mint_allowed = (max_debt_capacity * vault.max_mint_bps as u128)
             / BPS_DENOMINATOR as u128;
         let wsxmr_val_usd = (wsxmr_amount as u128 * xmr_price as u128) / WSXMR_DECIMALS as u128;
+        msg!("DEBUG: wsxmr_val_usd = {}, max_mint_allowed = {}", wsxmr_val_usd, max_mint_allowed);
         require!(wsxmr_val_usd <= max_mint_allowed, WrapSynthError::InvalidValue);
     }
 
@@ -403,9 +409,7 @@ pub struct InitiateMint<'info> {
     pub griefing_escrow: AccountInfo<'info>,
 
     #[account(
-        init_if_needed,
-        payer = initiator,
-        space = crate::state::PendingReturns::LEN,
+        mut,
         seeds = [PENDING_RETURNS_SEED, initiator.key().as_ref()],
         bump,
     )]
