@@ -49,7 +49,7 @@ WrapSynth is organized as a **multi-chain monorepo** with clear separation betwe
   - Solidity contracts, Hardhat tests, deployment scripts
   - Rust-based LP node for managing vaults and Monero interactions
   
-- **`solana/`** - Solana program implementation
+- **`solana/anchor-program/`** - Solana Anchor program implementation
   - Anchor-based vault manager program
   - Native Solana integration with similar atomic swap mechanics
   
@@ -222,7 +222,7 @@ cargo run --release
 
 ```bash
 # Build the Solana program
-cd solana/solana-program
+cd solana/anchor-program
 anchor build
 
 # Run tests
@@ -274,7 +274,7 @@ wrapsynth/
 │   └── .env.example           # Environment variables template
 │
 ├── solana/                     # Solana implementation
-│   └── solana-program/        # Anchor program
+│   └── anchor-program/        # Anchor program
 │       ├── programs/          # Solana programs
 │       │   └── wrapsynth-vault-manager/ # Main vault manager program
 │       ├── tests/             # Anchor tests
@@ -458,7 +458,7 @@ npx hardhat test test/03-MintingLifecycle.test.js
 ### Solana Tests
 ```bash
 # From solana program directory
-cd solana/solana-program
+cd solana/anchor-program
 
 # Run Anchor tests
 anchor test
@@ -480,7 +480,7 @@ cargo run --release -- --config config.toml
 ### Project Documentation
 - [Ethereum Contracts](ethereum/contracts/) - Solidity smart contracts
 - [LP Node Documentation](ethereum/lp-node/README.md) - LP node setup and operation
-- [Solana Program](solana/solana-program/README.md) - Anchor program documentation
+- [Solana Program](solana/anchor-program/README.md) - Anchor program documentation
 - [Seed Storage Design](docs/SEED_STORAGE_IMPLEMENTATION.md) - Technical design docs
 
 ### External Resources
