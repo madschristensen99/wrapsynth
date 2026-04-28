@@ -146,6 +146,21 @@ npx ts-mocha -p ./tsconfig.json -t 1000000 tests/vault_manager.ts
 ---
 
 ## Program ID
-`EZ1hsgYwmqmCY5Gzw9mwnJnJE4PJcKX5hHw5MZXk2ssy` (localnet)
+
+**Devnet**: `EZ1hsgYwmqmCY5Gzw9mwnJnJE4PJcKX5hHw5MZXk2ssy`  
+**Localnet**: `EZ1hsgYwmqmCY5Gzw9mwnJnJE4PJcKX5hHw5MZXk2ssy`
 
 Keypair: `target/deploy/wrapsynth_vault_manager-keypair.json`
+
+### Deploy to Devnet
+```bash
+# Set cluster to devnet
+solana config set --url https://api.devnet.solana.com
+
+# Deploy/upgrade program
+solana program deploy target/deploy/wrapsynth_vault_manager.so \
+  --program-id target/deploy/wrapsynth_vault_manager-keypair.json
+
+# View on explorer
+# https://explorer.solana.com/address/EZ1hsgYwmqmCY5Gzw9mwnJnJE4PJcKX5hHw5MZXk2ssy?cluster=devnet
+```
