@@ -41,6 +41,26 @@ WrapSynth enables trustless bridging of Monero (XMR) to Ethereum and EVM chains 
 
 ---
 
+## 🏗️ Monorepo Structure
+
+WrapSynth is organized as a **multi-chain monorepo** with clear separation between implementations:
+
+- **`ethereum/`** - Complete EVM implementation (Gnosis, Unichain, etc.)
+  - Solidity contracts, Hardhat tests, deployment scripts
+  - Rust-based LP node for managing vaults and Monero interactions
+  
+- **`solana/`** - Solana program implementation
+  - Anchor-based vault manager program
+  - Native Solana integration with similar atomic swap mechanics
+  
+- **`frontend/`** - Unified web interface supporting both chains
+  
+- **`docs/`** - Technical documentation and design specs
+
+This structure allows independent development and deployment of each chain while sharing common documentation and frontend code.
+
+---
+
 ## 🚀 Current Status
 
 **Development Phase**: ✅ **Deployed to Gnosis Chain Mainnet**
@@ -106,7 +126,8 @@ WrapSynth enables trustless bridging of Monero (XMR) to Ethereum and EVM chains 
 git clone https://github.com/yourusername/wrapsynth.git
 cd wrapsynth
 
-# Install Node.js dependencies
+# Install Ethereum dependencies
+cd ethereum
 npm install
 
 # Copy environment variables
@@ -117,7 +138,8 @@ cp .env.example .env
 ### Compile Contracts
 
 ```bash
-# From project root
+# From ethereum directory
+cd ethereum
 npx hardhat compile
 ```
 
@@ -143,6 +165,9 @@ cp .env.example .env
 
 3. **Deploy contracts:**
 ```bash
+# From ethereum directory
+cd ethereum
+
 # Deploy VaultManager and wsXMR to Gnosis mainnet
 npm run deploy:gnosis
 
@@ -167,6 +192,9 @@ The latest deployment uses CREATE2 for deterministic vanity addresses:
 
 2. **Deploy contracts:**
 ```bash
+# From ethereum directory
+cd ethereum
+
 # Deploy VaultManager and wsXMR to Unichain testnet
 npm run deploy:unichain
 ```
@@ -176,25 +204,29 @@ npm run deploy:unichain
 npm run verify
 ```
 
-### Run Oracle
+### Run LP Node
 
 ```bash
-# Build the Rust-based Monero oracle
-cd monero-oracle
+# Build the Rust-based LP node
+cd ethereum/lp-node
 cargo build --release
 
-# Configure oracle (edit config if needed)
-../scripts/oracle/setup.sh
+# Configure LP node (edit config.toml if needed)
+./setup.sh
 
-# Run oracle service
+# Run LP node service
 cargo run --release
 ```
 
-### Setup Liquidity Provider
+### Solana Program
 
 ```bash
-# Register as LP and set up pool
-npm run lp:setup:mock
+# Build the Solana program
+cd solana/solana-program
+anchor build
+
+# Run tests
+anchor test
 ```
 
 ---
@@ -203,40 +235,51 @@ npm run lp:setup:mock
 
 ```
 wrapsynth/
-├── contracts/                  # Solidity smart contracts
-│   ├── VaultManager.sol       # Core vault system with atomic swap logic
-│   ├── wsXMR.sol              # ERC-20 token (8 decimals)
-│   ├── Secp256k1.sol          # Elliptic curve verification library
-│   ├── Create2Deployer.sol    # CREATE2 factory for vanity addresses
-│   ├── IPyth.sol              # Pyth oracle interface
-│   ├── IERC20Metadata.sol     # ERC20 metadata interface
-│   ├── libraries/             # Modular logic libraries
-│   │   ├── CollateralLogic.sol # Collateral ratio calculations
-│   │   ├── YieldLogic.sol     # Yield harvesting logic
-│   │   └── BurnLogic.sol      # Burn request logic
-│   ├── interfaces/            # Contract interfaces
-│   ├── mocks/                 # Mock contracts for testing
-│   └── README.md              # Contract documentation
+├── ethereum/                   # Ethereum/EVM implementation
+│   ├── contracts/             # Solidity smart contracts
+│   │   ├── VaultManager.sol   # Core vault system with atomic swap logic
+│   │   ├── wsXMR.sol          # ERC-20 token (8 decimals)
+│   │   ├── Secp256k1.sol      # Elliptic curve verification library
+│   │   ├── Create2Deployer.sol # CREATE2 factory for vanity addresses
+│   │   ├── IPyth.sol          # Pyth oracle interface
+│   │   ├── libraries/         # Modular logic libraries
+│   │   │   ├── CollateralLogic.sol # Collateral ratio calculations
+│   │   │   ├── YieldLogic.sol # Yield harvesting logic
+│   │   │   └── BurnLogic.sol  # Burn request logic
+│   │   ├── interfaces/        # Contract interfaces
+│   │   └── mocks/             # Mock contracts for testing
+│   │
+│   ├── scripts/               # Deployment & management scripts
+│   │   ├── deploy/            # Deployment scripts
+│   │   │   ├── deploy-gnosis.js # Gnosis mainnet deployment
+│   │   │   └── verify-gnosis.js # Contract verification
+│   │   └── vanity-address.js  # Vanity address generator
+│   │
+│   ├── lp-node/               # Rust-based LP node
+│   │   ├── src/               # LP node source code
+│   │   │   ├── main.rs        # Main entry point
+│   │   │   ├── engine.rs      # Core LP logic
+│   │   │   ├── evm.rs         # EVM interaction
+│   │   │   ├── monero.rs      # Monero RPC client
+│   │   │   ├── db.rs          # Database layer
+│   │   │   ├── api.rs         # REST API
+│   │   │   └── events.rs      # Event monitoring
+│   │   ├── Cargo.toml         # Rust dependencies
+│   │   ├── config.toml        # LP node configuration
+│   │   └── README.md          # LP node documentation
+│   │
+│   ├── test/                  # Contract tests
+│   ├── hardhat.config.js      # Hardhat configuration
+│   ├── package.json           # Node.js dependencies
+│   └── .env.example           # Environment variables template
 │
-├── scripts/                    # Deployment & management scripts
-│   ├── deploy/                # Deployment scripts
-│   │   ├── deploy.js          # Unichain testnet deployment
-│   │   ├── deploy-gnosis.js   # Gnosis mainnet deployment
-│   │   ├── deploy-vanity-fixed.js # Vanity address deployment
-│   │   └── verify-gnosis.js   # Contract verification
-│   ├── vanity-address.js      # Vanity address generator
-│   │
-│   ├── lpServer/              # LP vault management
-│   │   ├── createVault.js     # Create new LP vault
-│   │   ├── depositCollateral.js # Deposit collateral to vault
-│   │   ├── confirmMint.js     # LP confirms XMR receipt
-│   │   ├── finalizeBurn.js    # LP reveals secret for burn
-│   │   ├── testMint.js        # Test mint flow
-│   │   ├── testBurn.js        # Test burn flow
-│   │   └── testVault.js       # Test vault operations
-│   │
-│   └── utils/                 # Utility functions
-│       └── pyth_utils.js      # Pyth oracle helpers
+├── solana/                     # Solana implementation
+│   └── solana-program/        # Anchor program
+│       ├── programs/          # Solana programs
+│       │   └── wrapsynth-vault-manager/ # Main vault manager program
+│       ├── tests/             # Anchor tests
+│       ├── Anchor.toml        # Anchor configuration
+│       └── README.md          # Solana program documentation
 │
 ├── frontend/                   # Web interface
 │   ├── index.html             # Landing page
@@ -246,14 +289,11 @@ wrapsynth/
 │       ├── app.html           # Main app interface
 │       └── app.js             # Frontend logic
 │
-├── deployments/                # Deployment records
-│   ├── unichain_testnet_latest.json
-│   └── unichain_testnet_mock_latest.json
+├── docs/                       # Technical documentation
+│   └── SEED_STORAGE_IMPLEMENTATION.md # Seed storage design
 │
-├── hardhat.config.js          # Hardhat configuration
-├── package.json               # Node.js dependencies
-├── .env.example               # Environment variables template
-├── RELAYER_README.md          # Relayer system documentation
+├── .env.example               # Root environment variables
+├── .gitignore                 # Git ignore rules
 └── README.md                  # This file
 ```
 
@@ -402,16 +442,35 @@ Before production deployment:
 
 ## 🧪 Testing
 
+### Ethereum Tests
 ```bash
-# Run contract tests
+# From ethereum directory
+cd ethereum
+
+# Run all contract tests
 npm test
 
-# Test mint/burn flows
-node scripts/lpServer/testMint.js
-node scripts/lpServer/testBurn.js
+# Run specific test suites
+npx hardhat test test/01-TokenAuthority.test.js
+npx hardhat test test/03-MintingLifecycle.test.js
+```
 
-# Test vault operations
-node scripts/lpServer/testVault.js
+### Solana Tests
+```bash
+# From solana program directory
+cd solana/solana-program
+
+# Run Anchor tests
+anchor test
+```
+
+### LP Node Testing
+```bash
+# From LP node directory
+cd ethereum/lp-node
+
+# Run LP node in test mode
+cargo run --release -- --config config.toml
 ```
 
 ---
@@ -419,9 +478,10 @@ node scripts/lpServer/testVault.js
 ## 📚 Documentation
 
 ### Project Documentation
-- [Technical Specification](SYNTHWRAP.md) - Complete protocol specification
-- [Contract Documentation](contracts/README.md) - Solidity smart contracts
-- [Deployment Guide](scripts/deploy/README.md) - Deployment instructions
+- [Ethereum Contracts](ethereum/contracts/) - Solidity smart contracts
+- [LP Node Documentation](ethereum/lp-node/README.md) - LP node setup and operation
+- [Solana Program](solana/solana-program/README.md) - Anchor program documentation
+- [Seed Storage Design](docs/SEED_STORAGE_IMPLEMENTATION.md) - Technical design docs
 
 ### External Resources
 - [Monero Documentation](https://www.getmonero.org/resources/developer-guides/) - Monero protocol
