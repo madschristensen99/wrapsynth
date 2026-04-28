@@ -1,12 +1,10 @@
-![WrapSynth](./images/wrapsynth-hero.png)
+# ⛴️ WrapSynth
 
-# 🌉 WrapSynth
-
-**A trustless bridge bringing Monero to EVM chains using atomic swaps and collateralized vaults.**
+**A trustless cross-chain ferry bringing Monero to EVM chains using atomic swaps and collateralized vaults.**
 
 🌐 **[wrapsynth.com](https://wrapsynth.com)**
 
-WrapSynth enables trustless bridging of Monero (XMR) to Ethereum and EVM chains through atomic swap mechanics and overcollateralized LP vaults. Users exchange XMR for wsXMR tokens backed by 150% collateral, with cryptographic commitments ensuring trustless execution.
+WrapSynth enables trustless cross-chain transfers of Monero (XMR) to Ethereum and EVM chains through atomic swap mechanics and overcollateralized LP vaults. Users exchange XMR for wsXMR tokens backed by 150% collateral, with cryptographic commitments ensuring trustless execution.
 
 ---
 
@@ -154,7 +152,7 @@ This will compile:
 #### Deploy to Gnosis Mainnet
 
 1. **Get xDAI** for gas fees (very low cost ~$0.01 per tx)
-   - Bridge DAI to xDAI: [Gnosis Bridge](https://bridge.gnosischain.com/)
+   - Transfer DAI to xDAI: [Gnosis Chain](https://www.gnosischain.com/)
    - Or use [Jumper Exchange](https://jumper.exchange/)
 
 2. **Configure environment:**
