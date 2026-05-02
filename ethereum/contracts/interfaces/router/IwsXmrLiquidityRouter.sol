@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: LGPLv3
+pragma solidity ^0.8.19;
+
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {address} from "@openzeppelin/contracts/utils/Address.sol";
+import {ILiquidityPosition} from "./ILiquidityPosition.sol";
+
+/**
+ * @title IwsXmrLiquidityRouter
+ * @notice Router responsible for managing liquidity positions and coordinating LPs/Users.
+ * @dev Acts as the primary entry point for creating and managing matched LP pairs.
+ */
+interface IwsXmrLiquidityRouter {
+    // ========== EVENTS ==========\n    \n    event LiquidityAllocated(address indexed lp, uint256 sDAIAmount);\n    event LiquidityDeallocated(address indexed lp, uint256 sDAIAmount);\n    event UserDepositedWsxmr(address indexed user, uint256 amount);\n    event UserWithdrewWsxmr(address indexed user, uint256 amount);\n    event WsxmrDeallocated(address indexed account, uint256 amount);\n    event LpApprovedUser(address indexed lp, address indexed user, uint256 amount);\n    event UserApprovedLp(address indexed user, address indexed lp, uint256 amount);\n    \n    // ========== FUNCTIONS ==========\n    \n    /// @notice LP allocates sDAI for liquidity provision\n    function allocateLiquidity(uint256 sDAIAmount) external;\n    \n    /// @notice Withdraw sDAI balance\n    function withdrawSDAI(uint256 sDAIAmount) external;\n    \n    /// @notice LP increases approval for a user (for swapping/interacting)\n    function increaseUserApproval(address user, uint256 additionalSDAI) external;\n    \n    /// @notice LP decreases approval for a user\n    function decreaseUserApproval(address user, uint256 reduceSDAI) external;\n    \n    // User Functions (Typically called by the User contract interaction layer)\n    /// @notice User deposits wsXMR for liquidity provision\n    function depositWsxmr(uint256 amount) external;\n    \n    /// @notice Withdraw wsXMR balance\n    function withdrawWsXMR(uint256 wsxmrAmount) external;\n    \n    /// @notice User increases approval for an LP\n    function increaseLpApproval(address lp, uint256 additionalWsxmr) external;\n    \n    /// @notice User decreases approval for an LP\n    function decreaseLpApproval(address lp, uint256 reduceWsxmr) external;\n    \n    // Utility/Burn Functions (Cross-reference to BurnFacet)\n    /// @notice Burns wsXMR from internal balance to reduce vault debt\n    function burnFromInternalBalance(\n        uint256 wsxmrAmount,\n        address lpVault\n    ) external returns (bytes32 requestId);\n    \n    // ETH Management\n    /// @notice Withdraw pending ETH refunds\n    function withdrawETH() external;\n}\n
