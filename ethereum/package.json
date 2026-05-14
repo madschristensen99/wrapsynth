@@ -3,7 +3,12 @@
   "version": "1.0.0",
   "description": "Privacy-preserving Monero bridge to Ethereum using ZK proofs",
   "scripts": {
-    "compile": "hardhat compile",
+    "compile": "forge build",
+    "test": "forge test",
+    "test:vvv": "forge test -vvv",
+    "snapshot": "forge snapshot",
+    "coverage": "forge coverage",
+    "fmt": "forge fmt",
     "deploy": "hardhat run scripts/deploy/deploy.js",
     "deploy:unichain": "hardhat run scripts/deploy/deploy.js --network unichain_testnet",
     "deploy:gnosis": "hardhat run scripts/deploy/deploy-gnosis.js --network gnosis",
@@ -13,15 +18,6 @@
     "verify:mock": "hardhat run scripts/deploy/verify-mock.js --network unichain_testnet",
     "lp:setup": "hardhat run scripts/lpServer/lp-setup.js --network unichain_testnet",
     "lp:setup:mock": "hardhat run scripts/lpServer/lp-setup-mock.js --network unichain_testnet",
-    "test": "hardhat test",
-    "test:fork": "FORK_GNOSIS=true hardhat test",
-    "test:token": "FORK_GNOSIS=true hardhat test test/01-TokenAuthority.test.js",
-    "test:vault": "FORK_GNOSIS=true hardhat test test/02-VaultManagement.test.js",
-    "test:mint": "FORK_GNOSIS=true hardhat test test/03-MintingLifecycle.test.js",
-    "test:burn": "FORK_GNOSIS=true hardhat test test/04-BurningLifecycle.test.js",
-    "test:liquidation": "FORK_GNOSIS=true hardhat test test/05-Liquidation.test.js",
-    "test:buyburn": "FORK_GNOSIS=true hardhat test test/06-BuyAndBurn.test.js",
-    "test:router": "FORK_GNOSIS=true hardhat test test/07-RouterTests.test.js",
     "node": "hardhat node"
   },
   "keywords": [
@@ -44,7 +40,6 @@
   "dependencies": {
     "@noble/ed25519": "^2.0.0",
     "@openzeppelin/contracts": "^5.0.0",
-    "@pythnetwork/pyth-sdk-solidity": "^3.1.0",
     "axios": "^1.13.4",
     "bs58": "^5.0.0",
     "circomlibjs": "^0.1.7",

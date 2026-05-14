@@ -1,0 +1,13 @@
+[profile.default]
+src = "contracts"
+test = "test"
+out = "out"
+libs = ["lib"]
+cache_path = "cache_forge"
+
+# Match Hardhat optimizer settings
+optimizer = true
+optimizer_runs = 1
+via_ir = true
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
