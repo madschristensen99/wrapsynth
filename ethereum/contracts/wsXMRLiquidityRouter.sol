@@ -12,7 +12,6 @@ import {VaultManager} from "./VaultManager.sol";
 import {wsXMR} from "./wsXMR.sol";
 import {ISavingsDAI} from "./interfaces/ISavingsDAI.sol";
 import {GnosisAddresses} from "./GnosisAddresses.sol";
-import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 
 /**
  * @title wsXMRLiquidityRouter
@@ -164,7 +163,7 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
     }
 
     receive() external payable {
-        // Accept ETH for Pyth fee refunds
+        // Accept ETH for oracle fee refunds
     }
 
     // ========== POOL INITIALIZATION ==========
@@ -172,22 +171,16 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
     /**
      * @notice FIX M-7: Initialize the Uniswap V3 pool with oracle-derived price
      * @dev Must be called before any positions can be created
-     * @param _pythUpdateData Pyth price update data for fresh oracle prices
+     * @param _reports Chainlink Data Streams signed reports for fresh oracle prices
      * @return pool Address of the created/initialized pool
      */
-    function initializePool(bytes[] calldata _pythUpdateData) external payable nonReentrant returns (address pool) {
+    function initializePool(bytes[] calldata _reports) external payable nonReentrant returns (address pool) {
         // FIX L-4: Only allow initialization once to prevent front-running
         require(!poolInitialized, "Pool already initialized");
         poolInitialized = true;
-        
-        // Update Pyth prices first
-        uint256 pythFee = IPyth(address(vaultManager.pyth())).getUpdateFee(_pythUpdateData);
-        IPyth(address(vaultManager.pyth())).updatePriceFeeds{value: pythFee}(_pythUpdateData);
-        
-        // FIX C-2: Track refund instead of sending inline
-        if (msg.value > pythFee) {
-            pendingETHRefunds[msg.sender] += msg.value - pythFee;
-        }
+
+        // Update Chainlink Data Streams prices first
+        vaultManager.updatePrices{value: msg.value}(_reports);
         
         // Get oracle prices with tight staleness
         uint256 sDAIPrice = vaultManager.getCollateralPriceWithAge(30 seconds);
@@ -467,14 +460,14 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
     }
     
     /**
-     * @notice Create position with fresh Pyth price update (one-click UX)
-     * @dev Forwards Pyth update data to VaultManager before creating position
+     * @notice Create position with fresh Chainlink Data Streams price update (one-click UX)
+     * @dev Forwards signed reports to VaultManager before creating position
      * @param _lp Address of LP providing sDAI
      * @param _user Address of user providing wsXMR
      * @param _sDAIAmount Amount of sDAI to pair
      * @param _wsxmrAmount Amount of wsXMR to pair
      * @param _deadline Transaction deadline
-     * @param _pythUpdateData Pyth price update data
+     * @param _reports Chainlink Data Streams signed reports
      */
     function createPositionWithPriceUpdate(
         address _lp,
@@ -482,17 +475,11 @@ contract wsXMRLiquidityRouter is ReentrancyGuard, IERC721Receiver {
         uint256 _sDAIAmount,
         uint256 _wsxmrAmount,
         uint256 _deadline,
-        bytes[] calldata _pythUpdateData
+        bytes[] calldata _reports
     ) external payable nonReentrant returns (uint256 positionIndex) {
         // Update prices first
-        uint256 pythFee = IPyth(address(vaultManager.pyth())).getUpdateFee(_pythUpdateData);
-        IPyth(address(vaultManager.pyth())).updatePriceFeeds{value: pythFee}(_pythUpdateData);
-        
-        // FIX C-2: Track refund per user instead of sending inline
-        if (msg.value > pythFee) {
-            pendingETHRefunds[msg.sender] += msg.value - pythFee;
-        }
-        
+        vaultManager.updatePrices{value: msg.value}(_reports);
+
         // Delegate to internal creation logic
         return _createPosition(_lp, _user, _sDAIAmount, _wsxmrAmount, _deadline);
     }

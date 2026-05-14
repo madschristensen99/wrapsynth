@@ -6,8 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Ed25519} from "./Ed25519.sol";
-import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
-import {PythStructs} from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
+import {IDataStreamsVerifier} from "./interfaces/IDataStreamsVerifier.sol";
 import {wsXMR} from "./wsXMR.sol";
 import {ISavingsDAI} from "./interfaces/ISavingsDAI.sol";
 import {ISwapRouter} from "./interfaces/ISwapRouter.sol";
@@ -73,13 +72,31 @@ contract VaultManager is ReentrancyGuard {
     // FIX C-3: Track authorized router for internal balance burns
     address public liquidityRouter;
     
-    // Pyth oracle
-    IPyth public immutable pyth;
-    
-    // Pyth price feed IDs
-    bytes32 public constant XMR_USD_FEED_ID = 0x46b8cc9347f04391764a0361e0b17c3ba394b001e7c304f7650f6376e37c321d;
-   
-    bytes32 public constant SDAI_USD_FEED_ID = 0xb0948a5e5313200c632b51bb5ca32f6de0d36e9950a942d19751e833f70dabfd;
+    // Chainlink Data Streams verifier proxy
+    IDataStreamsVerifier public immutable verifierProxy;
+
+    // Chainlink Data Streams feed IDs (bytes32)
+    bytes32 public constant XMR_USD_FEED_ID = 0x00038f3b8f8be4305564abf0ed3c9cc46cb8b4303c35ab54079ea873b7d74b3a;
+    bytes32 public constant DAI_USD_FEED_ID = 0x0003a9efc56074727bde001b0f0301eef38db844278734c32aa8b72dcb7902ba;
+
+    // Latest verified prices
+    int192 public lastXmrPrice;
+    uint256 public lastXmrPriceTimestamp;
+    int192 public lastCollateralPrice;
+    uint256 public lastCollateralPriceTimestamp;
+
+    // Chainlink Data Streams report schema v3
+    struct ReportV3 {
+        bytes32 feedId;
+        uint32 validFromTimestamp;
+        uint32 observationsTimestamp;
+        uint192 nativeFee;
+        uint192 linkFee;
+        uint32 expiresAt;
+        int192 price;
+        int192 bid;
+        int192 ask;
+    }
 
     // Oracle staleness configuration (in seconds)
     uint256 public constant PRICE_MAX_AGE = 2 minutes;
@@ -319,9 +336,7 @@ contract VaultManager is ReentrancyGuard {
     error InvalidPoolFeeTier();
     error CooldownActive();
     error InvalidSpotPrice();
-    error InvalidEMAPrice();
-    error PriceExponentMismatch();
-    error XMRNotDipped();
+    error InvalidReportVersion(uint16 version);
     error WarChestEmpty();
     error PriceNormalizedToZero();
     error RefundFailed();
@@ -329,11 +344,11 @@ contract VaultManager is ReentrancyGuard {
     
     // ========== CONSTRUCTOR ==========
     
-    constructor(address _pythContract) {
-        if (_pythContract == address(0)) revert ZeroAddress();
-        
+    constructor(address _verifierProxy) {
+        if (_verifierProxy == address(0)) revert ZeroAddress();
+
         deployer = msg.sender; // FIX C-1: Store deployer for router setup
-        pyth = IPyth(_pythContract);
+        verifierProxy = IDataStreamsVerifier(_verifierProxy);
         
         // Deploys the wsXMR token immutably on initialization
         wsxmrToken = new wsXMR();
@@ -344,7 +359,7 @@ contract VaultManager is ReentrancyGuard {
     }
     
     receive() external payable {
-        // Accept ETH from Pyth refunds and griefing deposits
+        // Accept ETH for griefing deposits and oracle fee refunds
     }
     
     // ========== VAULT MANAGEMENT ==========
@@ -1617,17 +1632,9 @@ contract VaultManager is ReentrancyGuard {
         // 1. Cooldown Check
         if (block.timestamp < lastBuyTimestamp + 1800) revert CooldownActive();
         
-        // 2. EMA vs Spot Check (Pyth provides both)
-        PythStructs.Price memory spotData = pyth.getPriceNoOlderThan(XMR_USD_FEED_ID, 3600);
-        PythStructs.Price memory emaData = pyth.getEmaPriceNoOlderThan(XMR_USD_FEED_ID, 3600);
-        
-        // Validate 1% dip: Spot <= EMA * 0.99
-        if (spotData.price <= 0) revert InvalidSpotPrice();
-        if (emaData.price <= 0) revert InvalidEMAPrice();
-        if (spotData.expo != emaData.expo) revert PriceExponentMismatch();
-        uint256 spotPrice = uint256(int256(spotData.price));
-        uint256 emaPrice = uint256(int256(emaData.price));
-        if (spotPrice > (emaPrice * 99) / 100) revert XMRNotDipped();
+        // 2. Spot price check using latest verified Chainlink Data Streams price
+        uint256 xmrPrice = getXmrPrice();
+        if (xmrPrice == 0) revert InvalidSpotPrice();
         
         // 3. Calculate 20% chunk
         if (yieldWarChest == 0) revert WarChestEmpty();
@@ -1650,7 +1657,7 @@ contract VaultManager is ReentrancyGuard {
        
         // This prevents DoS during DAI depeg events
         uint256 sDAIPrice = getCollateralPrice(); // USD per sDAI share (18 decimals)
-        uint256 xmrPrice = getXmrPrice(); // USD per XMR (18 decimals)
+        xmrPrice = getXmrPrice(); // USD per XMR (18 decimals)
         
         // Calculate expected wsXMR output
         // spendAmount is in sDAI shares (18 decimals)
@@ -1716,28 +1723,11 @@ contract VaultManager is ReentrancyGuard {
      * @param maxAge Maximum age of price in seconds
      */
     function getXmrPriceWithAge(uint256 maxAge) public view returns (uint256) {
-        PythStructs.Price memory priceData = pyth.getPriceNoOlderThan(XMR_USD_FEED_ID, maxAge);
-        if (priceData.price <= 0) revert StalePrice();
-        
-        uint256 price = uint256(int256(priceData.price));
-        uint256 conf = uint256(priceData.conf);
-        if (conf * 10 > price) revert StalePrice();
-        
-        int32 expo = priceData.expo;
-        
-        uint256 normalizedPrice;
-        if (expo >= 0) {
-            normalizedPrice = price * (10 ** uint32(expo)) * 1e18;
-        } else {
-            uint32 absExpo = uint32(-expo);
-            if (absExpo >= 18) {
-                normalizedPrice = price / (10 ** (absExpo - 18));
-            } else {
-                normalizedPrice = price * (10 ** (18 - absExpo));
-            }
-        }
-        if (normalizedPrice == 0) revert PriceNormalizedToZero();
-        return normalizedPrice;
+        if (block.timestamp > lastXmrPriceTimestamp + maxAge) revert StalePrice();
+        int192 price = lastXmrPrice;
+        if (price <= 0) revert StalePrice();
+        // Chainlink Data Streams crypto feeds use 8 decimals for price
+        return uint256(uint192(price)) * 1e10;
     }
     
     function getXmrPrice() public view returns (uint256) {
@@ -1745,32 +1735,15 @@ contract VaultManager is ReentrancyGuard {
     }
     
     /**
-     * @notice Get sDAI price in USD (18 decimals) with custom staleness
+     * @notice Get sDAI collateral price in USD (18 decimals) with custom staleness
      * @param maxAge Maximum age of price in seconds
      */
     function getCollateralPriceWithAge(uint256 maxAge) public view returns (uint256) {
-        PythStructs.Price memory priceData = pyth.getPriceNoOlderThan(SDAI_USD_FEED_ID, maxAge);
-        if (priceData.price <= 0) revert StalePrice();
-        
-        uint256 price = uint256(int256(priceData.price));
-        uint256 conf = uint256(priceData.conf);
-        if (conf * 10 > price) revert StalePrice();
-        
-        int32 expo = priceData.expo;
-        
-        uint256 normalizedPrice;
-        if (expo >= 0) {
-            normalizedPrice = price * (10 ** uint32(expo)) * 1e18;
-        } else {
-            uint32 absExpo = uint32(-expo);
-            if (absExpo >= 18) {
-                normalizedPrice = price / (10 ** (absExpo - 18));
-            } else {
-                normalizedPrice = price * (10 ** (18 - absExpo));
-            }
-        }
-        if (normalizedPrice == 0) revert PriceNormalizedToZero();
-        return normalizedPrice;
+        if (block.timestamp > lastCollateralPriceTimestamp + maxAge) revert StalePrice();
+        int192 price = lastCollateralPrice;
+        if (price <= 0) revert StalePrice();
+        // Chainlink Data Streams crypto feeds use 8 decimals for price
+        return uint256(uint192(price)) * 1e10;
     }
     
     function getCollateralPrice() public view returns (uint256) {
@@ -1857,22 +1830,23 @@ contract VaultManager is ReentrancyGuard {
     
     
     /**
-     * @notice Update Pyth price feeds with off-chain data
-     * @dev Pyth is a pull-based oracle - prices must be pushed on-chain before use
+     * @notice Update verified Chainlink Data Streams reports on-chain
+     * @dev Data Streams is a pull-based oracle - signed reports must be verified before use
      * @dev Call this before initiateMint, requestBurn, or liquidate operations
-     * @param pythUpdateData Signed price update data from Pyth Network
+     * @param reports Signed report payloads from Chainlink Data Streams
      */
-    function updatePythPrices(bytes[] calldata pythUpdateData) external payable {
-        // Get the required fee from Pyth
-        uint256 fee = pyth.getUpdateFee(pythUpdateData);
-        
-        // Update the price feeds (msg.value pays the fee)
-        pyth.updatePriceFeeds{value: fee}(pythUpdateData);
-        
-        // Refund any excess ETH sent
-        if (msg.value > fee) {
-            (bool success, ) = payable(msg.sender).call{value: msg.value - fee}("");
-            if (!success) revert RefundFailed();
+    function updatePrices(bytes[] calldata reports) external payable {
+        for (uint256 i = 0; i < reports.length; i++) {
+            bytes memory verified = verifierProxy.verify{value: 0}(reports[i], bytes(""));
+            ReportV3 memory decoded = abi.decode(verified, (ReportV3));
+
+            if (decoded.feedId == XMR_USD_FEED_ID) {
+                lastXmrPrice = decoded.price;
+                lastXmrPriceTimestamp = block.timestamp;
+            } else if (decoded.feedId == DAI_USD_FEED_ID) {
+                lastCollateralPrice = decoded.price;
+                lastCollateralPriceTimestamp = block.timestamp;
+            }
         }
     }
 }
