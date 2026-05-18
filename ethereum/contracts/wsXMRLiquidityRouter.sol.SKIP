@@ -5,12 +5,12 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
-import {INonfungiblePositionManager} from "./interfaces/INonfungiblePositionManager.sol";
-import {IUniswapV3Factory} from "./interfaces/IUniswapV3Factory.sol";
-import {IUniswapV3Pool} from "./interfaces/IUniswapV3Pool.sol";
-import {VaultManager} from "./VaultManager.sol";
-import {wsXMR} from "./wsXMR.sol";
-import {ISavingsDAI} from "./interfaces/ISavingsDAI.sol";
+import {INonfungiblePositionManager} from "./interfaces/external/INonfungiblePositionManager.sol";
+import {IUniswapV3Factory} from "./interfaces/external/IUniswapV3Factory.sol";
+import {IUniswapV3Pool} from "./interfaces/external/IUniswapV3Pool.sol";
+import {ISwapRouter} from "./interfaces/external/ISwapRouter.sol";
+import {IDataStreamsVerifier} from "./interfaces/external/IDataStreamsVerifier.sol";
+import {ISavingsDAI} from "./interfaces/external/ISavingsDAI.sol";
 import {GnosisAddresses} from "./GnosisAddresses.sol";
 
 /**

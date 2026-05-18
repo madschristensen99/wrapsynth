@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import {IDataStreamsVerifier} from "../interfaces/IDataStreamsVerifier.sol";
+import {IDataStreamsVerifier} from "../interfaces/external/IDataStreamsVerifier.sol";
 
 /**
  * @title MockVerifierProxy

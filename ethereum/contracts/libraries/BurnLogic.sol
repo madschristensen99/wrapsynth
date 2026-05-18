@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "../interfaces/ISavingsDAI.sol";
+import "../interfaces/external/ISavingsDAI.sol";
 import "../GnosisAddresses.sol";
 
 /**
@@ -9,23 +9,6 @@ import "../GnosisAddresses.sol";
  * @notice Library for burn request lifecycle logic
  */
 library BurnLogic {
-    enum BurnStatus { REQUESTED, PROPOSED, COMMITTED, COMPLETED, CANCELLED, SLASHED, INVALID }
-    
-    struct BurnRequest {
-        bytes32 requestId;
-        address user;
-        address lpVault;
-        uint256 wsxmrAmount;
-        uint256 xmrAmount;
-        bytes32 secretHash;
-        uint256 lockedCollateral;
-        uint256 rewardCollateral;
-        uint256 deadline;
-        uint256 vaultLiquidationNonce;
-        uint256 normalizedDebtAmount;
-        BurnStatus status;
-    }
-    
     /**
      * @notice Calculate burn reward collateral
      */
@@ -53,4 +36,5 @@ library BurnLogic {
         uint256 requiredValueUsd = (wsxmrValueUsd * liquidationRatio) / 100;
         requiredCollateral = (requiredValueUsd * 1e18) / collateralPrice;
     }
+    
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "../interfaces/ISavingsDAI.sol";
+import "../interfaces/external/ISavingsDAI.sol";
 import "../GnosisAddresses.sol";
 
 /**
@@ -12,6 +12,8 @@ library YieldLogic {
     uint256 constant YIELD_DUST_THRESHOLD = 100;
     uint256 constant COLLATERAL_RATIO = 150;
     uint256 constant RATIO_PRECISION = 100;
+    
+    event YieldHarvested(uint256 yieldDai, uint256 yieldShares);
     
     /**
      * @notice Calculate extractable yield from vault

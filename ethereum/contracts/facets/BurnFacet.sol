@@ -1,0 +1,336 @@
+// SPDX-License-Identifier: LGPLv3
+pragma solidity ^0.8.19;
+
+import {wsXmrStorage} from "../core/wsXmrStorage.sol";
+import {IBurnFacet} from "../interfaces/facets/IBurnFacet.sol";
+import {IOracleFacet} from "../interfaces/facets/IOracleFacet.sol";
+import {IwsXmrHub} from "../interfaces/core/IwsXmrHub.sol";
+import {Ed25519} from "../Ed25519.sol";
+import {CollateralLogic} from "../libraries/CollateralLogic.sol";
+import {YieldLogic} from "../libraries/YieldLogic.sol";
+import {BurnLogic} from "../libraries/BurnLogic.sol";
+
+contract BurnFacet is wsXmrStorage, IBurnFacet {
+    
+    constructor(address _wsxmrToken, address _verifierProxy) 
+        wsXmrStorage(_wsxmrToken, _verifierProxy) 
+    {}
+    
+    function requestBurn(uint256 wsxmrAmount, address lpVault, address user) external returns (bytes32) {
+        IwsXmrHub(address(this)).enterNonReentrant();
+        if (msg.sender != user) revert OnlyUserCanInitiate();
+        bytes32 requestId = _requestBurn(wsxmrAmount, lpVault, user, false);
+        IwsXmrHub(address(this)).exitNonReentrant();
+        return requestId;
+    }
+    
+    function requestBurnFromRouter(uint256 wsxmrAmount, address lpVault, address user) external returns (bytes32) {
+        IwsXmrHub(address(this)).enterNonReentrant();
+        if (msg.sender != liquidityRouter) revert OnlyRouter();
+        bytes32 requestId = _requestBurn(wsxmrAmount, lpVault, user, true);
+        IwsXmrHub(address(this)).exitNonReentrant();
+        return requestId;
+    }
+    
+    function _requestBurn(uint256 wsxmrAmount, address lpVault, address user, bool fromRouter) internal returns (bytes32) {
+        if (wsxmrAmount == 0) revert ZeroAmount();
+        if (lpVault == address(0)) revert ZeroAddress();
+        if (user == address(0)) revert ZeroAddress();
+        if (!vaults[lpVault].active) revert VaultDoesNotExist();
+        
+        _syncVaultYield(lpVault);
+        
+        if (wsxmrAmount < MIN_BURN_AMOUNT) revert BelowMinimumBurn();
+        
+        Vault storage vault = vaults[lpVault];
+        if (vault.minBurnAmount > 0 && wsxmrAmount < vault.minBurnAmount) revert BelowMinimumBurn();
+        
+        bytes32[] storage vaultBurns = vaultBurnRequests[lpVault];
+        uint256 activeCount = _cleanupBurnRequests(vaultBurns);
+        if (activeCount >= MAX_BURN_REQUESTS_PER_VAULT) revert MaxBurnRequestsReached();
+        
+        uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+        if (actualDebt < wsxmrAmount) revert InsufficientDebt();
+        
+        (uint256 collateralToLock, uint256 rewardCollateral) = calculateBurnCollateral(lpVault, wsxmrAmount);
+        uint256 totalLock = collateralToLock + rewardCollateral;
+        
+        if (vault.collateralShares < totalLock) revert InsufficientCollateral();
+        
+        uint256 remainingCollateral = vault.collateralShares - totalLock;
+        uint256 remainingDebt = actualDebt - wsxmrAmount;
+        if (remainingDebt > 0) {
+            uint256 postBurnRatio = _calculateCollateralRatio(remainingCollateral, remainingDebt + vault.pendingDebt);
+            if (postBurnRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
+        }
+        
+        bytes32 requestId = keccak256(abi.encodePacked(user, lpVault, wsxmrAmount, ++_requestNonce));
+        if (burnRequests[requestId].status != BurnStatus.INVALID) revert BurnAlreadyExists();
+        
+        if (!fromRouter) {
+            IwsXmrHub(address(this)).burnTokens(user, wsxmrAmount);
+        }
+        
+        vault.collateralShares -= totalLock;
+        vault.lockedCollateral += totalLock;
+        
+        uint256 normalizedBurnAmount = (wsxmrAmount * 1e18 + globalDebtIndex - 1) / globalDebtIndex;
+        if (normalizedBurnAmount > vault.normalizedDebt) {
+            normalizedBurnAmount = vault.normalizedDebt;
+        }
+        vault.normalizedDebt -= normalizedBurnAmount;
+        globalTotalDebt -= wsxmrAmount;
+        globalPendingBurnDebt += wsxmrAmount;
+        
+        burnRequests[requestId] = BurnRequest({
+            requestId: requestId,
+            user: user,
+            lpVault: lpVault,
+            wsxmrAmount: wsxmrAmount,
+            xmrAmount: wsxmrAmount * XMR_TO_WSXMR_DIVISOR,
+            lockedCollateral: collateralToLock,
+            rewardCollateral: rewardCollateral,
+            secretHash: bytes32(0),
+            deadline: block.timestamp + BURN_REQUEST_TIMEOUT,
+            vaultLiquidationNonce: vault.liquidationNonce,
+            normalizedDebtAmount: normalizedBurnAmount,
+            status: BurnStatus.REQUESTED
+        });
+        
+        userBurnRequests[user].push(requestId);
+        vaultBurnRequests[lpVault].push(requestId);
+        
+        emit BurnRequested(requestId, user, lpVault, wsxmrAmount, wsxmrAmount * XMR_TO_WSXMR_DIVISOR, rewardCollateral);
+        return requestId;
+    }
+    
+    function proposeHash(bytes32 requestId, bytes32 secretHash) external {
+        IwsXmrHub(address(this)).enterNonReentrant();
+        
+        BurnRequest storage request = burnRequests[requestId];
+        if (request.status != BurnStatus.REQUESTED) revert InvalidStatus();
+        
+        Vault storage vault = vaults[request.lpVault];
+        if (msg.sender != vault.lpAddress) revert Unauthorized();
+        if (secretHash == bytes32(0)) revert InvalidSecret();
+        
+        request.secretHash = secretHash;
+        request.status = BurnStatus.PROPOSED;
+        request.deadline = block.timestamp + BURN_COMMIT_TIMEOUT;
+        
+        emit HashProposed(requestId, secretHash);
+        
+        IwsXmrHub(address(this)).exitNonReentrant();
+    }
+    
+    function confirmMoneroLock(bytes32 requestId) external {
+        IwsXmrHub(address(this)).enterNonReentrant();
+        
+        BurnRequest storage request = burnRequests[requestId];
+        if (request.status != BurnStatus.PROPOSED) revert InvalidStatus();
+        if (msg.sender != request.user) revert Unauthorized();
+        
+        request.deadline = block.timestamp + BURN_COMMIT_TIMEOUT;
+        request.status = BurnStatus.COMMITTED;
+        
+        emit BurnCommitted(requestId, request.deadline);
+        
+        IwsXmrHub(address(this)).exitNonReentrant();
+    }
+    
+    function finalizeBurn(bytes32 requestId, bytes32 secret) external {
+        IwsXmrHub(address(this)).enterNonReentrant();
+        
+        BurnRequest storage request = burnRequests[requestId];
+        if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
+        if (block.timestamp >= request.deadline) revert DeadlineExpired();
+        
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
+        bytes32 computedHash = bytes32(keccak256(abi.encodePacked(px, py)));
+        if (computedHash != request.secretHash) revert InvalidSecret();
+        
+        _syncVaultYield(request.lpVault);
+        
+        Vault storage vault = vaults[request.lpVault];
+        
+        // TODO: Implement calculateSafeReward in BurnLogic library
+        // For now, use the full reward amount
+        uint256 safeReward = request.rewardCollateral;
+        
+        // if (safeReward < request.rewardCollateral) {
+        //     emit BurnRewardShortfall(requestId, request.rewardCollateral, safeReward);
+        // }
+        
+        vault.collateralShares += request.lockedCollateral;
+        vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
+        globalPendingBurnDebt -= request.wsxmrAmount;
+        
+        if (safeReward > 0) {
+            pendingReturns[request.user][address(this)] += safeReward;
+            globalPendingSDAI += safeReward;
+            emit ReturnQueued(request.user, address(this), safeReward);
+        }
+        
+        request.status = BurnStatus.COMPLETED;
+        emit BurnFinalized(requestId, secret, safeReward);
+        
+        IwsXmrHub(address(this)).exitNonReentrant();
+    }
+    
+    function claimSlashedCollateral(bytes32 requestId) external {
+        IwsXmrHub(address(this)).enterNonReentrant();
+        
+        BurnRequest storage request = burnRequests[requestId];
+        if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
+        if (block.timestamp < request.deadline) revert DeadlineNotExpired();
+        if (msg.sender != request.user) revert Unauthorized();
+        
+        Vault storage vault = vaults[request.lpVault];
+        
+        uint256 totalSeized = request.lockedCollateral + request.rewardCollateral;
+        vault.lockedCollateral -= totalSeized;
+        globalPendingBurnDebt -= request.wsxmrAmount;
+        
+        pendingReturns[request.user][address(this)] += totalSeized;
+        globalPendingSDAI += totalSeized;
+        emit ReturnQueued(request.user, address(this), totalSeized);
+        
+        request.status = BurnStatus.SLASHED;
+        emit BurnSlashed(requestId, request.user, totalSeized);
+        
+        IwsXmrHub(address(this)).exitNonReentrant();
+    }
+    
+    function cancelBurn(bytes32 requestId) external {
+        IwsXmrHub(address(this)).enterNonReentrant();
+        
+        BurnRequest storage request = burnRequests[requestId];
+        if (request.status != BurnStatus.REQUESTED && request.status != BurnStatus.PROPOSED) {
+            revert InvalidStatus();
+        }
+        if (block.timestamp < request.deadline) revert DeadlineNotExpired();
+        
+        Vault storage vault = vaults[request.lpVault];
+        
+        if (request.vaultLiquidationNonce == vault.liquidationNonce) {
+            vault.collateralShares += (request.lockedCollateral + request.rewardCollateral);
+            vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
+            vault.normalizedDebt += request.normalizedDebtAmount;
+            globalTotalDebt += request.wsxmrAmount;
+        }
+        
+        globalPendingBurnDebt -= request.wsxmrAmount;
+        
+        IwsXmrHub(address(this)).mintTokens(request.user, request.wsxmrAmount);
+        
+        request.status = BurnStatus.CANCELLED;
+        emit BurnCancelled(requestId);
+        
+        IwsXmrHub(address(this)).exitNonReentrant();
+    }
+    
+    function getBurnRequest(bytes32 requestId) external view returns (BurnRequest memory) {
+        return burnRequests[requestId];
+    }
+    
+    function getUserBurnRequests(address user) external view returns (bytes32[] memory) {
+        return userBurnRequests[user];
+    }
+    
+    function getVaultBurnRequests(address vault) external view returns (bytes32[] memory) {
+        return vaultBurnRequests[vault];
+    }
+    
+    function calculateBurnCollateral(address lpVault, uint256 wsxmrAmount) public view returns (uint256 baseLock, uint256 rewardLock) {
+        uint256 collateralValue = _getCollateralValueForDebt(wsxmrAmount);
+        baseLock = _usdToCollateral((collateralValue * BURN_LOCK_RATIO) / RATIO_PRECISION);
+        uint256 rewardUsd = (collateralValue * vaults[lpVault].burnRewardBps) / BPS_DENOMINATOR;
+        rewardLock = _usdToCollateral(rewardUsd);
+    }
+    
+    function meetsMinimumBurn(address lpVault, uint256 wsxmrAmount) external view returns (bool) {
+        if (wsxmrAmount < MIN_BURN_AMOUNT) return false;
+        uint256 vaultMin = vaults[lpVault].minBurnAmount;
+        if (vaultMin > 0 && wsxmrAmount < vaultMin) return false;
+        return true;
+    }
+    
+    function getActiveBurnCount(address lpVault) external view returns (uint256) {
+        bytes32[] storage vaultBurns = vaultBurnRequests[lpVault];
+        uint256 count = 0;
+        for (uint256 i = 0; i < vaultBurns.length; i++) {
+            BurnStatus status = burnRequests[vaultBurns[i]].status;
+            if (status == BurnStatus.REQUESTED || status == BurnStatus.PROPOSED || status == BurnStatus.COMMITTED) {
+                count++;
+            }
+        }
+        return count;
+    }
+    
+    
+    function _syncVaultYield(address lpAddress) internal {
+        Vault storage vault = vaults[lpAddress];
+        if (vault.collateralShares == 0) return;
+        
+        uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+        uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
+        uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
+        
+        uint256 yieldShares = YieldLogic.calculateExtractableYield(
+            vault.collateralShares,
+            vault.lockedCollateral,
+            lpPrincipalShares[lpAddress],
+            actualDebt,
+            vault.pendingDebt,
+            xmrPrice,
+            collateralPrice
+        );
+        
+        if (yieldShares > 0) {
+            vault.collateralShares -= yieldShares;
+            yieldWarChest += yieldShares;
+        }
+    }
+    
+    function _calculateCollateralRatio(uint256 collateralAmount, uint256 debtAmount) internal view returns (uint256) {
+        if (debtAmount == 0) return type(uint256).max;
+        uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
+        uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
+        uint256 collateralValueUsd = CollateralLogic.collateralToUsd(collateralAmount, collateralPrice);
+        uint256 debtValueUsd = (debtAmount * xmrPrice) / WSXMR_DECIMALS;
+        return CollateralLogic.calculateCollateralRatio(collateralValueUsd, debtValueUsd);
+    }
+    
+    function _getCollateralValueForDebt(uint256 debtAmount) internal view returns (uint256) {
+        return CollateralLogic.getCollateralValueForDebt(debtAmount, IOracleFacet(oracleFacet).getXmrPrice(), COLLATERAL_RATIO);
+    }
+    
+    function _usdToCollateral(uint256 usdValue) internal view returns (uint256) {
+        return CollateralLogic.usdToCollateral(usdValue, IOracleFacet(oracleFacet).getCollateralPrice());
+    }
+    
+    function _cleanupBurnRequests(bytes32[] storage vaultBurns) internal returns (uint256 activeCount) {
+        uint256 writeIndex = 0;
+        activeCount = 0;
+        
+        for (uint256 i = 0; i < vaultBurns.length; i++) {
+            BurnStatus status = burnRequests[vaultBurns[i]].status;
+            
+            if (status == BurnStatus.REQUESTED || 
+                status == BurnStatus.PROPOSED || 
+                status == BurnStatus.COMMITTED) {
+                if (writeIndex != i) {
+                    vaultBurns[writeIndex] = vaultBurns[i];
+                }
+                writeIndex++;
+                activeCount++;
+            }
+        }
+        
+        while (vaultBurns.length > writeIndex) {
+            vaultBurns.pop();
+        }
+        
+        return activeCount;
+    }
+}
