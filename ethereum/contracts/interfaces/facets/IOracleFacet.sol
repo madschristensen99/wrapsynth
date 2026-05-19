@@ -22,9 +22,9 @@ interface IOracleFacet {
     
     // ========== FUNCTIONS ==========
     
-    /// @notice Update Pyth price feeds
+    /// @notice Update Chainlink Data Streams price feeds
     /// @param updateData Signed price update data
-    function updatePythPrices(bytes[] calldata updateData) external payable;
+    function updateChainlinkPrices(bytes[] calldata updateData) external payable;
     
     // ========== VIEW FUNCTIONS ==========
     

@@ -82,8 +82,9 @@ contract VaultManagerForkTest is Test {
     // ============ Setup ============
     function setUp() public {
         // Select Gnosis mainnet fork
-        string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
-        vm.createSelectFork(rpcUrl);
+        // Note: When running with --fork-url, we use the already-forked Anvil instance
+        // string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
+        // vm.createSelectFork(rpcUrl);
 
         // Initialize actors
         deployer = address(this);
@@ -157,8 +158,7 @@ contract VaultManagerForkTest is Test {
     // ============ Internal Helpers ============
 
     function _fundWXDAI(address recipient, uint256 amount) internal {
-        vm.prank(SDAI_CONTRACT);
-        wxdai.transfer(recipient, amount);
+        deal(WXDAI, recipient, amount);
     }
 
     function _buildReport(bytes32 feedId) internal view returns (bytes memory) {
@@ -174,18 +174,18 @@ contract VaultManagerForkTest is Test {
         reports[0] = _buildReport(XMR_FEED_ID);
         reports[1] = _buildReport(DAI_FEED_ID);
 
-        oracleFacet.updatePythPrices(reports);
+        OracleFacet(address(hub)).updateChainlinkPrices(reports);
     }
 
     function _createVault(address lp) internal {
         vm.prank(lp);
-        vaultFacet.createVault();
+        VaultFacet(address(hub)).createVault();
     }
 
     function _depositCollateral(address lp, uint256 amount) internal {
         vm.startPrank(lp);
         wxdai.approve(address(hub), amount);
-        vaultFacet.depositCollateral(amount);
+        VaultFacet(address(hub)).depositCollateral(amount);
         vm.stopPrank();
     }
 
@@ -198,7 +198,7 @@ contract VaultManagerForkTest is Test {
         uint256 griefingDeposit
     ) internal returns (bytes32 requestId) {
         vm.prank(user);
-        requestId = mintFacet.initiateMint{value: griefingDeposit}(
+        requestId = MintFacet(address(hub)).initiateMint{value: griefingDeposit}(
             lp,
             user, // recipient
             xmrAmount,
@@ -209,41 +209,41 @@ contract VaultManagerForkTest is Test {
 
     function _provideLPKey(address lp, bytes32 requestId, bytes32 lpPubKey) internal {
         vm.prank(lp);
-        mintFacet.provideLPKey(requestId, lpPubKey);
+        MintFacet(address(hub)).provideLPKey(requestId, lpPubKey);
     }
 
     function _setMintReady(address lp, bytes32 requestId) internal {
         vm.prank(lp);
-        mintFacet.setMintReady(requestId);
+        MintFacet(address(hub)).setMintReady(requestId);
     }
 
     function _finalizeMint(address user, bytes32 requestId, bytes32 secret) internal {
         vm.prank(user);
-        mintFacet.finalizeMint(requestId, secret);
+        MintFacet(address(hub)).finalizeMint(requestId, secret);
     }
 
     function _requestBurn(address user, address lp, uint256 wsxmrAmount) internal returns (bytes32 requestId) {
         vm.prank(user);
-        requestId = burnFacet.requestBurn(wsxmrAmount, lp, user);
+        requestId = BurnFacet(address(hub)).requestBurn(wsxmrAmount, lp, user);
     }
 
     function _proposeHash(address lp, bytes32 requestId, bytes32 secretHash) internal {
         vm.prank(lp);
-        burnFacet.proposeHash(requestId, secretHash);
+        BurnFacet(address(hub)).proposeHash(requestId, secretHash);
     }
 
     function _confirmMoneroLock(address user, bytes32 requestId) internal {
         vm.prank(user);
-        burnFacet.confirmMoneroLock(requestId);
+        BurnFacet(address(hub)).confirmMoneroLock(requestId);
     }
 
     function _finalizeBurn(address lp, bytes32 requestId, bytes32 secret) internal {
         vm.prank(lp);
-        burnFacet.finalizeBurn(requestId, secret);
+        BurnFacet(address(hub)).finalizeBurn(requestId, secret);
     }
 
     function _getVaultRatio(address lp) internal view returns (uint256) {
-        return vaultFacet.getVaultHealth(lp);
+        return VaultFacet(address(hub)).getVaultHealth(lp);
     }
 
     // ============ 1. Deployment & Constructor ============
@@ -313,7 +313,7 @@ contract VaultManagerForkTest is Test {
         vm.startPrank(lp1);
         wxdai.approve(address(hub), 1000e18);
         vm.expectRevert();
-        vaultFacet.depositCollateral(1000e18);
+        VaultFacet(address(hub)).depositCollateral(1000e18);
         vm.stopPrank();
     }
 
@@ -322,7 +322,7 @@ contract VaultManagerForkTest is Test {
         vm.startPrank(lp1);
         wxdai.approve(address(hub), 1000e18);
         vm.expectRevert();
-        vaultFacet.depositCollateral(0);
+        VaultFacet(address(hub)).depositCollateral(0);
         vm.stopPrank();
     }
 
@@ -340,7 +340,7 @@ contract VaultManagerForkTest is Test {
 
         vm.startPrank(lp1);
         sdaiToken.approve(address(hub), sDAIShares);
-        vaultFacet.depositShares(sDAIShares);
+        VaultFacet(address(hub)).depositShares(sDAIShares);
         vm.stopPrank();
 
         uint256 sDAIAfter = sdaiToken.balanceOf(lp1);
@@ -361,7 +361,7 @@ contract VaultManagerForkTest is Test {
         uint256 wxdaiBefore = wxdai.balanceOf(lp1);
 
         vm.prank(lp1);
-        vaultFacet.withdrawCollateral(withdrawAmount);
+        VaultFacet(address(hub)).withdrawCollateral(withdrawAmount);
 
         uint256 wxdaiAfter = wxdai.balanceOf(lp1);
         assertGt(wxdaiAfter, wxdaiBefore); // Got DAI back
@@ -377,14 +377,14 @@ contract VaultManagerForkTest is Test {
         (, uint256 collateral,,,,,,,,,,,) = hub.vaults(lp1);
         vm.prank(lp1);
         vm.expectRevert();
-        vaultFacet.withdrawCollateral(collateral + 1);
+        VaultFacet(address(hub)).withdrawCollateral(collateral + 1);
     }
 
     function test_SetVaultMarketMetrics() public {
         _createVault(lp1);
 
         vm.prank(lp1);
-        vaultFacet.setVaultMarketMetrics(500, 200); // 5% mint fee, 2% burn reward
+        VaultFacet(address(hub)).setVaultMarketMetrics(500, 200); // 5% mint fee, 2% burn reward
 
         (,,,,,,, uint16 mintFeeBps, uint16 burnRewardBps,,,,) = hub.vaults(lp1);
         assertEq(mintFeeBps, 500);
@@ -395,13 +395,13 @@ contract VaultManagerForkTest is Test {
         _createVault(lp1);
         vm.expectRevert();
         vm.prank(lp1);
-        vaultFacet.setVaultMarketMetrics(1001, 0);
+        VaultFacet(address(hub)).setVaultMarketMetrics(1001, 0);
     }
 
     function test_SetMaxMintBps() public {
         _createVault(lp1);
         vm.prank(lp1);
-        vaultFacet.setMaxMintBps(1000); // 10%
+        VaultFacet(address(hub)).setMaxMintBps(1000); // 10%
         (,,,,, uint16 maxMintBps,,,,,,,) = hub.vaults(lp1);
         assertEq(maxMintBps, 1000);
     }
@@ -409,7 +409,7 @@ contract VaultManagerForkTest is Test {
     function test_SetMinBurnAmount() public {
         _createVault(lp1);
         vm.prank(lp1);
-        vaultFacet.setMinBurnAmount(10e8); // 10 wsXMR
+        VaultFacet(address(hub)).setMinBurnAmount(10e8); // 10 wsXMR
         (,,,,,,,,,,, uint256 minBurnAmount,) = hub.vaults(lp1);
         assertEq(minBurnAmount, 10e8);
     }
@@ -417,7 +417,7 @@ contract VaultManagerForkTest is Test {
     function test_SetMintGriefingDeposit() public {
         _createVault(lp1);
         vm.prank(lp1);
-        vaultFacet.setMintGriefingDeposit(0.1 ether);
+        VaultFacet(address(hub)).setMintGriefingDeposit(0.1 ether);
         (,,,,,, uint256 griefingDeposit,,,,,,) = hub.vaults(lp1);
         assertEq(griefingDeposit, 0.1 ether);
     }
@@ -431,8 +431,8 @@ contract VaultManagerForkTest is Test {
 
         // Set LP config
         vm.startPrank(lp1);
-        vaultFacet.setVaultMarketMetrics(100, 50); // 1% fee, 0.5% reward
-        vaultFacet.setMintGriefingDeposit(0.01 ether);
+        VaultFacet(address(hub)).setVaultMarketMetrics(100, 50); // 1% fee, 0.5% reward
+        VaultFacet(address(hub)).setMintGriefingDeposit(0.01 ether);
         vm.stopPrank();
 
         uint256 xmrAmount = 1000e12; // 1000 XMR (12 decimals)
@@ -472,7 +472,7 @@ contract VaultManagerForkTest is Test {
 
         // Anyone can cancel
         vm.prank(user2);
-        mintFacet.cancelMint(requestId);
+        MintFacet(address(hub)).cancelMint(requestId);
     }
 
     function test_CancelMint_Revert_BeforeTimeout() public {
@@ -482,7 +482,7 @@ contract VaultManagerForkTest is Test {
         bytes32 requestId = _initiateMint(user1, lp1, 1000e12, testCommitment, 1 hours, 0.01 ether);
 
         vm.expectRevert();
-        mintFacet.cancelMint(requestId);
+        MintFacet(address(hub)).cancelMint(requestId);
     }
 
     function test_InitiateMint_Revert_InsufficientDeposit() public {
@@ -490,7 +490,7 @@ contract VaultManagerForkTest is Test {
         _depositCollateral(lp1, 500_000e18);
 
         vm.prank(lp1);
-        vaultFacet.setMintGriefingDeposit(0.1 ether);
+        VaultFacet(address(hub)).setMintGriefingDeposit(0.1 ether);
 
         vm.expectRevert();
         _initiateMint(user1, lp1, 1000e12, testCommitment, 1 hours, 0.01 ether);
@@ -500,27 +500,27 @@ contract VaultManagerForkTest is Test {
         _createVault(lp1);
         vm.expectRevert();
         vm.prank(user1);
-        mintFacet.initiateMint{value: 0}(address(0), user1, 1000e12, testCommitment, 1 hours);
+        MintFacet(address(hub)).initiateMint{value: 0}(address(0), user1, 1000e12, testCommitment, 1 hours);
     }
 
     function test_InitiateMint_Revert_ZeroAmount() public {
         _createVault(lp1);
         vm.expectRevert();
         vm.prank(user1);
-        mintFacet.initiateMint{value: 0}(lp1, user1, 0, testCommitment, 1 hours);
+        MintFacet(address(hub)).initiateMint{value: 0}(lp1, user1, 0, testCommitment, 1 hours);
     }
 
     function test_InitiateMint_Revert_InvalidSecret() public {
         _createVault(lp1);
         vm.expectRevert();
         vm.prank(user1);
-        mintFacet.initiateMint{value: 0}(lp1, user1, 1000e12, bytes32(0), 1 hours);
+        MintFacet(address(hub)).initiateMint{value: 0}(lp1, user1, 1000e12, bytes32(0), 1 hours);
     }
 
     function test_InitiateMint_Revert_VaultDoesNotExist() public {
         vm.expectRevert();
         vm.prank(user1);
-        mintFacet.initiateMint{value: 0}(lp1, user1, 1000e12, testCommitment, 1 hours);
+        MintFacet(address(hub)).initiateMint{value: 0}(lp1, user1, 1000e12, testCommitment, 1 hours);
     }
 
     function test_FinalizeMint_Revert_InvalidSecret() public {
@@ -553,7 +553,7 @@ contract VaultManagerForkTest is Test {
 
         vm.expectRevert();
         vm.prank(user2);
-        mintFacet.setMintReady(requestId);
+        MintFacet(address(hub)).setMintReady(requestId);
     }
 
     // ============ 4. Burn Lifecycle ============
@@ -621,7 +621,7 @@ contract VaultManagerForkTest is Test {
 
         // User claims slashed collateral
         vm.prank(user1);
-        burnFacet.claimSlashedCollateral(burnId);
+        BurnFacet(address(hub)).claimSlashedCollateral(burnId);
 
         // User should have pending returns queued
         assertGt(hub.pendingReturns(user1, SDAI_CONTRACT), 0);
@@ -649,7 +649,7 @@ contract VaultManagerForkTest is Test {
 
         // Permissionless cancel
         vm.prank(user2);
-        burnFacet.cancelBurn(burnId);
+        BurnFacet(address(hub)).cancelBurn(burnId);
 
         // wsXMR should be re-minted to user
         assertEq(wsxmr.balanceOf(user1), userWsxmr);
@@ -659,7 +659,7 @@ contract VaultManagerForkTest is Test {
         _createVault(lp1);
         vm.expectRevert();
         vm.prank(user1);
-        burnFacet.requestBurn(0, lp1, user1);
+        BurnFacet(address(hub)).requestBurn(0, lp1, user1);
     }
 
     function test_RequestBurn_Revert_OnlyUserCanInitiate() public {
@@ -677,14 +677,14 @@ contract VaultManagerForkTest is Test {
 
         vm.expectRevert();
         vm.prank(user2); // not user1
-        burnFacet.requestBurn(userWsxmr, lp1, user1);
+        BurnFacet(address(hub)).requestBurn(userWsxmr, lp1, user1);
     }
 
     function test_RequestBurn_Revert_BelowMinimumBurn() public {
         _createVault(lp1);
         vm.expectRevert();
         vm.prank(user1);
-        burnFacet.requestBurn(1, lp1, user1);
+        BurnFacet(address(hub)).requestBurn(1, lp1, user1);
     }
 
     function test_FinalizeBurn_Revert_InvalidSecret() public {
@@ -738,7 +738,7 @@ contract VaultManagerForkTest is Test {
         _updatePrices(300_00000000, 1_00000000);
 
         // Vault should be liquidatable
-        assertTrue(liquidationFacet.isVaultLiquidatable(lp1));
+        assertTrue(LiquidationFacet(address(hub)).isVaultLiquidatable(lp1));
 
         // Ensure no locked collateral
         (,, uint256 lockedCollateral,,,,,,,,,,) = hub.vaults(lp1);
@@ -749,7 +749,7 @@ contract VaultManagerForkTest is Test {
         uint256 liquidatorSDAIBefore = sdaiToken.balanceOf(liquidator);
 
         vm.prank(liquidator);
-        liquidationFacet.liquidate(lp1, mintedWsxmr);
+        LiquidationFacet(address(hub)).liquidate(lp1, mintedWsxmr);
 
         uint256 liquidatorWsxmrAfter = wsxmr.balanceOf(liquidator);
         uint256 liquidatorSDAIAfter = sdaiToken.balanceOf(liquidator);
@@ -780,7 +780,7 @@ contract VaultManagerForkTest is Test {
         // Prices unchanged, vault is healthy
         vm.expectRevert();
         vm.prank(liquidator);
-        liquidationFacet.liquidate(lp1, mintedWsxmr);
+        LiquidationFacet(address(hub)).liquidate(lp1, mintedWsxmr);
     }
 
     function test_Liquidate_Revert_InsufficientDebt() public {
@@ -789,7 +789,7 @@ contract VaultManagerForkTest is Test {
 
         vm.expectRevert();
         vm.prank(liquidator);
-        liquidationFacet.liquidate(lp1, 100e8);
+        LiquidationFacet(address(hub)).liquidate(lp1, 100e8);
     }
 
     // ============ 6. Price Oracle ============
@@ -861,11 +861,11 @@ contract VaultManagerForkTest is Test {
         _finalizeMint(user1, mintId, testSecret);
 
         // Initially healthy
-        assertFalse(liquidationFacet.isVaultLiquidatable(lp1));
+        assertFalse(LiquidationFacet(address(hub)).isVaultLiquidatable(lp1));
 
         // Crash price
         _updatePrices(300_00000000, 1_00000000);
-        assertTrue(liquidationFacet.isVaultLiquidatable(lp1));
+        assertTrue(LiquidationFacet(address(hub)).isVaultLiquidatable(lp1));
     }
 
     function test_GetVaultHealth() public {

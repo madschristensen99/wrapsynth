@@ -175,4 +175,38 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     
     /// @notice Receive ETH for griefing deposits and refunds
     receive() external payable {}
+    
+    /// @notice Route function calls to appropriate facets via delegatecall
+    /// @dev Try OracleFacet first (most view functions), then others
+    fallback() external payable {
+        address facet = oracleFacet;
+        
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let result := delegatecall(gas(), facet, 0, calldatasize(), 0, 0)
+            if result {
+                returndatacopy(0, 0, returndatasize())
+                return(0, returndatasize())
+            }
+        }
+        
+        // Try other facets
+        address[5] memory otherFacets = [vaultFacet, mintFacet, burnFacet, liquidationFacet, yieldFacet];
+        for (uint256 i = 0; i < 5; i++) {
+            facet = otherFacets[i];
+            if (facet == address(0)) continue;
+            
+            assembly {
+                calldatacopy(0, 0, calldatasize())
+                let result := delegatecall(gas(), facet, 0, calldatasize(), 0, 0)
+                if result {
+                    returndatacopy(0, 0, returndatasize())
+                    return(0, returndatasize())
+                }
+            }
+        }
+        
+        // No facet handled the call
+        revert("Function does not exist");
+    }
 }

@@ -74,7 +74,7 @@ contract VaultManagerTest is Test {
         bytes[] memory reports = new bytes[](1);
         reports[0] = payload;
 
-        oracleFacet.updatePythPrices(reports);
+        oracleFacet.updateChainlinkPrices(reports);
 
         // These assertions will fail due to storage architecture issue
         // assertEq(hub.lastXmrPrice(), 16000000000);
@@ -90,7 +90,7 @@ contract VaultManagerTest is Test {
         bytes[] memory reports = new bytes[](1);
         reports[0] = payload;
 
-        oracleFacet.updatePythPrices(reports);
+        oracleFacet.updateChainlinkPrices(reports);
 
         uint256 price = oracleFacet.getXmrPrice();
         // 16000000000 * 1e10 = 160000000000000000000 (18 decimals)

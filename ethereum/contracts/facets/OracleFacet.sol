@@ -34,7 +34,7 @@ contract OracleFacet is wsXmrStorage, IOracleFacet {
     // ========== PRICE UPDATE ==========
     
     /// @inheritdoc IOracleFacet
-    function updatePythPrices(bytes[] calldata reports) external payable {
+    function updateChainlinkPrices(bytes[] calldata reports) external payable {
         uint256 refund = msg.value;
         
         for (uint256 i = 0; i < reports.length; i++) {
