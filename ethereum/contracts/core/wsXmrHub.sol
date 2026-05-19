@@ -177,32 +177,44 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     receive() external payable {}
     
     /// @notice Route function calls to appropriate facets via delegatecall
-    /// @dev Try OracleFacet first (most view functions), then others
+    /// @dev Try all facets in order until one succeeds
     fallback() external payable {
-        address facet = oracleFacet;
+        // Try all facets in order
+        address[6] memory allFacets = [vaultFacet, mintFacet, burnFacet, liquidationFacet, yieldFacet, oracleFacet];
         
-        assembly {
-            calldatacopy(0, 0, calldatasize())
-            let result := delegatecall(gas(), facet, 0, calldatasize(), 0, 0)
-            if result {
-                returndatacopy(0, 0, returndatasize())
-                return(0, returndatasize())
-            }
-        }
-        
-        // Try other facets
-        address[5] memory otherFacets = [vaultFacet, mintFacet, burnFacet, liquidationFacet, yieldFacet];
-        for (uint256 i = 0; i < 5; i++) {
-            facet = otherFacets[i];
+        for (uint256 i = 0; i < 6; i++) {
+            address facet = allFacets[i];
             if (facet == address(0)) continue;
             
             assembly {
-                calldatacopy(0, 0, calldatasize())
-                let result := delegatecall(gas(), facet, 0, calldatasize(), 0, 0)
+                // Use free memory pointer for safety
+                let ptr := mload(0x40)
+                calldatacopy(ptr, 0, calldatasize())
+                let result := delegatecall(gas(), facet, ptr, calldatasize(), 0, 0)
+                
+                // If call succeeded, return the data
                 if result {
-                    returndatacopy(0, 0, returndatasize())
-                    return(0, returndatasize())
+                    returndatacopy(ptr, 0, returndatasize())
+                    return(ptr, returndatasize())
                 }
+                
+                // If call failed, check if it's a real revert or just function not found
+                let rdsize := returndatasize()
+                if gt(rdsize, 0) {
+                    returndatacopy(ptr, 0, rdsize)
+                    
+                    let errorSig := mload(ptr)
+                    let errorSelector := shr(224, errorSig)
+                    
+                    // Error(string) selector is 0x08c379a0 - this is used for "function not found"
+                    // For any other error (Panic, custom errors, etc), propagate it
+                    // Only propagate if NOT Error(string)
+                    if iszero(eq(errorSelector, 0x08c379a0)) {
+                        revert(ptr, rdsize)
+                    }
+                    // If it is Error(string), continue to next facet
+                }
+                // No return data means function not found, continue to next facet
             }
         }
         
