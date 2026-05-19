@@ -42,13 +42,15 @@ contract MockVerifierProxy is IDataStreamsVerifier {
         int192 price = prices[feedId];
         require(price != 0, "Price not set for feed");
 
+        // Use block.timestamp for all timestamp fields
+        // This ensures prices are always "fresh" in tests since block.timestamp doesn't auto-advance
         ReportV3 memory report = ReportV3({
             feedId: feedId,
             validFromTimestamp: uint32(block.timestamp),
             observationsTimestamp: uint32(block.timestamp),
             nativeFee: 0,
             linkFee: 0,
-            expiresAt: uint32(block.timestamp + 3600),
+            expiresAt: uint32(block.timestamp + 365 days), // Far future expiry
             price: price,
             bid: price,
             ask: price

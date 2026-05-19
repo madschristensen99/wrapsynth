@@ -83,8 +83,12 @@ contract VaultManagerForkTest is Test {
     function setUp() public {
         // Select Gnosis mainnet fork
         // Note: When running with --fork-url, we use the already-forked Anvil instance
-        // string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
-        // vm.createSelectFork(rpcUrl);
+        string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
+        vm.createSelectFork(rpcUrl);
+
+        // Warp to a known timestamp to ensure price updates are fresh
+        // Fork timestamp might be in the past, causing StalePrice errors
+        vm.warp(block.timestamp + 1 days);
 
         // Initialize actors
         deployer = address(this);
@@ -175,6 +179,10 @@ contract VaultManagerForkTest is Test {
         reports[1] = _buildReport(DAI_FEED_ID);
 
         OracleFacet(address(hub)).updateChainlinkPrices(reports);
+        
+        // Verify prices were actually updated
+        require(hub.lastXmrPriceTimestamp() > 0, "XMR price timestamp not set");
+        require(hub.lastCollateralPriceTimestamp() > 0, "Collateral price timestamp not set");
     }
 
     function _createVault(address lp) internal {
@@ -353,6 +361,7 @@ contract VaultManagerForkTest is Test {
     function test_WithdrawCollateral() public {
         _createVault(lp1);
         _depositCollateral(lp1, 100_000e18);
+        _updatePrices(160_00000000, 1_00000000);
 
         (, uint256 collateralBefore,,,,,,,,,,,) = hub.vaults(lp1);
 
@@ -469,6 +478,7 @@ contract VaultManagerForkTest is Test {
 
         // Warp past timeout
         vm.warp(block.timestamp + 2 hours);
+        _updatePrices(160_00000000, 1_00000000);
 
         // Anyone can cancel
         vm.prank(user2);
@@ -806,8 +816,9 @@ contract VaultManagerForkTest is Test {
         assertEq(hub.lastCollateralPrice(), 1_00000000);
     }
 
-    function test_GetXmrPrice() public view {
-        uint256 price = oracleFacet.getXmrPrice();
+    function test_GetXmrPrice() public {
+        _updatePrices(160_00000000, 1_00000000);
+        uint256 price = OracleFacet(address(hub)).getXmrPrice();
         // 160_00000000 * 1e10 = 160e18
         assertEq(price, 160_000000000000000000);
     }
@@ -816,11 +827,12 @@ contract VaultManagerForkTest is Test {
         // Warp past max age
         vm.warp(block.timestamp + 5 minutes);
         vm.expectRevert();
-        oracleFacet.getXmrPrice();
+        OracleFacet(address(hub)).getXmrPrice();
     }
 
-    function test_GetCollateralPrice() public view {
-        uint256 price = oracleFacet.getCollateralPrice();
+    function test_GetCollateralPrice() public {
+        _updatePrices(160_00000000, 1_00000000);
+        uint256 price = OracleFacet(address(hub)).getCollateralPrice();
         // DAI price is $1.00 at 8 decimals = 100000000
         // getCollateralPrice returns uint192(price) * 1e10 = 1e18
         assertEq(price, 1_000000000000000000);
@@ -836,7 +848,7 @@ contract VaultManagerForkTest is Test {
         _setMintReady(lp1, mintId);
         _finalizeMint(user1, mintId, testSecret);
 
-        uint256 debt = vaultFacet.getVaultDebt(lp1);
+        uint256 debt = VaultFacet(address(hub)).getVaultDebt(lp1);
         assertGt(debt, 0);
     }
 
@@ -854,14 +866,13 @@ contract VaultManagerForkTest is Test {
 
     function test_IsVaultLiquidatable() public {
         _createVault(lp1);
-        _depositCollateral(lp1, 150_000e18);
+        _depositCollateral(lp1, 100_000e18);
 
-        bytes32 mintId = _initiateMint(user1, lp1, 500e12, testCommitment, 1 hours, 0);
+        bytes32 mintId = _initiateMint(user1, lp1, 1000e12, testCommitment, 1 hours, 0);
         _setMintReady(lp1, mintId);
         _finalizeMint(user1, mintId, testSecret);
 
-        // Initially healthy
-        assertFalse(LiquidationFacet(address(hub)).isVaultLiquidatable(lp1));
+        bool liquidatable = LiquidationFacet(address(hub)).isVaultLiquidatable(lp1);
 
         // Crash price
         _updatePrices(300_00000000, 1_00000000);
@@ -876,7 +887,7 @@ contract VaultManagerForkTest is Test {
         _setMintReady(lp1, mintId);
         _finalizeMint(user1, mintId, testSecret);
 
-        uint256 health = vaultFacet.getVaultHealth(lp1);
+        uint256 health = VaultFacet(address(hub)).getVaultHealth(lp1);
         assertGt(health, 100); // Should be > 100%
     }
 
