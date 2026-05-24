@@ -10,6 +10,7 @@ import {ISavingsDAI} from "../interfaces/external/ISavingsDAI.sol";
 import {GnosisAddresses} from "../GnosisAddresses.sol";
 import {CollateralLogic} from "../libraries/CollateralLogic.sol";
 import {YieldLogic} from "../libraries/YieldLogic.sol";
+import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
 /**
  * @title VaultFacet
@@ -307,10 +308,13 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
     }
     
     function _calculateCollateralRatio(
-        uint256 collateralAmount,
+        uint256 collateralShares,
         uint256 debtAmount
     ) internal view returns (uint256 ratio) {
         if (debtAmount == 0) return type(uint256).max;
+        
+        // Convert sDAI shares to underlying DAI amount
+        uint256 collateralAmount = IERC4626(GnosisAddresses.SDAI).convertToAssets(collateralShares);
         
         uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
         uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();

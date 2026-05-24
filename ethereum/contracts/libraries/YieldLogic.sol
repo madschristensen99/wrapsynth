@@ -19,7 +19,7 @@ library YieldLogic {
      * @notice Calculate extractable yield from vault
      */
     function calculateExtractableYield(
-        uint256 collateralAmount,
+        uint256 collateralShares,
         uint256 lockedCollateral,
         uint256 principalDeposits,
         uint256 actualDebt,
@@ -27,8 +27,8 @@ library YieldLogic {
         uint256 xmrPrice,
         uint256 collateralPrice
     ) internal view returns (uint256 yieldShares) {
-        uint256 currentRate = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(1e18);
-        uint256 totalDaiValue = (collateralAmount * currentRate) / 1e18;
+        // Convert sDAI shares to underlying DAI amount
+        uint256 totalDaiValue = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(collateralShares);
         
         if (totalDaiValue <= principalDeposits) {
             return 0;
@@ -37,25 +37,35 @@ library YieldLogic {
         uint256 yieldDai = totalDaiValue - principalDeposits;
         uint256 vaultYieldShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(yieldDai);
         
-        if (vaultYieldShares < YIELD_DUST_THRESHOLD || vaultYieldShares > collateralAmount) {
+        if (vaultYieldShares < YIELD_DUST_THRESHOLD || vaultYieldShares > collateralShares) {
             return 0;
         }
         
         uint256 totalObligations = actualDebt + pendingDebt;
         
         if (totalObligations > 0) {
+            // Convert available collateral shares to DAI, then to USD
+            uint256 availableCollateralDai = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(collateralShares);
+            uint256 availableCollateralUSD = (availableCollateralDai * collateralPrice) / 1e18;
+            
             uint256 debtValueUSD = (totalObligations * xmrPrice) / 1e8;
             uint256 minCollateralUSD = (debtValueUSD * COLLATERAL_RATIO) / RATIO_PRECISION;
-            uint256 minCollateralShares = (minCollateralUSD * 1e18) / collateralPrice;
-            minCollateralShares += lockedCollateral;
             
-            if (collateralAmount <= minCollateralShares) {
+            // Convert locked collateral shares to USD and add to minimum
+            uint256 lockedCollateralDai = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(lockedCollateral);
+            uint256 lockedCollateralUSD = (lockedCollateralDai * collateralPrice) / 1e18;
+            minCollateralUSD += lockedCollateralUSD;
+            
+            if (availableCollateralUSD <= minCollateralUSD) {
                 return 0;
             }
             
-            uint256 maxExtractable = collateralAmount - minCollateralShares;
-            if (vaultYieldShares > maxExtractable) {
-                vaultYieldShares = maxExtractable;
+            uint256 maxExtractableUSD = availableCollateralUSD - minCollateralUSD;
+            uint256 maxExtractableDai = (maxExtractableUSD * 1e18) / collateralPrice;
+            uint256 maxExtractableShares = ISavingsDAI(GnosisAddresses.SDAI).convertToShares(maxExtractableDai);
+            
+            if (vaultYieldShares > maxExtractableShares) {
+                vaultYieldShares = maxExtractableShares;
             }
         }
         

@@ -1,0 +1,103 @@
+// SPDX-License-Identifier: LGPLv3
+pragma solidity ^0.8.19;
+
+import {wsXmrStorage} from "../core/wsXmrStorage.sol";
+import {IOracleFacet} from "../interfaces/facets/IOracleFacet.sol";
+import "@redstone-finance/evm-connector/contracts/data-services/PrimaryProdDataServiceConsumerBase.sol";
+
+/**
+ * @title RedStoneOracleFacet
+ * @notice Oracle using RedStone Pull Oracles - simple and supports XMR!
+ * @dev Extends RedStone base contract, data is injected into transactions
+ */
+contract RedStoneOracleFacet is wsXmrStorage, IOracleFacet, PrimaryProdDataServiceConsumerBase {
+    
+    // Feed IDs (RedStone uses string identifiers)
+    bytes32 constant XMR_FEED_ID = bytes32("XMR");
+    bytes32 constant DAI_FEED_ID = bytes32("DAI");
+    
+    // ========== CONSTRUCTOR ==========
+    
+    constructor(address _wsxmrToken, address _verifierProxy) 
+        wsXmrStorage(_wsxmrToken, _verifierProxy) 
+    {}
+    
+    // ========== PRICE UPDATE ==========
+    
+    /// @inheritdoc IOracleFacet
+    /// @dev RedStone prices are passed in calldata, no need for explicit update
+    function updateChainlinkPrices(bytes[] calldata) external payable {
+        // Fetch prices from RedStone (data is in tx calldata)
+        uint256 xmrPrice = getOracleNumericValueFromTxMsg(XMR_FEED_ID);
+        uint256 daiPrice = getOracleNumericValueFromTxMsg(DAI_FEED_ID);
+        
+        // RedStone returns 8 decimals, convert to int192
+        lastXmrPrice = int192(int256(xmrPrice));
+        lastXmrPriceTimestamp = block.timestamp;
+        
+        lastCollateralPrice = int192(int256(daiPrice));
+        lastCollateralPriceTimestamp = block.timestamp;
+        
+        // Refund any sent ETH (not needed for RedStone)
+        if (msg.value > 0) {
+            (bool success, ) = msg.sender.call{value: msg.value}("");
+            if (!success) revert RefundFailed();
+        }
+    }
+    
+    // ========== VIEW FUNCTIONS ==========
+    
+    /// @inheritdoc IOracleFacet
+    function getXmrPrice() external view returns (uint256) {
+        return getXmrPriceWithAge(2 minutes);
+    }
+    
+    /// @inheritdoc IOracleFacet
+    function getXmrPriceWithAge(uint256 maxAge) public view returns (uint256) {
+        if (block.timestamp > lastXmrPriceTimestamp + maxAge) revert StalePrice();
+        int192 price = lastXmrPrice;
+        if (price <= 0) revert StalePrice();
+        // RedStone uses 8 decimals, normalize to 18
+        uint256 normalized = uint256(uint192(price)) * 1e10;
+        if (normalized == 0) revert PriceNormalizedToZero();
+        return normalized;
+    }
+    
+    /// @inheritdoc IOracleFacet
+    function getCollateralPrice() external view returns (uint256) {
+        return getCollateralPriceWithAge(2 minutes);
+    }
+    
+    /// @inheritdoc IOracleFacet
+    function getCollateralPriceWithAge(uint256 maxAge) public view returns (uint256) {
+        if (block.timestamp > lastCollateralPriceTimestamp + maxAge) revert StalePrice();
+        int192 price = lastCollateralPrice;
+        if (price <= 0) revert StalePrice();
+        // RedStone uses 8 decimals, normalize to 18
+        uint256 normalized = uint256(uint192(price)) * 1e10;
+        if (normalized == 0) revert PriceNormalizedToZero();
+        return normalized;
+    }
+    
+    /// @inheritdoc IOracleFacet
+    function getXmrEmaPrice() external view returns (uint256) {
+        return getXmrPriceWithAge(2 minutes);
+    }
+    
+    /// @inheritdoc IOracleFacet
+    function getUpdateFee(bytes[] calldata) external pure returns (uint256) {
+        // RedStone is free (data in calldata)
+        return 0;
+    }
+    
+    /// @inheritdoc IOracleFacet
+    function normalizeDebt(uint256 actualDebt) external view returns (uint256) {
+        if (globalDebtIndex == 0) return actualDebt;
+        return (actualDebt * 1e18) / globalDebtIndex;
+    }
+    
+    /// @inheritdoc IOracleFacet
+    function denormalizeDebt(uint256 normalizedDebt) external view returns (uint256) {
+        return (normalizedDebt * globalDebtIndex) / 1e18;
+    }
+}

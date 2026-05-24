@@ -1,0 +1,114 @@
+// SPDX-License-Identifier: LGPLv3
+pragma solidity ^0.8.19;
+
+import {wsXmrStorage} from "../core/wsXmrStorage.sol";
+import {IOracleFacet} from "../interfaces/facets/IOracleFacet.sol";
+
+/**
+ * @title SimpleOracleFacet
+ * @notice Simple oracle that accepts price updates from trusted updater
+ * @dev Prices fetched off-chain from RedStone API and pushed on-chain
+ */
+contract SimpleOracleFacet is wsXmrStorage, IOracleFacet {
+    
+    address public priceUpdater;
+    
+    event PricesUpdated(uint256 xmrPrice, uint256 daiPrice, uint256 timestamp);
+    event UpdaterChanged(address indexed oldUpdater, address indexed newUpdater);
+    
+    constructor(address _wsxmrToken, address _verifierProxy, address _priceUpdater) 
+        wsXmrStorage(_wsxmrToken, _verifierProxy) 
+    {
+        priceUpdater = _priceUpdater;
+    }
+    
+    // ========== PRICE UPDATE ==========
+    
+    /// @notice Update prices (called by price updater with real RedStone API data)
+    function updatePrices(uint256 xmrPrice, uint256 daiPrice) external {
+        require(msg.sender == priceUpdater || msg.sender == deployer, "Only updater");
+        require(xmrPrice > 0 && daiPrice > 0, "Invalid prices");
+        
+        // Prices come in 8 decimals from RedStone, store as int192
+        lastXmrPrice = int192(int256(xmrPrice));
+        lastXmrPriceTimestamp = block.timestamp;
+        
+        lastCollateralPrice = int192(int256(daiPrice));
+        lastCollateralPriceTimestamp = block.timestamp;
+        
+        emit PricesUpdated(xmrPrice, daiPrice, block.timestamp);
+    }
+    
+    /// @inheritdoc IOracleFacet
+    function updateChainlinkPrices(bytes[] calldata) external payable {
+        // Compatibility function - does nothing, use updatePrices() instead
+        if (msg.value > 0) {
+            (bool success, ) = msg.sender.call{value: msg.value}("");
+            require(success, "Refund failed");
+        }
+    }
+    
+    // ========== ADMIN ==========
+    
+    function setPriceUpdater(address newUpdater) external {
+        require(msg.sender == deployer, "Only deployer");
+        address oldUpdater = priceUpdater;
+        priceUpdater = newUpdater;
+        emit UpdaterChanged(oldUpdater, newUpdater);
+    }
+    
+    // ========== VIEW FUNCTIONS ==========
+    
+    /// @inheritdoc IOracleFacet
+    function getXmrPrice() external view returns (uint256) {
+        return getXmrPriceWithAge(2 minutes);
+    }
+    
+    /// @inheritdoc IOracleFacet
+    function getXmrPriceWithAge(uint256 maxAge) public view returns (uint256) {
+        if (block.timestamp > lastXmrPriceTimestamp + maxAge) revert StalePrice();
+        int192 price = lastXmrPrice;
+        if (price <= 0) revert StalePrice();
+        // RedStone uses 8 decimals, normalize to 18
+        uint256 normalized = uint256(uint192(price)) * 1e10;
+        if (normalized == 0) revert PriceNormalizedToZero();
+        return normalized;
+    }
+    
+    /// @inheritdoc IOracleFacet
+    function getCollateralPrice() external view returns (uint256) {
+        return getCollateralPriceWithAge(2 minutes);
+    }
+    
+    /// @inheritdoc IOracleFacet
+    function getCollateralPriceWithAge(uint256 maxAge) public view returns (uint256) {
+        if (block.timestamp > lastCollateralPriceTimestamp + maxAge) revert StalePrice();
+        int192 price = lastCollateralPrice;
+        if (price <= 0) revert StalePrice();
+        // RedStone uses 8 decimals, normalize to 18
+        uint256 normalized = uint256(uint192(price)) * 1e10;
+        if (normalized == 0) revert PriceNormalizedToZero();
+        return normalized;
+    }
+    
+    /// @inheritdoc IOracleFacet
+    function getXmrEmaPrice() external view returns (uint256) {
+        return getXmrPriceWithAge(2 minutes);
+    }
+    
+    /// @inheritdoc IOracleFacet
+    function getUpdateFee(bytes[] calldata) external pure returns (uint256) {
+        return 0;
+    }
+    
+    /// @inheritdoc IOracleFacet
+    function normalizeDebt(uint256 actualDebt) external view returns (uint256) {
+        if (globalDebtIndex == 0) return actualDebt;
+        return (actualDebt * 1e18) / globalDebtIndex;
+    }
+    
+    /// @inheritdoc IOracleFacet
+    function denormalizeDebt(uint256 normalizedDebt) external view returns (uint256) {
+        return (normalizedDebt * globalDebtIndex) / 1e18;
+    }
+}

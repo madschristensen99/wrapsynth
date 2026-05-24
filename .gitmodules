@@ -10,3 +10,6 @@
 [submodule "ethereum/lib/chainlink"]
 	path = ethereum/lib/chainlink
 	url = https://github.com/smartcontractkit/chainlink
+[submodule "ethereum/lib/redstone-oracles-monorepo"]
+	path = ethereum/lib/redstone-oracles-monorepo
+	url = https://github.com/redstone-finance/redstone-oracles-monorepo
