@@ -2,8 +2,11 @@
 // Generates Ed25519 keys from BIP-39 seed phrases (Monero-compatible)
 
 import { keccak256, toHex, hexToBytes, bytesToBigInt } from 'https://esm.sh/viem@2.7.0';
-import { Point } from 'https://esm.sh/noble-ed25519@2.0.0';
+import * as ed25519 from 'https://esm.sh/@noble/ed25519@2.1.0';
 import { mnemonicToAccount, english, generateMnemonic } from 'https://esm.sh/viem@2.7.0/accounts';
+
+// Access Point from the ed25519 module
+const Point = ed25519.Point;
 
 // Ed25519 group order (same as Monero)
 const ED25519_L = 2n**252n + 27742317777372353535851937790883648493n;

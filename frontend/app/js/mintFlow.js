@@ -2,9 +2,8 @@
 // Handles the complete minting process
 
 import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG } from './config.js';
-import { readVaultManager, writeVaultManager, watchContractEvent } from './contractInteraction.js';
-import { PhantomAgent } from './phantomAgent.js';
-import { updateSwapState } from './storage.js';
+import { readVaultManager, writeVaultManager, watchContractEvent } from './viemClient.js';
+import { getPhantomAgent } from './phantomAgent.js';
 import { getPriceUpdates, getPythUpdateFee } from './pythOracle.js';
 import { computeDepositAddress } from './moneroCrypto.js';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';

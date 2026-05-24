@@ -5,6 +5,13 @@ import { createPublicClient, createWalletClient, custom, http, parseAbi } from '
 import { gnosis } from 'https://esm.sh/viem@2.7.0/chains';
 import { NETWORKS, CONTRACTS, ABIS } from './config.js';
 
+// Parse ABIs once at module level
+const parsedABIs = {
+    vaultManager: parseAbi(ABIS.vaultManager),
+    wrappedMonero: parseAbi(ABIS.wrappedMonero),
+    pythOracle: parseAbi(ABIS.pythOracle)
+};
+
 // Public client for reading blockchain state
 let publicClient = null;
 
@@ -119,7 +126,7 @@ export async function readVaultManager(functionName, args = []) {
     
     return await client.readContract({
         address: CONTRACTS.vaultManager,
-        abi: parseAbi(ABIS.vaultManager),
+        abi: parsedABIs.vaultManager,
         functionName,
         args
     });
@@ -133,7 +140,7 @@ export async function writeVaultManager(functionName, args = [], value = 0n) {
     
     const { request } = await getPublicClient().simulateContract({
         address: CONTRACTS.vaultManager,
-        abi: parseAbi(ABIS.vaultManager),
+        abi: parsedABIs.vaultManager,
         functionName,
         args,
         value,
@@ -156,7 +163,7 @@ export async function readWrappedMonero(functionName, args = []) {
     
     return await client.readContract({
         address: CONTRACTS.wrappedMonero,
-        abi: parseAbi(ABIS.wrappedMonero),
+        abi: parsedABIs.wrappedMonero,
         functionName,
         args
     });
@@ -170,7 +177,7 @@ export async function writeWrappedMonero(functionName, args = []) {
     
     const { request } = await getPublicClient().simulateContract({
         address: CONTRACTS.wrappedMonero,
-        abi: parseAbi(ABIS.wrappedMonero),
+        abi: parsedABIs.wrappedMonero,
         functionName,
         args,
         account: userAddress
@@ -215,7 +222,7 @@ export function watchContractEvent(eventName, callback, fromBlock = 'latest') {
     
     return client.watchContractEvent({
         address: CONTRACTS.vaultManager,
-        abi: parseAbi(ABIS.vaultManager),
+        abi: parsedABIs.vaultManager,
         eventName,
         onLogs: callback,
         pollingInterval: 5000,
@@ -231,7 +238,7 @@ export async function getPastEvents(eventName, fromBlock, toBlock = 'latest', ar
     
     return await client.getContractEvents({
         address: CONTRACTS.vaultManager,
-        abi: parseAbi(ABIS.vaultManager),
+        abi: parsedABIs.vaultManager,
         eventName,
         fromBlock,
         toBlock,

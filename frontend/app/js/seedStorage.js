@@ -132,8 +132,8 @@ export async function storeSeed(seed, publicSpendKey) {
         const storageValue = `${STORAGE_VERSION}:${bytesToHex(new Uint8Array(encryptedIV))}:${bytesToHex(new Uint8Array(encryptedSeed))}`;
         localStorage.setItem(storageKey, storageValue);
 
-        console.log('✅ Seed encrypted and stored successfully');
-        console.warn('⚠️  This seed is only accessible from this browser with your wallet signature');
+        console.log('[SUCCESS] Seed encrypted and stored successfully');
+        console.warn('[WARNING] This seed is only accessible from this browser with your wallet signature');
         
         return true;
     } catch (error) {
@@ -233,7 +233,7 @@ export async function loadSeed(publicSpendKey) {
         const decoder = new TextDecoder();
         const seed = decoder.decode(decryptedSeedBytes);
 
-        console.log('✅ Seed decrypted successfully');
+        console.log('[SUCCESS] Seed decrypted successfully');
         return seed;
     } catch (error) {
         console.error('Failed to decrypt seed:', error);
@@ -254,7 +254,7 @@ export function deleteSeed(publicSpendKey) {
     const storageKey = getStorageKey(userAddress, publicSpendKey);
     localStorage.removeItem(storageKey);
     
-    console.log('🗑️  Seed deleted from storage');
+    console.log('[INFO] Seed deleted from storage');
     return true;
 }
 
@@ -276,5 +276,5 @@ export function clearAllSeeds() {
     }
 
     keysToDelete.forEach(key => localStorage.removeItem(key));
-    console.log(`🗑️  Cleared ${keysToDelete.length} stored seeds`);
+    console.log(`[INFO] Cleared ${keysToDelete.length} stored seeds`);
 }
