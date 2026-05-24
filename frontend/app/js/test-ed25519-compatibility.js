@@ -110,9 +110,9 @@ async function testSecretVerification(secret, expectedCommitment) {
     const matches = computedCommitment.toLowerCase() === expectedCommitment.toLowerCase();
     
     if (matches) {
-        console.log('✅ VERIFICATION SUCCESS: Secret matches commitment!');
+        console.log('[SUCCESS] VERIFICATION SUCCESS: Secret matches commitment!');
     } else {
-        console.log('❌ VERIFICATION FAILED: Secret does not match commitment!');
+        console.log('[FAILED] VERIFICATION FAILED: Secret does not match commitment!');
     }
     
     return matches;

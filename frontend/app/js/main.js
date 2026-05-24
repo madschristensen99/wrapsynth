@@ -68,7 +68,7 @@ async function fetchXmrPrice() {
             const priceElement = document.getElementById('xmr-price-stat');
             if (priceElement) {
                 priceElement.textContent = `$${price.toFixed(2)}`;
-                console.log('✅ XMR price updated:', price);
+                console.log('[SUCCESS] XMR price updated:', price);
             } else {
                 console.error('Price element not found!');
             }
@@ -90,7 +90,7 @@ async function fetchXmrPrice() {
  * Initialize application
  */
 async function init() {
-    console.log('🌉 Phantom Agent initializing...');
+    console.log('[INIT] Phantom Agent initializing...');
     
     // Initialize UI
     initUI();
@@ -99,7 +99,7 @@ async function init() {
     // Initialize viem clients
     try {
         await initializeClients();
-        console.log('✅ Viem clients initialized');
+        console.log('[SUCCESS] Viem clients initialized');
     } catch (error) {
         console.error('Error initializing clients:', error);
         showError('Initialization Error', error.message);
@@ -125,7 +125,7 @@ async function init() {
     onAccountsChanged(handleAccountChange);
     onChainChanged(handleChainChange);
     
-    console.log('✅ Phantom Agent ready');
+    console.log('[SUCCESS] Phantom Agent ready');
 }
 
 /**
