@@ -8,6 +8,8 @@ import {ILiquidationFacet} from "../interfaces/facets/ILiquidationFacet.sol";
 import {IOracleFacet} from "../interfaces/facets/IOracleFacet.sol";
 import {IwsXmrHub} from "../interfaces/core/IwsXmrHub.sol";
 import {CollateralLogic} from "../libraries/CollateralLogic.sol";
+import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
+import {GnosisAddresses} from "../GnosisAddresses.sol";
 import {YieldLogic} from "../libraries/YieldLogic.sol";
 import {GnosisAddresses} from "../GnosisAddresses.sol";
 
@@ -176,8 +178,12 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
     }
     
     
-    function _calculateCollateralRatio(uint256 collateralAmount, uint256 debtAmount) internal view returns (uint256) {
+    function _calculateCollateralRatio(uint256 collateralShares, uint256 debtAmount) internal view returns (uint256) {
         if (debtAmount == 0) return type(uint256).max;
+        
+        // Convert sDAI shares to underlying DAI amount
+        uint256 collateralAmount = IERC4626(GnosisAddresses.SDAI).convertToAssets(collateralShares);
+        
         uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
         uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
         uint256 collateralValueUsd = CollateralLogic.collateralToUsd(collateralAmount, collateralPrice);

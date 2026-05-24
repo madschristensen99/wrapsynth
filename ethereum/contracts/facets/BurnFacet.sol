@@ -9,6 +9,8 @@ import {Ed25519} from "../Ed25519.sol";
 import {CollateralLogic} from "../libraries/CollateralLogic.sol";
 import {YieldLogic} from "../libraries/YieldLogic.sol";
 import {BurnLogic} from "../libraries/BurnLogic.sol";
+import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
+import {GnosisAddresses} from "../GnosisAddresses.sol";
 
 contract BurnFacet is wsXmrStorage, IBurnFacet {
     
@@ -292,8 +294,12 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         }
     }
     
-    function _calculateCollateralRatio(uint256 collateralAmount, uint256 debtAmount) internal view returns (uint256) {
+    function _calculateCollateralRatio(uint256 collateralShares, uint256 debtAmount) internal view returns (uint256) {
         if (debtAmount == 0) return type(uint256).max;
+        
+        // Convert sDAI shares to underlying DAI amount
+        uint256 collateralAmount = IERC4626(GnosisAddresses.SDAI).convertToAssets(collateralShares);
+        
         uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
         uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
         uint256 collateralValueUsd = CollateralLogic.collateralToUsd(collateralAmount, collateralPrice);

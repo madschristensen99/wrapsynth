@@ -1,0 +1,29 @@
+{
+  "network": "gnosis",
+  "chainId": 100,
+  "timestamp": "2026-05-24T10:37:00Z",
+  "contracts": {
+    "wsXMR": "0xeacf0bb7c761dbf7f28e08310eae63f725edda77",
+    "wsXmrHub": "0x577b42fc4fcbcce799de1fb8c40592de15ac100a",
+    "OracleFacet": "0xfeb574473a45cbae296160ac9274932147da7507",
+    "VaultFacet": "0x876c7236117c8791ce23c0266f2fd40a9432a130",
+    "MintFacet": "0x7fde09d178ef9ade4d79c861d238dd94310ab8c9",
+    "BurnFacet": "0x907d0be53e0b478dc5de244f79c565c9d339b65b",
+    "LiquidationFacet": "0x865d821abad609ed48bc9ddf15be0f49a6c460b5",
+    "YieldFacet": "0x37f130facb0110ab0b7efd0c790930fa34c16b17"
+  },
+  "external": {
+    "chainlinkVerifier": "0x2880aB155794e7179c9eE2e38200202908C17B43",
+    "sDAI": "0xaf204776c7245bF4147c2612BF6e5972Ee483701"
+  },
+  "explorer": {
+    "wsXMR": "https://gnosisscan.io/address/0xeacf0bb7c761dbf7f28e08310eae63f725edda77",
+    "wsXmrHub": "https://gnosisscan.io/address/0x577b42fc4fcbcce799de1fb8c40592de15ac100a",
+    "OracleFacet": "https://gnosisscan.io/address/0xfeb574473a45cbae296160ac9274932147da7507",
+    "VaultFacet": "https://gnosisscan.io/address/0x876c7236117c8791ce23c0266f2fd40a9432a130",
+    "MintFacet": "https://gnosisscan.io/address/0x7fde09d178ef9ade4d79c861d238dd94310ab8c9",
+    "BurnFacet": "https://gnosisscan.io/address/0x907d0be53e0b478dc5de244f79c565c9d339b65b",
+    "LiquidationFacet": "https://gnosisscan.io/address/0x865d821abad609ed48bc9ddf15be0f49a6c460b5",
+    "YieldFacet": "https://gnosisscan.io/address/0x37f130facb0110ab0b7efd0c790930fa34c16b17"
+  }
+}
