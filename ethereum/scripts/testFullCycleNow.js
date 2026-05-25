@@ -36,6 +36,7 @@ async function main() {
         'function setMaxMintBps(uint16 maxMintBps) external',
         'function setMinBurnAmount(uint256 minAmount) external',
         'function setMintGriefingDeposit(uint256 deposit) external',
+        'function setVaultMarketMetrics(uint16 mintFeeBps, uint16 burnRewardBps) external',
         'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment, uint256 timeoutDuration) external payable returns (bytes32)',
         'function setMintReady(bytes32 requestId) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
@@ -88,11 +89,12 @@ async function main() {
         await createVaultTx.wait();
         console.log('✅ Vault created');
         
-        // Configure vault
+        // Configure vault with fees
         await (await hub.setMaxMintBps(0)).wait();
         await (await hub.setMinBurnAmount(0)).wait();
         await (await hub.setMintGriefingDeposit(ethers.utils.parseEther('0.001'))).wait();
-        console.log('✅ Vault configured');
+        await (await hub.setVaultMarketMetrics(50, 30)).wait(); // 0.5% mint fee, 0.3% burn reward
+        console.log('✅ Vault configured (0.5% mint fee, 0.3% burn reward)');
         
         // Wrap xDAI and deposit as collateral
         const collateralAmount = ethers.utils.parseEther('1'); // 1 xDAI
@@ -106,12 +108,18 @@ async function main() {
     } else {
         console.log('✅ Vault already exists');
         
+        // Update vault fees to ensure they're set correctly
+        await (await hub.setVaultMarketMetrics(50, 30)).wait(); // 0.5% mint fee, 0.3% burn reward
+        console.log('✅ Updated vault fees (0.5% mint fee, 0.3% burn reward)');
+        
         // Check collateral balance
         const vault = await hub.getVault(wallet.address);
         console.log('   Collateral shares:', vault.collateralShares.toString());
         console.log('   Locked collateral:', vault.lockedCollateral.toString());
         console.log('   Normalized debt:', vault.normalizedDebt.toString());
         console.log('   Pending debt:', vault.pendingDebt.toString());
+        console.log('   Mint fee:', vault.mintFeeBps, 'bps');
+        console.log('   Burn reward:', vault.burnRewardBps, 'bps');
         
         // If no collateral, deposit some
         if (vault.collateralShares.eq(0)) {
@@ -276,9 +284,18 @@ async function main() {
     
     const decimals = await wsxmr.decimals();
     const wsxmrBalance = await wsxmr.balanceOf(wallet.address);
+    
+    // Verify mint fee (0.5% = 50 bps)
+    const expectedBeforeFee = expectedWsXmr;
+    const feeAmount = expectedBeforeFee.mul(50).div(10000); // 0.5%
+    const expectedAfterFee = expectedBeforeFee.sub(feeAmount);
+    
     console.log('wsXMR Decimals:', decimals);
-    console.log('wsXMR Balance (raw):', wsxmrBalance.toString());
-    console.log('wsXMR Balance:', ethers.utils.formatUnits(wsxmrBalance, decimals));
+    console.log('Expected (before fee):', ethers.utils.formatUnits(expectedBeforeFee, decimals), 'wsXMR');
+    console.log('Mint fee (0.5%):', ethers.utils.formatUnits(feeAmount, decimals), 'wsXMR');
+    console.log('Expected (after fee):', ethers.utils.formatUnits(expectedAfterFee, decimals), 'wsXMR');
+    console.log('Actual balance:', ethers.utils.formatUnits(wsxmrBalance, decimals), 'wsXMR');
+    console.log('✅ Fee correctly applied:', wsxmrBalance.eq(expectedAfterFee) ? 'YES' : 'NO');
     console.log('');
     
     console.log('📊 Step 6: BURN - Request');
@@ -320,10 +337,23 @@ async function main() {
     
     console.log('📊 Step 9: BURN - LP Finalizes');
     console.log('===============================');
+    
+    // Check wxDAI balance before burn to verify reward
+    const wxdaiBalanceBefore = await wxdai.balanceOf(wallet.address);
+    
     const finalizeBurnTx = await hub.finalizeBurn(burnRequestId, burnSecret, { gasLimit: 1000000 });
     const finalizeBurnReceipt = await finalizeBurnTx.wait();
     console.log('✅ Burn finalized!');
     console.log('Gas:', finalizeBurnReceipt.gasUsed.toString());
+    
+    // Check burn reward (0.3% of burn value in collateral)
+    const wxdaiBalanceAfter = await wxdai.balanceOf(wallet.address);
+    const burnReward = wxdaiBalanceAfter.sub(wxdaiBalanceBefore);
+    
+    console.log('');
+    console.log('Burn Reward Received:', ethers.utils.formatEther(burnReward), 'wxDAI');
+    console.log('✅ Burn reward applied:', burnReward.gt(0) ? 'YES' : 'NO');
+    console.log('');
     
     const finalBalance = await wsxmr.balanceOf(wallet.address);
     const totalSupply = await wsxmr.totalSupply();
