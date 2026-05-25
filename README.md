@@ -188,6 +188,12 @@ The latest deployment uses EIP-2535 Diamond pattern with CREATE2 vanity addresse
 - Modular facet design eliminates 24KB contract size limit
 - Shared libraries (CollateralLogic, YieldLogic, BurnLogic) reduce code duplication
 
+**⚠️ EVM Requirements:**
+- Requires Cancun or later EVM (for transient storage EIP-1153)
+- Gnosis Chain: ✅ Supported (Pectra upgrade April 2025)
+- Most L2s: ✅ Supported (verify deployment target has Cancun)
+- Solidity 0.8.28+ required for `transient` keyword
+
 #### Deploy to Unichain Testnet
 
 1. **Get testnet ETH** from [Unichain Faucet](https://faucet.unichain.org/)
@@ -401,12 +407,13 @@ wrapsynth/
 
 ### For Liquidity Providers
 
-1. **Create Vault**: Call `createVault()` with chosen collateral type
-2. **Deposit Collateral**: Lock ETH or ERC20 tokens (minimum 150% of debt value)
+1. **Create Vault**: Call `createVault()` to initialize your LP vault
+2. **Deposit Collateral**: Deposit xDAI (auto-converts to sDAI) - minimum 150% of debt value
 3. **Set Parameters**: Configure griefing deposit amount for mint requests
 4. **Accept Mints**: Users can initiate mints against your vault
 5. **Manage Health**: Monitor collateral ratio to avoid liquidation (<120%)
 6. **Earn Fees**: Collect fees from mint/burn operations
+7. **Yield Harvesting**: Excess sDAI yield is automatically extracted to protocol war chest
 
 ---
 

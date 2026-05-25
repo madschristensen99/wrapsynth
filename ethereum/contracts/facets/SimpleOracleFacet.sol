@@ -61,7 +61,7 @@ contract SimpleOracleFacet is wsXmrStorage, IOracleFacet {
     
     /// @inheritdoc IOracleFacet
     function getXmrPrice() external view returns (uint256) {
-        return getXmrPriceWithAge(10 minutes);
+        return getXmrPriceWithAge(2 minutes);
     }
     
     /// @inheritdoc IOracleFacet
@@ -77,7 +77,7 @@ contract SimpleOracleFacet is wsXmrStorage, IOracleFacet {
     
     /// @inheritdoc IOracleFacet
     function getCollateralPrice() external view returns (uint256) {
-        return getCollateralPriceWithAge(10 minutes);
+        return getCollateralPriceWithAge(2 minutes);
     }
     
     /// @inheritdoc IOracleFacet
@@ -93,7 +93,7 @@ contract SimpleOracleFacet is wsXmrStorage, IOracleFacet {
     
     /// @inheritdoc IOracleFacet
     function getXmrEmaPrice() external view returns (uint256) {
-        return getXmrPriceWithAge(10 minutes);
+        return getXmrPriceWithAge(2 minutes);
     }
     
     /// @inheritdoc IOracleFacet
