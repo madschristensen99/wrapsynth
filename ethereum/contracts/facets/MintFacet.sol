@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPLv3
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.28;
 
 import {wsXmrStorage} from "../core/wsXmrStorage.sol";
 import {IMintFacet} from "../interfaces/facets/IMintFacet.sol";
@@ -93,6 +93,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         });
         
         userMintRequests[msg.sender].push(requestId);
+        vaultMintRequests[lpVault].push(requestId);
         
         emit MintInitiated(
             requestId,
@@ -163,7 +164,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
                 emit ReturnQueued(request.initiator, address(0), request.griefingDeposit);
             }
             emit MintCancelled(request.requestId);
-            IwsXmrHub(address(this)).exitNonReentrant();
+            _reentrancyStatus = _NOT_ENTERED;
             return;
         }
         
@@ -237,35 +238,24 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     }
     
     function getVaultPendingMints(address lpVault) external view returns (bytes32[] memory) {
-        // Scan all user mint requests to find those targeting this vault
-        // This is inefficient but correct - in production, maintain a vaultMintRequests mapping
-        uint256 totalCount = 0;
+        bytes32[] storage vaultReqs = vaultMintRequests[lpVault];
+        uint256 count = 0;
         
-        // First pass: count matching requests
-        for (uint256 i = 0; i < vaultList.length; i++) {
-            address user = vaultList[i];
-            bytes32[] storage userReqs = userMintRequests[user];
-            for (uint256 j = 0; j < userReqs.length; j++) {
-                MintRequest storage req = mintRequests[userReqs[j]];
-                if (req.lpVault == lpVault && 
-                    (req.status == MintStatus.PENDING || req.status == MintStatus.READY)) {
-                    totalCount++;
-                }
+        // Count pending/ready requests
+        for (uint256 i = 0; i < vaultReqs.length; i++) {
+            MintRequest storage req = mintRequests[vaultReqs[i]];
+            if (req.status == MintStatus.PENDING || req.status == MintStatus.READY) {
+                count++;
             }
         }
         
-        // Second pass: collect matching requests
-        bytes32[] memory result = new bytes32[](totalCount);
+        // Collect pending/ready requests
+        bytes32[] memory result = new bytes32[](count);
         uint256 index = 0;
-        for (uint256 i = 0; i < vaultList.length; i++) {
-            address user = vaultList[i];
-            bytes32[] storage userReqs = userMintRequests[user];
-            for (uint256 j = 0; j < userReqs.length; j++) {
-                MintRequest storage req = mintRequests[userReqs[j]];
-                if (req.lpVault == lpVault && 
-                    (req.status == MintStatus.PENDING || req.status == MintStatus.READY)) {
-                    result[index++] = userReqs[j];
-                }
+        for (uint256 i = 0; i < vaultReqs.length; i++) {
+            MintRequest storage req = mintRequests[vaultReqs[i]];
+            if (req.status == MintStatus.PENDING || req.status == MintStatus.READY) {
+                result[index++] = vaultReqs[i];
             }
         }
         
@@ -283,6 +273,13 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     
     function _syncVaultYield(address lpAddress) internal {
         Vault storage vault = vaults[lpAddress];
+        
+        // Early return if no collateral
+        if (vault.collateralShares == 0) return;
+        
+        // Early return if no debt (skip expensive oracle calls)
+        uint256 actualDebt = (vault.normalizedDebt * globalDebtIndex) / 1e18;
+        if (actualDebt == 0 && vault.pendingDebt == 0) return;
         
         uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
         uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();

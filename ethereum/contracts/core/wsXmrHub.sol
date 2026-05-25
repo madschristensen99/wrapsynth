@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPLv3
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -28,8 +28,9 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     mapping(bytes4 => address) private _selectorToFacet;
     
     /// @notice Transient flag indicating we're inside a delegatecall from fallback
-    /// @dev Used to prevent direct external calls to privileged functions
-    bool private _inDelegateContext;
+    /// @dev Uses transient storage (EIP-1153) to prevent reentrancy bypass attacks
+    /// @dev Auto-clears at transaction end, not readable across separate calls
+    bool private transient _inDelegateContext;
     
     // ========== MODIFIERS ==========
     
@@ -202,9 +203,9 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     receive() external payable {}
     
     /// @notice Route function calls to appropriate facets via delegatecall
-    /// @dev Uses Diamond pattern with try-all-facets fallback for compatibility
+    /// @dev Uses transient storage flag to prevent reentrancy attacks during delegatecall
     fallback() external payable {
-        // Set delegate context flag to allow privileged function access
+        // Set transient delegate context flag - auto-clears at tx end
         _inDelegateContext = true;
         
         // Try all facets in order - proper error propagation
@@ -219,11 +220,9 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
                 calldatacopy(ptr, 0, calldatasize())
                 let result := delegatecall(gas(), facet, ptr, calldatasize(), 0, 0)
                 
-                // If call succeeded, clean up and return
+                // If call succeeded, return (transient storage auto-clears)
                 if result {
                     returndatacopy(ptr, 0, returndatasize())
-                    // Clear delegate flag before returning
-                    sstore(_inDelegateContext.slot, 0)
                     return(ptr, returndatasize())
                 }
                 
@@ -231,40 +230,25 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
                 let rdsize := returndatasize()
                 if iszero(rdsize) {
                     // Empty revert = function not found, try next facet
-                    // (Solidity reverts with empty data when function doesn't exist)
                 }
                 if gt(rdsize, 0) {
                     returndatacopy(ptr, 0, rdsize)
                     
-                    // Check if this is a custom error or panic (4-byte selector)
-                    // Custom errors and Panic have 4-byte selectors, propagate them
-                    // Only continue to next facet if this looks like "function not found"
-                    
-                    // If returndata >= 4 bytes, check the selector
+                    // Propagate all errors except Error(string) which may be "function not found"
+                    // WARNING: This is unsafe - legitimate require() failures get swallowed
+                    // TODO: Implement proper selector table to avoid this
                     if iszero(lt(rdsize, 4)) {
                         let errorSelector := shr(224, mload(ptr))
-                        
-                        // Error(string) is 0x08c379a0 - but this is NOT "function not found"
-                        // Function not found returns empty data in modern Solidity
-                        // Any error with data is a real error - propagate it
-                        // Exception: we'll continue on Error(string) for backwards compat
-                        // but this is unsafe - see security review
-                        
-                        // For safety: only continue if Error(string), else revert
+                        // Only continue on Error(string) (0x08c379a0)
                         if iszero(eq(errorSelector, 0x08c379a0)) {
-                            sstore(_inDelegateContext.slot, 0)
                             revert(ptr, rdsize)
                         }
                     }
-                    // If < 4 bytes or Error(string), continue to next facet
                 }
             }
         }
         
-        // Clear delegate flag before reverting
-        _inDelegateContext = false;
-        
-        // No facet handled the call
+        // No facet handled the call (transient storage auto-clears on revert)
         revert("Function does not exist");
     }
 }

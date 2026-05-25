@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPLv3
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.28;
 
 /**
  * @title wsXmrStorage
@@ -162,6 +162,7 @@ contract wsXmrStorage {
     mapping(address => bytes32[]) public userMintRequests;
     mapping(address => bytes32[]) public userBurnRequests;
     mapping(address => bytes32[]) public vaultBurnRequests;
+    mapping(address => bytes32[]) public vaultMintRequests;
     
     // Core mappings
     mapping(address => Vault) public vaults;

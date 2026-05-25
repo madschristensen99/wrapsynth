@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPLv3
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.28;
 
 import {wsXmrStorage} from "../core/wsXmrStorage.sol";
 import {IBurnFacet} from "../interfaces/facets/IBurnFacet.sol";
@@ -312,6 +312,13 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     
     function _syncVaultYield(address lpAddress) internal {
         Vault storage vault = vaults[lpAddress];
+        
+        // Early return if no collateral
+        if (vault.collateralShares == 0) return;
+        
+        // Early return if no debt (skip expensive oracle calls)
+        uint256 actualDebt = (vault.normalizedDebt * globalDebtIndex) / 1e18;
+        if (actualDebt == 0 && vault.pendingDebt == 0) return;
         
         uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
         uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
