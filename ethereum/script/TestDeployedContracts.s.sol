@@ -3,7 +3,7 @@ pragma solidity ^0.8.19;
 
 import "forge-std/Script.sol";
 import "../contracts/core/wsXmrHub.sol";
-import "../contracts/facets/ChainlinkOracleFacet.sol";
+import "../contracts/facets/RedStoneOracleFacet.sol";
 import "../contracts/wsXMR.sol";
 
 contract TestDeployedContracts is Script {
@@ -24,7 +24,7 @@ contract TestDeployedContracts is Script {
 
         wsXMR wsxmr = wsXMR(WSXMR);
         wsXmrHub hub = wsXmrHub(HUB);
-        ChainlinkOracleFacet oracleFacet = ChainlinkOracleFacet(ORACLE_FACET);
+        RedStoneOracleFacet oracleFacet = RedStoneOracleFacet(ORACLE_FACET);
 
         console.log("Test 1: Check wsXMR token properties");
         console.log("  Name:", wsxmr.name());

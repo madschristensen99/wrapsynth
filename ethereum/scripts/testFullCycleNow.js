@@ -7,8 +7,8 @@ const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 
-const HUB_ADDRESS = '0x22B24682332470cD539441B531D67B2998b07218';
-const WSXMR_ADDRESS = '0xa4A726C57E94E34fCA44a3b01b0343249bf20406';
+const HUB_ADDRESS = '0x71587d4d85B9c319Fdf3A82e4686E68f62c09EF2';
+const WSXMR_ADDRESS = '0xa0aaD445eA07997d877Add2A5F5A0865DB3A6286';
 const WXDAI_ADDRESS = '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d';
 
 async function main() {
@@ -106,7 +106,7 @@ async function main() {
     
     console.log('📊 Step 5: MINT - Finalize');
     console.log('===========================');
-    const finalizeTx = await hub.finalizeMint(requestId, secret);
+    const finalizeTx = await hub.finalizeMint(requestId, secret, { gasLimit: 1000000 });
     const finalizeReceipt = await finalizeTx.wait();
     console.log('✅ Mint finalized!');
     console.log('Gas:', finalizeReceipt.gasUsed.toString());
@@ -143,7 +143,7 @@ async function main() {
     console.log('===========================');
     const burnSecret = ethers.utils.randomBytes(32);
     
-    const finalizeBurnTx = await hub.finalizeBurn(burnRequestId, burnSecret);
+    const finalizeBurnTx = await hub.finalizeBurn(burnRequestId, burnSecret, { gasLimit: 1000000 });
     const finalizeBurnReceipt = await finalizeBurnTx.wait();
     console.log('✅ Burn finalized!');
     console.log('Gas:', finalizeBurnReceipt.gasUsed.toString());

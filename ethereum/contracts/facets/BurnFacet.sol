@@ -79,8 +79,8 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         uint256 remainingCollateral = vault.collateralShares - totalLock;
         uint256 remainingDebt = actualDebt - wsxmrAmount;
         if (remainingDebt > 0) {
-            uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
-            uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
+            uint256 xmrPrice = _getXmrPriceFromStorage();
+            uint256 collateralPrice = _getCollateralPriceFromStorage();
             uint256 postBurnRatio = YieldLogic.calculateVaultCollateralRatio(
                 remainingCollateral,
                 remainingDebt + vault.pendingDebt,
@@ -320,8 +320,8 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         uint256 actualDebt = (vault.normalizedDebt * globalDebtIndex) / 1e18;
         if (actualDebt == 0 && vault.pendingDebt == 0) return;
         
-        uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
-        uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
         
         uint256 yieldShares = YieldLogic.syncVaultYield(
             vault.collateralShares,
@@ -341,11 +341,11 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     }
     
     function _getCollateralValueForDebt(uint256 debtAmount) internal view returns (uint256) {
-        return CollateralLogic.getCollateralValueForDebt(debtAmount, IOracleFacet(oracleFacet).getXmrPrice(), COLLATERAL_RATIO);
+        return CollateralLogic.getCollateralValueForDebt(debtAmount, _getXmrPriceFromStorage(), COLLATERAL_RATIO);
     }
     
     function _usdToCollateral(uint256 usdValue) internal view returns (uint256) {
-        return CollateralLogic.usdToCollateral(usdValue, IOracleFacet(oracleFacet).getCollateralPrice());
+        return CollateralLogic.usdToCollateral(usdValue, _getCollateralPriceFromStorage());
     }
     
     function _cleanupBurnRequests(bytes32[] storage vaultBurns) internal returns (uint256 activeCount) {

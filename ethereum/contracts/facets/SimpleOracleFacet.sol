@@ -40,7 +40,7 @@ contract SimpleOracleFacet is wsXmrStorage, IOracleFacet {
     }
     
     /// @inheritdoc IOracleFacet
-    function updateChainlinkPrices(bytes[] calldata) external payable {
+    function updateOraclePrices(bytes[] calldata) external payable {
         // Compatibility function - does nothing, use updatePrices() instead
         if (msg.value > 0) {
             (bool success, ) = msg.sender.call{value: msg.value}("");
@@ -118,7 +118,7 @@ contract SimpleOracleFacet is wsXmrStorage, IOracleFacet {
     function selectors() external pure returns (bytes4[] memory) {
         bytes4[] memory sels = new bytes4[](10);
         sels[0] = this.updatePrices.selector;
-        sels[1] = this.updateChainlinkPrices.selector;
+        sels[1] = this.updateOraclePrices.selector;
         sels[2] = this.setPriceUpdater.selector;
         sels[3] = this.getXmrPrice.selector;
         sels[4] = this.getXmrPriceWithAge.selector;

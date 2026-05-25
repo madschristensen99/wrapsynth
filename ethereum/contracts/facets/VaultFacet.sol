@@ -329,8 +329,8 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         // Skip yield calculation if no debt - no point checking prices
         if (actualDebt == 0 && vault.pendingDebt == 0) return;
         
-        uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
-        uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
         
         uint256 yieldShares = YieldLogic.calculateExtractableYield(
             vault.collateralShares,
@@ -352,8 +352,8 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         uint256 collateralShares,
         uint256 debtAmount
     ) internal view returns (uint256 ratio) {
-        uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
-        uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
         return CollateralLogic.calculateRatioFromShares(
             collateralShares,
             debtAmount,
