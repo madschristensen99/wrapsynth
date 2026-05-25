@@ -120,7 +120,7 @@ library YieldLogic {
         uint256 collateralAmount = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(collateralShares);
         
         uint256 collateralValueUsd = (collateralAmount * collateralPrice) / PRICE_DECIMALS;
-        uint256 debtValueUsd = (debtAmount * xmrPrice) / PRICE_DECIMALS;
+        uint256 debtValueUsd = (debtAmount * xmrPrice) / 1e8; // wsXMR has 8 decimals
         
         return (collateralValueUsd * RATIO_PRECISION) / debtValueUsd;
     }

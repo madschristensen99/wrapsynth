@@ -47,7 +47,7 @@ library CollateralLogic {
         uint256 xmrPrice,
         uint256 ratio
     ) internal pure returns (uint256 collateralValueUsd) {
-        uint256 debtValueUsd = (debtAmount * xmrPrice) / 1e18; // Using 1e18 directly since this is a library
+        uint256 debtValueUsd = (debtAmount * xmrPrice) / 1e8; // wsXMR has 8 decimals
         collateralValueUsd = (debtValueUsd * ratio) / RATIO_PRECISION;
     }
     
@@ -73,7 +73,7 @@ library CollateralLogic {
         uint256 collateralAmount = abi.decode(data, (uint256));
         
         uint256 collateralValueUsd = (collateralAmount * collateralPrice) / 1e18;
-        uint256 debtValueUsd = (debtAmount * xmrPrice) / 1e18;
+        uint256 debtValueUsd = (debtAmount * xmrPrice) / 1e8; // wsXMR has 8 decimals
         
         return (collateralValueUsd * RATIO_PRECISION) / debtValueUsd;
     }

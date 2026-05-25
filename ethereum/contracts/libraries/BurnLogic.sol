@@ -18,7 +18,7 @@ library BurnLogic {
         uint256 xmrPrice,
         uint256 collateralPrice
     ) internal pure returns (uint256 rewardCollateral) {
-        uint256 wsxmrValueUsd = (wsxmrAmount * xmrPrice) / 1e18; // Price decimals (oracle returns 18 decimals)
+        uint256 wsxmrValueUsd = (wsxmrAmount * xmrPrice) / 1e8; // wsXMR has 8 decimals, xmrPrice has 18 decimals
         uint256 rewardValueUsd = (wsxmrValueUsd * burnRewardBps) / 10000;
         rewardCollateral = (rewardValueUsd * 1e18) / collateralPrice;
     }
@@ -32,7 +32,7 @@ library BurnLogic {
         uint256 collateralPrice,
         uint256 liquidationRatio
     ) internal pure returns (uint256 requiredCollateral) {
-        uint256 wsxmrValueUsd = (wsxmrAmount * xmrPrice) / 1e18; // Price decimals (oracle returns 18 decimals)
+        uint256 wsxmrValueUsd = (wsxmrAmount * xmrPrice) / 1e8; // wsXMR has 8 decimals, xmrPrice has 18 decimals
         uint256 requiredValueUsd = (wsxmrValueUsd * liquidationRatio) / 100;
         requiredCollateral = (requiredValueUsd * 1e18) / collateralPrice;
     }

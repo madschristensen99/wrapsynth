@@ -73,7 +73,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         collateralPrice = _getCollateralPriceFromStorage();
         xmrPrice = _getXmrPriceFromStorage();
         
-        uint256 debtValueUsd = (debtToClear * xmrPrice) / PRICE_DECIMALS;
+        uint256 debtValueUsd = (debtToClear * xmrPrice) / WSXMR_DECIMALS; // wsXMR has 8 decimals
         uint256 collateralValueUsd = (debtValueUsd * LIQUIDATION_BONUS) / RATIO_PRECISION;
         uint256 collateralToSeize = (collateralValueUsd * SDAI_DECIMALS) / collateralPrice;
         
@@ -137,7 +137,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         uint256 collateralPrice = _getCollateralPriceFromStorage();
         uint256 xmrPrice = _getXmrPriceFromStorage();
         
-        uint256 debtValueUsd = (debtToClear * xmrPrice) / PRICE_DECIMALS;
+        uint256 debtValueUsd = (debtToClear * xmrPrice) / WSXMR_DECIMALS; // wsXMR has 8 decimals
         uint256 collateralValueUsd = (debtValueUsd * LIQUIDATION_BONUS) / RATIO_PRECISION;
         collateralSeized = (collateralValueUsd * SDAI_DECIMALS) / collateralPrice;
         

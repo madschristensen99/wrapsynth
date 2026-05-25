@@ -49,7 +49,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             uint256 maxMintAllowed = (maxTotalDebtCapacity * vault.maxMintBps) / BPS_DENOMINATOR;
             
             uint256 xmrPrice = _getXmrPriceFromStorage();
-            uint256 wsxmrValueUsd = (wsxmrAmount * xmrPrice) / PRICE_DECIMALS;
+            uint256 wsxmrValueUsd = (wsxmrAmount * xmrPrice) / WSXMR_DECIMALS; // wsXMR has 8 decimals
             
             if (wsxmrValueUsd > maxMintAllowed) revert InvalidValue();
         }
