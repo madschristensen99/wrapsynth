@@ -73,7 +73,8 @@ contract E2EComprehensiveTest is Test {
         
         wsxmr.setHub(address(hub));
         
-        oracleFacet.updatePrices(390_00000000, 1_00000000);
+        // Update prices after warp (before any vault operations)
+        SimpleOracleFacet(address(hub)).updatePrices(390_00000000, 1_00000000);
         
         // Setup LP vault
         vm.startPrank(lp);

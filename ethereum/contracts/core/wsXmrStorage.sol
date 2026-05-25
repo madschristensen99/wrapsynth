@@ -35,7 +35,7 @@ contract wsXmrStorage {
     uint256 public constant MEV_SLIPPAGE_BPS = 100;
     uint256 public constant MAX_BURN_REQUESTS_PER_VAULT = 50;
     uint256 public constant MAX_VAULT_COUNT = 10000;
-    uint256 public constant MIN_BURN_AMOUNT = 1e6;
+    uint256 public constant MIN_BURN_AMOUNT = 1e4; // 0.0001 wsXMR (~$0.04 at $400/XMR)
     uint256 public constant BURN_LOCK_RATIO = 130;
     
     uint256 public constant XMR_TO_WSXMR_DIVISOR = 1e4;
