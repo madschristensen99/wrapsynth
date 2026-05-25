@@ -196,9 +196,9 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         globalPendingBurnDebt -= request.wsxmrAmount;
         
         if (safeReward > 0) {
-            pendingReturns[request.user][address(this)] += safeReward;
+            pendingReturns[request.user][GnosisAddresses.SDAI] += safeReward;
             globalPendingSDAI += safeReward;
-            emit ReturnQueued(request.user, address(this), safeReward);
+            emit ReturnQueued(request.user, GnosisAddresses.SDAI, safeReward);
         }
         
         request.status = BurnStatus.COMPLETED;
@@ -222,9 +222,9 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         vault.lockedCollateral -= totalSeized;
         globalPendingBurnDebt -= request.wsxmrAmount;
         
-        pendingReturns[request.user][address(this)] += totalSeized;
+        pendingReturns[request.user][GnosisAddresses.SDAI] += totalSeized;
         globalPendingSDAI += totalSeized;
-        emit ReturnQueued(request.user, address(this), totalSeized);
+        emit ReturnQueued(request.user, GnosisAddresses.SDAI, totalSeized);
         
         request.status = BurnStatus.SLASHED;
         emit BurnSlashed(requestId, request.user, totalSeized);

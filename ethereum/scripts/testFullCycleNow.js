@@ -8,9 +8,9 @@ const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 
-// NEW DEPLOYMENT WITH DECIMAL FIX + LOWER MIN_BURN (May 25, 2026)
-const HUB_ADDRESS = '0xf873f64360c2214feb5cf7d7b542a6a3ca6a3afb';
-const WSXMR_ADDRESS = '0x54182a360c9014b981a8dbf5d199bb82c3c5b197';
+// NEW DEPLOYMENT WITH BURN REWARD FIX (May 25, 2026 v1.2)
+const HUB_ADDRESS = '0x9b03355624acd1265508b981b046f4293b1ffed8';
+const WSXMR_ADDRESS = '0x910bfbfe34cfa4ea45b6ec8070872e2f89b5e6ad';
 const WXDAI_ADDRESS = '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d';
 const ED25519_HELPER = '0x7EBdE733CE8Bac20984f919e4d2E66e9eE86f2a3';
 
@@ -37,6 +37,8 @@ async function main() {
         'function setMinBurnAmount(uint256 minAmount) external',
         'function setMintGriefingDeposit(uint256 deposit) external',
         'function setVaultMarketMetrics(uint16 mintFeeBps, uint16 burnRewardBps) external',
+        'function getPendingReturns(address user, address token) external view returns (uint256)',
+        'function withdrawReturns(address token) external',
         'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment, uint256 timeoutDuration) external payable returns (bytes32)',
         'function setMintReady(bytes32 requestId) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
@@ -96,10 +98,17 @@ async function main() {
         await (await hub.setVaultMarketMetrics(50, 30)).wait(); // 0.5% mint fee, 0.3% burn reward
         console.log('✅ Vault configured (0.5% mint fee, 0.3% burn reward)');
         
-        // Wrap xDAI and deposit as collateral
-        const collateralAmount = ethers.utils.parseEther('1'); // 1 xDAI
-        await (await wxdai.deposit({ value: collateralAmount })).wait();
-        console.log('✅ Wrapped', ethers.utils.formatEther(collateralAmount), 'xDAI');
+        // Check wxDAI balance and wrap if needed
+        const collateralAmount = ethers.utils.parseEther('0.5'); // 0.5 xDAI
+        const wxdaiBalance = await wxdai.balanceOf(wallet.address);
+        
+        if (wxdaiBalance.lt(collateralAmount)) {
+            const toWrap = collateralAmount.sub(wxdaiBalance);
+            await (await wxdai.deposit({ value: toWrap })).wait();
+            console.log('✅ Wrapped', ethers.utils.formatEther(toWrap), 'xDAI');
+        } else {
+            console.log('✅ Already have', ethers.utils.formatEther(wxdaiBalance), 'wxDAI');
+        }
         
         await (await wxdai.approve(HUB_ADDRESS, collateralAmount)).wait();
         await (await hub.depositCollateral(collateralAmount)).wait();
@@ -124,9 +133,16 @@ async function main() {
         // If no collateral, deposit some
         if (vault.collateralShares.eq(0)) {
             console.log('⚠️  No collateral in vault, depositing...');
-            const collateralAmount = ethers.utils.parseEther('1'); // 1 xDAI
-            await (await wxdai.deposit({ value: collateralAmount })).wait();
-            console.log('✅ Wrapped', ethers.utils.formatEther(collateralAmount), 'xDAI');
+            const collateralAmount = ethers.utils.parseEther('0.5'); // 0.5 xDAI
+            const wxdaiBalance = await wxdai.balanceOf(wallet.address);
+            
+            if (wxdaiBalance.lt(collateralAmount)) {
+                const toWrap = collateralAmount.sub(wxdaiBalance);
+                await (await wxdai.deposit({ value: toWrap })).wait();
+                console.log('✅ Wrapped', ethers.utils.formatEther(toWrap), 'xDAI');
+            } else {
+                console.log('✅ Already have', ethers.utils.formatEther(wxdaiBalance), 'wxDAI');
+            }
             
             await (await wxdai.approve(HUB_ADDRESS, collateralAmount)).wait();
             await (await hub.depositCollateral(collateralAmount)).wait();
@@ -361,10 +377,29 @@ async function main() {
     console.log('Total Supply:', ethers.utils.formatUnits(totalSupply, decimals));
     console.log('');
     
+    console.log('📊 Step 10: CLAIM - Withdraw Burn Rewards');
+    console.log('==========================================');
+    const SDAI_ADDRESS = '0xaf204776c7245bF4147c2612BF6e5972Ee483701';
+    const pendingReward = await hub.getPendingReturns(wallet.address, SDAI_ADDRESS);
+    console.log('Pending sDAI Reward:', ethers.utils.formatEther(pendingReward), 'sDAI');
+    
+    if (pendingReward.gt(0)) {
+        const claimTx = await hub.withdrawReturns(SDAI_ADDRESS, { gasLimit: 200000 });
+        await claimTx.wait();
+        console.log('✅ Burn reward claimed!');
+        
+        const remainingReward = await hub.getPendingReturns(wallet.address, SDAI_ADDRESS);
+        console.log('Remaining Pending:', ethers.utils.formatEther(remainingReward), 'sDAI');
+    } else {
+        console.log('⚠️  No pending rewards to claim');
+    }
+    console.log('');
+    
     console.log('🎉 FULL CYCLE COMPLETE!');
     console.log('=======================');
     console.log('✅ Minted wsXMR tokens');
     console.log('✅ Burned wsXMR tokens');
+    console.log('✅ Claimed burn rewards');
     console.log('✅ Protocol fully functional on Gnosis mainnet!');
 }
 
