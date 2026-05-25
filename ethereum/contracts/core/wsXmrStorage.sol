@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPLv3
 pragma solidity ^0.8.28;
 
+import {IOracleFacet} from "../interfaces/facets/IOracleFacet.sol";
+
 /**
  * @title wsXmrStorage
  * @notice Shared storage layout for the wsXMR facet-based system
@@ -181,6 +183,28 @@ contract wsXmrStorage {
     uint256 internal _reentrancyStatus;
     uint256 internal constant _NOT_ENTERED = 1;
     uint256 internal constant _ENTERED = 2;
+    
+    // ========== INTERNAL HELPERS ==========
+    
+    /// @dev Internal helper to get XMR price from storage (avoids diamond staticcall issues)
+    function _getXmrPriceFromStorage() internal view returns (uint256) {
+        if (block.timestamp > lastXmrPriceTimestamp + 120) revert IOracleFacet.StalePrice();
+        int192 price = lastXmrPrice;
+        if (price <= 0) revert IOracleFacet.StalePrice();
+        uint256 normalized = uint256(uint192(price)) * 1e10;
+        if (normalized == 0) revert IOracleFacet.PriceNormalizedToZero();
+        return normalized;
+    }
+    
+    /// @dev Internal helper to get collateral price from storage (avoids diamond staticcall issues)
+    function _getCollateralPriceFromStorage() internal view returns (uint256) {
+        if (block.timestamp > lastCollateralPriceTimestamp + 120) revert IOracleFacet.StalePrice();
+        int192 price = lastCollateralPrice;
+        if (price <= 0) revert IOracleFacet.StalePrice();
+        uint256 normalized = uint256(uint192(price)) * 1e10;
+        if (normalized == 0) revert IOracleFacet.PriceNormalizedToZero();
+        return normalized;
+    }
     
     // ========== STORAGE GAPS ==========
     

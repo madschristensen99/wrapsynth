@@ -22,9 +22,9 @@ interface IOracleFacet {
     
     // ========== FUNCTIONS ==========
     
-    /// @notice Update Chainlink Data Streams price feeds
-    /// @param updateData Signed price update data
-    function updateChainlinkPrices(bytes[] calldata updateData) external payable;
+    /// @notice Update oracle price feeds (RedStone)
+    /// @param updateData Signed price update data (empty for RedStone - data is in calldata)
+    function updateOraclePrices(bytes[] calldata updateData) external payable;
     
     // ========== VIEW FUNCTIONS ==========
     
