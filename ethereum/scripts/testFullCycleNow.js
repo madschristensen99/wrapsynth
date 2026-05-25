@@ -10,6 +10,7 @@ const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartw
 const HUB_ADDRESS = '0x71587d4d85B9c319Fdf3A82e4686E68f62c09EF2';
 const WSXMR_ADDRESS = '0xa0aaD445eA07997d877Add2A5F5A0865DB3A6286';
 const WXDAI_ADDRESS = '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d';
+const ED25519_HELPER = '0x7EBdE733CE8Bac20984f919e4d2E66e9eE86f2a3';
 
 async function main() {
     const provider = new ethers.providers.JsonRpcProvider('https://rpc.gnosischain.com');
@@ -35,8 +36,13 @@ async function main() {
         'function approve(address spender, uint256 amount) external returns (bool)'
     ];
     
+    const ed25519HelperAbi = [
+        'function computeCommitment(bytes32 secret) external view returns (bytes32)'
+    ];
+    
     const hub = new ethers.Contract(HUB_ADDRESS, hubAbi, wallet);
     const wsxmr = new ethers.Contract(WSXMR_ADDRESS, wsxmrAbi, wallet);
+    const ed25519Helper = new ethers.Contract(ED25519_HELPER, ed25519HelperAbi, provider);
     
     // Wrap with RedStone
     const authorizedSigners = getSignersForDataServiceId("redstone-primary-prod");
@@ -58,11 +64,14 @@ async function main() {
     console.log('📊 Step 2: MINT - Initiate (IMMEDIATELY after price update)');
     console.log('============================================================');
     const xmrAmount = ethers.utils.parseUnits('0.01', 12);
+    
+    // Generate secret and compute Ed25519 commitment
     const secret = ethers.utils.randomBytes(32);
-    const claimCommitment = ethers.utils.keccak256(secret);
+    const claimCommitment = await ed25519Helper.computeCommitment(secret);
     const griefingDeposit = ethers.utils.parseEther('0.001');
     
     console.log('Secret:', ethers.utils.hexlify(secret));
+    console.log('Commitment:', claimCommitment);
     
     const mintTx = await hub.initiateMint(
         wallet.address,
