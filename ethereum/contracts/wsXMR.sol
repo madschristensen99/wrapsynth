@@ -13,10 +13,14 @@ import {IwsXMR} from "./interfaces/core/IwsXMR.sol";
  */
 contract wsXMR is ERC20, ERC20Permit, IwsXMR {
     address public hub;
+    address private immutable _deployer;
 
-    constructor() ERC20("Wrapsynth Monero", "wsXMR") ERC20Permit("Wrapsynth Monero") {}
+    constructor() ERC20("Wrapsynth Monero", "wsXMR") ERC20Permit("Wrapsynth Monero") {
+        _deployer = msg.sender;
+    }
 
     function setHub(address _hub) external {
+        require(msg.sender == _deployer, "Only deployer");
         require(hub == address(0), "Hub already set");
         require(_hub != address(0), "Zero address");
         hub = _hub;

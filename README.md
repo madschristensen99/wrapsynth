@@ -12,17 +12,18 @@ WrapSynth enables trustless cross-chain transfers of Monero (XMR) to Ethereum an
 
 ### Core Technology
 - **Atomic Swap Protocol**: HTLC-style secret commitments for trustless XMR ↔ wsXMR exchange
-- **Secp256k1 Verification**: Cryptographic verification of secret reveals using elliptic curve operations
+- **Ed25519 Verification**: Cryptographic verification of secret reveals using elliptic curve operations (matching Monero's curve)
+- **Diamond/Facet Architecture**: Modular EIP-2535 Diamond pattern for upgradeable logic with immutable storage
 - **Vault-Based System**: Individual LP vaults with isolated collateral and debt tracking
-- **Multi-Collateral Support**: Accept ETH, wstETH, or any ERC20 token as collateral
+- **sDAI Collateral**: Savings DAI (auto-converting from xDAI) with yield harvesting
 - **Real-Time Pricing**: Pyth Network oracle integration for accurate asset valuation
 
 ### Vault-Based Architecture
 - **Individual LP Vaults**: Each liquidity provider manages their own collateralized vault
-- **Multi-Collateral Support**: Accept ETH, wstETH, or other ERC20 tokens as collateral
+- **sDAI Collateral**: Savings DAI with automatic yield harvesting to protocol war chest
 - **Overcollateralization**: 150% collateral ratio ensures wsXMR is always backed
 - **Liquidation Protection**: 120% liquidation threshold with 110% liquidator bonus
-- **Pyth Oracle Integration**: Real-time price feeds for XMR and collateral assets
+- **Pyth Oracle Integration**: Real-time price feeds for XMR and sDAI/USD
 
 ### Security & Trust Model
 - **Overcollateralization**: 150% collateral ratio ensures wsXMR is always backed
@@ -67,35 +68,36 @@ This structure allows independent development and deployment of each chain while
 
 #### Gnosis Chain (ChainID: 100)
 
-**Latest Deployment (Vanity Addresses):**
+**Latest Deployment (Diamond Architecture):**
 - **wsXMR Token**: [`0x4206580496249266945A5aED42E41b6CE9cd8DAD`](https://gnosisscan.io/address/0x4206580496249266945A5aED42E41b6CE9cd8DAD) (0x420...)
-- **VaultManager**: [`0xB00fed5E2F06187369f5bbF2fcFF065FA188D1a5`](https://gnosisscan.io/address/0xB00fed5E2F06187369f5bbF2fcFF065FA188D1a5) (0xB00F...)
+- **wsXmrHub (Diamond)**: [`0xB00fed5E2F06187369f5bbF2fcFF065FA188D1a5`](https://gnosisscan.io/address/0xB00fed5E2F06187369f5bbF2fcFF065FA188D1a5) (0xB00F...)
 - **CREATE2 Factory**: [`0x5bCaA55651c71ec49b29feCAFA8a3D654F9f87e7`](https://gnosisscan.io/address/0x5bCaA55651c71ec49b29feCAFA8a3D654F9f87e7)
 - Deployed: March 12, 2026
-- Status: ✅ Deployed with vanity addresses
+- Status: ✅ Deployed with Diamond/facet architecture
 
-**Previous Deployment:**
+**Previous Deployment (Monolithic):**
 - **wsXMR Token**: [`0xf0114924F8e3d1D4dca68DEf1F3Ea402EF5B32a2`](https://gnosisscan.io/address/0xf0114924F8e3d1D4dca68DEf1F3Ea402EF5B32a2#code)
-- **VaultManager**: [`0x839257DE37b22B377e545514e2eD0b4f92266F88`](https://gnosisscan.io/address/0x839257DE37b22B377e545514e2eD0b4f92266F88#code)
+- **VaultManager (deprecated)**: [`0x839257DE37b22B377e545514e2eD0b4f92266F88`](https://gnosisscan.io/address/0x839257DE37b22B377e545514e2eD0b4f92266F88#code)
 - **wsXMRLiquidityRouter**: [`0x7Ed870F86ae9c7ecE955185792FFF1Ac57dc743a`](https://gnosisscan.io/address/0x7Ed870F86ae9c7ecE955185792FFF1Ac57dc743a#code)
 
 **Configuration:**
 - Collateral: sDAI (Savings DAI) - auto-converts from xDAI deposits
 - Oracle: Pyth Network (`0x2880aB155794e7179c9eE2e38200202908C17B43`)
-- Contract Size: VaultManager optimized to 24,026 bytes (under 24KB limit)
-- Modular Architecture: Uses CollateralLogic, YieldLogic, and BurnLogic libraries
+- Architecture: EIP-2535 Diamond pattern with 6 facets (Vault, Mint, Burn, Liquidation, Yield, Oracle)
+- Cryptography: Ed25519 elliptic curve (matching Monero) for atomic swap secret verification
+- Libraries: CollateralLogic, YieldLogic, BurnLogic for shared functionality
 
 **Target Networks:**
 - **Gnosis Chain** (ChainID: 100) - ✅ **LIVE** (low gas costs)
 - **Unichain Testnet** (ChainID: 1301) - Development and testing
 
 **Deployment Status:**
-- ✅ VaultManager and wsXMR contracts implemented
-- ✅ Atomic swap mechanics with HTLC-style commitments
+- ✅ Diamond/facet architecture (wsXmrHub + 6 facets) implemented
+- ✅ Atomic swap mechanics with HTLC-style commitments and Ed25519 verification
 - ✅ Pyth oracle integration for price feeds
 - ✅ **Deployed to Gnosis Chain mainnet**
 - ✅ **Contracts verified on Gnosisscan**
-- ✅ Multi-collateral support (sDAI with auto-conversion from xDAI)
+- ✅ sDAI collateral with automatic yield harvesting
 
 **Next Steps:**
 1. ✅ ~~Deploy VaultManager and wsXMR to Gnosis mainnet~~ **COMPLETE**
@@ -142,10 +144,11 @@ npx hardhat compile
 ```
 
 This will compile:
-- `VaultManager.sol` - Core vault and atomic swap logic
-- `wsXMR.sol` - ERC-20 token contract
-- `Secp256k1.sol` - Elliptic curve verification library
-- Supporting interfaces and libraries
+- `wsXmrHub.sol` - Diamond proxy with state storage and facet routing
+- `wsXMR.sol` - ERC-20 token contract (8 decimals)
+- Facets: `VaultFacet`, `MintFacet`, `BurnFacet`, `LiquidationFacet`, `YieldFacet`, `OracleFacet`
+- `Ed25519.sol` - Elliptic curve verification library (matching Monero's curve)
+- Supporting interfaces and libraries (CollateralLogic, YieldLogic, BurnLogic)
 
 ### Deploy Contracts
 
@@ -166,10 +169,10 @@ cp .env.example .env
 # From ethereum directory
 cd ethereum
 
-# Deploy VaultManager and wsXMR to Gnosis mainnet
+# Deploy wsXmrHub (Diamond) and wsXMR to Gnosis mainnet
 npm run deploy:gnosis
 
-# Or deploy with vanity addresses (0xB00F, 0x420, 0x247)
+# Or deploy with vanity addresses (0xB00F for hub, 0x420 for token)
 npx hardhat run scripts/deploy/deploy-vanity-fixed.js --network gnosis
 ```
 
@@ -178,11 +181,12 @@ npx hardhat run scripts/deploy/deploy-vanity-fixed.js --network gnosis
 npm run verify:gnosis
 ```
 
-**Vanity Address Deployment:**
-The latest deployment uses CREATE2 for deterministic vanity addresses:
-- VaultManager starts with `0xB00F`
+**Diamond Architecture Deployment:**
+The latest deployment uses EIP-2535 Diamond pattern with CREATE2 vanity addresses:
+- wsXmrHub (Diamond proxy) starts with `0xB00F`
 - wsXMR token starts with `0x420`
-- Contract size optimized to 24,026 bytes using modular libraries
+- Modular facet design eliminates 24KB contract size limit
+- Shared libraries (CollateralLogic, YieldLogic, BurnLogic) reduce code duplication
 
 #### Deploy to Unichain Testnet
 
@@ -193,7 +197,7 @@ The latest deployment uses CREATE2 for deterministic vanity addresses:
 # From ethereum directory
 cd ethereum
 
-# Deploy VaultManager and wsXMR to Unichain testnet
+# Deploy wsXmrHub (Diamond) and wsXMR to Unichain testnet
 npm run deploy:unichain
 ```
 
@@ -235,12 +239,20 @@ anchor test
 wrapsynth/
 ├── ethereum/                   # Ethereum/EVM implementation
 │   ├── contracts/             # Solidity smart contracts
-│   │   ├── VaultManager.sol   # Core vault system with atomic swap logic
+│   │   ├── core/              # Diamond core contracts
+│   │   │   ├── wsXmrHub.sol   # Diamond proxy with facet routing
+│   │   │   └── wsXmrStorage.sol # Shared storage layout
+│   │   ├── facets/            # Diamond facets (logic contracts)
+│   │   │   ├── VaultFacet.sol # Vault management
+│   │   │   ├── MintFacet.sol  # Mint operations
+│   │   │   ├── BurnFacet.sol  # Burn operations
+│   │   │   ├── LiquidationFacet.sol # Liquidation logic
+│   │   │   ├── YieldFacet.sol # Yield harvesting and buy-and-burn
+│   │   │   └── OracleFacet.sol # Price feed management
 │   │   ├── wsXMR.sol          # ERC-20 token (8 decimals)
-│   │   ├── Secp256k1.sol      # Elliptic curve verification library
+│   │   ├── Ed25519.sol        # Elliptic curve verification (Monero curve)
 │   │   ├── Create2Deployer.sol # CREATE2 factory for vanity addresses
-│   │   ├── IPyth.sol          # Pyth oracle interface
-│   │   ├── libraries/         # Modular logic libraries
+│   │   ├── libraries/         # Shared logic libraries
 │   │   │   ├── CollateralLogic.sol # Collateral ratio calculations
 │   │   │   ├── YieldLogic.sol # Yield harvesting logic
 │   │   │   └── BurnLogic.sol  # Burn request logic
@@ -334,22 +346,24 @@ wrapsynth/
 
 1. **Atomic Swap Protocol**
    - HTLC-style secret commitments for trustless exchange
-   - Secp256k1 elliptic curve verification
+   - Ed25519 elliptic curve verification (matching Monero's curve)
    - Timeout-based slashing for non-compliance
-   - No zero-knowledge proofs required
+   - Commitment binding to prevent secret replay attacks
 
 2. **Smart Contracts** (`contracts/`)
-   - **VaultManager.sol**: Core vault system managing LP collateral and mint/burn operations
+   - **wsXmrHub.sol**: EIP-2535 Diamond proxy with facet routing and shared storage
+   - **Facets**: VaultFacet, MintFacet, BurnFacet, LiquidationFacet, YieldFacet, OracleFacet
    - **wsXMR.sol**: ERC-20 token (8 decimals) representing wrapped Monero
-   - **Secp256k1.sol**: Elliptic curve verification for secret reveals
-   - **IPyth.sol**: Oracle integration for XMR and collateral price feeds
+   - **Ed25519.sol**: Elliptic curve verification for secret reveals (Monero's curve)
+   - **Libraries**: CollateralLogic, YieldLogic, BurnLogic for shared functionality
 
 3. **Vault System**
-   - Individual LP vaults with customizable collateral types (ETH, wstETH, etc.)
+   - Individual LP vaults with sDAI (Savings DAI) collateral
    - 150% collateralization ratio ensures wsXMR is always backed
    - 120% liquidation threshold with 110% liquidator bonus
    - Atomic swap-based mint/burn with HTLC commitments
-   - Pyth oracle integration for real-time price feeds
+   - Automatic yield harvesting to protocol war chest
+   - Pyth oracle integration for real-time XMR/USD and sDAI/USD price feeds
 
 ---
 
@@ -400,11 +414,12 @@ wrapsynth/
 
 ### Cryptographic Guarantees
 
-- **Secp256k1 Verification**: Elliptic curve operations verify secret reveals match commitments
+- **Ed25519 Verification**: Elliptic curve operations verify secret reveals match commitments (using Monero's curve)
 - **Hash-Time-Locked Contracts**: HTLC-style atomic swaps prevent fund loss
 - **Timeout Enforcement**: 24-hour windows with on-chain slashing for non-compliance
-- **Commitment Binding**: Secrets are cryptographically bound to commitments
+- **Commitment Binding**: Secrets are cryptographically bound to requestId to prevent replay attacks
 - **Collateral Escrow**: Smart contract holds collateral during burn process
+- **Delegate Context Protection**: Privileged functions only callable via Diamond delegatecall
 
 ### Economic Security
 
@@ -493,10 +508,11 @@ cargo run --release -- --config config.toml
 ## 🔮 Roadmap
 
 ### Phase 1: Core Development (Current)
-- ✅ VaultManager contract with atomic swap mechanics
+- ✅ Diamond/facet architecture (wsXmrHub + 6 facets)
 - ✅ wsXMR ERC-20 token implementation
-- ✅ Secp256k1 verification library
+- ✅ Ed25519 verification library (Monero curve)
 - ✅ Pyth oracle integration
+- ✅ Security fixes: access control, commitment binding, reentrancy optimization
 - 🔄 LP server infrastructure for managing vaults
 - 🔄 Frontend development
 

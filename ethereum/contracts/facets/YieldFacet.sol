@@ -67,10 +67,10 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         
         if (netDebtReduction > 0 && globalTotalDebt > 0) {
             uint256 reductionRatio = (netDebtReduction * 1e18) / globalTotalDebt;
-            globalDebtIndex = (globalDebtIndex * (1e18 - reductionRatio)) / 1e18;
-            if (globalDebtIndex < 1e10) {
-                globalDebtIndex = 1e10;
-            }
+            uint256 newIndex = (globalDebtIndex * (1e18 - reductionRatio)) / 1e18;
+            // Prevent index from going to zero, but allow natural decrease
+            // If index would drop below 1e6, it means >99.9999% debt reduction - cap at 1e6
+            globalDebtIndex = newIndex > 1e6 ? newIndex : 1e6;
         }
         
         emit BuyAndBurnExecuted(sDAIToSpend, wsxmrBought, keeperReward, globalDebtIndex);
