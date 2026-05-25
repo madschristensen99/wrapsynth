@@ -174,9 +174,9 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
         if (block.timestamp >= request.deadline) revert DeadlineExpired();
         
-        // Bind commitment to requestId to prevent secret replay across requests
+        // Verify the secret matches the hash
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
-        bytes32 computedHash = bytes32(keccak256(abi.encodePacked(requestId, px, py)));
+        bytes32 computedHash = keccak256(abi.encodePacked(px, py));
         if (computedHash != request.secretHash) revert InvalidSecret();
         
         _syncVaultYield(request.lpVault);
