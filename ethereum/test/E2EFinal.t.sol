@@ -69,12 +69,13 @@ contract E2EFinalTest is Test {
         );
         
         wsxmr.setHub(address(hub));
-        
-        oracleFacet.updatePrices(390_00000000, 1_00000000);
     }
     
     function test_FullCycle() public {
         console.log("=== FULL MINT AND BURN CYCLE ===\n");
+        
+        // Update prices after warp (before any vault operations)
+        SimpleOracleFacet(address(hub)).updatePrices(390_00000000, 1_00000000);
         
         // LP creates vault and deposits
         vm.startPrank(lp);

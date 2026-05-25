@@ -3,16 +3,23 @@
  * Test FULL mint and burn cycle - update prices and immediately execute
  */
 
+require('dotenv').config();
 const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 
-const HUB_ADDRESS = '0x6889AC1EA36019ce6bb4552FB9d24ED50b5F13Ed';
-const WSXMR_ADDRESS = '0xc9162719b6BD9AfCc123D1e9F4D657b857E3aCDd';
+// NEW DEPLOYMENT WITH DECIMAL FIX + LOWER MIN_BURN (May 25, 2026)
+const HUB_ADDRESS = '0xf873f64360c2214feb5cf7d7b542a6a3ca6a3afb';
+const WSXMR_ADDRESS = '0x54182a360c9014b981a8dbf5d199bb82c3c5b197';
 const WXDAI_ADDRESS = '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d';
 const ED25519_HELPER = '0x7EBdE733CE8Bac20984f919e4d2E66e9eE86f2a3';
 
 async function main() {
+    if (!process.env.PRIVATE_KEY) {
+        console.error('❌ PRIVATE_KEY environment variable not set');
+        process.exit(1);
+    }
+    
     const provider = new ethers.providers.JsonRpcProvider('https://rpc.gnosischain.com');
     const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
     
@@ -22,6 +29,13 @@ async function main() {
     console.log('');
     
     const hubAbi = [
+        'function createVault() external',
+        'function depositCollateral(uint256 amount) external',
+        'function hasActiveVault(address lpAddress) external view returns (bool)',
+        'function getVault(address lpAddress) external view returns (tuple(address lpAddress, uint256 collateralShares, uint256 lockedCollateral, uint256 normalizedDebt, uint256 pendingDebt, uint16 maxMintBps, uint256 mintGriefingDeposit, uint256 mintReadyBond, uint16 mintFeeBps, uint16 burnRewardBps, uint256 liquidationNonce, uint256 mintNonce, uint256 minBurnAmount, bool active))',
+        'function setMaxMintBps(uint16 maxMintBps) external',
+        'function setMinBurnAmount(uint256 minAmount) external',
+        'function setMintGriefingDeposit(uint256 deposit) external',
         'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment, uint256 timeoutDuration) external payable returns (bytes32)',
         'function setMintReady(bytes32 requestId) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
@@ -35,7 +49,15 @@ async function main() {
     const wsxmrAbi = [
         'function balanceOf(address) external view returns (uint256)',
         'function totalSupply() external view returns (uint256)',
-        'function approve(address spender, uint256 amount) external returns (bool)'
+        'function approve(address spender, uint256 amount) external returns (bool)',
+        'function decimals() external view returns (uint8)'
+    ];
+    
+    const wxdaiAbi = [
+        'function balanceOf(address) external view returns (uint256)',
+        'function approve(address spender, uint256 amount) external returns (bool)',
+        'function deposit() external payable',
+        'function withdraw(uint256 amount) external'
     ];
     
     const ed25519HelperAbi = [
@@ -44,6 +66,7 @@ async function main() {
     
     const hub = new ethers.Contract(HUB_ADDRESS, hubAbi, wallet);
     const wsxmr = new ethers.Contract(WSXMR_ADDRESS, wsxmrAbi, wallet);
+    const wxdai = new ethers.Contract(WXDAI_ADDRESS, wxdaiAbi, wallet);
     const ed25519Helper = new ethers.Contract(ED25519_HELPER, ed25519HelperAbi, provider);
     
     // Wrap with RedStone
@@ -55,6 +78,128 @@ async function main() {
         authorizedSigners
     });
     
+    // Check if vault exists, create if needed
+    const hasVault = await hub.hasActiveVault(wallet.address);
+    if (!hasVault) {
+        console.log('📊 Step 0: Creating Vault and Depositing Collateral');
+        console.log('====================================================');
+        
+        const createVaultTx = await hub.createVault();
+        await createVaultTx.wait();
+        console.log('✅ Vault created');
+        
+        // Configure vault
+        await (await hub.setMaxMintBps(0)).wait();
+        await (await hub.setMinBurnAmount(0)).wait();
+        await (await hub.setMintGriefingDeposit(ethers.utils.parseEther('0.001'))).wait();
+        console.log('✅ Vault configured');
+        
+        // Wrap xDAI and deposit as collateral
+        const collateralAmount = ethers.utils.parseEther('1'); // 1 xDAI
+        await (await wxdai.deposit({ value: collateralAmount })).wait();
+        console.log('✅ Wrapped', ethers.utils.formatEther(collateralAmount), 'xDAI');
+        
+        await (await wxdai.approve(HUB_ADDRESS, collateralAmount)).wait();
+        await (await hub.depositCollateral(collateralAmount)).wait();
+        console.log('✅ Deposited', ethers.utils.formatEther(collateralAmount), 'xDAI as collateral');
+        console.log('');
+    } else {
+        console.log('✅ Vault already exists');
+        
+        // Check collateral balance
+        const vault = await hub.getVault(wallet.address);
+        console.log('   Collateral shares:', vault.collateralShares.toString());
+        console.log('   Locked collateral:', vault.lockedCollateral.toString());
+        console.log('   Normalized debt:', vault.normalizedDebt.toString());
+        console.log('   Pending debt:', vault.pendingDebt.toString());
+        
+        // If no collateral, deposit some
+        if (vault.collateralShares.eq(0)) {
+            console.log('⚠️  No collateral in vault, depositing...');
+            const collateralAmount = ethers.utils.parseEther('1'); // 1 xDAI
+            await (await wxdai.deposit({ value: collateralAmount })).wait();
+            console.log('✅ Wrapped', ethers.utils.formatEther(collateralAmount), 'xDAI');
+            
+            await (await wxdai.approve(HUB_ADDRESS, collateralAmount)).wait();
+            await (await hub.depositCollateral(collateralAmount)).wait();
+            console.log('✅ Deposited', ethers.utils.formatEther(collateralAmount), 'xDAI as collateral');
+        }
+        console.log('');
+    }
+    
+    // Check if we already have wsXMR balance
+    const existingBalance = await wsxmr.balanceOf(wallet.address);
+    const MIN_BURN_AMOUNT = ethers.BigNumber.from('10000'); // 1e4 = 0.0001 wsXMR
+    
+    if (existingBalance.gt(0) && existingBalance.gte(MIN_BURN_AMOUNT)) {
+        console.log('⚠️  Already have wsXMR balance:', existingBalance.toString());
+        console.log('   Skipping mint, going straight to burn...\n');
+        
+        const decimals = await wsxmr.decimals();
+        
+        // Update prices before burn
+        console.log('📊 Update Prices');
+        console.log('================');
+        const updateTx = await wrappedHub.updateOraclePrices([]);
+        console.log('TX:', updateTx.hash);
+        await updateTx.wait();
+        console.log('✅ Prices updated\n');
+        
+        // Jump to burn
+        console.log('📊 BURN - Request');
+        console.log('=================');
+        const burnAmount = existingBalance;
+        
+        const approveTx = await wsxmr.approve(HUB_ADDRESS, burnAmount);
+        await approveTx.wait();
+        
+        const burnRequestId = await hub.callStatic.requestBurn(burnAmount, wallet.address, wallet.address);
+        const burnTx = await hub.requestBurn(burnAmount, wallet.address, wallet.address);
+        await burnTx.wait();
+        
+        console.log('✅ Burn requested!');
+        console.log('Request ID:', burnRequestId);
+        console.log('Amount:', ethers.utils.formatUnits(burnAmount, decimals), 'wsXMR');
+        console.log('');
+        
+        console.log('📊 BURN - LP Proposes Hash');
+        console.log('===========================');
+        const burnSecret = ethers.utils.randomBytes(32);
+        const secretHash = await ed25519Helper.computeCommitment(burnSecret);
+        
+        console.log('Burn Secret:', ethers.utils.hexlify(burnSecret));
+        console.log('Secret Hash:', secretHash);
+        
+        const proposeHashTx = await hub.proposeHash(burnRequestId, secretHash);
+        await proposeHashTx.wait();
+        console.log('✅ LP proposed secret hash\n');
+        
+        console.log('📊 BURN - User Confirms Monero Lock');
+        console.log('====================================');
+        const confirmTx = await hub.confirmMoneroLock(burnRequestId, { gasLimit: 500000 });
+        await confirmTx.wait();
+        console.log('✅ User confirmed Monero lock\n');
+        
+        console.log('📊 BURN - LP Finalizes');
+        console.log('=======================');
+        const finalizeBurnTx = await hub.finalizeBurn(burnRequestId, burnSecret, { gasLimit: 1000000 });
+        const finalizeBurnReceipt = await finalizeBurnTx.wait();
+        console.log('✅ Burn finalized!');
+        console.log('Gas:', finalizeBurnReceipt.gasUsed.toString());
+        
+        const finalBalance = await wsxmr.balanceOf(wallet.address);
+        const totalSupply = await wsxmr.totalSupply();
+        console.log('Final wsXMR Balance:', ethers.utils.formatUnits(finalBalance, decimals));
+        console.log('Total Supply:', ethers.utils.formatUnits(totalSupply, decimals));
+        console.log('');
+        
+        console.log('🎉 BURN COMPLETE!');
+        console.log('=================');
+        console.log('✅ Burned wsXMR tokens');
+        console.log('✅ Protocol fully functional on Gnosis mainnet!');
+        return;
+    }
+    
     console.log('📊 Step 1: Update Prices');
     console.log('========================');
     const updateTx = await wrappedHub.updateOraclePrices([]);
@@ -65,7 +210,14 @@ async function main() {
     
     console.log('📊 Step 2: MINT - Initiate (IMMEDIATELY after price update)');
     console.log('============================================================');
-    const xmrAmount = ethers.utils.parseUnits('0.01', 12);
+    // Mint 0.0002 wsXMR = 20000 wsXMR units (above new minimum of 10000)
+    // wsXMR = xmrAmount / 10000
+    // So xmrAmount = 20000 * 10000 = 200,000,000 XMR atomic units
+    const xmrAmount = ethers.BigNumber.from('200000000'); // Will produce 20000 wsXMR units = 0.0002 wsXMR
+    const expectedWsXmr = xmrAmount.div(10000);
+    console.log('XMR atomic units:', xmrAmount.toString());
+    console.log('Expected wsXMR (raw):', expectedWsXmr.toString());
+    console.log('Expected wsXMR:', ethers.utils.formatUnits(expectedWsXmr, 8));
     
     // Generate secret and compute Ed25519 commitment
     const secret = ethers.utils.randomBytes(32);
@@ -122,8 +274,11 @@ async function main() {
     console.log('✅ Mint finalized!');
     console.log('Gas:', finalizeReceipt.gasUsed.toString());
     
+    const decimals = await wsxmr.decimals();
     const wsxmrBalance = await wsxmr.balanceOf(wallet.address);
-    console.log('wsXMR Balance:', ethers.utils.formatUnits(wsxmrBalance, 12));
+    console.log('wsXMR Decimals:', decimals);
+    console.log('wsXMR Balance (raw):', wsxmrBalance.toString());
+    console.log('wsXMR Balance:', ethers.utils.formatUnits(wsxmrBalance, decimals));
     console.log('');
     
     console.log('📊 Step 6: BURN - Request');
@@ -140,7 +295,7 @@ async function main() {
     
     console.log('✅ Burn requested!');
     console.log('Request ID:', burnRequestId);
-    console.log('Amount:', ethers.utils.formatUnits(burnAmount, 12), 'wsXMR');
+    console.log('Amount:', ethers.utils.formatUnits(burnAmount, decimals), 'wsXMR');
     console.log('');
     
     console.log('📊 Step 7: BURN - LP Proposes Hash');
@@ -172,8 +327,8 @@ async function main() {
     
     const finalBalance = await wsxmr.balanceOf(wallet.address);
     const totalSupply = await wsxmr.totalSupply();
-    console.log('Final wsXMR Balance:', ethers.utils.formatUnits(finalBalance, 12));
-    console.log('Total Supply:', ethers.utils.formatUnits(totalSupply, 12));
+    console.log('Final wsXMR Balance:', ethers.utils.formatUnits(finalBalance, decimals));
+    console.log('Total Supply:', ethers.utils.formatUnits(totalSupply, decimals));
     console.log('');
     
     console.log('🎉 FULL CYCLE COMPLETE!');
