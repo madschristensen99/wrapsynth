@@ -24,8 +24,8 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         if (block.timestamp < lastBuyTimestamp + COOLDOWN_PERIOD) revert CooldownActive();
         if (yieldWarChest == 0) revert WarChestEmpty();
         
-        uint256 spotPrice = IOracleFacet(oracleFacet).getXmrPrice();
-        uint256 emaPrice = IOracleFacet(oracleFacet).getXmrEmaPrice();
+        uint256 spotPrice = _getXmrPriceFromStorage();
+        uint256 emaPrice = IOracleFacet(address(this)).getXmrEmaPrice();
         
         if (spotPrice > (emaPrice * EMA_TRIGGER_THRESHOLD) / 100) revert XMRNotDipped();
         
@@ -114,8 +114,8 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         if (vault.collateralShares == 0) return;
         
         uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
-        uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
-        uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
         
         uint256 yieldShares = YieldLogic.calculateExtractableYield(
             vault.collateralShares,
@@ -151,8 +151,8 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
             return (false, "War chest empty");
         }
         
-        uint256 spotPrice = IOracleFacet(oracleFacet).getXmrPrice();
-        uint256 emaPrice = IOracleFacet(oracleFacet).getXmrEmaPrice();
+        uint256 spotPrice = _getXmrPriceFromStorage();
+        uint256 emaPrice = IOracleFacet(address(this)).getXmrEmaPrice();
         
         if (spotPrice > (emaPrice * EMA_TRIGGER_THRESHOLD) / 100) {
             return (false, "XMR price not dipped");
@@ -165,8 +165,8 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         Vault storage vault = vaults[lpVault];
         uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
         uint256 pendingDebt = vault.pendingDebt;
-        uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
-        uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
         
         return YieldLogic.calculateExtractableYield(
             vault.collateralShares,

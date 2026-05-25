@@ -26,7 +26,7 @@ contract RedStoneOracleFacet is wsXmrStorage, IOracleFacet, PrimaryProdDataServi
     
     /// @inheritdoc IOracleFacet
     /// @dev RedStone prices are passed in calldata, no need for explicit update
-    function updateChainlinkPrices(bytes[] calldata) external payable {
+    function updateOraclePrices(bytes[] calldata) external payable {
         // Fetch prices from RedStone (data is in tx calldata)
         uint256 xmrPrice = getOracleNumericValueFromTxMsg(XMR_FEED_ID);
         uint256 daiPrice = getOracleNumericValueFromTxMsg(DAI_FEED_ID);
@@ -99,5 +99,21 @@ contract RedStoneOracleFacet is wsXmrStorage, IOracleFacet, PrimaryProdDataServi
     /// @inheritdoc IOracleFacet
     function denormalizeDebt(uint256 normalizedDebt) external view returns (uint256) {
         return (normalizedDebt * globalDebtIndex) / 1e18;
+    }
+    
+    // ========== DIAMOND INTROSPECTION ==========
+    
+    /// @notice Returns all function selectors implemented by this facet
+    function selectors() external pure returns (bytes4[] memory) {
+        bytes4[] memory sels = new bytes4[](8);
+        sels[0] = this.updateOraclePrices.selector;
+        sels[1] = this.getXmrPrice.selector;
+        sels[2] = this.getXmrPriceWithAge.selector;
+        sels[3] = this.getCollateralPrice.selector;
+        sels[4] = this.getCollateralPriceWithAge.selector;
+        sels[5] = this.getXmrEmaPrice.selector;
+        sels[6] = this.getUpdateFee.selector;
+        sels[7] = this.normalizeDebt.selector;
+        return sels;
     }
 }

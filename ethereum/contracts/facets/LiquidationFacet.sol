@@ -32,8 +32,8 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         
         if (vault.collateralShares > 0) {
             actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
-            xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
-            collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
+            xmrPrice = _getXmrPriceFromStorage();
+            collateralPrice = _getCollateralPriceFromStorage();
             
             uint256 yieldShares = YieldLogic.calculateExtractableYield(
                 vault.collateralShares,
@@ -70,8 +70,8 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             }
         }
         
-        collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
-        xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
+        collateralPrice = _getCollateralPriceFromStorage();
+        xmrPrice = _getXmrPriceFromStorage();
         
         uint256 debtValueUsd = (debtToClear * xmrPrice) / PRICE_DECIMALS;
         uint256 collateralValueUsd = (debtValueUsd * LIQUIDATION_BONUS) / RATIO_PRECISION;
@@ -134,8 +134,8 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             debtToClear = actualDebt;
         }
         
-        uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
-        uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
+        uint256 xmrPrice = _getXmrPriceFromStorage();
         
         uint256 debtValueUsd = (debtToClear * xmrPrice) / PRICE_DECIMALS;
         uint256 collateralValueUsd = (debtValueUsd * LIQUIDATION_BONUS) / RATIO_PRECISION;
@@ -183,8 +183,8 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
     
     
     function _calculateCollateralRatio(uint256 collateralShares, uint256 debtAmount) internal view returns (uint256) {
-        uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
-        uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
+        uint256 xmrPrice = IOracleFacet(address(this)).getXmrPrice();
+        uint256 collateralPrice = IOracleFacet(address(this)).getCollateralPrice();
         return CollateralLogic.calculateRatioFromShares(
             collateralShares,
             debtAmount,
