@@ -118,5 +118,21 @@ contract OracleFacet is wsXmrStorage, IOracleFacet {
         return (normalizedDebt * globalDebtIndex) / 1e18;
     }
     
+    // ========== DIAMOND INTROSPECTION ==========
+    
+    /// @notice Returns all function selectors implemented by this facet
+    function selectors() external pure returns (bytes4[] memory) {
+        bytes4[] memory sels = new bytes4[](8);
+        sels[0] = this.updateChainlinkPrices.selector;
+        sels[1] = this.getXmrPrice.selector;
+        sels[2] = this.getXmrPriceWithAge.selector;
+        sels[3] = this.getCollateralPrice.selector;
+        sels[4] = this.getCollateralPriceWithAge.selector;
+        sels[5] = this.getXmrEmaPrice.selector;
+        sels[6] = this.normalizeDebt.selector;
+        sels[7] = this.denormalizeDebt.selector;
+        return sels;
+    }
+    
     // Note: Constants are inherited from wsXmrStorage as public constants
 }

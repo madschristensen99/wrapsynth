@@ -111,4 +111,22 @@ contract SimpleOracleFacet is wsXmrStorage, IOracleFacet {
     function denormalizeDebt(uint256 normalizedDebt) external view returns (uint256) {
         return (normalizedDebt * globalDebtIndex) / 1e18;
     }
+    
+    // ========== DIAMOND INTROSPECTION ==========
+    
+    /// @notice Returns all function selectors implemented by this facet
+    function selectors() external pure returns (bytes4[] memory) {
+        bytes4[] memory sels = new bytes4[](10);
+        sels[0] = this.updatePrices.selector;
+        sels[1] = this.updateChainlinkPrices.selector;
+        sels[2] = this.setPriceUpdater.selector;
+        sels[3] = this.getXmrPrice.selector;
+        sels[4] = this.getXmrPriceWithAge.selector;
+        sels[5] = this.getCollateralPrice.selector;
+        sels[6] = this.getCollateralPriceWithAge.selector;
+        sels[7] = this.getXmrEmaPrice.selector;
+        sels[8] = this.normalizeDebt.selector;
+        sels[9] = this.denormalizeDebt.selector;
+        return sels;
+    }
 }

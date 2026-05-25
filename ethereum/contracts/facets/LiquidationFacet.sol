@@ -189,4 +189,16 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             xmrPrice
         );
     }
+    
+    // ========== DIAMOND INTROSPECTION ==========
+    
+    /// @notice Returns all function selectors implemented by this facet
+    function selectors() external pure returns (bytes4[] memory) {
+        bytes4[] memory sels = new bytes4[](4);
+        sels[0] = this.liquidate.selector;
+        sels[1] = this.isVaultLiquidatable.selector;
+        sels[2] = this.calculateLiquidation.selector;
+        sels[3] = this.getLiquidatableVaults.selector;
+        return sels;
+    }
 }

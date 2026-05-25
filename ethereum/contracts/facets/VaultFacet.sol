@@ -273,6 +273,33 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         return vaults[lpAddress].active;
     }
     
+    // ========== DIAMOND INTROSPECTION ==========
+    
+    /// @notice Returns all function selectors implemented by this facet
+    /// @dev Used by Diamond to build selector → facet routing table
+    function selectors() external pure returns (bytes4[] memory) {
+        bytes4[] memory sels = new bytes4[](18);
+        sels[0] = this.createVault.selector;
+        sels[1] = this.deactivateVault.selector;
+        sels[2] = this.depositCollateral.selector;
+        sels[3] = this.depositShares.selector;
+        sels[4] = this.withdrawCollateral.selector;
+        sels[5] = this.setMintGriefingDeposit.selector;
+        sels[6] = this.setVaultMarketMetrics.selector;
+        sels[7] = this.setMaxMintBps.selector;
+        sels[8] = this.setMinBurnAmount.selector;
+        sels[9] = this.withdrawReturns.selector;
+        sels[10] = this.getVault.selector;
+        sels[11] = this.getVaultHealth.selector;
+        sels[12] = this.getVaultDebt.selector;
+        sels[13] = this.getVaultCount.selector;
+        sels[14] = this.getVaultAtIndex.selector;
+        sels[15] = this.getPendingReturns.selector;
+        sels[16] = this.hasActiveVault.selector;
+        sels[17] = this.selectors.selector;
+        return sels;
+    }
+    
     /// @inheritdoc IVaultFacet
     function calculateCollateralRatio(
         uint256 collateralAmount,

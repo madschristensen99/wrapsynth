@@ -100,8 +100,13 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         facets[_yieldFacet] = true;
         facets[_oracleFacet] = true;
         
-        // Build Diamond selector dispatch table
-        _buildSelectorTable();
+        // Build selector table by querying each facet's selectors()
+        _registerFacetSelectors(_vaultFacet);
+        _registerFacetSelectors(_mintFacet);
+        _registerFacetSelectors(_burnFacet);
+        _registerFacetSelectors(_liquidationFacet);
+        _registerFacetSelectors(_yieldFacet);
+        _registerFacetSelectors(_oracleFacet);
         
         emit FacetsRegistered(
             _vaultFacet,
@@ -113,12 +118,36 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         );
     }
     
-    /// @notice Build the Diamond selector => facet dispatch table
-    /// @dev Called once during registerFacets. Uses try/catch to discover selectors.
-    function _buildSelectorTable() private {
-        // This is a simplified approach - in production you'd pass selector lists explicitly
-        // For now, we'll rely on the fallback's try-each-facet behavior but with proper error handling
-        // A full Diamond implementation would register selectors explicitly during facet registration
+    /// @notice Register all selectors from a facet into the routing table
+    /// @dev Calls facet.selectors() and maps each selector to the facet address
+    function _registerFacetSelectors(address facet) private {
+        (bool success, bytes memory data) = facet.staticcall(
+            abi.encodeWithSignature("selectors()")
+        );
+        require(success, "Failed to get selectors");
+        
+        bytes4[] memory sels = abi.decode(data, (bytes4[]));
+        for (uint256 i = 0; i < sels.length; i++) {
+            _selectorToFacet[sels[i]] = facet;
+        }
+    }
+    
+    /// @notice Add new selectors to the routing table
+    /// @dev Only deployer can modify selector table
+    function addSelectors(address facet, bytes4[] calldata selectors) external onlyDeployer {
+        if (!facets[facet]) revert Unauthorized();
+        
+        for (uint256 i = 0; i < selectors.length; i++) {
+            _selectorToFacet[selectors[i]] = facet;
+        }
+    }
+    
+    /// @notice Remove selectors from the routing table
+    /// @dev Only deployer can modify selector table
+    function removeSelectors(bytes4[] calldata selectors) external onlyDeployer {
+        for (uint256 i = 0; i < selectors.length; i++) {
+            delete _selectorToFacet[selectors[i]];
+        }
     }
     
     /// @inheritdoc IwsXmrHub
@@ -203,52 +232,23 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     receive() external payable {}
     
     /// @notice Route function calls to appropriate facets via delegatecall
-    /// @dev Uses transient storage flag to prevent reentrancy attacks during delegatecall
+    /// @dev Uses selector table for O(1) routing, transient storage prevents reentrancy
     fallback() external payable {
+        address facet = _selectorToFacet[msg.sig];
+        if (facet == address(0)) revert("Function does not exist");
+        
         // Set transient delegate context flag - auto-clears at tx end
         _inDelegateContext = true;
         
-        // Try all facets in order - proper error propagation
-        address[6] memory allFacets = [vaultFacet, mintFacet, burnFacet, liquidationFacet, yieldFacet, oracleFacet];
-        
-        for (uint256 i = 0; i < 6; i++) {
-            address facet = allFacets[i];
-            if (facet == address(0)) continue;
+        assembly {
+            let ptr := mload(0x40)
+            calldatacopy(ptr, 0, calldatasize())
+            let result := delegatecall(gas(), facet, ptr, calldatasize(), 0, 0)
+            returndatacopy(ptr, 0, returndatasize())
             
-            assembly {
-                let ptr := mload(0x40)
-                calldatacopy(ptr, 0, calldatasize())
-                let result := delegatecall(gas(), facet, ptr, calldatasize(), 0, 0)
-                
-                // If call succeeded, return (transient storage auto-clears)
-                if result {
-                    returndatacopy(ptr, 0, returndatasize())
-                    return(ptr, returndatasize())
-                }
-                
-                // If call failed, check if it's function-not-found or real error
-                let rdsize := returndatasize()
-                if iszero(rdsize) {
-                    // Empty revert = function not found, try next facet
-                }
-                if gt(rdsize, 0) {
-                    returndatacopy(ptr, 0, rdsize)
-                    
-                    // Propagate all errors except Error(string) which may be "function not found"
-                    // WARNING: This is unsafe - legitimate require() failures get swallowed
-                    // TODO: Implement proper selector table to avoid this
-                    if iszero(lt(rdsize, 4)) {
-                        let errorSelector := shr(224, mload(ptr))
-                        // Only continue on Error(string) (0x08c379a0)
-                        if iszero(eq(errorSelector, 0x08c379a0)) {
-                            revert(ptr, rdsize)
-                        }
-                    }
-                }
-            }
+            switch result
+            case 0 { revert(ptr, returndatasize()) }
+            default { return(ptr, returndatasize()) }
         }
-        
-        // No facet handled the call (transient storage auto-clears on revert)
-        revert("Function does not exist");
     }
 }
