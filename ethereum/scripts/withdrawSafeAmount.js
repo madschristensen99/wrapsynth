@@ -4,7 +4,7 @@ const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 
-const OLD_HUB_ADDRESS = '0xe382ca36e0c35770843dadbb5c443e9a2077e830';
+const OLD_HUB_ADDRESS = '0xf873f64360c2214feb5cf7d7b542a6a3ca6a3afb'; // Current deployment
 const SDAI_ADDRESS = '0xaf204776c7245bF4147c2612BF6e5972Ee483701';
 
 async function main() {

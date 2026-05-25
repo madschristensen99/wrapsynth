@@ -4,16 +4,21 @@ A decentralized protocol for wrapping Monero (XMR) on Gnosis Chain using a diamo
 
 ## 🚀 Gnosis Mainnet Deployment
 
-**Deployed:** May 25, 2026
+**Deployed:** May 25, 2026 (v1.2)
 
-- **wsXmrHub (Diamond Proxy):** `0xf873f64360c2214feb5cf7d7b542a6a3ca6a3afb`
-- **wsXMR Token:** `0x54182a360c9014b981a8dbf5d199bb82c3c5b197`
+- **wsXmrHub (Diamond Proxy):** `0x9b03355624acd1265508b981b046f4293b1ffed8`
+- **wsXMR Token:** `0x910bfbfe34cfa4ea45b6ec8070872e2f89b5e6ad`
 - **Network:** Gnosis Chain (ChainID: 100)
 - **Explorer:** https://gnosisscan.io
 
-### Recent Fixes (v1.1)
+### Recent Fixes (v1.2)
 
-✅ **Critical Decimal Mismatch Fix**
+✅ **Burn Reward Withdrawal Fix**
+- Fixed burn rewards to be stored with SDAI address instead of hub address
+- Users can now successfully claim burn rewards via `withdrawReturns(SDAI)`
+- Burn reward: 0.3% of burn value paid in sDAI (from freed LP collateral)
+
+✅ **Critical Decimal Mismatch Fix (v1.1)**
 - Fixed wsXMR decimal handling (8 decimals) in collateral ratio calculations
 - Previously treated wsXMR as 18 decimals, causing 10 billion times underestimation of debt
 - All collateralization checks now correctly enforce 150% ratio
@@ -21,6 +26,12 @@ A decentralized protocol for wrapping Monero (XMR) on Gnosis Chain using a diamo
 ✅ **Configuration Updates**
 - Lowered `MIN_BURN_AMOUNT` from 1e6 (0.01 wsXMR) to 1e4 (0.0001 wsXMR)
 - More reasonable minimum for smaller transactions
+
+### Fee Structure
+
+- **Mint Fee:** 0.5% (50 bps) - Goes to LP vault
+- **Burn Reward:** 0.3% (30 bps) - Goes to burner in sDAI
+- Configurable per-vault via `setVaultMarketMetrics(mintFeeBps, burnRewardBps)`
 
 ### Verified Contracts
 
