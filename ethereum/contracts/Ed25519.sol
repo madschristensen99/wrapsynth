@@ -5,7 +5,7 @@
 //
 // converted to a library by hbs in 2025 to avoid having to deploy a specific Ed22519 contract
 
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.28;
 
 // Using formulas from https://hyperelliptic.org/EFD/g1p/auto-twisted-projective.html
 // and constants from https://tools.ietf.org/html/draft-josefsson-eddsa-ed25519-03

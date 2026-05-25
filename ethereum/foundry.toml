@@ -4,6 +4,8 @@ test = "test"
 out = "out"
 libs = ["lib"]
 cache_path = "cache_forge"
+solc_version = "0.8.28"
+evm_version = "cancun"
 
 # Optimizer settings
 optimizer = true

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPLv3
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.28;
 
 import {wsXmrStorage} from "../core/wsXmrStorage.sol";
 import {IOracleFacet} from "../interfaces/facets/IOracleFacet.sol";

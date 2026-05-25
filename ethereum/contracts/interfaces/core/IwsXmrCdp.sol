@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPLv3
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.28;
 
 import {IVaultFacet} from "../facets/IVaultFacet.sol";
 import {IMintFacet} from "../facets/IMintFacet.sol";
