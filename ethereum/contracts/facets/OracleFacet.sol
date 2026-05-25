@@ -40,13 +40,16 @@ contract OracleFacet is wsXmrStorage, IOracleFacet {
         for (uint256 i = 0; i < reports.length; i++) {
             bytes memory verified = IDataStreamsVerifier(verifierProxy).verify{value: 0}(reports[i], bytes(""));
             ReportV3 memory decoded = abi.decode(verified, (ReportV3));
+            
+            // Reject reports older than 30 seconds at submission time
+            if (block.timestamp > decoded.observationsTimestamp + 30) revert StalePrice();
 
             if (decoded.feedId == 0x00038f3b8f8be4305564abf0ed3c9cc46cb8b4303c35ab54079ea873b7d74b3a) {
                 lastXmrPrice = decoded.price;
-                lastXmrPriceTimestamp = block.timestamp;
+                lastXmrPriceTimestamp = decoded.observationsTimestamp;
             } else if (decoded.feedId == 0x0003a9efc56074727bde001b0f0301eef38db844278734c32aa8b72dcb7902ba) {
                 lastCollateralPrice = decoded.price;
-                lastCollateralPriceTimestamp = block.timestamp;
+                lastCollateralPriceTimestamp = decoded.observationsTimestamp;
             }
         }
         

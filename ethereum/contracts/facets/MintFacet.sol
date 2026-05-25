@@ -304,6 +304,12 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     function _calculateCollateralRatio(uint256 collateralShares, uint256 debtAmount) internal view returns (uint256) {
         uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
         uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
-        return YieldLogic.calculateVaultCollateralRatio(collateralShares, debtAmount, collateralPrice, xmrPrice);
+        return CollateralLogic.calculateRatioFromShares(
+            collateralShares,
+            debtAmount,
+            GnosisAddresses.SDAI,
+            collateralPrice,
+            xmrPrice
+        );
     }
 }

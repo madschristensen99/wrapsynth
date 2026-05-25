@@ -315,17 +315,14 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         uint256 collateralShares,
         uint256 debtAmount
     ) internal view returns (uint256 ratio) {
-        if (debtAmount == 0) return type(uint256).max;
-        
-        // Convert sDAI shares to underlying DAI amount
-        uint256 collateralAmount = IERC4626(GnosisAddresses.SDAI).convertToAssets(collateralShares);
-        
-        uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
         uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
-        
-        uint256 collateralValueUsd = CollateralLogic.collateralToUsd(collateralAmount, collateralPrice);
-        uint256 debtValueUsd = (debtAmount * xmrPrice) / PRICE_DECIMALS;
-        
-        ratio = CollateralLogic.calculateCollateralRatio(collateralValueUsd, debtValueUsd);
+        uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
+        return CollateralLogic.calculateRatioFromShares(
+            collateralShares,
+            debtAmount,
+            GnosisAddresses.SDAI,
+            collateralPrice,
+            xmrPrice
+        );
     }
 }

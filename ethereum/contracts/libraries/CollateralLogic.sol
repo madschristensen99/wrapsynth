@@ -50,4 +50,31 @@ library CollateralLogic {
         uint256 debtValueUsd = (debtAmount * xmrPrice) / 1e18; // Using 1e18 directly since this is a library
         collateralValueUsd = (debtValueUsd * ratio) / RATIO_PRECISION;
     }
+    
+    /**
+     * @notice Calculate collateral ratio from sDAI shares
+     * @dev Converts shares to assets, then calculates USD values and ratio
+     */
+    function calculateRatioFromShares(
+        uint256 collateralShares,
+        uint256 debtAmount,
+        address sdai,
+        uint256 collateralPrice,
+        uint256 xmrPrice
+    ) internal view returns (uint256) {
+        if (debtAmount == 0) return type(uint256).max;
+        
+        // Convert sDAI shares to underlying DAI amount
+        // Using low-level call to avoid importing IERC4626
+        (bool success, bytes memory data) = sdai.staticcall(
+            abi.encodeWithSignature("convertToAssets(uint256)", collateralShares)
+        );
+        require(success && data.length >= 32, "convertToAssets failed");
+        uint256 collateralAmount = abi.decode(data, (uint256));
+        
+        uint256 collateralValueUsd = (collateralAmount * collateralPrice) / 1e18;
+        uint256 debtValueUsd = (debtAmount * xmrPrice) / 1e18;
+        
+        return (collateralValueUsd * RATIO_PRECISION) / debtValueUsd;
+    }
 }
