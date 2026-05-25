@@ -76,6 +76,7 @@ contract wsXmrStorage {
         uint256 pendingDebt;
         uint16 maxMintBps;
         uint256 mintGriefingDeposit;
+        uint256 mintReadyBond;        // LP bond required when calling setMintReady
         uint16 mintFeeBps;
         uint16 burnRewardBps;
         uint256 liquidationNonce;
@@ -95,6 +96,7 @@ contract wsXmrStorage {
         bytes32 claimCommitment;
         uint256 timeout;
         uint256 griefingDeposit;
+        uint256 lpBond;              // LP bond posted when setMintReady called
         uint256 normalizedDebtAmount;
         uint256 vaultMintNonce;
         MintStatus status;

@@ -16,6 +16,7 @@ interface IVaultFacet is IErrors {
     event CollateralDeposited(address indexed lpAddress, uint256 underlyingAmount, uint256 shares);
     event CollateralWithdrawn(address indexed lpAddress, uint256 underlyingAmount, uint256 shares);
     event MintGriefingDepositUpdated(address indexed lpVault, uint256 newDeposit);
+    event MintReadyBondUpdated(address indexed lpVault, uint256 newBond);
     event VaultMarketMetricsUpdated(address indexed lpVault, uint16 mintFeeBps, uint16 burnRewardBps);
     event MaxMintBpsUpdated(address indexed lpVault, uint16 newMaxMintBps);
     event MinBurnAmountUpdated(address indexed lpVault, uint256 newMinBurnAmount);

@@ -7,6 +7,7 @@ interface IErrors {
     error VaultDoesNotExist();
     error InsufficientCollateral();
     error InsufficientDebt();
+    error InsufficientBond();
     error InvalidValue();
     error InvalidSecret();
     error InvalidStatus();

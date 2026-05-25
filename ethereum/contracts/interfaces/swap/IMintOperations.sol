@@ -76,7 +76,7 @@ interface IMintOperations is IErrors {
     
     /// @notice LP confirms XMR has been locked on Monero
     /// @param requestId The mint request ID
-    function setMintReady(bytes32 requestId) external;
+    function setMintReady(bytes32 requestId) external payable;
     
     /// @notice Finalize mint by revealing the secret
     /// @param requestId The mint request ID
