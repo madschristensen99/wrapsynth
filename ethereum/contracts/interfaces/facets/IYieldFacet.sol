@@ -15,6 +15,7 @@ interface IYieldFacet {
         uint256 keeperReward,
         uint256 newGlobalDebtIndex
     );
+    event DebtIndexMigrated(uint256 oldIndex, uint256 newIndex, uint256 vaultsRescaled);
     
     // ========== ERRORS ==========
     
