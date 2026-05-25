@@ -13,6 +13,8 @@ import {GnosisAddresses} from "../GnosisAddresses.sol";
 
 contract MintFacet is wsXmrStorage, IMintFacet {
     
+    error ReentrancyGuard();
+    
     constructor(address _wsxmrToken, address _verifierProxy) 
         wsXmrStorage(_wsxmrToken, _verifierProxy) 
     {}
@@ -140,13 +142,15 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     }
     
     function finalizeMint(bytes32 requestId, bytes32 secret) external {
-        IwsXmrHub(address(this)).enterNonReentrant();
+        if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
+        _reentrancyStatus = _ENTERED;
         
         MintRequest storage request = mintRequests[requestId];
         if (request.status != MintStatus.READY) revert InvalidStatus();
         
+        // Bind commitment to requestId to prevent secret replay across requests
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
-        bytes32 computedCommitment = bytes32(keccak256(abi.encodePacked(px, py)));
+        bytes32 computedCommitment = bytes32(keccak256(abi.encodePacked(requestId, px, py)));
         if (computedCommitment != request.claimCommitment) revert InvalidSecret();
         
         Vault storage vault = vaults[request.lpVault];
@@ -182,11 +186,12 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         request.status = MintStatus.COMPLETED;
         emit MintFinalized(requestId, secret);
         
-        IwsXmrHub(address(this)).exitNonReentrant();
+        _reentrancyStatus = _NOT_ENTERED;
     }
     
     function cancelMint(bytes32 requestId) external {
-        IwsXmrHub(address(this)).enterNonReentrant();
+        if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
+        _reentrancyStatus = _ENTERED;
         
         MintRequest storage request = mintRequests[requestId];
         if (request.status != MintStatus.PENDING && request.status != MintStatus.READY) {
@@ -216,7 +221,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             }
         }
         
-        IwsXmrHub(address(this)).exitNonReentrant();
+        _reentrancyStatus = _NOT_ENTERED;
     }
     
     function getMintRequest(bytes32 requestId) external view returns (MintRequest memory) {
@@ -232,18 +237,38 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     }
     
     function getVaultPendingMints(address lpVault) external view returns (bytes32[] memory) {
-        bytes32[] memory allRequests = new bytes32[](userMintRequests[lpVault].length);
-        uint256 count = 0;
-        for (uint256 i = 0; i < userMintRequests[lpVault].length; i++) {
-            bytes32 reqId = userMintRequests[lpVault][i];
-            if (mintRequests[reqId].status == MintStatus.PENDING || mintRequests[reqId].status == MintStatus.READY) {
-                allRequests[count++] = reqId;
+        // Scan all user mint requests to find those targeting this vault
+        // This is inefficient but correct - in production, maintain a vaultMintRequests mapping
+        uint256 totalCount = 0;
+        
+        // First pass: count matching requests
+        for (uint256 i = 0; i < vaultList.length; i++) {
+            address user = vaultList[i];
+            bytes32[] storage userReqs = userMintRequests[user];
+            for (uint256 j = 0; j < userReqs.length; j++) {
+                MintRequest storage req = mintRequests[userReqs[j]];
+                if (req.lpVault == lpVault && 
+                    (req.status == MintStatus.PENDING || req.status == MintStatus.READY)) {
+                    totalCount++;
+                }
             }
         }
-        bytes32[] memory result = new bytes32[](count);
-        for (uint256 i = 0; i < count; i++) {
-            result[i] = allRequests[i];
+        
+        // Second pass: collect matching requests
+        bytes32[] memory result = new bytes32[](totalCount);
+        uint256 index = 0;
+        for (uint256 i = 0; i < vaultList.length; i++) {
+            address user = vaultList[i];
+            bytes32[] storage userReqs = userMintRequests[user];
+            for (uint256 j = 0; j < userReqs.length; j++) {
+                MintRequest storage req = mintRequests[userReqs[j]];
+                if (req.lpVault == lpVault && 
+                    (req.status == MintStatus.PENDING || req.status == MintStatus.READY)) {
+                    result[index++] = userReqs[j];
+                }
+            }
         }
+        
         return result;
     }
     
@@ -258,22 +283,17 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     
     function _syncVaultYield(address lpAddress) internal {
         Vault storage vault = vaults[lpAddress];
-        if (vault.collateralShares == 0) return;
-        
-        uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
-        
-        // Skip yield calculation if no debt - no point checking prices
-        if (actualDebt == 0 && vault.pendingDebt == 0) return;
         
         uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
         uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
         
-        uint256 yieldShares = YieldLogic.calculateExtractableYield(
+        uint256 yieldShares = YieldLogic.syncVaultYield(
             vault.collateralShares,
             vault.lockedCollateral,
             lpPrincipalShares[lpAddress],
-            actualDebt,
+            vault.normalizedDebt,
             vault.pendingDebt,
+            globalDebtIndex,
             xmrPrice,
             collateralPrice
         );
@@ -285,15 +305,8 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     }
     
     function _calculateCollateralRatio(uint256 collateralShares, uint256 debtAmount) internal view returns (uint256) {
-        if (debtAmount == 0) return type(uint256).max;
-        
-        // Convert sDAI shares to underlying DAI amount
-        uint256 collateralAmount = IERC4626(GnosisAddresses.SDAI).convertToAssets(collateralShares);
-        
-        uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
         uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
-        uint256 collateralValueUsd = CollateralLogic.collateralToUsd(collateralAmount, collateralPrice);
-        uint256 debtValueUsd = (debtAmount * xmrPrice) / PRICE_DECIMALS;
-        return CollateralLogic.calculateCollateralRatio(collateralValueUsd, debtValueUsd);
+        uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
+        return YieldLogic.calculateVaultCollateralRatio(collateralShares, debtAmount, collateralPrice, xmrPrice);
     }
 }

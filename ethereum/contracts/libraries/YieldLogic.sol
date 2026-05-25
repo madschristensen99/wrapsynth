@@ -12,6 +12,7 @@ library YieldLogic {
     uint256 constant YIELD_DUST_THRESHOLD = 100;
     uint256 constant COLLATERAL_RATIO = 150;
     uint256 constant RATIO_PRECISION = 100;
+    uint256 constant PRICE_DECIMALS = 1e18;
     
     event YieldHarvested(uint256 yieldDai, uint256 yieldShares);
     
@@ -70,5 +71,57 @@ library YieldLogic {
         }
         
         return vaultYieldShares;
+    }
+    
+    /**
+     * @notice Sync vault yield extraction
+     * @dev Extracts yield to war chest if vault is overcollateralized
+     */
+    function syncVaultYield(
+        uint256 collateralShares,
+        uint256 lockedCollateral,
+        uint256 lpPrincipalShares,
+        uint256 normalizedDebt,
+        uint256 pendingDebt,
+        uint256 globalDebtIndex,
+        uint256 xmrPrice,
+        uint256 collateralPrice
+    ) internal view returns (uint256 yieldToExtract) {
+        if (collateralShares == 0) return 0;
+        
+        uint256 actualDebt = (normalizedDebt * globalDebtIndex) / 1e18;
+        
+        // Skip yield calculation if no debt
+        if (actualDebt == 0 && pendingDebt == 0) return 0;
+        
+        yieldToExtract = calculateExtractableYield(
+            collateralShares,
+            lockedCollateral,
+            lpPrincipalShares,
+            actualDebt,
+            pendingDebt,
+            xmrPrice,
+            collateralPrice
+        );
+    }
+    
+    /**
+     * @notice Calculate collateral ratio for a vault
+     */
+    function calculateVaultCollateralRatio(
+        uint256 collateralShares,
+        uint256 debtAmount,
+        uint256 collateralPrice,
+        uint256 xmrPrice
+    ) internal view returns (uint256) {
+        if (debtAmount == 0) return type(uint256).max;
+        
+        // Convert sDAI shares to underlying DAI amount
+        uint256 collateralAmount = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(collateralShares);
+        
+        uint256 collateralValueUsd = (collateralAmount * collateralPrice) / PRICE_DECIMALS;
+        uint256 debtValueUsd = (debtAmount * xmrPrice) / PRICE_DECIMALS;
+        
+        return (collateralValueUsd * RATIO_PRECISION) / debtValueUsd;
     }
 }
