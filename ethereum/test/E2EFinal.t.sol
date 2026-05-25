@@ -103,9 +103,8 @@ contract E2EFinalTest is Test {
         console.log("[2] User initiated mint");
         console.log("    Request ID:", vm.toString(requestId), "\n");
         
-        // LP provides key and sets ready
+        // LP sets ready (no LP key needed - stored off-chain)
         vm.startPrank(lp);
-        MintFacet(address(hub)).provideLPKey(requestId, bytes32(uint256(0x123)));
         MintFacet(address(hub)).setMintReady(requestId);
         vm.stopPrank();
         console.log("[3] LP set mint READY\n");

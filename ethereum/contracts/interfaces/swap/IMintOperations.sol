@@ -39,7 +39,6 @@ interface IMintOperations is IErrors {
         uint256 timeout
     );
     
-    event LPKeyProvided(bytes32 indexed requestId, bytes32 lpPublicKey);
     event MintReady(bytes32 indexed requestId);
     event MintFinalized(bytes32 indexed requestId, bytes32 secret);
     event MintCancelled(bytes32 indexed requestId);
@@ -69,11 +68,6 @@ interface IMintOperations is IErrors {
         uint256 timeoutDuration
     ) external payable returns (bytes32 requestId);
     
-    /// @notice LP provides their public key for the atomic swap
-    /// @param requestId The mint request ID
-    /// @param lpPublicKey LP's Ed25519 public spend key (P_b)
-    function provideLPKey(bytes32 requestId, bytes32 lpPublicKey) external;
-    
     /// @notice LP confirms XMR has been locked on Monero
     /// @param requestId The mint request ID
     function setMintReady(bytes32 requestId) external payable;
@@ -91,9 +85,6 @@ interface IMintOperations is IErrors {
     
     /// @notice Get mint request details
     function getMintRequest(bytes32 requestId) external view returns (wsXmrStorage.MintRequest memory);
-    
-    /// @notice Get LP's public key for a request
-    function getLPPublicKey(bytes32 requestId) external view returns (bytes32);
     
     /// @notice Get user's mint request IDs
     function getUserMintRequests(address user) external view returns (bytes32[] memory);

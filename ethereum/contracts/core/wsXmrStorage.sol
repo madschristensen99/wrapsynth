@@ -170,7 +170,6 @@ contract wsXmrStorage {
     mapping(address => Vault) public vaults;
     mapping(bytes32 => MintRequest) public mintRequests;
     mapping(bytes32 => BurnRequest) public burnRequests;
-    mapping(bytes32 => bytes32) public lpPublicKeys;
     
     // Vault list
     address[] public vaultList;
