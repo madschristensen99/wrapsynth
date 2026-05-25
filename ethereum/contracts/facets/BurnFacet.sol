@@ -372,4 +372,26 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         return activeCount;
     }
+    
+    // ========== DIAMOND INTROSPECTION ==========
+    
+    /// @notice Returns all function selectors implemented by this facet
+    function selectors() external pure returns (bytes4[] memory) {
+        bytes4[] memory sels = new bytes4[](14);
+        sels[0] = this.requestBurn.selector;
+        sels[1] = this.requestBurnFromRouter.selector;
+        sels[2] = this.proposeHash.selector;
+        sels[3] = this.confirmMoneroLock.selector;
+        sels[4] = this.finalizeBurn.selector;
+        sels[5] = this.claimSlashedCollateral.selector;
+        sels[6] = this.cancelBurn.selector;
+        sels[7] = this.getBurnRequest.selector;
+        sels[8] = this.getUserBurnRequests.selector;
+        sels[9] = this.getVaultBurnRequests.selector;
+        sels[10] = this.calculateBurnCollateral.selector;
+        sels[11] = this.meetsMinimumBurn.selector;
+        sels[12] = this.getActiveBurnCount.selector;
+        sels[13] = this.cleanupVaultBurnRequests.selector;
+        return sels;
+    }
 }

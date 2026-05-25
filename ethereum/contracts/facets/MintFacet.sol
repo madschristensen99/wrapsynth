@@ -312,4 +312,23 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             xmrPrice
         );
     }
+    
+    // ========== DIAMOND INTROSPECTION ==========
+    
+    /// @notice Returns all function selectors implemented by this facet
+    function selectors() external pure returns (bytes4[] memory) {
+        bytes4[] memory sels = new bytes4[](11);
+        sels[0] = this.initiateMint.selector;
+        sels[1] = this.provideLPKey.selector;
+        sels[2] = this.setMintReady.selector;
+        sels[3] = this.finalizeMint.selector;
+        sels[4] = this.cancelMint.selector;
+        sels[5] = this.getMintRequest.selector;
+        sels[6] = this.getLPPublicKey.selector;
+        sels[7] = this.getUserMintRequests.selector;
+        sels[8] = this.getVaultPendingMints.selector;
+        sels[9] = this.calculateWsxmrAmount.selector;
+        sels[10] = this.calculateMintFee.selector;
+        return sels;
+    }
 }

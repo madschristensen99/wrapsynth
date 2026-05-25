@@ -150,4 +150,18 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         return allowedPoolFeeTiers[tier];
     }
     
+    // ========== DIAMOND INTROSPECTION ==========
+    
+    /// @notice Returns all function selectors implemented by this facet
+    function selectors() external pure returns (bytes4[] memory) {
+        bytes4[] memory sels = new bytes4[](7);
+        sels[0] = this.triggerBuyAndBurn.selector;
+        sels[1] = this.syncVaultYield.selector;
+        sels[2] = this.getYieldWarChest.selector;
+        sels[3] = this.getLastBuyTimestamp.selector;
+        sels[4] = this.canTriggerBuyAndBurn.selector;
+        sels[5] = this.getVaultExtractableYield.selector;
+        sels[6] = this.isPoolFeeTierAllowed.selector;
+        return sels;
+    }
 }
