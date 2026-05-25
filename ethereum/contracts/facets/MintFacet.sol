@@ -109,16 +109,6 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         );
     }
     
-    function provideLPKey(bytes32 requestId, bytes32 lpPublicKey) external {
-        MintRequest storage request = mintRequests[requestId];
-        if (request.status != MintStatus.PENDING) revert InvalidStatus();
-        if (msg.sender != request.lpVault) revert Unauthorized();
-        if (lpPublicKey == bytes32(0)) revert InvalidValue();
-        
-        lpPublicKeys[requestId] = lpPublicKey;
-        emit LPKeyProvided(requestId, lpPublicKey);
-    }
-    
     function setMintReady(bytes32 requestId) external payable {
         MintRequest storage request = mintRequests[requestId];
         if (request.status != MintStatus.PENDING) revert InvalidStatus();
@@ -250,10 +240,6 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         return mintRequests[requestId];
     }
     
-    function getLPPublicKey(bytes32 requestId) external view returns (bytes32) {
-        return lpPublicKeys[requestId];
-    }
-    
     function getUserMintRequests(address user) external view returns (bytes32[] memory) {
         return userMintRequests[user];
     }
@@ -338,18 +324,16 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     
     /// @notice Returns all function selectors implemented by this facet
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](11);
+        bytes4[] memory sels = new bytes4[](9);
         sels[0] = this.initiateMint.selector;
-        sels[1] = this.provideLPKey.selector;
-        sels[2] = this.setMintReady.selector;
-        sels[3] = this.finalizeMint.selector;
-        sels[4] = this.cancelMint.selector;
-        sels[5] = this.getMintRequest.selector;
-        sels[6] = this.getLPPublicKey.selector;
-        sels[7] = this.getUserMintRequests.selector;
-        sels[8] = this.getVaultPendingMints.selector;
-        sels[9] = this.calculateWsxmrAmount.selector;
-        sels[10] = this.calculateMintFee.selector;
+        sels[1] = this.setMintReady.selector;
+        sels[2] = this.finalizeMint.selector;
+        sels[3] = this.cancelMint.selector;
+        sels[4] = this.getMintRequest.selector;
+        sels[5] = this.getUserMintRequests.selector;
+        sels[6] = this.getVaultPendingMints.selector;
+        sels[7] = this.calculateWsxmrAmount.selector;
+        sels[8] = this.calculateMintFee.selector;
         return sels;
     }
 }
