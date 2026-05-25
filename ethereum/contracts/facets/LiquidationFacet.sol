@@ -73,7 +73,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
         xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
         
-        uint256 debtValueUsd = (debtToClear * xmrPrice) / WSXMR_DECIMALS;
+        uint256 debtValueUsd = (debtToClear * xmrPrice) / PRICE_DECIMALS;
         uint256 collateralValueUsd = (debtValueUsd * LIQUIDATION_BONUS) / RATIO_PRECISION;
         uint256 collateralToSeize = (collateralValueUsd * SDAI_DECIMALS) / collateralPrice;
         
@@ -133,7 +133,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
         uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
         
-        uint256 debtValueUsd = (debtToClear * xmrPrice) / WSXMR_DECIMALS;
+        uint256 debtValueUsd = (debtToClear * xmrPrice) / PRICE_DECIMALS;
         uint256 collateralValueUsd = (debtValueUsd * LIQUIDATION_BONUS) / RATIO_PRECISION;
         collateralSeized = (collateralValueUsd * SDAI_DECIMALS) / collateralPrice;
         
@@ -187,7 +187,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
         uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
         uint256 collateralValueUsd = CollateralLogic.collateralToUsd(collateralAmount, collateralPrice);
-        uint256 debtValueUsd = (debtAmount * xmrPrice) / WSXMR_DECIMALS;
+        uint256 debtValueUsd = (debtAmount * xmrPrice) / PRICE_DECIMALS;
         return CollateralLogic.calculateCollateralRatio(collateralValueUsd, debtValueUsd);
     }
 }

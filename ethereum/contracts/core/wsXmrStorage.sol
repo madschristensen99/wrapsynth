@@ -39,6 +39,7 @@ contract wsXmrStorage {
     uint256 public constant XMR_TO_WSXMR_DIVISOR = 1e4;
     uint256 public constant WSXMR_DECIMALS = 1e8;
     uint256 public constant SDAI_DECIMALS = 1e18;
+    uint256 public constant PRICE_DECIMALS = 1e18; // Oracle prices are normalized to 18 decimals
     
     
     // ========== EVENTS ==========

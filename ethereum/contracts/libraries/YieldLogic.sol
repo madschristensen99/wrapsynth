@@ -48,7 +48,7 @@ library YieldLogic {
             uint256 availableCollateralDai = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(collateralShares);
             uint256 availableCollateralUSD = (availableCollateralDai * collateralPrice) / 1e18;
             
-            uint256 debtValueUSD = (totalObligations * xmrPrice) / 1e8;
+            uint256 debtValueUSD = (totalObligations * xmrPrice) / 1e18; // Price decimals (oracle returns 18 decimals)
             uint256 minCollateralUSD = (debtValueUSD * COLLATERAL_RATIO) / RATIO_PRECISION;
             
             // Convert locked collateral shares to USD and add to minimum

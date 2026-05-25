@@ -47,7 +47,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             uint256 maxMintAllowed = (maxTotalDebtCapacity * vault.maxMintBps) / BPS_DENOMINATOR;
             
             uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
-            uint256 wsxmrValueUsd = (wsxmrAmount * xmrPrice) / WSXMR_DECIMALS;
+            uint256 wsxmrValueUsd = (wsxmrAmount * xmrPrice) / PRICE_DECIMALS;
             
             if (wsxmrValueUsd > maxMintAllowed) revert InvalidValue();
         }
@@ -261,6 +261,10 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         if (vault.collateralShares == 0) return;
         
         uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+        
+        // Skip yield calculation if no debt - no point checking prices
+        if (actualDebt == 0 && vault.pendingDebt == 0) return;
+        
         uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
         uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
         
@@ -289,7 +293,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
         uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
         uint256 collateralValueUsd = CollateralLogic.collateralToUsd(collateralAmount, collateralPrice);
-        uint256 debtValueUsd = (debtAmount * xmrPrice) / WSXMR_DECIMALS;
+        uint256 debtValueUsd = (debtAmount * xmrPrice) / PRICE_DECIMALS;
         return CollateralLogic.calculateCollateralRatio(collateralValueUsd, debtValueUsd);
     }
 }
