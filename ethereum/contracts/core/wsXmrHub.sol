@@ -120,6 +120,7 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     
     /// @notice Register all selectors from a facet into the routing table
     /// @dev Calls facet.selectors() and maps each selector to the facet address
+    /// @dev Reverts if any selector is already registered to prevent silent overwrites
     function _registerFacetSelectors(address facet) private {
         (bool success, bytes memory data) = facet.staticcall(
             abi.encodeWithSignature("selectors()")
@@ -128,6 +129,9 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         
         bytes4[] memory sels = abi.decode(data, (bytes4[]));
         for (uint256 i = 0; i < sels.length; i++) {
+            if (_selectorToFacet[sels[i]] != address(0)) {
+                revert("Selector collision");
+            }
             _selectorToFacet[sels[i]] = facet;
         }
     }

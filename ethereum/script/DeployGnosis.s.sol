@@ -3,7 +3,7 @@ pragma solidity ^0.8.19;
 
 import "forge-std/Script.sol";
 import "../contracts/core/wsXmrHub.sol";
-import "../contracts/facets/OracleFacet.sol";
+import "../contracts/facets/RedStoneOracleFacet.sol";
 import "../contracts/facets/VaultFacet.sol";
 import "../contracts/facets/MintFacet.sol";
 import "../contracts/facets/BurnFacet.sol";
@@ -12,8 +12,8 @@ import "../contracts/facets/YieldFacet.sol";
 import "../contracts/wsXMR.sol";
 
 contract DeployGnosis is Script {
-    // Chainlink Data Streams Verifier on Gnosis Chain
-    address constant CHAINLINK_VERIFIER = 0x2880aB155794e7179c9eE2e38200202908C17B43;
+    // No verifier needed for RedStone (uses off-chain signed data)
+    address constant VERIFIER = address(0);
     address constant SDAI = 0xaf204776c7245bF4147c2612BF6e5972Ee483701;
 
     function run() external {
@@ -39,7 +39,7 @@ contract DeployGnosis is Script {
         console.log("============================================================");
         console.log("STEP 2: Deploying wsXmrHub");
         console.log("============================================================");
-        wsXmrHub hub = new wsXmrHub(address(wsxmr), CHAINLINK_VERIFIER);
+        wsXmrHub hub = new wsXmrHub(address(wsxmr), VERIFIER);
         console.log("wsXmrHub deployed to:", address(hub));
         console.log("");
 
@@ -47,22 +47,23 @@ contract DeployGnosis is Script {
         console.log("STEP 3: Deploying Facets");
         console.log("============================================================");
         
-        OracleFacet oracleFacet = new OracleFacet(address(wsxmr), CHAINLINK_VERIFIER);
-        console.log("OracleFacet deployed to:", address(oracleFacet));
+        // RedStoneOracleFacet - uses off-chain signed price data
+        RedStoneOracleFacet oracleFacet = new RedStoneOracleFacet(address(wsxmr), VERIFIER);
+        console.log("RedStoneOracleFacet deployed to:", address(oracleFacet));
         
-        VaultFacet vaultFacet = new VaultFacet(address(wsxmr), CHAINLINK_VERIFIER);
+        VaultFacet vaultFacet = new VaultFacet(address(wsxmr), VERIFIER);
         console.log("VaultFacet deployed to:", address(vaultFacet));
         
-        MintFacet mintFacet = new MintFacet(address(wsxmr), CHAINLINK_VERIFIER);
+        MintFacet mintFacet = new MintFacet(address(wsxmr), VERIFIER);
         console.log("MintFacet deployed to:", address(mintFacet));
         
-        BurnFacet burnFacet = new BurnFacet(address(wsxmr), CHAINLINK_VERIFIER);
+        BurnFacet burnFacet = new BurnFacet(address(wsxmr), VERIFIER);
         console.log("BurnFacet deployed to:", address(burnFacet));
         
-        LiquidationFacet liquidationFacet = new LiquidationFacet(address(wsxmr), CHAINLINK_VERIFIER);
+        LiquidationFacet liquidationFacet = new LiquidationFacet(address(wsxmr), VERIFIER);
         console.log("LiquidationFacet deployed to:", address(liquidationFacet));
         
-        YieldFacet yieldFacet = new YieldFacet(address(wsxmr), CHAINLINK_VERIFIER);
+        YieldFacet yieldFacet = new YieldFacet(address(wsxmr), VERIFIER);
         console.log("YieldFacet deployed to:", address(yieldFacet));
         console.log("");
 
@@ -108,7 +109,6 @@ contract DeployGnosis is Script {
         console.log("  YieldFacet:       ", address(yieldFacet));
         console.log("");
         console.log("External Contracts:");
-        console.log("  Chainlink Verifier:", CHAINLINK_VERIFIER);
         console.log("  sDAI:             ", SDAI);
         console.log("============================================================");
         console.log("");
