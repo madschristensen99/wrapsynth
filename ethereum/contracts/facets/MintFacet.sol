@@ -43,12 +43,12 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         uint256 feeAmount = (wsxmrAmount * vault.mintFeeBps) / BPS_DENOMINATOR;
         
         if (vault.maxMintBps > 0) {
-            uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
+            uint256 collateralPrice = _getCollateralPriceFromStorage();
             uint256 collateralValueUsd = (vault.collateralShares * collateralPrice) / SDAI_DECIMALS;
             uint256 maxTotalDebtCapacity = (collateralValueUsd * RATIO_PRECISION) / COLLATERAL_RATIO;
             uint256 maxMintAllowed = (maxTotalDebtCapacity * vault.maxMintBps) / BPS_DENOMINATOR;
             
-            uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
+            uint256 xmrPrice = _getXmrPriceFromStorage();
             uint256 wsxmrValueUsd = (wsxmrAmount * xmrPrice) / PRICE_DECIMALS;
             
             if (wsxmrValueUsd > maxMintAllowed) revert InvalidValue();
@@ -288,8 +288,8 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         uint256 actualDebt = (vault.normalizedDebt * globalDebtIndex) / 1e18;
         if (actualDebt == 0 && vault.pendingDebt == 0) return;
         
-        uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
-        uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
         
         uint256 yieldShares = YieldLogic.syncVaultYield(
             vault.collateralShares,
@@ -309,8 +309,9 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     }
     
     function _calculateCollateralRatio(uint256 collateralShares, uint256 debtAmount) internal view returns (uint256) {
-        uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
-        uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
+        // Read prices directly from storage using inherited helpers
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
         return CollateralLogic.calculateRatioFromShares(
             collateralShares,
             debtAmount,
