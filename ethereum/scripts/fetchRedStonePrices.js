@@ -26,6 +26,7 @@ async function main() {
         [xmrPrice, daiPrice]
     );
     
+    // Output raw bytes (Foundry FFI expects hex string with 0x prefix)
     process.stdout.write(encoded);
 }
 

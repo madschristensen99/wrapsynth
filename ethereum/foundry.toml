@@ -5,9 +5,20 @@ out = "out"
 libs = ["lib"]
 cache_path = "cache_forge"
 
-# Match Hardhat optimizer settings
+# Optimizer settings
 optimizer = true
 optimizer_runs = 1
 via_ir = true
+
+# Enable FFI for fetching real prices in E2E tests
+ffi = true
+
+# RPC endpoints
+[rpc_endpoints]
+gnosis = "${GNOSIS_RPC_URL}"
+
+# Etherscan API keys for verification
+[etherscan]
+gnosis = { key = "${GNOSISSCAN_API_KEY}", url = "https://api.gnosisscan.io/api" }
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

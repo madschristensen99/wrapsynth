@@ -9,19 +9,10 @@
     "snapshot": "forge snapshot",
     "coverage": "forge coverage",
     "fmt": "forge fmt",
-    "deploy": "hardhat run scripts/deploy/deploy.js",
-    "deploy:unichain": "hardhat run scripts/deploy/deploy.js --network unichain_testnet",
-    "deploy:gnosis": "hardhat run scripts/deploy/deploy-gnosis.js --network gnosis",
-    "deploy:mock": "hardhat run scripts/deploy/deploy-with-mock.js --network unichain_testnet",
-    "verify": "hardhat run scripts/deploy/verify.js --network unichain_testnet",
-    "verify:gnosis": "hardhat run scripts/deploy/verify-gnosis.js --network gnosis",
-    "verify:mock": "hardhat run scripts/deploy/verify-mock.js --network unichain_testnet",
-    "lp:setup": "hardhat run scripts/lpServer/lp-setup.js --network unichain_testnet",
-    "lp:setup:mock": "hardhat run scripts/lpServer/lp-setup-mock.js --network unichain_testnet",
-    "oracle:update": "hardhat run scripts/fetchChainlinkPrices.js --network gnosis",
-    "test:e2e": "hardhat run scripts/e2eTestRedStone.js --network gnosis",
-    "test:full": "hardhat run scripts/fullE2ERedStone.js --network gnosis",
-    "node": "hardhat node"
+    "deploy:gnosis": "forge script script/DeployGnosis.s.sol:DeployGnosis --rpc-url $GNOSIS_RPC_URL --broadcast --verify",
+    "deploy:gnosis:dry": "forge script script/DeployGnosis.s.sol:DeployGnosis --rpc-url $GNOSIS_RPC_URL",
+    "test:e2e": "forge script script/E2ETest.s.sol:E2ETest --fork-url $GNOSIS_RPC_URL -vvv",
+    "test:e2e:broadcast": "forge script script/E2ETest.s.sol:E2ETest --rpc-url $GNOSIS_RPC_URL --broadcast"
   },
   "keywords": [
     "monero",
@@ -34,11 +25,8 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "@uniswap/v4-core": "^1.0.2",
-    "@uniswap/v4-periphery": "^1.0.3",
-    "hardhat": "^2.22.0",
-    "hardhat-preprocessor": "^0.1.5"
+    "@uniswap/v4-periphery": "^1.0.3"
   },
   "dependencies": {
     "@noble/ed25519": "^2.0.0",
@@ -48,6 +36,7 @@
     "bs58": "^5.0.0",
     "circomlibjs": "^0.1.7",
     "dotenv": "^16.4.0",
+    "ethers": "^6.0.0",
     "js-sha3": "^0.9.0",
     "merkletreejs": "^0.6.0",
     "monero-javascript": "^0.8.4",
