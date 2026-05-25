@@ -96,20 +96,15 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         vault.collateralShares -= collateralToSeize;
         globalTotalDebt -= debtToClear;
         
-        // Socialize bad debt if vault has remaining debt but no collateral
+        // Track bad debt if vault has remaining debt but no collateral
+        // TODO M3: Implement proper socialization (war chest backing or index increase)
+        // Current implementation just tracks for transparency
         if (vault.normalizedDebt > 0 && vault.collateralShares == 0) {
             uint256 badDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
             if (badDebt > 0) {
-                // Socialize loss by reducing globalDebtIndex proportionally
-                // All LPs share the loss via their normalized debt
-                uint256 newIndex = globalDebtIndex - (badDebt * 1e18) / globalTotalDebt;
-                if (newIndex < 1e6) newIndex = 1e6; // Floor to prevent underflow
-                globalDebtIndex = newIndex;
-                
-                // Clear vault's normalized debt (already socialized)
                 vault.normalizedDebt = 0;
                 globalBadDebt += badDebt;
-                emit BadDebtSocialized(lpVault, badDebt, newIndex);
+                emit BadDebtWrittenOff(lpVault, badDebt);
             }
         }
         

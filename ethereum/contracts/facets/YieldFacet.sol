@@ -39,13 +39,9 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         
         IERC20(GnosisAddresses.XDAI).forceApprove(GnosisAddresses.UNISWAP_V3_ROUTER, daiAmount);
         
-        // H1: Use TWAP price for slippage protection instead of spot oracle
-        // TWAP is harder to manipulate and represents actual market cost basis
-        address pool = _getUniswapV3Pool(GnosisAddresses.XDAI, wsxmrToken, poolFeeTier);
-        uint256 twapPrice = _getTWAPPrice(pool, 1800); // 30-minute TWAP
-        
-        // Use TWAP for minimum output calculation (1% slippage)
-        uint256 minWsxmr = (daiAmount * PRICE_PRECISION * (10000 - MEV_SLIPPAGE_BPS)) / (twapPrice * 10000);
+        // TODO H1: Implement TWAP for better MEV protection
+        // For now, use spot oracle (documented MEV risk)
+        uint256 minWsxmr = (daiAmount * PRICE_PRECISION * (10000 - MEV_SLIPPAGE_BPS)) / (spotPrice * 10000);
         
         ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
             tokenIn: GnosisAddresses.XDAI,
@@ -76,8 +72,11 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
             uint256 newIndex = (globalDebtIndex * (1e18 - reductionRatio)) / 1e18;
             
             // M1: Migrate debt index if it drops below threshold
+            // TODO: This is expensive (~30M gas for 10k vaults). Consider:
+            // - Separate keeper function with cursor
+            // - Or accept the floor at 1e6 as documented technical debt
             if (newIndex < 1e12) {
-                _migrateDebtIndex(newIndex);
+                _migrateDebtIndex();
             } else {
                 globalDebtIndex = newIndex > 1e6 ? newIndex : 1e6;
             }
@@ -88,22 +87,23 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
     
     /// @notice Migrate debt index when it drops too low to prevent precision loss
     /// @dev Rescales all vault normalized debts and resets index to 1e18
-    function _migrateDebtIndex(uint256 newIndex) private {
-        uint256 scaleFactor = (newIndex * 1e18) / 1e18; // oldIndex / newIndex
+    /// @dev WARNING: Expensive operation - ~30M gas for MAX_VAULT_COUNT vaults
+    function _migrateDebtIndex() private {
+        uint256 oldIndex = globalDebtIndex;
+        if (oldIndex >= 1e18) return; // Nothing to do
         
-        // Rescale all active vaults' normalized debt
+        // Preserve invariant: actualDebt = normalizedDebt * index / 1e18
+        // After migration: actualDebt = newNormalizedDebt * 1e18 / 1e18
+        // Therefore: newNormalizedDebt = normalizedDebt * oldIndex / 1e18
         for (uint256 i = 0; i < vaultList.length; i++) {
-            address lpAddress = vaultList[i];
-            Vault storage vault = vaults[lpAddress];
+            Vault storage vault = vaults[vaultList[i]];
             
             if (vault.normalizedDebt > 0) {
-                // Scale normalized debt: newNormalized = oldNormalized * (oldIndex / newIndex)
-                vault.normalizedDebt = (vault.normalizedDebt * 1e18) / scaleFactor;
+                vault.normalizedDebt = (vault.normalizedDebt * oldIndex) / 1e18;
             }
         }
         
         // Reset index to 1e18
-        uint256 oldIndex = globalDebtIndex;
         globalDebtIndex = 1e18;
         
         emit DebtIndexMigrated(oldIndex, 1e18, vaultList.length);
@@ -181,22 +181,6 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
     
     function isPoolFeeTierAllowed(uint24 tier) external view returns (bool) {
         return allowedPoolFeeTiers[tier];
-    }
-    
-    // ========== INTERNAL TWAP HELPERS ==========
-    
-    /// @notice Get Uniswap V3 pool address (placeholder - needs factory integration)
-    function _getUniswapV3Pool(address, address, uint24) private pure returns (address) {
-        // TODO: Integrate with Uniswap V3 Factory to get pool address
-        // For now, assume a known pool address or configure via storage
-        revert("TWAP pool lookup not implemented");
-    }
-    
-    /// @notice Get TWAP price from Uniswap V3 pool (placeholder)
-    function _getTWAPPrice(address, uint32) private pure returns (uint256) {
-        // TODO: Implement Uniswap V3 TWAP oracle consultation
-        // Requires: IUniswapV3Pool.observe() + tick-to-price conversion
-        revert("TWAP price calculation not implemented");
     }
     
     // ========== DIAMOND INTROSPECTION ==========
