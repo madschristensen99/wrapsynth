@@ -7,8 +7,8 @@ const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 
-const HUB_ADDRESS = '0x71587d4d85B9c319Fdf3A82e4686E68f62c09EF2';
-const WSXMR_ADDRESS = '0xa0aaD445eA07997d877Add2A5F5A0865DB3A6286';
+const HUB_ADDRESS = '0x6889AC1EA36019ce6bb4552FB9d24ED50b5F13Ed';
+const WSXMR_ADDRESS = '0xc9162719b6BD9AfCc123D1e9F4D657b857E3aCDd';
 const WXDAI_ADDRESS = '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d';
 const ED25519_HELPER = '0x7EBdE733CE8Bac20984f919e4d2E66e9eE86f2a3';
 
@@ -26,6 +26,8 @@ async function main() {
         'function setMintReady(bytes32 requestId) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
         'function requestBurn(uint256 wsxmrAmount, address lpVault, address burnRecipient) external returns (bytes32)',
+        'function proposeHash(bytes32 requestId, bytes32 secretHash) external',
+        'function confirmMoneroLock(bytes32 requestId) external',
         'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
         'function updateOraclePrices(bytes[] calldata updateData) external payable'
     ];
@@ -131,27 +133,38 @@ async function main() {
     const approveTx = await wsxmr.approve(HUB_ADDRESS, burnAmount);
     await approveTx.wait();
     
+    // requestBurn returns the requestId directly
+    const burnRequestId = await hub.callStatic.requestBurn(burnAmount, wallet.address, wallet.address);
     const burnTx = await hub.requestBurn(burnAmount, wallet.address, wallet.address);
-    const burnReceipt = await burnTx.wait();
-    
-    // Parse burnRequestId from logs
-    let burnRequestId;
-    if (burnReceipt.events && burnReceipt.events.length > 0) {
-        const burnEvent = burnReceipt.events.find(e => e.event === 'BurnRequested');
-        burnRequestId = burnEvent ? burnEvent.args.requestId : burnReceipt.logs[0].topics[1];
-    } else {
-        burnRequestId = burnReceipt.logs[0].topics[1];
-    }
+    await burnTx.wait();
     
     console.log('✅ Burn requested!');
     console.log('Request ID:', burnRequestId);
     console.log('Amount:', ethers.utils.formatUnits(burnAmount, 12), 'wsXMR');
     console.log('');
     
-    console.log('📊 Step 7: BURN - Finalize');
-    console.log('===========================');
+    console.log('📊 Step 7: BURN - LP Proposes Hash');
+    console.log('===================================');
     const burnSecret = ethers.utils.randomBytes(32);
+    const secretHash = await ed25519Helper.computeCommitment(burnSecret);
     
+    console.log('Burn Secret:', ethers.utils.hexlify(burnSecret));
+    console.log('Secret Hash:', secretHash);
+    
+    const proposeHashTx = await hub.proposeHash(burnRequestId, secretHash);
+    await proposeHashTx.wait();
+    console.log('✅ LP proposed secret hash');
+    console.log('');
+    
+    console.log('📊 Step 8: BURN - User Confirms Monero Lock');
+    console.log('============================================');
+    const confirmTx = await hub.confirmMoneroLock(burnRequestId, { gasLimit: 500000 });
+    await confirmTx.wait();
+    console.log('✅ User confirmed Monero lock');
+    console.log('');
+    
+    console.log('📊 Step 9: BURN - LP Finalizes');
+    console.log('===============================');
     const finalizeBurnTx = await hub.finalizeBurn(burnRequestId, burnSecret, { gasLimit: 1000000 });
     const finalizeBurnReceipt = await finalizeBurnTx.wait();
     console.log('✅ Burn finalized!');
