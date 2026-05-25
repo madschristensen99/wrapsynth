@@ -146,7 +146,9 @@ npx hardhat compile
 This will compile:
 - `wsXmrHub.sol` - Diamond proxy with state storage and facet routing
 - `wsXMR.sol` - ERC-20 token contract (8 decimals)
-- Facets: `VaultFacet`, `MintFacet`, `BurnFacet`, `LiquidationFacet`, `YieldFacet`, `OracleFacet`
+- Facets: `VaultFacet`, `MintFacet`, `BurnFacet`, `LiquidationFacet`, `YieldFacet`
+- **Oracle**: `RedStoneOracleFacet` (live deployment) or `SimpleOracleFacet` (testing)
+  - `ChainlinkOracleFacet` exists for reference but is not currently used
 - `Ed25519.sol` - Elliptic curve verification library (matching Monero's curve)
 - Supporting interfaces and libraries (CollateralLogic, YieldLogic, BurnLogic)
 
@@ -386,7 +388,7 @@ wrapsynth/
 4. **Send XMR** (User): User sends XMR to LP's Monero address off-chain
 5. **Confirm Receipt** (LP): LP verifies XMR receipt and marks mint as READY
 6. **Finalize Mint** (User): User reveals secret to claim wsXMR
-   - Secret is verified against commitment using secp256k1
+   - Secret is verified against commitment using Ed25519 scalar multiplication
    - wsXMR is minted to user
    - Griefing deposit is refunded
 

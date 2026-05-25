@@ -6,11 +6,12 @@ import {IOracleFacet} from "../interfaces/facets/IOracleFacet.sol";
 import {IDataStreamsVerifier} from "../interfaces/external/IDataStreamsVerifier.sol";
 
 /**
- * @title OracleFacet
- * @notice Handles price oracle operations for the wsXMR system
- * @dev Integrates with Chainlink Data Streams (formerly Mercury)
+ * @title ChainlinkOracleFacet
+ * @notice Chainlink Data Streams oracle implementation (NOT CURRENTLY USED)
+ * @dev This facet uses Chainlink Data Streams. The live deployment uses RedStoneOracleFacet.
+ * @dev Kept for reference but should not be deployed alongside RedStoneOracleFacet (selector collision)
  */
-contract OracleFacet is wsXmrStorage, IOracleFacet {
+contract ChainlinkOracleFacet is wsXmrStorage, IOracleFacet {
     
     // Chainlink Data Streams report schema v3
     struct ReportV3 {
