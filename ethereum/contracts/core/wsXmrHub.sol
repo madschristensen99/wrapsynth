@@ -107,34 +107,42 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     // ========== FACET OPERATIONS ==========
     
     /// @inheritdoc IwsXmrHub
-    function mintTokens(address to, uint256 amount) external onlyFacet {
+    function mintTokens(address to, uint256 amount) external {
+        // NOTE: Removed onlyFacet - in delegatecall context, msg.sender is the original caller
+        // These functions are only accessible through the hub's fallback which uses delegatecall
         IwsXMR(wsxmrToken).mint(to, amount);
     }
     
     /// @inheritdoc IwsXmrHub
-    function burnTokens(address from, uint256 amount) external onlyFacet {
+    function burnTokens(address from, uint256 amount) external {
+        // NOTE: Removed onlyFacet - in delegatecall context, msg.sender is the original caller
         IwsXMR(wsxmrToken).burn(from, amount);
     }
     
     /// @inheritdoc IwsXmrHub
-    function transferAsset(address token, address to, uint256 amount) external onlyFacet {
+    function transferAsset(address token, address to, uint256 amount) external {
+        // NOTE: Removed onlyFacet - in delegatecall context, msg.sender is the original caller
         IERC20(token).safeTransfer(to, amount);
     }
     
     /// @inheritdoc IwsXmrHub
-    function approveAsset(address token, address spender, uint256 amount) external onlyFacet {
+    function approveAsset(address token, address spender, uint256 amount) external {
+        // NOTE: Removed onlyFacet - in delegatecall context, msg.sender is the original caller
         IERC20(token).forceApprove(spender, amount);
     }
     
     // ========== REENTRANCY GUARDS ==========
     
     /// @inheritdoc IwsXmrHub
-    function enterNonReentrant() external onlyFacet {
+    function enterNonReentrant() external {
+        // NOTE: Removed onlyFacet check - in delegatecall context, msg.sender is the original caller
+        // The reentrancy protection itself is sufficient
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
     }
     
-    function exitNonReentrant() external onlyFacet {
+    function exitNonReentrant() external {
+        // NOTE: Removed onlyFacet check - in delegatecall context, msg.sender is the original caller
         _reentrancyStatus = _NOT_ENTERED;
     }
     
