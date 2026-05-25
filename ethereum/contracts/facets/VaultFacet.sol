@@ -288,6 +288,10 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         if (vault.collateralShares == 0) return;
         
         uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+        
+        // Skip yield calculation if no debt - no point checking prices
+        if (actualDebt == 0 && vault.pendingDebt == 0) return;
+        
         uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
         uint256 collateralPrice = IOracleFacet(oracleFacet).getCollateralPrice();
         
@@ -320,7 +324,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         uint256 xmrPrice = IOracleFacet(oracleFacet).getXmrPrice();
         
         uint256 collateralValueUsd = CollateralLogic.collateralToUsd(collateralAmount, collateralPrice);
-        uint256 debtValueUsd = (debtAmount * xmrPrice) / 1e8;
+        uint256 debtValueUsd = (debtAmount * xmrPrice) / PRICE_DECIMALS;
         
         ratio = CollateralLogic.calculateCollateralRatio(collateralValueUsd, debtValueUsd);
     }

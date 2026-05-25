@@ -47,7 +47,7 @@ library CollateralLogic {
         uint256 xmrPrice,
         uint256 ratio
     ) internal pure returns (uint256 collateralValueUsd) {
-        uint256 debtValueUsd = (debtAmount * xmrPrice) / 1e8;
+        uint256 debtValueUsd = (debtAmount * xmrPrice) / 1e18; // Using 1e18 directly since this is a library
         collateralValueUsd = (debtValueUsd * ratio) / RATIO_PRECISION;
     }
 }
