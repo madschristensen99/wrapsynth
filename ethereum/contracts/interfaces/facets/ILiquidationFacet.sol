@@ -17,6 +17,7 @@ interface ILiquidationFacet is IErrors {
         uint256 collateralSeized
     );
     event BadDebtWrittenOff(address indexed lpVault, uint256 debtAmount);
+    event BadDebtSocialized(address indexed lpVault, uint256 badDebt, uint256 newGlobalDebtIndex);
     
     // ========== ERRORS ==========
     
