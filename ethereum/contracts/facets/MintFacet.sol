@@ -145,9 +145,9 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         MintRequest storage request = mintRequests[requestId];
         if (request.status != MintStatus.READY) revert InvalidStatus();
         
-        // Bind commitment to requestId to prevent secret replay across requests
+        // Verify the secret matches the commitment
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
-        bytes32 computedCommitment = bytes32(keccak256(abi.encodePacked(requestId, px, py)));
+        bytes32 computedCommitment = keccak256(abi.encodePacked(px, py));
         if (computedCommitment != request.claimCommitment) revert InvalidSecret();
         
         Vault storage vault = vaults[request.lpVault];

@@ -37,7 +37,6 @@ contract E2EFinalTest is Test {
     address public user;
     
     bytes32 public testSecret = bytes32(uint256(123456789));
-    bytes32 public testCommitment;
     
     function setUp() public {
         string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
@@ -72,9 +71,6 @@ contract E2EFinalTest is Test {
         wsxmr.setHub(address(hub));
         
         oracleFacet.updatePrices(390_00000000, 1_00000000);
-        
-        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(testSecret));
-        testCommitment = keccak256(abi.encodePacked(px, py));
     }
     
     function test_FullCycle() public {
@@ -96,6 +92,11 @@ contract E2EFinalTest is Test {
         
         // User initiates mint (need at least 1e6 wsXMR for burn, which is 1e10 XMR atomic units)
         uint256 xmrAmount = 20000000000; // 0.002 XMR = ~$0.78 worth
+        
+        // Create commitment from Ed25519 public key
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(testSecret));
+        bytes32 testCommitment = keccak256(abi.encodePacked(px, py));
+        
         vm.prank(user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
             lp, user, xmrAmount, testCommitment, 1 hours
