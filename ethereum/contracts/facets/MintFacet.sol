@@ -87,6 +87,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             claimCommitment: claimCommitment,
             timeout: block.timestamp + timeoutDuration,
             griefingDeposit: msg.value,
+            lpBond: 0,  // Bond posted later when LP calls setMintReady
             normalizedDebtAmount: 0,
             vaultMintNonce: vault.mintNonce,
             status: MintStatus.PENDING
@@ -118,7 +119,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         emit LPKeyProvided(requestId, lpPublicKey);
     }
     
-    function setMintReady(bytes32 requestId) external {
+    function setMintReady(bytes32 requestId) external payable {
         MintRequest storage request = mintRequests[requestId];
         if (request.status != MintStatus.PENDING) revert InvalidStatus();
         if (msg.sender != request.lpVault) revert Unauthorized();
@@ -126,6 +127,11 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         
         Vault storage vault = vaults[request.lpVault];
         if (request.vaultMintNonce != vault.mintNonce) revert InvalidStatus();
+        
+        // Require LP bond proportional to mint amount
+        uint256 requiredBond = vault.mintReadyBond;
+        if (msg.value < requiredBond) revert InsufficientBond();
+        request.lpBond = msg.value;
         
         _syncVaultYield(request.lpVault);
         
@@ -184,6 +190,12 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             emit ReturnQueued(request.initiator, address(0), request.griefingDeposit);
         }
         
+        // Return LP bond
+        if (request.lpBond > 0) {
+            pendingReturns[request.lpVault][address(0)] += request.lpBond;
+            emit ReturnQueued(request.lpVault, address(0), request.lpBond);
+        }
+        
         request.status = MintStatus.COMPLETED;
         emit MintFinalized(requestId, secret);
         
@@ -208,17 +220,26 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         
         MintStatus originalStatus = request.status;
         uint256 depositToTransfer = request.griefingDeposit;
+        uint256 bondToTransfer = request.lpBond;
         
         request.status = MintStatus.CANCELLED;
         emit MintCancelled(requestId);
         
-        if (depositToTransfer > 0) {
-            if (originalStatus == MintStatus.PENDING) {
+        if (originalStatus == MintStatus.PENDING) {
+            // Timeout before LP marked ready - user gets griefing deposit back
+            if (depositToTransfer > 0) {
                 pendingReturns[request.initiator][address(0)] += depositToTransfer;
                 emit ReturnQueued(request.initiator, address(0), depositToTransfer);
-            } else {
-                pendingReturns[vault.lpAddress][address(0)] += depositToTransfer;
-                emit ReturnQueued(vault.lpAddress, address(0), depositToTransfer);
+            }
+        } else {
+            // LP marked READY but failed to provide secret - user gets BOTH deposits
+            if (depositToTransfer > 0) {
+                pendingReturns[request.initiator][address(0)] += depositToTransfer;
+                emit ReturnQueued(request.initiator, address(0), depositToTransfer);
+            }
+            if (bondToTransfer > 0) {
+                pendingReturns[request.initiator][address(0)] += bondToTransfer;
+                emit ReturnQueued(request.initiator, address(0), bondToTransfer);
             }
         }
         

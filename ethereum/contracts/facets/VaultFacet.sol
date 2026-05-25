@@ -50,6 +50,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
             pendingDebt: 0,
             maxMintBps: 0,
             mintGriefingDeposit: 0,
+            mintReadyBond: 0,  // LP can configure this later
             mintFeeBps: 0,
             burnRewardBps: 0,
             liquidationNonce: 0,
@@ -186,6 +187,14 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         emit MintGriefingDepositUpdated(msg.sender, deposit);
     }
     
+    /// @notice Set LP bond required when calling setMintReady
+    /// @param bond Amount of native token LP must post when marking mint ready
+    function setMintReadyBond(uint256 bond) external {
+        if (!vaults[msg.sender].active) revert VaultDoesNotExist();
+        vaults[msg.sender].mintReadyBond = bond;
+        emit MintReadyBondUpdated(msg.sender, bond);
+    }
+    
     /// @inheritdoc IVaultFacet
     function setVaultMarketMetrics(uint16 mintFeeBps, uint16 burnRewardBps) external {
         if (!vaults[msg.sender].active) revert VaultDoesNotExist();
@@ -278,25 +287,26 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
     /// @notice Returns all function selectors implemented by this facet
     /// @dev Used by Diamond to build selector → facet routing table
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](18);
+        bytes4[] memory sels = new bytes4[](19);
         sels[0] = this.createVault.selector;
         sels[1] = this.deactivateVault.selector;
         sels[2] = this.depositCollateral.selector;
         sels[3] = this.depositShares.selector;
         sels[4] = this.withdrawCollateral.selector;
         sels[5] = this.setMintGriefingDeposit.selector;
-        sels[6] = this.setVaultMarketMetrics.selector;
-        sels[7] = this.setMaxMintBps.selector;
-        sels[8] = this.setMinBurnAmount.selector;
-        sels[9] = this.withdrawReturns.selector;
-        sels[10] = this.getVault.selector;
-        sels[11] = this.getVaultHealth.selector;
-        sels[12] = this.getVaultDebt.selector;
-        sels[13] = this.getVaultCount.selector;
-        sels[14] = this.getVaultAtIndex.selector;
-        sels[15] = this.getPendingReturns.selector;
-        sels[16] = this.hasActiveVault.selector;
-        sels[17] = this.selectors.selector;
+        sels[6] = this.setMintReadyBond.selector;
+        sels[7] = this.setVaultMarketMetrics.selector;
+        sels[8] = this.setMaxMintBps.selector;
+        sels[9] = this.setMinBurnAmount.selector;
+        sels[10] = this.withdrawReturns.selector;
+        sels[11] = this.getVault.selector;
+        sels[12] = this.getVaultHealth.selector;
+        sels[13] = this.getVaultDebt.selector;
+        sels[14] = this.getVaultCount.selector;
+        sels[15] = this.getVaultAtIndex.selector;
+        sels[16] = this.getPendingReturns.selector;
+        sels[17] = this.hasActiveVault.selector;
+        sels[18] = this.selectors.selector;
         return sels;
     }
     
