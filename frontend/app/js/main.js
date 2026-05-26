@@ -6,7 +6,7 @@ import {
     connectWallet, 
     getUserAddress,
     getWsXmrBalance,
-    readVaultManager,
+    readHub,
     onAccountsChanged,
     onChainChanged
 } from './viemClient.js';
@@ -41,6 +41,9 @@ import {
 
 import { MintFlow } from './mintFlow.js';
 import { BurnFlow } from './burnFlow.js';
+import { getLPPanel } from './lpPanel.js';
+import { getPoolFlow } from './poolFlow.js';
+import { getDashboard } from './dashboard.js';
 import { hasActiveSwap, loadActiveSwap, clearActiveSwap } from './storage.js';
 import { CONTRACTS } from './config.js';
 
@@ -87,6 +90,81 @@ async function fetchXmrPrice() {
 }
 
 /**
+ * Fetch 24h volume from mint/burn events
+ */
+async function fetch24hVolume() {
+    try {
+        const { getPublicClient } = await import('./viemClient.js');
+        const { CONTRACTS } = await import('./config.js');
+        const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
+        
+        const publicClient = getPublicClient();
+        const currentBlock = await publicClient.getBlockNumber();
+        const blocksPerDay = 17280n; // ~5 second blocks on Gnosis
+        const fromBlock = currentBlock - blocksPerDay;
+        
+        const hubAbi = parseAbi([
+            'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, uint256 timeout)',
+            'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral)'
+        ]);
+        
+        const [mintEvents, burnEvents] = await Promise.all([
+            publicClient.getContractEvents({
+                address: CONTRACTS.hub,
+                abi: hubAbi,
+                eventName: 'MintInitiated',
+                fromBlock,
+                toBlock: 'latest'
+            }),
+            publicClient.getContractEvents({
+                address: CONTRACTS.hub,
+                abi: hubAbi,
+                eventName: 'BurnRequested',
+                fromBlock,
+                toBlock: 'latest'
+            })
+        ]);
+        
+        // Sum up wsXMR amounts from both mints and burns
+        let totalWsxmr = 0n;
+        for (const event of mintEvents) {
+            totalWsxmr += event.args.wsxmrAmount;
+        }
+        for (const event of burnEvents) {
+            totalWsxmr += event.args.wsxmrAmount;
+        }
+        
+        // Convert to float (8 decimals)
+        const wsxmrVolume = Number(totalWsxmr) / 1e8;
+        
+        // Get XMR price
+        const xmrPrice = await fetchXmrPrice();
+        const volumeUsd = wsxmrVolume * (xmrPrice || 0);
+        
+        const volumeElement = document.getElementById('volume-stat');
+        if (volumeElement) {
+            if (volumeUsd >= 1000) {
+                volumeElement.textContent = `$${(volumeUsd / 1000).toFixed(1)}K`;
+            } else if (volumeUsd >= 1) {
+                volumeElement.textContent = `$${volumeUsd.toFixed(0)}`;
+            } else if (volumeUsd > 0) {
+                volumeElement.textContent = `$${volumeUsd.toFixed(2)}`;
+            } else {
+                volumeElement.textContent = '$0';
+            }
+        }
+        
+        console.log(`24h volume: ${wsxmrVolume.toFixed(2)} wsXMR ($${volumeUsd.toFixed(2)})`);
+    } catch (error) {
+        console.error('Could not fetch 24h volume:', error);
+        const volumeElement = document.getElementById('volume-stat');
+        if (volumeElement) {
+            volumeElement.textContent = '$0';
+        }
+    }
+}
+
+/**
  * Initialize application
  */
 async function init() {
@@ -115,11 +193,15 @@ async function init() {
     // Check for active swap
     checkForActiveSwap();
     
-    // Fetch XMR price
+    // Fetch XMR price and 24h volume
     fetchXmrPrice();
+    fetch24hVolume();
     
-    // Update XMR price every 60 seconds
-    setInterval(fetchXmrPrice, 60000);
+    // Update stats every 60 seconds
+    setInterval(() => {
+        fetchXmrPrice();
+        fetch24hVolume();
+    }, 60000);
     
     // Listen for account/chain changes
     onAccountsChanged(handleAccountChange);
@@ -272,11 +354,12 @@ async function handleLpTab() {
     
     // Check if user has a vault
     try {
-        const vaultData = await readVaultManager('vaults', [userAddress]);
+        const lpPanel = getLPPanel();
+        const isLP = await lpPanel.init();
         
-        // Check if vault is active
-        if (vaultData && vaultData[9]) { // active is the 10th element (index 9)
+        if (isLP) {
             // User is an LP - show stats view
+            const vaultData = await lpPanel.loadVaultData();
             await loadLpStats(userAddress, vaultData);
             document.getElementById('lp-education-view').classList.add('hidden');
             document.getElementById('lp-stats-view').classList.remove('hidden');
@@ -298,30 +381,18 @@ async function handleLpTab() {
  */
 async function loadLpStats(address, vaultData) {
     try {
-        // Parse vault data
-        // vaultData structure: [collateralAmount, normalizedDebt, pendingDebt, lockedCollateral, 
-        //                       collateralAsset, mintGriefingDeposit, mintFeeBps, burnFeeBps, maxMintBps, active]
-        
-        const collateralAmount = vaultData[0];
-        const normalizedDebt = vaultData[1];
-        const mintFeeBps = vaultData[6];
-        const burnFeeBps = vaultData[7];
-        const maxMintBps = vaultData[8];
+        const { vault, health, debt } = vaultData;
         
         // Update UI with vault stats
-        document.getElementById('lp-collateral').textContent = `${(Number(collateralAmount) / 1e18).toFixed(2)} xDAI`;
-        document.getElementById('lp-debt').textContent = `${(Number(normalizedDebt) / 1e8).toFixed(4)} wsXMR`;
-        
-        // Calculate health ratio (simplified - would need price data for accurate calculation)
-        const collateralValue = Number(collateralAmount) / 1e18;
-        const debtValue = Number(normalizedDebt) / 1e8;
-        const healthRatio = debtValue > 0 ? ((collateralValue / debtValue) * 100).toFixed(0) : '∞';
-        document.getElementById('lp-health').textContent = `${healthRatio}%`;
+        document.getElementById('lp-collateral').textContent = `${(Number(vault.collateralShares) / 1e18).toFixed(2)} sDAI`;
+        document.getElementById('lp-debt').textContent = `${(Number(debt) / 1e8).toFixed(4)} wsXMR`;
+        document.getElementById('lp-health').textContent = `${(Number(health) / 1e16).toFixed(0)}%`;
         
         // Update settings inputs
-        document.getElementById('lp-mint-fee').value = Number(mintFeeBps);
-        document.getElementById('lp-burn-fee').value = Number(burnFeeBps);
-        document.getElementById('lp-max-mint').value = Number(maxMintBps) / 100;
+        document.getElementById('lp-mint-fee').value = Number(vault.mintFeeBps);
+        document.getElementById('lp-burn-fee').value = Number(vault.burnRewardBps);
+        document.getElementById('lp-max-mint').value = Number(vault.maxMintBps) / 100;
+        document.getElementById('lp-griefing').value = (Number(vault.mintGriefingDeposit) / 1e18).toFixed(3);
         
         // TODO: Fetch fees earned from events
         document.getElementById('lp-fees').textContent = '0 xDAI';
@@ -385,33 +456,29 @@ async function loadVaults() {
         for (const vaultAddress of knownVaults) {
             try {
                 console.log('Fetching vault data for:', vaultAddress);
-                const vaultData = await readVaultManager('getVault', [vaultAddress]);
+                const vaultData = await readHub('getVault', [vaultAddress]);
                 
-                // getVault returns a Vault struct as a tuple
-                // [0] lpAddress, [1] collateralAmount, [2] lockedCollateral, [3] normalizedDebt, 
-                // [4] pendingDebt, [5] maxMintBps, [6] mintGriefingDeposit, [7] mintFeeBps, 
-                // [8] burnRewardBps, [9] liquidationNonce, [10] active
-                
+                // getVault returns a Vault struct
                 console.log('Raw vault data:', vaultData);
-                console.log('Collateral (index 1):', vaultData[1]?.toString());
-                console.log('Debt (index 3):', vaultData[3]?.toString());
-                console.log('Active (index 10):', vaultData[10]);
+                console.log('Collateral shares:', vaultData.collateralShares?.toString());
+                console.log('Debt:', vaultData.normalizedDebt?.toString());
+                console.log('Active:', vaultData.active);
                 
-                // Check if vault has collateral (more reliable than active flag due to decoding issues)
-                const hasCollateral = vaultData && vaultData[1] && BigInt(vaultData[1].toString()) > 0n;
+                // Check if vault has collateral
+                const hasCollateral = vaultData && vaultData.collateralShares && BigInt(vaultData.collateralShares.toString()) > 0n;
                 
-                if (hasCollateral || (vaultData && vaultData[10])) {
+                if (hasCollateral || vaultData.active) {
                     const vault = {
                         address: vaultAddress,
                         name: `LP Vault ${vaultAddress.slice(0, 6)}...${vaultAddress.slice(-4)}`,
-                        collateral: vaultData[1], // collateralAmount
-                        debt: vaultData[3], // normalizedDebt
+                        collateral: vaultData.collateralShares,
+                        debt: vaultData.normalizedDebt,
                     };
                     console.log('Adding active vault:', vault);
                     activeVaults.push(vault);
                     
                     // Add to total collateral (sDAI shares)
-                    totalCollateralWei += BigInt(vaultData[1].toString());
+                    totalCollateralWei += BigInt(vaultData.collateralShares.toString());
                 } else {
                     console.warn('Vault has no collateral and is not active');
                 }
@@ -470,7 +537,7 @@ async function handleVaultSelect(isMint) {
     
     try {
         // Fetch vault info
-        const vaultData = await readVaultManager('getVault', [vaultAddress]);
+        const vaultData = await readHub('getVault', [vaultAddress]);
         
         const vaultInfo = {
             totalXmrLocked: vaultData[0],

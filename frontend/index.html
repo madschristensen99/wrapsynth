@@ -912,7 +912,7 @@
                         <div class="chart-bar" style="height: 100%"></div>
                     </div>
 
-                    <a href="https://gnosisscan.io/address/0x184fDC73f58B9b56e81CC150922661CF5A3d600F" target="_blank" class="tvl-cta" id="tvl-contract-link">
+                    <a href="https://gnosisscan.io/address/0x9b03355624acd1265508b981b046f4293b1ffed8" target="_blank" class="tvl-cta" id="tvl-contract-link">
                         View Contract →
                     </a>
                 </div>
@@ -1013,24 +1013,24 @@
             </div>
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-card-value" id="verified-txs-stat">0</div>
-                    <div class="stat-card-label">Verified Transactions</div>
-                    <div class="stat-card-detail">On Gnosis Mainnet</div>
+                    <div class="stat-card-value" id="total-supply-stat">0 wsXMR</div>
+                    <div class="stat-card-label">Total Supply</div>
+                    <div class="stat-card-detail">Circulating wsXMR</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-card-value">~3.2M</div>
-                    <div class="stat-card-label">Gas Per Mint</div>
-                    <div class="stat-card-detail" id="largest-tx-network">On Gnosis Chain</div>
+                    <div class="stat-card-value" id="tvl-usd-stat">$0</div>
+                    <div class="stat-card-label">Total Value Locked</div>
+                    <div class="stat-card-detail">In Collateral (sDAI)</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-card-value">931</div>
-                    <div class="stat-card-label">Largest Verified (XMR)</div>
-                    <div class="stat-card-detail">Mainnet Transaction</div>
+                    <div class="stat-card-value" id="collateral-ratio-stat">0%</div>
+                    <div class="stat-card-label">Collateral Ratio</div>
+                    <div class="stat-card-detail">Overcollateralized</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-card-value">100%</div>
-                    <div class="stat-card-label">Success Rate</div>
-                    <div class="stat-card-detail">All Tests Passing</div>
+                    <div class="stat-card-value" id="active-vaults-stat">0</div>
+                    <div class="stat-card-label">Active Vaults</div>
+                    <div class="stat-card-detail">Liquidity Providers</div>
                 </div>
             </div>
         </div>
@@ -1044,14 +1044,14 @@
             </div>
             <div class="deployment-grid">
                 <div class="deployment-card">
-                    <h3>VaultManager</h3>
-                    <p class="contract-address">0x184fDC73f58B9b56e81CC150922661CF5A3d600F</p>
-                    <a href="https://gnosisscan.io/address/0x184fDC73f58B9b56e81CC150922661CF5A3d600F" target="_blank" class="btn-view" id="vault-manager-link">View on Gnosisscan</a>
+                    <h3>wsXmrHub (Diamond)</h3>
+                    <p class="contract-address">0x9b03355624acd1265508b981b046f4293b1ffed8</p>
+                    <a href="https://gnosisscan.io/address/0x9b03355624acd1265508b981b046f4293b1ffed8" target="_blank" class="btn-view" id="vault-manager-link">View on Gnosisscan</a>
                 </div>
                 <div class="deployment-card">
                     <h3>wsXMR Token</h3>
-                    <p class="contract-address">0x3100aE36ce786EfE1D68BC3863139c59018e739c</p>
-                    <a href="https://gnosisscan.io/address/0x3100aE36ce786EfE1D68BC3863139c59018e739c" target="_blank" class="btn-view" id="wsxmr-token-link">View on Gnosisscan</a>
+                    <p class="contract-address">0x910bfbfe34cfa4ea45b6ec8070872e2f89b5e6ad</p>
+                    <a href="https://gnosisscan.io/address/0x910bfbfe34cfa4ea45b6ec8070872e2f89b5e6ad" target="_blank" class="btn-view" id="wsxmr-token-link">View on Gnosisscan</a>
                 </div>
             </div>
             <div class="network-badge">
@@ -1088,7 +1088,7 @@
                 <div class="footer-section">
                     <h4>Contract</h4>
                     <ul>
-                        <li><a href="https://gnosisscan.io/address/0x184fDC73f58B9b56e81CC150922661CF5A3d600F" target="_blank" id="footer-contract-link">Gnosis Chain</a></li>
+                        <li><a href="https://gnosisscan.io/address/0x9b03355624acd1265508b981b046f4293b1ffed8" target="_blank" id="footer-contract-link">Gnosis Chain</a></li>
                     </ul>
                 </div>
             </div>
@@ -1099,158 +1099,7 @@
         </div>
     </footer>
 
-    <script type="module">
-        import { createPublicClient, http, formatUnits } from 'https://esm.sh/viem@2.7.15';
-        import { CONFIG, NETWORKS, DEFAULT_NETWORK } from './config.js';
-
-        // Contract ABI (minimal for reading data)
-        const CONTRACT_ABI = [
-            {
-                inputs: [],
-                name: 'totalSupply',
-                outputs: [{ name: '', type: 'uint256' }],
-                stateMutability: 'view',
-                type: 'function'
-            },
-            {
-                inputs: [],
-                name: 'totalCollateral',
-                outputs: [{ name: '', type: 'uint256' }],
-                stateMutability: 'view',
-                type: 'function'
-            }
-        ];
-
-        // Initialize viem client
-        const publicClient = createPublicClient({
-            chain: NETWORKS[DEFAULT_NETWORK],
-            transport: http(CONFIG.RPC_URL)
-        });
-
-        // Fetch transaction count from contract events
-        async function fetchTransactionCount() {
-            try {
-                // Get the current block number
-                const currentBlock = await publicClient.getBlockNumber();
-                const deploymentBlock = BigInt(CONFIG.contracts.initialMoneroBlock || 0);
-                
-                // Fetch Minted events (you can add more event types)
-                const mintedEvents = await publicClient.getLogs({
-                    address: CONFIG.CONTRACT_ADDRESS,
-                    event: {
-                        type: 'event',
-                        name: 'Minted',
-                        inputs: [
-                            { type: 'address', indexed: true, name: 'to' },
-                            { type: 'uint256', indexed: false, name: 'amount' },
-                        ]
-                    },
-                    fromBlock: deploymentBlock,
-                    toBlock: currentBlock
-                });
-                
-                return mintedEvents.length;
-            } catch (error) {
-                console.error('Error fetching transaction count:', error);
-                return 0;
-            }
-        }
-
-        // Fetch and update TVL data
-        async function updateTVLData() {
-            try {
-                // Read total supply from contract
-                const totalSupply = await publicClient.readContract({
-                    address: CONFIG.CONTRACT_ADDRESS,
-                    abi: CONTRACT_ABI,
-                    functionName: 'totalSupply'
-                });
-
-                // Convert from wei (assuming 12 decimals for XMR)
-                const xmrAmount = parseFloat(formatUnits(totalSupply, 12));
-                
-                // Update TVL number
-                const tvlNumber = document.querySelector('.tvl-number');
-                if (tvlNumber) {
-                    tvlNumber.textContent = xmrAmount.toFixed(2);
-                }
-
-                // Fetch XMR price (you can replace with real price API)
-                const xmrPrice = 153.20; // Placeholder - integrate with Pyth or CoinGecko
-                const usdValue = xmrAmount * xmrPrice;
-                
-                const tvlUsd = document.querySelector('.tvl-usd');
-                if (tvlUsd) {
-                    tvlUsd.textContent = `≈ $${usdValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`;
-                }
-
-                // Fetch and update transaction count
-                const txCount = await fetchTransactionCount();
-                const totalTxsElements = document.querySelectorAll('#total-txs, #total-txs-hero, #verified-txs-stat');
-                totalTxsElements.forEach(el => {
-                    if (el) el.textContent = txCount.toString();
-                });
-
-                // Update 24h change (placeholder for now)
-                const change24h = document.getElementById('tvl-24h-change');
-                if (change24h && xmrAmount > 0) {
-                    change24h.textContent = `↗ +${xmrAmount.toFixed(2)} XMR`;
-                    change24h.classList.add('positive');
-                }
-
-                console.log('[SUCCESS] TVL data updated:', { xmrAmount, usdValue, txCount });
-            } catch (error) {
-                console.error('Error fetching TVL data:', error);
-                // Keep placeholder values on error
-            }
-        }
-
-        // Update contract addresses
-        function updateContractAddresses() {
-            const contractCards = document.querySelectorAll('.deployment-card');
-            const explorerUrl = CONFIG.EXPLORER_URL;
-            
-            if (contractCards.length >= 2) {
-                // Update VaultManager contract
-                const vaultManagerCard = contractCards[0];
-                vaultManagerCard.querySelector('h3').textContent = 'VaultManager';
-                if (CONFIG.contracts?.vaultManager) {
-                    vaultManagerCard.querySelector('.contract-address').textContent = CONFIG.contracts.vaultManager;
-                    vaultManagerCard.querySelector('.btn-view').href = `${explorerUrl}/address/${CONFIG.contracts.vaultManager}`;
-                }
-                vaultManagerCard.querySelector('.btn-view').textContent = `View on ${NETWORKS[DEFAULT_NETWORK].blockExplorers.default.name}`;
-                
-                // Update wsXMR Token contract
-                const wsxmrCard = contractCards[1];
-                wsxmrCard.querySelector('h3').textContent = 'wsXMR Token';
-                if (CONFIG.contracts?.wsxmr) {
-                    wsxmrCard.querySelector('.contract-address').textContent = CONFIG.contracts.wsxmr;
-                    wsxmrCard.querySelector('.btn-view').href = `${explorerUrl}/address/${CONFIG.contracts.wsxmr}`;
-                }
-                wsxmrCard.querySelector('.btn-view').textContent = `View on ${NETWORKS[DEFAULT_NETWORK].blockExplorers.default.name}`;
-            }
-
-            // Update network badge
-            const networkBadge = document.querySelector('.network-badge .badge');
-            if (networkBadge) {
-                networkBadge.textContent = `✓ ${NETWORKS[DEFAULT_NETWORK].name} Mainnet`;
-            }
-
-            // Update TVL contract link
-            const tvlCta = document.querySelector('.tvl-cta');
-            if (tvlCta) {
-                tvlCta.href = `${explorerUrl}/address/${CONFIG.CONTRACT_ADDRESS}`;
-            }
-        }
-
-        // Initialize on page load
-        document.addEventListener('DOMContentLoaded', () => {
-            updateContractAddresses();
-            updateTVLData();
-            
-            // Update TVL every 30 seconds
-            setInterval(updateTVLData, 30000);
-        });
-    </script>
+    <!-- Landing page stats are loaded by js/landing-stats.js -->
+    <script type="module" src="js/landing-stats.js"></script>
 </body>
 </html>

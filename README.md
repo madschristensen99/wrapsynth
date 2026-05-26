@@ -68,12 +68,12 @@ This structure allows independent development and deployment of each chain while
 
 #### Gnosis Chain (ChainID: 100)
 
-**Latest Deployment (Diamond Architecture):**
-- **wsXMR Token**: [`0x4206580496249266945A5aED42E41b6CE9cd8DAD`](https://gnosisscan.io/address/0x4206580496249266945A5aED42E41b6CE9cd8DAD) (0x420...)
-- **wsXmrHub (Diamond)**: [`0xB00fed5E2F06187369f5bbF2fcFF065FA188D1a5`](https://gnosisscan.io/address/0xB00fed5E2F06187369f5bbF2fcFF065FA188D1a5) (0xB00F...)
+**Latest Deployment (v1.2 - Burn Reward Fix):**
+- **wsXMR Token**: [`0x910bfbfe34cfa4ea45b6ec8070872e2f89b5e6ad`](https://gnosisscan.io/address/0x910bfbfe34cfa4ea45b6ec8070872e2f89b5e6ad) (0x910...)
+- **wsXmrHub (Diamond)**: [`0x9b03355624acd1265508b981b046f4293b1ffed8`](https://gnosisscan.io/address/0x9b03355624acd1265508b981b046f4293b1ffed8) (0x9b0...)
 - **CREATE2 Factory**: [`0x5bCaA55651c71ec49b29feCAFA8a3D654F9f87e7`](https://gnosisscan.io/address/0x5bCaA55651c71ec49b29feCAFA8a3D654F9f87e7)
-- Deployed: March 12, 2026
-- Status: ✅ Deployed with Diamond/facet architecture
+- Deployed: May 25, 2026
+- Status: ✅ Deployed with Diamond/facet architecture + burn reward fixes
 
 **Previous Deployment (Monolithic):**
 - **wsXMR Token**: [`0xf0114924F8e3d1D4dca68DEf1F3Ea402EF5B32a2`](https://gnosisscan.io/address/0xf0114924F8e3d1D4dca68DEf1F3Ea402EF5B32a2#code)
