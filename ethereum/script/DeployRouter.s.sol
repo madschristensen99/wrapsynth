@@ -14,7 +14,7 @@ import {GnosisAddresses} from "../contracts/GnosisAddresses.sol";
  */
 contract DeployRouter is Script {
     // Gnosis Chain deployed addresses
-    address constant WSHUB = 0xB00fed5E2F06187369f5bbF2fcFF065FA188D1a5;
+    address constant WSHUB = 0x9B03355624acD1265508B981b046f4293B1fFED8;
     address constant WSXMR = 0x4206580496249266945A5aED42E41b6CE9cd8DAD;
 
     function run() external {
@@ -42,20 +42,13 @@ contract DeployRouter is Script {
         
         console.log("Router deployed at:", address(router));
         
-        // Set router on hub (requires deployer to be hub owner)
-        wsXmrHub hub = wsXmrHub(payable(WSHUB));
-        
-        try hub.setLiquidityRouter(address(router)) {
-            console.log("Router registered with hub successfully");
-        } catch Error(string memory reason) {
-            console.log("Failed to register router with hub:", reason);
-            console.log("You may need to call setLiquidityRouter manually if not the hub deployer");
-        } catch {
-            console.log("Failed to register router with hub (unknown error)");
-            console.log("You may need to call setLiquidityRouter manually if not the hub deployer");
-        }
-        
         vm.stopBroadcast();
+        
+        // Try to register with hub (optional - may fail if hub doesn't exist or caller not owner)
+        console.log("\n=== Hub Registration ===");
+        console.log("To register router with hub, call setLiquidityRouter on hub:");
+        console.log("Hub address:", WSHUB);
+        console.log("Router address:", address(router));
         
         console.log("\n=== Deployment Summary ===");
         console.log("Router:", address(router));
@@ -81,9 +74,11 @@ contract DeployRouter is Script {
  * @dev Run with: forge script script/DeployRouter.s.sol:InitializePool --rpc-url $GNOSIS_RPC_URL --broadcast
  */
 contract InitializePool is Script {
+    address constant ROUTER = 0xAc0EF983bA5c0A053468e2a8FB32733fBa26eC3E;
+    
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
-        address routerAddress = vm.envAddress("ROUTER_ADDRESS");
+        address routerAddress = ROUTER;
         
         console.log("Initializing pool for router:", routerAddress);
         
