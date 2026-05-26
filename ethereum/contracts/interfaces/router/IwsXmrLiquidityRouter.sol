@@ -44,9 +44,9 @@ interface IwsXmrLiquidityRouter is ILiquidityPosition, ICoLPMatching {
     // ========== INITIALIZATION ==========
     
     /// @notice Initialize the DEX pool with oracle-derived price
-    /// @param pythUpdateData Price update data for oracle
+    /// @param oracleUpdateData Reserved for future oracle update mechanism (currently ignored)
     /// @return pool Address of initialized pool
-    function initializePool(bytes[] calldata pythUpdateData) external payable returns (address pool);
+    function initializePool(bytes[] calldata oracleUpdateData) external payable returns (address pool);
     
     // ========== VIEW FUNCTIONS ==========
     

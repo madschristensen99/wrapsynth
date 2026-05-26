@@ -61,13 +61,14 @@ interface ILiquidityPosition {
     // ========== FUNCTIONS ==========
     
     /// @notice Create position with fresh price update
+    /// @param oracleUpdateData Reserved for future oracle update mechanism (currently ignored)
     function createPositionWithPriceUpdate(
         address lp,
         address user,
         uint256 sDAIAmount,
         uint256 wsxmrAmount,
         uint256 deadline,
-        bytes[] calldata pythUpdateData
+        bytes[] calldata oracleUpdateData
     ) external payable returns (uint256 positionIndex);
     
     /// @notice Create position (requires recent price update)

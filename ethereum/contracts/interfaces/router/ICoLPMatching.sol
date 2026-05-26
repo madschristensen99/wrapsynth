@@ -6,6 +6,15 @@ pragma solidity ^0.8.28;
  * @notice Interface for co-LP matching and balance management
  */
 interface ICoLPMatching {
+    // ========== STRUCTS ==========
+    
+    struct LPConfig {
+        uint256 maxPositionSize;      // Max sDAI per position
+        uint256 maxTotalExposure;     // Max total sDAI in all positions
+        uint16 minCollateralRatioBps; // Min wsXMR/sDAI ratio in bps (e.g., 15000 = 150%)
+        bool acceptingPositions;      // On/off switch
+    }
+    
     // ========== EVENTS ==========
     
     event LiquidityAllocated(address indexed lp, uint256 sDAIAmount);
@@ -13,8 +22,7 @@ interface ICoLPMatching {
     event UserDepositedWsxmr(address indexed user, uint256 amount);
     event UserWithdrewWsxmr(address indexed user, uint256 amount);
     event WsxmrDeallocated(address indexed account, uint256 amount);
-    event LpApprovedUser(address indexed lp, address indexed user, uint256 amount);
-    event UserApprovedLp(address indexed user, address indexed lp, uint256 amount);
+    event LPConfigUpdated(address indexed lp, uint256 maxPositionSize, uint256 maxTotalExposure, uint16 minCollateralRatioBps, bool acceptingPositions);
     
     // ========== ERRORS ==========
     
@@ -24,6 +32,11 @@ interface ICoLPMatching {
     error VaultNotActive();
     error VaultUndercollateralized();
     error MaxPositionsReached();
+    error LPNotAcceptingPositions();
+    error ExceedsMaxPositionSize();
+    error ExceedsMaxTotalExposure();
+    error InsufficientCollateralRatio();
+    error InvalidConfig();
     
     // ========== LP FUNCTIONS ==========
     
@@ -35,15 +48,17 @@ interface ICoLPMatching {
     /// @param sDAIAmount Amount to withdraw
     function withdrawSDAI(uint256 sDAIAmount) external;
     
-    /// @notice LP increases approval for a user
-    /// @param user Address of user
-    /// @param additionalSDAI Additional sDAI to approve
-    function increaseUserApproval(address user, uint256 additionalSDAI) external;
-    
-    /// @notice LP decreases approval for a user
-    /// @param user Address of user
-    /// @param reduceSDAI Amount to reduce
-    function decreaseUserApproval(address user, uint256 reduceSDAI) external;
+    /// @notice LP sets risk parameters for permissionless matching
+    /// @param maxPositionSize Max sDAI per position
+    /// @param maxTotalExposure Max total sDAI across all positions
+    /// @param minCollateralRatioBps Min collateral ratio in bps (15000 = 150%)
+    /// @param acceptingPositions Whether to accept new positions
+    function setLPConfig(
+        uint256 maxPositionSize,
+        uint256 maxTotalExposure,
+        uint16 minCollateralRatioBps,
+        bool acceptingPositions
+    ) external;
     
     // ========== USER FUNCTIONS ==========
     
@@ -54,16 +69,6 @@ interface ICoLPMatching {
     /// @notice Withdraw wsXMR balance
     /// @param wsxmrAmount Amount to withdraw
     function withdrawWsXMR(uint256 wsxmrAmount) external;
-    
-    /// @notice User increases approval for an LP
-    /// @param lp Address of LP
-    /// @param additionalWsxmr Additional wsXMR to approve
-    function increaseLpApproval(address lp, uint256 additionalWsxmr) external;
-    
-    /// @notice User decreases approval for an LP
-    /// @param lp Address of LP
-    /// @param reduceWsxmr Amount to reduce
-    function decreaseLpApproval(address lp, uint256 reduceWsxmr) external;
     
     /// @notice Burn wsXMR from internal balance to reduce vault debt
     /// @param wsxmrAmount Amount to burn
@@ -81,17 +86,17 @@ interface ICoLPMatching {
     
     // ========== VIEW FUNCTIONS ==========
     
+    /// @notice Get LP's configuration
+    function getLPConfig(address lp) external view returns (LPConfig memory);
+    
     /// @notice Get LP's available liquidity allocation
     function getLpAvailableLiquidity(address lp) external view returns (uint256);
     
+    /// @notice Get LP's total exposure across all positions
+    function getLpTotalExposure(address lp) external view returns (uint256);
+    
     /// @notice Get user's available wsXMR deposit
     function getUserAvailableWsxmr(address user) external view returns (uint256);
-    
-    /// @notice Get LP's approval amount for a user
-    function lpApprovalAmount(address lp, address user) external view returns (uint256);
-    
-    /// @notice Get user's approval amount for an LP
-    function userApprovalAmount(address user, address lp) external view returns (uint256);
     
     /// @notice Get all withdrawable balances for an account
     function getWithdrawableBalances(address account) external view returns (
@@ -103,7 +108,4 @@ interface ICoLPMatching {
     
     /// @notice Get pending ETH refunds
     function pendingETHRefunds(address account) external view returns (uint256);
-    
-    /// @notice Get approval nonce (for front-running protection)
-    function approvalNonce(address account) external view returns (uint256);
 }

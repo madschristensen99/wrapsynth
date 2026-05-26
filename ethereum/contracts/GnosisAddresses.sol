@@ -12,10 +12,19 @@ library GnosisAddresses {
     address public constant XDAI = 0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d; // Wrapped xDAI (wxDAI)
     address public constant SDAI = 0xaf204776c7245bF4147c2612BF6e5972Ee483701; // Savings DAI (sDAI)
 
-    // Uniswap V3
-    address public constant UNISWAP_V3_FACTORY = 0x1F98431c8aD98523631AE4a59f267346ea31F984;
-    address public constant UNISWAP_V3_POSITION_MANAGER = 0xC36442b4a4522E871399CD717aBDD847Ab11FE88;
-    address public constant UNISWAP_V3_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
+    // Uniswap V3 on Gnosis Chain (ChainID 100)
+    // Official deployment by Gnosis team (April 2023, proposal #20)
+    // Verified against Uniswap Accountability Committee deployments (July 2024)
+    address public constant UNI_V3_FACTORY = 0xe32F7dD7e3f098D518ff19A22d5f028e076489B1;
+    address public constant UNI_V3_POSITION_MANAGER = 0xAE8fbE656a77519a7490054274910129c9244FA3;
+    address public constant UNI_V3_SWAP_ROUTER_02 = 0xc6D25285D5C5b62b7ca26D6092751A145D50e9Be;
+    address public constant UNI_V3_QUOTER_V2 = 0x7E9cB3499A6cee3baBe5c8a3D328EA7FD36578f4;
+    address public constant UNI_V3_TICK_LENS = 0x8fe3D346B53dCA838B228e0e53aCdBED5DEC70Dc;
+    address public constant UNI_V3_STAKER = 0x8b5a954Fba566B157798C413d95028F4aB87F5E0;
+    address public constant UNI_V3_MULTICALL = 0x4dfa9a980efE4802E969AC33968E3d6E59B8a19e;
+    
+    // Backward compatibility alias
+    address public constant UNISWAP_V3_ROUTER = UNI_V3_SWAP_ROUTER_02;
 
     // Chainlink Data Feeds (Gnosis Chain — verify at https://docs.chain.link/data-feeds/price-feeds/addresses)
     // NOTE: XMR/USD is not natively available on Gnosis Chain. Use a custom aggregator
