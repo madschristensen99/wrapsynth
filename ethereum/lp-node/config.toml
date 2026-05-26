@@ -54,3 +54,31 @@ health_check_interval = 300
 min_collateral_ratio = 150  # 150%
 liquidation_threshold = 120  # 120%
 target_collateral_ratio = 180  # 180% (safety buffer)
+
+[api]
+# API server configuration
+port = 8080
+# Rate limiting (requests per minute per IP)
+rate_limit_per_minute = 60
+
+[admin]
+# Admin API authentication
+# IMPORTANT: Change this secret in production!
+secret = "change_this_in_production_use_env_var"
+
+[quote]
+# Quote configuration
+ttl_seconds = 60
+min_xmr_amount = 10000  # 0.00001 XMR in atomic units
+max_xmr_amount = 1000000000000  # 1 XMR in atomic units
+mint_fee_bps = 100  # 1.00%
+burn_reward_bps = 50  # 0.50%
+griefing_deposit_wei = "10000000000000000"  # 0.01 ETH
+mint_ready_bond_wei = "10000000000000000"  # 0.01 ETH
+
+[oracle]
+# Oracle price pusher configuration
+is_price_pusher = false  # Set to true for only ONE LP node per deployment
+push_threshold_bps = 25  # Push if price drifts > 0.25%
+max_age_secs = 90  # Push if last update older than 90 seconds
+poll_interval_secs = 30  # Check prices every 30 seconds

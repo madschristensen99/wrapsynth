@@ -371,6 +371,228 @@ mv lp-node-db lp-node-db.backup
 cargo run --release
 ```
 
+## HTTP API
+
+The LP node exposes an HTTP API for frontend integration and LP management. The API runs on port 8080 by default (configurable in `config.toml`).
+
+### Public Endpoints
+
+#### `GET /health`
+Health check endpoint.
+
+**Response:**
+```
+OK
+```
+
+#### `GET /lp/info`
+Get LP node information and capacity.
+
+**Response:**
+```json
+{
+  "lp_address": "0x492c...",
+  "lp_vault": "0x492c...",
+  "monero_network": "mainnet",
+  "supported_collateral": ["sDAI"],
+  "quote_ttl_seconds": 60,
+  "min_xmr_amount": 10000,
+  "max_xmr_amount": 1000000000000,
+  "current_capacity_xmr": 50000000000,
+  "mint_fee_bps": 100,
+  "burn_reward_bps": 50,
+  "griefing_deposit_wei": "10000000000000000",
+  "mint_ready_bond_wei": "10000000000000000",
+  "node_version": "0.2.0",
+  "uptime_seconds": 123456
+}
+```
+
+#### `POST /quote/mint`
+Request a quote for minting wsXMR.
+
+**Request:**
+```json
+{
+  "xmr_amount": 1000000000000,
+  "user_address": "0xabc..."
+}
+```
+
+**Response:**
+```json
+{
+  "quote_id": "...",
+  "lp_vault": "0x492c...",
+  "xmr_amount": 1000000000000,
+  "wsxmr_amount": 100000000,
+  "fee_wsxmr": 1000000,
+  "griefing_deposit_wei": "10000000000000000",
+  "expires_at": 1740000000,
+  "signature": "0x..."
+}
+```
+
+#### `POST /quote/burn`
+Request a quote for burning wsXMR.
+
+**Request:**
+```json
+{
+  "wsxmr_amount": 100000000,
+  "user_address": "0xabc..."
+}
+```
+
+**Response:** Same structure as mint quote.
+
+#### `POST /mint/notify`
+Notify the LP that a mint has been initiated on-chain.
+
+**Request:**
+```json
+{
+  "request_id": "0xdead...",
+  "tx_hash": "0xcafe..."
+}
+```
+
+**Response:**
+```json
+{
+  "request_id": "0xdead...",
+  "deposit_address": "5...",
+  "xmr_amount": 1000000000000,
+  "status": "Pending"
+}
+```
+
+#### `GET /mint/:request_id/status`
+Get the status of a mint request.
+
+**Response:**
+```json
+{
+  "request_id": "0xdead...",
+  "status": "XmrLocked",
+  "xmr_amount": 1000000000000,
+  "wsxmr_amount": 100000000,
+  "deposit_address": "5...",
+  "monero_confirmations": 5
+}
+```
+
+#### `GET /burn/:request_id/status`
+Get the status of a burn request.
+
+**Response:**
+```json
+{
+  "request_id": "0xbeef...",
+  "status": "XmrLocked",
+  "xmr_amount": 1000000000000,
+  "wsxmr_amount": 100000000,
+  "monero_txid": "abc123..."
+}
+```
+
+#### `GET /swap/:request_id`
+Get swap information (legacy endpoint).
+
+**Response:**
+```json
+{
+  "request_id": "0xdead...",
+  "deposit_address": "5...",
+  "lp_public_spend": "...",
+  "lp_public_view": "...",
+  "xmr_amount": 1000000000000,
+  "status": "Pending"
+}
+```
+
+### Admin Endpoints
+
+All admin endpoints require authentication via `X-Admin-Key` header. Generate the key using:
+
+```bash
+echo -n "admin_auth" | openssl dgst -sha256 -hmac "YOUR_SECRET_FROM_CONFIG"
+```
+
+#### `POST /admin/start`
+Resume accepting new quotes (if paused).
+
+**Headers:**
+```
+X-Admin-Key: <hmac_signature>
+```
+
+#### `POST /admin/pause`
+Pause accepting new quotes.
+
+#### `GET /admin/inventory`
+Get current inventory and warnings.
+
+**Response:**
+```json
+{
+  "xmr_balance": 5000000000000,
+  "xmr_unlocked": 4500000000000,
+  "collateral_amount": "1000000000000000000",
+  "locked_collateral": "100000000000000000",
+  "pending_mints": 2,
+  "pending_burns": 1,
+  "warnings": ["Low XMR balance"]
+}
+```
+
+#### `GET /admin/oracle/status`
+Get oracle price status.
+
+**Response:**
+```json
+{
+  "last_xmr_price": 39000000000,
+  "last_dai_price": 100000000,
+  "last_update_timestamp": 1740000000,
+  "age_seconds": 45,
+  "last_api_fetch": 1740000030,
+  "drift_bps": 12
+}
+```
+
+#### `POST /admin/oracle/force_push`
+Force an immediate oracle price update.
+
+**Response:**
+```json
+{
+  "tx_hash": "0x...",
+  "xmr_price": 39000000000,
+  "dai_price": 100000000
+}
+```
+
+### Oracle Price Pusher
+
+The LP node can optionally push oracle prices from RedStone API to the on-chain SimpleOracleFacet. Configure in `config.toml`:
+
+```toml
+[oracle]
+is_price_pusher = true  # Only ONE LP node should have this enabled
+push_threshold_bps = 25  # Push if price drifts > 0.25%
+max_age_secs = 90  # Push if last update older than 90 seconds
+poll_interval_secs = 30  # Check prices every 30 seconds
+```
+
+**Important:** Only one LP node per deployment should have `is_price_pusher = true` to avoid transaction conflicts.
+
+The price pusher:
+- Fetches XMR and DAI prices from RedStone API every 30 seconds
+- Pushes to on-chain oracle if drift > 0.25% or age > 90 seconds
+- Prevents `StalePrice` errors during mint/burn operations
+- Requires the LP node's EVM address to be set as `priceUpdater` on the SimpleOracleFacet
+
 ## License
 
 LGPL-3.0

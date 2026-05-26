@@ -27,6 +27,16 @@ sol! {
     }
     
     #[sol(rpc)]
+    contract SimpleOracleFacet {
+        function updatePrices(uint256 xmrPrice, uint256 daiPrice) external;
+        function getXmrPrice() external view returns (uint256);
+        function getCollateralPrice() external view returns (uint256);
+        function priceUpdater() external view returns (address);
+        
+        event PricesUpdated(uint256 xmrPrice, uint256 daiPrice, uint256 timestamp);
+    }
+    
+    #[sol(rpc)]
     contract VaultManager {
         // Events
         event BurnRequested(
@@ -782,6 +792,105 @@ impl EvmClient {
         }
         
         Ok(receipt.transaction_hash)
+    }
+
+    /// Update oracle prices on SimpleOracleFacet
+    pub async fn update_oracle_prices(&self, xmr_price: u64, dai_price: u64) -> Result<FixedBytes<32>> {
+        info!("Updating oracle prices: XMR={}, DAI={}", xmr_price, dai_price);
+
+        let contract = SimpleOracleFacet::new(self.vault_manager, &self.provider);
+        
+        let call = contract.updatePrices(U256::from(xmr_price), U256::from(dai_price));
+        
+        let pending_tx = call
+            .send()
+            .await
+            .context("Failed to send updatePrices transaction")?;
+
+        let receipt = pending_tx
+            .get_receipt()
+            .await
+            .context("Failed to get updatePrices receipt")?;
+
+        info!("Oracle prices updated in tx: {:?}", receipt.transaction_hash);
+        Ok(receipt.transaction_hash)
+    }
+
+    /// Get last oracle state (price and timestamp)
+    pub async fn get_last_oracle_state(&self) -> Result<(u64, u64)> {
+        let contract = SimpleOracleFacet::new(self.vault_manager, &self.provider);
+        
+        let xmr_price = contract.getXmrPrice().call().await
+            .context("Failed to get XMR price")?._0;
+        
+        let current_block = self.provider.get_block_number().await
+            .context("Failed to get block number")?;
+        let block = self.provider.get_block_by_number(current_block.into(), false.into()).await
+            .context("Failed to get block")?
+            .ok_or_else(|| anyhow::anyhow!("Block not found"))?;
+        
+        let timestamp = block.header.timestamp;
+        let xmr_price_u64 = (xmr_price / U256::from(10u64.pow(10))).to::<u64>();
+        
+        Ok((xmr_price_u64, timestamp))
+    }
+
+    /// Calculate LP capacity in XMR atomic units
+    pub async fn get_lp_capacity(&self, active_quote_holds: u64) -> Result<u64> {
+        let vault = self.get_vault().await?;
+        
+        let collateral_price = SimpleOracleFacet::new(self.vault_manager, &self.provider)
+            .getCollateralPrice()
+            .call()
+            .await
+            .context("Failed to get collateral price")?._0;
+        
+        let xmr_price = SimpleOracleFacet::new(self.vault_manager, &self.provider)
+            .getXmrPrice()
+            .call()
+            .await
+            .context("Failed to get XMR price")?._0;
+        
+        let available_collateral = vault.collateral_amount.saturating_sub(vault.locked_collateral);
+        
+        let available_collateral_usd = (available_collateral * collateral_price) / U256::from(10u64.pow(18));
+        
+        let max_debt_usd = (available_collateral_usd * U256::from(100)) / U256::from(150);
+        
+        let current_debt_usd = ((vault.normalized_debt + vault.pending_debt) * xmr_price) / U256::from(10u64.pow(8));
+        
+        let capacity_usd = max_debt_usd.saturating_sub(current_debt_usd);
+        
+        let capacity_xmr = if xmr_price.is_zero() {
+            0
+        } else {
+            ((capacity_usd * U256::from(10u64.pow(8))) / xmr_price).to::<u64>()
+        };
+        
+        let capacity_after_holds = capacity_xmr.saturating_sub(active_quote_holds);
+        
+        Ok(capacity_after_holds)
+    }
+
+    /// Verify a mint event exists in a transaction
+    pub async fn verify_mint_event_in_tx(&self, tx_hash: FixedBytes<32>, expected_request_id: [u8; 32]) -> Result<bool> {
+        let receipt = self.provider.get_transaction_receipt(tx_hash)
+            .await
+            .context("Failed to get transaction receipt")?
+            .ok_or_else(|| anyhow::anyhow!("Transaction not found"))?;
+        
+        for log in receipt.inner.logs() {
+            if log.address() == self.vault_manager {
+                if let Ok(event) = self.parse_mint_initiated(log) {
+                    let event_request_id: [u8; 32] = event.requestId.into();
+                    if event_request_id == expected_request_id {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        
+        Ok(false)
     }
 }
 

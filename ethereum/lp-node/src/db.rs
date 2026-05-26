@@ -37,6 +37,13 @@ pub enum BurnStatus {
     Slashed,
 }
 
+/// Direction of a quote
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum QuoteDirection {
+    Mint,
+    Burn,
+}
+
 /// Mint task tracking
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MintTask {
@@ -82,6 +89,22 @@ pub struct BurnTask {
     pub monero_lock_txid: Option<String>,
     /// EVM transaction hash for commitBurn
     pub commit_tx_hash: Option<[u8; 32]>,
+}
+
+/// Quote for mint or burn operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Quote {
+    pub quote_id: [u8; 32],
+    pub direction: QuoteDirection,
+    pub user: [u8; 20],
+    pub lp_vault: [u8; 20],
+    pub xmr_amount: u64,
+    pub wsxmr_amount: u64,
+    pub fee: u64,
+    pub created_at: u64,
+    pub expires_at: u64,
+    pub consumed: bool,
+    pub signature: Option<Vec<u8>>,
 }
 
 /// Database wrapper for crash-safe persistence
@@ -219,6 +242,93 @@ impl Database {
         let mut key = b"burn:".to_vec();
         key.extend_from_slice(request_id);
         key
+    }
+
+    fn quote_key(quote_id: &[u8; 32]) -> Vec<u8> {
+        let mut key = b"quote:".to_vec();
+        key.extend_from_slice(quote_id);
+        key
+    }
+
+    // ========== QUOTE OPERATIONS ==========
+
+    /// Insert a new quote
+    pub fn insert_quote(&self, quote: &Quote) -> Result<()> {
+        let key = Self::quote_key(&quote.quote_id);
+        let value = bincode::serialize(quote).context("Failed to serialize quote")?;
+        self.db
+            .insert(key, value)
+            .context("Failed to insert quote")?;
+        self.db.flush().context("Failed to flush database")?;
+        Ok(())
+    }
+
+    /// Get a quote by ID
+    pub fn get_quote(&self, quote_id: &[u8; 32]) -> Result<Option<Quote>> {
+        let key = Self::quote_key(quote_id);
+        match self.db.get(key).context("Failed to get quote")? {
+            Some(bytes) => {
+                let quote = bincode::deserialize(&bytes)
+                    .context("Failed to deserialize quote")?;
+                Ok(Some(quote))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Mark a quote as consumed
+    pub fn mark_quote_consumed(&self, quote_id: &[u8; 32]) -> Result<()> {
+        if let Some(mut quote) = self.get_quote(quote_id)? {
+            quote.consumed = true;
+            self.insert_quote(&quote)?;
+        }
+        Ok(())
+    }
+
+    /// Delete expired quotes
+    pub fn delete_expired_quotes(&self, current_time: u64) -> Result<usize> {
+        let prefix = b"quote:";
+        let mut deleted = 0;
+
+        let mut to_delete = Vec::new();
+        for result in self.db.scan_prefix(prefix) {
+            let (key, value) = result.context("Failed to scan quotes")?;
+            let quote: Quote = bincode::deserialize(&value)
+                .context("Failed to deserialize quote")?;
+            
+            if !quote.consumed && quote.expires_at < current_time {
+                to_delete.push(key.to_vec());
+            }
+        }
+
+        for key in to_delete {
+            self.db.remove(key).context("Failed to delete quote")?;
+            deleted += 1;
+        }
+
+        if deleted > 0 {
+            self.db.flush().context("Failed to flush database")?;
+        }
+
+        Ok(deleted)
+    }
+
+    /// Get all active (non-expired, non-consumed) quotes
+    pub fn get_active_quotes(&self, current_time: u64) -> Result<Vec<Quote>> {
+        let prefix = b"quote:";
+        let mut quotes = Vec::new();
+
+        for result in self.db.scan_prefix(prefix) {
+            let (_key, value) = result.context("Failed to scan quotes")?;
+            let quote: Quote = bincode::deserialize(&value)
+                .context("Failed to deserialize quote")?;
+            
+            if !quote.consumed && quote.expires_at >= current_time {
+                quotes.push(quote);
+            }
+        }
+
+        Ok(quotes)
     }
 
     // ========== UTILITY ==========

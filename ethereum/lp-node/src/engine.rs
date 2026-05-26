@@ -1,6 +1,7 @@
 use crate::db::{BurnStatus, BurnTask, Database, MintStatus, MintTask};
 use crate::evm::EvmClient;
 use crate::monero::MoneroClient;
+use crate::oracle::OracleClient;
 use alloy::primitives::FixedBytes;
 use anyhow::{Context, Result};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
@@ -13,18 +14,29 @@ use tracing::{debug, error, info, warn};
 
 const MONERO_CONFIRMATIONS: u64 = 10;
 const POLL_INTERVAL_SECS: u64 = 30;
-const BURN_SAFETY_MARGIN_HOURS: u64 = 6; // Finalize 6 hours before deadline
+const BURN_SAFETY_MARGIN_HOURS: u64 = 6;
+const PRICE_POLL_INTERVAL_SECS: u64 = 30;
+const PRICE_PUSH_THRESHOLD_BPS: u16 = 25;
+const PRICE_PUSH_MAX_AGE_SECS: u64 = 90; // Finalize 6 hours before deadline
 
 /// The main engine that orchestrates atomic swaps
 pub struct SwapEngine {
     db: Database,
     evm: Arc<EvmClient>,
     monero: Arc<MoneroClient>,
+    oracle: Arc<OracleClient>,
+    enable_price_pusher: bool,
 }
 
 impl SwapEngine {
-    pub fn new(db: Database, evm: Arc<EvmClient>, monero: Arc<MoneroClient>) -> Self {
-        Self { db, evm, monero }
+    pub fn new(db: Database, evm: Arc<EvmClient>, monero: Arc<MoneroClient>, enable_price_pusher: bool) -> Self {
+        Self { 
+            db, 
+            evm, 
+            monero,
+            oracle: Arc::new(OracleClient::new()),
+            enable_price_pusher,
+        }
     }
 
     /// Start the engine - spawns all background workers
@@ -54,6 +66,19 @@ impl SwapEngine {
                 error!("Vault monitor worker error: {}", e);
             }
         });
+
+        // Spawn price pusher worker if enabled
+        if self.enable_price_pusher {
+            let engine = self.clone();
+            tokio::spawn(async move {
+                if let Err(e) = engine.price_pusher_worker().await {
+                    error!("Price pusher worker error: {}", e);
+                }
+            });
+            info!("Price pusher worker started");
+        } else {
+            info!("Price pusher disabled in config");
+        }
 
         info!("All workers started");
         Ok(())
@@ -448,6 +473,63 @@ impl SwapEngine {
         if ratio < 120.0 {
             error!("CRITICAL: Vault is liquidatable! Ratio: {:.2}%", ratio);
             // In production, implement emergency procedures
+        }
+
+        Ok(())
+    }
+
+    // ========== PRICE PUSHER ==========
+
+    /// Worker that pushes oracle prices from RedStone API
+    async fn price_pusher_worker(&self) -> Result<()> {
+        info!("Price pusher worker started");
+
+        loop {
+            if let Err(e) = self.push_prices_if_needed().await {
+                error!("Error pushing prices: {}", e);
+            }
+
+            sleep(Duration::from_secs(PRICE_POLL_INTERVAL_SECS)).await;
+        }
+    }
+
+    async fn push_prices_if_needed(&self) -> Result<()> {
+        let prices = self.oracle.fetch_redstone_prices().await?;
+
+        let (last_xmr_price, last_timestamp) = match self.evm.get_last_oracle_state().await {
+            Ok(state) => state,
+            Err(e) => {
+                warn!("Failed to get last oracle state: {}", e);
+                return Ok(());
+            }
+        };
+
+        let now = current_timestamp();
+        let age = now.saturating_sub(last_timestamp);
+        let drift_bps = OracleClient::calculate_drift_bps(last_xmr_price, prices.xmr_price);
+
+        if drift_bps > PRICE_PUSH_THRESHOLD_BPS || age > PRICE_PUSH_MAX_AGE_SECS {
+            info!(
+                "Pushing oracle update: drift={}bps age={}s",
+                drift_bps, age
+            );
+
+            match self.evm.update_oracle_prices(prices.xmr_price, prices.dai_price).await {
+                Ok(tx_hash) => {
+                    info!(
+                        "Oracle updated: xmr={} dai={} drift={}bps age={}s tx={:?}",
+                        prices.xmr_price, prices.dai_price, drift_bps, age, tx_hash
+                    );
+                }
+                Err(e) => {
+                    error!("Failed to push oracle prices: {}", e);
+                }
+            }
+        } else {
+            debug!(
+                "Oracle update not needed: drift={}bps age={}s",
+                drift_bps, age
+            );
         }
 
         Ok(())
