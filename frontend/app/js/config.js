@@ -15,26 +15,30 @@ export const NETWORKS = {
     }
 };
 
-// Contract addresses - Deployed on Gnosis Chain Mainnet
+// Contract addresses - Deployed on Gnosis Chain Mainnet (Diamond Architecture)
 export const CONTRACTS = {
-    vaultManager: '0x839257DE37b22B377e545514e2eD0b4f92266F88',
-    wrappedMonero: '0xf0114924F8e3d1D4dca68DEf1F3Ea402EF5B32a2',
-    liquidityRouter: '0x7Ed870F86ae9c7ecE955185792FFF1Ac57dc743a',
-    pythOracle: '0x2880aB155794e7179c9eE2e38200202908C17B43', // Gnosis Pyth Oracle
+    hub: '0x9b03355624acd1265508b981b046f4293b1ffed8',  // wsXmrHub (Diamond) - v1.2
+    wsxmrToken: '0x910bfbfe34cfa4ea45b6ec8070872e2f89b5e6ad',
+    // liquidityRouter address — will be filled in after Task 01 deploys it
+    liquidityRouter: '0x0000000000000000000000000000000000000000',
     // Default LP vault to use for mints (the active LP running the LP node)
     defaultLpVault: '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB'
 };
 
-// Pyth Network Configuration
-export const PYTH_CONFIG = {
-    hermesUrl: 'https://hermes.pyth.network/api',
-    priceIds: {
-        // XMR/USD price feed ID
-        xmrUsd: '0x46b8cc9347f04391764a0361e0b17c3ba394b001e7c304f7650f6376e37c321d',
-        // sDAI/USD price feed ID (collateral asset)
-        sdaiUsd: '0xb0948a5e5313200c632b51bb5ca32f6de0d36e9950a942d19751e833f70dabfd'
-    },
-    updateFee: 1n // Wei, will be calculated dynamically
+// LP Server Configuration
+export const LP_SERVER_CONFIG = {
+    // Default LP server URL (operator's server)
+    defaultUrl: 'http://localhost:3001',
+    // Endpoints
+    endpoints: {
+        info: '/info',
+        quoteMint: '/quote/mint',
+        quoteBurn: '/quote/burn',
+        notifyMint: '/mint/notify',
+        getMintStatus: '/mint/:id/status',
+        getBurnStatus: '/burn/:id/status',
+        confirmBurn: '/burn/:id/confirm'
+    }
 };
 
 // Token decimals
@@ -93,39 +97,140 @@ export const STORAGE_KEYS = {
     userPreferences: 'phantom_preferences'
 };
 
+// Raw ABI for complex return types (parseAbi doesn't support tuples)
+export const RAW_ABIS = {
+    getVault: {
+        inputs: [{ name: 'lpAddress', type: 'address' }],
+        name: 'getVault',
+        outputs: [{
+            components: [
+                { name: 'lpAddress', type: 'address' },
+                { name: 'collateralShares', type: 'uint256' },
+                { name: 'lockedCollateral', type: 'uint256' },
+                { name: 'normalizedDebt', type: 'uint256' },
+                { name: 'pendingDebt', type: 'uint256' },
+                { name: 'maxMintBps', type: 'uint16' },
+                { name: 'mintGriefingDeposit', type: 'uint256' },
+                { name: 'mintReadyBond', type: 'uint256' },
+                { name: 'mintFeeBps', type: 'uint16' },
+                { name: 'burnRewardBps', type: 'uint16' },
+                { name: 'liquidationNonce', type: 'uint256' },
+                { name: 'mintNonce', type: 'uint256' },
+                { name: 'minBurnAmount', type: 'uint256' },
+                { name: 'active', type: 'bool' }
+            ],
+            name: '',
+            type: 'tuple'
+        }],
+        stateMutability: 'view',
+        type: 'function'
+    }
+};
+
 // Contract ABIs (minimal, only what we need)
 export const ABIS = {
-    vaultManager: [
+    hub: [
+        // Mint flow
         'function initiateMint(address lpVault, address recipient, uint256 xmrAmount, bytes32 claimCommitment, uint256 timeoutDuration) external payable returns (bytes32 requestId)',
-        'function updatePythPrices(bytes[] calldata pythUpdateData) external payable',
-        'function requestBurn(uint256 wsxmrAmount, address lpVault, address user) external returns (bytes32 requestId)',
+        'function setMintReady(bytes32 requestId) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
-        'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
         'function cancelMint(bytes32 requestId) external',
-        'function vaults(address lpVault) external view returns (uint256 collateralAmount, uint256 normalizedDebt, uint256 pendingDebt, uint256 lockedCollateral, address collateralAsset, uint256 mintGriefingDeposit, uint256 mintFeeBps, uint256 burnFeeBps, uint256 maxMintBps, bool active)',
-        'function getVault(address lpVault) external view returns (address lpAddress, uint256 collateralAmount, uint256 lockedCollateral, uint256 normalizedDebt, uint256 pendingDebt, uint16 maxMintBps, uint256 mintGriefingDeposit, uint16 mintFeeBps, uint16 burnRewardBps, uint256 mintNonce, uint256 liquidationNonce, bool active)',
-        'function mintRequests(bytes32 requestId) external view returns (bytes32 requestId, address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, uint256 timeout, uint256 griefingDeposit, uint256 normalizedDebtAmount, uint256 vaultMintNonce, uint8 status)',
-        'function lpPublicKeys(bytes32 requestId) external view returns (bytes32)',
-        'function burnRequests(bytes32 requestId) external view returns (address user, address lpVault, uint256 wsxmrAmount, bytes32 secretHash, uint256 collateralLocked, uint256 deadline, uint8 status)',
+        'function getUserMintRequests(address user) external view returns (bytes32[])',
+        'function getVaultPendingMints(address lpVault) external view returns (bytes32[])',
+        'function calculateWsxmrAmount(uint256 xmrAmount) external pure returns (uint256)',
+        'function calculateMintFee(address lpVault, uint256 wsxmrAmount) external view returns (uint256)',
+
+        // Burn flow — 4-step: requestBurn → proposeHash → confirmMoneroLock → finalizeBurn
+        'function requestBurn(uint256 wsxmrAmount, address lpVault, address user) external returns (bytes32 requestId)',
+        'function proposeHash(bytes32 requestId, bytes32 secretHash) external',
+        'function confirmMoneroLock(bytes32 requestId) external',
+        'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
+        'function claimSlashedCollateral(bytes32 requestId) external',
+        'function cancelBurn(bytes32 requestId) external',
+        'function getUserBurnRequests(address user) external view returns (bytes32[])',
+
+        // Vault (LP-side)
+        'function createVault() external',
+        'function deactivateVault() external',
+        'function depositCollateral(uint256 amount) external',
+        'function depositShares(uint256 shares) external',
+        'function withdrawCollateral(uint256 shares) external',
+        'function setMintGriefingDeposit(uint256 deposit) external',
+        'function setMintReadyBond(uint256 bond) external',
+        'function setVaultMarketMetrics(uint16 mintFeeBps, uint16 burnRewardBps) external',
+        'function setMaxMintBps(uint16 maxMintBps) external',
+        'function setMinBurnAmount(uint256 minAmount) external',
+        'function withdrawReturns(address token) external',
+        'function getVaultHealth(address lpAddress) external view returns (uint256 ratio)',
+        'function getVaultDebt(address lpAddress) external view returns (uint256)',
+        'function getVaultCount() external view returns (uint256)',
+        'function getVaultAtIndex(uint256 index) external view returns (address)',
+        'function getPendingReturns(address user, address token) external view returns (uint256)',
+        'function hasActiveVault(address lpAddress) external view returns (bool)',
+
+        // Oracle (SimpleOracleFacet — RedStone prices pushed by LP server, not the user)
         'function getXmrPrice() external view returns (uint256)',
         'function getCollateralPrice() external view returns (uint256)',
+        'function getXmrPriceWithAge(uint256 maxAge) external view returns (uint256)',
+        'function getCollateralPriceWithAge(uint256 maxAge) external view returns (uint256)',
+
+        // Events
         'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, uint256 timeout)',
-        'event LPKeyProvided(bytes32 indexed requestId, bytes32 lpPublicKey)',
         'event MintReady(bytes32 indexed requestId)',
         'event MintFinalized(bytes32 indexed requestId, bytes32 secret)',
-        'event BurnRequested(bytes32 indexed requestId, address indexed user, uint256 wsxmrAmount)',
-        'event BurnCommitted(bytes32 indexed requestId, bytes32 secretHash)',
-        'event BurnFinalized(bytes32 indexed requestId, bytes32 secret)'
+        'event MintCancelled(bytes32 indexed requestId)',
+        'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral)',
+        'event HashProposed(bytes32 indexed requestId, bytes32 secretHash)',
+        'event BurnCommitted(bytes32 indexed requestId, uint256 deadline)',
+        'event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 reward)',
+        'event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 totalSeized)',
+        'event BurnCancelled(bytes32 indexed requestId)',
+        'event VaultCreated(address indexed lp)',
+        'event CollateralDeposited(address indexed lp, uint256 amount, uint256 shares)',
+        'event CollateralWithdrawn(address indexed lp, uint256 amount, uint256 shares)'
     ],
-    wrappedMonero: [
+
+    liquidityRouter: [
+        // LP side
+        'function allocateLiquidity(uint256 sDAIAmount) external',
+        'function withdrawSDAI(uint256 sDAIAmount) external',
+        'function increaseUserApproval(address user, uint256 additionalSDAI) external',
+        'function decreaseUserApproval(address user, uint256 reduceSDAI) external',
+        // User side
+        'function depositWsxmr(uint256 amount) external',
+        'function withdrawWsXMR(uint256 wsxmrAmount) external',
+        'function increaseLpApproval(address lp, uint256 additionalWsxmr) external',
+        'function decreaseLpApproval(address lp, uint256 reduceWsxmr) external',
+        'function burnFromInternalBalance(uint256 wsxmrAmount, address lpVault) external returns (bytes32)',
+        // Positions
+        'function createPosition(address lp, address user, uint256 sDAIAmount, uint256 wsxmrAmount, uint256 deadline) external returns (uint256)',
+        'function createPositionWithPriceUpdate(address lp, address user, uint256 sDAIAmount, uint256 wsxmrAmount, uint256 deadline, bytes[] calldata oracleUpdateData) external payable returns (uint256)',
+        'function closePosition(uint256 positionIndex, uint256 deadline, uint256 minTotalValueUSD) external',
+        'function collectFees(uint256 positionIndex) external',
+        'function withdrawFees() external',
+        'function withdrawETH() external',
+        // Views
+        'function getLpAvailableLiquidity(address lp) external view returns (uint256)',
+        'function getUserAvailableWsxmr(address user) external view returns (uint256)',
+        'function lpApprovalAmount(address lp, address user) external view returns (uint256)',
+        'function userApprovalAmount(address user, address lp) external view returns (uint256)',
+        'function activePositionCount(address account) external view returns (uint256)',
+        // Events
+        'event PositionCreated(uint256 indexed positionIndex, uint256 dexTokenId, address indexed lp, address indexed user, uint256 sDAIAmount, uint256 wsxmrAmount)',
+        'event PositionClosed(uint256 indexed positionIndex, uint256 sDAIReturned, uint256 wsxmrReturned)',
+        'event LpApprovedUser(address indexed lp, address indexed user, uint256 amount)',
+        'event UserApprovedLp(address indexed user, address indexed lp, uint256 amount)',
+        'event ILSDAICredited(address indexed user, uint256 amount, uint256 positionIndex)',
+        'event ILWsxmrCredited(address indexed lp, uint256 amount, uint256 positionIndex)'
+    ],
+
+    wsxmr: [
         'function balanceOf(address account) external view returns (uint256)',
         'function decimals() external view returns (uint8)',
         'function approve(address spender, uint256 amount) external returns (bool)',
-        'function allowance(address owner, address spender) external view returns (uint256)'
-    ],
-    pythOracle: [
-        'function getUpdateFee(bytes[] calldata updateData) external view returns (uint256 feeAmount)',
-        'function updatePriceFeeds(bytes[] calldata updateData) external payable'
+        'function allowance(address owner, address spender) external view returns (uint256)',
+        'function transfer(address to, uint256 amount) external returns (bool)',
+        'function totalSupply() external view returns (uint256)'
     ]
 };
 

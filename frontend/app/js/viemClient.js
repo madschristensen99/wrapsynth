@@ -3,13 +3,13 @@
 
 import { createPublicClient, createWalletClient, custom, http, parseAbi } from 'https://esm.sh/viem@2.7.0';
 import { gnosis } from 'https://esm.sh/viem@2.7.0/chains';
-import { NETWORKS, CONTRACTS, ABIS } from './config.js';
+import { NETWORKS, CONTRACTS, ABIS, RAW_ABIS } from './config.js';
 
 // Parse ABIs once at module level
 const parsedABIs = {
-    vaultManager: parseAbi(ABIS.vaultManager),
-    wrappedMonero: parseAbi(ABIS.wrappedMonero),
-    pythOracle: parseAbi(ABIS.pythOracle)
+    hub: parseAbi(ABIS.hub),
+    wsxmr: parseAbi(ABIS.wsxmr),
+    liquidityRouter: parseAbi(ABIS.liquidityRouter)
 };
 
 // Public client for reading blockchain state
@@ -119,28 +119,38 @@ export function getWalletClient() {
 }
 
 /**
- * Read from VaultManager contract
+ * Read from Hub contract (Diamond)
  */
-export async function readVaultManager(functionName, args = []) {
+export async function readHub(functionName, args = []) {
     const client = getPublicClient();
     
+    // Special handling for getVault which has tuple return type
+    if (functionName === 'getVault') {
+        return await client.readContract({
+            address: CONTRACTS.hub,
+            abi: [RAW_ABIS.getVault],
+            functionName,
+            args
+        });
+    }
+    
     return await client.readContract({
-        address: CONTRACTS.vaultManager,
-        abi: parsedABIs.vaultManager,
+        address: CONTRACTS.hub,
+        abi: parsedABIs.hub,
         functionName,
         args
     });
 }
 
 /**
- * Write to VaultManager contract
+ * Write to Hub contract (Diamond)
  */
-export async function writeVaultManager(functionName, args = [], value = 0n) {
+export async function writeHub(functionName, args = [], value = 0n) {
     const client = getWalletClient();
     
     const { request } = await getPublicClient().simulateContract({
-        address: CONTRACTS.vaultManager,
-        abi: parsedABIs.vaultManager,
+        address: CONTRACTS.hub,
+        abi: parsedABIs.hub,
         functionName,
         args,
         value,
@@ -156,28 +166,28 @@ export async function writeVaultManager(functionName, args = [], value = 0n) {
 }
 
 /**
- * Read from WrappedMonero contract
+ * Read from wsXMR token contract
  */
-export async function readWrappedMonero(functionName, args = []) {
+export async function readWsxmr(functionName, args = []) {
     const client = getPublicClient();
     
     return await client.readContract({
-        address: CONTRACTS.wrappedMonero,
-        abi: parsedABIs.wrappedMonero,
+        address: CONTRACTS.wsxmrToken,
+        abi: parsedABIs.wsxmr,
         functionName,
         args
     });
 }
 
 /**
- * Write to WrappedMonero contract
+ * Write to wsXMR token contract
  */
-export async function writeWrappedMonero(functionName, args = []) {
+export async function writeWsxmr(functionName, args = []) {
     const client = getWalletClient();
     
     const { request } = await getPublicClient().simulateContract({
-        address: CONTRACTS.wrappedMonero,
-        abi: parsedABIs.wrappedMonero,
+        address: CONTRACTS.wsxmrToken,
+        abi: parsedABIs.wsxmr,
         functionName,
         args,
         account: userAddress
@@ -198,7 +208,7 @@ export async function getWsXmrBalance(address = null) {
         throw new Error('No address provided');
     }
     
-    return await readWrappedMonero('balanceOf', [targetAddress]);
+    return await readWsxmr('balanceOf', [targetAddress]);
 }
 
 /**
@@ -217,13 +227,14 @@ export async function getNativeBalance(address = null) {
 /**
  * Watch for contract events
  */
-export function watchContractEvent(eventName, callback, fromBlock = 'latest') {
+export function watchContractEvent(contractAddress, abi, eventName, args = {}, callback, fromBlock = 'latest') {
     const client = getPublicClient();
     
     return client.watchContractEvent({
-        address: CONTRACTS.vaultManager,
-        abi: parsedABIs.vaultManager,
+        address: contractAddress,
+        abi: parseAbi(abi),
         eventName,
+        args,
         onLogs: callback,
         pollingInterval: 5000,
         fromBlock
@@ -233,12 +244,12 @@ export function watchContractEvent(eventName, callback, fromBlock = 'latest') {
 /**
  * Get past contract events
  */
-export async function getPastEvents(eventName, fromBlock, toBlock = 'latest', args = {}) {
+export async function getPastEvents(contractAddress, abi, eventName, fromBlock, toBlock = 'latest', args = {}) {
     const client = getPublicClient();
     
     return await client.getContractEvents({
-        address: CONTRACTS.vaultManager,
-        abi: parsedABIs.vaultManager,
+        address: contractAddress,
+        abi: parseAbi(abi),
         eventName,
         fromBlock,
         toBlock,

@@ -1,17 +1,12 @@
-// Mint Flow - XMR to wsXMR
-// Handles the complete minting process
+// Mint Flow - XMR to wsXMR (Diamond Architecture + LP Server Integration)
 
 import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG } from './config.js';
-import { readVaultManager, writeVaultManager, watchContractEvent } from './viemClient.js';
+import { readHub, writeHub, watchContractEvent, getUserAddress } from './viemClient.js';
 import { getPhantomAgent } from './phantomAgent.js';
-import { getPriceUpdates, getPythUpdateFee } from './pythOracle.js';
-import { computeDepositAddress } from './moneroCrypto.js';
+import { getLPClient } from './lpClient.js';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
-import { pad, toHex, parseEther } from 'https://esm.sh/viem@2.7.0';
+import { keccak256, toHex, parseEther } from 'https://esm.sh/viem@2.7.0';
 
-/**
- * Mint Flow State Machine
- */
 export class MintFlow {
     constructor() {
         this.state = 'idle';
@@ -19,49 +14,36 @@ export class MintFlow {
         this.agent = null;
         this.lpVault = null;
         this.xmrAmount = null;
+        this.wsxmrAmount = null;
         this.griefingDeposit = null;
         this.timeout = null;
+        this.depositAddress = null;
         this.eventWatchers = [];
+        this.lpClient = getLPClient();
     }
 
-    /**
-     * Start the mint flow
-     * @param {string} lpVault - LP vault address
-     * @param {number} xmrAmount - Amount in XMR (human-readable)
-     */
     async start(lpVault, xmrAmount) {
         console.log('Starting mint flow:', { lpVault, xmrAmount });
 
-        // Validate inputs - contract enforces minimum of 1e4 piconeros (0.00000001 XMR)
         if (xmrAmount <= 0) {
             throw new Error('Amount must be greater than 0');
         }
 
         this.lpVault = lpVault;
         this.xmrAmount = xmrAmount;
-        this.timeoutDuration = SWAP_CONFIG.defaultTimeout; // Duration in seconds, not timestamp
+        this.timeoutDuration = SWAP_CONFIG.defaultTimeout;
 
-        // Step 1: Initialize Phantom Agent (generate commitment)
+        await this.getQuote();
         await this.initializeAgent();
-
-        // Step 2: Initiate on EVM (call contract with commitment)
+        await this.checkOracleFreshness();
         await this.initiateOnEVM();
-
-        // Step 3: Display deposit info and monitor (LP provides address, user deposits)
-        await this.monitorDeposit();
-
-        // Step 4: Wait for LP confirmation (LP confirms XMR lock)
-        await this.waitForLPConfirmation();
-
-        // Step 5: Wait for finalization (LP reveals secret)
-        await this.waitForFinalization();
+        await this.notifyLP();
+        await this.waitForLPReady();
+        await this.finalize();
     }
 
-    /**
-     * Step 1: Initialize Phantom Agent
-     */
-    async initializeAgent() {
-        this.state = 'init';
+    async getQuote() {
+        this.state = 'quote';
         updateSwapState({ 
             type: 'mint',
             state: this.state,
@@ -69,382 +51,256 @@ export class MintFlow {
             xmrAmount: this.xmrAmount
         });
 
-        this.agent = getPhantomAgent();
+        console.log('Getting quote from LP server...');
         
-        const agentData = await this.agent.initialize(
-            'MINT',
-            this.xmrAmount.toString()
-        );
+        try {
+            const userAddress = getUserAddress();
+            const quote = await this.lpClient.quoteMint({
+                xmrAmount: this.xmrAmount,
+                userAddress
+            });
+
+            console.log('Quote received:', quote);
+            
+            this.lpVault = quote.lp_vault || this.lpVault;
+            this.griefingDeposit = BigInt(quote.griefing_deposit || '1000000000000000');
+            this.wsxmrAmount = BigInt(quote.wsxmr_amount);
+            
+            updateSwapState({
+                quote,
+                griefingDeposit: this.griefingDeposit.toString(),
+                wsxmrAmount: this.wsxmrAmount.toString()
+            });
+        } catch (error) {
+            console.warn('LP server unavailable, using on-chain fallback:', error);
+            
+            const vault = await readHub('getVault', [this.lpVault]);
+            this.griefingDeposit = vault.mintGriefingDeposit;
+            
+            const xmrAtomic = BigInt(Math.floor(this.xmrAmount * Math.pow(10, DECIMALS.XMR)));
+            this.wsxmrAmount = await readHub('calculateWsxmrAmount', [xmrAtomic]);
+        }
+    }
+
+    async initializeAgent() {
+        this.state = 'init';
+        updateSwapState({ state: this.state });
+
+        console.log('Initializing Phantom Agent...');
+        
+        this.agent = getPhantomAgent();
+        const agentData = await this.agent.initialize('MINT', this.xmrAmount.toString());
 
         console.log('Agent initialized:', agentData);
 
         updateSwapState({
-            state: 'deposit',
             moneroAddress: agentData.moneroAddress,
             commitment: agentData.commitment
         });
-
-        this.state = 'deposit';
     }
 
-    /**
-     * Step 2: Monitor for XMR deposit
-     * Note: This requires LP server with wallet RPC to actually scan the chain
-     * Browser can only display the address and wait for LP confirmation
-     */
-    async monitorDeposit() {
-        console.log('Monitoring for XMR deposit to:', this.agent.getMoneroAddress());
-
-        // Convert XMR to atomic units (12 decimals)
-        const expectedAmount = BigInt(Math.floor(this.xmrAmount * Math.pow(10, DECIMALS.XMR)));
-
-        console.log('Expected amount:', expectedAmount.toString(), 'atomic units');
-        console.log('Waiting for LP server to detect deposit...');
-
-        // In production, the LP server monitors the Monero chain
-        // The browser just waits for the LP to confirm via EVM event
-        return new Promise((resolve, reject) => {
-            let pollInterval;
-            let timeoutHandle;
-
-            const checkDeposit = async () => {
+    async checkOracleFreshness() {
+        console.log('Checking oracle freshness...');
+        
+        try {
+            await readHub('getXmrPriceWithAge', [110n]);
+            console.log('✅ Oracle prices are fresh');
+        } catch (error) {
+            if (error.message && error.message.includes('StalePrice')) {
+                console.warn('⚠️ Oracle prices stale, waiting 10s...');
+                await new Promise(resolve => setTimeout(resolve, 10000));
+                
                 try {
-                    // Try to scan for deposit (will fail in browser, succeed with LP server)
-                    const moneroWallet = this.agent.moneroWallet;
-                    if (moneroWallet && moneroWallet.scanForDeposit) {
-                        try {
-                            const currentHeight = await moneroWallet.getHeight();
-                            const deposit = await moneroWallet.scanForDeposit(
-                                expectedAmount,
-                                currentHeight - 10 // Scan last 10 blocks
-                            );
-                            
-                            if (deposit) {
-                                console.log('Deposit detected:', deposit);
-                                clearInterval(pollInterval);
-                                clearTimeout(timeoutHandle);
-                                resolve();
-                                return;
-                            }
-                        } catch (scanError) {
-                            // Expected to fail in browser - LP server handles this
-                            console.log('Browser cannot scan chain - waiting for LP confirmation');
-                        }
-                    }
-
-                    // Fallback: Check for LP confirmation via EVM event
-                    // The LP will call confirmMint() when they see the deposit
-                    // We can watch for the MintReady event
-                } catch (error) {
-                    console.error('Error monitoring deposit:', error);
+                    await readHub('getXmrPriceWithAge', [110n]);
+                    console.log('✅ Oracle prices refreshed');
+                } catch (retryError) {
+                    throw new Error('Oracle stale — please retry in a moment. The LP server price pusher may be behind.');
                 }
-            };
-
-            pollInterval = setInterval(checkDeposit, SWAP_CONFIG.pollInterval);
-            
-            // Initial check
-            checkDeposit();
-
-            // Timeout after 2 hours (MAX_MINT_TIMEOUT)
-            timeoutHandle = setTimeout(() => {
-                clearInterval(pollInterval);
-                reject(new Error('Deposit timeout - no XMR received within 2 hours'));
-            }, 7200000);
-        });
+            } else {
+                throw error;
+            }
+        }
     }
 
-    /**
-     * Step 3: Initiate mint on EVM
-     */
     async initiateOnEVM() {
         this.state = 'evm-init';
         updateSwapState({ state: this.state });
 
         console.log('Initiating mint on EVM...');
 
-        // Get vault info to determine griefing deposit
-        const vaultInfo = await readVaultManager('getVault', [this.lpVault]);
-        this.griefingDeposit = vaultInfo[6]; // mintGriefingDeposit (index 6)
-        
-        console.log('Griefing deposit required:', this.griefingDeposit.toString());
-        
-        // Note: We skip pre-flight capacity validation here because:
-        // 1. It requires fresh Pyth prices which may be stale
-        // 2. We're about to update Pyth prices as part of the mint transaction
-        // 3. The contract will validate capacity on-chain with fresh prices
-        // If capacity is insufficient, the transaction will revert with InsufficientCollateral()
-
-        // Convert XMR amount to contract format (12 decimals for XMR atomic units)
-        const xmrAmountContract = BigInt(Math.floor(this.xmrAmount * Math.pow(10, DECIMALS.XMR)));
-
-        // Fetch Pyth price updates
-        const { updateData } = await getPriceUpdates();
-        const pythFee = await getPythUpdateFee(updateData, CONTRACTS.pythOracle);
-
-        // Get commitment from agent
+        const userAddress = getUserAddress();
+        const xmrAmountAtomic = BigInt(Math.floor(this.xmrAmount * Math.pow(10, DECIMALS.XMR)));
         const commitment = this.agent.getCommitment();
 
-        // Calculate total value to send (griefing deposit + pyth fee)
-        const totalValue = this.griefingDeposit + pythFee;
-
-        // Get user's address for recipient
-        const { getUserAddress } = await import('./viemClient.js');
-        const userAddress = getUserAddress();
-        
         console.log('Initiating mint with params:', {
             lpVault: this.lpVault,
-            recipient: userAddress,
-            xmrAmount: xmrAmountContract.toString(),
+            initiator: userAddress,
+            wsxmrAmount: this.wsxmrAmount.toString(),
             commitment,
             timeoutDuration: this.timeoutDuration,
-            pythFee: pythFee.toString(),
-            griefingDeposit: this.griefingDeposit.toString(),
-            totalValue: totalValue.toString()
+            griefingDeposit: this.griefingDeposit.toString()
         });
 
-        // Step 1: Update Pyth prices first
-        console.log('Updating Pyth prices...');
-        await writeVaultManager(
-            'updatePythPrices',
-            [updateData],
-            pythFee // Pay the Pyth update fee
-        );
-        
-        console.log('Pyth prices updated, now initiating mint...');
-        
-        // Step 2: Initiate the mint
-        const receipt = await writeVaultManager(
+        const receipt = await writeHub(
             'initiateMint',
-            [this.lpVault, userAddress, xmrAmountContract, commitment, BigInt(this.timeoutDuration)],
-            this.griefingDeposit // Pay the griefing deposit
+            [
+                this.lpVault,
+                userAddress,
+                this.wsxmrAmount,
+                commitment,
+                BigInt(this.timeoutDuration)
+            ],
+            this.griefingDeposit
         );
 
         console.log('Mint initiated, tx:', receipt.transactionHash);
 
-        // Extract requestId from events
-        // MintInitiated event signature: MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, uint256 timeout)
-        const mintInitiatedEventSig = '0xb2dfbb26df226ffe3b99f8ca997b1758298208a9f9ba18dd035e3ee1539e6950';
-        
-        const mintInitiatedEvent = receipt.logs.find(log => {
-            try {
-                return log.topics[0] === mintInitiatedEventSig;
-            } catch {
-                return false;
-            }
-        });
+        const mintInitiatedEvent = receipt.logs.find(log => 
+            log.topics[0] === keccak256(toHex('MintInitiated(bytes32,address,address,address,uint256,uint256,uint256,bytes32,uint256)'))
+        );
 
         if (mintInitiatedEvent) {
-            this.requestId = mintInitiatedEvent.topics[1]; // requestId is first indexed param
+            this.requestId = mintInitiatedEvent.topics[1];
             console.log('Request ID:', this.requestId);
             
-            // Wait for LP to provide their public key on-chain
-            console.log('Waiting for LP to provide public key on-chain...');
-            await this.waitForLPKey();
-            
             updateSwapState({
-                state: 'lp-confirm',
                 requestId: this.requestId,
-                txHash: receipt.transactionHash,
-                depositAddress: this.depositAddress
+                txHash: receipt.transactionHash
             });
         } else {
             throw new Error('Could not extract requestId from transaction');
         }
 
-        this.state = 'lp-confirm';
+        this.state = 'initiated';
     }
-    
-    /**
-     * Wait for LP to provide their public key and compute deposit address
-     */
-    async waitForLPKey() {
-        return new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                reject(new Error('Timeout waiting for LP key'));
-            }, 60000); // 60 second timeout
+
+    async notifyLP() {
+        console.log('Notifying LP server...');
+        
+        try {
+            const response = await this.lpClient.notifyMint({
+                requestId: this.requestId,
+                txHash: updateSwapState.txHash
+            });
+
+            this.depositAddress = response.deposit_address;
+            console.log('LP notified, deposit address:', this.depositAddress);
             
-            // Watch for LPKeyProvided event
+            updateSwapState({
+                state: 'deposit',
+                depositAddress: this.depositAddress
+            });
+        } catch (error) {
+            console.warn('LP server notification failed:', error);
+            console.log('User must send XMR manually and wait for LP to detect it');
+            
+            updateSwapState({
+                state: 'deposit',
+                depositAddress: 'MANUAL_DEPOSIT_REQUIRED'
+            });
+        }
+
+        this.state = 'deposit';
+    }
+
+    async waitForLPReady() {
+        this.state = 'lp-ready';
+        updateSwapState({ state: this.state });
+
+        console.log('Waiting for LP to call setMintReady...');
+
+        const pollStatus = async () => {
+            try {
+                const status = await this.lpClient.getMintStatus(this.requestId);
+                console.log('Mint status:', status);
+                
+                if (status.status === 'READY') {
+                    return true;
+                }
+                
+                updateSwapState({
+                    lpStatus: status.status,
+                    lpMessage: status.message
+                });
+            } catch (error) {
+                console.warn('LP status poll failed:', error);
+            }
+            return false;
+        };
+
+        return new Promise((resolve, reject) => {
             const unwatch = watchContractEvent(
-                CONTRACTS.vaultManager,
-                ABIS.vaultManager,
-                'LPKeyProvided',
-                {
-                    requestId: this.requestId
-                },
-                async (log) => {
-                    clearTimeout(timeout);
+                CONTRACTS.hub,
+                ABIS.hub,
+                'MintReady',
+                { requestId: this.requestId },
+                (log) => {
+                    console.log('MintReady event received');
+                    clearInterval(pollInterval);
                     unwatch();
-                    
-                    const lpPublicKey = log.args.lpPublicKey;
-                    console.log('LP public key received:', lpPublicKey);
-                    
-                    // Compute deposit address from P_a + P_b
-                    this.depositAddress = await this.computeDepositAddress(lpPublicKey);
-                    console.log('Deposit address computed:', this.depositAddress);
-                    
                     resolve();
                 }
             );
-            
-            // Also try reading from contract in case event already fired
-            setTimeout(async () => {
-                try {
-                    const lpPublicKey = await readVaultManager('lpPublicKeys', [this.requestId]);
-                    if (lpPublicKey && lpPublicKey !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
-                        clearTimeout(timeout);
-                        unwatch();
-                        
-                        console.log('LP public key read from contract:', lpPublicKey);
-                        this.depositAddress = await this.computeDepositAddress(lpPublicKey);
-                        console.log('Deposit address computed:', this.depositAddress);
-                        
-                        resolve();
-                    }
-                } catch (error) {
-                    console.error('Error reading LP public key:', error);
-                }
-            }, 2000);
-        });
-    }
-    
-    /**
-     * Compute Monero deposit address from P_a + P_b
-     */
-    async computeDepositAddress(lpPublicKey) {
-        try {
-            const userCommitment = this.agent.getCommitment();
-            console.log('Computing deposit address:');
-            console.log('  User commitment (P_a):', userCommitment);
-            console.log('  LP public key (P_b):', lpPublicKey);
-            
-            // Compute P_a + P_b and derive Monero address
-            const depositAddress = await computeDepositAddress(userCommitment, lpPublicKey);
-            
-            console.log('  Deposit address:', depositAddress);
-            return depositAddress;
-        } catch (error) {
-            console.error('Error computing deposit address:', error);
-            // Fallback to placeholder if crypto library fails
-            return 'ERROR_COMPUTING_ADDRESS_' + lpPublicKey.slice(2, 10);
-        }
-    }
 
-    /**
-     * Step 4: Wait for LP confirmation (MintReady event)
-     */
-    async waitForLPConfirmation() {
-        console.log('Waiting for LP to confirm Monero lock...');
-
-        return new Promise((resolve, reject) => {
-            // Watch for MintReady event
-            const unwatch = watchContractEvent(
-                'MintReady',
-                (logs) => {
-                    for (const log of logs) {
-                        const requestId = log.args.requestId;
-                        if (requestId === this.requestId) {
-                            console.log('LP confirmed! MintReady event received');
-                            unwatch();
-                            resolve();
-                        }
-                    }
+            const pollInterval = setInterval(async () => {
+                if (await pollStatus()) {
+                    clearInterval(pollInterval);
+                    unwatch();
+                    resolve();
                 }
-            );
+            }, SWAP_CONFIG.pollInterval);
 
             this.eventWatchers.push(unwatch);
 
-            // Timeout after 30 minutes
             setTimeout(() => {
+                clearInterval(pollInterval);
                 unwatch();
-                reject(new Error('LP confirmation timeout'));
+                reject(new Error('LP ready timeout'));
             }, 1800000);
         });
     }
 
-    /**
-     * Step 5: Wait for finalization (MintFinalized event)
-     */
-    async waitForFinalization() {
+    async finalize() {
         this.state = 'finalize';
         updateSwapState({ state: this.state });
 
-        console.log('Waiting for mint finalization...');
+        console.log('Finalizing mint...');
 
-        return new Promise((resolve, reject) => {
-            // Watch for MintFinalized event
-            const unwatch = watchContractEvent(
-                'MintFinalized',
-                (logs) => {
-                    for (const log of logs) {
-                        const requestId = log.args.requestId;
-                        if (requestId === this.requestId) {
-                            console.log('Mint finalized! wsXMR minted to user');
-                            unwatch();
-                            this.complete();
-                            resolve();
-                        }
-                    }
-                }
-            );
+        const secret = this.agent.getSecret();
+        
+        const receipt = await writeHub('finalizeMint', [this.requestId, secret]);
+        
+        console.log('Mint finalized, tx:', receipt.transactionHash);
 
-            this.eventWatchers.push(unwatch);
-
-            // Timeout after 30 minutes
-            setTimeout(() => {
-                unwatch();
-                reject(new Error('Finalization timeout'));
-            }, 1800000);
-        });
+        this.complete();
     }
 
-    /**
-     * Complete the mint flow
-     */
     complete() {
         this.state = 'completed';
         
-        // Save to history
         const swapData = {
             type: 'mint',
             requestId: this.requestId,
             lpVault: this.lpVault,
             xmrAmount: this.xmrAmount,
-            moneroAddress: this.agent.getMoneroAddress(),
-            state: 'completed'
+            wsxmrAmount: this.wsxmrAmount.toString(),
+            state: 'completed',
+            timestamp: Date.now()
         };
         
         saveToHistory(swapData);
         clearActiveSwap();
-        
-        // Cleanup
         this.cleanup();
         
         console.log('Mint flow completed successfully!');
     }
 
-    /**
-     * Cancel and refund
-     */
     async cancel() {
-        console.log('Canceling mint and refunding XMR...');
+        console.log('Canceling mint...');
 
-        // If we have XMR in the phantom wallet, send it back to user
-        const balance = await this.agent.getMoneroBalance();
-        
-        if (balance > 0n) {
-            // User needs to provide their Monero address for refund
-            const destination = prompt('Enter your Monero address for refund:');
-            
-            if (destination) {
-                await this.agent.sendMonero(destination, balance);
-                console.log('XMR refunded to:', destination);
-            }
-        }
-
-        // If we've already initiated on EVM, try to cancel
         if (this.requestId) {
             try {
-                await writeVaultManager('cancelMint', [this.requestId]);
+                await writeHub('cancelMint', [this.requestId]);
                 console.log('Mint request canceled on EVM');
             } catch (error) {
                 console.error('Error canceling mint on EVM:', error);
@@ -455,9 +311,6 @@ export class MintFlow {
         this.cleanup();
     }
 
-    /**
-     * Cleanup watchers
-     */
     cleanup() {
         this.eventWatchers.forEach(unwatch => {
             try {
@@ -469,9 +322,6 @@ export class MintFlow {
         this.eventWatchers = [];
     }
 
-    /**
-     * Resume from saved state
-     */
     async resume(savedState) {
         console.log('Resuming mint flow from state:', savedState.state);
 
@@ -480,31 +330,17 @@ export class MintFlow {
         this.requestId = savedState.requestId;
         this.state = savedState.state;
 
-        // Re-initialize agent
         this.agent = getPhantomAgent();
-        
-        // User needs to sign again to restore the agent
         await this.agent.initialize('MINT', this.xmrAmount.toString());
 
-        // Resume from current state
         switch (this.state) {
             case 'deposit':
-                await this.monitorDeposit();
-                await this.initiateOnEVM();
-                await this.waitForLPConfirmation();
-                await this.waitForFinalization();
-                break;
-            case 'evm-init':
-                await this.initiateOnEVM();
-                await this.waitForLPConfirmation();
-                await this.waitForFinalization();
-                break;
-            case 'lp-confirm':
-                await this.waitForLPConfirmation();
-                await this.waitForFinalization();
+            case 'lp-ready':
+                await this.waitForLPReady();
+                await this.finalize();
                 break;
             case 'finalize':
-                await this.waitForFinalization();
+                await this.finalize();
                 break;
             default:
                 throw new Error('Cannot resume from state: ' + this.state);
