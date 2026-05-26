@@ -23,7 +23,7 @@ contract CoLPRouterTest is Test {
     IERC20 public sDAI;
     SimpleOracleFacet public oracleFacet;
 
-    address constant WSHUB_DEPLOYED = 0xB00fed5E2F06187369f5bbF2fcFF065FA188D1a5;
+    address constant WSHUB_DEPLOYED = 0x9B03355624acD1265508B981b046f4293B1fFED8;
     address constant WSXMR_DEPLOYED = 0x4206580496249266945A5aED42E41b6CE9cd8DAD;
     address constant SDAI_WHALE = 0x4aa42145Aa6Ebf72e164C9bBC74fbD3788045016;
 
