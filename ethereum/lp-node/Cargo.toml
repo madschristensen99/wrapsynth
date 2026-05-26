@@ -21,6 +21,10 @@ reqwest = { version = "0.12", features = ["json"] }
 axum = "0.7"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors"] }
+tower_governor = "0.4"
+utoipa = { version = "4.2", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "6.0", features = ["axum"] }
+hmac = "0.12"
 
 # Monero library
 monero = "0.20"

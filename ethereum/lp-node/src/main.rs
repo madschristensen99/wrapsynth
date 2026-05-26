@@ -5,6 +5,8 @@ mod engine;
 mod evm;
 mod events;
 mod monero;
+mod oracle;
+mod quote;
 
 use alloy::primitives::Address;
 use anyhow::{Context, Result};
@@ -161,7 +163,12 @@ async fn main() -> Result<()> {
             ));
             
             // Initialize swap engine
-            let swap_engine = Arc::new(engine::SwapEngine::new(db.clone(), evm.clone(), monero.clone()));
+            let swap_engine = Arc::new(engine::SwapEngine::new(
+                db.clone(), 
+                evm.clone(), 
+                monero.clone(),
+                config.oracle_config.is_price_pusher,
+            ));
             
             // Calculate from_block based on hours
             let current_block = evm.get_block_number().await.unwrap_or(0);
@@ -223,17 +230,58 @@ async fn main() -> Result<()> {
                 lp_vault_bytes,
             ));
 
-            // Initialize swap engine
-            let swap_engine = Arc::new(engine::SwapEngine::new(db.clone(), evm.clone(), monero.clone()));
+            // Initialize oracle client
+            let oracle = Arc::new(oracle::OracleClient::new());
+            info!("Oracle client initialized");
+
+            // Initialize quote generator
+            let quote_gen = Arc::new(
+                quote::QuoteGenerator::new(&config.private_key, config.lp_vault_address)
+                    .context("Failed to initialize quote generator")?
+            );
+            info!("Quote generator initialized");
+
+            // Initialize swap engine with oracle config
+            let swap_engine = Arc::new(engine::SwapEngine::new(
+                db.clone(), 
+                evm.clone(), 
+                monero.clone(),
+                config.oracle_config.is_price_pusher,
+            ));
 
             // Start API server in background
             let api_db = Arc::new(db.clone());
+            let api_evm = evm.clone();
+            let api_monero = monero.clone();
+            let api_oracle = oracle.clone();
+            let api_quote_gen = quote_gen.clone();
+            let api_config = api::ApiConfig {
+                port: config.api_config.port,
+                admin_secret: config.admin_config.secret.clone(),
+                quote_ttl_seconds: config.quote_config.ttl_seconds,
+                min_xmr_amount: config.quote_config.min_xmr_amount,
+                max_xmr_amount: config.quote_config.max_xmr_amount,
+                mint_fee_bps: config.quote_config.mint_fee_bps,
+                burn_reward_bps: config.quote_config.burn_reward_bps,
+                griefing_deposit_wei: config.quote_config.griefing_deposit_wei.clone(),
+                mint_ready_bond_wei: config.quote_config.mint_ready_bond_wei.clone(),
+            };
+            let api_lp_vault = config.lp_vault_address;
+            
             tokio::spawn(async move {
-                if let Err(e) = api::start_api_server(api_db, 3030).await {
+                if let Err(e) = api::start_api_server(
+                    api_db,
+                    api_evm,
+                    api_monero,
+                    api_oracle,
+                    api_quote_gen,
+                    api_config,
+                    api_lp_vault,
+                ).await {
                     tracing::error!("API server error: {}", e);
                 }
             });
-            info!("API server started on port 3030");
+            info!("API server started on port {}", config.api_config.port);
 
             // Start event listener
             event_listener
@@ -269,6 +317,10 @@ struct ConfigFile {
     unichain_testnet: Option<NetworkConfig>,
     monero: MoneroConfig,
     lp_node: LpNodeConfig,
+    api: ApiConfig,
+    admin: AdminConfig,
+    quote: QuoteConfig,
+    oracle: OracleConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -295,6 +347,36 @@ struct LpNodeConfig {
     log_level: String,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+struct ApiConfig {
+    port: u16,
+    rate_limit_per_minute: u64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct AdminConfig {
+    secret: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct QuoteConfig {
+    ttl_seconds: u64,
+    min_xmr_amount: u64,
+    max_xmr_amount: u64,
+    mint_fee_bps: u16,
+    burn_reward_bps: u16,
+    griefing_deposit_wei: String,
+    mint_ready_bond_wei: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct OracleConfig {
+    is_price_pusher: bool,
+    push_threshold_bps: u16,
+    max_age_secs: u64,
+    poll_interval_secs: u64,
+}
+
 /// Runtime configuration combining config file and environment variables
 struct Config {
     network_config: NetworkConfig,
@@ -303,6 +385,10 @@ struct Config {
     private_key: String,
     lp_vault_address: Address,
     monero_private_key: String,
+    api_config: ApiConfig,
+    admin_config: AdminConfig,
+    quote_config: QuoteConfig,
+    oracle_config: OracleConfig,
 }
 
 impl Config {
@@ -356,6 +442,10 @@ impl Config {
             private_key,
             lp_vault_address,
             monero_private_key,
+            api_config: config_file.api,
+            admin_config: config_file.admin,
+            quote_config: config_file.quote,
+            oracle_config: config_file.oracle,
         })
     }
 
