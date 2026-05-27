@@ -319,20 +319,17 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         IERC20(wsxmrToken).safeTransferFrom(msg.sender, address(this), wsxmrAmount);
         
         vault.collateralShares -= sharesNeeded;
-        uint256 daiReceived = ISavingsDAI(GnosisAddresses.SDAI).redeem(
-            sharesNeeded, address(this), address(this)
-        );
         
-        uint16 rangeBps = vault.maxCoLPRangeBps > 0 
-            ? vault.maxCoLPRangeBps 
+        uint16 rangeBps = vault.maxCoLPRangeBps > 0
+            ? vault.maxCoLPRangeBps
             : uint16(DEFAULT_COLP_RANGE_BPS);
         
-        IERC20(GnosisAddresses.XDAI).safeTransfer(liquidityRouter, daiReceived);
+        IERC20(GnosisAddresses.SDAI).safeTransfer(liquidityRouter, sharesNeeded);
         IERC20(wsxmrToken).safeTransfer(liquidityRouter, wsxmrAmount);
         
-        (uint256 _tokenId, uint128 liquidity, int24 tickLower, int24 tickUpper) = 
+        (uint256 _tokenId, uint128 liquidity, int24 tickLower, int24 tickUpper) =
             IwsXmrLiquidityRouter(liquidityRouter).mintConcentratedPosition(
-                daiReceived, wsxmrAmount, rangeBps, xmrPrice, deadline
+                sharesNeeded, wsxmrAmount, rangeBps, xmrPrice, deadline
             );
         tokenId = _tokenId;
         
@@ -393,7 +390,8 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
             revert InvalidRange();
         }
         
-        bool outOfRange = IwsXmrLiquidityRouter(liquidityRouter).isPositionOutOfRange(tokenId);
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        bool outOfRange = IwsXmrLiquidityRouter(liquidityRouter).isPositionOutOfRange(tokenId, xmrPrice);
         bool isOwner = msg.sender == meta.vaultOwner;
         if (!outOfRange && !isOwner) revert PositionInRange();
         
@@ -404,7 +402,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         uint256 keeperFee = 0;
         if (!isOwner) {
             keeperFee = (daiOut * COLP_REBALANCE_FEE_BPS) / BPS_DENOMINATOR;
-            IERC20(GnosisAddresses.XDAI).safeTransfer(msg.sender, keeperFee);
+            IERC20(GnosisAddresses.SDAI).safeTransfer(msg.sender, keeperFee);
             daiOut -= keeperFee;
         }
         
@@ -493,12 +491,17 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         return _vaults[lpAddress].active;
     }
     
+    /// @notice Get position metadata for a co-LP position
+    function getPositionMetadata(uint256 tokenId) external view returns (PositionMetadata memory) {
+        return _positionMetadata[tokenId];
+    }
+    
     // ========== DIAMOND INTROSPECTION ==========
     
     /// @notice Returns all function selectors implemented by this facet
     /// @dev Used by Diamond to build selector → facet routing table
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](24);
+        bytes4[] memory sels = new bytes4[](25);
         sels[0] = this.createVault.selector;
         sels[1] = this.deactivateVault.selector;
         sels[2] = this.depositCollateral.selector;
@@ -517,12 +520,13 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         sels[15] = this.getVaultAtIndex.selector;
         sels[16] = this.getPendingReturns.selector;
         sels[17] = this.hasActiveVault.selector;
-        sels[18] = this.selectors.selector;
-        sels[19] = this.setMaxCoLPRange.selector;
-        sels[20] = this.userOpenCoLP.selector;
-        sels[21] = this.unwindCoLP.selector;
-        sels[22] = this.rebalanceCoLP.selector;
-        sels[23] = this.getCoLPCapacity.selector;
+        sels[18] = this.getPositionMetadata.selector;
+        sels[19] = this.selectors.selector;
+        sels[20] = this.setMaxCoLPRange.selector;
+        sels[21] = this.userOpenCoLP.selector;
+        sels[22] = this.unwindCoLP.selector;
+        sels[23] = this.rebalanceCoLP.selector;
+        sels[24] = this.getCoLPCapacity.selector;
         return sels;
     }
     
@@ -606,8 +610,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         }
         
         if (daiOut > 0) {
-            uint256 shares = ISavingsDAI(GnosisAddresses.SDAI).deposit(daiOut, address(this));
-            vault.collateralShares += shares;
+            vault.collateralShares += daiOut;
         }
         
         if (wsxmrOut > 0) {
@@ -650,22 +653,21 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         Vault storage vault = _vaults[lpVault];
         uint256 xmrPrice = _getXmrPriceFromStorage();
         
-        IERC20(GnosisAddresses.XDAI).safeTransfer(liquidityRouter, daiAmount);
+        IERC20(GnosisAddresses.SDAI).safeTransfer(liquidityRouter, daiAmount);
         IERC20(wsxmrToken).safeTransfer(liquidityRouter, wsxmrAmount);
         
-        (uint256 _tokenId, uint128 liquidity, int24 tickLower, int24 tickUpper) = 
+        (uint256 _tokenId, uint128 liquidity, int24 tickLower, int24 tickUpper) =
             IwsXmrLiquidityRouter(liquidityRouter).mintConcentratedPosition(
                 daiAmount, wsxmrAmount, rangeBps, xmrPrice, deadline
             );
         tokenId = _tokenId;
         
-        uint256 sDAIShares = IERC4626(GnosisAddresses.SDAI).convertToShares(daiAmount);
-        vault.deployedSDAIShares += sDAIShares;
+        vault.deployedSDAIShares += daiAmount;
         
         _positionMetadata[tokenId] = PositionMetadata({
             vaultOwner: lpVault,
             user: user,
-            sDAISharesOriginal: sDAIShares,
+            sDAISharesOriginal: daiAmount,
             wsxmrOriginal: wsxmrAmount,
             tickLower: tickLower,
             tickUpper: tickUpper,
@@ -675,6 +677,6 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         _vaultPositions[lpVault].push(tokenId);
         _userPositions[user].push(tokenId);
         
-        emit CoLPDeployed(lpVault, user, tokenId, sDAIShares, wsxmrAmount, rangeBps);
+        emit CoLPDeployed(lpVault, user, tokenId, daiAmount, wsxmrAmount, rangeBps);
     }
 }
