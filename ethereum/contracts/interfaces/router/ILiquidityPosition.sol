@@ -65,6 +65,8 @@ interface ILiquidityPosition {
     function getPositionAmountsAtPrice(uint256 tokenId, uint256 xmrPriceUSD18)
         external view returns (uint256 daiAmount, uint256 wsxmrAmount);
 
-    /// @notice Check if the pool's current tick is outside this position's range.
-    function isPositionOutOfRange(uint256 tokenId) external view returns (bool);
+    /// @notice Check if the position is out of range at the given oracle XMR price.
+    /// @param tokenId V3 NFT id
+    /// @param xmrPrice XMR price in USD (18 decimals)
+    function isPositionOutOfRange(uint256 tokenId, uint256 xmrPrice) external view returns (bool);
 }

@@ -260,8 +260,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
                 .drainPosition(tokenId);
             
             if (daiOut > 0) {
-                uint256 shares = ISavingsDAI(GnosisAddresses.SDAI).deposit(daiOut, address(this));
-                vault.collateralShares += shares;
+                vault.collateralShares += daiOut;
             }
             if (wsxmrOut > 0) {
                 pendingReturns[meta.user][wsxmrToken] += wsxmrOut;
