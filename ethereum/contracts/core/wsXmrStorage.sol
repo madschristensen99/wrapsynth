@@ -43,6 +43,11 @@ contract wsXmrStorage {
     uint256 public constant SDAI_DECIMALS = 1e18;
     uint256 public constant PRICE_DECIMALS = 1e18; // Oracle prices are normalized to 18 decimals
     
+    uint256 public constant MIN_COLP_RANGE_BPS = 1000;
+    uint256 public constant MAX_COLP_RANGE_BPS = 10000;
+    uint256 public constant DEFAULT_COLP_RANGE_BPS = 2500;
+    uint256 public constant COLP_REBALANCE_FEE_BPS = 10;
+    uint16 public constant UNISWAP_V3_FEE_TIER = 3000;
     
     // ========== EVENTS ==========
     
@@ -85,6 +90,8 @@ contract wsXmrStorage {
         uint256 mintNonce;
         uint256 minBurnAmount;
         bool active;
+        uint256 deployedSDAIShares;
+        uint16 maxCoLPRangeBps;
     }
     
     struct MintRequest {
@@ -117,6 +124,17 @@ contract wsXmrStorage {
         uint256 vaultLiquidationNonce;
         uint256 normalizedDebtAmount;
         BurnStatus status;
+    }
+    
+    struct PositionMetadata {
+        address vaultOwner;
+        address user;
+        uint256 sDAISharesOriginal;
+        uint256 wsxmrOriginal;
+        int24 tickLower;
+        int24 tickUpper;
+        uint128 liquidity;
+        uint256 createdAt;
     }
     
     // ========== IMMUTABLES ==========
@@ -169,7 +187,7 @@ contract wsXmrStorage {
     mapping(address => bytes32[]) public vaultMintRequests;
     
     // Core mappings
-    mapping(address => Vault) public vaults;
+    mapping(address => Vault) internal _vaults;
     mapping(bytes32 => MintRequest) public mintRequests;
     mapping(bytes32 => BurnRequest) public burnRequests;
     
@@ -178,6 +196,13 @@ contract wsXmrStorage {
     
     // Pending returns
     mapping(address => mapping(address => uint256)) public pendingReturns;
+    
+    // Co-LP state
+    mapping(uint256 => PositionMetadata) internal _positionMetadata;
+    mapping(address => uint256[]) internal _vaultPositions;
+    mapping(address => uint256[]) internal _userPositions;
+    address public uniswapV3PositionManager;
+    address public uniswapV3Pool;
     
     // Reentrancy guard
     uint256 internal _reentrancyStatus;
@@ -222,7 +247,7 @@ contract wsXmrStorage {
      * Example: If adding 3 new uint256 variables, change to:
      * uint256[47] private __gap;
      */
-    uint256[50] private __gap;
+    uint256[44] private __gap;
     
     // ========== CONSTRUCTOR ==========
     

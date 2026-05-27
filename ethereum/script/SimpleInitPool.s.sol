@@ -30,27 +30,30 @@ contract SimpleInitPool is Script {
         }
         
         // Try to get prices
-        try oracle.getXmrPrice() returns (uint256 xmrPrice) {
+        uint256 xmrPrice;
+        try oracle.getXmrPrice() returns (uint256 _xmrPrice) {
+            xmrPrice = _xmrPrice;
             console.log("XMR Price:", xmrPrice);
             uint256 daiPrice = oracle.getCollateralPrice();
             console.log("DAI Price:", daiPrice);
         } catch {
             console.log("WARNING: No oracle prices set - pool init may fail");
+            xmrPrice = 160 * 1e18; // fallback: $160
         }
         
         // Initialize pool
         console.log("\nInitializing Uniswap V3 pool...");
         wsXMRLiquidityRouter router = wsXMRLiquidityRouter(payable(ROUTER));
-        address pool = router.initializePool(emptyData);
+        router.initializePool(xmrPrice);
         
         console.log("\n=== SUCCESS ===");
-        console.log("Pool:", pool);
+        console.log("Pool:", router.pool());
         console.log("Token0:", router.token0());
         console.log("Token1:", router.token1());
         
         vm.stopBroadcast();
         
         console.log("\nView on Gnosisscan:");
-        console.log("https://gnosisscan.io/address/", pool);
+        console.log("https://gnosisscan.io/address/", router.pool());
     }
 }

@@ -199,27 +199,6 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     
     // ========== VIEW FUNCTIONS ==========
     
-    /// @inheritdoc IwsXmrHub
-    function getGlobalState() external view returns (GlobalState memory) {
-        return GlobalState({
-            wsxmrToken: wsxmrToken,
-            liquidityRouter: liquidityRouter,
-            deployer: deployer,
-            pythOracle: verifierProxy,
-            globalTotalDebt: globalTotalDebt,
-            globalDebtIndex: globalDebtIndex,
-            globalBadDebt: globalBadDebt,
-            globalPendingBurnDebt: globalPendingBurnDebt,
-            yieldWarChest: yieldWarChest,
-            lastBuyTimestamp: lastBuyTimestamp,
-            globalLpPrincipal: globalLpPrincipal,
-            globalLpPrincipalShares: globalLpPrincipalShares,
-            globalPendingSDAI: globalPendingSDAI,
-            requestNonce: _requestNonce,
-            vaultCount: vaultList.length
-        });
-    }
-    
     /// @notice Get total number of vaults
     function getVaultCount() external view returns (uint256) {
         return vaultList.length;
