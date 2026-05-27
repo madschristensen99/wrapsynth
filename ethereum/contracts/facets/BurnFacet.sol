@@ -48,13 +48,13 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         if (wsxmrAmount == 0) revert ZeroAmount();
         if (lpVault == address(0)) revert ZeroAddress();
         if (user == address(0)) revert ZeroAddress();
-        if (!vaults[lpVault].active) revert VaultDoesNotExist();
+        if (!_vaults[lpVault].active) revert VaultDoesNotExist();
         
         _syncVaultYield(lpVault);
         
         if (wsxmrAmount < MIN_BURN_AMOUNT) revert BelowMinimumBurn();
         
-        Vault storage vault = vaults[lpVault];
+        Vault storage vault = _vaults[lpVault];
         if (vault.minBurnAmount > 0 && wsxmrAmount < vault.minBurnAmount) revert BelowMinimumBurn();
         
         bytes32[] storage vaultBurns = vaultBurnRequests[lpVault];
@@ -137,7 +137,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.REQUESTED) revert InvalidStatus();
         
-        Vault storage vault = vaults[request.lpVault];
+        Vault storage vault = _vaults[request.lpVault];
         if (msg.sender != vault.lpAddress) revert Unauthorized();
         if (secretHash == bytes32(0)) revert InvalidSecret();
         
@@ -181,7 +181,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         _syncVaultYield(request.lpVault);
         
-        Vault storage vault = vaults[request.lpVault];
+        Vault storage vault = _vaults[request.lpVault];
         
         // TODO: Implement calculateSafeReward in BurnLogic library
         // For now, use the full reward amount
@@ -216,7 +216,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         if (block.timestamp < request.deadline) revert DeadlineNotExpired();
         if (msg.sender != request.user) revert Unauthorized();
         
-        Vault storage vault = vaults[request.lpVault];
+        Vault storage vault = _vaults[request.lpVault];
         
         uint256 totalSeized = request.lockedCollateral + request.rewardCollateral;
         vault.lockedCollateral -= totalSeized;
@@ -242,7 +242,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         }
         if (block.timestamp < request.deadline) revert DeadlineNotExpired();
         
-        Vault storage vault = vaults[request.lpVault];
+        Vault storage vault = _vaults[request.lpVault];
         
         if (request.vaultLiquidationNonce == vault.liquidationNonce) {
             vault.collateralShares += (request.lockedCollateral + request.rewardCollateral);
@@ -276,13 +276,13 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     function calculateBurnCollateral(address lpVault, uint256 wsxmrAmount) public view returns (uint256 baseLock, uint256 rewardLock) {
         uint256 collateralValue = _getCollateralValueForDebt(wsxmrAmount);
         baseLock = _usdToCollateral((collateralValue * BURN_LOCK_RATIO) / RATIO_PRECISION);
-        uint256 rewardUsd = (collateralValue * vaults[lpVault].burnRewardBps) / BPS_DENOMINATOR;
+        uint256 rewardUsd = (collateralValue * _vaults[lpVault].burnRewardBps) / BPS_DENOMINATOR;
         rewardLock = _usdToCollateral(rewardUsd);
     }
     
     function meetsMinimumBurn(address lpVault, uint256 wsxmrAmount) external view returns (bool) {
         if (wsxmrAmount < MIN_BURN_AMOUNT) return false;
-        uint256 vaultMin = vaults[lpVault].minBurnAmount;
+        uint256 vaultMin = _vaults[lpVault].minBurnAmount;
         if (vaultMin > 0 && wsxmrAmount < vaultMin) return false;
         return true;
     }
@@ -311,7 +311,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     
     
     function _syncVaultYield(address lpAddress) internal {
-        Vault storage vault = vaults[lpAddress];
+        Vault storage vault = _vaults[lpAddress];
         
         // Early return if no collateral
         if (vault.collateralShares == 0) return;

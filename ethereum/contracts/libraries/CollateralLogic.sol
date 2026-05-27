@@ -77,4 +77,42 @@ library CollateralLogic {
         
         return (collateralValueUsd * RATIO_PRECISION) / debtValueUsd;
     }
+    
+    /**
+     * @notice Calculate CR including idle sDAI shares AND deployed pool positions.
+     * @dev Position contents (positionDAI, positionWsxmr) MUST be valued at oracle prices
+     *      by the caller. This function trusts those inputs.
+     * @param idleShares sDAI shares held directly by vault
+     * @param positionDAI Sum of DAI (1e18) across vault's active positions
+     * @param positionWsxmr Sum of wsXMR (1e8) across vault's active positions
+     * @param debtAmount wsXMR debt
+     * @param sdai sDAI token address
+     * @param collateralPrice sDAI USD price (1e18)
+     * @param xmrPrice XMR USD price (1e18)
+     */
+    function calculateVaultCRWithDeployment(
+        uint256 idleShares,
+        uint256 positionDAI,
+        uint256 positionWsxmr,
+        uint256 debtAmount,
+        address sdai,
+        uint256 collateralPrice,
+        uint256 xmrPrice
+    ) internal view returns (uint256) {
+        if (debtAmount == 0) return type(uint256).max;
+        
+        (bool success, bytes memory data) = sdai.staticcall(
+            abi.encodeWithSignature("convertToAssets(uint256)", idleShares)
+        );
+        require(success && data.length >= 32, "convertToAssets failed");
+        uint256 idleDaiAmount = abi.decode(data, (uint256));
+        
+        uint256 totalDaiAmount = idleDaiAmount + positionDAI;
+        uint256 collateralUsd = (totalDaiAmount * collateralPrice) / 1e18;
+        uint256 deployedWsxmrUsd = (positionWsxmr * xmrPrice) / 1e8;
+        uint256 totalCollateralUsd = collateralUsd + deployedWsxmrUsd;
+        uint256 debtValueUsd = (debtAmount * xmrPrice) / 1e8;
+        
+        return (totalCollateralUsd * RATIO_PRECISION) / debtValueUsd;
+    }
 }

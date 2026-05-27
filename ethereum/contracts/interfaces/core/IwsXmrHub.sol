@@ -38,6 +38,7 @@ interface IwsXmrHub {
         address oracleFacet
     );
     event LiquidityRouterSet(address router);
+    event LiquidityRouterMigrated(address indexed oldRouter, address indexed newRouter);
     
     // ========== ERRORS ==========
     
@@ -101,9 +102,6 @@ interface IwsXmrHub {
     function exitNonReentrant() external;
     
     // ========== VIEW FUNCTIONS ==========
-    
-    /// @notice Get global system state
-    function getGlobalState() external view returns (GlobalState memory);
     
     // Note: The following view functions are auto-generated from public state variables in wsXmrStorage:
     // - wsxmrToken() returns (address)

@@ -5,15 +5,15 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {wsXMRLiquidityRouter} from "../contracts/router/wsXMRLiquidityRouter.sol";
 import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
+import {IUniswapV3Factory} from "../contracts/interfaces/external/IUniswapV3Factory.sol";
 import {GnosisAddresses} from "../contracts/GnosisAddresses.sol";
 
 /**
  * @title DeployRouter
  * @notice Foundry script to deploy wsXMRLiquidityRouter to Gnosis Chain
- * @dev Run with: forge script script/DeployRouter.s.sol:DeployRouter --rpc-url $GNOSIS_RPC_URL --broadcast --verify
+ * @dev Run with: forge script script/DeployRouter.s.sol:DeployRouter --rpc-url $GNOSIS_RPC_URL --broadcast
  */
 contract DeployRouter is Script {
-    // Gnosis Chain deployed addresses
     address constant WSHUB = 0x9B03355624acD1265508B981b046f4293B1fFED8;
     address constant WSXMR = 0x4206580496249266945A5aED42E41b6CE9cd8DAD;
 
@@ -31,40 +31,41 @@ contract DeployRouter is Script {
         
         vm.startBroadcast(deployerPrivateKey);
         
-        // Deploy router
+        (address token0, address token1) = GnosisAddresses.SDAI < WSXMR
+            ? (GnosisAddresses.SDAI, WSXMR)
+            : (WSXMR, GnosisAddresses.SDAI);
+        
+        address pool = IUniswapV3Factory(GnosisAddresses.UNI_V3_FACTORY).getPool(token0, token1, 3000);
+        if (pool == address(0)) {
+            pool = IUniswapV3Factory(GnosisAddresses.UNI_V3_FACTORY).createPool(token0, token1, 3000);
+            console.log("Pool created at:", pool);
+        } else {
+            console.log("Pool already exists at:", pool);
+        }
+        
         wsXMRLiquidityRouter router = new wsXMRLiquidityRouter(
             WSHUB,
-            WSXMR,
+            GnosisAddresses.UNI_V3_POSITION_MANAGER,
             GnosisAddresses.SDAI,
-            GnosisAddresses.UNI_V3_FACTORY,
-            GnosisAddresses.UNI_V3_POSITION_MANAGER
+            WSXMR,
+            pool
         );
         
         console.log("Router deployed at:", address(router));
         
         vm.stopBroadcast();
         
-        // Try to register with hub (optional - may fail if hub doesn't exist or caller not owner)
-        console.log("\n=== Hub Registration ===");
-        console.log("To register router with hub, call setLiquidityRouter on hub:");
-        console.log("Hub address:", WSHUB);
-        console.log("Router address:", address(router));
-        
         console.log("\n=== Deployment Summary ===");
         console.log("Router:", address(router));
+        console.log("Pool:", pool);
         console.log("Pool Fee:", router.POOL_FEE());
         console.log("Tick Spacing:", router.TICK_SPACING());
-        console.log("Min Deposit:", router.MIN_DEPOSIT_AMOUNT());
-        console.log("Min Position Duration:", router.MIN_POSITION_DURATION());
-        console.log("Max Positions Per User:", router.MAX_ACTIVE_POSITIONS_PER_USER());
+        console.log("sDAI is token0:", router.sDAIIsToken0());
         
         console.log("\n=== Next Steps ===");
-        console.log("1. Verify contract on Gnosisscan:");
-        console.log("   forge verify-contract", address(router));
-        console.log("   wsXMRLiquidityRouter --chain gnosis --watch");
-        console.log("\n2. Initialize pool:");
-        console.log("   cast send", address(router), '"initializePool(bytes[])" "[]" --rpc-url $GNOSIS_RPC_URL');
-        console.log("\n3. Test with small amounts before production use");
+        console.log("1. Initialize pool via router.initializePool(xmrPrice)");
+        console.log("2. Register router with hub via hub.migrateLiquidityRouter(router)");
+        console.log("3. Diamond cut to add new selectors");
     }
 }
 
@@ -78,18 +79,17 @@ contract InitializePool is Script {
     
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
-        address routerAddress = ROUTER;
+        uint256 xmrPrice = vm.envUint("XMR_PRICE");
         
-        console.log("Initializing pool for router:", routerAddress);
+        console.log("Initializing pool for router:", ROUTER);
+        console.log("XMR Price:", xmrPrice);
         
         vm.startBroadcast(deployerPrivateKey);
         
-        wsXMRLiquidityRouter router = wsXMRLiquidityRouter(payable(routerAddress));
+        wsXMRLiquidityRouter router = wsXMRLiquidityRouter(ROUTER);
+        router.initializePool(xmrPrice);
         
-        bytes[] memory emptyUpdateData = new bytes[](0);
-        address pool = router.initializePool(emptyUpdateData);
-        
-        console.log("Pool initialized at:", pool);
+        console.log("Pool initialized");
         console.log("Token0:", router.token0());
         console.log("Token1:", router.token1());
         console.log("sDAI is token0:", router.sDAIIsToken0());
@@ -109,29 +109,24 @@ contract VerifyDeployment is Script {
         
         console.log("Verifying router at:", routerAddress);
         
-        wsXMRLiquidityRouter router = wsXMRLiquidityRouter(payable(routerAddress));
+        wsXMRLiquidityRouter router = wsXMRLiquidityRouter(routerAddress);
         
         console.log("\n=== Configuration ===");
         console.log("Hub:", router.hub());
-        console.log("wsXMR Token:", router.wsxmrToken());
         console.log("sDAI:", router.sDAI());
-        console.log("DEX Factory:", router.dexFactory());
-        console.log("DEX Position Manager:", router.dexPositionManager());
+        console.log("wsXMR:", router.wsXMR());
+        console.log("Position Manager:", router.positionManager());
+        console.log("Pool:", router.pool());
         
         console.log("\n=== Pool Status ===");
         console.log("Pool Initialized:", router.poolInitialized());
-        if (router.poolInitialized()) {
-            console.log("Pool Address:", router.pool());
-            console.log("Token0:", router.token0());
-            console.log("Token1:", router.token1());
-        }
+        console.log("Token0:", router.token0());
+        console.log("Token1:", router.token1());
+        console.log("sDAI is token0:", router.sDAIIsToken0());
         
         console.log("\n=== Constants ===");
         console.log("Pool Fee:", router.POOL_FEE());
         console.log("Tick Spacing:", router.TICK_SPACING());
-        console.log("Min Deposit Amount:", router.MIN_DEPOSIT_AMOUNT());
-        console.log("Min Position Duration:", router.MIN_POSITION_DURATION());
-        console.log("Max Active Positions Per User:", router.MAX_ACTIVE_POSITIONS_PER_USER());
         
         console.log("\n=== Hub Integration ===");
         wsXmrHub hub = wsXmrHub(payable(router.hub()));

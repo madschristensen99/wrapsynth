@@ -12,19 +12,30 @@ import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {GnosisAddresses} from "../GnosisAddresses.sol";
 import {YieldLogic} from "../libraries/YieldLogic.sol";
 import {GnosisAddresses} from "../GnosisAddresses.sol";
+import {IwsXmrLiquidityRouter} from "../interfaces/router/IwsXmrLiquidityRouter.sol";
+import {ISavingsDAI} from "../interfaces/external/ISavingsDAI.sol";
 
 contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
     using SafeERC20 for IERC20;
+    
+    event CoLPUnwound(
+        uint256 indexed tokenId,
+        address indexed vault,
+        address indexed user,
+        uint256 daiReturned,
+        uint256 wsxmrReturned,
+        bool liquidationTriggered
+    );
     
     constructor(address _wsxmrToken, address _verifierProxy) 
         wsXmrStorage(_wsxmrToken, _verifierProxy) 
     {}
     
     function liquidate(address lpVault, uint256 debtToClear) external {
-        if (!vaults[lpVault].active) revert VaultDoesNotExist();
+        if (!_vaults[lpVault].active) revert VaultDoesNotExist();
         if (debtToClear == 0) revert ZeroAmount();
         
-        Vault storage vault = vaults[lpVault];
+        Vault storage vault = _vaults[lpVault];
         
         uint256 actualDebt;
         uint256 xmrPrice;
@@ -57,7 +68,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             debtToClear = actualDebt;
         }
         
-        uint256 ratio = _calculateCollateralRatio(vault.collateralShares, actualDebt);
+        uint256 ratio = _calculateCRWithPositions(lpVault, actualDebt);
         if (ratio >= LIQUIDATION_RATIO) revert VaultHealthy();
         
         bytes32[] storage vaultBurns = vaultBurnRequests[lpVault];
@@ -68,6 +79,11 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
                 burnReq.status == BurnStatus.COMMITTED) {
                 revert CancelBurnsFirst();
             }
+        }
+        
+        // Atomic unwind all deployed positions before seizure
+        if (_vaultPositions[lpVault].length > 0) {
+            _unwindAllVaultPositions(lpVault);
         }
         
         collateralPrice = _getCollateralPriceFromStorage();
@@ -118,16 +134,16 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
     }
     
     function isVaultLiquidatable(address lpVault) external view returns (bool) {
-        Vault memory vault = vaults[lpVault];
+        Vault memory vault = _vaults[lpVault];
         uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
         if (!vault.active || actualDebt == 0) return false;
         
-        uint256 ratio = _calculateCollateralRatio(vault.collateralShares, actualDebt);
+        uint256 ratio = _calculateCRWithPositions(lpVault, actualDebt);
         return ratio < LIQUIDATION_RATIO;
     }
     
     function calculateLiquidation(address lpVault, uint256 debtToClear) external view returns (uint256 collateralSeized, uint256 actualDebtCleared) {
-        Vault memory vault = vaults[lpVault];
+        Vault memory vault = _vaults[lpVault];
         uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
         
         if (debtToClear > actualDebt) {
@@ -167,11 +183,11 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         
         for (uint256 i = startIndex; i < startIndex + maxResults && i < totalVaults; i++) {
             address vaultAddr = vaultList[i];
-            Vault memory vault = vaults[vaultAddr];
+            Vault memory vault = _vaults[vaultAddr];
             uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
             
             if (vault.active && actualDebt > 0) {
-                uint256 ratio = _calculateCollateralRatio(vault.collateralShares, actualDebt);
+                uint256 ratio = _calculateCRWithPositions(vaultAddr, actualDebt);
                 if (ratio < LIQUIDATION_RATIO) {
                     vaults_[found] = vaultAddr;
                     debts[found] = actualDebt;
@@ -194,15 +210,96 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         );
     }
     
+    function _calculateCRWithPositions(address vaultAddr, uint256 debtAmount)
+        internal view returns (uint256)
+    {
+        Vault memory vault = _vaults[vaultAddr];
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
+        
+        if (vault.deployedSDAIShares == 0) {
+            return CollateralLogic.calculateRatioFromShares(
+                vault.collateralShares, debtAmount, GnosisAddresses.SDAI, collateralPrice, xmrPrice
+            );
+        }
+        
+        (uint256 positionDAI, uint256 positionWsxmr) = _getVaultPositionTotalsAtOracle(vaultAddr, xmrPrice);
+        return CollateralLogic.calculateVaultCRWithDeployment(
+            vault.collateralShares,
+            positionDAI,
+            positionWsxmr,
+            debtAmount,
+            GnosisAddresses.SDAI,
+            collateralPrice,
+            xmrPrice
+        );
+    }
+    
+    function _getVaultPositionTotalsAtOracle(address vaultAddr, uint256 xmrPrice)
+        internal view
+        returns (uint256 totalDAI, uint256 totalWsxmr)
+    {
+        uint256[] memory positions = _vaultPositions[vaultAddr];
+        for (uint256 i = 0; i < positions.length; i++) {
+            (uint256 dai, uint256 wsxmr) = IwsXmrLiquidityRouter(liquidityRouter)
+                .getPositionAmountsAtPrice(positions[i], xmrPrice);
+            totalDAI += dai;
+            totalWsxmr += wsxmr;
+        }
+    }
+    
+    function _unwindAllVaultPositions(address lpVault) internal {
+        Vault storage vault = _vaults[lpVault];
+        
+        while (_vaultPositions[lpVault].length > 0) {
+            uint256 idx = _vaultPositions[lpVault].length - 1;
+            uint256 tokenId = _vaultPositions[lpVault][idx];
+            PositionMetadata memory meta = _positionMetadata[tokenId];
+            
+            (uint256 daiOut, uint256 wsxmrOut) = IwsXmrLiquidityRouter(liquidityRouter)
+                .drainPosition(tokenId);
+            
+            if (daiOut > 0) {
+                uint256 shares = ISavingsDAI(GnosisAddresses.SDAI).deposit(daiOut, address(this));
+                vault.collateralShares += shares;
+            }
+            if (wsxmrOut > 0) {
+                pendingReturns[meta.user][wsxmrToken] += wsxmrOut;
+            }
+            
+            if (vault.deployedSDAIShares >= meta.sDAISharesOriginal) {
+                vault.deployedSDAIShares -= meta.sDAISharesOriginal;
+            } else {
+                vault.deployedSDAIShares = 0;
+            }
+            
+            _vaultPositions[lpVault].pop();
+            
+            uint256[] storage upos = _userPositions[meta.user];
+            for (uint256 i = 0; i < upos.length; i++) {
+                if (upos[i] == tokenId) {
+                    upos[i] = upos[upos.length - 1];
+                    upos.pop();
+                    break;
+                }
+            }
+            
+            delete _positionMetadata[tokenId];
+            
+            emit CoLPUnwound(tokenId, lpVault, meta.user, daiOut, wsxmrOut, true);
+        }
+    }
+    
     // ========== DIAMOND INTROSPECTION ==========
     
     /// @notice Returns all function selectors implemented by this facet
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](4);
+        bytes4[] memory sels = new bytes4[](5);
         sels[0] = this.liquidate.selector;
         sels[1] = this.isVaultLiquidatable.selector;
         sels[2] = this.calculateLiquidation.selector;
         sels[3] = this.getLiquidatableVaults.selector;
+        sels[4] = this.selectors.selector;
         return sels;
     }
 }

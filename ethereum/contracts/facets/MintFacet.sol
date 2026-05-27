@@ -31,10 +31,10 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         if (xmrAmount == 0) revert ZeroAmount();
         if (claimCommitment == bytes32(0)) revert InvalidCommitment();
         if (timeoutDuration == 0 || timeoutDuration > MAX_MINT_TIMEOUT) revert InvalidTimeout();
-        if (!vaults[lpVault].active) revert VaultDoesNotExist();
+        if (!_vaults[lpVault].active) revert VaultDoesNotExist();
         if (xmrAmount < 1e4) revert ZeroAmount();
         
-        Vault storage vault = vaults[lpVault];
+        Vault storage vault = _vaults[lpVault];
         _syncVaultYield(lpVault);
         
         if (msg.value < vault.mintGriefingDeposit) revert InsufficientDeposit();
@@ -115,7 +115,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         if (msg.sender != request.lpVault) revert Unauthorized();
         if (block.timestamp >= request.timeout) revert DeadlineExpired();
         
-        Vault storage vault = vaults[request.lpVault];
+        Vault storage vault = _vaults[request.lpVault];
         if (request.vaultMintNonce != vault.mintNonce) revert InvalidStatus();
         
         // Require LP bond proportional to mint amount
@@ -150,7 +150,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         bytes32 computedCommitment = keccak256(abi.encodePacked(px, py));
         if (computedCommitment != request.claimCommitment) revert InvalidSecret();
         
-        Vault storage vault = vaults[request.lpVault];
+        Vault storage vault = _vaults[request.lpVault];
         _syncVaultYield(request.lpVault);
         
         if (request.vaultMintNonce != vault.mintNonce) {
@@ -203,7 +203,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         
         if (block.timestamp < request.timeout) revert TimeoutNotReached();
         
-        Vault storage vault = vaults[request.lpVault];
+        Vault storage vault = _vaults[request.lpVault];
         if (request.vaultMintNonce == vault.mintNonce) {
             vault.pendingDebt -= request.wsxmrAmount;
         }
@@ -274,12 +274,12 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     }
     
     function calculateMintFee(address lpVault, uint256 wsxmrAmount) external view returns (uint256) {
-        return (wsxmrAmount * vaults[lpVault].mintFeeBps) / BPS_DENOMINATOR;
+        return (wsxmrAmount * _vaults[lpVault].mintFeeBps) / BPS_DENOMINATOR;
     }
     
     
     function _syncVaultYield(address lpAddress) internal {
-        Vault storage vault = vaults[lpAddress];
+        Vault storage vault = _vaults[lpAddress];
         
         // Early return if no collateral
         if (vault.collateralShares == 0) return;

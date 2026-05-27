@@ -71,6 +71,39 @@ interface IVaultFacet is IErrors {
     /// @param minAmount Minimum wsXMR for burn requests (0 = global default)
     function setMinBurnAmount(uint256 minAmount) external;
     
+    // ========== CO-LP OPERATIONS ==========
+    
+    /// @notice Set the LP's preferred max range width for co-LP positions
+    /// @param newMaxBps Range width in basis points (1000-10000)
+    function setMaxCoLPRange(uint16 newMaxBps) external;
+    
+    /// @notice User opens a co-LP position by pairing wsXMR against an LP vault's idle collateral
+    /// @param lpVault LP vault address
+    /// @param wsxmrAmount Amount of wsXMR to contribute
+    /// @param deadline Transaction deadline
+    /// @return tokenId V3 NFT token ID
+    function userOpenCoLP(
+        address lpVault,
+        uint256 wsxmrAmount,
+        uint256 deadline
+    ) external returns (uint256 tokenId);
+    
+    /// @notice Either LP or user closes a co-LP position
+    /// @param tokenId V3 NFT token ID
+    /// @param deadline Transaction deadline
+    function unwindCoLP(uint256 tokenId, uint256 deadline) external;
+    
+    /// @notice Keeper-callable rebalance when a position goes out of range
+    /// @param tokenId V3 NFT token ID
+    /// @param newRangeBps New range width in basis points
+    /// @param deadline Transaction deadline
+    function rebalanceCoLP(uint256 tokenId, uint16 newRangeBps, uint256 deadline) external;
+    
+    /// @notice Get max wsXMR a vault can accept for co-LP
+    /// @param lpVault LP vault address
+    /// @return maxWsxmrAcceptable Maximum wsXMR the vault can pair
+    function getCoLPCapacity(address lpVault) external view returns (uint256 maxWsxmrAcceptable);
+    
     // ========== PENDING RETURNS ==========
     
     /// @notice Withdraw queued returns (pull pattern)
