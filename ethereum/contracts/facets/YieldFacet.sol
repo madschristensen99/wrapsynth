@@ -72,7 +72,7 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
             uint256 newIndex = (globalDebtIndex * (1e18 - reductionRatio)) / 1e18;
             
             // M1: Migrate debt index if it drops below threshold
-            // TODO: This is expensive (~30M gas for 10k vaults). Consider:
+            // TODO: This is expensive (~30M gas for 10k _vaults). Consider:
             // - Separate keeper function with cursor
             // - Or accept the floor at 1e6 as documented technical debt
             if (newIndex < 1e12) {
@@ -87,7 +87,7 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
     
     /// @notice Migrate debt index when it drops too low to prevent precision loss
     /// @dev Rescales all vault normalized debts and resets index to 1e18
-    /// @dev WARNING: Expensive operation - ~30M gas for MAX_VAULT_COUNT vaults
+    /// @dev WARNING: Expensive operation - ~30M gas for MAX_VAULT_COUNT _vaults
     function _migrateDebtIndex() private {
         uint256 oldIndex = globalDebtIndex;
         if (oldIndex >= 1e18) return; // Nothing to do
@@ -96,7 +96,7 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         // After migration: actualDebt = newNormalizedDebt * 1e18 / 1e18
         // Therefore: newNormalizedDebt = normalizedDebt * oldIndex / 1e18
         for (uint256 i = 0; i < vaultList.length; i++) {
-            Vault storage vault = vaults[vaultList[i]];
+            Vault storage vault = _vaults[vaultList[i]];
             
             if (vault.normalizedDebt > 0) {
                 vault.normalizedDebt = (vault.normalizedDebt * oldIndex) / 1e18;
@@ -110,7 +110,7 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
     }
     
     function syncVaultYield(address lpVault) external {
-        Vault storage vault = vaults[lpVault];
+        Vault storage vault = _vaults[lpVault];
         if (vault.collateralShares == 0) return;
         
         uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
@@ -162,7 +162,7 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
     }
     
     function getVaultExtractableYield(address lpVault) external view returns (uint256) {
-        Vault storage vault = vaults[lpVault];
+        Vault storage vault = _vaults[lpVault];
         uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
         uint256 pendingDebt = vault.pendingDebt;
         uint256 xmrPrice = _getXmrPriceFromStorage();

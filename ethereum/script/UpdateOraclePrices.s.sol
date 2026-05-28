@@ -34,11 +34,10 @@ contract UpdatePrices is Script {
         // Initialize pool
         console.log("\nInitializing Uniswap V3 pool...");
         wsXMRLiquidityRouter router = wsXMRLiquidityRouter(payable(ROUTER));
-        bytes[] memory emptyData = new bytes[](0);
-        address pool = router.initializePool(emptyData);
+        router.initializePool(XMR_PRICE * 1e10);
         
         console.log("\n=== Pool Initialized ===");
-        console.log("Pool Address:", pool);
+        console.log("Pool Address:", router.pool());
         console.log("Token0:", router.token0());
         console.log("Token1:", router.token1());
         console.log("sDAI is token0:", router.sDAIIsToken0());
@@ -47,10 +46,7 @@ contract UpdatePrices is Script {
         
         console.log("\n=== Ready for Trading ===");
         console.log("Router:", ROUTER);
-        console.log("Pool:", pool);
-        console.log("\nLPs can now:");
-        console.log("1. allocateLiquidity(sDAIAmount)");
-        console.log("2. setLPConfig(maxPosition, maxExposure, minRatio, true)");
-        console.log("\nUsers can then create positions permissionlessly!");
+        console.log("Pool:", router.pool());
+        console.log("\nCo-LP is vault-integrated via the diamond.");
     }
 }
