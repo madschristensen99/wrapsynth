@@ -3,605 +3,334 @@ pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IwsXmrLiquidityRouter} from "../interfaces/router/IwsXmrLiquidityRouter.sol";
-import {ICoLPMatching} from "../interfaces/router/ICoLPMatching.sol";
-import {ILiquidityPosition} from "../interfaces/router/ILiquidityPosition.sol";
-import {IOracleFacet} from "../interfaces/facets/IOracleFacet.sol";
-import {IBurnFacet} from "../interfaces/facets/IBurnFacet.sol";
-import {IUniswapV3Factory} from "../interfaces/external/IUniswapV3Factory.sol";
-import {IUniswapV3Pool} from "../interfaces/external/IUniswapV3Pool.sol";
 import {INonfungiblePositionManager} from "../interfaces/external/INonfungiblePositionManager.sol";
+import {IUniswapV3Pool} from "../interfaces/external/IUniswapV3Pool.sol";
+import {IUniswapV3Factory} from "../interfaces/external/IUniswapV3Factory.sol";
 import {GnosisAddresses} from "../GnosisAddresses.sol";
 
 /**
  * @title wsXMRLiquidityRouter
- * @notice Co-LP router for pairing sDAI LPs with wsXMR holders in Uniswap V3 positions
- * @dev Implements dual-approval matchmaking, IL compensation, and fee splitting
- * 
- * Oracle Integration:
- * - Reads prices from SimpleOracleFacet (pushed by off-chain bot every ~5 min)
- * - No on-chain price updates needed (legacy Pyth integration removed)
- * - oracleUpdateData parameters kept for forward compatibility but ignored
- * - Any ETH sent for "updates" is refunded to pendingETHRefunds
+ * @notice Thin wrapper around Uniswap V3 NonfungiblePositionManager for concentrated co-LP.
+ * @dev Called only by the diamond (via onlyDiamond modifier). Holds no balances and no user state.
+ *      All accounting lives in the diamond's storage. The diamond owns all V3 NFTs.
  */
-contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter, ReentrancyGuard {
+contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
     using SafeERC20 for IERC20;
 
-    // ========== ERRORS ==========
-    
-    error ZeroAddress();
-    error DeadlineExpired();
-    error TransferFailed();
-
     // ========== IMMUTABLES ==========
-    
-    address public immutable hub;
-    address public immutable wsxmrToken;
-    address public immutable sDAI;
-    address public immutable dexFactory;
-    address public immutable dexPositionManager;
 
-    // ========== STATE ==========
-    
-    address public pool;
-    
-    mapping(address => uint256) public lpSDAIBalance;
-    mapping(address => uint256) public userWsxmrBalance;
-    
-    mapping(address => LPConfig) public lpConfigs;
-    mapping(address => uint256) public lpTotalExposure;
-    
-    mapping(uint256 => Position) public positions;
-    mapping(address => uint256[]) private _userPositions;
-    uint256 public nextPositionIndex;
-    
-    mapping(address => uint256) public pendingSDAIFees;
-    mapping(address => uint256) public pendingWsxmrFees;
-    
-    mapping(address => uint256) public pendingILSDAI;
-    mapping(address => uint256) public pendingILWsxmr;
-    
-    mapping(address => uint256) public pendingETHRefunds;
-    
-    mapping(address => uint256) private _activePositionCount;
+    address public immutable hub;
+    address public immutable positionManager;
+    address public immutable sDAI;
+    address public immutable wsXMR;
+    address public immutable pool;
+    bool public immutable sDAIIsToken0;
 
     // ========== CONSTANTS ==========
-    
+
     uint24 public constant POOL_FEE = 3000;
     int24 public constant TICK_SPACING = 60;
-    uint256 public constant MIN_DEPOSIT_AMOUNT = 1e6;
-    uint256 public constant MIN_POSITION_DURATION = 1 hours;
-    uint256 public constant MAX_ACTIVE_POSITIONS_PER_USER = 50;
-    uint256 public constant BPS_DENOMINATOR = 10000;
-    
-    int24 private constant MIN_TICK = -887220;
-    int24 private constant MAX_TICK = 887220;
+    int24 private constant MIN_TICK = -887272;
+    int24 private constant MAX_TICK = 887272;
 
     // ========== CONSTRUCTOR ==========
-    
+
     constructor(
         address _hub,
-        address _wsxmrToken,
+        address _positionManager,
         address _sDAI,
-        address _dexFactory,
-        address _dexPositionManager
+        address _wsXMR,
+        address _pool
     ) {
-        if (_hub == address(0) || _wsxmrToken == address(0) || _sDAI == address(0) ||
-            _dexFactory == address(0) || _dexPositionManager == address(0)) {
+        if (_hub == address(0) || _positionManager == address(0) ||
+            _sDAI == address(0) || _wsXMR == address(0) || _pool == address(0)) {
             revert ZeroAddress();
         }
-        
+
         hub = _hub;
-        wsxmrToken = _wsxmrToken;
+        positionManager = _positionManager;
         sDAI = _sDAI;
-        dexFactory = _dexFactory;
-        dexPositionManager = _dexPositionManager;
+        wsXMR = _wsXMR;
+        pool = _pool;
+        sDAIIsToken0 = _sDAI < _wsXMR;
     }
 
-    // ========== POOL INITIALIZATION ==========
-    
-    /// @inheritdoc IwsXmrLiquidityRouter
-    function initializePool(bytes[] calldata oracleUpdateData) external payable nonReentrant returns (address) {
-        if (pool != address(0)) revert PoolAlreadyInitialized();
-        
-        // Oracle migration note: oracleUpdateData is ignored. Prices are read from SimpleOracleFacet
-        // which is updated off-chain by a bot pushing RedStone API data every ~5 minutes.
-        // This parameter is kept for forward compatibility in case we re-add a pull oracle (Pyth/RedStone).
-        // Any ETH sent is refunded since no update fee is needed.
-        
-        if (msg.value > 0) {
-            pendingETHRefunds[msg.sender] += msg.value;
-        }
-        
-        uint256 wsxmrPriceUsd = IOracleFacet(hub).getXmrPrice();
-        uint256 sDAIPriceUsd = IOracleFacet(hub).getCollateralPrice();
-        
-        (address _token0, address _token1) = wsxmrToken < sDAI ? (wsxmrToken, sDAI) : (sDAI, wsxmrToken);
-        
-        pool = IUniswapV3Factory(dexFactory).getPool(_token0, _token1, POOL_FEE);
-        if (pool == address(0)) {
-            pool = IUniswapV3Factory(dexFactory).createPool(_token0, _token1, POOL_FEE);
-        }
-        
-        uint160 sqrtPriceX96 = _calculateSqrtPriceX96(wsxmrPriceUsd, sDAIPriceUsd, _token0 == wsxmrToken);
-        
+    // ========== MODIFIERS ==========
+
+    modifier onlyDiamond() {
+        if (msg.sender != hub) revert Unauthorized();
+        _;
+    }
+
+    // ========== INITIALIZATION ==========
+
+    function initializePool(uint256 initialXmrPrice) external onlyDiamond {
+        uint256 collateralPrice = 1e18; // sDAI ≈ $1
+        uint160 sqrtPriceX96 = _priceToSqrtPriceX96(initialXmrPrice, collateralPrice);
+
         IUniswapV3Pool(pool).initialize(sqrtPriceX96);
-        
-        emit PoolInitialized(pool, sqrtPriceX96, sDAIPriceUsd, wsxmrPriceUsd);
-        
-        return pool;
+
+        emit PoolInitialized(pool, sqrtPriceX96, collateralPrice, initialXmrPrice);
     }
 
-    // ========== LP FUNCTIONS ==========
-    
-    /// @inheritdoc ICoLPMatching
-    function allocateLiquidity(uint256 sDAIAmount) external nonReentrant {
-        if (sDAIAmount < MIN_DEPOSIT_AMOUNT) revert InvalidAmount();
-        
-        IERC20(sDAI).safeTransferFrom(msg.sender, address(this), sDAIAmount);
-        lpSDAIBalance[msg.sender] += sDAIAmount;
-        
-        emit LiquidityAllocated(msg.sender, sDAIAmount);
-    }
-    
-    /// @inheritdoc ICoLPMatching
-    function withdrawSDAI(uint256 sDAIAmount) external nonReentrant {
-        if (sDAIAmount == 0) revert InvalidAmount();
-        if (lpSDAIBalance[msg.sender] < sDAIAmount) revert InsufficientBalance();
-        
-        lpSDAIBalance[msg.sender] -= sDAIAmount;
-        IERC20(sDAI).safeTransfer(msg.sender, sDAIAmount);
-        
-        emit LiquidityDeallocated(msg.sender, sDAIAmount);
-    }
-    
-    /// @inheritdoc ICoLPMatching
-    function setLPConfig(
-        uint256 maxPositionSize,
-        uint256 maxTotalExposure,
-        uint16 minCollateralRatioBps,
-        bool acceptingPositions
-    ) external nonReentrant {
-        if (minCollateralRatioBps < 10000 || minCollateralRatioBps > 50000) revert InvalidConfig();
-        if (maxPositionSize == 0 && acceptingPositions) revert InvalidConfig();
-        if (maxTotalExposure < maxPositionSize && acceptingPositions) revert InvalidConfig();
-        
-        lpConfigs[msg.sender] = LPConfig({
-            maxPositionSize: maxPositionSize,
-            maxTotalExposure: maxTotalExposure,
-            minCollateralRatioBps: minCollateralRatioBps,
-            acceptingPositions: acceptingPositions
-        });
-        
-        emit LPConfigUpdated(msg.sender, maxPositionSize, maxTotalExposure, minCollateralRatioBps, acceptingPositions);
-    }
+    // ========== POSITION MANAGEMENT ==========
 
-    // ========== USER FUNCTIONS ==========
-    
-    /// @inheritdoc ICoLPMatching
-    function depositWsxmr(uint256 amount) external nonReentrant {
-        if (amount < MIN_DEPOSIT_AMOUNT) revert InvalidAmount();
-        
-        IERC20(wsxmrToken).safeTransferFrom(msg.sender, address(this), amount);
-        userWsxmrBalance[msg.sender] += amount;
-        
-        emit UserDepositedWsxmr(msg.sender, amount);
-    }
-    
-    /// @inheritdoc ICoLPMatching
-    function withdrawWsXMR(uint256 wsxmrAmount) external nonReentrant {
-        if (wsxmrAmount == 0) revert InvalidAmount();
-        if (userWsxmrBalance[msg.sender] < wsxmrAmount) revert InsufficientBalance();
-        
-        userWsxmrBalance[msg.sender] -= wsxmrAmount;
-        IERC20(wsxmrToken).safeTransfer(msg.sender, wsxmrAmount);
-        
-        emit UserWithdrewWsxmr(msg.sender, wsxmrAmount);
-    }
-    
-    /// @inheritdoc ICoLPMatching
-    function burnFromInternalBalance(
+    function mintConcentratedPosition(
+        uint256 daiAmount,
         uint256 wsxmrAmount,
-        address lpVault
-    ) external nonReentrant returns (bytes32 requestId) {
-        if (wsxmrAmount == 0) revert InvalidAmount();
-        if (userWsxmrBalance[msg.sender] < wsxmrAmount) revert InsufficientBalance();
-        
-        userWsxmrBalance[msg.sender] -= wsxmrAmount;
-        
-        IERC20(wsxmrToken).forceApprove(hub, wsxmrAmount);
-        
-        requestId = IBurnFacet(hub).requestBurnFromRouter(wsxmrAmount, lpVault, msg.sender);
-        
-        return requestId;
-    }
-
-    // ========== POSITION LIFECYCLE ==========
-    
-    /// @inheritdoc ILiquidityPosition
-    function createPosition(
-        address lp,
-        address user,
-        uint256 sDAIAmount,
-        uint256 wsxmrAmount,
+        uint16 rangeBps,
+        uint256 centerXmrPrice,
         uint256 deadline
-    ) external nonReentrant returns (uint256 positionIndex) {
-        return _createPosition(lp, user, sDAIAmount, wsxmrAmount, deadline);
-    }
-    
-    /// @inheritdoc ILiquidityPosition
-    function createPositionWithPriceUpdate(
-        address lp,
-        address user,
-        uint256 sDAIAmount,
-        uint256 wsxmrAmount,
-        uint256 deadline,
-        bytes[] calldata oracleUpdateData
-    ) external payable nonReentrant returns (uint256 positionIndex) {
-        // Oracle migration note: Same as initializePool - oracleUpdateData ignored, prices read from hub.
-        // Refund any ETH sent since no update fee needed.
-        if (msg.value > 0) {
-            pendingETHRefunds[msg.sender] += msg.value;
-        }
-        
-        return _createPosition(lp, user, sDAIAmount, wsxmrAmount, deadline);
-    }
-    
-    function _createPosition(
-        address lp,
-        address user,
-        uint256 sDAIAmount,
-        uint256 wsxmrAmount,
-        uint256 deadline
-    ) private returns (uint256 positionIndex) {
-        if (pool == address(0)) revert PoolNotInitialized();
+    ) external onlyDiamond returns (
+        uint256 tokenId,
+        uint128 liquidity,
+        int24 tickLower,
+        int24 tickUpper
+    ) {
         if (block.timestamp > deadline) revert DeadlineExpired();
-        if (sDAIAmount < MIN_DEPOSIT_AMOUNT || wsxmrAmount < MIN_DEPOSIT_AMOUNT) revert InvalidAmount();
-        
-        LPConfig memory config = lpConfigs[lp];
-        if (!config.acceptingPositions) revert LPNotAcceptingPositions();
-        if (sDAIAmount > config.maxPositionSize) revert ExceedsMaxPositionSize();
-        if (lpTotalExposure[lp] + sDAIAmount > config.maxTotalExposure) revert ExceedsMaxTotalExposure();
-        
-        uint256 wsxmrPriceUsd = IOracleFacet(hub).getXmrPrice();
-        uint256 sDAIPriceUsd = IOracleFacet(hub).getCollateralPrice();
-        
-        uint256 wsxmrValueUsd = (wsxmrAmount * wsxmrPriceUsd) / 1e8;
-        uint256 sDAIValueUsd = (sDAIAmount * sDAIPriceUsd) / 1e18;
-        uint256 collateralRatioBps = (wsxmrValueUsd * BPS_DENOMINATOR) / sDAIValueUsd;
-        
-        if (collateralRatioBps < config.minCollateralRatioBps) revert InsufficientCollateralRatio();
-        
-        if (lpSDAIBalance[lp] < sDAIAmount) revert InsufficientBalance();
-        if (userWsxmrBalance[user] < wsxmrAmount) revert InsufficientBalance();
-        
-        if (_activePositionCount[lp] >= MAX_ACTIVE_POSITIONS_PER_USER) revert MaxPositionsReached();
-        if (_activePositionCount[user] >= MAX_ACTIVE_POSITIONS_PER_USER) revert MaxPositionsReached();
-        
-        lpSDAIBalance[lp] -= sDAIAmount;
-        userWsxmrBalance[user] -= wsxmrAmount;
-        lpTotalExposure[lp] += sDAIAmount;
-        
-        uint256 lpInitialValueUSD = sDAIValueUsd;
-        uint256 userInitialValueUSD = wsxmrValueUsd;
-        
-        IERC20(sDAI).forceApprove(dexPositionManager, sDAIAmount);
-        IERC20(wsxmrToken).forceApprove(dexPositionManager, wsxmrAmount);
-        
-        (address _token0, address _token1) = sDAI < wsxmrToken ? (sDAI, wsxmrToken) : (wsxmrToken, sDAI);
-        (uint256 amount0, uint256 amount1) = _token0 == sDAI ? (sDAIAmount, wsxmrAmount) : (wsxmrAmount, sDAIAmount);
-        
+
+        uint256 collateralPrice = 1e18;
+        uint160 sqrtPriceX96 = _priceToSqrtPriceX96(centerXmrPrice, collateralPrice);
+        int24 centerTick = _getTickAtSqrtRatio(sqrtPriceX96);
+
+        int24 halfWidth = int24(int256(uint256(rangeBps) / 2));
+        tickLower = centerTick - halfWidth;
+        tickUpper = centerTick + halfWidth;
+
+        // Snap to tick spacing
+        tickLower = (tickLower / TICK_SPACING) * TICK_SPACING;
+        tickUpper = (tickUpper / TICK_SPACING) * TICK_SPACING;
+
+        if (tickLower < MIN_TICK) tickLower = (MIN_TICK / TICK_SPACING) * TICK_SPACING;
+        if (tickUpper > MAX_TICK) tickUpper = (MAX_TICK / TICK_SPACING) * TICK_SPACING;
+        if (tickLower >= tickUpper) revert InvalidRange();
+
+        // Approve position manager
+        IERC20(sDAI).forceApprove(positionManager, daiAmount);
+        IERC20(wsXMR).forceApprove(positionManager, wsxmrAmount);
+
+        (address _token0, address _token1) = sDAIIsToken0 ? (sDAI, wsXMR) : (wsXMR, sDAI);
+        (uint256 amount0Desired, uint256 amount1Desired) = sDAIIsToken0
+            ? (daiAmount, wsxmrAmount)
+            : (wsxmrAmount, daiAmount);
+
         INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
             token0: _token0,
             token1: _token1,
             fee: POOL_FEE,
-            tickLower: (MIN_TICK / TICK_SPACING) * TICK_SPACING,
-            tickUpper: (MAX_TICK / TICK_SPACING) * TICK_SPACING,
-            amount0Desired: amount0,
-            amount1Desired: amount1,
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            amount0Desired: amount0Desired,
+            amount1Desired: amount1Desired,
             amount0Min: 0,
             amount1Min: 0,
             recipient: address(this),
             deadline: deadline
         });
-        
-        (uint256 tokenId, , uint256 actualAmount0, uint256 actualAmount1) = 
-            INonfungiblePositionManager(dexPositionManager).mint(params);
-        
-        (uint256 actualSDAI, uint256 actualWsxmr) = _token0 == sDAI ? 
-            (actualAmount0, actualAmount1) : (actualAmount1, actualAmount0);
-        
-        if (actualSDAI < sDAIAmount) {
-            lpSDAIBalance[lp] += (sDAIAmount - actualSDAI);
-        }
-        if (actualWsxmr < wsxmrAmount) {
-            userWsxmrBalance[user] += (wsxmrAmount - actualWsxmr);
-        }
-        
-        positionIndex = nextPositionIndex++;
-        
-        positions[positionIndex] = Position({
-            positionId: tokenId,
-            lpProvider: lp,
-            userProvider: user,
-            sDAIAmount: actualSDAI,
-            wsxmrAmount: actualWsxmr,
-            lpInitialValueUSD: lpInitialValueUSD,
-            userInitialValueUSD: userInitialValueUSD,
-            createdAt: block.timestamp
-        });
-        
-        _userPositions[lp].push(positionIndex);
-        _userPositions[user].push(positionIndex);
-        _activePositionCount[lp]++;
-        _activePositionCount[user]++;
-        
-        emit PositionCreated(positionIndex, tokenId, lp, user, actualSDAI, actualWsxmr);
-        
-        return positionIndex;
+
+        (tokenId, liquidity, , ) = INonfungiblePositionManager(positionManager).mint(params);
     }
-    
-    /// @inheritdoc ILiquidityPosition
-    function closePosition(
-        uint256 positionIndex,
-        uint256 deadline,
-        uint256 minTotalValueUSD
-    ) external nonReentrant {
-        Position storage position = positions[positionIndex];
-        if (position.positionId == 0) revert PositionNotFound();
-        if (block.timestamp > deadline) revert DeadlineExpired();
-        if (block.timestamp < position.createdAt + MIN_POSITION_DURATION) revert PositionTooYoung();
-        
-        address lp = position.lpProvider;
-        address user = position.userProvider;
-        
-        if (msg.sender != lp && msg.sender != user) revert Unauthorized();
-        
-        INonfungiblePositionManager.DecreaseLiquidityParams memory decreaseParams = 
-            INonfungiblePositionManager.DecreaseLiquidityParams({
-                tokenId: position.positionId,
-                liquidity: _getPositionLiquidity(position.positionId),
-                amount0Min: 0,
-                amount1Min: 0,
-                deadline: deadline
-            });
-        
-        INonfungiblePositionManager(dexPositionManager).decreaseLiquidity(decreaseParams);
-        
-        INonfungiblePositionManager.CollectParams memory collectParams = 
+
+    function drainPosition(uint256 tokenId)
+        external onlyDiamond
+        returns (uint256 daiOut, uint256 wsxmrOut)
+    {
+        (, , , , , , , uint128 liq, , , , ) =
+            INonfungiblePositionManager(positionManager).positions(tokenId);
+
+        if (liq > 0) {
+            INonfungiblePositionManager.DecreaseLiquidityParams memory decParams =
+                INonfungiblePositionManager.DecreaseLiquidityParams({
+                    tokenId: tokenId,
+                    liquidity: liq,
+                    amount0Min: 0,
+                    amount1Min: 0,
+                    deadline: block.timestamp
+                });
+            INonfungiblePositionManager(positionManager).decreaseLiquidity(decParams);
+        }
+
+        INonfungiblePositionManager.CollectParams memory colParams =
             INonfungiblePositionManager.CollectParams({
-                tokenId: position.positionId,
-                recipient: address(this),
+                tokenId: tokenId,
+                recipient: hub,
                 amount0Max: type(uint128).max,
                 amount1Max: type(uint128).max
             });
-        
-        (uint256 amount0, uint256 amount1) = INonfungiblePositionManager(dexPositionManager).collect(collectParams);
-        
-        (address _token0, ) = sDAI < wsxmrToken ? (sDAI, wsxmrToken) : (wsxmrToken, sDAI);
-        (uint256 returnedSDAI, uint256 returnedWsxmr) = _token0 == sDAI ? (amount0, amount1) : (amount1, amount0);
-        
-        uint256 wsxmrPriceUsd = IOracleFacet(hub).getXmrPrice();
-        uint256 sDAIPriceUsd = IOracleFacet(hub).getCollateralPrice();
-        
-        uint256 lpFinalValueUSD = (returnedSDAI * sDAIPriceUsd) / 1e18;
-        uint256 userFinalValueUSD = (returnedWsxmr * wsxmrPriceUsd) / 1e8;
-        uint256 totalValueUSD = lpFinalValueUSD + userFinalValueUSD;
-        
-        if (totalValueUSD < minTotalValueUSD) revert WithdrawalValueTooLow();
-        
-        if (lpFinalValueUSD < position.lpInitialValueUSD) {
-            uint256 lpLoss = position.lpInitialValueUSD - lpFinalValueUSD;
-            uint256 compensationWsxmr = (lpLoss * 1e8) / wsxmrPriceUsd;
-            if (compensationWsxmr <= returnedWsxmr) {
-                returnedWsxmr -= compensationWsxmr;
-                pendingILWsxmr[lp] += compensationWsxmr;
-                emit ILWsxmrCredited(lp, compensationWsxmr, positionIndex);
-            }
-        }
-        
-        if (userFinalValueUSD < position.userInitialValueUSD) {
-            uint256 userLoss = position.userInitialValueUSD - userFinalValueUSD;
-            uint256 compensationSDAI = (userLoss * 1e18) / sDAIPriceUsd;
-            if (compensationSDAI <= returnedSDAI) {
-                returnedSDAI -= compensationSDAI;
-                pendingILSDAI[user] += compensationSDAI;
-                emit ILSDAICredited(user, compensationSDAI, positionIndex);
-            }
-        }
-        
-        lpSDAIBalance[lp] += returnedSDAI;
-        userWsxmrBalance[user] += returnedWsxmr;
-        
-        lpTotalExposure[lp] -= position.sDAIAmount;
-        
-        INonfungiblePositionManager(dexPositionManager).burn(position.positionId);
-        
-        _activePositionCount[lp]--;
-        _activePositionCount[user]--;
-        
-        delete positions[positionIndex];
-        
-        emit PositionClosed(positionIndex, returnedSDAI, returnedWsxmr);
+
+        (uint256 amount0, uint256 amount1) =
+            INonfungiblePositionManager(positionManager).collect(colParams);
+
+        (daiOut, wsxmrOut) = sDAIIsToken0
+            ? (amount0, amount1)
+            : (amount1, amount0);
+
+        INonfungiblePositionManager(positionManager).burn(tokenId);
     }
-    
-    /// @inheritdoc ILiquidityPosition
-    function collectFees(uint256 positionIndex) external nonReentrant {
-        Position storage position = positions[positionIndex];
-        if (position.positionId == 0) revert PositionNotFound();
-        
-        address lp = position.lpProvider;
-        address user = position.userProvider;
-        
-        if (msg.sender != lp && msg.sender != user) revert Unauthorized();
-        
-        INonfungiblePositionManager.CollectParams memory collectParams = 
+
+    function collectFees(uint256 tokenId)
+        external onlyDiamond
+        returns (uint256 daiFees, uint256 wsxmrFees)
+    {
+        INonfungiblePositionManager.CollectParams memory colParams =
             INonfungiblePositionManager.CollectParams({
-                tokenId: position.positionId,
-                recipient: address(this),
+                tokenId: tokenId,
+                recipient: hub,
                 amount0Max: type(uint128).max,
                 amount1Max: type(uint128).max
             });
-        
-        (uint256 amount0, uint256 amount1) = INonfungiblePositionManager(dexPositionManager).collect(collectParams);
-        
-        (address _token0, ) = sDAI < wsxmrToken ? (sDAI, wsxmrToken) : (wsxmrToken, sDAI);
-        (uint256 sDAIFees, uint256 wsxmrFees) = _token0 == sDAI ? (amount0, amount1) : (amount1, amount0);
-        
-        pendingSDAIFees[lp] += sDAIFees;
-        pendingWsxmrFees[user] += wsxmrFees;
-        
-        emit FeesCollected(positionIndex, sDAIFees, wsxmrFees);
-    }
-    
-    /// @inheritdoc ILiquidityPosition
-    function withdrawFees() external nonReentrant {
-        uint256 sDAIAmount = pendingSDAIFees[msg.sender];
-        uint256 wsxmrAmount = pendingWsxmrFees[msg.sender];
-        
-        if (sDAIAmount > 0) {
-            pendingSDAIFees[msg.sender] = 0;
-            IERC20(sDAI).safeTransfer(msg.sender, sDAIAmount);
-        }
-        
-        if (wsxmrAmount > 0) {
-            pendingWsxmrFees[msg.sender] = 0;
-            IERC20(wsxmrToken).safeTransfer(msg.sender, wsxmrAmount);
-        }
-        
-        emit FeesWithdrawn(msg.sender, sDAIAmount, wsxmrAmount);
-    }
-    
-    /// @inheritdoc ICoLPMatching
-    function withdrawETH() external nonReentrant {
-        uint256 amount = pendingETHRefunds[msg.sender];
-        if (amount == 0) revert InvalidAmount();
-        
-        pendingETHRefunds[msg.sender] = 0;
-        (bool success, ) = msg.sender.call{value: amount}("");
-        if (!success) revert TransferFailed();
+
+        (uint256 amount0, uint256 amount1) =
+            INonfungiblePositionManager(positionManager).collect(colParams);
+
+        (daiFees, wsxmrFees) = sDAIIsToken0
+            ? (amount0, amount1)
+            : (amount1, amount0);
     }
 
     // ========== VIEW FUNCTIONS ==========
-    
-    /// @inheritdoc IwsXmrLiquidityRouter
+
+    function getPositionAmountsAtSpot(uint256 tokenId)
+        external view
+        returns (uint256 daiAmount, uint256 wsxmrAmount)
+    {
+        (uint160 sqrtPriceX96, , , , , , ) = IUniswapV3Pool(pool).slot0();
+        return _getAmountsAtSqrtPrice(tokenId, sqrtPriceX96);
+    }
+
+    function getPositionAmountsAtPrice(uint256 tokenId, uint256 xmrPriceUSD18)
+        external view
+        returns (uint256 daiAmount, uint256 wsxmrAmount)
+    {
+        uint256 collateralPrice = 1e18;
+        uint160 sqrtPriceX96 = _priceToSqrtPriceX96(xmrPriceUSD18, collateralPrice);
+        return _getAmountsAtSqrtPrice(tokenId, sqrtPriceX96);
+    }
+
+    function isPositionOutOfRange(uint256 tokenId, uint256 xmrPrice) external view returns (bool) {
+        (, , , , , int24 tickLower, int24 tickUpper, , , , , ) =
+            INonfungiblePositionManager(positionManager).positions(tokenId);
+
+        uint160 sqrtPriceX96 = _priceToSqrtPriceX96(xmrPrice, 1e18);
+
+        uint160 sqrtLower = _getSqrtRatioAtTick(tickLower);
+        uint160 sqrtUpper = _getSqrtRatioAtTick(tickUpper);
+        return sqrtPriceX96 <= sqrtLower || sqrtPriceX96 >= sqrtUpper;
+    }
+
     function poolInitialized() external view returns (bool) {
         return pool != address(0);
     }
-    
-    /// @inheritdoc IwsXmrLiquidityRouter
+
     function token0() external view returns (address) {
-        return sDAI < wsxmrToken ? sDAI : wsxmrToken;
-    }
-    
-    /// @inheritdoc IwsXmrLiquidityRouter
-    function token1() external view returns (address) {
-        return sDAI < wsxmrToken ? wsxmrToken : sDAI;
-    }
-    
-    /// @inheritdoc IwsXmrLiquidityRouter
-    function sDAIIsToken0() external view returns (bool) {
-        return sDAI < wsxmrToken;
-    }
-    
-    /// @inheritdoc ICoLPMatching
-    function getLPConfig(address lp) external view returns (LPConfig memory) {
-        return lpConfigs[lp];
-    }
-    
-    /// @inheritdoc ICoLPMatching
-    function getLpAvailableLiquidity(address lp) external view returns (uint256) {
-        return lpSDAIBalance[lp];
-    }
-    
-    /// @inheritdoc ICoLPMatching
-    function getLpTotalExposure(address lp) external view returns (uint256) {
-        return lpTotalExposure[lp];
-    }
-    
-    /// @inheritdoc ICoLPMatching
-    function getUserAvailableWsxmr(address user) external view returns (uint256) {
-        return userWsxmrBalance[user];
-    }
-    
-    /// @inheritdoc ICoLPMatching
-    function getWithdrawableBalances(address account) external view returns (
-        uint256 sDAIBalance,
-        uint256 wsxmrBalance,
-        uint256 sDAIFees,
-        uint256 wsxmrFees
-    ) {
-        return (
-            lpSDAIBalance[account] + pendingILSDAI[account],
-            userWsxmrBalance[account] + pendingILWsxmr[account],
-            pendingSDAIFees[account],
-            pendingWsxmrFees[account]
-        );
-    }
-    
-    /// @inheritdoc ILiquidityPosition
-    function getPosition(uint256 positionIndex) external view returns (Position memory) {
-        return positions[positionIndex];
-    }
-    
-    /// @inheritdoc ILiquidityPosition
-    function getUserPositions(
-        address account,
-        uint256 cursor,
-        uint256 limit
-    ) external view returns (Position[] memory positionList, uint256 nextCursor) {
-        uint256[] storage indices = _userPositions[account];
-        uint256 length = indices.length;
-        
-        if (cursor >= length) {
-            return (new Position[](0), cursor);
-        }
-        
-        uint256 remaining = length - cursor;
-        uint256 count = remaining < limit ? remaining : limit;
-        
-        positionList = new Position[](count);
-        for (uint256 i = 0; i < count; i++) {
-            positionList[i] = positions[indices[cursor + i]];
-        }
-        
-        nextCursor = cursor + count;
-        return (positionList, nextCursor);
-    }
-    
-    /// @inheritdoc ILiquidityPosition
-    function getPendingFees(address account) external view returns (
-        uint256 sDAIFees,
-        uint256 wsxmrFees
-    ) {
-        return (pendingSDAIFees[account], pendingWsxmrFees[account]);
-    }
-    
-    /// @inheritdoc ILiquidityPosition
-    function activePositionCount(address account) external view returns (uint256) {
-        return _activePositionCount[account];
+        return sDAIIsToken0 ? sDAI : wsXMR;
     }
 
-    // ========== INTERNAL HELPERS ==========
-    
-    function _calculateSqrtPriceX96(
-        uint256 wsxmrPriceUsd,
-        uint256 sDAIPriceUsd,
-        bool wsxmrIsToken0
-    ) private pure returns (uint160) {
+    function token1() external view returns (address) {
+        return sDAIIsToken0 ? wsXMR : sDAI;
+    }
+
+    // ========== INTERNAL: TICK MATH ==========
+
+    /// @dev Convert oracle XMR price (USD, 18 decimals) to sqrtPriceX96 for the sDAI/wsXMR pool.
+    ///      sDAI is pegged ~$1 so collateralPrice ≈ 1e18.
+    function _priceToSqrtPriceX96(uint256 xmrPrice, uint256 collateralPrice)
+        private view returns (uint160)
+    {
+        // Pool price = token1/token0
+        // If sDAI is token0: price = wsXMR/sDAI = (xmrPrice * 1e18) / (collateralPrice * 1e8)
+        // If wsXMR is token0: price = sDAI/wsXMR = (collateralPrice * 1e8) / (xmrPrice * 1e18)
         uint256 priceRatio;
-        
-        if (wsxmrIsToken0) {
-            priceRatio = (sDAIPriceUsd * 1e8) / wsxmrPriceUsd;
+        if (sDAIIsToken0) {
+            priceRatio = (xmrPrice * 1e18) / (collateralPrice * 1e8);
         } else {
-            priceRatio = (wsxmrPriceUsd * 1e18) / (sDAIPriceUsd * 1e8);
+            priceRatio = (collateralPrice * 1e18) / (xmrPrice * 1e8);
         }
-        
-        uint256 sqrtPrice = _sqrt(priceRatio);
+
+        uint256 sqrtPrice = _sqrt(priceRatio * 1e18);
         return uint160((sqrtPrice * (1 << 96)) / 1e9);
     }
-    
+
+    function _getTickAtSqrtRatio(uint160 sqrtPriceX96) private pure returns (int24 tick) {
+        uint256 ratio = uint256(sqrtPriceX96) * uint256(sqrtPriceX96);
+        ratio = (ratio << 32) / 1e18; // scale to Q128.128-ish
+
+        // Binary search for tick
+        int24 lo = MIN_TICK;
+        int24 hi = MAX_TICK;
+        while (lo <= hi) {
+            int24 mid = (lo + hi) / 2;
+            uint160 midSqrt = _getSqrtRatioAtTick(mid);
+            if (midSqrt <= sqrtPriceX96) {
+                tick = mid;
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+    }
+
+    function _getSqrtRatioAtTick(int24 tick) private pure returns (uint160 sqrtPriceX96) {
+        uint256 absTick = tick < 0 ? uint256(-int256(tick)) : uint256(int256(tick));
+        if (absTick > uint256(int256(MAX_TICK))) absTick = uint256(int256(MAX_TICK));
+
+        uint256 ratio = (absTick & 0x1) != 0
+            ? 0xfffcb933bd6fad37aa2d162d1a594001
+            : 0x100000000000000000000000000000000;
+        if ((absTick & 0x2) != 0) ratio = (ratio * 0xfff97272373d413259a46990580e213a) >> 128;
+        if ((absTick & 0x4) != 0) ratio = (ratio * 0xfff2e50f5f656932ef12357cf3c7fdcc) >> 128;
+        if ((absTick & 0x8) != 0) ratio = (ratio * 0xffe5caca7e10e4e61c3624eaa0941cd0) >> 128;
+        if ((absTick & 0x10) != 0) ratio = (ratio * 0xffcb9843d60f6159c9db58835c926644) >> 128;
+        if ((absTick & 0x20) != 0) ratio = (ratio * 0xff973b41fa98c081472e6896dfb254c0) >> 128;
+        if ((absTick & 0x40) != 0) ratio = (ratio * 0xff2ea16466c96a3843ec78b326b52861) >> 128;
+        if ((absTick & 0x80) != 0) ratio = (ratio * 0xfe5dee046a99a2a811c461f1969c3053) >> 128;
+        if ((absTick & 0x100) != 0) ratio = (ratio * 0xfcbe86c7900a88aedcffc83b479aa3a4) >> 128;
+        if ((absTick & 0x200) != 0) ratio = (ratio * 0xf987a7253ac413176f2b074cf7815e54) >> 128;
+        if ((absTick & 0x400) != 0) ratio = (ratio * 0xf3392b0822b70005940c7a398e4b70f3) >> 128;
+        if ((absTick & 0x800) != 0) ratio = (ratio * 0xe7159475a2c29b7443b29c7fa6e889d9) >> 128;
+        if ((absTick & 0x1000) != 0) ratio = (ratio * 0xd097f3bdfd2022b8845ad8f792aa5825) >> 128;
+        if ((absTick & 0x2000) != 0) ratio = (ratio * 0xa9f746462d870fdf8a65dc1f90e061e5) >> 128;
+        if ((absTick & 0x4000) != 0) ratio = (ratio * 0x70d869a156d2a1b890bb3df62baf32f7) >> 128;
+        if ((absTick & 0x8000) != 0) ratio = (ratio * 0x31be135f97d08fd981231505542fcfa6) >> 128;
+        if ((absTick & 0x10000) != 0) ratio = (ratio * 0x9aa508b5b7a84e1c677de54f3e99bc9) >> 128;
+        if ((absTick & 0x20000) != 0) ratio = (ratio * 0x5d6af8dedb81196699c329225ee604) >> 128;
+        if ((absTick & 0x40000) != 0) ratio = (ratio * 0x2216e584f5fa1ea926041bedfe98) >> 128;
+        if ((absTick & 0x80000) != 0) ratio = (ratio * 0x48a170391f7dc42444e8fa2) >> 128;
+
+        if (tick > 0) ratio = type(uint256).max / ratio;
+
+        sqrtPriceX96 = uint160((ratio >> 32) + (ratio % (1 << 32) == 0 ? 0 : 1));
+    }
+
+    function _getAmountsAtSqrtPrice(uint256 tokenId, uint160 sqrtPriceX96)
+        private view
+        returns (uint256 daiAmount, uint256 wsxmrAmount)
+    {
+        (, , , , , int24 tickLower, int24 tickUpper, uint128 liq, , , , ) =
+            INonfungiblePositionManager(positionManager).positions(tokenId);
+
+        if (liq == 0) return (0, 0);
+
+        uint160 sqrtLower = _getSqrtRatioAtTick(tickLower);
+        uint160 sqrtUpper = _getSqrtRatioAtTick(tickUpper);
+
+        uint160 sqrtPrice = sqrtPriceX96;
+        if (sqrtPrice < sqrtLower) sqrtPrice = sqrtLower;
+        if (sqrtPrice > sqrtUpper) sqrtPrice = sqrtUpper;
+
+        uint256 diff0 = sqrtUpper - sqrtPrice;
+        uint256 diff1 = sqrtPrice - sqrtLower;
+
+        uint256 amount0 = (uint256(liq) * (1 << 96) * diff0)
+            / (uint256(sqrtUpper) * uint256(sqrtPrice));
+        uint256 amount1 = (uint256(liq) * diff1) / (1 << 96);
+
+        (daiAmount, wsxmrAmount) = sDAIIsToken0
+            ? (amount0, amount1)
+            : (amount1, amount0);
+    }
+
     function _sqrt(uint256 x) private pure returns (uint256) {
         if (x == 0) return 0;
         uint256 z = (x + 1) / 2;
@@ -611,15 +340,5 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter, ReentrancyGuard {
             z = (x / z + z) / 2;
         }
         return y;
-    }
-    
-    function _getPositionLiquidity(uint256 tokenId) private view returns (uint128) {
-        (, , , , , , , uint128 liquidity, , , , ) = 
-            INonfungiblePositionManager(dexPositionManager).positions(tokenId);
-        return liquidity;
-    }
-    
-    receive() external payable {
-        pendingETHRefunds[msg.sender] += msg.value;
     }
 }

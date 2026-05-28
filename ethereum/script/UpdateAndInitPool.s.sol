@@ -49,11 +49,10 @@ contract UpdateAndInitPool is Script {
         // Initialize Uniswap V3 pool
         console.log("\n=== Initializing Uniswap V3 Pool ===");
         wsXMRLiquidityRouter router = wsXMRLiquidityRouter(payable(ROUTER));
-        bytes[] memory emptyData = new bytes[](0);
-        address pool = router.initializePool(emptyData);
+        router.initializePool(xmrPrice);
         
         console.log("\n=== SUCCESS! Pool Initialized ===");
-        console.log("Pool Address:", pool);
+        console.log("Pool Address:", router.pool());
         console.log("Token0:", router.token0());
         console.log("Token1:", router.token1());
         console.log("sDAI is Token0:", router.sDAIIsToken0());
@@ -63,18 +62,13 @@ contract UpdateAndInitPool is Script {
         
         console.log("\n=== Router Ready for Use ===");
         console.log("Router:", ROUTER);
-        console.log("Pool:", pool);
+        console.log("Pool:", router.pool());
         console.log("\nView on Gnosisscan:");
         console.log("  Router: https://gnosisscan.io/address/", ROUTER);
-        console.log("  Pool: https://gnosisscan.io/address/", pool);
+        console.log("  Pool: https://gnosisscan.io/address/", router.pool());
         
         console.log("\n=== How to Use ===");
-        console.log("LPs:");
-        console.log("  1. allocateLiquidity(sDAIAmount)");
-        console.log("  2. setLPConfig(maxPosition, maxExposure, minRatio, true)");
-        console.log("\nUsers:");
-        console.log("  1. depositWsxmr(amount)");
-        console.log("  2. createPosition(lp, user, sDAI, wsXMR, deadline)");
-        console.log("\nNo approvals needed - fully permissionless!");
+        console.log("Co-LP is vault-integrated. Users call userOpenCoLP on the diamond.");
+        console.log("LPs set their range preference via setMaxCoLPRange.");
     }
 }
