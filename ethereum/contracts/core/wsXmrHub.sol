@@ -6,6 +6,8 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {wsXmrStorage} from "./wsXmrStorage.sol";
 import {IwsXmrHub} from "../interfaces/core/IwsXmrHub.sol";
 import {IwsXMR} from "../interfaces/core/IwsXMR.sol";
+import {VaultFacet} from "../facets/VaultFacet.sol";
+import {GnosisAddresses} from "../GnosisAddresses.sol";
 
 /**
  * @title wsXmrHub
@@ -27,10 +29,12 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     /// @notice Diamond selector dispatch table: function selector => facet address
     mapping(bytes4 => address) private _selectorToFacet;
     
-    /// @notice Transient flag indicating we're inside a delegatecall from fallback
-    /// @dev Uses transient storage (EIP-1153) to prevent reentrancy bypass attacks
-    /// @dev Auto-clears at transaction end, not readable across separate calls
-    bool private transient _inDelegateContext;
+    /// @notice Transient storage slot for delegate context flag (EIP-1153)
+    /// @dev WARNING: Per EIP-1153 spec, TSTORE fails in STATICCALL context
+    /// @dev This means view functions CANNOT be called through the hub's fallback
+    /// @dev Workaround: Expose view functions directly on hub, or use multicall pattern
+    /// @dev Slot 0x00 is used for the transient flag
+    uint256 private constant _DELEGATE_CONTEXT_SLOT = 0x00;
     
     // ========== MODIFIERS ==========
     
@@ -40,7 +44,11 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     }
     
     modifier onlyDelegateCall() {
-        if (!_inDelegateContext) revert Unauthorized();
+        bool inContext;
+        assembly {
+            inContext := tload(_DELEGATE_CONTEXT_SLOT)
+        }
+        if (!inContext) revert Unauthorized();
         _;
     }
     
@@ -209,21 +217,71 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         return (normalizedDebt * globalDebtIndex) / 1e18;
     }
     
+    /// @notice Get the facet address for a given function selector
+    /// @dev Allows external callers to bypass hub and call view functions directly on facets
+    /// @param selector The function selector to look up
+    /// @return The facet address that implements this function
+    function getFacetAddress(bytes4 selector) external view returns (address) {
+        return _selectorToFacet[selector];
+    }
+    
+    /// @notice Get vault health ratio for a given LP
+    /// @dev Direct implementation to avoid TSTORE in staticcall issue
+    /// @param lpAddress The LP address to check
+    /// @return ratio The collateralization ratio (e.g., 150 = 150%)
+    function getVaultHealth(address lpAddress) external view returns (uint256 ratio) {
+        Vault memory vault = _vaults[lpAddress];
+        uint256 actualDebt = (vault.normalizedDebt * globalDebtIndex) / 1e18;
+        
+        if (actualDebt == 0) return type(uint256).max;
+        
+        // Convert sDAI shares to DAI
+        (bool success, bytes memory data) = GnosisAddresses.SDAI.staticcall(
+            abi.encodeWithSignature("convertToAssets(uint256)", vault.collateralShares)
+        );
+        require(success && data.length >= 32, "convertToAssets failed");
+        uint256 collateralAmount = abi.decode(data, (uint256));
+        
+        // Get prices from storage (set by oracle facet)
+        uint256 xmrPrice = _getXmrPriceFromStorage();  // 18 decimals (normalized)
+        uint256 daiPrice = _getCollateralPriceFromStorage();  // 18 decimals (normalized)
+        
+        // Calculate USD values (prices are 18 decimals, collateralAmount is 18 decimals)
+        uint256 collateralValueUsd = (collateralAmount * daiPrice) / 1e18; // 18 decimals
+        uint256 debtValueUsd = (actualDebt * xmrPrice) / 1e8; // wsXMR has 8 decimals, result 18 decimals
+        
+        // Calculate ratio: (collateral / debt) * 100
+        return (collateralValueUsd * 100) / debtValueUsd;
+    }
+    
+    /// @notice Get vault debt for a given LP
+    /// @dev Direct implementation to avoid TSTORE in staticcall issue
+    /// @param lpAddress The LP address to check
+    /// @return The denormalized debt amount
+    function getVaultDebt(address lpAddress) external view returns (uint256) {
+        return (_vaults[lpAddress].normalizedDebt * globalDebtIndex) / 1e18;
+    }
+    
     // ========== FALLBACK ==========
     
     /// @notice Receive ETH for griefing deposits and refunds
     receive() external payable {}
     
     /// @notice Route function calls to appropriate facets via delegatecall
-    /// @dev Uses selector table for O(1) routing, transient storage prevents reentrancy
+    /// @dev Uses selector table for O(1) routing
+    /// @dev Uses EIP-1153 transient storage (TSTORE/TLOAD) for reentrancy protection
+    /// @dev LIMITATION: Per EIP-1153, TSTORE fails in STATICCALL, so view functions revert
+    /// @dev Solution: Important view functions are duplicated directly on this contract
     fallback() external payable {
         address facet = _selectorToFacet[msg.sig];
         if (facet == address(0)) revert("Function does not exist");
         
-        // Set transient delegate context flag - auto-clears at tx end
-        _inDelegateContext = true;
-        
         assembly {
+            // Set transient delegate context flag using TSTORE (EIP-1153)
+            // NOTE: This will revert if called via STATICCALL (view functions)
+            // Per EIP-1153 spec: "TSTORE in STATICCALL results in an exception"
+            tstore(_DELEGATE_CONTEXT_SLOT, 1)
+            
             let ptr := mload(0x40)
             calldatacopy(ptr, 0, calldatasize())
             let result := delegatecall(gas(), facet, ptr, calldatasize(), 0, 0)
