@@ -87,9 +87,7 @@ async function createMintRequest(vaultManager, user, lpAddress, xmrAmount, grief
   const tx = await vaultManager.connect(user).initiateMint(
     lpAddress,
     xmrAmount,
-    secretHash,
-    timeout,
-    { value: griefingDeposit }
+    secretHash, { value: griefingDeposit }
   );
   
   const receipt = await tx.wait();

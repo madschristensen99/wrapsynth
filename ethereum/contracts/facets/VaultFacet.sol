@@ -98,7 +98,9 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
             minBurnAmount: 0,
             active: true,
             deployedSDAIShares: 0,
-            maxCoLPRangeBps: uint16(DEFAULT_COLP_RANGE_BPS)
+            maxCoLPRangeBps: uint16(DEFAULT_COLP_RANGE_BPS),
+            mintTimeoutBlocks: DEFAULT_MINT_TIMEOUT_BLOCKS,
+            burnTimeoutBlocks: DEFAULT_BURN_TIMEOUT_BLOCKS
         });
         
         vaultList.push(msg.sender);
@@ -279,6 +281,22 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         if (!_vaults[msg.sender].active) revert VaultDoesNotExist();
         _vaults[msg.sender].minBurnAmount = minAmount;
         emit MinBurnAmountUpdated(msg.sender, minAmount);
+    }
+    
+    /// @inheritdoc IVaultFacet
+    function setMintTimeoutBlocks(uint256 blocks) external {
+        if (!_vaults[msg.sender].active) revert VaultDoesNotExist();
+        if (blocks < MIN_MINT_TIMEOUT_BLOCKS || blocks > MAX_MINT_TIMEOUT_BLOCKS) revert InvalidConfig();
+        _vaults[msg.sender].mintTimeoutBlocks = blocks;
+        emit MintTimeoutBlocksUpdated(msg.sender, blocks);
+    }
+    
+    /// @inheritdoc IVaultFacet
+    function setBurnTimeoutBlocks(uint256 blocks) external {
+        if (!_vaults[msg.sender].active) revert VaultDoesNotExist();
+        if (blocks < MIN_BURN_TIMEOUT_BLOCKS || blocks > MAX_BURN_TIMEOUT_BLOCKS) revert InvalidConfig();
+        _vaults[msg.sender].burnTimeoutBlocks = blocks;
+        emit BurnTimeoutBlocksUpdated(msg.sender, blocks);
     }
     
     // ========== CO-LP OPERATIONS ==========
@@ -501,7 +519,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
     /// @notice Returns all function selectors implemented by this facet
     /// @dev Used by Diamond to build selector → facet routing table
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](25);
+        bytes4[] memory sels = new bytes4[](27);
         sels[0] = this.createVault.selector;
         sels[1] = this.deactivateVault.selector;
         sels[2] = this.depositCollateral.selector;
@@ -527,6 +545,8 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         sels[22] = this.unwindCoLP.selector;
         sels[23] = this.rebalanceCoLP.selector;
         sels[24] = this.getCoLPCapacity.selector;
+        sels[25] = this.setMintTimeoutBlocks.selector;
+        sels[26] = this.setBurnTimeoutBlocks.selector;
         return sels;
     }
     

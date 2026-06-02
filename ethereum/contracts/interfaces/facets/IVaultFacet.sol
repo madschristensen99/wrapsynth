@@ -20,6 +20,8 @@ interface IVaultFacet is IErrors {
     event VaultMarketMetricsUpdated(address indexed lpVault, uint16 mintFeeBps, uint16 burnRewardBps);
     event MaxMintBpsUpdated(address indexed lpVault, uint16 newMaxMintBps);
     event MinBurnAmountUpdated(address indexed lpVault, uint256 newMinBurnAmount);
+    event MintTimeoutBlocksUpdated(address indexed lpVault, uint256 newBlocks);
+    event BurnTimeoutBlocksUpdated(address indexed lpVault, uint256 newBlocks);
     // Note: ReturnQueued event is defined in wsXmrStorage
     event ReturnsWithdrawn(address indexed recipient, address indexed token, uint256 amount);
     
@@ -70,6 +72,14 @@ interface IVaultFacet is IErrors {
     /// @notice Set minimum burn amount
     /// @param minAmount Minimum wsXMR for burn requests (0 = global default)
     function setMinBurnAmount(uint256 minAmount) external;
+    
+    /// @notice Set mint timeout in blocks (360-17280, ~30 min to ~24 hours)
+    /// @param blocks Number of blocks until mint request can be cancelled
+    function setMintTimeoutBlocks(uint256 blocks) external;
+    
+    /// @notice Set burn timeout in blocks (360-17280, ~30 min to ~24 hours)
+    /// @param blocks Number of blocks until burn request can be cancelled
+    function setBurnTimeoutBlocks(uint256 blocks) external;
     
     // ========== CO-LP OPERATIONS ==========
     

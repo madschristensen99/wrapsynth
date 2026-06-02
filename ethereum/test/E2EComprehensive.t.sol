@@ -102,8 +102,7 @@ contract E2EComprehensiveTest is Test {
         // Mint
         vm.prank(user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user, xmrAmount, commitment, 1 hours
-        );
+            lp, user, xmrAmount, commitment);
         
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady(requestId);
@@ -150,12 +149,11 @@ contract E2EComprehensiveTest is Test {
         
         vm.prank(user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user, xmrAmount, commitment, 1 hours
-        );
+            lp, user, xmrAmount, commitment);
         console.log("  Mint initiated with 1 hour timeout");
         
         // Jump past timeout
-        vm.warp(block.timestamp + 1 hours + 1);
+        vm.roll(block.number + 721);
         console.log("  Jumped 1 hour + 1 second");
         
         // Anyone can cancel now
@@ -176,15 +174,14 @@ contract E2EComprehensiveTest is Test {
         
         vm.prank(user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user, xmrAmount, commitment, 1 hours
-        );
+            lp, user, xmrAmount, commitment);
         
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady(requestId);
         console.log("  LP set mint ready (extends timeout)");
         
         // Jump past extended timeout (MINT_READY_EXTENSION = 24 hours)
-        vm.warp(block.timestamp + 24 hours + 1);
+        vm.roll(block.number + 17281);
         console.log("  Jumped 24 hours + 1 second");
         
         vm.prank(user2);
@@ -202,14 +199,13 @@ contract E2EComprehensiveTest is Test {
         
         vm.prank(user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user, xmrAmount, commitment, 1 hours
-        );
+            lp, user, xmrAmount, commitment);
         
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady(requestId);
         
         // Jump past timeout
-        vm.warp(block.timestamp + 24 hours + 1);
+        vm.roll(block.number + 17281);
         
         // Cancel it first
         vm.prank(user2);
@@ -232,11 +228,10 @@ contract E2EComprehensiveTest is Test {
         
         vm.prank(user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user, xmrAmount, commitment, 1 hours
-        );
+            lp, user, xmrAmount, commitment);
         
         // Jump past timeout
-        vm.warp(block.timestamp + 1 hours + 1);
+        vm.roll(block.number + 721);
         
         // LP tries to set ready - should fail
         vm.prank(lp);
@@ -260,7 +255,7 @@ contract E2EComprehensiveTest is Test {
         console.log("  Burn requested");
         
         // Jump past BURN_REQUEST_TIMEOUT (24 hours)
-        vm.warp(block.timestamp + 24 hours + 1);
+        vm.roll(block.number + 17281);
         console.log("  Jumped 24 hours + 1 second");
         
         // LP cancels the abandoned request
@@ -287,7 +282,7 @@ contract E2EComprehensiveTest is Test {
         console.log("  LP proposed hash");
         
         // Jump past BURN_COMMIT_TIMEOUT (48 hours)
-        vm.warp(block.timestamp + 48 hours + 1);
+        vm.roll(block.number + 34561);
         console.log("  Jumped 48 hours + 1 second");
         
         // LP cancels
@@ -318,7 +313,7 @@ contract E2EComprehensiveTest is Test {
         console.log("  User confirmed Monero lock");
         
         // Jump past deadline (48 hours from confirm)
-        vm.warp(block.timestamp + 48 hours + 1);
+        vm.roll(block.number + 34561);
         console.log("  Jumped 48 hours + 1 second");
         
         // User claims slashed collateral
@@ -347,7 +342,7 @@ contract E2EComprehensiveTest is Test {
         BurnFacet(address(hub)).confirmMoneroLock(burnId);
         
         // Jump past deadline
-        vm.warp(block.timestamp + 48 hours + 1);
+        vm.roll(block.number + 34561);
         
         // LP tries to finalize - should fail
         vm.prank(lp);
@@ -370,8 +365,7 @@ contract E2EComprehensiveTest is Test {
         
         vm.prank(user);
         bytes32 requestId1 = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user, xmrAmount, commitment1, 1 hours
-        );
+            lp, user, xmrAmount, commitment1);
         
         // User 2 mints with different secret
         bytes32 secret2 = bytes32(uint256(987654321));
@@ -380,8 +374,7 @@ contract E2EComprehensiveTest is Test {
         
         vm.prank(user2);
         bytes32 requestId2 = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user2, xmrAmount, commitment2, 1 hours
-        );
+            lp, user2, xmrAmount, commitment2);
         
         console.log("  Two concurrent mints initiated");
         
@@ -426,8 +419,7 @@ contract E2EComprehensiveTest is Test {
         
         vm.prank(user2);
         bytes32 mintId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user2, xmrAmount, commitment2, 1 hours
-        );
+            lp, user2, xmrAmount, commitment2);
         console.log("  User2 started mint");
         
         // Process both
@@ -463,8 +455,7 @@ contract E2EComprehensiveTest is Test {
         
         vm.prank(_user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, _user, xmrAmount, commitment, 1 hours
-        );
+            lp, _user, xmrAmount, commitment);
         
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady(requestId);

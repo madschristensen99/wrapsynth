@@ -57,7 +57,7 @@ impl EventListener {
     pub async fn start(self: Arc<Self>) -> Result<()> {
         info!("Starting event listener");
 
-        // Scan for historical events from the last 3 hours (max mint timeout is 2 hours)
+        // Scan for historical events from the last ~3 hours worth of blocks
         let current_block = self.evm.get_block_number().await.unwrap_or(0);
         let blocks_per_hour = 720; // ~5 second blocks on Gnosis
         let from_block = current_block.saturating_sub(blocks_per_hour * 3);
@@ -150,7 +150,7 @@ impl EventListener {
             wsxmr_amount: event.wsxmrAmount.to::<u64>(),
             xmr_amount: event.xmrAmount.to::<u64>(),
             locked_collateral: 0, // Will be calculated
-            deadline: current_timestamp() + (48 * 3600), // 48 hours
+            deadline: self.evm.get_block_number().await.unwrap_or(0) + 720, // default burn timeout blocks
             status: BurnStatus::Requested,
             created_at: current_timestamp(),
             updated_at: current_timestamp(),

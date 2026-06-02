@@ -23,14 +23,12 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         address lpVault,
         address recipient,
         uint256 xmrAmount,
-        bytes32 claimCommitment,
-        uint256 timeoutDuration
+        bytes32 claimCommitment
     ) external payable returns (bytes32 requestId) {
         if (lpVault == address(0)) revert ZeroAddress();
         if (recipient == address(0)) revert ZeroAddress();
         if (xmrAmount == 0) revert ZeroAmount();
         if (claimCommitment == bytes32(0)) revert InvalidCommitment();
-        if (timeoutDuration == 0 || timeoutDuration > MAX_MINT_TIMEOUT) revert InvalidTimeout();
         if (!_vaults[lpVault].active) revert VaultDoesNotExist();
         if (xmrAmount < 1e4) revert ZeroAmount();
         
@@ -76,6 +74,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         
         vault.pendingDebt += wsxmrAmount;
         
+        uint256 timeoutBlock = block.number + vault.mintTimeoutBlocks;
         mintRequests[requestId] = MintRequest({
             requestId: requestId,
             initiator: msg.sender,
@@ -85,7 +84,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             wsxmrAmount: wsxmrAmount,
             feeAmount: feeAmount,
             claimCommitment: claimCommitment,
-            timeout: block.timestamp + timeoutDuration,
+            timeout: timeoutBlock,
             griefingDeposit: msg.value,
             lpBond: 0,  // Bond posted later when LP calls setMintReady
             normalizedDebtAmount: 0,
@@ -105,7 +104,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             wsxmrAmount,
             feeAmount,
             claimCommitment,
-            block.timestamp + timeoutDuration
+            timeoutBlock
         );
     }
     
@@ -113,7 +112,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         MintRequest storage request = mintRequests[requestId];
         if (request.status != MintStatus.PENDING) revert InvalidStatus();
         if (msg.sender != request.lpVault) revert Unauthorized();
-        if (block.timestamp >= request.timeout) revert DeadlineExpired();
+        if (block.number >= request.timeout) revert DeadlineExpired();
         
         Vault storage vault = _vaults[request.lpVault];
         if (request.vaultMintNonce != vault.mintNonce) revert InvalidStatus();
@@ -134,7 +133,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         if (currentRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
         
         request.status = MintStatus.READY;
-        request.timeout = block.timestamp + MINT_READY_EXTENSION;
+        request.timeout = block.number + MINT_READY_EXTENSION_BLOCKS;
         emit MintReady(requestId);
     }
     
@@ -201,7 +200,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             revert InvalidStatus();
         }
         
-        if (block.timestamp < request.timeout) revert TimeoutNotReached();
+        if (block.number < request.timeout) revert TimeoutNotReached();
         
         Vault storage vault = _vaults[request.lpVault];
         if (request.vaultMintNonce == vault.mintNonce) {

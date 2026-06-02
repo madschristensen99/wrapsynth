@@ -110,8 +110,7 @@ contract DeployAndTestRedStoneOracle is Script {
             deployer,
             deployer,
             xmrAmount,
-            commitment,
-            3600
+            commitment
         );
         console.log("SUCCESS: MINT INITIATED!\n");
 
