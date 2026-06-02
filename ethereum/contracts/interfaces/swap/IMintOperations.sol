@@ -58,14 +58,12 @@ interface IMintOperations is IErrors {
     /// @param recipient Address to receive wsXMR
     /// @param xmrAmount Amount of XMR in atomic units (12 decimals)
     /// @param claimCommitment Ed25519 commitment (keccak256 of public point)
-    /// @param timeoutDuration Seconds until request can be cancelled
     /// @return requestId Unique identifier for this request
     function initiateMint(
         address lpVault,
         address recipient,
         uint256 xmrAmount,
-        bytes32 claimCommitment,
-        uint256 timeoutDuration
+        bytes32 claimCommitment
     ) external payable returns (bytes32 requestId);
     
     /// @notice LP confirms XMR has been locked on Monero

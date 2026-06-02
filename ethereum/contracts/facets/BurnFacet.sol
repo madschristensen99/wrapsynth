@@ -117,7 +117,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
             lockedCollateral: collateralToLock,
             rewardCollateral: rewardCollateral,
             secretHash: bytes32(0),
-            deadline: block.timestamp + BURN_REQUEST_TIMEOUT,
+            deadline: block.number + vault.burnTimeoutBlocks,
             vaultLiquidationNonce: vault.liquidationNonce,
             normalizedDebtAmount: normalizedBurnAmount,
             status: BurnStatus.REQUESTED
@@ -143,7 +143,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         request.secretHash = secretHash;
         request.status = BurnStatus.PROPOSED;
-        request.deadline = block.timestamp + BURN_COMMIT_TIMEOUT;
+        request.deadline = block.number + BURN_COMMIT_TIMEOUT_BLOCKS;
         
         emit HashProposed(requestId, secretHash);
         
@@ -158,7 +158,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         if (request.status != BurnStatus.PROPOSED) revert InvalidStatus();
         if (msg.sender != request.user) revert Unauthorized();
         
-        request.deadline = block.timestamp + BURN_COMMIT_TIMEOUT;
+        request.deadline = block.number + BURN_COMMIT_TIMEOUT_BLOCKS;
         request.status = BurnStatus.COMMITTED;
         
         emit BurnCommitted(requestId, request.deadline);
@@ -172,7 +172,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
-        if (block.timestamp >= request.deadline) revert DeadlineExpired();
+        if (block.number >= request.deadline) revert DeadlineExpired();
         
         // Verify the secret matches the hash
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
@@ -213,7 +213,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
-        if (block.timestamp < request.deadline) revert DeadlineNotExpired();
+        if (block.number < request.deadline) revert DeadlineNotExpired();
         if (msg.sender != request.user) revert Unauthorized();
         
         Vault storage vault = _vaults[request.lpVault];
@@ -240,7 +240,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         if (request.status != BurnStatus.REQUESTED && request.status != BurnStatus.PROPOSED) {
             revert InvalidStatus();
         }
-        if (block.timestamp < request.deadline) revert DeadlineNotExpired();
+        if (block.number < request.deadline) revert DeadlineNotExpired();
         
         Vault storage vault = _vaults[request.lpVault];
         

@@ -1,6 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
-const { time } = require("@nomicfoundation/hardhat-network-helpers");
+const { time, mine } = require("@nomicfoundation/hardhat-network-helpers");
 const { ADDRESSES, getXDAI, setupVaultWithCollateral, generateSecret, deployMockPyth } = require("./helpers/testHelpers");
 
 describe("Minting Lifecycle and Anti-Spam (Griefing Deposits)", function () {
@@ -48,14 +48,10 @@ describe("Minting Lifecycle and Anti-Spam (Griefing Deposits)", function () {
 
     it("Should initiate mint with exact griefing deposit", async function () {
       const { secretHash } = generateSecret();
-      const timeout = 3600;
-
       const tx = await vaultManager.connect(user1).initiateMint(
         lp1.address,
         XMR_AMOUNT,
-        secretHash,
-        timeout,
-        { value: GRIEFING_DEPOSIT }
+        secretHash, { value: GRIEFING_DEPOSIT }
       );
 
       const receipt = await tx.wait();
@@ -105,9 +101,7 @@ describe("Minting Lifecycle and Anti-Spam (Griefing Deposits)", function () {
         vaultManager.connect(user2).initiateMint(
           lp1.address,
           XMR_AMOUNT,
-          secretHash,
-          3600,
-          { value: insufficientDeposit }
+          secretHash, { value: insufficientDeposit }
         )
       ).to.be.revertedWithCustomError(vaultManager, "InsufficientDeposit");
     });
@@ -119,9 +113,7 @@ describe("Minting Lifecycle and Anti-Spam (Griefing Deposits)", function () {
         vaultManager.connect(user2).initiateMint(
           lp1.address,
           XMR_AMOUNT,
-          secretHash,
-          3600,
-          { value: 0 }
+          secretHash, { value: 0 }
         )
       ).to.be.revertedWithCustomError(vaultManager, "InsufficientDeposit");
     });
@@ -130,14 +122,10 @@ describe("Minting Lifecycle and Anti-Spam (Griefing Deposits)", function () {
   describe("A. User Fails to Lock XMR Before Timeout", function () {
     it("Should allow third party to cancel and award deposit to LP", async function () {
       const { secretHash } = generateSecret();
-      const shortTimeout = 60; // 1 minute
-
       const tx = await vaultManager.connect(user2).initiateMint(
         lp1.address,
         XMR_AMOUNT / 10n,
-        secretHash,
-        shortTimeout,
-        { value: GRIEFING_DEPOSIT }
+        secretHash, { value: GRIEFING_DEPOSIT }
       );
 
       const receipt = await tx.wait();
@@ -152,7 +140,7 @@ describe("Minting Lifecycle and Anti-Spam (Griefing Deposits)", function () {
       const requestId = parsedEvent.args.requestId;
 
       // Fast forward past timeout
-      await time.increase(shortTimeout + 1);
+      await mine(721);
 
       const lpBalanceBefore = await vaultManager.pendingReturns(lp1.address, ethers.ZeroAddress);
 
@@ -174,14 +162,10 @@ describe("Minting Lifecycle and Anti-Spam (Griefing Deposits)", function () {
   describe("B. LP Confirms READY but Fails to Finalize Before Extended Timeout", function () {
     it("Should refund deposit to user after extended timeout expires", async function () {
       const { secretHash } = generateSecret();
-      const shortTimeout = 60;
-
       const tx = await vaultManager.connect(user2).initiateMint(
         lp1.address,
         XMR_AMOUNT / 10n,
-        secretHash,
-        shortTimeout,
-        { value: GRIEFING_DEPOSIT }
+        secretHash, { value: GRIEFING_DEPOSIT }
       );
 
       const receipt = await tx.wait();
@@ -199,8 +183,7 @@ describe("Minting Lifecycle and Anti-Spam (Griefing Deposits)", function () {
       await vaultManager.connect(lp1).setMintReady(requestId);
 
       // Fast forward past extended timeout
-      const MINT_READY_EXTENSION = 8 * 3600; // 8 hours
-      await time.increase(shortTimeout + MINT_READY_EXTENSION + 1);
+      await mine(1500);
 
       const userBalanceBefore = await vaultManager.pendingReturns(user2.address, ethers.ZeroAddress);
 
@@ -240,9 +223,7 @@ describe("Minting Lifecycle and Anti-Spam (Griefing Deposits)", function () {
         vaultManager.connect(user2).initiateMint(
           lp1.address,
           smallAmount,
-          secretHash,
-          3600,
-          { value: GRIEFING_DEPOSIT }
+          secretHash, { value: GRIEFING_DEPOSIT }
         )
       ).to.emit(vaultManager, "MintInitiated");
 
@@ -286,9 +267,7 @@ describe("Minting Lifecycle and Anti-Spam (Griefing Deposits)", function () {
         vaultManager.connect(user2).initiateMint(
           lp1.address,
           largeAmount,
-          secretHash,
-          3600,
-          { value: GRIEFING_DEPOSIT }
+          secretHash, { value: GRIEFING_DEPOSIT }
         )
       ).to.be.revertedWithCustomError(vaultManager, "InvalidValue");
 
@@ -305,9 +284,7 @@ describe("Minting Lifecycle and Anti-Spam (Griefing Deposits)", function () {
         vaultManager.connect(user1).initiateMint(
           lp1.address,
           0,
-          secretHash,
-          3600,
-          { value: GRIEFING_DEPOSIT }
+          secretHash, { value: GRIEFING_DEPOSIT }
         )
       ).to.be.revertedWithCustomError(vaultManager, "ZeroAmount");
     });
@@ -317,24 +294,16 @@ describe("Minting Lifecycle and Anti-Spam (Griefing Deposits)", function () {
         vaultManager.connect(user1).initiateMint(
           lp1.address,
           XMR_AMOUNT,
-          ethers.ZeroHash,
-          3600,
-          { value: GRIEFING_DEPOSIT }
+          ethers.ZeroHash, { value: GRIEFING_DEPOSIT }
         )
       ).to.be.revertedWithCustomError(vaultManager, "InvalidSecret");
     });
-
-    it("Should revert with timeout exceeding MAX_MINT_TIMEOUT", async function () {
-      const { secretHash } = generateSecret();
-      const excessiveTimeout = 13 * 3600; // > 12 hours
 
       await expect(
         vaultManager.connect(user1).initiateMint(
           lp1.address,
           XMR_AMOUNT,
-          secretHash,
-          excessiveTimeout,
-          { value: GRIEFING_DEPOSIT }
+          secretHash, { value: GRIEFING_DEPOSIT }
         )
       ).to.be.revertedWithCustomError(vaultManager, "InvalidValue");
     });
@@ -346,9 +315,7 @@ describe("Minting Lifecycle and Anti-Spam (Griefing Deposits)", function () {
         vaultManager.connect(user1).initiateMint(
           user2.address, // Not an LP
           XMR_AMOUNT,
-          secretHash,
-          3600,
-          { value: GRIEFING_DEPOSIT }
+          secretHash, { value: GRIEFING_DEPOSIT }
         )
       ).to.be.revertedWithCustomError(vaultManager, "VaultDoesNotExist");
     });

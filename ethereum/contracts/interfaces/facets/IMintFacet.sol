@@ -11,8 +11,10 @@ import {IMintOperations} from "../swap/IMintOperations.sol";
 interface IMintFacet is IMintOperations {
     // ========== CONSTANTS ==========
     // Note: Constants are defined in wsXmrStorage:
-    // - MAX_MINT_TIMEOUT
-    // - MINT_READY_EXTENSION
+    // - MIN_MINT_TIMEOUT_BLOCKS
+    // - MAX_MINT_TIMEOUT_BLOCKS
+    // - DEFAULT_MINT_TIMEOUT_BLOCKS
+    // - MINT_READY_EXTENSION_BLOCKS
     
     // ========== ADDITIONAL VIEWS ==========
     

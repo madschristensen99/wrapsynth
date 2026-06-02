@@ -1,6 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
-const { time } = require("@nomicfoundation/hardhat-network-helpers");
+const { time, mine } = require("@nomicfoundation/hardhat-network-helpers");
 
 describe("WrapSynth Comprehensive Test Suite - Gnosis Fork", function () {
   let wsxmrToken;
@@ -224,14 +224,10 @@ describe("WrapSynth Comprehensive Test Suite - Gnosis Fork", function () {
     describe("A. User provides exact griefing deposit and LP finalizes", function () {
       it("Should initiate mint with exact griefing deposit", async function () {
         const { secret, secretHash } = generateSecret();
-        const timeout = 3600; // 1 hour
-        
         const tx = await vaultManager.connect(user1).initiateMint(
           lp1.address,
           xmrAmount,
-          secretHash,
-          timeout,
-          { value: griefingDeposit }
+          secretHash, { value: griefingDeposit }
         );
         
         const receipt = await tx.wait();
@@ -275,16 +271,13 @@ describe("WrapSynth Comprehensive Test Suite - Gnosis Fork", function () {
     describe("B. User provides insufficient griefing deposit", function () {
       it("Should revert with insufficient deposit", async function () {
         const { secretHash } = generateSecret();
-        const timeout = 3600;
         const insufficientDeposit = griefingDeposit / 2n;
         
         await expect(
           vaultManager.connect(user2).initiateMint(
             lp1.address,
             xmrAmount,
-            secretHash,
-            timeout,
-            { value: insufficientDeposit }
+            secretHash, { value: insufficientDeposit }
           )
         ).to.be.revertedWithCustomError(vaultManager, "InsufficientDeposit");
       });
@@ -293,14 +286,10 @@ describe("WrapSynth Comprehensive Test Suite - Gnosis Fork", function () {
     describe("A. User fails to lock XMR before timeout", function () {
       it("Should allow cancellation after timeout and award deposit to LP", async function () {
         const { secretHash } = generateSecret();
-        const timeout = 60; // 1 minute
-        
         const tx = await vaultManager.connect(user2).initiateMint(
           lp1.address,
           xmrAmount / 10n,
-          secretHash,
-          timeout,
-          { value: griefingDeposit }
+          secretHash, { value: griefingDeposit }
         );
         
         const receipt = await tx.wait();
@@ -315,7 +304,7 @@ describe("WrapSynth Comprehensive Test Suite - Gnosis Fork", function () {
         const requestId = parsedEvent.args.requestId;
         
         // Fast forward past timeout
-        await time.increase(timeout + 1);
+        await mine(721);
         
         const lpBalanceBefore = await vaultManager.pendingReturns(lp1.address, ethers.ZeroAddress);
         
@@ -329,14 +318,10 @@ describe("WrapSynth Comprehensive Test Suite - Gnosis Fork", function () {
     describe("B. LP confirms but fails to finalize before extended timeout", function () {
       it("Should refund deposit to user after extended timeout", async function () {
         const { secretHash } = generateSecret();
-        const timeout = 60;
-        
         const tx = await vaultManager.connect(user2).initiateMint(
           lp1.address,
           xmrAmount / 10n,
-          secretHash,
-          timeout,
-          { value: griefingDeposit }
+          secretHash, { value: griefingDeposit }
         );
         
         const receipt = await tx.wait();
@@ -354,8 +339,7 @@ describe("WrapSynth Comprehensive Test Suite - Gnosis Fork", function () {
         await vaultManager.connect(lp1).setMintReady(requestId);
         
         // Fast forward past extended timeout
-        const MINT_READY_EXTENSION = 8 * 3600; // 8 hours
-        await time.increase(timeout + MINT_READY_EXTENSION + 1);
+        await mine(1500);
         
         const userBalanceBefore = await vaultManager.pendingReturns(user2.address, ethers.ZeroAddress);
         
@@ -378,9 +362,7 @@ describe("WrapSynth Comprehensive Test Suite - Gnosis Fork", function () {
           vaultManager.connect(user2).initiateMint(
             lp1.address,
             smallAmount,
-            secretHash,
-            3600,
-            { value: griefingDeposit }
+            secretHash, { value: griefingDeposit }
           )
         ).to.emit(vaultManager, "MintInitiated");
       });
@@ -397,9 +379,7 @@ describe("WrapSynth Comprehensive Test Suite - Gnosis Fork", function () {
           vaultManager.connect(user2).initiateMint(
             lp1.address,
             xmrAmount,
-            secretHash,
-            3600,
-            { value: griefingDeposit }
+            secretHash, { value: griefingDeposit }
           )
         ).to.be.revertedWithCustomError(vaultManager, "InvalidValue");
         

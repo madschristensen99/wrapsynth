@@ -20,11 +20,15 @@ contract wsXmrStorage {
     uint256 public constant RATIO_PRECISION = 100;
     uint256 public constant PRICE_PRECISION = 1e18;
     
-    uint256 public constant MAX_MINT_TIMEOUT = 24 hours;
-    uint256 public constant MINT_READY_EXTENSION = 2 hours;
-    
-    uint256 public constant BURN_REQUEST_TIMEOUT = 1 hours;
-    uint256 public constant BURN_COMMIT_TIMEOUT = 2 hours;
+    uint256 public constant MIN_MINT_TIMEOUT_BLOCKS = 360; // ~30 min at 5s/block
+    uint256 public constant MAX_MINT_TIMEOUT_BLOCKS = 17280; // ~24 hours at 5s/block
+    uint256 public constant DEFAULT_MINT_TIMEOUT_BLOCKS = 720; // ~1 hour
+    uint256 public constant MINT_READY_EXTENSION_BLOCKS = 1440; // ~2 hours at 5s/block
+
+    uint256 public constant MIN_BURN_TIMEOUT_BLOCKS = 360; // ~30 min at 5s/block
+    uint256 public constant MAX_BURN_TIMEOUT_BLOCKS = 17280; // ~24 hours at 5s/block
+    uint256 public constant DEFAULT_BURN_TIMEOUT_BLOCKS = 720; // ~1 hour
+    uint256 public constant BURN_COMMIT_TIMEOUT_BLOCKS = 1440; // ~2 hours at 5s/block
     
     uint256 public constant BPS_DENOMINATOR = 10000;
     uint256 public constant MAX_MARGIN_BPS = 1000;
@@ -92,6 +96,8 @@ contract wsXmrStorage {
         bool active;
         uint256 deployedSDAIShares;
         uint16 maxCoLPRangeBps;
+        uint256 mintTimeoutBlocks;
+        uint256 burnTimeoutBlocks;
     }
     
     struct MintRequest {

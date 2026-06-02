@@ -14,10 +14,10 @@ use tracing::{debug, error, info, warn};
 
 const MONERO_CONFIRMATIONS: u64 = 10;
 const POLL_INTERVAL_SECS: u64 = 30;
-const BURN_SAFETY_MARGIN_HOURS: u64 = 6;
+const BURN_SAFETY_MARGIN_BLOCKS: u64 = 4320; // ~6 hours at 5s/block
 const PRICE_POLL_INTERVAL_SECS: u64 = 30;
 const PRICE_PUSH_THRESHOLD_BPS: u16 = 25;
-const PRICE_PUSH_MAX_AGE_SECS: u64 = 90; // Finalize 6 hours before deadline
+const PRICE_PUSH_MAX_AGE_SECS: u64 = 90;
 
 /// The main engine that orchestrates atomic swaps
 pub struct SwapEngine {
@@ -242,10 +242,10 @@ impl SwapEngine {
             self.db.update_burn_task(burn)?;
         } else {
             // Check if we're approaching the deadline
-            let now = current_timestamp();
-            let safety_deadline = burn.deadline - (BURN_SAFETY_MARGIN_HOURS * 3600);
+            let current_block = self.evm.get_block_number().await.unwrap_or(0);
+            let safety_deadline = burn.deadline.saturating_sub(BURN_SAFETY_MARGIN_BLOCKS);
 
-            if now >= safety_deadline {
+            if current_block >= safety_deadline {
                 warn!(
                     "Approaching deadline for burn {}, but user hasn't revealed secret yet",
                     hex::encode(burn.request_id)

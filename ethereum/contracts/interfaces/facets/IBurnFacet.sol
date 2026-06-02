@@ -11,8 +11,10 @@ import {IBurnOperations} from "../swap/IBurnOperations.sol";
 interface IBurnFacet is IBurnOperations {
     // ========== CONSTANTS ==========
     // Note: Constants are defined in wsXmrStorage:
-    // - BURN_REQUEST_TIMEOUT
-    // - BURN_COMMIT_TIMEOUT
+    // - MIN_BURN_TIMEOUT_BLOCKS
+    // - MAX_BURN_TIMEOUT_BLOCKS
+    // - DEFAULT_BURN_TIMEOUT_BLOCKS
+    // - BURN_COMMIT_TIMEOUT_BLOCKS
     // - BURN_LOCK_RATIO
     // - MIN_BURN_AMOUNT
     // - MAX_BURN_REQUESTS_PER_VAULT

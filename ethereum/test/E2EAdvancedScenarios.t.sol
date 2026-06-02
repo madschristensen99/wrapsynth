@@ -112,8 +112,7 @@ contract E2EAdvancedScenariosTest is Test {
         
         vm.prank(user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user, xmrAmount, commitment, 1 hours
-        );
+            lp, user, xmrAmount, commitment);
         
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady(requestId);
@@ -190,13 +189,12 @@ contract E2EAdvancedScenariosTest is Test {
         
         vm.prank(user1);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp1, user1, 50000000000, commitment, 1 hours
-        );
+            lp1, user1, 50000000000, commitment);
         console.log("[2] User1 initiated mint with 1 hour timeout");
         
         // Warp time forward 2 hours (past timeout)
         console.log("[3] Warping time forward 2 hours...");
-        vm.warp(block.timestamp + 2 hours);
+        vm.roll(block.number + 1440);
         
         // LP can now cancel and claim griefing deposit
         vm.prank(lp1);
@@ -238,7 +236,7 @@ contract E2EAdvancedScenariosTest is Test {
         
         // Warp time forward past finalization deadline (2 hours)
         console.log("[5] Warping time forward 3 hours...");
-        vm.warp(block.timestamp + 3 hours);
+        vm.roll(block.number + 2160);
         
         // User can now claim slashed collateral
         uint256 collateralBefore = IERC20(SDAI).balanceOf(user1);
