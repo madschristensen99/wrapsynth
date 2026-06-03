@@ -452,32 +452,60 @@ async function loadVaults() {
         
         const activeVaults = [];
         let totalCollateralWei = 0n;
-        
+
+        // Fetch oracle prices once for capacity calculation
+        let xmrPrice = 150;   // fallback USD per XMR
+        let collPrice = 1.0;  // fallback USD per sDAI
+        try {
+            const xmrPriceWei = await readHub('getXmrPrice');
+            const collPriceWei = await readHub('getCollateralPrice');
+            xmrPrice = Number(xmrPriceWei) / 1e18;
+            collPrice = Number(collPriceWei) / 1e18;
+            console.log('Oracle prices:', { xmrPrice, collPrice });
+        } catch (e) {
+            console.warn('Could not fetch oracle prices, using fallbacks:', e.message);
+        }
+
         for (const vaultAddress of knownVaults) {
             try {
                 console.log('Fetching vault data for:', vaultAddress);
                 const vaultData = await readHub('getVault', [vaultAddress]);
-                
-                // getVault returns a Vault struct
+
                 console.log('Raw vault data:', vaultData);
                 console.log('Collateral shares:', vaultData.collateralShares?.toString());
                 console.log('Debt:', vaultData.normalizedDebt?.toString());
                 console.log('Active:', vaultData.active);
-                
-                // Check if vault has collateral
+
                 const hasCollateral = vaultData && vaultData.collateralShares && BigInt(vaultData.collateralShares.toString()) > 0n;
-                
+
                 if (hasCollateral || vaultData.active) {
+                    const collAmount = Number(vaultData.collateralShares) / 1e18;
+                    const debtAmount = Number(vaultData.normalizedDebt) / 1e8;
+                    const debtValueUsd = debtAmount * xmrPrice;
+                    const usedCollateral = collPrice > 0 ? debtValueUsd / collPrice : 0;
+                    const freeCollateral = Math.max(0, collAmount - usedCollateral);
+
+                    console.log('Vault capacity:', {
+                        collAmount,
+                        debtAmount,
+                        xmrPrice,
+                        collPrice,
+                        debtValueUsd,
+                        usedCollateral,
+                        freeCollateral
+                    });
+
                     const vault = {
                         address: vaultAddress,
                         name: `LP Vault ${vaultAddress.slice(0, 6)}...${vaultAddress.slice(-4)}`,
                         collateral: vaultData.collateralShares,
                         debt: vaultData.normalizedDebt,
+                        usedCollateral,
+                        freeCollateral,
                     };
                     console.log('Adding active vault:', vault);
                     activeVaults.push(vault);
-                    
-                    // Add to total collateral (sDAI shares)
+
                     totalCollateralWei += BigInt(vaultData.collateralShares.toString());
                 } else {
                     console.warn('Vault has no collateral and is not active');
@@ -545,7 +573,8 @@ async function handleVaultSelect(isMint) {
             collateralToken: vaultData[2],
             collateralizationRatio: vaultData[3],
             mintGriefingDeposit: vaultData[4],
-            isActive: vaultData[5]
+            isActive: vaultData[5],
+            lpVault: vaultAddress
         };
         
         showVaultInfo(vaultInfo, isMint);

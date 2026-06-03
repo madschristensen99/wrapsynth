@@ -2,6 +2,7 @@
 // Manages all DOM interactions and updates
 
 import { DECIMALS } from './config.js';
+import { getIconSVG } from './icons.js';
 
 /**
  * UI Element References
@@ -233,17 +234,41 @@ export function populateVaults(vaults) {
             const vaultsHtml = vaults.map(v => {
                 const shortAddr = `${v.address.slice(0, 6)}...${v.address.slice(-4)}`;
                 const collateralAmount = v.collateral ? formatBalance(v.collateral, 18) : '0';
-                const debtAmount = v.debt ? formatBalance(v.debt, 8) : '0';
-                
+                const usedRaw = v.usedCollateral !== undefined ? v.usedCollateral : 0;
+                const freeRaw = v.freeCollateral !== undefined ? v.freeCollateral : (v.collateral ? Number(v.collateral) / 1e18 : 0);
+                const usedAmount = fmtCapacity(usedRaw);
+                const freeAmount = fmtCapacity(freeRaw);
+                const totalCap = usedRaw + freeRaw;
+                const usedPct = totalCap > 0 ? (usedRaw / totalCap) * 100 : 0;
+                const freePct = totalCap > 0 ? (freeRaw / totalCap) * 100 : 0;
+                const pieSvg = totalCap > 0 ? makePieChart(usedPct, freePct) : '';
+                console.log('Vault chart:', { usedRaw, freeRaw, usedPct, freePct, pieSvg: pieSvg.slice(0, 80) });
+
                 return `
                 <div class="vault-item">
                     <div class="vault-header">
                         <strong>LP Vault ${shortAddr}</strong>
                         <span class="vault-collateral">${collateralAmount} sDAI</span>
+                        <a href="https://gnosisscan.io/address/${v.address}" target="_blank" rel="noopener" class="vault-scan-inline" title="View on GnosisScan">${getIconSVG('externalLink')}</a>
                     </div>
-                    ${v.collateral ? `<div class="vault-stats">
-                        <span>💰 Collateral: ${collateralAmount} sDAI</span>
-                        <span>📊 Debt: ${debtAmount} wsXMR</span>
+                    ${v.collateral ? `<div class="vault-chart-row">
+                        ${pieSvg}
+                        <div class="vault-legend">
+                            <div class="legend-row">
+                                <span class="legend-dot used-dot"></span>
+                                <div class="legend-text">
+                                    <span class="legend-label">Backing debt:</span>
+                                    <span class="legend-value">${usedAmount} sDAI</span>
+                                </div>
+                            </div>
+                            <div class="legend-row">
+                                <span class="legend-dot free-dot"></span>
+                                <div class="legend-text">
+                                    <span class="legend-label">Free capacity:</span>
+                                    <span class="legend-value">${freeAmount} sDAI</span>
+                                </div>
+                            </div>
+                        </div>
                     </div>` : ''}
                 </div>
             `;
@@ -265,6 +290,7 @@ export function showVaultInfo(vaultData, isMint = true) {
         <p><strong>Collateralization:</strong> ${vaultData.collateralizationRatio / 100}%</p>
         <p><strong>Griefing Deposit:</strong> ${formatBalance(vaultData.mintGriefingDeposit, DECIMALS.ETH)} xDAI</p>
         <p><strong>Status:</strong> ${vaultData.isActive ? '✅ Active' : '❌ Inactive'}</p>
+        <p class="vault-info-link"><a href="https://gnosisscan.io/address/${vaultData.lpVault || ''}" target="_blank" rel="noopener">${getIconSVG('externalLink')}<span>View on GnosisScan</span></a></p>
     `;
     
     infoElement.innerHTML = html;
@@ -498,6 +524,64 @@ export function resetMintUI() {
 export function resetBurnUI() {
     elements.burnProgress.classList.add('hidden');
     enableInputs(false);
+}
+
+/**
+ * Format a number nicely: up to 4 decimals, never rounds small values to 0
+ */
+function fmtCapacity(val) {
+    if (val === 0) return '0';
+    if (val < 0.0001) return val.toExponential(2);
+    const s = val.toFixed(4);
+    return s.replace(/\.?0+$/, '');
+}
+
+/**
+ * Generate inline SVG donut chart for vault capacity
+ * First slice = used (orange), second slice = free (green)
+ */
+function makePieChart(usedPct, freePct) {
+    const size = 64;
+    const cx = size / 2;
+    const cy = size / 2;
+    const r = 26;
+    const strokeW = 10;
+    const circ = +(2 * Math.PI * r).toFixed(2);
+    const minVis = 4;
+
+    let usedLen = +(usedPct / 100 * circ).toFixed(2);
+    let freeLen = +(freePct / 100 * circ).toFixed(2);
+
+    // Ensure non-zero slices are always visible
+    if (usedLen > 0 && usedLen < minVis) {
+        const diff = minVis - usedLen;
+        usedLen = minVis;
+        freeLen = Math.max(minVis, freeLen - diff);
+    }
+    if (freeLen > 0 && freeLen < minVis) {
+        const diff = minVis - freeLen;
+        freeLen = minVis;
+        usedLen = Math.max(minVis, usedLen - diff);
+    }
+
+    // Clamp
+    usedLen = Math.min(usedLen, circ);
+    freeLen = Math.min(freeLen, circ);
+
+    // Guard against NaN / Infinity
+    if (!Number.isFinite(usedLen)) usedLen = 0;
+    if (!Number.isFinite(freeLen)) freeLen = circ;
+
+    // Build SVG — always draw both rings so one can overlay the other
+    const usedDash = `${usedLen} ${circ}`;
+    const freeDash = `${freeLen} ${circ}`;
+    const freeOff = -usedLen;
+
+    return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" class="vault-pie">
+        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#f97316" stroke-width="${strokeW}" stroke-dasharray="${usedDash}" transform="rotate(-90 ${cx} ${cy})"/>
+        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#10b981" stroke-width="${strokeW}" stroke-dasharray="${freeDash}" stroke-dashoffset="${freeOff}" transform="rotate(-90 ${cx} ${cy})"/>
+        <circle cx="${cx}" cy="${cy}" r="${r - strokeW / 2}" fill="var(--bg-card-light)"/>
+    </svg>`;
 }
 
 /**
