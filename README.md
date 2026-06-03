@@ -68,14 +68,25 @@ This structure allows independent development and deployment of each chain while
 
 #### Gnosis Chain (ChainID: 100)
 
-**Latest Deployment (v1.2 - Burn Reward Fix):**
-- **wsXMR Token**: [`0x910bfbfe34cfa4ea45b6ec8070872e2f89b5e6ad`](https://gnosisscan.io/address/0x910bfbfe34cfa4ea45b6ec8070872e2f89b5e6ad) (0x910...)
-- **wsXmrHub (Diamond)**: [`0x9b03355624acd1265508b981b046f4293b1ffed8`](https://gnosisscan.io/address/0x9b03355624acd1265508b981b046f4293b1ffed8) (0x9b0...)
+**Latest Deployment (v1.3 - LP Timeout Configurable):**
+- **wsXMR Token**: [`0x31c76171773138215E518C0224b82AC9BE9897b8`](https://gnosisscan.io/address/0x31c76171773138215E518C0224b82AC9BE9897b8)
+- **wsXmrHub (Diamond)**: [`0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9`](https://gnosisscan.io/address/0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9)
+- **OracleFacet**: [`0xA0ED496c6e16a6d0799Ad300DeC96494a12bE01A`](https://gnosisscan.io/address/0xA0ED496c6e16a6d0799Ad300DeC96494a12bE01A)
+- **VaultFacet**: [`0x203Ccc8B35c00752dc8B04f1D77E765a5ca65BbC`](https://gnosisscan.io/address/0x203Ccc8B35c00752dc8B04f1D77E765a5ca65BbC)
+- **MintFacet**: [`0xC4Fa182098DEA7d37725203A636fBC5D5B7FcC43`](https://gnosisscan.io/address/0xC4Fa182098DEA7d37725203A636fBC5D5B7FcC43)
+- **BurnFacet**: [`0x28f325Da1D4910B788ba27FD68e06c2b830f3B9A`](https://gnosisscan.io/address/0x28f325Da1D4910B788ba27FD68e06c2b830f3B9A)
+- **LiquidationFacet**: [`0x21A82BbA3C20d28baE6aEde14311f932F960Fa2F`](https://gnosisscan.io/address/0x21A82BbA3C20d28baE6aEde14311f932F960Fa2F)
+- **YieldFacet**: [`0xa62B73677b82780059abB96ef29E1B732607B2Dc`](https://gnosisscan.io/address/0xa62B73677b82780059abB96ef29E1B732607B2Dc)
+- Deployed: June 2, 2026
+- Status: ✅ Deployed with Diamond/facet architecture + configurable LP vault timeouts
+
+**Previous Deployment (v1.2 - Burn Reward Fix):**
+- **wsXMR Token**: [`0x910bfbfe34cfa4ea45b6ec8070872e2f89b5e6ad`](https://gnosisscan.io/address/0x910bfbfe34cfa4ea45b6ec8070872e2f89b5e6ad)
+- **wsXmrHub (Diamond)**: [`0x9b03355624acd1265508b981b046f4293b1ffed8`](https://gnosisscan.io/address/0x9b03355624acd1265508b981b046f4293b1ffed8)
 - **CREATE2 Factory**: [`0x5bCaA55651c71ec49b29feCAFA8a3D654F9f87e7`](https://gnosisscan.io/address/0x5bCaA55651c71ec49b29feCAFA8a3D654F9f87e7)
 - Deployed: May 25, 2026
-- Status: ✅ Deployed with Diamond/facet architecture + burn reward fixes
 
-**Previous Deployment (Monolithic):**
+**Earlier Deployment (Monolithic):**
 - **wsXMR Token**: [`0xf0114924F8e3d1D4dca68DEf1F3Ea402EF5B32a2`](https://gnosisscan.io/address/0xf0114924F8e3d1D4dca68DEf1F3Ea402EF5B32a2#code)
 - **VaultManager (deprecated)**: [`0x839257DE37b22B377e545514e2eD0b4f92266F88`](https://gnosisscan.io/address/0x839257DE37b22B377e545514e2eD0b4f92266F88#code)
 - **wsXMRLiquidityRouter**: [`0x7Ed870F86ae9c7ecE955185792FFF1Ac57dc743a`](https://gnosisscan.io/address/0x7Ed870F86ae9c7ecE955185792FFF1Ac57dc743a#code)

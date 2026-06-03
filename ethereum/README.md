@@ -4,14 +4,28 @@ A decentralized protocol for wrapping Monero (XMR) on Gnosis Chain using a diamo
 
 ## 🚀 Gnosis Mainnet Deployment
 
-**Deployed:** May 25, 2026 (v1.2)
+**Deployed:** June 2, 2026 (v1.3)
 
-- **wsXmrHub (Diamond Proxy):** `0x9b03355624acd1265508b981b046f4293b1ffed8`
-- **wsXMR Token:** `0x910bfbfe34cfa4ea45b6ec8070872e2f89b5e6ad`
+- **wsXmrHub (Diamond Proxy):** `0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9`
+- **wsXMR Token:** `0x31c76171773138215E518C0224b82AC9BE9897b8`
+- **OracleFacet:** `0xA0ED496c6e16a6d0799Ad300DeC96494a12bE01A`
+- **VaultFacet:** `0x203Ccc8B35c00752dc8B04f1D77E765a5ca65BbC`
+- **MintFacet:** `0xC4Fa182098DEA7d37725203A636fBC5D5B7FcC43`
+- **BurnFacet:** `0x28f325Da1D4910B788ba27FD68e06c2b830f3B9A`
+- **LiquidationFacet:** `0x21A82BbA3C20d28baE6aEde14311f932F960Fa2F`
+- **YieldFacet:** `0xa62B73677b82780059abB96ef29E1B732607B2Dc`
 - **Network:** Gnosis Chain (ChainID: 100)
 - **Explorer:** https://gnosisscan.io
 
-### Recent Fixes (v1.2)
+### Recent Fixes (v1.3)
+
+✅ **Configurable LP Vault Timeouts**
+- LPs can now set per-vault `mintTimeoutBlocks` and `burnTimeoutBlocks`
+- Bounds: 360 (30 min) to 17280 (24 hours) blocks
+- Default: 720 blocks (~1 hour at 5s/block)
+- Enforced via `VaultFacet.setMintTimeoutBlocks()` and `setBurnTimeoutBlocks()`
+
+### Previous Fixes (v1.2)
 
 ✅ **Burn Reward Withdrawal Fix**
 - Fixed burn rewards to be stored with SDAI address instead of hub address
