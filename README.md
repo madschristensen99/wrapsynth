@@ -1,388 +1,133 @@
 # ⛴️ WrapSynth
 
-**A trustless cross-chain ferry bringing Monero to EVM chains using atomic swaps and collateralized vaults.**
+**A trustless cross-chain ferry bringing Monero to EVM and Solana using atomic-swap commitments and overcollateralized vaults.**
 
 🌐 **[wrapsynth.com](https://wrapsynth.com)**
 
-WrapSynth enables trustless cross-chain transfers of Monero (XMR) to Ethereum and EVM chains through atomic swap mechanics and overcollateralized LP vaults. Users exchange XMR for wsXMR tokens backed by 150% collateral, with cryptographic commitments ensuring trustless execution.
+WrapSynth enables trust-minimized transfers of Monero (XMR) onto EVM chains and Solana. Liquidity providers run overcollateralized vaults (150% minimum) and mint `wsXMR` against incoming XMR; redemptions burn `wsXMR` and release XMR back to the user. Both legs are bound by Ed25519 secret commitments in an HTLC-style atomic swap, so neither party can take funds without the counterparty completing their side — **no bridge custodian and no ZK circuits**.
 
 ---
 
 ## ✨ Key Features
 
 ### Core Technology
-- **Atomic Swap Protocol**: HTLC-style secret commitments for trustless XMR ↔ wsXMR exchange
-- **Ed25519 Verification**: Cryptographic verification of secret reveals using elliptic curve operations (matching Monero's curve)
-- **Diamond/Facet Architecture**: Modular EIP-2535 Diamond pattern for upgradeable logic with immutable storage
-- **Vault-Based System**: Individual LP vaults with isolated collateral and debt tracking
-- **sDAI Collateral**: Savings DAI (auto-converting from xDAI) with yield harvesting
-- **Real-Time Pricing**: Pyth Network oracle integration for accurate asset valuation
 
-### Vault-Based Architecture
-- **Individual LP Vaults**: Each liquidity provider manages their own collateralized vault
-- **sDAI Collateral**: Savings DAI with automatic yield harvesting to protocol war chest
-- **Overcollateralization**: 150% collateral ratio ensures wsXMR is always backed
-- **Liquidation Protection**: 120% liquidation threshold with 110% liquidator bonus
-- **Pyth Oracle Integration**: Real-time price feeds for XMR and sDAI/USD
+- **Atomic-Swap Protocol**: HTLC-style secret commitments for trustless XMR ↔ wsXMR exchange, with timeout-based slashing for non-compliance.
+- **Ed25519 Verification**: Secret reveals are verified on-chain against their commitments using an Ed25519 library (EVM) / Ed25519 instruction-sysvar checks (Solana), matching Monero's signature curve.
+- **Overcollateralized Vaults**: Each LP runs an isolated vault with its own collateral, debt, and risk parameters.
+- **Yield-Bearing Collateral**: On Gnosis, collateral is sDAI (auto-converted from xDAI deposits), so idle collateral earns the DAI Savings Rate.
+- **Diamond / Hub-Facet Architecture**: A single state-owning hub with hot-swappable logic facets keeps the system under the 24KB contract-size limit and upgrade-friendly.
 
 ### Security & Trust Model
-- **Overcollateralization**: 150% collateral ratio ensures wsXMR is always backed
-- **Atomic Swap Guarantees**: Cryptographic commitments prevent fund loss for both parties
-- **Liquidation System**: 120% threshold with 10% liquidator bonus protects solvency
-- **Timeout Protection**: 24-hour windows with slashing for non-compliance
-- **Griefing Protection**: Configurable deposits prevent spam attacks on LP vaults
+
+- **Overcollateralization**: 150% minimum collateral ratio backs all outstanding wsXMR.
+- **Liquidation**: 120% liquidation threshold with a 110% liquidator payout (10% bonus).
+- **Atomic-Swap Guarantees**: Cryptographic commitments prevent fund loss for both user and LP.
+- **Timeout Protection**: Block-based mint/burn windows (~5s/block on Gnosis) with on-chain slashing if a counterparty stalls.
+- **Griefing Protection**: Configurable mint griefing deposits and LP ready-bonds deter spam against vaults.
+- **Immutable Token**: `wsXMR` has no admin keys — only the hub can mint or burn.
 
 ### DeFi Integration
-- **ERC-20 Compatible**: Standard token interface (8 decimals matching XMR)
-- **Multi-Chain Support**: Designed for Gnosis Chain, Unichain, and other EVM chains
-- **Composable Design**: Ready for DEX integration and DeFi protocols
-- **Price Oracle Ready**: Pyth Network integration for accurate pricing
+
+- **ERC-20 + Permit**: `wsXMR` is a standard ERC-20 with EIP-2612 gasless approvals (8 decimals).
+- **Uniswap V3 (Gnosis)**: Native integration for buy-and-burn and a concentrated-liquidity router (CoLP) for wsXMR pools.
+- **Multi-Chain**: Live on Gnosis Chain; Anchor program for Solana.
 
 ---
 
 ## 🏗️ Monorepo Structure
 
-WrapSynth is organized as a **multi-chain monorepo** with clear separation between implementations:
+WrapSynth is a multi-chain monorepo with clear separation between implementations:
 
-- **`ethereum/`** - Complete EVM implementation (Gnosis, Unichain, etc.)
-  - Solidity contracts, Hardhat tests, deployment scripts
-  - Rust-based LP node for managing vaults and Monero interactions
-  
-- **`solana/anchor-program/`** - Solana Anchor program implementation
-  - Anchor-based vault manager program
-  - Native Solana integration with similar atomic swap mechanics
-  
-- **`frontend/`** - Unified web interface supporting both chains
-  
-- **`docs/`** - Technical documentation and design specs
-
-This structure allows independent development and deployment of each chain while sharing common documentation and frontend code.
+- **`ethereum/`** — EVM implementation (Gnosis Chain). Foundry-based Solidity contracts (diamond/hub-facet), deploy/test scripts, and a Rust LP node.
+- **`solana/anchor-program/`** — Anchor program (`wrapsynth-vault-manager`) implementing the same vault and atomic-swap mechanics natively on Solana.
+- **`frontend/`** — Web interface supporting both chains.
+- **`docs/`** — Technical design docs and sequence diagrams.
 
 ---
 
 ## 🚀 Current Status
 
-**Development Phase**: ✅ **Deployed to Gnosis Chain Mainnet**
+**Development Phase**: ✅ **Deployed to Gnosis Chain Mainnet** (experimental / unaudited)
 
-### 🌐 Live Deployments
+### 🌐 Live Deployment — Gnosis Chain (ChainID: 100)
 
-#### Gnosis Chain (ChainID: 100)
+Deployed June 2, 2026. Collateral: **sDAI**. Oracle: **RedStone** pull oracle.
 
-**Latest Deployment (v1.3 - LP Timeout Configurable):**
-- **wsXMR Token**: [`0x31c76171773138215E518C0224b82AC9BE9897b8`](https://gnosisscan.io/address/0x31c76171773138215E518C0224b82AC9BE9897b8)
-- **wsXmrHub (Diamond)**: [`0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9`](https://gnosisscan.io/address/0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9)
-- **OracleFacet**: [`0xA0ED496c6e16a6d0799Ad300DeC96494a12bE01A`](https://gnosisscan.io/address/0xA0ED496c6e16a6d0799Ad300DeC96494a12bE01A)
-- **VaultFacet**: [`0x203Ccc8B35c00752dc8B04f1D77E765a5ca65BbC`](https://gnosisscan.io/address/0x203Ccc8B35c00752dc8B04f1D77E765a5ca65BbC)
-- **MintFacet**: [`0xC4Fa182098DEA7d37725203A636fBC5D5B7FcC43`](https://gnosisscan.io/address/0xC4Fa182098DEA7d37725203A636fBC5D5B7FcC43)
-- **BurnFacet**: [`0x28f325Da1D4910B788ba27FD68e06c2b830f3B9A`](https://gnosisscan.io/address/0x28f325Da1D4910B788ba27FD68e06c2b830f3B9A)
-- **LiquidationFacet**: [`0x21A82BbA3C20d28baE6aEde14311f932F960Fa2F`](https://gnosisscan.io/address/0x21A82BbA3C20d28baE6aEde14311f932F960Fa2F)
-- **YieldFacet**: [`0xa62B73677b82780059abB96ef29E1B732607B2Dc`](https://gnosisscan.io/address/0xa62B73677b82780059abB96ef29E1B732607B2Dc)
-- Deployed: June 2, 2026
-- Status: ✅ Deployed with Diamond/facet architecture + configurable LP vault timeouts
+| Contract | Address |
+| --- | --- |
+| **wsXMR Token** | [`0x31c76171773138215E518C0224b82AC9BE9897b8`](https://gnosisscan.io/address/0x31c76171773138215E518C0224b82AC9BE9897b8) |
+| **wsXmrHub** | [`0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9`](https://gnosisscan.io/address/0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9) |
+| **OracleFacet** | [`0xA0ED496c6e16a6d0799Ad300DeC96494a12bE01A`](https://gnosisscan.io/address/0xA0ED496c6e16a6d0799Ad300DeC96494a12bE01A) |
+| **VaultFacet** | [`0x203Ccc8B35c00752dc8B04f1D77E765a5ca65BbC`](https://gnosisscan.io/address/0x203Ccc8B35c00752dc8B04f1D77E765a5ca65BbC) |
+| **MintFacet** | [`0xC4Fa182098DEA7d37725203A636fBC5D5B7FcC43`](https://gnosisscan.io/address/0xC4Fa182098DEA7d37725203A636fBC5D5B7FcC43) |
+| **BurnFacet** | [`0x28f325Da1D4910B788ba27FD68e06c2b830f3B9A`](https://gnosisscan.io/address/0x28f325Da1D4910B788ba27FD68e06c2b830f3B9A) |
+| **LiquidationFacet** | [`0x21A82BbA3C20d28baE6aEde14311f932F960Fa2F`](https://gnosisscan.io/address/0x21A82BbA3C20d28baE6aEde14311f932F960Fa2F) |
+| **YieldFacet** | [`0xa62B73677b82780059abB96ef29E1B732607B2Dc`](https://gnosisscan.io/address/0xa62B73677b82780059abB96ef29E1B732607B2Dc) |
 
-**Previous Deployment (v1.2 - Burn Reward Fix):**
-- **wsXMR Token**: [`0x910bfbfe34cfa4ea45b6ec8070872e2f89b5e6ad`](https://gnosisscan.io/address/0x910bfbfe34cfa4ea45b6ec8070872e2f89b5e6ad)
-- **wsXmrHub (Diamond)**: [`0x9b03355624acd1265508b981b046f4293b1ffed8`](https://gnosisscan.io/address/0x9b03355624acd1265508b981b046f4293b1ffed8)
-- **CREATE2 Factory**: [`0x5bCaA55651c71ec49b29feCAFA8a3D654F9f87e7`](https://gnosisscan.io/address/0x5bCaA55651c71ec49b29feCAFA8a3D654F9f87e7)
-- Deployed: May 25, 2026
+External: **sDAI** [`0xaf204776c7245bF4147c2612BF6e5972Ee483701`](https://gnosisscan.io/address/0xaf204776c7245bF4147c2612BF6e5972Ee483701)
 
-**Earlier Deployment (Monolithic):**
-- **wsXMR Token**: [`0xf0114924F8e3d1D4dca68DEf1F3Ea402EF5B32a2`](https://gnosisscan.io/address/0xf0114924F8e3d1D4dca68DEf1F3Ea402EF5B32a2#code)
-- **VaultManager (deprecated)**: [`0x839257DE37b22B377e545514e2eD0b4f92266F88`](https://gnosisscan.io/address/0x839257DE37b22B377e545514e2eD0b4f92266F88#code)
-- **wsXMRLiquidityRouter**: [`0x7Ed870F86ae9c7ecE955185792FFF1Ac57dc743a`](https://gnosisscan.io/address/0x7Ed870F86ae9c7ecE955185792FFF1Ac57dc743a#code)
+### Solana — Anchor Program
 
-**Configuration:**
-- Collateral: sDAI (Savings DAI) - auto-converts from xDAI deposits
-- Oracle: Pyth Network (`0x2880aB155794e7179c9eE2e38200202908C17B43`)
-- Architecture: EIP-2535 Diamond pattern with 6 facets (Vault, Mint, Burn, Liquidation, Yield, Oracle)
-- Cryptography: Ed25519 elliptic curve (matching Monero) for atomic swap secret verification
-- Libraries: CollateralLogic, YieldLogic, BurnLogic for shared functionality
+- **Program ID**: `EZ1hsgYwmqmCY5Gzw9mwnJnJE4PJcKX5hHw5MZXk2ssy`
+- **Oracle**: Pyth (`PriceUpdateV2`) for XMR/USD and collateral feeds.
 
-**Target Networks:**
-- **Gnosis Chain** (ChainID: 100) - ✅ **LIVE** (low gas costs)
-- **Unichain Testnet** (ChainID: 1301) - Development and testing
+### Next Steps
 
-**Deployment Status:**
-- ✅ Diamond/facet architecture (wsXmrHub + 6 facets) implemented
-- ✅ Atomic swap mechanics with HTLC-style commitments and Ed25519 verification
-- ✅ Pyth oracle integration for price feeds
-- ✅ **Deployed to Gnosis Chain mainnet**
-- ✅ **Contracts verified on Gnosisscan**
-- ✅ sDAI collateral with automatic yield harvesting
-
-**Next Steps:**
-1. ✅ ~~Deploy VaultManager and wsXMR to Gnosis mainnet~~ **COMPLETE**
-2. Set up LP server infrastructure for vault management
-3. Integrate with frontend for testing
-4. Complete end-to-end testing with Monero stagenet
-5. Security audit before public launch
+1. ✅ ~~Deploy hub + facets and wsXMR to Gnosis mainnet~~ **COMPLETE**
+2. LP server infrastructure for vault management
+3. End-to-end testing against Monero stagenet
+4. Security audit before public launch
 
 ---
 
-## 🛠️ Development Setup
+## 🧩 Architecture
 
-### Prerequisites
+### EVM: Hub-and-Facet (Diamond)
 
-- **Node.js** v18+
-- **npm** or **yarn**
-- **Circom** 2.1.0+
-- **snarkjs** (installed via npm)
-- **Rust** (for oracle) - Install from [rustup.rs](https://rustup.rs/)
-- **Hardhat** (installed via npm)
+The EVM implementation is **not** a single monolithic contract. State and logic are separated:
 
-### Installation
+- **`wsXmrHub`** — owns all state (via `wsXmrStorage`), holds all collateral, controls `wsXMR` mint/burn, and routes calls to facets through a selector-dispatch table. Uses EIP-1153 transient storage to gate delegate-call context, plus a reentrancy guard. Only registered facets may mutate state.
+- **`wsXmrStorage`** — the shared, append-only storage layout inherited by the hub and every facet (vaults, mint/burn requests, debt index, oracle prices, constants).
+- **Facets** (logic only, state accessed through the hub):
+  - **VaultFacet** — create/fund vaults, manage collateral and parameters.
+  - **MintFacet** — XMR → wsXMR mint lifecycle.
+  - **BurnFacet** — wsXMR → XMR burn lifecycle.
+  - **LiquidationFacet** — health checks and liquidation of undercollateralized vaults.
+  - **YieldFacet** — sDAI yield harvesting / buy-and-burn.
+  - **OracleFacet** — price reads + staleness checks (see below).
+- **`wsXMRLiquidityRouter`** — Uniswap V3 concentrated-liquidity (CoLP) router for wsXMR pools.
 
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/wrapsynth.git
-cd wrapsynth
+### Oracles
 
-# Install Ethereum dependencies
-cd ethereum
-npm install
-
-# Copy environment variables
-cp .env.example .env
-# Edit .env and add your PRIVATE_KEY and RPC URLs
-```
-
-### Compile Contracts
-
-```bash
-# From ethereum directory
-cd ethereum
-npx hardhat compile
-```
-
-This will compile:
-- `wsXmrHub.sol` - Diamond proxy with state storage and facet routing
-- `wsXMR.sol` - ERC-20 token contract (8 decimals)
-- Facets: `VaultFacet`, `MintFacet`, `BurnFacet`, `LiquidationFacet`, `YieldFacet`
-- **Oracle**: `RedStoneOracleFacet` (live deployment) or `SimpleOracleFacet` (testing)
-  - `ChainlinkOracleFacet` exists for reference but is not currently used
-- `Ed25519.sol` - Elliptic curve verification library (matching Monero's curve)
-- Supporting interfaces and libraries (CollateralLogic, YieldLogic, BurnLogic)
-
-### Deploy Contracts
-
-#### Deploy to Gnosis Mainnet
-
-1. **Get xDAI** for gas fees (very low cost ~$0.01 per tx)
-   - Transfer DAI to xDAI: [Gnosis Chain](https://www.gnosischain.com/)
-   - Or use [Jumper Exchange](https://jumper.exchange/)
-
-2. **Configure environment:**
-```bash
-cp .env.example .env
-# Edit .env and add your PRIVATE_KEY and GNOSIS_RPC_URL
-```
-
-3. **Deploy contracts:**
-```bash
-# From ethereum directory
-cd ethereum
-
-# Deploy wsXmrHub (Diamond) and wsXMR to Gnosis mainnet
-npm run deploy:gnosis
-
-# Or deploy with vanity addresses (0xB00F for hub, 0x420 for token)
-npx hardhat run scripts/deploy/deploy-vanity-fixed.js --network gnosis
-```
-
-4. **Verify contracts on Gnosisscan:**
-```bash
-npm run verify:gnosis
-```
-
-**Diamond Architecture Deployment:**
-The latest deployment uses EIP-2535 Diamond pattern with CREATE2 vanity addresses:
-- wsXmrHub (Diamond proxy) starts with `0xB00F`
-- wsXMR token starts with `0x420`
-- Modular facet design eliminates 24KB contract size limit
-- Shared libraries (CollateralLogic, YieldLogic, BurnLogic) reduce code duplication
-
-**⚠️ EVM Requirements:**
-- Requires Cancun or later EVM (for transient storage EIP-1153)
-- Gnosis Chain: ✅ Supported (Pectra upgrade April 2025)
-- Most L2s: ✅ Supported (verify deployment target has Cancun)
-- Solidity 0.8.28+ required for `transient` keyword
-
-#### Deploy to Unichain Testnet
-
-1. **Get testnet ETH** from [Unichain Faucet](https://faucet.unichain.org/)
-
-2. **Deploy contracts:**
-```bash
-# From ethereum directory
-cd ethereum
-
-# Deploy wsXmrHub (Diamond) and wsXMR to Unichain testnet
-npm run deploy:unichain
-```
-
-3. **Verify contracts on Uniscan:**
-```bash
-npm run verify
-```
-
-### Run LP Node
-
-```bash
-# Build the Rust-based LP node
-cd ethereum/lp-node
-cargo build --release
-
-# Configure LP node (edit config.toml if needed)
-./setup.sh
-
-# Run LP node service
-cargo run --release
-```
-
-### Solana Program
-
-```bash
-# Build the Solana program
-cd solana/anchor-program
-anchor build
-
-# Run tests
-anchor test
-```
-
----
-
-## 📁 Project Structure
-
-```
-wrapsynth/
-├── ethereum/                   # Ethereum/EVM implementation
-│   ├── contracts/             # Solidity smart contracts
-│   │   ├── core/              # Diamond core contracts
-│   │   │   ├── wsXmrHub.sol   # Diamond proxy with facet routing
-│   │   │   └── wsXmrStorage.sol # Shared storage layout
-│   │   ├── facets/            # Diamond facets (logic contracts)
-│   │   │   ├── VaultFacet.sol # Vault management
-│   │   │   ├── MintFacet.sol  # Mint operations
-│   │   │   ├── BurnFacet.sol  # Burn operations
-│   │   │   ├── LiquidationFacet.sol # Liquidation logic
-│   │   │   ├── YieldFacet.sol # Yield harvesting and buy-and-burn
-│   │   │   └── OracleFacet.sol # Price feed management
-│   │   ├── wsXMR.sol          # ERC-20 token (8 decimals)
-│   │   ├── Ed25519.sol        # Elliptic curve verification (Monero curve)
-│   │   ├── Create2Deployer.sol # CREATE2 factory for vanity addresses
-│   │   ├── libraries/         # Shared logic libraries
-│   │   │   ├── CollateralLogic.sol # Collateral ratio calculations
-│   │   │   ├── YieldLogic.sol # Yield harvesting logic
-│   │   │   └── BurnLogic.sol  # Burn request logic
-│   │   ├── interfaces/        # Contract interfaces
-│   │   └── mocks/             # Mock contracts for testing
-│   │
-│   ├── scripts/               # Deployment & management scripts
-│   │   ├── deploy/            # Deployment scripts
-│   │   │   ├── deploy-gnosis.js # Gnosis mainnet deployment
-│   │   │   └── verify-gnosis.js # Contract verification
-│   │   └── vanity-address.js  # Vanity address generator
-│   │
-│   ├── lp-node/               # Rust-based LP node
-│   │   ├── src/               # LP node source code
-│   │   │   ├── main.rs        # Main entry point
-│   │   │   ├── engine.rs      # Core LP logic
-│   │   │   ├── evm.rs         # EVM interaction
-│   │   │   ├── monero.rs      # Monero RPC client
-│   │   │   ├── db.rs          # Database layer
-│   │   │   ├── api.rs         # REST API
-│   │   │   └── events.rs      # Event monitoring
-│   │   ├── Cargo.toml         # Rust dependencies
-│   │   ├── config.toml        # LP node configuration
-│   │   └── README.md          # LP node documentation
-│   │
-│   ├── test/                  # Contract tests
-│   ├── hardhat.config.js      # Hardhat configuration
-│   ├── package.json           # Node.js dependencies
-│   └── .env.example           # Environment variables template
-│
-├── solana/                     # Solana implementation
-│   └── anchor-program/        # Anchor program
-│       ├── programs/          # Solana programs
-│       │   └── wrapsynth-vault-manager/ # Main vault manager program
-│       ├── tests/             # Anchor tests
-│       ├── Anchor.toml        # Anchor configuration
-│       └── README.md          # Solana program documentation
-│
-├── frontend/                   # Web interface
-│   ├── index.html             # Landing page
-│   ├── config.js              # Network configuration
-│   ├── styles.css             # Styling
-│   └── app/                   # Frontend application
-│       ├── app.html           # Main app interface
-│       └── app.js             # Frontend logic
-│
-├── docs/                       # Technical documentation
-│   └── SEED_STORAGE_IMPLEMENTATION.md # Seed storage design
-│
-├── .env.example               # Root environment variables
-├── .gitignore                 # Git ignore rules
-└── README.md                  # This file
-```
-
----
-
-## 🏗️ Architecture
+- **EVM (Gnosis): RedStone pull oracle.** `RedStoneOracleFacet` extends RedStone's `PrimaryProdDataServiceConsumerBase`; price data is injected into the transaction calldata, verified on-chain, and read for the `XMR` and `DAI` feeds. Prices arrive in 8 decimals and are normalized to 18. Default staleness window is 2 minutes; RedStone charges no verification fee. A `SimpleOracleFacet` variant accepts prices pushed by a trusted updater that pulls from the RedStone API — useful for chains where calldata injection isn't convenient.
+- **Solana: Pyth.** `utils/oracle.rs` parses Pyth `PriceUpdateV2` accounts directly from raw bytes (spot + EMA), enforces a feed-ID match, a confidence check (`conf × 10 ≤ price`), and a staleness window, then normalizes to 18 decimals to mirror the EVM math exactly.
+- **Note on Chainlink Data Streams.** The repo includes a minimal `IDataStreamsVerifier` interface and a `MockVerifierProxy`, and the hub storage carries a `verifierProxy` slot. This is scaffolding for evaluating Chainlink Data Streams (available on Gnosis) as an alternative XMR/USD source; it is **not** the active oracle. XMR/USD is not available as a classic Chainlink Data Feed on Gnosis, which is why a pull oracle (RedStone) is used instead.
 
 ### High-Level Flow
 
 ```
-┌──────────────┐                                  ┌─────────────┐
-│   Monero     │                                  │   Gnosis    │
-│   Mainnet    │                                  │   Chain     │
-└──────┬───────┘                                  └──────┬──────┘
-       │                                                 │
-       │  1. User sends XMR to LP's Monero address      │
-       │  ──────────────────────────────────────────►   │
-       │                                                 │
-       │  2. User generates ZK proof of ownership        │
-       │     (Proves P = H_s·G + B without revealing r)  │
-       │                                                 │
-       │  3. LP verifies proof & mints wsXMR        ┌────┴────┐
-       │  ◄──────────────────────────────────────  │VaultMgr │
-       │                                           │  Vault  │
-       │  4. User receives wsXMR tokens            │Collateral│
-       │  ◄──────────────────────────────────────  │  wsXMR  │
-       │                                           └────┬────┘
-       │                                                 │
-       │  5. To burn: User commits to XMR address        │
-       │  ──────────────────────────────────────────────►│
-       │                                                 │
-       │  6. LP sends XMR, reveals secret                │
-       │  ◄──────────────────────────────────────────────│
-       │                                                 │
-       │  7. User verifies & finalizes burn              │
-       │  ──────────────────────────────────────────────►│
+┌──────────────┐                                    ┌─────────────┐
+│   Monero     │                                    │  Gnosis /   │
+│   Mainnet    │                                    │   Solana    │
+└──────┬───────┘                                    └──────┬──────┘
+       │ 1. User initiates mint, posts Ed25519 claim       │
+       │    commitment + griefing deposit                  │
+       │  ────────────────────────────────────────────►    │
+       │ 2. User sends XMR to LP's Monero address           │
+       │ 3. LP confirms receipt → setMintReady (+ bond)     │
+       │ 4. User reveals secret → commitment verified       │
+       │    (Ed25519) → wsXMR minted, deposit refunded      │
+       │  ◄────────────────────────────────────────────    │
+       │                                                    │
+       │ 5. Burn: user requests w/ XMR addr + secret hash   │
+       │    → wsXMR + LP collateral reserved                │
+       │ 6. LP sends XMR off-chain                           │
+       │ 7. User commits burn → wsXMR burned, collateral    │
+       │    escrowed                                         │
+       │ 8. LP reveals secret → collateral released         │
+       │    (timeout → user slashes & seizes collateral)    │
 ```
-
-### Components
-
-1. **Atomic Swap Protocol**
-   - HTLC-style secret commitments for trustless exchange
-   - Ed25519 elliptic curve verification (matching Monero's curve)
-   - Timeout-based slashing for non-compliance
-   - Commitment binding to prevent secret replay attacks
-
-2. **Smart Contracts** (`contracts/`)
-   - **wsXmrHub.sol**: EIP-2535 Diamond proxy with facet routing and shared storage
-   - **Facets**: VaultFacet, MintFacet, BurnFacet, LiquidationFacet, YieldFacet, OracleFacet
-   - **wsXMR.sol**: ERC-20 token (8 decimals) representing wrapped Monero
-   - **Ed25519.sol**: Elliptic curve verification for secret reveals (Monero's curve)
-   - **Libraries**: CollateralLogic, YieldLogic, BurnLogic for shared functionality
-
-3. **Vault System**
-   - Individual LP vaults with sDAI (Savings DAI) collateral
-   - 150% collateralization ratio ensures wsXMR is always backed
-   - 120% liquidation threshold with 110% liquidator bonus
-   - Atomic swap-based mint/burn with HTLC commitments
-   - Automatic yield harvesting to protocol war chest
-   - Pyth oracle integration for real-time XMR/USD and sDAI/USD price feeds
 
 ---
 
@@ -390,215 +135,112 @@ wrapsynth/
 
 ### Minting (Monero → wsXMR)
 
-1. **Create Vault** (LP): Liquidity provider creates a vault with collateral (ETH, wstETH, etc.)
-2. **Deposit Collateral** (LP): LP deposits collateral to back wsXMR (minimum 150% ratio)
-3. **Initiate Mint** (User): User initiates mint request on-chain
-   - Provides claim commitment (hash of secret for atomic swap)
-   - Pays griefing deposit (refunded on completion)
-   - LP's vault debt is reserved
-4. **Send XMR** (User): User sends XMR to LP's Monero address off-chain
-5. **Confirm Receipt** (LP): LP verifies XMR receipt and marks mint as READY
-6. **Finalize Mint** (User): User reveals secret to claim wsXMR
-   - Secret is verified against commitment using Ed25519 scalar multiplication
-   - wsXMR is minted to user
-   - Griefing deposit is refunded
+1. **Create & fund vault** (LP): create a vault and deposit collateral (sDAI on Gnosis) at ≥150% of intended debt.
+2. **Initiate mint** (User): submit an on-chain mint request with an Ed25519 claim commitment and a griefing deposit; the target vault's debt is reserved.
+3. **Send XMR** (User): transfer XMR to the LP's Monero address off-chain.
+4. **Mark ready** (LP): confirm XMR receipt and post a ready-bond, moving the request to `READY`.
+5. **Finalize** (User): reveal the secret; it's verified against the commitment, `wsXMR` is minted to the recipient, and the griefing deposit is refunded.
 
 ### Burning (wsXMR → Monero)
 
-1. **Request Burn** (User): User requests burn with Monero address and secret hash
-   - wsXMR tokens are reserved (not yet burned)
-   - LP's collateral is reserved for this burn
-   - 24-hour deadline is set
-2. **Send XMR** (LP): LP sends XMR to user's Monero address off-chain
-3. **Commit Burn** (User): User verifies XMR receipt and commits burn
-   - wsXMR is burned
-   - Collateral is escrowed
-4. **Finalize Burn** (LP): LP reveals secret to unlock escrowed collateral
-   - Secret is verified against hash
-   - Collateral is released back to LP
-5. **Timeout Protection**: If LP doesn't reveal secret within 24h, user can slash and seize collateral
+1. **Request burn** (User): specify Monero destination + secret hash; `wsXMR` and LP collateral are reserved.
+2. **Send XMR** (LP): pay the user in XMR off-chain.
+3. **Commit burn** (User): confirm receipt; `wsXMR` is burned and collateral escrowed.
+4. **Finalize** (LP): reveal the secret to release the escrowed collateral.
+5. **Timeout** : if the LP fails to reveal in time, the user slashes the vault and seizes collateral.
 
-### For Liquidity Providers
+Mint statuses: `PENDING → READY → COMPLETED` (or `CANCELLED`). Burn statuses: `REQUESTED → PROPOSED → COMMITTED → COMPLETED` (or `SLASHED` / `CANCELLED`).
 
-1. **Create Vault**: Call `createVault()` to initialize your LP vault
-2. **Deposit Collateral**: Deposit xDAI (auto-converts to sDAI) - minimum 150% of debt value
-3. **Set Parameters**: Configure griefing deposit amount for mint requests
-4. **Accept Mints**: Users can initiate mints against your vault
-5. **Manage Health**: Monitor collateral ratio to avoid liquidation (<120%)
-6. **Earn Fees**: Collect fees from mint/burn operations
-7. **Yield Harvesting**: Excess sDAI yield is automatically extracted to protocol war chest
+---
+
+## 🛠️ Development Setup
+
+### Prerequisites
+
+- **Foundry** (forge/cast) — install from [getfoundry.sh](https://getfoundry.sh)
+- **Node.js** v18+ (frontend + legacy scripts)
+- **Rust** (LP node + Solana program) — [rustup.rs](https://rustup.rs)
+- **Anchor** + **Solana CLI** (Solana program)
+
+### Clone (with submodules)
+
+```bash
+git clone --recurse-submodules https://github.com/madschristensen99/wrapsynth.git
+cd wrapsynth
+```
+
+Submodules: `openzeppelin-contracts`, `forge-std`, `chainlink`, `redstone-oracles-monorepo`, `svm-fhe`.
+
+### EVM (Foundry)
+
+```bash
+cd ethereum
+forge build
+forge test
+
+# Configure environment
+cp .env.example .env
+# set PRIVATE_KEY, GNOSIS_RPC_URL, GNOSISSCAN_API_KEY
+
+# Deploy to Gnosis (RedStone oracle wiring)
+forge script script/DeployGnosisRedStone.s.sol --rpc-url gnosis --broadcast --verify
+```
+
+Build profile: solc `0.8.28`, EVM `cancun`, `via_ir = true`, `optimizer_runs = 1`.
+
+### LP Node (Rust)
+
+```bash
+cd ethereum/lp-node
+cargo build --release
+cargo run --release
+```
+
+The LP node manages vaults, watches chain events, talks to a Monero RPC wallet, and pushes RedStone prices on-chain (`oracle.rs` pulls from `api.redstone.finance`).
+
+### Solana (Anchor)
+
+```bash
+cd solana/anchor-program
+anchor build
+anchor test
+```
+
+Instructions: `initialize`, `vault_management`, `mint_flow`, `burn_flow`, `liquidation`, `buy_and_burn`, `reconciliation`, `withdrawals`.
 
 ---
 
 ## 🔐 Security
 
-### Cryptographic Guarantees
+⚠️ **This is experimental, unaudited research software. Do not use with real funds.**
 
-- **Ed25519 Verification**: Elliptic curve operations verify secret reveals match commitments (using Monero's curve)
-- **Hash-Time-Locked Contracts**: HTLC-style atomic swaps prevent fund loss
-- **Timeout Enforcement**: 24-hour windows with on-chain slashing for non-compliance
-- **Commitment Binding**: Secrets are cryptographically bound to requestId to prevent replay attacks
-- **Collateral Escrow**: Smart contract holds collateral during burn process
-- **Delegate Context Protection**: Privileged functions only callable via Diamond delegatecall
+Before any production deployment: professional security audit, formal verification of critical components, extensive testnet/stagenet testing, and legal/regulatory review.
 
-### Economic Security
-
-**Collateralization System:**
-- **Collateral Ratio**: 150% - Minimum collateral required to back wsXMR debt
-- **Liquidation Threshold**: 120% - Below this, vault can be liquidated
-- **Liquidation Bonus**: 110% - Liquidators receive 10% bonus from vault collateral
-- **Health Monitoring**: Real-time collateral ratio tracking per vault
-- **Multi-Asset Support**: Each collateral type has its own Pyth price feed
-
-**Oracle System:**
-- **Pyth Network Integration**: Real-time price feeds for XMR/USD and collateral assets
-- **Price Staleness Check**: Maximum 5-minute age for price data
-- **Pull-Based Updates**: Prices pushed on-chain before critical operations
-- **Multi-Feed Support**: Separate feeds for XMR and each collateral type
-
-### Security Considerations
-
-⚠️ **This is experimental software for research purposes.**
-
-- Not audited by professional security firms
-- Not recommended for production use with real funds
-- Testnet deployment only
-- Use at your own risk
-
-Before production deployment:
-- Professional security audit required
-- Formal verification of critical components
-- Extensive testnet testing
-- Legal and regulatory review
-
----
-
-## 🧪 Testing
-
-### Ethereum Tests
-```bash
-# From ethereum directory
-cd ethereum
-
-# Run all contract tests
-npm test
-
-# Run specific test suites
-npx hardhat test test/01-TokenAuthority.test.js
-npx hardhat test test/03-MintingLifecycle.test.js
-```
-
-### Solana Tests
-```bash
-# From solana program directory
-cd solana/anchor-program
-
-# Run Anchor tests
-anchor test
-```
-
-### LP Node Testing
-```bash
-# From LP node directory
-cd ethereum/lp-node
-
-# Run LP node in test mode
-cargo run --release -- --config config.toml
-```
+Economic parameters: 150% collateral ratio, 120% liquidation threshold, 110% liquidator payout, 2-minute oracle staleness window, block-based mint/burn timeouts.
 
 ---
 
 ## 📚 Documentation
 
-### Project Documentation
-- [Ethereum Contracts](ethereum/contracts/) - Solidity smart contracts
-- [LP Node Documentation](ethereum/lp-node/README.md) - LP node setup and operation
-- [Solana Program](solana/anchor-program/README.md) - Anchor program documentation
-- [Seed Storage Design](docs/SEED_STORAGE_IMPLEMENTATION.md) - Technical design docs
+- [Ethereum Contracts](ethereum/contracts) — Solidity (hub, facets, libraries)
+- [LP Node](ethereum/lp-node/README.md) — setup and operation
+- [Solana Program](solana/anchor-program/README.md) — Anchor program docs
+- [Seed Storage Design](docs/SEED_STORAGE_IMPLEMENTATION.md)
+- [Sequence Diagrams](docs/sequenceDiagrams.md)
 
 ### External Resources
-- [Monero Documentation](https://www.getmonero.org/resources/developer-guides/) - Monero protocol
-- [Pyth Network](https://pyth.network/) - Price oracle documentation
-- [Atomic Swaps](https://en.bitcoin.it/wiki/Atomic_swap) - Cross-chain atomic swap protocol
-- [HTLC](https://en.bitcoin.it/wiki/Hash_Time_Locked_Contracts) - Hash time-locked contracts
-- [Uniswap V4 Hooks](https://docs.uniswap.org/contracts/v4/overview) - Hook development
 
----
-
-## 🔮 Roadmap
-
-### Phase 1: Core Development (Current)
-- ✅ Diamond/facet architecture (wsXmrHub + 6 facets)
-- ✅ wsXMR ERC-20 token implementation
-- ✅ Ed25519 verification library (Monero curve)
-- ✅ Pyth oracle integration
-- ✅ Security fixes: access control, commitment binding, reentrancy optimization
-- 🔄 LP server infrastructure for managing vaults
-- 🔄 Frontend development
-
-### Phase 2: Testnet Deployment
-- ⏳ Deploy to Unichain testnet
-- ⏳ Deploy to Gnosis Chain testnet
-- ⏳ Integrate Monero stagenet
-- ⏳ Public testing and feedback
-
-### Phase 3: Security & Audit
-- ⏳ Internal security review
-- ⏳ External security audit
-- ⏳ Bug bounty program
-- ⏳ Formal verification of critical components
-
-### Phase 4: Mainnet Launch
-- ⏳ Gnosis Chain mainnet deployment (low gas costs)
-- ⏳ Unichain mainnet deployment
-- ⏳ Multi-chain expansion (Arbitrum, Optimism, Base)
-- ⏳ Decentralized oracle network
-
----
-
-## 🤝 Contributing
-
-Contributions welcome! This is experimental research software.
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Write/update tests
-5. Commit your changes (`git commit -m 'Add amazing feature'`)
-6. Push to the branch (`git push origin feature/amazing-feature`)
-7. Open a Pull Request
-
----
-
-## ⚠️ Disclaimer
-
-**EXPERIMENTAL RESEARCH SOFTWARE**
-
-This software is provided "as is" for research and educational purposes only. It has not been audited and should not be used in production with real funds. The developers assume no liability for any losses incurred through the use of this software.
-
-Before any production deployment, this system requires:
-- Professional security audit by qualified firms
-- Formal verification of critical components
-- Extensive testing on testnets
-- Legal and regulatory review
-- Community review and feedback
+- [Monero Developer Guides](https://www.getmonero.org/resources/developer-guides/)
+- [RedStone Oracles](https://docs.redstone.finance/) — EVM price feeds
+- [Pyth Network](https://pyth.network/) — Solana price feeds
+- [Atomic Swaps](https://en.bitcoin.it/wiki/Atomic_swap) · [HTLC](https://en.bitcoin.it/wiki/Hash_Time_Locked_Contracts)
+- [Uniswap V3](https://docs.uniswap.org/contracts/v3/overview)
 
 ---
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) file for details
-
----
-
-## 🔗 Links
-
-- **Website**: [wrapsynth.com](https://wrapsynth.com)
-- **GitHub**: [github.com/wrapsynth](https://github.com/wrapsynth)
-- **Unichain Docs**: [docs.unichain.org](https://docs.unichain.org/)
-- **Gnosis Chain**: [gnosis.io](https://www.gnosis.io/)
-- **Monero**: [getmonero.org](https://www.getmonero.org/)
-- **Circom**: [docs.circom.io](https://docs.circom.io/)
+LGPL-3.0 for contracts (see SPDX headers); MIT where noted. See [LICENSE](LICENSE).
 
 ---
 
