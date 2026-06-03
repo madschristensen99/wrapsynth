@@ -131,10 +131,12 @@ export const RAW_ABIS = {
 export const ABIS = {
     hub: [
         // Mint flow
-        'function initiateMint(address lpVault, address recipient, uint256 xmrAmount, bytes32 claimCommitment, uint256 timeoutDuration) external payable returns (bytes32 requestId)',
+        'function initiateMint(address lpVault, address recipient, uint256 xmrAmount, bytes32 claimCommitment) external payable returns (bytes32 requestId)',
+        'function provideLPKey(bytes32 requestId, bytes32 lpPublicKey) external',
         'function setMintReady(bytes32 requestId) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
         'function cancelMint(bytes32 requestId) external',
+        'function lpPublicKeys(bytes32 requestId) external view returns (bytes32)',
         'function getUserMintRequests(address user) external view returns (bytes32[])',
         'function getVaultPendingMints(address lpVault) external view returns (bytes32[])',
         'function calculateWsxmrAmount(uint256 xmrAmount) external pure returns (uint256)',
@@ -168,7 +170,8 @@ export const ABIS = {
         'function getPendingReturns(address user, address token) external view returns (uint256)',
         'function hasActiveVault(address lpAddress) external view returns (bool)',
 
-        // Oracle (SimpleOracleFacet — RedStone prices pushed by LP server, not the user)
+        // Oracle (RedStoneOracleFacet — user can update prices with RedStone data)
+        'function updateOraclePrices(bytes[] calldata) external payable',
         'function getXmrPrice() external view returns (uint256)',
         'function getCollateralPrice() external view returns (uint256)',
         'function getXmrPriceWithAge(uint256 maxAge) external view returns (uint256)',
@@ -176,6 +179,7 @@ export const ABIS = {
 
         // Events
         'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, uint256 timeout)',
+        'event LPKeyProvided(bytes32 indexed requestId, bytes32 lpPublicKey)',
         'event MintReady(bytes32 indexed requestId)',
         'event MintFinalized(bytes32 indexed requestId, bytes32 secret)',
         'event MintCancelled(bytes32 indexed requestId)',

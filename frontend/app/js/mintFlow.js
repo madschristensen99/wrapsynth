@@ -103,23 +103,20 @@ export class MintFlow {
         console.log('Checking oracle freshness...');
         
         try {
-            await readHub('getXmrPriceWithAge', [110n]);
+            // Try to get price with 2 minute staleness tolerance
+            await readHub('getXmrPrice', []);
             console.log('✅ Oracle prices are fresh');
         } catch (error) {
-            if (error.message && error.message.includes('StalePrice')) {
-                console.warn('⚠️ Oracle prices stale, waiting 10s...');
-                await new Promise(resolve => setTimeout(resolve, 10000));
-                
-                try {
-                    await readHub('getXmrPriceWithAge', [110n]);
-                    console.log('✅ Oracle prices refreshed');
-                } catch (retryError) {
-                    throw new Error('Oracle stale — please retry in a moment. The LP server price pusher may be behind.');
-                }
-            } else {
-                throw error;
-            }
+            // Prices are stale - update them
+            console.warn('⚠️ Oracle prices are stale, updating...');
+            await this.updatePrices();
         }
+    }
+
+    async updatePrices() {
+        const { updateOraclePrices } = await import('./redstoneWrapper.js');
+        await updateOraclePrices();
+        console.log('✅ Prices updated, continuing with mint');
     }
 
     async initiateOnEVM() {
@@ -137,21 +134,28 @@ export class MintFlow {
             initiator: userAddress,
             wsxmrAmount: this.wsxmrAmount.toString(),
             commitment,
-            timeoutDuration: this.timeoutDuration,
             griefingDeposit: this.griefingDeposit.toString()
         });
 
-        const receipt = await writeHub(
-            'initiateMint',
-            [
-                this.lpVault,
-                userAddress,
-                this.wsxmrAmount,
-                commitment,
-                BigInt(this.timeoutDuration)
-            ],
-            this.griefingDeposit
-        );
+        let receipt;
+        try {
+            receipt = await writeHub(
+                'initiateMint',
+                [
+                    this.lpVault,
+                    userAddress,
+                    this.wsxmrAmount,
+                    commitment
+                ],
+                this.griefingDeposit
+            );
+        } catch (error) {
+            // Check if it's a StalePrice error (0x19abf40e)
+            if (error.message && error.message.includes('0x19abf40e')) {
+                throw new Error('Oracle prices are stale. Please wait a moment for the LP node to update prices, then try again.');
+            }
+            throw error;
+        }
 
         console.log('Mint initiated, tx:', receipt.transactionHash);
 
@@ -175,32 +179,53 @@ export class MintFlow {
     }
 
     async notifyLP() {
-        console.log('Notifying LP server...');
+        console.log('Waiting for LP to provide public key...');
         
-        try {
-            const response = await this.lpClient.notifyMint({
-                requestId: this.requestId,
-                txHash: updateSwapState.txHash
-            });
-
-            this.depositAddress = response.deposit_address;
-            console.log('LP notified, deposit address:', this.depositAddress);
-            
-            updateSwapState({
-                state: 'deposit',
-                depositAddress: this.depositAddress
-            });
-        } catch (error) {
-            console.warn('LP server notification failed:', error);
-            console.log('User must send XMR manually and wait for LP to detect it');
-            
-            updateSwapState({
-                state: 'deposit',
-                depositAddress: 'MANUAL_DEPOSIT_REQUIRED'
-            });
-        }
+        // Wait for LP to call provideLPKey() on-chain
+        const lpPublicKey = await this.waitForLPKey();
+        
+        // Derive shared Monero address from LP's key + user's secret
+        const sharedAddress = this.agent.deriveSharedMoneroAddress(lpPublicKey);
+        this.depositAddress = sharedAddress;
+        
+        console.log('✅ LP public key received:', lpPublicKey);
+        console.log('📍 Shared Monero Deposit Address:', sharedAddress);
+        console.log('💡 Send exactly', this.xmrAmount, 'XMR to this address');
+        
+        updateSwapState({
+            state: 'deposit',
+            depositAddress: sharedAddress,
+            lpPublicKey: lpPublicKey
+        });
 
         this.state = 'deposit';
+    }
+    
+    async waitForLPKey() {
+        console.log('Polling for LP public key on-chain...');
+        
+        const maxAttempts = 60; // 5 minutes (5s intervals)
+        
+        for (let i = 0; i < maxAttempts; i++) {
+            try {
+                const lpPublicKey = await readHub('lpPublicKeys', [this.requestId]);
+                
+                if (lpPublicKey && lpPublicKey !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
+                    return lpPublicKey;
+                }
+                
+                if (i % 6 === 0) { // Log every 30 seconds
+                    console.log('Still waiting for LP to provide public key...');
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            } catch (error) {
+                console.error('Error checking for LP key:', error);
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+        }
+        
+        throw new Error('Timeout waiting for LP to provide public key. LP may be offline.');
     }
 
     async waitForLPReady() {

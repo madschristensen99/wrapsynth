@@ -9,7 +9,7 @@ evm_version = "cancun"
 
 # Optimizer settings
 optimizer = true
-optimizer_runs = 1
+optimizer_runs = 200
 via_ir = true
 
 # Enable FFI for fetching real prices in E2E tests
