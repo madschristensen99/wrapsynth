@@ -12,8 +12,8 @@ import {GnosisAddresses} from "../contracts/GnosisAddresses.sol";
  * @notice Deploys Co-LP liquidity router, creates Uniswap V3 pool, initializes it, and registers router on hub
  */
 contract DeployCoLPRouter is Script {
-    address constant HUB = 0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9;
-    address constant WSXMR = 0x31c76171773138215E518C0224b82AC9BE9897b8;
+    address constant HUB = 0x198E33a69E5121bee029546309DDEf7F0de8dd8C;
+    address constant WSXMR = 0xD1ee047a450B496125c934765a39664d3Cbe87fF;
     address constant DEPLOYER = 0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB;
 
     uint256 constant XMR_PRICE = 390 * 1e18;
@@ -83,7 +83,7 @@ contract DeployCoLPRouter is Script {
     }
 
     function _priceToSqrtPriceX96(uint256 xmrPrice, uint256 collateralPrice) internal pure returns (uint160) {
-        // wsXMR is token0 (address 0x31c7... < 0xaf20...)
+        // wsXMR is token1 (address 0xD1ee... > 0xaf20...)
         // priceRatio = sDAI/wsXMR = (collateralPrice * 1e18) / (xmrPrice * 1e8)
         uint256 priceRatio = (collateralPrice * 1e18) / (xmrPrice * 1e8);
         uint256 sqrtPrice = _sqrt(priceRatio * 1e18);
