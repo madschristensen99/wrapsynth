@@ -108,6 +108,25 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         );
     }
     
+    /**
+     * @notice LP provides their Ed25519 public key for atomic swap coordination
+     * @dev User combines LP's public key with their secret to derive shared Monero address
+     * @param requestId The mint request ID
+     * @param lpPublicKey LP's Ed25519 public key (32 bytes, x-coordinate only)
+     */
+    function provideLPKey(bytes32 requestId, bytes32 lpPublicKey) external {
+        MintRequest storage request = mintRequests[requestId];
+        if (request.status != MintStatus.PENDING) revert InvalidStatus();
+        if (msg.sender != request.lpVault) revert Unauthorized();
+        if (block.number >= request.timeout) revert DeadlineExpired();
+        if (lpPublicKey == bytes32(0)) revert InvalidCommitment();
+        if (lpPublicKeys[requestId] != bytes32(0)) revert InvalidStatus(); // Already provided
+        
+        lpPublicKeys[requestId] = lpPublicKey;
+        
+        emit LPKeyProvided(requestId, lpPublicKey);
+    }
+    
     function setMintReady(bytes32 requestId) external payable {
         MintRequest storage request = mintRequests[requestId];
         if (request.status != MintStatus.PENDING) revert InvalidStatus();

@@ -28,8 +28,9 @@ class PhantomAgent {
      * @param {string} amount - Amount in human-readable format
      * @param {string} destination - Optional destination address for burns
      * @param {string} existingSeed - Optional existing seed phrase
+     * @param {boolean} autoGenerate - If true, auto-generate wallet without UI (default: true)
      */
-    async initialize(action, amount, destination = null, existingSeed = null) {
+    async initialize(action, amount, destination = null, existingSeed = null, autoGenerate = true) {
         const address = getUserAddress();
         if (!address) {
             throw new Error('Wallet not connected');
@@ -45,11 +46,17 @@ class PhantomAgent {
             this.seed = existingSeed;
             this.keySet = createKeySet(existingSeed);
             seedData = { seed: existingSeed, keySet: this.keySet };
+        } else if (autoGenerate) {
+            // Auto-generate wallet silently (MoneroSwap style)
+            console.log('Auto-generating wallet...');
+            const { generateSeedPhrase } = await import('./seedManager.js');
+            this.seed = generateSeedPhrase(12);
+            this.keySet = createKeySet(this.seed);
+            seedData = { seed: this.seed, keySet: this.keySet };
+            console.log('✅ Wallet auto-generated');
         } else {
-            // Check if we have a stored seed for this user
-            // For new operations, we'll generate a new seed each time
-            // Users can optionally store it for convenience
-            console.log('Generating new seed phrase...');
+            // Show UI for manual seed management (optional)
+            console.log('Showing seed generation UI...');
             seedData = await showSeedGenerationModal();
             this.seed = seedData.seed;
             this.keySet = seedData.keySet;
@@ -185,6 +192,78 @@ class PhantomAgent {
             throw new Error('Agent not initialized');
         }
         return this.seed;
+    }
+
+    /**
+     * Derive shared Monero address from LP's public key
+     * Uses ECDH (Elliptic Curve Diffie-Hellman) to combine keys
+     * @param {string} lpPublicKeyHex - LP's Ed25519 public key (0x-prefixed hex)
+     * @returns {string} Shared Monero address
+     */
+    deriveSharedMoneroAddress(lpPublicKeyHex) {
+        if (!this.keySet) {
+            throw new Error('Agent not initialized');
+        }
+        
+        // For now, return a placeholder that shows the concept
+        // TODO: Implement proper ECDH key combination and Monero address derivation
+        // This requires:
+        // 1. Multiply LP's public key by user's private spend key (ECDH)
+        // 2. Derive shared spend key and view key
+        // 3. Generate Monero address from shared keys
+        
+        const lpKeyShort = lpPublicKeyHex.slice(0, 10) + '...' + lpPublicKeyHex.slice(-8);
+        const userKeyShort = this.keySet.publicSpendKey.toString(16).slice(0, 10);
+        
+        console.log('Deriving shared Monero address:');
+        console.log('  LP Public Key:', lpKeyShort);
+        console.log('  User Secret:', '0x' + this.seed.split(' ').slice(0, 2).join('') + '...');
+        
+        // Placeholder format - shows it's a shared/derived address
+        return `XMR_SHARED_${userKeyShort}_${lpKeyShort}`;
+    }
+
+    /**
+     * Show seed phrase backup UI for auto-generated wallets
+     * Allows users to backup their seed after auto-generation
+     */
+    async showSeedBackup() {
+        if (!this.seed) {
+            throw new Error('Agent not initialized');
+        }
+        
+        const words = this.seed.split(' ');
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="modal-content seed-modal">
+                <div class="modal-header">
+                    <h2>🔐 Backup Your Wallet</h2>
+                    <button class="btn-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+                </div>
+                <div class="modal-body">
+                    <div class="warning-box">
+                        <strong>⚠️ Important:</strong>
+                        <p>Save these 12 words to recover your Monero funds if needed.</p>
+                    </div>
+                    <div class="seed-words-grid">
+                        ${words.map((word, i) => `
+                            <div class="seed-word">
+                                <span class="seed-word-number">${i + 1}.</span>
+                                <span class="seed-word-text">${word}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <button class="btn-secondary" onclick="navigator.clipboard.writeText('${this.seed}').then(() => alert('Copied to clipboard!'))">
+                        📋 Copy to Clipboard
+                    </button>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-primary" onclick="this.closest('.modal-overlay').remove()">Done</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
     }
 
     /**
