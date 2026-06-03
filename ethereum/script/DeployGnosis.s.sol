@@ -10,11 +10,15 @@ import "../contracts/facets/BurnFacet.sol";
 import "../contracts/facets/LiquidationFacet.sol";
 import "../contracts/facets/YieldFacet.sol";
 import "../contracts/wsXMR.sol";
+import "../contracts/router/wsXMRLiquidityRouter.sol";
+import "../contracts/interfaces/external/IUniswapV3Factory.sol";
+import "../contracts/GnosisAddresses.sol";
 
 contract DeployGnosis is Script {
     // No verifier needed for RedStone (uses off-chain signed data)
     address constant VERIFIER = address(0);
     address constant SDAI = 0xaf204776c7245bF4147c2612BF6e5972Ee483701;
+    uint256 constant XMR_PRICE = 390 * 1e18; // Initial XMR price for pool initialization
 
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
@@ -88,6 +92,58 @@ contract DeployGnosis is Script {
         console.log("Hub set as wsXMR minter");
         console.log("");
 
+        console.log("============================================================");
+        console.log("STEP 6: Creating/Checking Uniswap V3 Pool");
+        console.log("============================================================");
+        address token0 = SDAI < address(wsxmr) ? SDAI : address(wsxmr);
+        address token1 = SDAI < address(wsxmr) ? address(wsxmr) : SDAI;
+        address factory = GnosisAddresses.UNI_V3_FACTORY;
+        address pool = IUniswapV3Factory(factory).getPool(token0, token1, 3000);
+
+        if (pool == address(0)) {
+            console.log("Creating Uniswap V3 pool...");
+            pool = IUniswapV3Factory(factory).createPool(token0, token1, 3000);
+            console.log("Pool created:", pool);
+        } else {
+            console.log("Pool already exists:", pool);
+        }
+
+        // Initialize pool if needed
+        (bool success, bytes memory data) = pool.call(abi.encodeWithSignature("slot0()"));
+        if (success && data.length >= 32) {
+            uint160 sqrtPriceX96 = abi.decode(data, (uint160));
+            if (sqrtPriceX96 == 0) {
+                console.log("Initializing pool at $390 XMR...");
+                uint160 targetSqrtPriceX96 = _priceToSqrtPriceX96(XMR_PRICE, 1e18);
+                (bool ok,) = pool.call(abi.encodeWithSignature("initialize(uint160)", targetSqrtPriceX96));
+                require(ok, "Pool initialization failed");
+                console.log("Pool initialized");
+            } else {
+                console.log("Pool already initialized");
+            }
+        }
+        console.log("");
+
+        console.log("============================================================");
+        console.log("STEP 7: Deploying Liquidity Router");
+        console.log("============================================================");
+        wsXMRLiquidityRouter router = new wsXMRLiquidityRouter(
+            address(hub),
+            GnosisAddresses.UNI_V3_POSITION_MANAGER,
+            SDAI,
+            address(wsxmr),
+            pool
+        );
+        console.log("Router deployed to:", address(router));
+        console.log("");
+
+        console.log("============================================================");
+        console.log("STEP 8: Registering Router with Hub");
+        console.log("============================================================");
+        hub.setLiquidityRouter(address(router));
+        console.log("Router registered with hub");
+        console.log("");
+
         vm.stopBroadcast();
 
         console.log("============================================================");
@@ -99,6 +155,7 @@ contract DeployGnosis is Script {
         console.log("Core Contracts:");
         console.log("  wsXMR:            ", address(wsxmr));
         console.log("  wsXmrHub:         ", address(hub));
+        console.log("  LiquidityRouter:  ", address(router));
         console.log("");
         console.log("Facets:");
         console.log("  OracleFacet:      ", address(oracleFacet));
@@ -110,11 +167,31 @@ contract DeployGnosis is Script {
         console.log("");
         console.log("External Contracts:");
         console.log("  sDAI:             ", SDAI);
+        console.log("  Uniswap V3 Pool:  ", pool);
         console.log("============================================================");
         console.log("");
         console.log("Next steps:");
-        console.log("1. Verify contracts: forge verify-contract <address> <contract> --chain gnosis");
-        console.log("2. Configure LP node with deployed addresses");
-        console.log("3. Update frontend configuration");
+        console.log("1. Verify contracts on Gnosisscan");
+        console.log("2. Update frontend configuration with new addresses");
+        console.log("3. Configure LP node with deployed addresses");
+        console.log("4. Test full cycle with testFullCycleNow.js");
+        console.log("5. Test co-LP with testCoLPNow.js");
+    }
+
+    function _priceToSqrtPriceX96(uint256 xmrPrice, uint256 collateralPrice) internal pure returns (uint160) {
+        // Calculate price ratio: sDAI/wsXMR
+        // wsXMR has 8 decimals, sDAI has 18 decimals
+        uint256 priceRatio = (collateralPrice * 1e18) / (xmrPrice * 1e8);
+        uint256 sqrtPrice = _sqrt(priceRatio * 1e18);
+        return uint160((sqrtPrice * (1 << 96)) / 1e9);
+    }
+
+    function _sqrt(uint256 x) internal pure returns (uint256 y) {
+        uint256 z = (x + 1) / 2;
+        y = x;
+        while (z < y) {
+            y = z;
+            z = (x / z + z) / 2;
+        }
     }
 }
