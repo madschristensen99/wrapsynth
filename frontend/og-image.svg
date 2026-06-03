@@ -1,0 +1,24 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fafafa"/>
+      <stop offset="100%" stop-color="#ffffff"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="80%" cy="20%" r="60%">
+      <stop offset="0%" stop-color="#fff4eb"/>
+      <stop offset="100%" stop-color="transparent"/>
+    </radialGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ff6b00"/>
+      <stop offset="100%" stop-color="#ff8533"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+  <rect x="100" y="100" width="1000" height="430" rx="24" fill="#ffffff" stroke="#e2e8f0" stroke-width="2"/>
+  <text x="600" y="260" font-family="'Inter', -apple-system, sans-serif" font-size="72" font-weight="800" fill="#1a1a2e" text-anchor="middle" letter-spacing="-0.03em">WrapSynth</text>
+  <text x="600" y="340" font-family="'Inter', -apple-system, sans-serif" font-size="32" font-weight="600" fill="#64748b" text-anchor="middle">Trustless Wrapped Monero via Atomic Liquidity</text>
+  <rect x="420" y="400" width="360" height="56" rx="12" fill="url(#accent)"/>
+  <text x="600" y="438" font-family="'Inter', -apple-system, sans-serif" font-size="20" font-weight="700" fill="#ffffff" text-anchor="middle">Launch App →</text>
+  <text x="600" y="520" font-family="'JetBrains Mono', monospace" font-size="16" font-weight="500" fill="#94a3b8" text-anchor="middle">>200% Collateral Ratio • 12h Swap Timeout • Gnosis Chain</text>
+</svg>
