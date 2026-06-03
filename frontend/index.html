@@ -834,6 +834,30 @@
 
         ::selection { background: var(--accent-orange); color: #fff; }
     </style>
+    <script type="importmap">
+    {
+      "imports": {
+        "@noble/hashes/sha512": "https://esm.sh/@noble/hashes@1.3.3/sha512",
+        "@noble/hashes/sha256": "https://esm.sh/@noble/hashes@1.3.3/sha256",
+        "@noble/hashes/utils": "https://esm.sh/@noble/hashes@1.3.3/utils",
+        "@noble/hashes/hmac": "https://esm.sh/@noble/hashes@1.3.3/hmac",
+        "@noble/hashes/pbkdf2": "https://esm.sh/@noble/hashes@1.3.3/pbkdf2",
+        "@noble/hashes/ripemd160": "https://esm.sh/@noble/hashes@1.3.3/ripemd160",
+        "@noble/hashes/_assert": "https://esm.sh/@noble/hashes@1.3.3/_assert",
+        "@noble/curves/secp256k1": "https://esm.sh/@noble/curves@1.2.0/secp256k1",
+        "@scure/base": "https://esm.sh/@scure/base@1.1.5",
+        "@scure/base@~1.1.0": "https://esm.sh/@scure/base@1.1.5",
+        "@scure/base@~1.1.2": "https://esm.sh/@scure/base@1.1.5"
+      }
+    }
+    </script>
+    <script>
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(regs => {
+            regs.forEach(r => r.unregister());
+        });
+    }
+    </script>
 </head>
 <body>
     <nav class="navbar">
