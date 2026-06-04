@@ -183,6 +183,11 @@ contract MintFacet is wsXmrStorage, IMintFacet {
                 pendingReturns[request.initiator][address(0)] += request.griefingDeposit;
                 emit ReturnQueued(request.initiator, address(0), request.griefingDeposit);
             }
+            // C3: Return LP bond if present (nonce mismatch strands bond)
+            if (request.lpBond > 0) {
+                pendingReturns[request.lpVault][address(0)] += request.lpBond;
+                emit ReturnQueued(request.lpVault, address(0), request.lpBond);
+            }
             emit MintCancelled(request.requestId);
             _reentrancyStatus = _NOT_ENTERED;
             return;
@@ -246,14 +251,15 @@ contract MintFacet is wsXmrStorage, IMintFacet {
                 emit ReturnQueued(request.initiator, address(0), depositToTransfer);
             }
         } else {
-            // LP marked READY but failed to provide secret - user gets BOTH deposits
+            // C1: LP marked READY but failed to provide secret
+            // Slash griefing deposit to LP (anti-grief), return LP bond to LP
             if (depositToTransfer > 0) {
-                pendingReturns[request.initiator][address(0)] += depositToTransfer;
-                emit ReturnQueued(request.initiator, address(0), depositToTransfer);
+                pendingReturns[request.lpVault][address(0)] += depositToTransfer;
+                emit ReturnQueued(request.lpVault, address(0), depositToTransfer);
             }
             if (bondToTransfer > 0) {
-                pendingReturns[request.initiator][address(0)] += bondToTransfer;
-                emit ReturnQueued(request.initiator, address(0), bondToTransfer);
+                pendingReturns[request.lpVault][address(0)] += bondToTransfer;
+                emit ReturnQueued(request.lpVault, address(0), bondToTransfer);
             }
         }
         

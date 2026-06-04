@@ -130,6 +130,13 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         return requestId;
     }
     
+    /**
+     * @notice LP proposes secret hash after locking XMR on Monero
+     * @dev The secretHash emitted here, combined with request.xmrAmount from BurnRequested event,
+     *      provides all information clients need to verify the Monero lock before confirmMoneroLock
+     * @param requestId The burn request ID
+     * @param secretHash keccak256(secret·G) where secret unlocks the Monero output
+     */
     function proposeHash(bytes32 requestId, bytes32 secretHash) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
@@ -150,6 +157,21 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         _reentrancyStatus = _NOT_ENTERED;
     }
     
+    /**
+     * @notice User confirms the Monero output is locked with correct amount and secret binding
+     * @dev CRITICAL CLIENT REQUIREMENT: This is a trust-minimized attestation. Clients MUST verify
+     *      off-chain BEFORE calling this function:
+     *      1. The Monero output amount matches request.xmrAmount (available in HashProposed event)
+     *      2. The secret binding is correct - the adaptor signature construction ensures that
+     *         revealing the secret on-chain (via finalizeBurn) is the ONLY way the user can
+     *         claim the locked XMR
+     *      3. The LP cannot expose the secret Monero-side before finalizeBurn, or double-claim
+     *         becomes possible (user gets XMR + slashes collateral)
+     * 
+     *      Once COMMITTED, the user is bound. If the LP fails to finalize, the user receives
+     *      par value + reward via claimSlashedCollateral. There is no on-chain Monero verification.
+     * @param requestId The burn request ID
+     */
     function confirmMoneroLock(bytes32 requestId) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
@@ -172,7 +194,8 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
-        if (block.number >= request.deadline) revert DeadlineExpired();
+        // B2: Grace window - LP can finalize until deadline + grace
+        if (block.number >= request.deadline + BURN_FINALIZE_GRACE_BLOCKS) revert DeadlineExpired();
         
         // Verify the secret matches the hash
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
@@ -183,13 +206,8 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         Vault storage vault = _vaults[request.lpVault];
         
-        // TODO: Implement calculateSafeReward in BurnLogic library
-        // For now, use the full reward amount
+        // B4: Unified reward accounting - pay full reward on successful finalize
         uint256 safeReward = request.rewardCollateral;
-        
-        // if (safeReward < request.rewardCollateral) {
-        //     emit BurnRewardShortfall(requestId, request.rewardCollateral, safeReward);
-        // }
         
         vault.collateralShares += request.lockedCollateral;
         vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
@@ -213,21 +231,35 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
-        if (block.number < request.deadline) revert DeadlineNotExpired();
+        // B2: Slash only after deadline + grace (no overlap with finalize window)
+        if (block.number < request.deadline + BURN_FINALIZE_GRACE_BLOCKS) revert DeadlineNotExpired();
         if (msg.sender != request.user) revert Unauthorized();
         
         Vault storage vault = _vaults[request.lpVault];
         
-        uint256 totalSeized = request.lockedCollateral + request.rewardCollateral;
-        vault.lockedCollateral -= totalSeized;
+        // B1: Cap user payout at par value + reward, return excess to LP
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
+        uint256 parValueUsd = (request.wsxmrAmount * xmrPrice) / WSXMR_DECIMALS;
+        uint256 parShares = (parValueUsd * SDAI_DECIMALS) / collateralPrice;
+        
+        // User gets min(par, lockedCollateral) + reward; LP gets excess locked collateral
+        uint256 userBase = parShares < request.lockedCollateral ? parShares : request.lockedCollateral;
+        uint256 lpRefund = request.lockedCollateral - userBase;
+        uint256 userPayout = userBase + request.rewardCollateral;
+        
+        vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
+        if (lpRefund > 0) {
+            vault.collateralShares += lpRefund;
+        }
         globalPendingBurnDebt -= request.wsxmrAmount;
         
-        pendingReturns[request.user][GnosisAddresses.SDAI] += totalSeized;
-        globalPendingSDAI += totalSeized;
-        emit ReturnQueued(request.user, GnosisAddresses.SDAI, totalSeized);
+        pendingReturns[request.user][GnosisAddresses.SDAI] += userPayout;
+        globalPendingSDAI += userPayout;
+        emit ReturnQueued(request.user, GnosisAddresses.SDAI, userPayout);
         
         request.status = BurnStatus.SLASHED;
-        emit BurnSlashed(requestId, request.user, totalSeized);
+        emit BurnSlashed(requestId, request.user, userPayout);
         
         _reentrancyStatus = _NOT_ENTERED;
     }
