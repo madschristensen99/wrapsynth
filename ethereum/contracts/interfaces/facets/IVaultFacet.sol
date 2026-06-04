@@ -22,6 +22,7 @@ interface IVaultFacet is IErrors {
     event MinBurnAmountUpdated(address indexed lpVault, uint256 newMinBurnAmount);
     event MintTimeoutBlocksUpdated(address indexed lpVault, uint256 newBlocks);
     event BurnTimeoutBlocksUpdated(address indexed lpVault, uint256 newBlocks);
+    event MinterWhitelistUpdated(address indexed lpVault, address indexed minter, bool whitelisted);
     // Note: ReturnQueued event is defined in wsXmrStorage
     event ReturnsWithdrawn(address indexed recipient, address indexed token, uint256 amount);
     
@@ -80,6 +81,16 @@ interface IVaultFacet is IErrors {
     /// @notice Set burn timeout in blocks (360-17280, ~30 min to ~24 hours)
     /// @param blocks Number of blocks until burn request can be cancelled
     function setBurnTimeoutBlocks(uint256 blocks) external;
+    
+    /// @notice Whitelist a minter to bypass griefing deposit requirement
+    /// @param minter Address to whitelist
+    /// @param whitelisted True to whitelist, false to remove
+    function setMinterWhitelist(address minter, bool whitelisted) external;
+    
+    /// @notice Batch whitelist multiple minters
+    /// @param minters Array of addresses to whitelist
+    /// @param whitelisted True to whitelist all, false to remove all
+    function batchSetMinterWhitelist(address[] calldata minters, bool whitelisted) external;
     
     // ========== CO-LP OPERATIONS ==========
     
@@ -143,6 +154,9 @@ interface IVaultFacet is IErrors {
     
     /// @notice Check if address has an active vault
     function hasActiveVault(address lpAddress) external view returns (bool);
+    
+    /// @notice Check if a minter is whitelisted for a vault
+    function isMinterWhitelisted(address vault, address minter) external view returns (bool);
     
     /// @notice Calculate collateral ratio for given amounts
     function calculateCollateralRatio(

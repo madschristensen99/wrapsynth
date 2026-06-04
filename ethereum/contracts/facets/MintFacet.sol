@@ -35,7 +35,13 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         Vault storage vault = _vaults[lpVault];
         _syncVaultYield(lpVault);
         
-        if (msg.value < vault.mintGriefingDeposit) revert InsufficientDeposit();
+        // P0-2: Check griefing deposit requirement
+        // Whitelisted minters can bypass; others must meet vault's configured deposit
+        bool isWhitelisted = whitelistedMinters[lpVault][msg.sender];
+        if (!isWhitelisted) {
+            if (vault.mintGriefingDeposit == 0) revert InsufficientDeposit();
+            if (msg.value < vault.mintGriefingDeposit) revert InsufficientDeposit();
+        }
         
         uint256 wsxmrAmount = xmrAmount / XMR_TO_WSXMR_DIVISOR;
         uint256 feeAmount = (wsxmrAmount * vault.mintFeeBps) / BPS_DENOMINATOR;

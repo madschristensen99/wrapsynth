@@ -111,7 +111,7 @@ contract CoLPTest is Test {
         VaultFacet(address(hub)).createVault();
         VaultFacet(address(hub)).setMaxMintBps(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
-        VaultFacet(address(hub)).setMintGriefingDeposit(0);
+        VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
 
         // Get sDAI for LP
         deal(GnosisAddresses.SDAI, lp, 1000 ether);
@@ -124,7 +124,7 @@ contract CoLPTest is Test {
         bytes32 testSecret = bytes32(uint256(0xabcdef));
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(testSecret));
         bytes32 commitment = keccak256(abi.encodePacked(px, py));
-        MintFacet(address(hub)).initiateMint(lp, user, 20000000000, commitment);
+        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 20000000000, commitment);
         vm.stopPrank();
 
         bytes32[] memory userMints = _getUserMintRequests(user);
@@ -303,7 +303,7 @@ contract CoLPTest is Test {
 
         // Mint ~14M wsXMR units (close to CR limit at $390 with ~$96 collateral after Co-LP)
         vm.prank(user2);
-        MintFacet(address(hub)).initiateMint(lp, user2, 140_000_000_000, commitment2);
+        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user2, 140_000_000_000, commitment2);
 
         bytes32[] memory user2Mints = _getUserMintRequests(user2);
         vm.prank(lp);
@@ -465,7 +465,7 @@ contract CoLPTest is Test {
         bytes32 commitment3 = keccak256(abi.encodePacked(px3, py3));
 
         vm.prank(user3);
-        bytes32 requestId = MintFacet(address(hub)).initiateMint(lp, user3, 20000000000, commitment3);
+        bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user3, 20000000000, commitment3);
 
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady(requestId);
