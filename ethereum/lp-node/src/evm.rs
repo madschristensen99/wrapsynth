@@ -98,18 +98,23 @@ sol! {
         // Structs
         struct Vault {
             address lpAddress;
-            uint256 collateralAmount;
+            uint256 collateralShares;
             uint256 lockedCollateral;
             uint256 normalizedDebt;
             uint256 pendingDebt;
             uint16 maxMintBps;
             uint256 mintGriefingDeposit;
+            uint256 mintReadyBond;
             uint16 mintFeeBps;
             uint16 burnRewardBps;
             uint256 liquidationNonce;
             uint256 mintNonce;
             uint256 minBurnAmount;
             bool active;
+            uint256 deployedSDAIShares;
+            uint16 maxCoLPRangeBps;
+            uint256 mintTimeoutBlocks;
+            uint256 burnTimeoutBlocks;
         }
         
         // View functions
@@ -535,16 +540,21 @@ impl EvmClient {
 
         Ok(VaultInfo {
             lp_address: vault.lpAddress,
-            collateral_amount: vault.collateralAmount,
+            collateral_shares: vault.collateralShares,
             locked_collateral: vault.lockedCollateral,
             normalized_debt: vault.normalizedDebt,
             pending_debt: vault.pendingDebt,
             max_mint_bps: vault.maxMintBps,
             mint_griefing_deposit: vault.mintGriefingDeposit,
+            mint_ready_bond: vault.mintReadyBond,
             mint_fee_bps: vault.mintFeeBps,
             burn_reward_bps: vault.burnRewardBps,
             liquidation_nonce: vault.liquidationNonce,
             active: vault.active,
+            deployed_sdai_shares: vault.deployedSDAIShares,
+            max_colp_range_bps: vault.maxCoLPRangeBps,
+            mint_timeout_blocks: vault.mintTimeoutBlocks,
+            burn_timeout_blocks: vault.burnTimeoutBlocks,
         })
     }
 
@@ -568,16 +578,21 @@ impl EvmClient {
 
         Ok(VaultInfo {
             lp_address: vault.lpAddress,
-            collateral_amount: vault.collateralAmount,
+            collateral_shares: vault.collateralShares,
             locked_collateral: vault.lockedCollateral,
             normalized_debt: vault.normalizedDebt,
             pending_debt: vault.pendingDebt,
             max_mint_bps: vault.maxMintBps,
             mint_griefing_deposit: vault.mintGriefingDeposit,
+            mint_ready_bond: vault.mintReadyBond,
             mint_fee_bps: vault.mintFeeBps,
             burn_reward_bps: vault.burnRewardBps,
             liquidation_nonce: vault.liquidationNonce,
             active: vault.active,
+            deployed_sdai_shares: vault.deployedSDAIShares,
+            max_colp_range_bps: vault.maxCoLPRangeBps,
+            mint_timeout_blocks: vault.mintTimeoutBlocks,
+            burn_timeout_blocks: vault.burnTimeoutBlocks,
         })
     }
 
@@ -741,7 +756,7 @@ impl EvmClient {
         let amount_wei = U256::from((amount * 1e18) as u128);
         
         // Check available collateral (total - locked)
-        let available = vault_info.collateral_amount - vault_info.locked_collateral;
+        let available = vault_info.collateral_shares - vault_info.locked_collateral;
         if available < amount_wei {
             let available_dai = available.to::<u128>() as f64 / 1e18;
             let locked_dai = vault_info.locked_collateral.to::<u128>() as f64 / 1e18;
@@ -851,7 +866,7 @@ impl EvmClient {
             .await
             .context("Failed to get XMR price")?._0;
         
-        let available_collateral = vault.collateral_amount.saturating_sub(vault.locked_collateral);
+        let available_collateral = vault.collateral_shares.saturating_sub(vault.locked_collateral);
         
         let available_collateral_usd = (available_collateral * collateral_price) / U256::from(10u64.pow(18));
         
@@ -897,16 +912,21 @@ impl EvmClient {
 #[derive(Debug, Clone)]
 pub struct VaultInfo {
     pub lp_address: Address,
-    pub collateral_amount: U256,
+    pub collateral_shares: U256,
     pub locked_collateral: U256,
     pub normalized_debt: U256,
     pub pending_debt: U256,
     pub max_mint_bps: u16,
     pub mint_griefing_deposit: U256,
+    pub mint_ready_bond: U256,
     pub mint_fee_bps: u16,
     pub burn_reward_bps: u16,
     pub liquidation_nonce: U256,
     pub active: bool,
+    pub deployed_sdai_shares: U256,
+    pub max_colp_range_bps: u16,
+    pub mint_timeout_blocks: U256,
+    pub burn_timeout_blocks: U256,
 }
 
 impl VaultInfo {
@@ -923,7 +943,7 @@ impl VaultInfo {
 
         // Convert collateral to USD (sDAI has 18 decimals)
         let collateral_usd =
-            (self.collateral_amount.to::<u128>() as f64 / 1e18) * collateral_price_usd;
+            (self.collateral_shares.to::<u128>() as f64 / 1e18) * collateral_price_usd;
 
         (collateral_usd / debt_usd) * 100.0
     }

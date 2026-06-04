@@ -748,7 +748,7 @@ async fn admin_inventory(
     Ok(Json(InventoryResponse {
         xmr_balance,
         xmr_unlocked,
-        collateral_amount: vault.collateral_amount.to_string(),
+        collateral_amount: vault.collateral_shares.to_string(),
         locked_collateral: vault.locked_collateral.to_string(),
         pending_mints,
         pending_burns,

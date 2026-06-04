@@ -23,7 +23,7 @@ impl LpCli {
         println!("\n╔════════════════════════════════════════════════════════════╗");
         println!("║                    VAULT INFORMATION                       ║");
         println!("╠════════════════════════════════════════════════════════════╣");
-        println!("║ Collateral Amount:  {:>38} ║", format_u256(vault.collateral_amount));
+        println!("║ Collateral Shares:  {:>38} ║", format_u256(vault.collateral_shares));
         println!("║ Normalized Debt:    {:>38} ║", format_u256(vault.normalized_debt));
         println!("║ Health Ratio:       {:>38} ║", calculate_health_ratio(&vault));
         println!("╚════════════════════════════════════════════════════════════╝\n");
@@ -228,7 +228,7 @@ fn calculate_ratio(vault: &crate::evm::VaultInfo) -> f64 {
         return 0.0;
     }
     
-    let collateral = vault.collateral_amount.to::<u128>() as f64;
+    let collateral = vault.collateral_shares.to::<u128>() as f64;
     let debt = vault.normalized_debt.to::<u128>() as f64;
     
     (collateral / debt) * 100.0
