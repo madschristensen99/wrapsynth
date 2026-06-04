@@ -99,6 +99,7 @@ contract E2EAdvancedScenariosTest is Test {
         VaultFacet(address(hub)).setMaxMintBps(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
+        VaultFacet(address(hub)).setMintReadyBond(0.001 ether);
         
         IERC20(WXDAI).approve(address(hub), collateralAmount);
         VaultFacet(address(hub)).depositCollateral(collateralAmount);
@@ -114,8 +115,12 @@ contract E2EAdvancedScenariosTest is Test {
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
             lp, user, xmrAmount, commitment);
         
+        bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(requestId);
+        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey);
+        
+        vm.prank(lp);
+        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(requestId);
         
         vm.prank(user);
         MintFacet(address(hub)).finalizeMint(requestId, testSecret);

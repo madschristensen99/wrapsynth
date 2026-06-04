@@ -4,7 +4,7 @@ const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 
-const HUB_ADDRESS = '0x99fde7582653f1e25489f2295747c0dc7510426f'; // Gnosis Mainnet
+const HUB_ADDRESS = '0xd32e2ece901094550b81ab5051a72256761514d6'; // Gnosis Mainnet - June 4, 2026
 const SDAI_ADDRESS = '0xaf204776c7245bF4147c2612BF6e5972Ee483701';
 
 async function main() {

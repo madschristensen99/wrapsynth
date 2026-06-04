@@ -112,6 +112,7 @@ contract CoLPTest is Test {
         VaultFacet(address(hub)).setMaxMintBps(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
+        VaultFacet(address(hub)).setMintReadyBond(0.001 ether);
 
         // Get sDAI for LP
         deal(GnosisAddresses.SDAI, lp, 1000 ether);
@@ -129,8 +130,13 @@ contract CoLPTest is Test {
 
         bytes32[] memory userMints = _getUserMintRequests(user);
 
+        // LP provides public key
+        bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(userMints[0]);
+        MintFacet(address(hub)).provideLPKey(userMints[0], lpPublicKey);
+
+        vm.prank(lp);
+        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(userMints[0]);
 
         vm.prank(user);
         MintFacet(address(hub)).finalizeMint(userMints[0], testSecret);
@@ -306,8 +312,13 @@ contract CoLPTest is Test {
         MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user2, 140_000_000_000, commitment2);
 
         bytes32[] memory user2Mints = _getUserMintRequests(user2);
+        
+        bytes32 lpPublicKey2 = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(user2Mints[0]);
+        MintFacet(address(hub)).provideLPKey(user2Mints[0], lpPublicKey2);
+        
+        vm.prank(lp);
+        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(user2Mints[0]);
 
         vm.prank(user2);
         MintFacet(address(hub)).finalizeMint(user2Mints[0], secret2);
@@ -467,8 +478,12 @@ contract CoLPTest is Test {
         vm.prank(user3);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user3, 20000000000, commitment3);
 
+        bytes32 lpPublicKey3 = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(requestId);
+        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey3);
+
+        vm.prank(lp);
+        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(requestId);
 
         vm.prank(user3);
         MintFacet(address(hub)).finalizeMint(requestId, secret3);
