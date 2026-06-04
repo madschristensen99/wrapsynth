@@ -15,11 +15,11 @@ export const NETWORKS = {
     }
 };
 
-// Contract addresses - Deployed on Gnosis Chain Mainnet (Diamond Architecture)
+// Contract addresses - Deployed on Gnosis Chain Mainnet (Diamond Architecture) - June 4, 2026
 export const CONTRACTS = {
-    hub: '0x99fde7582653f1e25489f2295747c0dc7510426f',  // wsXmrHub (Diamond) - DEPLOYED
-    wsxmrToken: '0x3ba7ac3206195d278a62c5a388cdcbe25613e448',
-    liquidityRouter: '0x214e07a2433bb9bbf5b2833f45cff4de6e83ca15',
+    hub: '0xd32e2ece901094550b81ab5051a72256761514d6',  // wsXmrHub (Diamond) - DEPLOYED
+    wsxmrToken: '0x8890f651190c838651623de077474a98e37803ab',
+    liquidityRouter: '0x3235ffe7b51b3726bc0f398da21ed0583103f106',
     // Default LP vault to use for mints (the active LP running the LP node)
     defaultLpVault: '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB'
 };

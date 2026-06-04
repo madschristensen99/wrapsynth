@@ -227,9 +227,11 @@ contract E2EFullCycleTest is Test {
         VaultFacet(address(hub)).setMaxMintBps(0); // No limit
         VaultFacet(address(hub)).setMinBurnAmount(0); // No minimum
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
+        VaultFacet(address(hub)).setMintReadyBond(0.001 ether);
         console.log("[OK] Max mint BPS: unlimited");
         console.log("[OK] Min burn amount: 0");
         console.log("[OK] Griefing deposit: 0.001 ETH");
+        console.log("[OK] Mint ready bond: 0.001 ETH");
         
         vm.stopPrank();
         console.log();
@@ -256,9 +258,16 @@ contract E2EFullCycleTest is Test {
         console.log("[OK] Mint initiated");
         console.log("  Request ID:", vm.toString(mintRequestId));
         
-        // LP sets ready
+        // LP provides their Ed25519 public key for atomic swap
+        bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef)); // Mock LP public key
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(mintRequestId);
+        MintFacet(address(hub)).provideLPKey(mintRequestId, lpPublicKey);
+        console.log("[OK] LP provided public key");
+        console.log("  LP Public Key:", vm.toString(lpPublicKey));
+        
+        // LP sets ready (after user locks XMR on Monero)
+        vm.prank(lp);
+        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(mintRequestId);
         console.log("[OK] LP set mint READY");
         
         // User finalizes

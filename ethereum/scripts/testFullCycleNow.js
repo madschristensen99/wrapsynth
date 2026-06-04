@@ -8,9 +8,9 @@ const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 
-// GNOSIS MAINNET DEPLOYMENT (June 4, 2026)
-const HUB_ADDRESS = '0x99fde7582653f1e25489f2295747c0dc7510426f';
-const WSXMR_ADDRESS = '0x3ba7ac3206195d278a62c5a388cdcbe25613e448';
+// GNOSIS MAINNET DEPLOYMENT (June 4, 2026 - Updated)
+const HUB_ADDRESS = '0xd32e2ece901094550b81ab5051a72256761514d6';
+const WSXMR_ADDRESS = '0x8890f651190c838651623de077474a98e37803ab';
 const WXDAI_ADDRESS = '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d';
 const ED25519_HELPER = '0x7EBdE733CE8Bac20984f919e4d2E66e9eE86f2a3';
 
@@ -36,10 +36,12 @@ async function main() {
         'function setMaxMintBps(uint16 maxMintBps) external',
         'function setMinBurnAmount(uint256 minAmount) external',
         'function setMintGriefingDeposit(uint256 deposit) external',
+        'function setMintReadyBond(uint256 bond) external',
         'function setVaultMarketMetrics(uint16 mintFeeBps, uint16 burnRewardBps) external',
         'function getPendingReturns(address user, address token) external view returns (uint256)',
         'function withdrawReturns(address token) external',
         'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment) external payable returns (bytes32)',
+        'function provideLPKey(bytes32 requestId, bytes32 lpPublicKey) external',
         'function setMintReady(bytes32 requestId) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
         'function requestBurn(uint256 wsxmrAmount, address lpVault, address burnRecipient) external returns (bytes32)',
@@ -64,7 +66,8 @@ async function main() {
     ];
     
     const ed25519HelperAbi = [
-        'function computeCommitment(bytes32 secret) external view returns (bytes32)'
+        'function computeCommitment(bytes32 secret) external view returns (bytes32)',
+        'function scalarMultBase(uint256 scalar) external view returns (uint256 x, uint256 y)'
     ];
     
     const hub = new ethers.Contract(HUB_ADDRESS, hubAbi, wallet);
@@ -95,8 +98,9 @@ async function main() {
         await (await hub.setMaxMintBps(0)).wait();
         await (await hub.setMinBurnAmount(0)).wait();
         await (await hub.setMintGriefingDeposit(ethers.utils.parseEther('0.001'))).wait();
+        await (await hub.setMintReadyBond(ethers.utils.parseEther('0.001'))).wait();
         await (await hub.setVaultMarketMetrics(50, 30)).wait(); // 0.5% mint fee, 0.3% burn reward
-        console.log('✅ Vault configured (0.5% mint fee, 0.3% burn reward)');
+        console.log('✅ Vault configured (0.5% mint fee, 0.3% burn reward, 0.001 ETH bond)');
         
         // Check wxDAI balance and wrap if needed
         const collateralAmount = ethers.utils.parseEther('0.5'); // 0.5 xDAI
@@ -282,7 +286,23 @@ async function main() {
     console.log('✅ Prices refreshed');
     console.log('');
     
-    console.log('📊 Step 4: MINT - LP Sets Ready');
+    console.log('📊 Step 4: MINT - LP Provides Public Key');
+    console.log('==========================================');
+    // Generate real Ed25519 public key for LP
+    const lpSecret = ethers.utils.randomBytes(32);
+    const [lpPubX, lpPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(lpSecret));
+    const lpPublicKey = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['uint256', 'uint256'], [lpPubX, lpPubY]));
+    
+    console.log('LP Secret:', ethers.utils.hexlify(lpSecret));
+    console.log('LP Public Key (x, y):', lpPubX.toString(), lpPubY.toString());
+    console.log('LP Public Key (hash):', lpPublicKey);
+    
+    const provideTx = await hub.provideLPKey(requestId, lpPublicKey);
+    await provideTx.wait();
+    console.log('✅ LP provided public key');
+    console.log('');
+    
+    console.log('📊 Step 5: MINT - LP Sets Ready');
     console.log('================================');
     const lpBond = ethers.utils.parseEther('0.001');
     const readyTx = await hub.setMintReady(requestId, { value: lpBond });
@@ -290,7 +310,7 @@ async function main() {
     console.log('✅ LP marked ready');
     console.log('');
     
-    console.log('📊 Step 5: MINT - Finalize');
+    console.log('📊 Step 6: MINT - Finalize');
     console.log('===========================');
     const finalizeTx = await hub.finalizeMint(requestId, secret, { gasLimit: 1000000 });
     const finalizeReceipt = await finalizeTx.wait();
@@ -313,7 +333,7 @@ async function main() {
     console.log('✅ Fee correctly applied:', wsxmrBalance.eq(expectedAfterFee) ? 'YES' : 'NO');
     console.log('');
     
-    console.log('📊 Step 6: BURN - Request');
+    console.log('📊 Step 7: BURN - Request');
     console.log('=========================');
     const burnAmount = wsxmrBalance;
     
@@ -330,7 +350,7 @@ async function main() {
     console.log('Amount:', ethers.utils.formatUnits(burnAmount, decimals), 'wsXMR');
     console.log('');
     
-    console.log('📊 Step 7: BURN - LP Proposes Hash');
+    console.log('📊 Step 8: BURN - LP Proposes Hash');
     console.log('===================================');
     const burnSecret = ethers.utils.randomBytes(32);
     const secretHash = await ed25519Helper.computeCommitment(burnSecret);
@@ -343,15 +363,15 @@ async function main() {
     console.log('✅ LP proposed secret hash');
     console.log('');
     
-    console.log('📊 Step 8: BURN - User Confirms Monero Lock');
+    console.log('📊 Step 9: BURN - User Confirms Monero Lock');
     console.log('============================================');
     const confirmTx = await hub.confirmMoneroLock(burnRequestId, { gasLimit: 500000 });
     await confirmTx.wait();
     console.log('✅ User confirmed Monero lock');
     console.log('');
     
-    console.log('📊 Step 9: BURN - LP Finalizes');
-    console.log('===============================');
+    console.log('📊 Step 10: BURN - LP Finalizes');
+    console.log('================================');
     
     // Check wxDAI balance before burn to verify reward
     const wxdaiBalanceBefore = await wxdai.balanceOf(wallet.address);
@@ -376,7 +396,7 @@ async function main() {
     console.log('Total Supply:', ethers.utils.formatUnits(totalSupply, decimals));
     console.log('');
     
-    console.log('📊 Step 10: CLAIM - Withdraw Burn Rewards');
+    console.log('📊 Step 11: CLAIM - Withdraw Burn Rewards');
     console.log('==========================================');
     const SDAI_ADDRESS = '0xaf204776c7245bF4147c2612BF6e5972Ee483701';
     const pendingReward = await hub.getPendingReturns(wallet.address, SDAI_ADDRESS);

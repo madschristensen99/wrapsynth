@@ -9,8 +9,8 @@ const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 
-const HUB_ADDRESS = '0x99fde7582653f1e25489f2295747c0dc7510426f';
-const WSXMR_ADDRESS = '0x3ba7ac3206195d278a62c5a388cdcbe25613e448';
+const HUB_ADDRESS = '0xd32e2ece901094550b81ab5051a72256761514d6';
+const WSXMR_ADDRESS = '0x8890f651190c838651623de077474a98e37803ab';
 const WXDAI_ADDRESS = '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d';
 const ED25519_HELPER = '0x7EBdE733CE8Bac20984f919e4d2E66e9eE86f2a3';
 
@@ -36,6 +36,7 @@ async function main() {
         'function setMaxMintBps(uint16 maxMintBps) external',
         'function setMinBurnAmount(uint256 minAmount) external',
         'function setMintGriefingDeposit(uint256 deposit) external',
+        'function setMintReadyBond(uint256 bond) external',
         'function setVaultMarketMetrics(uint16 mintFeeBps, uint16 burnRewardBps) external',
         'function userOpenCoLP(address lpVault, uint256 wsxmrAmount, uint256 deadline) external returns (uint256 tokenId)',
         'function unwindCoLP(uint256 tokenId, uint256 deadline) external',
@@ -43,6 +44,7 @@ async function main() {
         'function getPendingReturns(address user, address token) external view returns (uint256)',
         'function withdrawReturns(address token) external',
         'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment) external payable returns (bytes32)',
+        'function provideLPKey(bytes32 requestId, bytes32 lpPublicKey) external',
         'function setMintReady(bytes32 requestId) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
         'function updateOraclePrices(bytes[] calldata updateData) external payable',
@@ -64,7 +66,8 @@ async function main() {
     ];
 
     const ed25519HelperAbi = [
-        'function computeCommitment(bytes32 secret) external view returns (bytes32)'
+        'function computeCommitment(bytes32 secret) external view returns (bytes32)',
+        'function scalarMultBase(uint256 scalar) external view returns (uint256 x, uint256 y)'
     ];
 
     const hub = new ethers.Contract(HUB_ADDRESS, hubAbi, wallet);
@@ -93,6 +96,7 @@ async function main() {
         await (await hub.setMaxMintBps(0, { gasLimit: 200000 })).wait();
         await (await hub.setMinBurnAmount(0, { gasLimit: 200000 })).wait();
         await (await hub.setMintGriefingDeposit(ethers.utils.parseEther('0.001'), { gasLimit: 200000 })).wait();
+        await (await hub.setMintReadyBond(ethers.utils.parseEther('0.001'), { gasLimit: 200000 })).wait();
         await (await hub.setVaultMarketMetrics(50, 30, { gasLimit: 200000 })).wait();
         console.log('Vault created and configured');
     } else {
@@ -148,6 +152,16 @@ async function main() {
         const refreshTx = await wrappedHub.updateOraclePrices([], { gasLimit: 500000 });
         await refreshTx.wait();
         console.log('  Prices refreshed:', refreshTx.hash);
+
+        // LP provides public key (generate real Ed25519 key)
+        const lpSecret = ethers.utils.randomBytes(32);
+        const [lpPubX, lpPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(lpSecret));
+        const lpPublicKey = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['uint256', 'uint256'], [lpPubX, lpPubY]));
+        console.log('  LP Public Key:', lpPublicKey);
+        
+        const provideTx = await hub.provideLPKey(requestId, lpPublicKey, { gasLimit: 200000 });
+        await provideTx.wait();
+        console.log('  LP key provided:', provideTx.hash);
 
         const readyTx = await hub.setMintReady(requestId, { value: griefingDeposit, gasLimit: 200000 });
         await readyTx.wait();
