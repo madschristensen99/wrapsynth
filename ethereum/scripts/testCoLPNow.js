@@ -9,8 +9,8 @@ const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 
-const HUB_ADDRESS = '0x198E33a69E5121bee029546309DDEf7F0de8dd8C';
-const WSXMR_ADDRESS = '0xD1ee047a450B496125c934765a39664d3Cbe87fF';
+const HUB_ADDRESS = '0x99fde7582653f1e25489f2295747c0dc7510426f';
+const WSXMR_ADDRESS = '0x3ba7ac3206195d278a62c5a388cdcbe25613e448';
 const WXDAI_ADDRESS = '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d';
 const ED25519_HELPER = '0x7EBdE733CE8Bac20984f919e4d2E66e9eE86f2a3';
 

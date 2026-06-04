@@ -1,0 +1,48 @@
+{
+  "network": "Gnosis Chain Mainnet",
+  "chainId": 100,
+  "deploymentDate": "2026-06-04",
+  "rpcUrl": "https://rpc.gnosischain.com",
+  "wsUrl": "wss://rpc.gnosischain.com/wss",
+  "explorer": "https://gnosisscan.io",
+  "contracts": {
+    "wsXMR": "0x3ba7ac3206195d278a62c5a388cdcbe25613e448",
+    "wsXmrHub": "0x99fde7582653f1e25489f2295747c0dc7510426f",
+    "liquidityRouter": "0x214e07a2433bb9bbf5b2833f45cff4de6e83ca15",
+    "facets": {
+      "RedStoneOracleFacet": "0xea2a9f6eb1b83fdcea698470ab5c18226f548722",
+      "VaultFacet": "0xd32478ce6253d985a6fd8135d4764824ce875e78",
+      "MintFacet": "0x5285f9e81bf65eb77355150f5904a41597a4d58d",
+      "BurnFacet": "0xd2fe83c65e01a5d2c644ff49952ddd6e3c8850a9",
+      "LiquidationFacet": "0x48164d7b8a1ac9c001b5926da8b7d374fd50b8d8",
+      "YieldFacet": "0x453ab67f51d075eb5d1d2cfd8a7719100403bf37"
+    }
+  },
+  "externalContracts": {
+    "sDAI": "0xaf204776c7245bF4147c2612BF6e5972Ee483701",
+    "UniswapV3Factory": "0xae8fbe656a77519a7490054274910129c9244fa3",
+    "UniswapV3PositionManager": "0x83f705098d58b4a3aebcbb78126fe8451aa80724",
+    "PythOracle": "0x2880aB155794e7179c9eE2e38200202908C17B43"
+  },
+  "lpConfig": {
+    "defaultLpVault": "0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB",
+    "apiPort": 3001,
+    "minCollateralRatio": 150,
+    "liquidationThreshold": 120,
+    "targetCollateralRatio": 180
+  },
+  "verification": {
+    "status": "verified",
+    "verifiedContracts": [
+      "wsXMR",
+      "wsXmrHub",
+      "liquidityRouter",
+      "RedStoneOracleFacet",
+      "VaultFacet",
+      "MintFacet",
+      "BurnFacet",
+      "LiquidationFacet",
+      "YieldFacet"
+    ]
+  }
+}
