@@ -19,6 +19,7 @@ use curve25519_dalek::{
 #[derive(Clone)]
 pub struct MoneroClient {
     daemon_url: String,
+    daemon_fallbacks: Vec<String>,
     wallet_rpc_url: Option<String>,
     http_client: Arc<Client>,
     private_spend_key: PrivateKey,
@@ -104,14 +105,31 @@ impl MoneroClient {
             warn!("Wallet RPC not configured - transaction operations will be limited");
         }
 
-        // Create HTTP client with longer timeout for Monero daemon
+        // Create HTTP client with timeout for Monero daemon (5s for fast fallback)
         let http_client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(5))
             .build()
             .context("Failed to create HTTP client")?;
 
+        // Fallback Monero daemon nodes
+        let daemon_fallbacks = vec![
+            "https://xmr.hexide.com".to_string(),
+            "https://monero.econanon.com:443".to_string(),
+            "https://monerorpc.scentle5s.net".to_string(),
+            "https://node.xmr.surf".to_string(),
+            "https://xmr2.doggett.tech:18089".to_string(),
+            "https://xmr.visnova.pl".to_string(),
+            "https://xmr-node.cakewallet.com:18081".to_string(),
+            "https://dewitte.fiatfaucet.com".to_string(),
+            "https://xmr.unshakled.net:443".to_string(),
+            "https://xmr.cryptostorm.is".to_string(),
+            "https://xmr.ci.vet:443".to_string(),
+            "https://monero.openinternet.io".to_string(),
+        ];
+
         Ok(Self {
             daemon_url,
+            daemon_fallbacks,
             wallet_rpc_url,
             http_client: Arc::new(http_client),
             private_spend_key,
@@ -163,34 +181,48 @@ impl MoneroClient {
 
     /// Get current blockchain height from daemon
     pub async fn get_height(&self) -> Result<u64> {
-        // Call get_block_count RPC method
-        let url = format!("{}/json_rpc", self.daemon_url);
-        tracing::debug!("Calling Monero daemon at: {}", url);
+        // Try primary daemon first, then fallbacks
+        let mut urls = vec![self.daemon_url.clone()];
+        urls.extend(self.daemon_fallbacks.clone());
         
-        let response = self.http_client
-            .post(&url)
-            .json(&serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": "0",
-                "method": "get_block_count"
-            }))
-            .send()
-            .await
-            .with_context(|| format!("Failed to call Monero daemon at {}", url))?;
+        let mut last_error = None;
         
-        let status = response.status();
-        tracing::debug!("Monero daemon response status: {}", status);
+        for url in urls {
+            let rpc_url = format!("{}/json_rpc", url);
+            tracing::info!("Trying Monero daemon: {}", url);
+            
+            match self.http_client
+                .post(&rpc_url)
+                .json(&serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": "0",
+                    "method": "get_block_count"
+                }))
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    match response.json::<serde_json::Value>().await {
+                        Ok(result) => {
+                            if let Some(height) = result["result"]["count"].as_u64() {
+                                tracing::info!("✓ Connected to Monero daemon: {} (height: {})", url, height);
+                                return Ok(height);
+                            }
+                            last_error = Some(anyhow!("Invalid block count in response from {}", url));
+                        }
+                        Err(e) => {
+                            last_error = Some(anyhow!("Failed to parse response from {}: {}", url, e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to connect to Monero daemon {}: {}", url, e);
+                    last_error = Some(anyhow!("Failed to call {}: {}", url, e));
+                }
+            }
+        }
         
-        let result: serde_json::Value = response.json().await
-            .context("Failed to parse daemon response")?;
-        
-        tracing::debug!("Monero daemon response: {:?}", result);
-        
-        let height = result["result"]["count"]
-            .as_u64()
-            .ok_or_else(|| anyhow!("Invalid block count in response"))?;
-        
-        Ok(height)
+        Err(last_error.unwrap_or_else(|| anyhow!("All Monero daemon nodes failed")))
     }
 
     /// Send XMR to an address
@@ -369,13 +401,17 @@ impl MoneroClient {
         let mut lp_scalar_bytes = [0u8; 32];
         rng.fill_bytes(&mut lp_scalar_bytes);
         let lp_scalar = Scalar::from_bytes_mod_order(lp_scalar_bytes);
-        let lp_private_spend = PrivateKey::from_slice(&lp_scalar_bytes)
+        // Use the canonical scalar bytes for PrivateKey creation
+        let canonical_bytes = lp_scalar.to_bytes();
+        let lp_private_spend = PrivateKey::from_slice(&canonical_bytes)
             .map_err(|e| anyhow!("Failed to create LP private spend key: {:?}", e))?;
         
         // Generate v_b (LP's private view key for this swap)
         let mut lp_view_bytes = [0u8; 32];
         rng.fill_bytes(&mut lp_view_bytes);
-        let lp_private_view = PrivateKey::from_slice(&lp_view_bytes)
+        let lp_view_scalar = Scalar::from_bytes_mod_order(lp_view_bytes);
+        let canonical_view_bytes = lp_view_scalar.to_bytes();
+        let lp_private_view = PrivateKey::from_slice(&canonical_view_bytes)
             .map_err(|e| anyhow!("Failed to create LP private view key: {:?}", e))?;
         
         // Derive LP's public keys

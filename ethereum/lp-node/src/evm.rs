@@ -6,10 +6,10 @@ use alloy::rpc::types::{Filter, Log};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol;
 use alloy::sol_types::SolEvent;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 // Define contract ABIs using Alloy's sol! macro
 sol! {
@@ -462,10 +462,13 @@ impl EvmClient {
         
         let call = contract.provideLPKey(request_id, lp_public_key);
         
-        let pending_tx = call
-            .send()
-            .await
-            .context("Failed to send provideLPKey transaction")?;
+        let pending_tx = match call.send().await {
+            Ok(tx) => tx,
+            Err(e) => {
+                error!("Failed to send provideLPKey transaction: {:?}", e);
+                return Err(anyhow!("Failed to send provideLPKey transaction: {}", e));
+            }
+        };
 
         let receipt = pending_tx
             .get_receipt()

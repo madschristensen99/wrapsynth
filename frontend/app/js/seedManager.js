@@ -107,17 +107,10 @@ export function generateCommitment(secret) {
     // Generate Ed25519 public key: P = secret * G
     const publicKeyPoint = Point.BASE.multiply(secretReduced);
     
-    // Get raw bytes of the public key point
+    // Get compressed Ed25519 point (32 bytes) - this IS the commitment
+    // The LP node expects the actual public key point, not a hash
     const publicKeyBytes = publicKeyPoint.toRawBytes();
-    const publicKeyHex = toHex(publicKeyBytes);
-    
-    // Extract x and y coordinates (32 bytes each)
-    const px = publicKeyHex.slice(0, 66); // First 32 bytes
-    const py = '0x' + publicKeyHex.slice(66); // Next 32 bytes
-    
-    // Generate commitment as keccak256(abi.encodePacked(px, py))
-    // This matches the VaultManager contract verification
-    const commitment = keccak256(px + py.slice(2));
+    const commitment = toHex(publicKeyBytes); // toHex already adds 0x prefix
     
     return commitment;
 }
