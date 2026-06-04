@@ -37,6 +37,39 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         wsXmrStorage(_wsxmrToken, _verifierProxy) 
     {}
     
+    /// @dev Par-capped slash settlement for a COMMITTED burn.
+    /// User receives min(par, locked) + reward in sDAI; excess locked collateral returns to vault.
+    /// @notice Known residual: if XMR appreciates >30% within commit window, user is capped at
+    ///         lockedCollateral (under par). This is inherent to fixed-ratio locking and accepted.
+    function _settleCommittedBurnSlash(
+        BurnRequest storage burnReq,
+        Vault storage v,
+        uint256 xmrPrice,
+        uint256 collateralPrice
+    ) internal {
+        uint256 parValueUsd = (burnReq.wsxmrAmount * xmrPrice) / WSXMR_DECIMALS;
+        uint256 parShares = (parValueUsd * SDAI_DECIMALS) / collateralPrice;
+
+        uint256 userBase = parShares < burnReq.lockedCollateral
+            ? parShares
+            : burnReq.lockedCollateral;
+        uint256 lpRefund = burnReq.lockedCollateral - userBase;
+        uint256 userPayout = userBase + burnReq.rewardCollateral;
+
+        v.lockedCollateral -= (burnReq.lockedCollateral + burnReq.rewardCollateral);
+        if (lpRefund > 0) {
+            v.collateralShares += lpRefund;
+        }
+        globalPendingBurnDebt -= burnReq.wsxmrAmount;
+
+        pendingReturns[burnReq.user][GnosisAddresses.SDAI] += userPayout;
+        globalPendingSDAI += userPayout;
+        emit ReturnQueued(burnReq.user, GnosisAddresses.SDAI, userPayout);
+
+        burnReq.status = BurnStatus.SLASHED;
+        emit BurnSlashed(burnReq.requestId, burnReq.user, userPayout);
+    }
+    
     function liquidate(address lpVault, uint256 debtToClear) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
@@ -80,6 +113,10 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         uint256 ratio = _calculateCRWithPositions(lpVault, actualDebt);
         if (ratio >= LIQUIDATION_RATIO) revert VaultHealthy();
         
+        // Fetch prices once before burn loop (needed for par-cap slash settlement)
+        collateralPrice = _getCollateralPriceFromStorage();
+        xmrPrice = _getXmrPriceFromStorage();
+        
         // P0-1: Handle in-flight burns inline to prevent dust-burn shield attack
         // Force-cancel REQUESTED/PROPOSED, settle COMMITTED burns before proceeding
         bytes32[] storage vaultBurns = vaultBurnRequests[lpVault];
@@ -103,18 +140,8 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
                 emit BurnCancelled(burnReq.requestId);
                 
             } else if (burnReq.status == BurnStatus.COMMITTED) {
-                // Settle committed burn: user asserted Monero lock, honor the obligation
-                // Seize locked+reward collateral to user's pending returns
-                uint256 totalSeized = burnReq.lockedCollateral + burnReq.rewardCollateral;
-                vault.lockedCollateral -= totalSeized;
-                globalPendingBurnDebt -= burnReq.wsxmrAmount;
-                
-                pendingReturns[burnReq.user][GnosisAddresses.SDAI] += totalSeized;
-                globalPendingSDAI += totalSeized;
-                emit ReturnQueued(burnReq.user, GnosisAddresses.SDAI, totalSeized);
-                
-                burnReq.status = BurnStatus.SLASHED;
-                emit BurnSlashed(burnReq.requestId, burnReq.user, totalSeized);
+                // Settle committed burn: par-capped slash (user gets par + reward, excess to vault)
+                _settleCommittedBurnSlash(burnReq, vault, xmrPrice, collateralPrice);
             }
         }
         
@@ -123,8 +150,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             _unwindAllVaultPositions(lpVault);
         }
         
-        collateralPrice = _getCollateralPriceFromStorage();
-        xmrPrice = _getXmrPriceFromStorage();
+        // Prices already fetched above, reuse for seizure calculation
         
         uint256 debtValueUsd = (debtToClear * xmrPrice) / WSXMR_DECIMALS; // wsXMR has 8 decimals
         uint256 collateralValueUsd = (debtValueUsd * LIQUIDATION_BONUS) / RATIO_PRECISION;
@@ -251,14 +277,8 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
                 emit BurnCancelled(burnReq.requestId);
                 
             } else if (burnReq.status == BurnStatus.COMMITTED) {
-                uint256 totalSeized = burnReq.lockedCollateral + burnReq.rewardCollateral;
-                oldV.lockedCollateral -= totalSeized;
-                globalPendingBurnDebt -= burnReq.wsxmrAmount;
-                pendingReturns[burnReq.user][GnosisAddresses.SDAI] += totalSeized;
-                globalPendingSDAI += totalSeized;
-                emit ReturnQueued(burnReq.user, GnosisAddresses.SDAI, totalSeized);
-                burnReq.status = BurnStatus.SLASHED;
-                emit BurnSlashed(burnReq.requestId, burnReq.user, totalSeized);
+                // Settle committed burn: par-capped slash (user gets par + reward, excess to vault)
+                _settleCommittedBurnSlash(burnReq, oldV, xmrPrice, collateralPrice);
             }
         }
         

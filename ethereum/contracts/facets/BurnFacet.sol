@@ -161,7 +161,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
      * @notice User confirms the Monero output is locked with correct amount and secret binding
      * @dev CRITICAL CLIENT REQUIREMENT: This is a trust-minimized attestation. Clients MUST verify
      *      off-chain BEFORE calling this function:
-     *      1. The Monero output amount matches request.xmrAmount (available in HashProposed event)
+     *      1. The Monero output amount matches request.xmrAmount (available in BurnRequested event)
      *      2. The secret binding is correct - the adaptor signature construction ensures that
      *         revealing the secret on-chain (via finalizeBurn) is the ONLY way the user can
      *         claim the locked XMR
@@ -237,27 +237,31 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         Vault storage vault = _vaults[request.lpVault];
         
-        // B1: Cap user payout at par value + reward, return excess to LP
+        // B1: Par-capped slash settlement (matches LiquidationFacet._settleCommittedBurnSlash)
+        // User receives min(par, locked) + reward; excess locked collateral returns to vault.
+        // Known residual: if XMR appreciates >30% within commit window, user is capped at
+        // lockedCollateral (under par). This is inherent to fixed-ratio locking and accepted.
         uint256 xmrPrice = _getXmrPriceFromStorage();
         uint256 collateralPrice = _getCollateralPriceFromStorage();
         uint256 parValueUsd = (request.wsxmrAmount * xmrPrice) / WSXMR_DECIMALS;
         uint256 parShares = (parValueUsd * SDAI_DECIMALS) / collateralPrice;
-        
-        // User gets min(par, lockedCollateral) + reward; LP gets excess locked collateral
-        uint256 userBase = parShares < request.lockedCollateral ? parShares : request.lockedCollateral;
+
+        uint256 userBase = parShares < request.lockedCollateral
+            ? parShares
+            : request.lockedCollateral;
         uint256 lpRefund = request.lockedCollateral - userBase;
         uint256 userPayout = userBase + request.rewardCollateral;
-        
+
         vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
         if (lpRefund > 0) {
             vault.collateralShares += lpRefund;
         }
         globalPendingBurnDebt -= request.wsxmrAmount;
-        
+
         pendingReturns[request.user][GnosisAddresses.SDAI] += userPayout;
         globalPendingSDAI += userPayout;
         emit ReturnQueued(request.user, GnosisAddresses.SDAI, userPayout);
-        
+
         request.status = BurnStatus.SLASHED;
         emit BurnSlashed(requestId, request.user, userPayout);
         
