@@ -17,9 +17,9 @@ export const NETWORKS = {
 
 // Contract addresses - Deployed on Gnosis Chain Mainnet (Diamond Architecture)
 export const CONTRACTS = {
-    hub: '0x198E33a69E5121bee029546309DDEf7F0de8dd8C',  // wsXmrHub (Diamond) - v1.4
-    wsxmrToken: '0xD1ee047a450B496125c934765a39664d3Cbe87fF',
-    liquidityRouter: '0xa1c2d0e87789aEB5229B8e39C4BB4ab90ff3381E',
+    hub: '0x99fde7582653f1e25489f2295747c0dc7510426f',  // wsXmrHub (Diamond) - DEPLOYED
+    wsxmrToken: '0x3ba7ac3206195d278a62c5a388cdcbe25613e448',
+    liquidityRouter: '0x214e07a2433bb9bbf5b2833f45cff4de6e83ca15',
     // Default LP vault to use for mints (the active LP running the LP node)
     defaultLpVault: '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB'
 };

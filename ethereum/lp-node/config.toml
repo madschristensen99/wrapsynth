@@ -8,10 +8,10 @@ rpc_url = "https://rpc.gnosischain.com"
 ws_url = "wss://rpc.gnosischain.com/wss"
 explorer = "https://gnosisscan.io"
 
-# Deployed contract addresses (v1.4 Diamond Architecture)
-vault_manager = "0x198E33a69E5121bee029546309DDEf7F0de8dd8C"
-wsxmr_token = "0xD1ee047a450B496125c934765a39664d3Cbe87fF"
-liquidity_router = "0xa1c2d0e87789aEB5229B8e39C4BB4ab90ff3381E"
+# Deployed contract addresses (GNOSIS MAINNET - DEPLOYED)
+vault_manager = "0x99fde7582653f1e25489f2295747c0dc7510426f"
+wsxmr_token = "0x3ba7ac3206195d278a62c5a388cdcbe25613e448"
+liquidity_router = "0x214e07a2433bb9bbf5b2833f45cff4de6e83ca15"
 
 # Oracle configuration
 pyth_oracle = "0x2880aB155794e7179c9eE2e38200202908C17B43"
