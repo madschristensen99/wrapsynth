@@ -8,10 +8,10 @@ rpc_url = "https://rpc.gnosischain.com"
 ws_url = "wss://rpc.gnosischain.com/wss"
 explorer = "https://gnosisscan.io"
 
-# Deployed contract addresses
-vault_manager = "0x839257DE37b22B377e545514e2eD0b4f92266F88"
-wsxmr_token = "0xf0114924F8e3d1D4dca68DEf1F3Ea402EF5B32a2"
-liquidity_router = "0x7Ed870F86ae9c7ecE955185792FFF1Ac57dc743a"
+# Deployed contract addresses (v1.4 Diamond Architecture)
+vault_manager = "0x198E33a69E5121bee029546309DDEf7F0de8dd8C"
+wsxmr_token = "0xD1ee047a450B496125c934765a39664d3Cbe87fF"
+liquidity_router = "0xa1c2d0e87789aEB5229B8e39C4BB4ab90ff3381E"
 
 # Oracle configuration
 pyth_oracle = "0x2880aB155794e7179c9eE2e38200202908C17B43"
@@ -57,7 +57,7 @@ target_collateral_ratio = 180  # 180% (safety buffer)
 
 [api]
 # API server configuration
-port = 8080
+port = 3001
 # Rate limiting (requests per minute per IP)
 rate_limit_per_minute = 60
 

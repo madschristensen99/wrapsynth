@@ -1821,6 +1821,18 @@ body.app-page .container {
     background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
 }
 
+.btn-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+.btn-action:disabled:hover {
+    transform: none;
+    box-shadow: none;
+}
+
 .btn-lp {
     background: linear-gradient(135deg, var(--accent-purple) 0%, var(--accent-blue) 100%);
 }
@@ -1910,6 +1922,31 @@ body.app-page .container {
 
 .step-status {
     font-size: 0.9rem;
+    color: var(--text-secondary-light);
+}
+
+.step-explanation {
+    font-size: 0.85rem;
+    color: var(--text-secondary-light);
+    margin-top: 0.5rem;
+    line-height: 1.6;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-card-light);
+    border-radius: 8px;
+    border-left: 3px solid var(--primary);
+}
+
+.step-explanation.step-penalty {
+    border-left-color: #ef4444;
+    background: rgba(239, 68, 68, 0.08);
+    color: #991b1b;
+}
+
+.penalty-icon {
+    margin-right: 0.25rem;
+}
+
+.progress-step.active .step-explanation {
     color: var(--text-secondary-light);
 }
 
@@ -2255,6 +2292,10 @@ body.app-page .container {
 
 .legend-dot.free-dot {
     background: #10b981;
+}
+
+.legend-dot.buffer-dot {
+    background: #eab308;
 }
 
 .legend-text {

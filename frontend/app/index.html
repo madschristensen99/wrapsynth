@@ -110,7 +110,13 @@
 
         <!-- Resume Active Swap Banner -->
         <div id="resume-banner" class="banner banner-warning hidden">
-            <p><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle; margin-right: 4px;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> Active swap detected! <button id="resume-swap" class="btn btn-small">Resume Swap</button></p>
+            <div id="resume-banner-header" style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+                <span id="resume-banner-title">Active swaps detected!</span>
+            </div>
+            <div id="resume-swap-list" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                <!-- Swap items injected here -->
+            </div>
         </div>
 
         <!-- Main Content Grid -->
@@ -166,14 +172,26 @@
                     <div class="progress-step" data-step="init">
                         <div class="step-indicator">1</div>
                         <div class="step-content">
-                            <h3>Initialize Phantom Agent</h3>
+                            <h3>Initialize Swap Agent</h3>
                             <p class="step-status">Waiting for signature...</p>
+                            <p class="step-explanation">Sign a message to create a one-time secret for this swap. This secret will later unlock your wsXMR tokens. No gas fee yet.</p>
+                        </div>
+                    </div>
+                    <div class="progress-step" data-step="evm-init">
+                        <div class="step-indicator">2</div>
+                        <div class="step-content">
+                            <h3>Lock Griefing Deposit</h3>
+                            <p class="step-status">Submitting to blockchain...</p>
+                            <p class="step-explanation">You pay a refundable griefing deposit in xDAI. This proves you're serious about the swap and prevents spam. <strong>Follow through with the XMR deposit and the LP returns it.</strong> If you abandon the swap, the LP keeps it as compensation for locked capital.</p>
+                            <p class="step-explanation step-penalty"><span class="penalty-icon">&#9888;</span> <strong>Penalty:</strong> If you don't send XMR within the timeout, the LP can claim your deposit.</p>
                         </div>
                     </div>
                     <div class="progress-step" data-step="deposit">
-                        <div class="step-indicator">2</div>
+                        <div class="step-indicator">3</div>
                         <div class="step-content">
                             <h3>Deposit XMR</h3>
+                            <p class="step-status">Waiting for LP to provide deposit address...</p>
+                            <p class="step-explanation">The LP provides a public key that combines with your secret to generate a shared one-time Monero address. <strong>Send exactly the displayed amount to this address.</strong></p>
                             <div id="mint-deposit-info" class="deposit-info hidden">
                                 <div class="qr-container">
                                     <canvas id="mint-qr-code"></canvas>
@@ -187,25 +205,20 @@
                             </div>
                         </div>
                     </div>
-                    <div class="progress-step" data-step="evm-init">
-                        <div class="step-indicator">3</div>
-                        <div class="step-content">
-                            <h3>Initiate on EVM</h3>
-                            <p class="step-status">Pending...</p>
-                        </div>
-                    </div>
                     <div class="progress-step" data-step="lp-confirm">
                         <div class="step-indicator">4</div>
                         <div class="step-content">
-                            <h3>LP Confirmation</h3>
-                            <p class="step-status">Waiting for LP...</p>
+                            <h3>LP Confirms Receipt</h3>
+                            <p class="step-status">Waiting for LP to verify XMR...</p>
+                            <p class="step-explanation">The LP scans the Monero blockchain to confirm your deposit. Once verified, they mark the mint as ready. Your griefing deposit is now safe.</p>
                         </div>
                     </div>
                     <div class="progress-step" data-step="finalize">
                         <div class="step-indicator">5</div>
                         <div class="step-content">
-                            <h3>Finalize Mint</h3>
-                            <p class="step-status">Pending...</p>
+                            <h3>Reveal Secret & Receive wsXMR</h3>
+                            <p class="step-status">Finalizing on blockchain...</p>
+                            <p class="step-explanation">You reveal the secret you created in Step 1. The contract verifies it and mints wsXMR directly to your wallet. Your griefing deposit is refunded.</p>
                         </div>
                     </div>
                 </div>

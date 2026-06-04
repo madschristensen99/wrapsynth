@@ -123,6 +123,56 @@ export const RAW_ABIS = {
         }],
         stateMutability: 'view',
         type: 'function'
+    },
+    getMintRequest: {
+        inputs: [{ name: 'requestId', type: 'bytes32' }],
+        name: 'getMintRequest',
+        outputs: [{
+            components: [
+                { name: 'requestId', type: 'bytes32' },
+                { name: 'initiator', type: 'address' },
+                { name: 'recipient', type: 'address' },
+                { name: 'lpVault', type: 'address' },
+                { name: 'xmrAmount', type: 'uint256' },
+                { name: 'wsxmrAmount', type: 'uint256' },
+                { name: 'feeAmount', type: 'uint256' },
+                { name: 'claimCommitment', type: 'bytes32' },
+                { name: 'timeout', type: 'uint256' },
+                { name: 'griefingDeposit', type: 'uint256' },
+                { name: 'lpBond', type: 'uint256' },
+                { name: 'normalizedDebtAmount', type: 'uint256' },
+                { name: 'vaultMintNonce', type: 'uint256' },
+                { name: 'status', type: 'uint8' }
+            ],
+            name: '',
+            type: 'tuple'
+        }],
+        stateMutability: 'view',
+        type: 'function'
+    },
+    getBurnRequest: {
+        inputs: [{ name: 'requestId', type: 'bytes32' }],
+        name: 'getBurnRequest',
+        outputs: [{
+            components: [
+                { name: 'requestId', type: 'bytes32' },
+                { name: 'user', type: 'address' },
+                { name: 'lpVault', type: 'address' },
+                { name: 'wsxmrAmount', type: 'uint256' },
+                { name: 'xmrAmount', type: 'uint256' },
+                { name: 'lockedCollateral', type: 'uint256' },
+                { name: 'rewardCollateral', type: 'uint256' },
+                { name: 'secretHash', type: 'bytes32' },
+                { name: 'deadline', type: 'uint256' },
+                { name: 'vaultLiquidationNonce', type: 'uint256' },
+                { name: 'normalizedDebtAmount', type: 'uint256' },
+                { name: 'status', type: 'uint8' }
+            ],
+            name: '',
+            type: 'tuple'
+        }],
+        stateMutability: 'view',
+        type: 'function'
     }
 };
 

@@ -176,10 +176,12 @@ export class MintFlow {
         }
 
         this.state = 'initiated';
+        updateSwapState({ requestId: this.requestId, state: this.state });
     }
 
     async notifyLP() {
         console.log('Waiting for LP to provide public key...');
+        updateSwapState({ requestId: this.requestId, state: 'awaiting-lp-key', message: 'Waiting for LP to provide public key...' });
         
         // Wait for LP to call provideLPKey() on-chain
         const lpPublicKey = await this.waitForLPKey();
@@ -193,6 +195,7 @@ export class MintFlow {
         console.log('💡 Send exactly', this.xmrAmount, 'XMR to this address');
         
         updateSwapState({
+            requestId: this.requestId,
             state: 'deposit',
             depositAddress: sharedAddress,
             lpPublicKey: lpPublicKey
@@ -230,7 +233,7 @@ export class MintFlow {
 
     async waitForLPReady() {
         this.state = 'lp-ready';
-        updateSwapState({ state: this.state });
+        updateSwapState({ requestId: this.requestId, state: this.state });
 
         console.log('Waiting for LP to call setMintReady...');
 
@@ -244,6 +247,7 @@ export class MintFlow {
                 }
                 
                 updateSwapState({
+                    requestId: this.requestId,
                     lpStatus: status.status,
                     lpMessage: status.message
                 });
@@ -287,7 +291,7 @@ export class MintFlow {
 
     async finalize() {
         this.state = 'finalize';
-        updateSwapState({ state: this.state });
+        updateSwapState({ requestId: this.requestId, state: this.state });
 
         console.log('Finalizing mint...');
 
@@ -359,6 +363,12 @@ export class MintFlow {
         await this.agent.initialize('MINT', this.xmrAmount.toString());
 
         switch (this.state) {
+            case 'initiated':
+            case 'awaiting-lp-key':
+                await this.notifyLP();
+                await this.waitForLPReady();
+                await this.finalize();
+                break;
             case 'deposit':
             case 'lp-ready':
                 await this.waitForLPReady();

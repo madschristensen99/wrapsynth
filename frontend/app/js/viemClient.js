@@ -124,11 +124,27 @@ export function getWalletClient() {
 export async function readHub(functionName, args = []) {
     const client = getPublicClient();
     
-    // Special handling for getVault which has tuple return type
+    // Special handling for functions with tuple return types
     if (functionName === 'getVault') {
         return await client.readContract({
             address: CONTRACTS.hub,
             abi: [RAW_ABIS.getVault],
+            functionName,
+            args
+        });
+    }
+    if (functionName === 'getMintRequest') {
+        return await client.readContract({
+            address: CONTRACTS.hub,
+            abi: [RAW_ABIS.getMintRequest],
+            functionName,
+            args
+        });
+    }
+    if (functionName === 'getBurnRequest') {
+        return await client.readContract({
+            address: CONTRACTS.hub,
+            abi: [RAW_ABIS.getBurnRequest],
             functionName,
             args
         });
