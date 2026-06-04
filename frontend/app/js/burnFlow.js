@@ -103,6 +103,7 @@ export class BurnFlow {
         }
 
         this.state = 'lp-propose';
+        updateSwapState({ requestId: this.requestId, state: this.state });
     }
 
     async waitForLPProposal() {
@@ -119,6 +120,7 @@ export class BurnFlow {
                 }
                 
                 updateSwapState({
+                    requestId: this.requestId,
                     lpStatus: status.status,
                     lpMessage: status.message
                 });
@@ -163,7 +165,7 @@ export class BurnFlow {
 
     async confirmMoneroLock() {
         this.state = 'confirm-lock';
-        updateSwapState({ state: this.state });
+        updateSwapState({ requestId: this.requestId, state: this.state });
 
         console.log('User confirming Monero lock...');
         console.log('Please verify XMR has been received at:', this.destination);
@@ -184,6 +186,7 @@ export class BurnFlow {
         console.log('Monero lock confirmed, tx:', receipt.transactionHash);
 
         updateSwapState({
+            requestId: this.requestId,
             state: 'lp-finalize',
             confirmTxHash: receipt.transactionHash
         });

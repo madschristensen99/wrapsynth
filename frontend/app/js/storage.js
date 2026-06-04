@@ -1,53 +1,139 @@
 // LocalStorage manager for persisting swap state
+// Supports multiple concurrent active swaps
 
 import { STORAGE_KEYS } from './config.js';
 
+const ACTIVE_SWAPS_KEY = 'wrapsynth_active_swaps_v2';
+
+// ─── Internal helpers ───────────────────────────────────────────────────────
+
+function getSwapsArray() {
+    try {
+        // Migrate old single-swap data if present
+        const oldData = localStorage.getItem(STORAGE_KEYS.activeSwap);
+        if (oldData) {
+            try {
+                const oldSwap = JSON.parse(oldData);
+                localStorage.setItem(ACTIVE_SWAPS_KEY, JSON.stringify([oldSwap]));
+                localStorage.removeItem(STORAGE_KEYS.activeSwap);
+                console.log('[STORAGE] Migrated old single-swap to multi-swap array');
+                return [oldSwap];
+            } catch {
+                localStorage.removeItem(STORAGE_KEYS.activeSwap);
+            }
+        }
+        const data = localStorage.getItem(ACTIVE_SWAPS_KEY);
+        return data ? JSON.parse(data) : [];
+    } catch {
+        return [];
+    }
+}
+
+function setSwapsArray(swaps) {
+    localStorage.setItem(ACTIVE_SWAPS_KEY, JSON.stringify(swaps));
+}
+
+// ─── Multi-swap API (new) ───────────────────────────────────────────────────
+
 /**
- * Save active swap state
+ * Load all active swaps
+ * @returns {Array} Array of active swap states
+ */
+export function loadActiveSwaps() {
+    return getSwapsArray();
+}
+
+/**
+ * Add or update a swap in the active swaps array (keyed by requestId)
+ * @param {Object} swap - Swap state (must include requestId if updating existing)
+ */
+export function addOrUpdateActiveSwap(swap) {
+    try {
+        const swaps = getSwapsArray();
+        const requestId = swap.requestId;
+        const idx = swaps.findIndex(s => s.requestId === requestId);
+        const enriched = { ...swap, lastUpdated: Date.now() };
+
+        if (idx >= 0 && requestId) {
+            swaps[idx] = { ...swaps[idx], ...enriched };
+        } else {
+            swaps.push(enriched);
+        }
+        setSwapsArray(swaps);
+        console.log('[STORAGE] Active swap updated:', enriched);
+    } catch (error) {
+        console.error('[STORAGE] Error saving active swap:', error);
+    }
+}
+
+/**
+ * Remove a specific swap by requestId
+ * @param {string} requestId
+ */
+export function removeActiveSwap(requestId) {
+    try {
+        const swaps = getSwapsArray().filter(s => s.requestId !== requestId);
+        setSwapsArray(swaps);
+        console.log('[STORAGE] Removed swap:', requestId);
+    } catch (error) {
+        console.error('[STORAGE] Error removing swap:', error);
+    }
+}
+
+/**
+ * Check if any active swaps exist
+ * @returns {boolean}
+ */
+export function hasActiveSwaps() {
+    return getSwapsArray().length > 0;
+}
+
+/**
+ * Get the most recent active swap
+ * @returns {Object|null}
+ */
+export function getMostRecentActiveSwap() {
+    const swaps = getSwapsArray();
+    return swaps.length > 0 ? swaps[swaps.length - 1] : null;
+}
+
+/**
+ * Get a specific swap by requestId
+ * @param {string} requestId
+ * @returns {Object|null}
+ */
+export function getActiveSwapByRequestId(requestId) {
+    return getSwapsArray().find(s => s.requestId === requestId) || null;
+}
+
+// ─── Backward-compatible single-swap API ─────────────────────────────────────
+
+/**
+ * Save active swap state (adds/updates most recent)
  * @param {Object} swapState - Current swap state
  */
 export function saveActiveSwap(swapState) {
-    try {
-        const data = {
-            ...swapState,
-            lastUpdated: Date.now()
-        };
-        localStorage.setItem(STORAGE_KEYS.activeSwap, JSON.stringify(data));
-        console.log('Active swap saved:', data);
-    } catch (error) {
-        console.error('Error saving active swap:', error);
-    }
+    addOrUpdateActiveSwap(swapState);
 }
 
 /**
- * Load active swap state
- * @returns {Object|null} Swap state or null if none exists
+ * Load active swap state (most recent)
+ * @returns {Object|null}
  */
 export function loadActiveSwap() {
-    try {
-        const data = localStorage.getItem(STORAGE_KEYS.activeSwap);
-        if (!data) {
-            return null;
-        }
-        
-        const swapState = JSON.parse(data);
-        console.log('Active swap loaded:', swapState);
-        return swapState;
-    } catch (error) {
-        console.error('Error loading active swap:', error);
-        return null;
-    }
+    return getMostRecentActiveSwap();
 }
 
 /**
- * Clear active swap
+ * Clear ALL active swaps
  */
 export function clearActiveSwap() {
     try {
+        localStorage.removeItem(ACTIVE_SWAPS_KEY);
         localStorage.removeItem(STORAGE_KEYS.activeSwap);
-        console.log('Active swap cleared');
+        console.log('[STORAGE] All active swaps cleared');
     } catch (error) {
-        console.error('Error clearing active swap:', error);
+        console.error('[STORAGE] Error clearing swaps:', error);
     }
 }
 
@@ -56,8 +142,48 @@ export function clearActiveSwap() {
  * @returns {boolean}
  */
 export function hasActiveSwap() {
-    return localStorage.getItem(STORAGE_KEYS.activeSwap) !== null;
+    return hasActiveSwaps();
 }
+
+/**
+ * Update swap state.
+ * If updates contains a requestId, updates that specific swap.
+ * Otherwise updates the most recent swap.
+ * @param {Object} updates - Partial state updates
+ */
+export function updateSwapState(updates) {
+    const swaps = getSwapsArray();
+    const requestId = updates.requestId;
+
+    if (requestId) {
+        const idx = swaps.findIndex(s => s.requestId === requestId);
+        if (idx >= 0) {
+            swaps[idx] = { ...swaps[idx], ...updates, lastUpdated: Date.now() };
+            setSwapsArray(swaps);
+            return;
+        }
+    }
+
+    if (swaps.length === 0) {
+        addOrUpdateActiveSwap(updates);
+    } else {
+        const mostRecent = swaps[swaps.length - 1];
+        Object.assign(mostRecent, updates, { lastUpdated: Date.now() });
+        setSwapsArray(swaps);
+    }
+}
+
+/**
+ * Get swap state field from most recent swap
+ * @param {string} field - Field name
+ * @returns {any} Field value
+ */
+export function getSwapStateField(field) {
+    const state = loadActiveSwap();
+    return state ? state[field] : null;
+}
+
+// ─── History & Preferences (unchanged) ──────────────────────────────────────
 
 /**
  * Save swap to history
@@ -70,14 +196,11 @@ export function saveToHistory(swap) {
             ...swap,
             completedAt: Date.now()
         });
-        
-        // Keep only last 50 swaps
         const trimmedHistory = history.slice(0, 50);
-        
         localStorage.setItem(STORAGE_KEYS.swapHistory, JSON.stringify(trimmedHistory));
-        console.log('Swap saved to history');
+        console.log('[STORAGE] Swap saved to history');
     } catch (error) {
-        console.error('Error saving to history:', error);
+        console.error('[STORAGE] Error saving to history:', error);
     }
 }
 
@@ -90,7 +213,7 @@ export function getSwapHistory() {
         const data = localStorage.getItem(STORAGE_KEYS.swapHistory);
         return data ? JSON.parse(data) : [];
     } catch (error) {
-        console.error('Error loading swap history:', error);
+        console.error('[STORAGE] Error loading swap history:', error);
         return [];
     }
 }
@@ -101,9 +224,9 @@ export function getSwapHistory() {
 export function clearSwapHistory() {
     try {
         localStorage.removeItem(STORAGE_KEYS.swapHistory);
-        console.log('Swap history cleared');
+        console.log('[STORAGE] Swap history cleared');
     } catch (error) {
-        console.error('Error clearing swap history:', error);
+        console.error('[STORAGE] Error clearing swap history:', error);
     }
 }
 
@@ -114,9 +237,9 @@ export function clearSwapHistory() {
 export function savePreferences(preferences) {
     try {
         localStorage.setItem(STORAGE_KEYS.userPreferences, JSON.stringify(preferences));
-        console.log('Preferences saved');
+        console.log('[STORAGE] Preferences saved');
     } catch (error) {
-        console.error('Error saving preferences:', error);
+        console.error('[STORAGE] Error saving preferences:', error);
     }
 }
 
@@ -133,41 +256,11 @@ export function loadPreferences() {
             autoApprove: false
         };
     } catch (error) {
-        console.error('Error loading preferences:', error);
+        console.error('[STORAGE] Error loading preferences:', error);
         return {
             defaultVault: null,
             slippageTolerance: 0.5,
             autoApprove: false
         };
     }
-}
-
-/**
- * Update swap state
- * @param {Object} updates - Partial state updates
- */
-export function updateSwapState(updates) {
-    const currentState = loadActiveSwap();
-    if (!currentState) {
-        console.warn('No active swap to update');
-        return;
-    }
-    
-    const newState = {
-        ...currentState,
-        ...updates,
-        lastUpdated: Date.now()
-    };
-    
-    saveActiveSwap(newState);
-}
-
-/**
- * Get swap state field
- * @param {string} field - Field name
- * @returns {any} Field value
- */
-export function getSwapStateField(field) {
-    const state = loadActiveSwap();
-    return state ? state[field] : null;
 }

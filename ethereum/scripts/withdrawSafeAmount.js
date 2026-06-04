@@ -4,15 +4,15 @@ const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 
-const OLD_HUB_ADDRESS = '0xf873f64360c2214feb5cf7d7b542a6a3ca6a3afb'; // Current deployment
+const HUB_ADDRESS = '0x198E33a69E5121bee029546309DDEf7F0de8dd8C'; // v1.4 Diamond
 const SDAI_ADDRESS = '0xaf204776c7245bF4147c2612BF6e5972Ee483701';
 
 async function main() {
     const provider = new ethers.providers.JsonRpcProvider('https://rpc.gnosischain.com');
     const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
     
-    console.log('💰 Withdrawing Safe Amount from Old Contract');
-    console.log('=============================================');
+    console.log('💰 Withdrawing Safe Amount from wsXmrHub');
+    console.log('========================================');
     console.log('Wallet:', wallet.address);
     console.log('');
     
@@ -28,7 +28,7 @@ async function main() {
         'function convertToAssets(uint256 shares) external view returns (uint256)'
     ];
     
-    const hub = new ethers.Contract(OLD_HUB_ADDRESS, hubAbi, wallet);
+    const hub = new ethers.Contract(HUB_ADDRESS, hubAbi, wallet);
     const sdai = new ethers.Contract(SDAI_ADDRESS, sdaiAbi, provider);
     
     // Wrap with RedStone for price updates

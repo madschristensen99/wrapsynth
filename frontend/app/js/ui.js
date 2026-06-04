@@ -17,7 +17,8 @@ const elements = {
     // Banners
     contractsBanner: null,
     resumeBanner: null,
-    resumeSwap: null,
+    resumeSwapList: null,
+    resumeBannerTitle: null,
     
     // Main interface
     mainInterface: null,
@@ -76,7 +77,8 @@ export function initUI() {
     // Banners
     elements.contractsBanner = document.getElementById('contracts-banner');
     elements.resumeBanner = document.getElementById('resume-banner');
-    elements.resumeSwap = document.getElementById('resume-swap');
+    elements.resumeSwapList = document.getElementById('resume-swap-list');
+    elements.resumeBannerTitle = document.getElementById('resume-banner-title');
     
     // Main interface
     elements.mainInterface = document.getElementById('main-interface');
@@ -140,7 +142,11 @@ export function showWalletConnected(address, balance) {
     elements.connectedInfo.classList.remove('hidden');
     elements.userAddress.textContent = formatAddress(address);
     elements.userBalance.textContent = `${formatBalance(balance, DECIMALS.wsXMR)} wsXMR`;
-    elements.mainInterface.classList.remove('hidden');
+    // Enable action buttons
+    elements.startMint.disabled = false;
+    elements.startBurn.disabled = false;
+    elements.mintAmount.disabled = false;
+    elements.burnAmount.disabled = false;
 }
 
 /**
@@ -149,7 +155,9 @@ export function showWalletConnected(address, balance) {
 export function showWalletDisconnected() {
     elements.connectWallet.classList.remove('hidden');
     elements.connectedInfo.classList.add('hidden');
-    elements.mainInterface.classList.add('hidden');
+    // Disable action buttons since wallet is required
+    elements.startMint.disabled = true;
+    elements.startBurn.disabled = true;
 }
 
 /**
@@ -161,10 +169,74 @@ export function updateBalance(balance) {
 }
 
 /**
- * Show resume banner
+ * Show resume banner with list of active swaps
+ * @param {Array} swaps - Array of active swap states
+ * @param {Function} onResume - Callback when user clicks resume on a swap (receives swap object)
  */
-export function showResumeBanner() {
+export function showResumeBanner(swaps, onResume) {
+    if (!swaps || swaps.length === 0) {
+        hideResumeBanner();
+        return;
+    }
+
+    // Update title
+    elements.resumeBannerTitle.textContent = swaps.length === 1
+        ? 'Active swap detected!'
+        : `${swaps.length} active swaps detected!`;
+
+    // Build list
+    elements.resumeSwapList.innerHTML = '';
+    for (const swap of swaps) {
+        const row = document.createElement('div');
+        row.className = 'resume-swap-row';
+        row.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.5rem 0.75rem; background: rgba(255,255,255,0.5); border-radius: 8px;';
+
+        const typeLabel = swap.type === 'mint' ? 'Mint' : 'Burn';
+        const amount = swap.type === 'mint'
+            ? (swap.xmrAmount ? `${swap.xmrAmount.toFixed ? swap.xmrAmount.toFixed(6) : swap.xmrAmount} XMR` : 'Mint')
+            : (swap.wsxmrAmount ? `${(Number(swap.wsxmrAmount) / 1e8).toFixed(4)} wsXMR` : 'Burn');
+        const stateLabel = formatSwapState(swap.state);
+        const vaultShort = swap.lpVault ? `${swap.lpVault.slice(0, 6)}...${swap.lpVault.slice(-4)}` : '';
+
+        row.innerHTML = `
+            <span style="font-size: 0.85rem;">
+                <strong>${typeLabel}</strong> ${amount} 
+                <span style="color: var(--text-muted);">(${stateLabel})</span>
+                ${vaultShort ? `<span style="color: var(--text-muted); font-size: 0.75rem;"> ${vaultShort}</span>` : ''}
+            </span>
+        `;
+
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-small';
+        btn.textContent = 'Resume';
+        btn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.8rem;';
+        btn.addEventListener('click', () => {
+            if (onResume) onResume(swap);
+        });
+        row.appendChild(btn);
+
+        elements.resumeSwapList.appendChild(row);
+    }
+
     elements.resumeBanner.classList.remove('hidden');
+}
+
+function formatSwapState(state) {
+    const labels = {
+        'init': 'Initializing',
+        'evm-init': 'Griefing deposit',
+        'initiated': 'Initiated',
+        'awaiting-lp-key': 'Awaiting LP',
+        'deposit': 'Deposit XMR',
+        'lp-ready': 'LP Ready',
+        'lp-confirm': 'LP Confirming',
+        'finalize': 'Finalizing',
+        'evm-request': 'Requesting',
+        'lp-propose': 'LP Proposing',
+        'committed': 'Committed',
+        'completed': 'Complete'
+    };
+    return labels[state] || state;
 }
 
 /**
@@ -172,6 +244,7 @@ export function showResumeBanner() {
  */
 export function hideResumeBanner() {
     elements.resumeBanner.classList.add('hidden');
+    elements.resumeSwapList.innerHTML = '';
 }
 
 /**
@@ -235,14 +308,17 @@ export function populateVaults(vaults) {
                 const shortAddr = `${v.address.slice(0, 6)}...${v.address.slice(-4)}`;
                 const collateralAmount = v.collateral ? formatBalance(v.collateral, 18) : '0';
                 const usedRaw = v.usedCollateral !== undefined ? v.usedCollateral : 0;
+                const bufferRaw = v.bufferCollateral !== undefined ? v.bufferCollateral : 0;
                 const freeRaw = v.freeCollateral !== undefined ? v.freeCollateral : (v.collateral ? Number(v.collateral) / 1e18 : 0);
                 const usedAmount = fmtCapacity(usedRaw);
+                const bufferAmount = fmtCapacity(bufferRaw);
                 const freeAmount = fmtCapacity(freeRaw);
-                const totalCap = usedRaw + freeRaw;
+                const totalCap = usedRaw + bufferRaw + freeRaw;
                 const usedPct = totalCap > 0 ? (usedRaw / totalCap) * 100 : 0;
+                const bufferPct = totalCap > 0 ? (bufferRaw / totalCap) * 100 : 0;
                 const freePct = totalCap > 0 ? (freeRaw / totalCap) * 100 : 0;
-                const pieSvg = totalCap > 0 ? makePieChart(usedPct, freePct) : '';
-                console.log('Vault chart:', { usedRaw, freeRaw, usedPct, freePct, pieSvg: pieSvg.slice(0, 80) });
+                const pieSvg = totalCap > 0 ? makePieChart(usedPct, bufferPct, freePct) : '';
+                console.log('Vault chart:', { usedRaw, bufferRaw, freeRaw, usedPct, bufferPct, freePct, pieSvg: pieSvg.slice(0, 80) });
 
                 return `
                 <div class="vault-item">
@@ -259,6 +335,13 @@ export function populateVaults(vaults) {
                                 <div class="legend-text">
                                     <span class="legend-label">Backing debt:</span>
                                     <span class="legend-value">${usedAmount} sDAI</span>
+                                </div>
+                            </div>
+                            <div class="legend-row">
+                                <span class="legend-dot buffer-dot"></span>
+                                <div class="legend-text">
+                                    <span class="legend-label">Safety buffer:</span>
+                                    <span class="legend-value">${bufferAmount} sDAI</span>
                                 </div>
                             </div>
                             <div class="legend-row">
@@ -538,47 +621,66 @@ function fmtCapacity(val) {
 
 /**
  * Generate inline SVG donut chart for vault capacity
- * First slice = used (orange), second slice = free (green)
+ * Slices: used (orange), buffer (yellow), free (green)
  */
-function makePieChart(usedPct, freePct) {
+function makePieChart(usedPct, bufferPct, freePct) {
     const size = 64;
     const cx = size / 2;
     const cy = size / 2;
     const r = 26;
     const strokeW = 10;
     const circ = +(2 * Math.PI * r).toFixed(2);
-    const minVis = 4;
+    const minVis = 3;
 
     let usedLen = +(usedPct / 100 * circ).toFixed(2);
+    let bufferLen = +(bufferPct / 100 * circ).toFixed(2);
     let freeLen = +(freePct / 100 * circ).toFixed(2);
 
-    // Ensure non-zero slices are always visible
-    if (usedLen > 0 && usedLen < minVis) {
-        const diff = minVis - usedLen;
-        usedLen = minVis;
-        freeLen = Math.max(minVis, freeLen - diff);
-    }
-    if (freeLen > 0 && freeLen < minVis) {
-        const diff = minVis - freeLen;
-        freeLen = minVis;
-        usedLen = Math.max(minVis, usedLen - diff);
-    }
+    // Ensure non-zero slices are always visible (steal from largest)
+    const ensureMin = (len, others) => {
+        if (len > 0 && len < minVis) {
+            const diff = minVis - len;
+            const largest = others.reduce((a, b) => a > b ? a : b);
+            return { len: minVis, stolenFrom: largest === others[0] ? 0 : largest === others[1] ? 1 : -1, diff };
+        }
+        return { len, stolenFrom: -1, diff: 0 };
+    };
+
+    const u = ensureMin(usedLen, [bufferLen, freeLen]);
+    usedLen = u.len;
+    if (u.stolenFrom === 0) bufferLen = Math.max(minVis, bufferLen - u.diff);
+    else if (u.stolenFrom === 1) freeLen = Math.max(minVis, freeLen - u.diff);
+
+    const b = ensureMin(bufferLen, [usedLen, freeLen]);
+    bufferLen = b.len;
+    if (b.stolenFrom === 0) usedLen = Math.max(minVis, usedLen - b.diff);
+    else if (b.stolenFrom === 1) freeLen = Math.max(minVis, freeLen - b.diff);
+
+    const f = ensureMin(freeLen, [usedLen, bufferLen]);
+    freeLen = f.len;
+    if (f.stolenFrom === 0) usedLen = Math.max(minVis, usedLen - f.diff);
+    else if (f.stolenFrom === 1) bufferLen = Math.max(minVis, bufferLen - f.diff);
 
     // Clamp
     usedLen = Math.min(usedLen, circ);
+    bufferLen = Math.min(bufferLen, circ);
     freeLen = Math.min(freeLen, circ);
 
     // Guard against NaN / Infinity
     if (!Number.isFinite(usedLen)) usedLen = 0;
+    if (!Number.isFinite(bufferLen)) bufferLen = 0;
     if (!Number.isFinite(freeLen)) freeLen = circ;
 
-    // Build SVG — always draw both rings so one can overlay the other
+    // Build SVG — stacked circles with dash offsets
     const usedDash = `${usedLen} ${circ}`;
+    const bufferDash = `${bufferLen} ${circ}`;
     const freeDash = `${freeLen} ${circ}`;
-    const freeOff = -usedLen;
+    const bufferOff = -usedLen;
+    const freeOff = -(usedLen + bufferLen);
 
     return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" class="vault-pie">
         <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#f97316" stroke-width="${strokeW}" stroke-dasharray="${usedDash}" transform="rotate(-90 ${cx} ${cy})"/>
+        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#eab308" stroke-width="${strokeW}" stroke-dasharray="${bufferDash}" stroke-dashoffset="${bufferOff}" transform="rotate(-90 ${cx} ${cy})"/>
         <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#10b981" stroke-width="${strokeW}" stroke-dasharray="${freeDash}" stroke-dashoffset="${freeOff}" transform="rotate(-90 ${cx} ${cy})"/>
         <circle cx="${cx}" cy="${cy}" r="${r - strokeW / 2}" fill="var(--bg-card-light)"/>
     </svg>`;
