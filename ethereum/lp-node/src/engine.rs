@@ -462,7 +462,7 @@ impl SwapEngine {
 
         info!(
             "Vault health - Collateral: {}, Normalized Debt: {}, Ratio: {:.2}%",
-            vault.collateral_amount, vault.normalized_debt, ratio
+            vault.collateral_shares, vault.normalized_debt, ratio
         );
 
         if ratio < 150.0 {

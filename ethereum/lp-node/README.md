@@ -15,15 +15,16 @@ cargo build --release
 
 The LP node uses `config.toml` for network/contract addresses and `.env` for sensitive data.
 
-**Deployed Contracts (Gnosis Chain - v1.3 Diamond Architecture):**
-- wsXmrHub (Diamond Proxy): `0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9`
-- wsXMR Token: `0x31c76171773138215E518C0224b82AC9BE9897b8`
-- OracleFacet: `0xA0ED496c6e16a6d0799Ad300DeC96494a12bE01A`
-- VaultFacet: `0x203Ccc8B35c00752dc8B04f1D77E765a5ca65BbC`
-- MintFacet: `0xC4Fa182098DEA7d37725203A636fBC5D5B7FcC43`
-- BurnFacet: `0x28f325Da1D4910B788ba27FD68e06c2b830f3B9A`
-- LiquidationFacet: `0x21A82BbA3C20d28baE6aEde14311f932F960Fa2F`
-- YieldFacet: `0xa62B73677b82780059abB96ef29E1B732607B2Dc`
+**Deployed Contracts (Gnosis Chain Mainnet - June 4, 2026):**
+- wsXmrHub (Diamond Proxy): `0x99fde7582653f1e25489f2295747c0dc7510426f`
+- wsXMR Token: `0x3ba7ac3206195d278a62c5a388cdcbe25613e448`
+- Liquidity Router: `0x214e07a2433bb9bbf5b2833f45cff4de6e83ca15`
+- RedStoneOracleFacet: `0xea2a9f6eb1b83fdcea698470ab5c18226f548722`
+- VaultFacet: `0xd32478ce6253d985a6fd8135d4764824ce875e78`
+- MintFacet: `0x5285f9e81bf65eb77355150f5904a41597a4d58d`
+- BurnFacet: `0xd2fe83c65e01a5d2c644ff49952ddd6e3c8850a9`
+- LiquidationFacet: `0x48164d7b8a1ac9c001b5926da8b7d374fd50b8d8`
+- YieldFacet: `0x453ab67f51d075eb5d1d2cfd8a7719100403bf37`
 
 **Setup using the script:**
 ```bash
