@@ -206,6 +206,9 @@ contract wsXmrStorage {
     // Pending returns
     mapping(address => mapping(address => uint256)) public pendingReturns;
     
+    // Whitelisted minters (vault => user => whitelisted)
+    mapping(address => mapping(address => bool)) public whitelistedMinters;
+    
     // Co-LP state
     mapping(uint256 => PositionMetadata) internal _positionMetadata;
     mapping(address => uint256[]) internal _vaultPositions;

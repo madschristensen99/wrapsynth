@@ -16,6 +16,12 @@ interface ILiquidationFacet is IErrors {
         uint256 debtCleared,
         uint256 collateralSeized
     );
+    event VaultBackstopped(
+        address indexed oldVault,
+        address indexed newVault,
+        uint256 debtAssumed,
+        uint256 collateralReceived
+    );
     event BadDebtWrittenOff(address indexed lpVault, uint256 debtAmount);
     event BadDebtSocialized(address indexed lpVault, uint256 badDebt, uint256 newGlobalDebtIndex);
     
@@ -35,6 +41,11 @@ interface ILiquidationFacet is IErrors {
     /// @param lpVault Address of vault to liquidate
     /// @param debtToClear Amount of debt to clear (wsXMR)
     function liquidate(address lpVault, uint256 debtToClear) external;
+    
+    /// @notice Backstop an underwater vault by assuming its debt and collateral
+    /// @dev Caller must have an active vault; takes over old vault at discount
+    /// @param oldVault Address of underwater vault to backstop
+    function backstopVault(address oldVault) external;
     
     // ========== VIEW FUNCTIONS ==========
     

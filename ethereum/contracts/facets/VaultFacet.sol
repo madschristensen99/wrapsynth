@@ -283,6 +283,28 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         emit MinBurnAmountUpdated(msg.sender, minAmount);
     }
     
+    /// @notice Whitelist a minter to bypass griefing deposit requirement
+    /// @param minter Address to whitelist
+    /// @param whitelisted True to whitelist, false to remove
+    function setMinterWhitelist(address minter, bool whitelisted) external {
+        if (!_vaults[msg.sender].active) revert VaultDoesNotExist();
+        if (minter == address(0)) revert ZeroAddress();
+        whitelistedMinters[msg.sender][minter] = whitelisted;
+        emit MinterWhitelistUpdated(msg.sender, minter, whitelisted);
+    }
+    
+    /// @notice Batch whitelist multiple minters
+    /// @param minters Array of addresses to whitelist
+    /// @param whitelisted True to whitelist all, false to remove all
+    function batchSetMinterWhitelist(address[] calldata minters, bool whitelisted) external {
+        if (!_vaults[msg.sender].active) revert VaultDoesNotExist();
+        for (uint256 i = 0; i < minters.length; i++) {
+            if (minters[i] == address(0)) revert ZeroAddress();
+            whitelistedMinters[msg.sender][minters[i]] = whitelisted;
+            emit MinterWhitelistUpdated(msg.sender, minters[i], whitelisted);
+        }
+    }
+    
     /// @inheritdoc IVaultFacet
     function setMintTimeoutBlocks(uint256 blocks) external {
         if (!_vaults[msg.sender].active) revert VaultDoesNotExist();
@@ -514,12 +536,17 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         return _positionMetadata[tokenId];
     }
     
+    /// @notice Check if a minter is whitelisted for a vault
+    function isMinterWhitelisted(address vault, address minter) external view returns (bool) {
+        return whitelistedMinters[vault][minter];
+    }
+    
     // ========== DIAMOND INTROSPECTION ==========
     
     /// @notice Returns all function selectors implemented by this facet
     /// @dev Used by Diamond to build selector → facet routing table
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](27);
+        bytes4[] memory sels = new bytes4[](30);
         sels[0] = this.createVault.selector;
         sels[1] = this.deactivateVault.selector;
         sels[2] = this.depositCollateral.selector;
@@ -530,23 +557,26 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         sels[7] = this.setVaultMarketMetrics.selector;
         sels[8] = this.setMaxMintBps.selector;
         sels[9] = this.setMinBurnAmount.selector;
-        sels[10] = this.withdrawReturns.selector;
-        sels[11] = this.getVault.selector;
-        sels[12] = this.getVaultHealth.selector;
-        sels[13] = this.getVaultDebt.selector;
-        sels[14] = this.getVaultCount.selector;
-        sels[15] = this.getVaultAtIndex.selector;
-        sels[16] = this.getPendingReturns.selector;
-        sels[17] = this.hasActiveVault.selector;
-        sels[18] = this.getPositionMetadata.selector;
-        sels[19] = this.selectors.selector;
-        sels[20] = this.setMaxCoLPRange.selector;
-        sels[21] = this.userOpenCoLP.selector;
-        sels[22] = this.unwindCoLP.selector;
-        sels[23] = this.rebalanceCoLP.selector;
-        sels[24] = this.getCoLPCapacity.selector;
-        sels[25] = this.setMintTimeoutBlocks.selector;
-        sels[26] = this.setBurnTimeoutBlocks.selector;
+        sels[10] = this.setMinterWhitelist.selector;
+        sels[11] = this.batchSetMinterWhitelist.selector;
+        sels[12] = this.withdrawReturns.selector;
+        sels[13] = this.getVault.selector;
+        sels[14] = this.getVaultHealth.selector;
+        sels[15] = this.getVaultDebt.selector;
+        sels[16] = this.getVaultCount.selector;
+        sels[17] = this.getVaultAtIndex.selector;
+        sels[18] = this.getPendingReturns.selector;
+        sels[19] = this.hasActiveVault.selector;
+        sels[20] = this.getPositionMetadata.selector;
+        sels[21] = this.isMinterWhitelisted.selector;
+        sels[22] = this.selectors.selector;
+        sels[23] = this.setMaxCoLPRange.selector;
+        sels[24] = this.userOpenCoLP.selector;
+        sels[25] = this.unwindCoLP.selector;
+        sels[26] = this.rebalanceCoLP.selector;
+        sels[27] = this.getCoLPCapacity.selector;
+        sels[28] = this.setMintTimeoutBlocks.selector;
+        sels[29] = this.setBurnTimeoutBlocks.selector;
         return sels;
     }
     

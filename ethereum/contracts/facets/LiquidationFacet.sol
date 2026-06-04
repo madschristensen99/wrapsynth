@@ -14,6 +14,7 @@ import {YieldLogic} from "../libraries/YieldLogic.sol";
 import {GnosisAddresses} from "../GnosisAddresses.sol";
 import {IwsXmrLiquidityRouter} from "../interfaces/router/IwsXmrLiquidityRouter.sol";
 import {ISavingsDAI} from "../interfaces/external/ISavingsDAI.sol";
+import {IBurnOperations} from "../interfaces/swap/IBurnOperations.sol";
 
 contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
     using SafeERC20 for IERC20;
@@ -26,6 +27,9 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         uint256 wsxmrReturned,
         bool liquidationTriggered
     );
+    
+    event BurnCancelled(bytes32 indexed requestId);
+    event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 collateralSeized);
     
     constructor(address _wsxmrToken, address _verifierProxy) 
         wsXmrStorage(_wsxmrToken, _verifierProxy) 
@@ -71,13 +75,41 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         uint256 ratio = _calculateCRWithPositions(lpVault, actualDebt);
         if (ratio >= LIQUIDATION_RATIO) revert VaultHealthy();
         
+        // P0-1: Handle in-flight burns inline to prevent dust-burn shield attack
+        // Force-cancel REQUESTED/PROPOSED, settle COMMITTED burns before proceeding
         bytes32[] storage vaultBurns = vaultBurnRequests[lpVault];
         for (uint256 i = 0; i < vaultBurns.length; i++) {
             BurnRequest storage burnReq = burnRequests[vaultBurns[i]];
-            if (burnReq.status == BurnStatus.REQUESTED || 
-                burnReq.status == BurnStatus.PROPOSED || 
-                burnReq.status == BurnStatus.COMMITTED) {
-                revert CancelBurnsFirst();
+            
+            if (burnReq.status == BurnStatus.REQUESTED || burnReq.status == BurnStatus.PROPOSED) {
+                // Force-cancel: user hasn't asserted Monero lock yet, safe to unwind
+                if (burnReq.vaultLiquidationNonce == vault.liquidationNonce) {
+                    vault.collateralShares += (burnReq.lockedCollateral + burnReq.rewardCollateral);
+                    vault.lockedCollateral -= (burnReq.lockedCollateral + burnReq.rewardCollateral);
+                    vault.normalizedDebt += burnReq.normalizedDebtAmount;
+                    globalTotalDebt += burnReq.wsxmrAmount;
+                }
+                globalPendingBurnDebt -= burnReq.wsxmrAmount;
+                
+                // Re-mint wsXMR to user
+                IwsXmrHub(address(this)).mintTokens(burnReq.user, burnReq.wsxmrAmount);
+                
+                burnReq.status = BurnStatus.CANCELLED;
+                emit BurnCancelled(burnReq.requestId);
+                
+            } else if (burnReq.status == BurnStatus.COMMITTED) {
+                // Settle committed burn: user asserted Monero lock, honor the obligation
+                // Seize locked+reward collateral to user's pending returns
+                uint256 totalSeized = burnReq.lockedCollateral + burnReq.rewardCollateral;
+                vault.lockedCollateral -= totalSeized;
+                globalPendingBurnDebt -= burnReq.wsxmrAmount;
+                
+                pendingReturns[burnReq.user][GnosisAddresses.SDAI] += totalSeized;
+                globalPendingSDAI += totalSeized;
+                emit ReturnQueued(burnReq.user, GnosisAddresses.SDAI, totalSeized);
+                
+                burnReq.status = BurnStatus.SLASHED;
+                emit BurnSlashed(burnReq.requestId, burnReq.user, totalSeized);
             }
         }
         
@@ -131,6 +163,120 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         IERC20(GnosisAddresses.SDAI).safeTransfer(msg.sender, collateralToSeize);
         
         emit VaultLiquidated(lpVault, msg.sender, debtToClear, collateralToSeize);
+    }
+    
+    /// @notice P1-1: Backstop an underwater vault by assuming its debt and collateral
+    /// @dev New LP takes over old vault's position at a discount (no wsXMR sourcing needed)
+    /// @param oldVault Address of underwater vault to backstop
+    function backstopVault(address oldVault) external {
+        if (!_vaults[oldVault].active) revert VaultDoesNotExist();
+        if (!_vaults[msg.sender].active) revert VaultDoesNotExist();
+        if (oldVault == msg.sender) revert InvalidValue();
+        
+        Vault storage oldV = _vaults[oldVault];
+        Vault storage newV = _vaults[msg.sender];
+        
+        // Extract yield from old vault
+        uint256 oldDebt;
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
+        
+        if (oldV.collateralShares > 0) {
+            oldDebt = IOracleFacet(oracleFacet).denormalizeDebt(oldV.normalizedDebt);
+            uint256 yieldShares = YieldLogic.calculateExtractableYield(
+                oldV.collateralShares,
+                oldV.lockedCollateral,
+                lpPrincipalShares[oldVault],
+                oldDebt,
+                oldV.pendingDebt,
+                xmrPrice,
+                collateralPrice
+            );
+            if (yieldShares > 0) {
+                oldV.collateralShares -= yieldShares;
+                yieldWarChest += yieldShares;
+            }
+        } else {
+            oldDebt = IOracleFacet(oracleFacet).denormalizeDebt(oldV.normalizedDebt);
+        }
+        
+        // Extract yield from new vault
+        if (newV.collateralShares > 0) {
+            uint256 newDebtBefore = IOracleFacet(oracleFacet).denormalizeDebt(newV.normalizedDebt);
+            uint256 yieldShares = YieldLogic.calculateExtractableYield(
+                newV.collateralShares,
+                newV.lockedCollateral,
+                lpPrincipalShares[msg.sender],
+                newDebtBefore,
+                newV.pendingDebt,
+                xmrPrice,
+                collateralPrice
+            );
+            if (yieldShares > 0) {
+                newV.collateralShares -= yieldShares;
+                yieldWarChest += yieldShares;
+            }
+        }
+        if (oldDebt == 0) revert InsufficientDebt();
+        
+        // Check old vault is underwater
+        uint256 ratio = _calculateCRWithPositions(oldVault, oldDebt);
+        if (ratio >= LIQUIDATION_RATIO) revert VaultHealthy();
+        
+        // Handle in-flight burns on old vault (same as liquidate)
+        bytes32[] storage vaultBurns = vaultBurnRequests[oldVault];
+        for (uint256 i = 0; i < vaultBurns.length; i++) {
+            BurnRequest storage burnReq = burnRequests[vaultBurns[i]];
+            
+            if (burnReq.status == BurnStatus.REQUESTED || burnReq.status == BurnStatus.PROPOSED) {
+                if (burnReq.vaultLiquidationNonce == oldV.liquidationNonce) {
+                    oldV.collateralShares += (burnReq.lockedCollateral + burnReq.rewardCollateral);
+                    oldV.lockedCollateral -= (burnReq.lockedCollateral + burnReq.rewardCollateral);
+                    oldV.normalizedDebt += burnReq.normalizedDebtAmount;
+                    globalTotalDebt += burnReq.wsxmrAmount;
+                }
+                globalPendingBurnDebt -= burnReq.wsxmrAmount;
+                IwsXmrHub(address(this)).mintTokens(burnReq.user, burnReq.wsxmrAmount);
+                burnReq.status = BurnStatus.CANCELLED;
+                emit BurnCancelled(burnReq.requestId);
+                
+            } else if (burnReq.status == BurnStatus.COMMITTED) {
+                uint256 totalSeized = burnReq.lockedCollateral + burnReq.rewardCollateral;
+                oldV.lockedCollateral -= totalSeized;
+                globalPendingBurnDebt -= burnReq.wsxmrAmount;
+                pendingReturns[burnReq.user][GnosisAddresses.SDAI] += totalSeized;
+                globalPendingSDAI += totalSeized;
+                emit ReturnQueued(burnReq.user, GnosisAddresses.SDAI, totalSeized);
+                burnReq.status = BurnStatus.SLASHED;
+                emit BurnSlashed(burnReq.requestId, burnReq.user, totalSeized);
+            }
+        }
+        
+        // Unwind old vault positions
+        if (_vaultPositions[oldVault].length > 0) {
+            _unwindAllVaultPositions(oldVault);
+        }
+        
+        // Recalculate debt after burn settlements
+        oldDebt = IOracleFacet(oracleFacet).denormalizeDebt(oldV.normalizedDebt);
+        
+        // Transfer state: new vault assumes old vault's debt and collateral
+        // The discount is implicit - new LP gets collateral worth less than debt at market
+        newV.normalizedDebt += oldV.normalizedDebt;
+        newV.collateralShares += oldV.collateralShares;
+        
+        // Zero out old vault
+        oldV.normalizedDebt = 0;
+        oldV.collateralShares = 0;
+        oldV.liquidationNonce++;
+        oldV.mintNonce++;
+        
+        // Verify new vault is healthy after takeover
+        uint256 newDebt = IOracleFacet(oracleFacet).denormalizeDebt(newV.normalizedDebt);
+        uint256 newRatio = _calculateCRWithPositions(msg.sender, newDebt);
+        if (newRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
+        
+        emit VaultBackstopped(oldVault, msg.sender, oldDebt, oldV.collateralShares);
     }
     
     function isVaultLiquidatable(address lpVault) external view returns (bool) {
@@ -293,11 +439,12 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
     
     /// @notice Returns all function selectors implemented by this facet
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](4);
+        bytes4[] memory sels = new bytes4[](5);
         sels[0] = this.liquidate.selector;
-        sels[1] = this.isVaultLiquidatable.selector;
-        sels[2] = this.calculateLiquidation.selector;
-        sels[3] = this.getLiquidatableVaults.selector;
+        sels[1] = this.backstopVault.selector;
+        sels[2] = this.isVaultLiquidatable.selector;
+        sels[3] = this.calculateLiquidation.selector;
+        sels[4] = this.getLiquidatableVaults.selector;
         return sels;
     }
 }
