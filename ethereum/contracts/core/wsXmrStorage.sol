@@ -63,6 +63,7 @@ contract wsXmrStorage {
     enum MintStatus {
         INVALID,
         PENDING,
+        KEY_PROVIDED,
         READY,
         COMPLETED,
         CANCELLED

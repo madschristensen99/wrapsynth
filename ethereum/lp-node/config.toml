@@ -5,7 +5,7 @@
 chain_id = 100
 name = "Gnosis Chain"
 rpc_url = "https://rpc.gnosischain.com"
-ws_url = "wss://rpc.gnosischain.com/wss"
+ws_url = "wss://gnosis-rpc.publicnode.com"
 explorer = "https://gnosisscan.io"
 
 # Deployed contract addresses (GNOSIS MAINNET - DEPLOYED)
@@ -37,7 +37,7 @@ pyth_hermes_url = "https://hermes.pyth.network"
 # Monero daemon RPC configuration
 # The LP node connects to a Monero daemon (monerod) for blockchain data
 # You can use a public node or run your own
-daemon_url = "http://xmr-node.cakewallet.com:18081"
+daemon_url = "https://xmr-node.cakewallet.com:18081"
 network = "mainnet"  # or "stagenet" for testing
 
 [lp_node]

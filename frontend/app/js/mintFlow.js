@@ -144,7 +144,7 @@ export class MintFlow {
                 [
                     this.lpVault,
                     userAddress,
-                    this.wsxmrAmount,
+                    xmrAmountAtomic,
                     commitment
                 ],
                 this.griefingDeposit

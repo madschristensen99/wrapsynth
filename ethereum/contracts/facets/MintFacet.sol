@@ -129,13 +129,14 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         if (lpPublicKeys[requestId] != bytes32(0)) revert InvalidStatus(); // Already provided
         
         lpPublicKeys[requestId] = lpPublicKey;
+        request.status = MintStatus.KEY_PROVIDED;
         
         emit LPKeyProvided(requestId, lpPublicKey);
     }
     
     function setMintReady(bytes32 requestId) external payable {
         MintRequest storage request = mintRequests[requestId];
-        if (request.status != MintStatus.PENDING) revert InvalidStatus();
+        if (request.status != MintStatus.KEY_PROVIDED) revert InvalidStatus();
         if (msg.sender != request.lpVault) revert Unauthorized();
         if (block.number >= request.timeout) revert DeadlineExpired();
         
@@ -226,7 +227,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         _reentrancyStatus = _ENTERED;
         
         MintRequest storage request = mintRequests[requestId];
-        if (request.status != MintStatus.PENDING && request.status != MintStatus.READY) {
+        if (request.status != MintStatus.PENDING && request.status != MintStatus.KEY_PROVIDED && request.status != MintStatus.READY) {
             revert InvalidStatus();
         }
         
@@ -244,7 +245,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         request.status = MintStatus.CANCELLED;
         emit MintCancelled(requestId);
         
-        if (originalStatus == MintStatus.PENDING) {
+        if (originalStatus == MintStatus.PENDING || originalStatus == MintStatus.KEY_PROVIDED) {
             // Timeout before LP marked ready - user gets griefing deposit back
             if (depositToTransfer > 0) {
                 pendingReturns[request.initiator][address(0)] += depositToTransfer;
@@ -281,7 +282,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         // Count pending/ready requests
         for (uint256 i = 0; i < vaultReqs.length; i++) {
             MintRequest storage req = mintRequests[vaultReqs[i]];
-            if (req.status == MintStatus.PENDING || req.status == MintStatus.READY) {
+            if (req.status == MintStatus.PENDING || req.status == MintStatus.KEY_PROVIDED || req.status == MintStatus.READY) {
                 count++;
             }
         }
@@ -291,7 +292,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         uint256 index = 0;
         for (uint256 i = 0; i < vaultReqs.length; i++) {
             MintRequest storage req = mintRequests[vaultReqs[i]];
-            if (req.status == MintStatus.PENDING || req.status == MintStatus.READY) {
+            if (req.status == MintStatus.PENDING || req.status == MintStatus.KEY_PROVIDED || req.status == MintStatus.READY) {
                 result[index++] = vaultReqs[i];
             }
         }
@@ -355,16 +356,17 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     
     /// @notice Returns all function selectors implemented by this facet
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](9);
+        bytes4[] memory sels = new bytes4[](10);
         sels[0] = this.initiateMint.selector;
-        sels[1] = this.setMintReady.selector;
-        sels[2] = this.finalizeMint.selector;
-        sels[3] = this.cancelMint.selector;
-        sels[4] = this.getMintRequest.selector;
-        sels[5] = this.getUserMintRequests.selector;
-        sels[6] = this.getVaultPendingMints.selector;
-        sels[7] = this.calculateWsxmrAmount.selector;
-        sels[8] = this.calculateMintFee.selector;
+        sels[1] = this.provideLPKey.selector;
+        sels[2] = this.setMintReady.selector;
+        sels[3] = this.finalizeMint.selector;
+        sels[4] = this.cancelMint.selector;
+        sels[5] = this.getMintRequest.selector;
+        sels[6] = this.getUserMintRequests.selector;
+        sels[7] = this.getVaultPendingMints.selector;
+        sels[8] = this.calculateWsxmrAmount.selector;
+        sels[9] = this.calculateMintFee.selector;
         return sels;
     }
 }
