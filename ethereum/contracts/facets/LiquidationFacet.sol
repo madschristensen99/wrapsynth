@@ -19,6 +19,8 @@ import {IBurnOperations} from "../interfaces/swap/IBurnOperations.sol";
 contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
     using SafeERC20 for IERC20;
     
+    error ReentrancyGuard();
+    
     event CoLPUnwound(
         uint256 indexed tokenId,
         address indexed vault,
@@ -36,6 +38,9 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
     {}
     
     function liquidate(address lpVault, uint256 debtToClear) external {
+        if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
+        _reentrancyStatus = _ENTERED;
+        
         if (!_vaults[lpVault].active) revert VaultDoesNotExist();
         if (debtToClear == 0) revert ZeroAmount();
         
@@ -163,12 +168,17 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         IERC20(GnosisAddresses.SDAI).safeTransfer(msg.sender, collateralToSeize);
         
         emit VaultLiquidated(lpVault, msg.sender, debtToClear, collateralToSeize);
+        
+        _reentrancyStatus = _NOT_ENTERED;
     }
     
     /// @notice P1-1: Backstop an underwater vault by assuming its debt and collateral
     /// @dev New LP takes over old vault's position at a discount (no wsXMR sourcing needed)
     /// @param oldVault Address of underwater vault to backstop
     function backstopVault(address oldVault) external {
+        if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
+        _reentrancyStatus = _ENTERED;
+        
         if (!_vaults[oldVault].active) revert VaultDoesNotExist();
         if (!_vaults[msg.sender].active) revert VaultDoesNotExist();
         if (oldVault == msg.sender) revert InvalidValue();
@@ -260,10 +270,17 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         // Recalculate debt after burn settlements
         oldDebt = IOracleFacet(oracleFacet).denormalizeDebt(oldV.normalizedDebt);
         
+        // C2: Capture absorbed collateral to prevent yield-siphon
+        uint256 absorbedCollateral = oldV.collateralShares;
+        
         // Transfer state: new vault assumes old vault's debt and collateral
         // The discount is implicit - new LP gets collateral worth less than debt at market
         newV.normalizedDebt += oldV.normalizedDebt;
-        newV.collateralShares += oldV.collateralShares;
+        newV.collateralShares += absorbedCollateral;
+        
+        // C2: Track absorbed collateral as principal to prevent yield extraction
+        lpPrincipalShares[msg.sender] += absorbedCollateral;
+        lpPrincipalShares[oldVault] = 0;
         
         // Zero out old vault
         oldV.normalizedDebt = 0;
@@ -276,7 +293,9 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         uint256 newRatio = _calculateCRWithPositions(msg.sender, newDebt);
         if (newRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
         
-        emit VaultBackstopped(oldVault, msg.sender, oldDebt, oldV.collateralShares);
+        emit VaultBackstopped(oldVault, msg.sender, oldDebt, absorbedCollateral);
+        
+        _reentrancyStatus = _NOT_ENTERED;
     }
     
     function isVaultLiquidatable(address lpVault) external view returns (bool) {

@@ -29,6 +29,7 @@ contract wsXmrStorage {
     uint256 public constant MAX_BURN_TIMEOUT_BLOCKS = 17280; // ~24 hours at 5s/block
     uint256 public constant DEFAULT_BURN_TIMEOUT_BLOCKS = 720; // ~1 hour
     uint256 public constant BURN_COMMIT_TIMEOUT_BLOCKS = 1440; // ~2 hours at 5s/block
+    uint256 public constant BURN_FINALIZE_GRACE_BLOCKS = 120; // ~10 min grace for LP finalization
     
     uint256 public constant BPS_DENOMINATOR = 10000;
     uint256 public constant MAX_MARGIN_BPS = 1000;
