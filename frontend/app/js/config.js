@@ -50,12 +50,12 @@ export const DECIMALS = {
 
 // Monero Network Configuration
 export const MONERO_CONFIG = {
-    // Default to public stagenet node for testing
+    // Default to public mainnet node
     // Users should configure their own node for privacy
-    rpcUrl: 'http://stagenet.xmr-tw.org:38081',
+    rpcUrl: 'https://xmr-node.cakewallet.com:18081',
     
     // Network type
-    networkType: 'stagenet', // 'mainnet', 'testnet', or 'stagenet'
+    networkType: 'mainnet', // 'mainnet', 'testnet', or 'stagenet'
     
     // Public nodes (users can select or add their own)
     publicNodes: {
