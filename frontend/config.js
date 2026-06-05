@@ -72,7 +72,7 @@ export const DEPLOYMENTS = {
         pythOracle: '0x2880aB155794e7179c9eE2e38200202908C17B43',
         ed25519Helper: '0x7EBdE733CE8Bac20984f919e4d2E66e9eE86f2a3',
         initialMoneroBlock: 3607954,
-        deployedAt: '2026-06-03T21:00:00.000Z',
+        deployedAt: '2026-06-04T00:00:00.000Z',
     },
     UNICHAIN_SEPOLIA: {
         chainId: 1301,
