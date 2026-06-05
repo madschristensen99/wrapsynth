@@ -66,12 +66,16 @@ export class LPClient {
     }
 
     async getMintStatus(requestId) {
-        const endpoint = LP_SERVER_CONFIG.endpoints.getMintStatus.replace(':id', requestId);
+        // Strip 0x prefix if present
+        const cleanId = requestId.startsWith('0x') ? requestId.slice(2) : requestId;
+        const endpoint = LP_SERVER_CONFIG.endpoints.getMintStatus.replace(':id', cleanId);
         return this.request(endpoint);
     }
 
     async getBurnStatus(requestId) {
-        const endpoint = LP_SERVER_CONFIG.endpoints.getBurnStatus.replace(':id', requestId);
+        // Strip 0x prefix if present
+        const cleanId = requestId.startsWith('0x') ? requestId.slice(2) : requestId;
+        const endpoint = LP_SERVER_CONFIG.endpoints.getBurnStatus.replace(':id', cleanId);
         return this.request(endpoint);
     }
 

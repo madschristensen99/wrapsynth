@@ -6,7 +6,7 @@ import { gnosis } from 'https://esm.sh/viem@2.7.0/chains';
 import { NETWORKS, CONTRACTS, ABIS, RAW_ABIS } from './config.js';
 
 // Parse ABIs once at module level
-const parsedABIs = {
+export const parsedABIs = {
     hub: parseAbi(ABIS.hub),
     wsxmr: parseAbi(ABIS.wsxmr),
     liquidityRouter: parseAbi(ABIS.liquidityRouter)

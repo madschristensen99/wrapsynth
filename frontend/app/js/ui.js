@@ -516,25 +516,37 @@ function formatBalance(balance, decimals) {
 
 /**
  * Generate QR code
- * Using a simple QR code library via CDN
+ * Uses qrcode library to generate actual QR codes
  */
-function generateQRCode(canvas, data) {
-    // Simple QR code generation
-    // In production, use a library like qrcode.js
-    const ctx = canvas.getContext('2d');
-    canvas.width = 200;
-    canvas.height = 200;
-    
-    // For now, just show placeholder
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, 200, 200);
-    ctx.fillStyle = '#000000';
-    ctx.font = '12px monospace';
-    ctx.fillText('QR Code', 70, 100);
-    ctx.fillText('(Placeholder)', 55, 115);
-    
-    // TODO: Integrate actual QR code library
-    // Example: QRCode.toCanvas(canvas, data, { width: 200 });
+async function generateQRCode(canvas, data) {
+    try {
+        // Dynamically import qrcode library
+        const QRCode = await import('https://cdn.jsdelivr.net/npm/qrcode@1.5.3/+esm');
+        
+        // Generate QR code on canvas
+        await QRCode.toCanvas(canvas, data, {
+            width: 200,
+            margin: 2,
+            color: {
+                dark: '#000000',
+                light: '#FFFFFF'
+            }
+        });
+        
+        console.log('QR code generated for:', data);
+    } catch (error) {
+        console.error('Failed to generate QR code:', error);
+        
+        // Fallback to placeholder
+        const ctx = canvas.getContext('2d');
+        canvas.width = 200;
+        canvas.height = 200;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, 200, 200);
+        ctx.fillStyle = '#000000';
+        ctx.font = '12px monospace';
+        ctx.fillText('QR Code Error', 50, 100);
+    }
 }
 
 /**
