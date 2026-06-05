@@ -107,14 +107,20 @@ export class MintFlow {
             await readHub('getXmrPrice', []);
             console.log('✅ Oracle prices are fresh');
         } catch (error) {
-            // Prices are stale - update them
-            console.warn('⚠️ Oracle prices are stale, updating...');
-            await this.updatePrices();
+            // Prices are stale - try to update them
+            console.warn('⚠️ Oracle prices are stale, attempting update...');
+            try {
+                await this.updatePrices();
+            } catch (updateError) {
+                console.warn('⚠️ Could not update prices from UI:', updateError.message);
+                console.log('ℹ️ Continuing anyway - LP node should handle price updates');
+                // Don't throw - the LP node will update prices
+            }
         }
     }
 
     async updatePrices() {
-        const { updateOraclePrices } = await import('./redstoneWrapper.js');
+        const { updateOraclePrices } = await import('./redstoneWrapper.js?v=' + Date.now());
         await updateOraclePrices();
         console.log('✅ Prices updated, continuing with mint');
     }
@@ -186,18 +192,28 @@ export class MintFlow {
         // Wait for LP to call provideLPKey() on-chain
         const lpPublicKey = await this.waitForLPKey();
         
-        // Derive shared Monero address from LP's key + user's secret
-        const sharedAddress = this.agent.deriveSharedMoneroAddress(lpPublicKey);
-        this.depositAddress = sharedAddress;
-        
         console.log('✅ LP public key received:', lpPublicKey);
-        console.log('📍 Shared Monero Deposit Address:', sharedAddress);
-        console.log('💡 Send exactly', this.xmrAmount, 'XMR to this address');
+        
+        // Get the deposit address from LP server (it computes the proper Monero address)
+        console.log('Fetching deposit address from LP server...');
+        try {
+            const status = await this.lpClient.getMintStatus(this.requestId);
+            if (status.deposit_address) {
+                this.depositAddress = status.deposit_address;
+                console.log('📍 Monero Deposit Address:', this.depositAddress);
+                console.log('� Send exactly', this.xmrAmount, 'XMR to this address');
+            } else {
+                throw new Error('LP server did not provide deposit address');
+            }
+        } catch (error) {
+            console.error('Failed to get deposit address from LP server:', error);
+            throw new Error('Could not get deposit address from LP. Please try again.');
+        }
         
         updateSwapState({
             requestId: this.requestId,
             state: 'deposit',
-            depositAddress: sharedAddress,
+            depositAddress: this.depositAddress,
             lpPublicKey: lpPublicKey
         });
 
@@ -232,9 +248,8 @@ export class MintFlow {
     }
 
     async waitForLPReady() {
-        this.state = 'lp-ready';
-        updateSwapState({ requestId: this.requestId, state: this.state });
-
+        // Don't change state yet - we're still in 'deposit' state waiting for user to deposit
+        // The state will change to 'lp-ready' when MintReady event is received
         console.log('Waiting for LP to call setMintReady...');
 
         const pollStatus = async () => {
@@ -265,6 +280,8 @@ export class MintFlow {
                 { requestId: this.requestId },
                 (log) => {
                     console.log('MintReady event received');
+                    this.state = 'lp-ready';
+                    updateSwapState({ requestId: this.requestId, state: this.state });
                     clearInterval(pollInterval);
                     unwatch();
                     resolve();
@@ -363,6 +380,29 @@ export class MintFlow {
         await this.agent.initialize('MINT', this.xmrAmount.toString());
 
         switch (this.state) {
+            case 'quote':
+            case 'init':
+                // Swap was initialized but not yet submitted on-chain
+                // Restart from the beginning (need to get quote first)
+                console.log('Restarting mint flow from', this.state, 'state...');
+                await this.getQuote();
+                await this.checkOracleFreshness();
+                await this.initiateOnEVM();
+                await this.notifyLP();
+                await this.waitForLPReady();
+                await this.finalize();
+                break;
+            case 'evm-init':
+                // Transaction to initiate on EVM was started but may have failed
+                // Retry from initiateOnEVM
+                console.log('Resuming from evm-init state...');
+                await this.getQuote();
+                await this.checkOracleFreshness();
+                await this.initiateOnEVM();
+                await this.notifyLP();
+                await this.waitForLPReady();
+                await this.finalize();
+                break;
             case 'initiated':
             case 'awaiting-lp-key':
                 await this.notifyLP();
@@ -371,6 +411,45 @@ export class MintFlow {
                 break;
             case 'deposit':
             case 'lp-ready':
+                // Check if we have a valid deposit address, otherwise fetch from LP server
+                if (savedState.depositAddress && savedState.depositAddress.startsWith('4')) {
+                    // Valid Monero address from saved state
+                    this.depositAddress = savedState.depositAddress;
+                    console.log('📍 Restored Monero Deposit Address:', this.depositAddress);
+                } else {
+                    // Fetch from LP server
+                    console.log('Fetching deposit address from LP server...');
+                    try {
+                        const status = await this.lpClient.getMintStatus(this.requestId);
+                        if (status.deposit_address) {
+                            this.depositAddress = status.deposit_address;
+                            console.log('📍 Fetched Monero Deposit Address:', this.depositAddress);
+                        } else {
+                            throw new Error('LP server did not provide deposit address');
+                        }
+                    } catch (error) {
+                        console.error('Failed to get deposit address:', error);
+                        throw new Error('Could not get deposit address from LP. Please try again.');
+                    }
+                }
+                
+                console.log('💡 Send exactly', this.xmrAmount, 'XMR to this address');
+                
+                // Update state to deposit (not lp-ready) so UI shows deposit info
+                this.state = 'deposit';
+                
+                // Update UI to show deposit address
+                updateSwapState({
+                    requestId: this.requestId,
+                    state: 'deposit',
+                    depositAddress: this.depositAddress,
+                    lpPublicKey: savedState.lpPublicKey
+                });
+                
+                // Force UI update by importing and calling showMintDepositInfo
+                const { showMintDepositInfo } = await import('./ui.js');
+                showMintDepositInfo(this.depositAddress, this.xmrAmount);
+                
                 await this.waitForLPReady();
                 await this.finalize();
                 break;

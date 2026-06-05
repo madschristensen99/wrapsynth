@@ -1,0 +1,12 @@
+{
+  "name": "wrapsynth-frontend",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@redstone-finance/evm-connector": "^0.6.0",
+    "@redstone-finance/sdk": "^0.6.0",
+    "ethers": "^5.7.2",
+    "monero-ts": "^0.11.10",
+    "qrcode": "^1.5.4"
+  }
+}
