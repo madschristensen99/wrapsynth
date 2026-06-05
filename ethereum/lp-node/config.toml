@@ -9,9 +9,18 @@ ws_url = "wss://gnosis-rpc.publicnode.com"
 explorer = "https://gnosisscan.io"
 
 # Deployed contract addresses (GNOSIS MAINNET - DEPLOYED June 4, 2026)
+# wsXmrHub acts as the vault manager (diamond proxy)
 vault_manager = "0xd32e2ece901094550b81ab5051a72256761514d6"
 wsxmr_token = "0x8890f651190c838651623de077474a98e37803ab"
 liquidity_router = "0x3235ffe7b51b3726bc0f398da21ed0583103f106"
+
+# Facet addresses (for reference - all calls go through vault_manager)
+redstone_oracle_facet = "0x01acec458fd3e8508510cbdc03a8f64532a10618"
+vault_facet = "0xf2ec5240c442bba6674a873343ec43c451467229"
+mint_facet = "0x35da334de761b200da3242429b884a00509bc32b"
+burn_facet = "0x779e5a10f4ba60fbc87c1dee79f09168547fda09"
+liquidation_facet = "0xbc5ffaaa057030b5e6b1f13807f54fd029c57c94"
+yield_facet = "0x6d242f08ec7d704b5824f1334c192360f2966add"
 
 # Oracle configuration
 pyth_oracle = "0x2880aB155794e7179c9eE2e38200202908C17B43"
