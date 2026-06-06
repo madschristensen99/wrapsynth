@@ -15,7 +15,10 @@ const RPC_URL = process.env.GNOSIS_RPC_URL || 'https://rpc.gnosischain.com';
 
 async function updatePrices() {
     try {
-        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        // Support both ethers v5 and v6
+        const provider = ethers.JsonRpcProvider 
+            ? new ethers.JsonRpcProvider(RPC_URL)
+            : new ethers.providers.JsonRpcProvider(RPC_URL);
         const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
         
         const hubAbi = [

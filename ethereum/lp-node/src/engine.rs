@@ -3,7 +3,7 @@ use crate::evm::EvmClient;
 use crate::monero::MoneroClient;
 use crate::oracle::OracleClient;
 use alloy::primitives::FixedBytes;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::SecretKey;
 use rand::rngs::OsRng;
@@ -444,19 +444,54 @@ impl SwapEngine {
             // Check on-chain status first to avoid calling setMintReady if already called
             let request_id = FixedBytes::from_slice(&mint.request_id);
             info!("Checking on-chain status before calling setMintReady...");
-            let on_chain_status = self.evm.get_mint_status(request_id).await;
             
-            if let Ok(status) = on_chain_status {
-                info!("On-chain mint status: {}", status);
-                if status >= 3 { // Already READY or beyond
-                    info!("Mint already ready on-chain (status: {}), updating local state", status);
-                    mint.status = MintStatus::Ready;
-                    mint.updated_at = current_timestamp();
-                    self.db.update_mint_task(mint)?;
-                    return Ok(());
+            // Try to get on-chain status, but if it fails, assume PENDING and try to provide LP key
+            let should_provide_key = match self.evm.get_mint_status(request_id).await {
+                Ok(status) => {
+                    info!("On-chain mint status: {}", status);
+                    
+                    // Status 4 = COMPLETED, Status 5 = CANCELLED
+                    if status >= 4 {
+                        info!("Mint already finalized on-chain (status: {}), marking as completed", status);
+                        mint.status = if status == 4 { MintStatus::Completed } else { MintStatus::Cancelled };
+                        mint.updated_at = current_timestamp();
+                        self.db.update_mint_task(mint)?;
+                        return Ok(());
+                    }
+                    
+                    if status == 3 { // READY
+                        info!("Mint already ready on-chain (status: {}), updating local state", status);
+                        mint.status = MintStatus::Ready;
+                        mint.updated_at = current_timestamp();
+                        self.db.update_mint_task(mint)?;
+                        return Ok(());
+                    }
+                    
+                    status == 0 // PENDING - need to provide LP key
                 }
-            } else {
-                warn!("Failed to check on-chain status: {:?}", on_chain_status);
+                Err(e) => {
+                    warn!("Failed to check on-chain status: {}, assuming PENDING and will try to provide LP key", e);
+                    true // Assume PENDING if we can't check
+                }
+            };
+            
+            // Provide LP key if needed
+            if should_provide_key {
+                info!("Providing LP key before setMintReady...");
+                
+                if let Some(lp_public_spend_bytes) = mint.lp_public_spend {
+                    match self.evm.provide_lp_key(request_id, lp_public_spend_bytes.into()).await {
+                        Ok(tx_hash) => {
+                            info!("LP key provided on-chain: {:?}", tx_hash);
+                        }
+                        Err(e) => {
+                            // If provideLPKey fails, it might already be provided - continue anyway
+                            warn!("Failed to provide LP key (may already be provided): {}", e);
+                        }
+                    }
+                } else {
+                    warn!("LP public key not found in mint task, skipping provideLPKey");
+                }
             }
 
             // Update oracle prices using Node.js script (RedStone SDK only works in JS)

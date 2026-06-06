@@ -83,7 +83,7 @@ export const MONERO_CONFIG = {
 // Swap parameters
 export const SWAP_CONFIG = {
     minMintAmount: 0.01, // Minimum XMR to mint
-    minBurnAmount: 0.01, // Minimum wsXMR to burn
+    minBurnAmount: 0, // No minimum - allow burning any amount
     defaultTimeout: 7200, // 2 hours in seconds (matches MAX_MINT_TIMEOUT)
     pollInterval: 5000, // 5 seconds
     maxRetries: 3

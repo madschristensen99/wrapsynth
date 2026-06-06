@@ -68,16 +68,18 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         }
         if (activeCount >= MAX_BURN_REQUESTS_PER_VAULT) revert MaxBurnRequestsReached();
         
-        uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
-        if (actualDebt < wsxmrAmount) revert InsufficientDebt();
-        
+        // Calculate collateral needed for burn
         (uint256 collateralToLock, uint256 rewardCollateral) = calculateBurnCollateral(lpVault, wsxmrAmount);
         uint256 totalLock = collateralToLock + rewardCollateral;
         
+        // Only check if vault has enough collateral - debt check removed
+        // Users can burn any wsXMR they hold as long as vault is sufficiently collateralized
         if (vault.collateralShares < totalLock) revert InsufficientCollateral();
         
+        // Get current debt for post-burn health check
+        uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
         uint256 remainingCollateral = vault.collateralShares - totalLock;
-        uint256 remainingDebt = actualDebt - wsxmrAmount;
+        uint256 remainingDebt = actualDebt > wsxmrAmount ? actualDebt - wsxmrAmount : 0;
         if (remainingDebt > 0) {
             uint256 xmrPrice = _getXmrPriceFromStorage();
             uint256 collateralPrice = _getCollateralPriceFromStorage();

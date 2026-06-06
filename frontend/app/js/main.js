@@ -244,6 +244,101 @@ function setupEventHandlers() {
     // Burn flow
     elements.startBurn.addEventListener('click', handleStartBurn);
     elements.burnVaultSelect.addEventListener('change', () => handleVaultSelect(false));
+    
+    // Burn percentage buttons
+    document.querySelectorAll('.percentage-btn').forEach(btn => {
+        btn.addEventListener('click', handleBurnPercentage);
+    });
+    
+    // Manual price update button
+    const updatePricesBtn = document.getElementById('update-prices-btn');
+    if (updatePricesBtn) {
+        updatePricesBtn.addEventListener('click', handleUpdatePrices);
+    }
+}
+
+/**
+ * Handle burn percentage button clicks
+ */
+async function handleBurnPercentage(event) {
+    const percentage = parseInt(event.target.dataset.percentage);
+    const feedback = document.getElementById('burn-percentage-feedback');
+    
+    // Get actual balance from contract
+    const { readWsxmr, getUserAddress } = await import('./viemClient.js');
+    const userAddress = getUserAddress();
+    
+    if (!userAddress) {
+        feedback.textContent = 'Connect wallet first';
+        feedback.style.opacity = '1';
+        setTimeout(() => { feedback.style.opacity = '0'; }, 2000);
+        return;
+    }
+    
+    try {
+        const balance = await readWsxmr('balanceOf', [userAddress]);
+        const balanceNum = Number(balance) / 1e8; // wsXMR has 8 decimals
+        
+        if (balanceNum === 0) {
+            feedback.textContent = 'No balance';
+            feedback.style.opacity = '1';
+            setTimeout(() => { feedback.style.opacity = '0'; }, 2000);
+            return;
+        }
+        
+        const amount = (balanceNum * percentage) / 100;
+        const burnAmountInput = document.getElementById('burn-amount');
+        burnAmountInput.value = amount.toFixed(8);
+        
+        feedback.textContent = `✓ ${percentage}%`;
+        feedback.style.opacity = '1';
+        setTimeout(() => { feedback.style.opacity = '0'; }, 1500);
+    } catch (error) {
+        console.error('Failed to get balance:', error);
+        feedback.textContent = 'Error';
+        feedback.style.opacity = '1';
+        setTimeout(() => { feedback.style.opacity = '0'; }, 2000);
+    }
+}
+
+/**
+ * Handle manual price update
+ */
+async function handleUpdatePrices() {
+    const btn = document.getElementById('update-prices-btn');
+    const originalText = btn.innerHTML;
+    
+    try {
+        // Disable button and show loading state
+        btn.disabled = true;
+        btn.innerHTML = '<span class="btn-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg></span><span>Updating...</span>';
+        
+        console.log('Manually updating oracle prices...');
+        
+        // Import and call the update function
+        const { updateOraclePrices } = await import('./redstoneWrapper.js?v=' + Date.now());
+        await updateOraclePrices();
+        
+        // Success feedback
+        btn.innerHTML = '<span class="btn-icon">✅</span><span>Updated!</span>';
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }, 2000);
+        
+        console.log('✅ Oracle prices updated successfully');
+        showSuccess('Prices Updated', 'Oracle prices have been updated with latest RedStone data.');
+        
+    } catch (error) {
+        console.error('Failed to update prices:', error);
+        btn.innerHTML = '<span class="btn-icon">❌</span><span>Failed</span>';
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }, 2000);
+        
+        showError('Update Failed', `Could not update oracle prices: ${error.message}`);
+    }
 }
 
 /**
@@ -418,8 +513,8 @@ async function checkForActiveSwapOnChain(userAddress) {
                 continue;
             }
 
-            // Status: 0=INVALID, 1=PENDING, 2=READY, 3=FINALIZED, 4=CANCELLED
-            if (mintReq.status === 1 || mintReq.status === 2) {
+            // Status: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
+            if (mintReq.status === 1 || mintReq.status === 2 || mintReq.status === 3) {
                 activeRequestIds.add(requestId);
 
                 let lpPublicKey = '0x0000000000000000000000000000000000000000000000000000000000000000';
@@ -431,9 +526,10 @@ async function checkForActiveSwapOnChain(userAddress) {
                 const hasLpKey = lpPublicKey !== '0x0000000000000000000000000000000000000000000000000000000000000000';
 
                 let state;
-                if (mintReq.status === 2) state = 'lp-ready';
-                else if (hasLpKey) state = 'deposit';
-                else state = 'awaiting-lp-key';
+                if (mintReq.status === 3) state = 'lp-ready';  // READY - can finalize
+                else if (mintReq.status === 2) state = 'lp-verifying';  // KEY_PROVIDED - LP is verifying
+                else if (hasLpKey) state = 'deposit';  // PENDING with LP key - waiting for XMR
+                else state = 'awaiting-lp-key';  // PENDING without LP key
 
                 const xmrAmount = Number(mintReq.xmrAmount) / 1e12;
                 const swap = {
@@ -575,9 +671,12 @@ async function loadLpStats(address, vaultData) {
     try {
         const { vault, health, debt } = vaultData;
         
+        console.log('Vault pending debt:', vault.pendingDebt);
+        
         // Update UI with vault stats
         document.getElementById('lp-collateral').textContent = `${(Number(vault.collateralShares) / 1e18).toFixed(2)} sDAI`;
         document.getElementById('lp-debt').textContent = `${(Number(debt) / 1e8).toFixed(4)} wsXMR`;
+        document.getElementById('lp-pending-debt').textContent = `${(Number(vault.pendingDebt) / 1e8).toFixed(4)} wsXMR`;
         document.getElementById('lp-health').textContent = `${(Number(health) / 1e16).toFixed(0)}%`;
         
         // Update settings inputs
@@ -615,6 +714,31 @@ async function handleResumeSwap(specificSwap) {
         
         // Resume appropriate flow
         if (swap.type === 'mint') {
+            // Try to load the seed for this mint if we have the publicSpendKey
+            if (swap.publicSpendKey) {
+                const { loadSeed, hasStoredSeed } = await import('./seedStorage.js');
+                const { getPhantomAgent } = await import('./phantomAgent.js');
+                
+                // Remove '0x' prefix if present
+                const pubKeyHex = swap.publicSpendKey.startsWith('0x') 
+                    ? swap.publicSpendKey.slice(2) 
+                    : swap.publicSpendKey;
+                
+                if (hasStoredSeed(pubKeyHex)) {
+                    console.log('Loading seed for this mint...');
+                    const seed = await loadSeed(pubKeyHex);
+                    if (seed) {
+                        const agent = getPhantomAgent();
+                        await agent.restoreFromSeed(seed);
+                        console.log('✅ Seed restored for mint');
+                    } else {
+                        console.warn('⚠️ Could not decrypt seed - you may need to sign to decrypt');
+                    }
+                } else {
+                    console.warn('⚠️ No stored seed found for this mint - finalization may fail');
+                }
+            }
+            
             currentMintFlow = new MintFlow();
             showMintTab();
             trackMintProgress(currentMintFlow);
@@ -676,19 +800,29 @@ async function loadVaults() {
                 if (hasCollateral || vaultData.active) {
                     const collAmount = Number(vaultData.collateralShares) / 1e18;
                     const debtAmount = Number(vaultData.normalizedDebt) / 1e8;
+                    const pendingDebtAmount = Number(vaultData.pendingDebt) / 1e8;
+                    const totalDebt = debtAmount + pendingDebtAmount;
                     const debtValueUsd = debtAmount * xmrPrice;
+                    const pendingDebtValueUsd = pendingDebtAmount * xmrPrice;
+                    const totalDebtValueUsd = totalDebt * xmrPrice;
+                    
                     const usedCollateral = collPrice > 0 ? debtValueUsd / collPrice : 0;
-                    // Buffer = extra 50% collateral required to maintain 150% ratio
-                    const bufferCollateral = usedCollateral * 0.5;
-                    const freeCollateral = Math.max(0, collAmount - usedCollateral - bufferCollateral);
+                    const pendingCollateral = collPrice > 0 ? pendingDebtValueUsd / collPrice : 0;
+                    // Buffer = extra 50% collateral required to maintain 150% ratio (on total debt)
+                    const bufferCollateral = (usedCollateral + pendingCollateral) * 0.5;
+                    const freeCollateral = Math.max(0, collAmount - usedCollateral - pendingCollateral - bufferCollateral);
 
                     console.log('Vault capacity:', {
                         collAmount,
                         debtAmount,
+                        pendingDebtAmount,
+                        totalDebt,
                         xmrPrice,
                         collPrice,
                         debtValueUsd,
+                        pendingDebtValueUsd,
                         usedCollateral,
+                        pendingCollateral,
                         bufferCollateral,
                         freeCollateral
                     });
@@ -698,7 +832,9 @@ async function loadVaults() {
                         name: `LP Vault ${vaultAddress.slice(0, 6)}...${vaultAddress.slice(-4)}`,
                         collateral: vaultData.collateralShares,
                         debt: vaultData.normalizedDebt,
+                        pendingDebt: vaultData.pendingDebt,
                         usedCollateral,
+                        pendingCollateral,
                         bufferCollateral,
                         freeCollateral,
                     };
@@ -919,7 +1055,7 @@ async function handleStartBurn() {
     
     // Require wallet connection
     if (!getUserAddress()) {
-        showError('Wallet Required', 'Please connect your wallet to start a burn');
+        console.log('Wallet not connected');
         return;
     }
     
@@ -929,17 +1065,17 @@ async function handleStartBurn() {
     
     // Validate inputs
     if (!amount || amount <= 0) {
-        showError('Invalid Input', 'Please enter a valid amount');
+        console.log('Invalid amount');
         return;
     }
     
     if (!destination || destination.length < 95) {
-        showError('Invalid Input', 'Please enter a valid Monero address');
+        console.log('Invalid Monero address');
         return;
     }
     
     if (!vaultAddress) {
-        showError('Invalid Input', 'Please select a vault');
+        console.log('No vault selected');
         return;
     }
     
@@ -955,8 +1091,8 @@ async function handleStartBurn() {
         // Start the flow
         await currentBurnFlow.start(vaultAddress, amount, destination);
         
-        // Success
-        showSuccess('Burn Complete', `Successfully burned ${amount} wsXMR and sent XMR to ${destination}!`);
+        // Success - just log it
+        console.log(`Burn complete: ${amount} wsXMR`);
         
         // Update balance
         const address = getUserAddress();
@@ -968,7 +1104,6 @@ async function handleStartBurn() {
         
     } catch (error) {
         console.error('Burn error:', error);
-        showError('Burn Error', error.message);
         enableInputs(false);
     }
 }
