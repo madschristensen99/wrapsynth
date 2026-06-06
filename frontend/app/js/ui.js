@@ -104,6 +104,8 @@ export function initUI() {
     elements.mintQrCode = document.getElementById('mint-qr-code');
     elements.mintXmrAddress = document.getElementById('mint-xmr-address');
     elements.mintExactAmount = document.getElementById('mint-exact-amount');
+    elements.confirmSentXmr = document.getElementById('confirm-sent-xmr');
+    elements.waitingLpVerification = document.getElementById('waiting-lp-verification');
     elements.mintActions = document.getElementById('mint-actions');
     elements.cancelMint = document.getElementById('cancel-mint');
     
@@ -429,8 +431,56 @@ export function showMintDepositInfo(address, amount) {
     // Generate QR code
     generateQRCode(elements.mintQrCode, `monero:${address}?tx_amount=${amount}`);
     
+    // Show button, hide verification status initially
+    if (elements.confirmSentXmr) {
+        elements.confirmSentXmr.classList.remove('hidden');
+    }
+    if (elements.waitingLpVerification) {
+        elements.waitingLpVerification.classList.add('hidden');
+    }
+    
     elements.mintDepositInfo.classList.remove('hidden');
     elements.mintActions.classList.remove('hidden');
+}
+
+/**
+ * Show LP verification status (after user confirms they sent XMR)
+ */
+export function showLPVerificationStatus() {
+    if (elements.confirmSentXmr) {
+        elements.confirmSentXmr.classList.add('hidden');
+    }
+    if (elements.waitingLpVerification) {
+        elements.waitingLpVerification.classList.remove('hidden');
+    }
+}
+
+/**
+ * Show "Claim wsXMR" button after LP confirms receipt
+ */
+export function showClaimWsXmrButton(onClaim) {
+    // Hide verification status
+    if (elements.waitingLpVerification) {
+        elements.waitingLpVerification.classList.add('hidden');
+    }
+    
+    // Create or show claim button
+    let claimButton = elements.mintActions.querySelector('.claim-wsxmr-btn');
+    if (!claimButton) {
+        claimButton = document.createElement('button');
+        claimButton.className = 'btn btn-primary claim-wsxmr-btn';
+        claimButton.innerHTML = `
+            <span class="btn-icon">${getIconSVG('check')}</span>
+            <span>Claim wsXMR</span>
+        `;
+        elements.mintActions.appendChild(claimButton);
+    }
+    
+    claimButton.classList.remove('hidden');
+    claimButton.onclick = onClaim;
+    
+    // Update progress message
+    updateMintProgress('lp-confirm', 'LP confirmed! Click to claim your wsXMR tokens.');
 }
 
 /**

@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, error, info, warn};
 
 const REDSTONE_API_URL: &str = "https://api.redstone.finance/prices";
+const REDSTONE_DATA_PACKAGES_URL: &str = "https://oracle-gateway-1.a.redstone.finance/data-packages/latest";
 
 #[derive(Debug, Deserialize)]
 struct RedStoneResponse {
@@ -87,6 +88,62 @@ impl OracleClient {
             dai_price,
             timestamp,
         })
+    }
+
+    /// Fetch signed RedStone data packages for on-chain verification
+    /// Returns the serialized data packages as bytes to append to calldata
+    pub async fn fetch_redstone_data_packages(&self) -> Result<Vec<u8>> {
+        let url = format!(
+            "{}?data-service-id=redstone-primary-prod&unique-signers-count=3&data-feeds=XMR,DAI",
+            REDSTONE_DATA_PACKAGES_URL
+        );
+
+        debug!("Fetching RedStone data packages from: {}", url);
+
+        let response = self
+            .http_client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to fetch RedStone data packages")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            anyhow::bail!("RedStone data packages API returned error: {}", status);
+        }
+
+        // Get the response as text first to see what we're getting
+        let response_text = response
+            .text()
+            .await
+            .context("Failed to read RedStone response as text")?;
+
+        debug!("RedStone raw response: {}", response_text);
+
+        // Try to parse as JSON
+        let data: serde_json::Value = serde_json::from_str(&response_text)
+            .context(format!("Failed to parse RedStone response as JSON. Response: {}", response_text))?;
+
+        debug!("RedStone data packages response: {}", serde_json::to_string_pretty(&data).unwrap_or_default());
+
+        // Extract the serialized data packages
+        // RedStone returns an array of data packages with signatures
+        // We need to serialize them according to RedStone's format
+        let packages = data.as_array()
+            .ok_or_else(|| anyhow::anyhow!("Expected array of data packages"))?;
+
+        if packages.is_empty() {
+            anyhow::bail!("No data packages returned from RedStone");
+        }
+
+        // For now, return the raw JSON as bytes
+        // TODO: Implement proper RedStone calldata serialization
+        let serialized = serde_json::to_vec(&data)
+            .context("Failed to serialize data packages")?;
+
+        info!("Fetched {} RedStone data packages ({} bytes)", packages.len(), serialized.len());
+
+        Ok(serialized)
     }
 
     /// Calculate price drift in basis points

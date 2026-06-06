@@ -809,9 +809,22 @@ async fn admin_oracle_force_push(
         )
     })?;
 
+    let redstone_data = state
+        .oracle
+        .fetch_redstone_data_packages()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to fetch RedStone data: {}", e),
+                }),
+            )
+        })?;
+
     let tx_hash = state
         .evm
-        .update_oracle_prices(prices.xmr_price, prices.dai_price)
+        .update_oracle_prices_redstone(redstone_data)
         .await
         .map_err(|e| {
             (

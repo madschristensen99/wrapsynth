@@ -46,6 +46,9 @@ import { getPoolFlow } from './poolFlow.js';
 import { getDashboard } from './dashboard.js';
 import { hasActiveSwap, loadActiveSwap, loadActiveSwaps, saveActiveSwap, addOrUpdateActiveSwap, removeActiveSwap, clearActiveSwap } from './storage.js';
 import { CONTRACTS } from './config.js';
+import { displaySwapHistory } from './swapHistory.js';
+import { loadRecentActivity } from './activityFeed.js';
+import { updateProtocolStats } from './protocolStats.js';
 
 // Global state
 let currentMintFlow = null;
@@ -172,6 +175,9 @@ async function init() {
     
     // Initialize UI
     initUI();
+    
+    // Display swap history
+    displaySwapHistory();
     setupCopyButtons();
     
     // Initialize viem clients
@@ -197,10 +203,16 @@ async function init() {
     fetchXmrPrice();
     fetch24hVolume();
     
+    // Load activity feed and protocol stats
+    loadRecentActivity();
+    updateProtocolStats();
+    
     // Update stats every 60 seconds
     setInterval(() => {
         fetchXmrPrice();
         fetch24hVolume();
+        loadRecentActivity();
+        updateProtocolStats();
     }, 60000);
     
     // Listen for account/chain changes
@@ -356,12 +368,14 @@ async function handleChainChange(chainId) {
 /**
  * Check for active swap on startup (localStorage only)
  */
-function checkForActiveSwap() {
+async function checkForActiveSwap() {
     const swaps = loadActiveSwaps();
-    if (swaps.length > 0) {
-        console.log('Active swaps detected:', swaps);
-        showResumeBanner(swaps, handleResumeSwap);
-    }
+    if (swaps.length === 0) return;
+    
+    console.log('Found saved swaps in localStorage:', swaps);
+    
+    // Show banner for all swaps - on-chain check will happen when wallet connects
+    showResumeBanner(swaps, handleResumeSwap);
 }
 
 /**
@@ -857,10 +871,14 @@ function trackMintProgress(flow) {
                 const depositAddr = flow.depositAddress || flow.agent.getMoneroAddress();
                 showMintDepositInfo(depositAddr, flow.xmrAmount);
                 break;
+            case 'lp-verifying':
+                completeMintStep('deposit');
+                updateMintProgress('lp-confirm', 'LP is updating oracle prices and verifying your XMR deposit...');
+                break;
             case 'lp-ready':
             case 'lp-confirm':
                 completeMintStep('deposit');
-                updateMintProgress('lp-confirm', 'Waiting for LP to verify XMR...');
+                updateMintProgress('lp-confirm', 'LP verified! Preparing to mint...');
                 break;
             case 'finalize':
                 completeMintStep('lp-confirm');

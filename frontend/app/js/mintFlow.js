@@ -6,6 +6,8 @@ import { getPhantomAgent } from './phantomAgent.js';
 import { getLPClient } from './lpClient.js';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
 import { keccak256, toHex, parseEther } from 'https://esm.sh/viem@2.7.0';
+import { startDeadlineTimer, startStatusPolling, stopTimers } from './mintFlowTimers.js';
+import { showLPVerificationStatus } from './ui.js';
 
 export class MintFlow {
     constructor() {
@@ -33,6 +35,9 @@ export class MintFlow {
         this.xmrAmount = xmrAmount;
         this.timeoutDuration = SWAP_CONFIG.defaultTimeout;
 
+        // Setup cancel button
+        this.setupCancelButton();
+
         await this.getQuote();
         await this.initializeAgent();
         await this.checkOracleFreshness();
@@ -40,6 +45,87 @@ export class MintFlow {
         await this.notifyLP();
         await this.waitForLPReady();
         await this.finalize();
+    }
+
+    setupCancelButton() {
+        const cancelBtn = document.getElementById('cancel-mint');
+        if (cancelBtn) {
+            cancelBtn.onclick = () => this.cancelMint();
+        }
+    }
+
+    setupConfirmSentButton() {
+        const confirmBtn = document.getElementById('confirm-sent-xmr');
+        if (confirmBtn) {
+            confirmBtn.onclick = () => {
+                showLPVerificationStatus();
+                // Resolve the promise waiting for user confirmation
+                if (this.userConfirmResolve) {
+                    this.userConfirmResolve();
+                }
+            };
+        }
+    }
+
+    async cancelMint() {
+        try {
+            const confirmed = confirm('Are you sure you want to cancel this mint? This action cannot be undone.');
+            if (!confirmed) return;
+
+            console.log('Cancelling mint:', this.requestId);
+            
+            // Call cancelMint on the contract
+            const { getWalletClient, getPublicClient } = await import('./viemClient.js');
+            
+            const walletClient = await getWalletClient();
+            const publicClient = await getPublicClient();
+            
+            const hash = await walletClient.writeContract({
+                address: CONTRACTS.hub,
+                abi: ABIS.hub,
+                functionName: 'cancelMint',
+                args: [this.requestId]
+            });
+            
+            console.log('Cancel transaction sent:', hash);
+            
+            // Wait for confirmation
+            await publicClient.waitForTransactionReceipt({ hash });
+            
+            console.log('Mint cancelled successfully');
+            
+            // Save to history
+            const { saveToHistory, removeActiveSwap } = await import('./storage.js');
+            saveToHistory({
+                type: 'mint',
+                requestId: this.requestId,
+                xmrAmount: this.xmrAmount,
+                wsxmrAmount: this.wsxmrAmount,
+                lpVault: this.lpVault,
+                status: 'Cancelled',
+                timestamp: Date.now(),
+                completedAt: Date.now()
+            });
+            
+            // Clear from active storage
+            removeActiveSwap(this.requestId);
+            
+            // Show success
+            const { showSuccess, resetMintUI } = await import('./ui.js');
+            showSuccess('Mint Cancelled', 'The mint has been cancelled. You can now start a new mint.');
+            
+            // Reset UI
+            resetMintUI();
+            
+            // Refresh history display
+            const { displaySwapHistory } = await import('./swapHistory.js');
+            displaySwapHistory();
+            
+        } catch (error) {
+            console.error('Error cancelling mint:', error);
+            const { showError } = await import('./ui.js');
+            showError('Cancel Failed', error.message || 'Failed to cancel mint');
+        }
     }
 
     async getQuote() {
@@ -173,9 +259,19 @@ export class MintFlow {
             this.requestId = mintInitiatedEvent.topics[1];
             console.log('Request ID:', this.requestId);
             
-            updateSwapState({
+            // Save complete swap state to localStorage
+            const { addOrUpdateActiveSwap } = await import('./storage.js');
+            addOrUpdateActiveSwap({
+                type: 'mint',
                 requestId: this.requestId,
-                txHash: receipt.transactionHash
+                state: 'initiated',
+                lpVault: this.lpVault,
+                xmrAmount: this.xmrAmount,
+                wsxmrAmount: this.wsxmrAmount.toString(),
+                griefingDeposit: this.griefingDeposit.toString(),
+                txHash: receipt.transactionHash,
+                timestamp: Date.now(),
+                lastUpdated: Date.now()
             });
         } else {
             throw new Error('Could not extract requestId from transaction');
@@ -248,61 +344,86 @@ export class MintFlow {
     }
 
     async waitForLPReady() {
-        // Don't change state yet - we're still in 'deposit' state waiting for user to deposit
+        // First, wait for user to confirm they sent the XMR
+        console.log('Waiting for user to confirm XMR sent...');
+        
+        // Setup the confirm button
+        this.setupConfirmSentButton();
+        
+        // Wait for user to click "I've Sent the XMR" button
+        await new Promise((resolve) => {
+            this.userConfirmResolve = resolve;
+        });
+        
+        console.log('User confirmed XMR sent. Now waiting for LP to verify...');
+        
+        // Update UI to show LP is processing
+        updateSwapState({ 
+            requestId: this.requestId, 
+            state: 'lp-verifying',
+            message: 'LP is updating oracle prices and verifying your XMR deposit...' 
+        });
+        
+        // Now start LP verification process
         // The state will change to 'lp-ready' when MintReady event is received
-        console.log('Waiting for LP to call setMintReady...');
 
-        const pollStatus = async () => {
-            try {
-                const status = await this.lpClient.getMintStatus(this.requestId);
-                console.log('Mint status:', status);
-                
-                if (status.status === 'READY') {
-                    return true;
-                }
-                
-                updateSwapState({
-                    requestId: this.requestId,
-                    lpStatus: status.status,
-                    lpMessage: status.message
-                });
-            } catch (error) {
-                console.warn('LP status poll failed:', error);
+        // Start deadline countdown timer
+        startDeadlineTimer(this);
+        
+        // Start periodic status checking (now just a placeholder)
+        startStatusPolling(this);
+
+        // Check if MintReady was already called (in case we're resuming)
+        const { readHub } = await import('./web3.js');
+        const mintRequest = await readHub('mintRequests', [this.requestId]);
+        
+        if (mintRequest.status === 3) { // MintStatus.READY = 3
+            console.log('Mint is already ready (status check)');
+            this.state = 'lp-ready';
+            updateSwapState({ requestId: this.requestId, state: this.state });
+        } else {
+            // Watch for on-chain MintReady event
+            await new Promise((resolve, reject) => {
+                const unwatch = watchContractEvent(
+                    CONTRACTS.hub,
+                    ABIS.hub,
+                    'MintReady',
+                    { requestId: this.requestId },
+                    (log) => {
+                        console.log('MintReady event received');
+                        this.state = 'lp-ready';
+                        updateSwapState({ requestId: this.requestId, state: this.state });
+                        unwatch();
+                        resolve();
+                    }
+                );
+
+                this.eventWatchers.push(unwatch);
+
+                // Timeout after 30 minutes
+                setTimeout(() => {
+                    unwatch();
+                    reject(new Error('LP ready timeout - MintReady event not received'));
+                }, 1800000);
+            });
+        }
+
+        // LP has confirmed - now wait for user to claim wsXMR
+        console.log('LP confirmed XMR received. Waiting for user to claim wsXMR...');
+        this.setupClaimButton();
+        
+        return new Promise((resolve) => {
+            this.userClaimResolve = resolve;
+        });
+    }
+
+    setupClaimButton() {
+        const { showClaimWsXmrButton } = require('./ui.js');
+        showClaimWsXmrButton(() => {
+            console.log('User clicked Claim wsXMR');
+            if (this.userClaimResolve) {
+                this.userClaimResolve();
             }
-            return false;
-        };
-
-        return new Promise((resolve, reject) => {
-            const unwatch = watchContractEvent(
-                CONTRACTS.hub,
-                ABIS.hub,
-                'MintReady',
-                { requestId: this.requestId },
-                (log) => {
-                    console.log('MintReady event received');
-                    this.state = 'lp-ready';
-                    updateSwapState({ requestId: this.requestId, state: this.state });
-                    clearInterval(pollInterval);
-                    unwatch();
-                    resolve();
-                }
-            );
-
-            const pollInterval = setInterval(async () => {
-                if (await pollStatus()) {
-                    clearInterval(pollInterval);
-                    unwatch();
-                    resolve();
-                }
-            }, SWAP_CONFIG.pollInterval);
-
-            this.eventWatchers.push(unwatch);
-
-            setTimeout(() => {
-                clearInterval(pollInterval);
-                unwatch();
-                reject(new Error('LP ready timeout'));
-            }, 1800000);
         });
     }
 
@@ -459,5 +580,14 @@ export class MintFlow {
             default:
                 throw new Error('Cannot resume from state: ' + this.state);
         }
+    }
+
+    cleanup() {
+        // Stop all timers
+        stopTimers(this);
+        
+        // Unwatch events
+        this.eventWatchers.forEach(unwatch => unwatch());
+        this.eventWatchers = [];
     }
 }

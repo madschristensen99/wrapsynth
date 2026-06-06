@@ -38,6 +38,28 @@ sol! {
     
     #[sol(rpc)]
     contract VaultManager {
+        // View functions
+        struct MintRequest {
+            bytes32 requestId;
+            address initiator;
+            address recipient;
+            address lpVault;
+            uint256 xmrAmount;
+            uint256 wsxmrAmount;
+            uint256 feeAmount;
+            bytes32 claimCommitment;
+            uint256 timeout;
+            uint256 griefingDeposit;
+            uint256 lpBond;
+            uint8 status;
+            uint256 vaultMintNonce;
+            uint256 normalizedDebtAmount;
+        }
+        function mintRequests(bytes32 requestId) external view returns (MintRequest memory);
+        
+        // Oracle functions
+        function updateOraclePrices(bytes[] calldata updateData) external payable;
+        
         // Events
         event BurnRequested(
             bytes32 indexed requestId,
@@ -84,6 +106,9 @@ sol! {
             bytes32 secret
         );
 
+        // Mappings
+        function lpPublicKeys(bytes32 requestId) external view returns (bytes32);
+        
         // Functions
         function createVault() external;
         function depositCollateral(uint256 _amount) external;
@@ -92,6 +117,7 @@ sol! {
         function commitBurn(bytes32 requestId, bytes32 secretHash) external;
         function finalizeBurn(bytes32 requestId, bytes32 secret) external;
         function setMintReady(bytes32 requestId) external;
+        function cancelMint(bytes32 requestId) external;
         function finalizeMint(bytes32 requestId, bytes32 secret) external;
         function updatePythPrices(bytes[] calldata pythUpdateData) external payable;
         
@@ -297,8 +323,7 @@ impl EvmClient {
     ) -> Result<SubscriptionStream<Log>> {
         let filter = Filter::new()
             .address(self.vault_manager)
-            .event_signature(VaultManager::BurnRequested::SIGNATURE_HASH)
-            .from_block(0);
+            .event_signature(VaultManager::BurnRequested::SIGNATURE_HASH);
 
         let stream = self
             .provider
@@ -315,8 +340,7 @@ impl EvmClient {
     ) -> Result<SubscriptionStream<Log>> {
         let filter = Filter::new()
             .address(self.vault_manager)
-            .event_signature(VaultManager::MintInitiated::SIGNATURE_HASH)
-            .from_block(0);
+            .event_signature(VaultManager::MintInitiated::SIGNATURE_HASH);
 
         let stream = self
             .provider
@@ -454,6 +478,13 @@ impl EvmClient {
         Ok(receipt.transaction_hash)
     }
 
+    /// Get LP public key for a request (returns zero bytes if not set)
+    pub async fn get_lp_public_key(&self, request_id: FixedBytes<32>) -> Result<FixedBytes<32>> {
+        let contract = VaultManager::new(self.vault_manager, &self.provider);
+        let key = contract.lpPublicKeys(request_id).call().await?;
+        Ok(key._0)
+    }
+
     /// Provide LP's public key for Farcaster atomic swap
     pub async fn provide_lp_key(&self, request_id: FixedBytes<32>, lp_public_key: FixedBytes<32>) -> Result<FixedBytes<32>> {
         info!("Providing LP key for request {}", hex::encode(request_id));
@@ -479,23 +510,61 @@ impl EvmClient {
         Ok(receipt.transaction_hash)
     }
 
+    /// Cancel an expired mint
+    pub async fn cancel_mint(&self, request_id: FixedBytes<32>) -> Result<FixedBytes<32>> {
+        info!("Cancelling mint for request {}", hex::encode(request_id));
+
+        let contract = VaultManager::new(self.vault_manager, &self.provider);
+        
+        let call = contract.cancelMint(request_id);
+        
+        let pending_tx = call
+            .send()
+            .await
+            .map_err(|e| {
+                error!("Failed to send cancelMint transaction: {:?}", e);
+                anyhow!("Failed to send cancelMint transaction: {}", e)
+            })?;
+
+        let receipt = pending_tx
+            .get_receipt()
+            .await
+            .map_err(|e| {
+                error!("Failed to get cancelMint receipt: {:?}", e);
+                anyhow!("Failed to get cancelMint receipt: {}", e)
+            })?;
+
+        info!("Mint cancelled in tx: {:?}", receipt.transaction_hash);
+        Ok(receipt.transaction_hash)
+    }
+
     /// Set mint ready after verifying XMR lock
     pub async fn set_mint_ready(&self, request_id: FixedBytes<32>) -> Result<FixedBytes<32>> {
         info!("Setting mint ready for request {}", hex::encode(request_id));
 
         let contract = VaultManager::new(self.vault_manager, &self.provider);
         
-        let call = contract.setMintReady(request_id);
+        // Set the bond value (0.001 xDAI = 1000000000000000 wei)
+        // TODO: Query this from the vault instead of hardcoding
+        let bond_value = alloy::primitives::U256::from(1000000000000000u64);
+        
+        let call = contract.setMintReady(request_id).value(bond_value);
         
         let pending_tx = call
             .send()
             .await
-            .context("Failed to send setMintReady transaction")?;
+            .map_err(|e| {
+                error!("Failed to send setMintReady transaction: {:?}", e);
+                anyhow!("Failed to send setMintReady transaction: {}", e)
+            })?;
 
         let receipt = pending_tx
             .get_receipt()
             .await
-            .context("Failed to get setMintReady receipt")?;
+            .map_err(|e| {
+                error!("Failed to get setMintReady receipt: {:?}", e);
+                anyhow!("Failed to get setMintReady receipt: {}", e)
+            })?;
 
         info!("Mint ready set in tx: {:?}", receipt.transaction_hash);
         Ok(receipt.transaction_hash)
@@ -812,23 +881,36 @@ impl EvmClient {
         Ok(receipt.transaction_hash)
     }
 
-    /// Update oracle prices on SimpleOracleFacet
-    pub async fn update_oracle_prices(&self, xmr_price: u64, dai_price: u64) -> Result<FixedBytes<32>> {
-        info!("Updating oracle prices: XMR={}, DAI={}", xmr_price, dai_price);
+    /// Get the current status of a mint request
+    pub async fn get_mint_status(&self, request_id: FixedBytes<32>) -> Result<u8> {
+        let contract = VaultManager::new(self.vault_manager, &self.provider);
+        let mint_request = contract.mintRequests(request_id).call().await?;
+        Ok(mint_request._0.status)
+    }
 
-        let contract = SimpleOracleFacet::new(self.vault_manager, &self.provider);
+    /// Update oracle prices using RedStone signed data packages
+    pub async fn update_oracle_prices_redstone(&self, redstone_data: Vec<u8>) -> Result<FixedBytes<32>> {
+        info!("Updating oracle prices via RedStone ({} bytes of signed data)", redstone_data.len());
+
+        let contract = VaultManager::new(self.vault_manager, &self.provider);
         
-        let call = contract.updatePrices(U256::from(xmr_price), U256::from(dai_price));
+        // Convert RedStone data to bytes array for the contract call
+        // RedStone data should be appended to calldata, but for now we pass it as parameter
+        // TODO: Properly append to calldata instead of passing as parameter
+        let data_bytes = alloy::primitives::Bytes::from(redstone_data);
+        let update_data: Vec<alloy::primitives::Bytes> = vec![data_bytes];
+        
+        let call = contract.updateOraclePrices(update_data);
         
         let pending_tx = call
             .send()
             .await
-            .context("Failed to send updatePrices transaction")?;
+            .context("Failed to send updateOraclePrices transaction")?;
 
         let receipt = pending_tx
             .get_receipt()
             .await
-            .context("Failed to get updatePrices receipt")?;
+            .context("Failed to get updateOraclePrices receipt")?;
 
         info!("Oracle prices updated in tx: {:?}", receipt.transaction_hash);
         Ok(receipt.transaction_hash)

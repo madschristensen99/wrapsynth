@@ -199,17 +199,26 @@ impl EventListener {
         let mut lp_public_key_array = [0u8; 32];
         lp_public_key_array.copy_from_slice(lp_public_spend_bytes);
         
-        match self.evm.provide_lp_key(
-            request_id_bytes.into(),
-            lp_public_key_array.into()
-        ).await {
-            Ok(tx_hash) => {
-                info!("LP key submitted on-chain: {:?}", tx_hash);
+        // Check if LP key was already provided (to avoid revert on historical event replay)
+        let existing_key = self.evm.get_lp_public_key(request_id_bytes.into()).await;
+        let key_already_provided = existing_key.is_ok() && 
+            existing_key.unwrap() != alloy::primitives::FixedBytes::from([0u8; 32]);
+        
+        if !key_already_provided {
+            match self.evm.provide_lp_key(
+                request_id_bytes.into(),
+                lp_public_key_array.into()
+            ).await {
+                Ok(tx_hash) => {
+                    info!("LP key submitted on-chain: {:?}", tx_hash);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to submit LP key on-chain: {}", e);
+                    // Continue anyway - we still store it in DB for API fallback
+                }
             }
-            Err(e) => {
-                tracing::error!("Failed to submit LP key on-chain: {}", e);
-                // Continue anyway - we still store it in DB for API fallback
-            }
+        } else {
+            info!("LP key already provided for this request, skipping on-chain submission");
         }
 
         // Create a mint task with swap keys

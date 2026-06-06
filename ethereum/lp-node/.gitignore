@@ -1,0 +1,21 @@
+# Rust build artifacts
+target/
+Cargo.lock
+
+# Database files
+lp-node-db/
+*.db
+*.db-shm
+*.db-wal
+
+# Wallet files
+lp-wallet
+lp-wallet.keys
+*.wallet
+
+# Logs
+*.log
+monero-wallet-rpc.log*
+
+# Environment
+.env
