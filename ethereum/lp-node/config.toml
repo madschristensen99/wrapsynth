@@ -10,17 +10,17 @@ explorer = "https://gnosisscan.io"
 
 # Deployed contract addresses (GNOSIS MAINNET - DEPLOYED June 4, 2026)
 # wsXmrHub acts as the vault manager (diamond proxy)
-vault_manager = "0xd32e2ece901094550b81ab5051a72256761514d6"
-wsxmr_token = "0x8890f651190c838651623de077474a98e37803ab"
-liquidity_router = "0x3235ffe7b51b3726bc0f398da21ed0583103f106"
+vault_manager = "0xe485b74fe0a6aeb590a2e655734d436daa1dec8a"
+wsxmr_token = "0xd48d298650fcd0c1c8478ee4c3ee077f16171697"
+liquidity_router = "0x4ca832cb79514d05a7162257d8bd316ad6fc46a9"
 
 # Facet addresses (for reference - all calls go through vault_manager)
-redstone_oracle_facet = "0x01acec458fd3e8508510cbdc03a8f64532a10618"
-vault_facet = "0xf2ec5240c442bba6674a873343ec43c451467229"
-mint_facet = "0x35da334de761b200da3242429b884a00509bc32b"
-burn_facet = "0x779e5a10f4ba60fbc87c1dee79f09168547fda09"
-liquidation_facet = "0xbc5ffaaa057030b5e6b1f13807f54fd029c57c94"
-yield_facet = "0x6d242f08ec7d704b5824f1334c192360f2966add"
+redstone_oracle_facet = "0xcb85ee56254f925e910e8bbe4c34b5e285fdae34"
+vault_facet = "0x3c6a147b3aced0ed207d75343462db1c863923cd"
+mint_facet = "0x6933456daa0f3018b7f3ab6fbf08c66bda011c4a"
+burn_facet = "0xd2ae40b9427ac197b3847fbe677f7027bf00a728"
+liquidation_facet = "0x813523c2f43e81e0b5e10c072037f817b6495851"
+yield_facet = "0x5989690092ffcc195663c0ab4da3c71bea705049"
 
 # Oracle configuration
 pyth_oracle = "0x2880aB155794e7179c9eE2e38200202908C17B43"

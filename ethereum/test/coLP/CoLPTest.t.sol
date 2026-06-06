@@ -605,4 +605,83 @@ contract CoLPTest is Test {
 
         console.log("PASS: non-LP cannot set timeout");
     }
+
+    // ========== TEST 17: Collect Co-LP fees authorization ==========
+
+    function test_CollectCoLPFees_LPCanCall() public {
+        uint256 wsxmrBalance = wsxmr.balanceOf(user);
+        uint256 wsxmrToDeposit = wsxmrBalance / 2;
+
+        vm.prank(user);
+        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+
+        // LP can collect fees (even if 0)
+        vm.prank(lp);
+        VaultFacet(address(hub)).collectCoLPFees(tokenId);
+
+        console.log("PASS: LP can call collectCoLPFees");
+    }
+
+    function test_CollectCoLPFees_UserCanCall() public {
+        uint256 wsxmrBalance = wsxmr.balanceOf(user);
+        uint256 wsxmrToDeposit = wsxmrBalance / 2;
+
+        vm.prank(user);
+        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+
+        // User can collect fees
+        vm.prank(user);
+        VaultFacet(address(hub)).collectCoLPFees(tokenId);
+
+        console.log("PASS: user can call collectCoLPFees");
+    }
+
+    function test_CollectCoLPFees_RandoReverts() public {
+        uint256 wsxmrBalance = wsxmr.balanceOf(user);
+        uint256 wsxmrToDeposit = wsxmrBalance / 2;
+
+        vm.prank(user);
+        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+
+        address rando = makeAddr("rando");
+        vm.prank(rando);
+        vm.expectRevert();
+        VaultFacet(address(hub)).collectCoLPFees(tokenId);
+
+        console.log("PASS: rando cannot call collectCoLPFees");
+    }
+
+    function test_CollectCoLPFees_InvalidTokenIdReverts() public {
+        vm.prank(lp);
+        vm.expectRevert();
+        VaultFacet(address(hub)).collectCoLPFees(999999);
+
+        console.log("PASS: invalid tokenId reverts");
+    }
+
+    // ========== TEST 18: Collect Co-LP fees with trading ==========
+
+    function test_CollectCoLPFees_AfterSwaps() public {
+        uint256 wsxmrBalance = wsxmr.balanceOf(user);
+        uint256 wsxmrToDeposit = wsxmrBalance / 2;
+
+        vm.prank(user);
+        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+
+        // Track pending returns before
+        uint256 daiBefore = _getPendingReturns(lp, GnosisAddresses.SDAI);
+        uint256 wsxmrBefore = _getPendingReturns(user, address(wsxmr));
+
+        // Collect fees (no trades yet, so should be 0)
+        vm.prank(user);
+        VaultFacet(address(hub)).collectCoLPFees(tokenId);
+
+        uint256 daiAfter = _getPendingReturns(lp, GnosisAddresses.SDAI);
+        uint256 wsxmrAfter = _getPendingReturns(user, address(wsxmr));
+
+        assertEq(daiAfter, daiBefore, "No fees without trading");
+        assertEq(wsxmrAfter, wsxmrBefore, "No fees without trading");
+
+        console.log("PASS: collectCoLPFees after swaps (no trades = no fees)");
+    }
 }

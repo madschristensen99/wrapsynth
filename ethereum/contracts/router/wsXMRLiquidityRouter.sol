@@ -236,17 +236,17 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
 
     /// @dev Convert oracle XMR price (USD, 18 decimals) to sqrtPriceX96 for the sDAI/wsXMR pool.
     ///      sDAI is pegged ~$1 so collateralPrice ≈ 1e18.
+    ///      Uniswap V3 price = token1/token0.
+    ///      If sDAI is token0: price = wsXMR/sDAI = (collateralPrice * 1e8) / (xmrPrice * 1e18)
+    ///      If wsXMR is token0: price = sDAI/wsXMR = (xmrPrice * 1e18) / (collateralPrice * 1e8)
     function _priceToSqrtPriceX96(uint256 xmrPrice, uint256 collateralPrice)
         private view returns (uint160)
     {
-        // Pool price = token1/token0
-        // If sDAI is token0: price = wsXMR/sDAI = (xmrPrice * 1e18) / (collateralPrice * 1e8)
-        // If wsXMR is token0: price = sDAI/wsXMR = (collateralPrice * 1e8) / (xmrPrice * 1e18)
         uint256 priceRatio;
         if (sDAIIsToken0) {
-            priceRatio = (xmrPrice * 1e18) / (collateralPrice * 1e8);
+            priceRatio = (collateralPrice * 1e8) / (xmrPrice * 1e18);
         } else {
-            priceRatio = (collateralPrice * 1e18) / (xmrPrice * 1e8);
+            priceRatio = (xmrPrice * 1e18) / (collateralPrice * 1e8);
         }
 
         uint256 sqrtPrice = _sqrt(priceRatio * 1e18);

@@ -389,7 +389,26 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         
         emit CoLPDeployed(lpVault, msg.sender, tokenId, sharesNeeded, wsxmrAmount, rangeBps);
     }
-    
+
+    /// @notice Collect accumulated fees from a co-LP position.
+    ///         Fees go to pending returns: sDAI to LP vault, wsXMR to user.
+    function collectCoLPFees(uint256 tokenId) external nonReentrant {
+        PositionMetadata memory meta = _positionMetadata[tokenId];
+        if (meta.vaultOwner == address(0)) revert PositionNotFound();
+        if (meta.vaultOwner != msg.sender && meta.user != msg.sender) revert Unauthorized();
+
+        (uint256 daiFees, uint256 wsxmrFees) = IwsXmrLiquidityRouter(liquidityRouter).collectFees(tokenId);
+
+        if (daiFees > 0) {
+            pendingReturns[meta.vaultOwner][GnosisAddresses.SDAI] += daiFees;
+        }
+        if (wsxmrFees > 0) {
+            pendingReturns[meta.user][wsxmrToken] += wsxmrFees;
+        }
+
+        emit CoLPFeesCollected(tokenId, daiFees, wsxmrFees);
+    }
+
     /// @notice Either LP or user can close a co-LP position
     function unwindCoLP(uint256 tokenId, uint256 deadline) external nonReentrant {
         if (block.timestamp > deadline) revert DeadlineExpired();
@@ -546,7 +565,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
     /// @notice Returns all function selectors implemented by this facet
     /// @dev Used by Diamond to build selector → facet routing table
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](30);
+        bytes4[] memory sels = new bytes4[](31);
         sels[0] = this.createVault.selector;
         sels[1] = this.deactivateVault.selector;
         sels[2] = this.depositCollateral.selector;
@@ -572,11 +591,12 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         sels[22] = this.selectors.selector;
         sels[23] = this.setMaxCoLPRange.selector;
         sels[24] = this.userOpenCoLP.selector;
-        sels[25] = this.unwindCoLP.selector;
-        sels[26] = this.rebalanceCoLP.selector;
-        sels[27] = this.getCoLPCapacity.selector;
-        sels[28] = this.setMintTimeoutBlocks.selector;
-        sels[29] = this.setBurnTimeoutBlocks.selector;
+        sels[25] = this.collectCoLPFees.selector;
+        sels[26] = this.unwindCoLP.selector;
+        sels[27] = this.rebalanceCoLP.selector;
+        sels[28] = this.getCoLPCapacity.selector;
+        sels[29] = this.setMintTimeoutBlocks.selector;
+        sels[30] = this.setBurnTimeoutBlocks.selector;
         return sels;
     }
     

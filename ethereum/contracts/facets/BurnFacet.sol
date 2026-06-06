@@ -246,7 +246,8 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         uint256 xmrPrice = _getXmrPriceFromStorage();
         uint256 collateralPrice = _getCollateralPriceFromStorage();
         uint256 parValueUsd = (request.wsxmrAmount * xmrPrice) / WSXMR_DECIMALS;
-        uint256 parShares = (parValueUsd * SDAI_DECIMALS) / collateralPrice;
+        uint256 parDaiAmount = (parValueUsd * SDAI_DECIMALS) / collateralPrice;
+        uint256 parShares = _daiToShares(parDaiAmount);
 
         uint256 userBase = parShares < request.lockedCollateral
             ? parShares
@@ -313,9 +314,10 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     
     function calculateBurnCollateral(address lpVault, uint256 wsxmrAmount) public view returns (uint256 baseLock, uint256 rewardLock) {
         uint256 collateralValue = _getCollateralValueForDebt(wsxmrAmount);
-        baseLock = _usdToCollateral((collateralValue * BURN_LOCK_RATIO) / RATIO_PRECISION);
+        uint256 baseDai = (collateralValue * BURN_LOCK_RATIO) / RATIO_PRECISION;
+        baseLock = _daiToShares(baseDai);
         uint256 rewardUsd = (collateralValue * _vaults[lpVault].burnRewardBps) / BPS_DENOMINATOR;
-        rewardLock = _usdToCollateral(rewardUsd);
+        rewardLock = _daiToShares(rewardUsd);
     }
     
     function meetsMinimumBurn(address lpVault, uint256 wsxmrAmount) external view returns (bool) {
@@ -384,6 +386,14 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     
     function _usdToCollateral(uint256 usdValue) internal view returns (uint256) {
         return CollateralLogic.usdToCollateral(usdValue, _getCollateralPriceFromStorage());
+    }
+    
+    function _daiToShares(uint256 daiAmount) internal view returns (uint256) {
+        (bool success, bytes memory data) = GnosisAddresses.SDAI.staticcall(
+            abi.encodeWithSignature("convertToShares(uint256)", daiAmount)
+        );
+        require(success && data.length >= 32, "convertToShares failed");
+        return abi.decode(data, (uint256));
     }
     
     function _cleanupBurnRequests(bytes32[] storage vaultBurns) internal returns (uint256 activeCount) {

@@ -1637,7 +1637,7 @@ body.app-page .container {
 /* Mode Selector */
 .mode-selector {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 1rem;
     padding: 1rem;
     background: rgba(255, 255, 255, 0.9);
@@ -1762,6 +1762,139 @@ body.app-page .container {
     background: var(--bg-input);
     border: 1px solid var(--border-color);
     border-radius: 12px;
+}
+
+/* Co-LP Panel */
+.co-lp-section {
+    margin-bottom: 0.5rem;
+}
+
+.co-lp-section .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.co-lp-section .section-heading {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text-primary-light);
+    margin: 0;
+}
+
+.co-lp-section .section-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.2rem 0.5rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-secondary-light);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.section-divider {
+    border: none;
+    height: 1px;
+    background: var(--border-color);
+    margin: 1.5rem 0;
+    opacity: 0.5;
+}
+
+/* Co-LP Positions List */
+.positions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.positions-empty {
+    padding: 1.5rem;
+    text-align: center;
+    color: var(--text-secondary-light);
+    font-size: 0.9rem;
+    background: var(--bg-input);
+    border-radius: 12px;
+    border: 1px dashed var(--border-color);
+}
+
+.position-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    gap: 0.75rem;
+}
+
+.position-card .position-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    flex: 1;
+    min-width: 0;
+}
+
+.position-card .position-token {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.position-card .position-meta {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.position-card .position-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.position-card .position-actions button {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.8rem;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    transition: all 0.2s ease;
+}
+
+.position-card .position-actions button:hover {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+.position-card .position-actions button.btn-unwind {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+.position-card .position-actions button.btn-unwind:hover {
+    background: #ef4444;
+    color: white;
+}
+
+/* Refresh button spin animation */
+@keyframes spin-refresh {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.refresh-btn.spinning svg {
+    animation: spin-refresh 1s linear infinite;
 }
 
 /* Action Buttons */
@@ -2255,11 +2388,41 @@ body.app-page .container {
     transform: rotate(180deg);
 }
 
+.external-link-btn {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-muted);
+    transition: color 0.2s ease;
+}
+
+.external-link-btn:hover {
+    color: var(--text-primary-light);
+}
+
 .vaults-list,
 .activity-feed {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.5rem;
+    max-height: 420px;
+    overflow-y: auto;
+}
+
+.activity-feed::-webkit-scrollbar {
+    width: 5px;
+}
+
+.activity-feed::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.activity-feed::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+}
+
+.activity-feed::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted-light);
 }
 
 .vault-scan-inline {
@@ -2384,20 +2547,82 @@ body.app-page .container {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    padding: 0.75rem;
-    background: var(--bg-input);
+    padding: 0.625rem 0.75rem;
+    background: var(--bg-card-light);
     border: 1px solid var(--border-color);
     border-radius: 12px;
-    font-size: 0.9rem;
-    color: var(--text-secondary-light);
+    font-size: 0.875rem;
+    transition: all 0.2s ease;
 }
 
-.activity-icon {
-    font-size: 1.25rem;
+.activity-item:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--primary);
+    box-shadow: 0 2px 8px rgba(255, 107, 0, 0.08);
 }
 
-.activity-text {
+.activity-item--empty {
+    opacity: 0.7;
+}
+
+.activity-item--empty:hover {
+    border-color: var(--border-color);
+    box-shadow: none;
+}
+
+.activity-badge {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--badge-bg, rgba(148, 163, 184, 0.12));
+    color: var(--badge-color, var(--text-muted-light));
+    border-radius: 10px;
+    transition: transform 0.2s ease;
+}
+
+.activity-item:hover .activity-badge {
+    transform: scale(1.08);
+}
+
+.activity-content {
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+}
+
+.activity-title-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    line-height: 1.4;
+}
+
+.activity-title-row strong {
+    color: var(--text-primary-light);
+    font-weight: 600;
+    font-size: 0.875rem;
+    white-space: nowrap;
+}
+
+.activity-detail {
+    color: var(--text-secondary-light);
+    font-size: 0.8rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.activity-time {
+    font-size: 0.75rem;
+    color: var(--text-muted-light);
+    font-variant-numeric: tabular-nums;
 }
 
 .quick-stats {

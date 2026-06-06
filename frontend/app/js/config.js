@@ -15,11 +15,11 @@ export const NETWORKS = {
     }
 };
 
-// Contract addresses - Deployed on Gnosis Chain Mainnet (Diamond Architecture) - June 4, 2026
+// Contract addresses - Deployed on Gnosis Chain Mainnet (Diamond Architecture) - June 6, 2026
 export const CONTRACTS = {
-    hub: '0xd32e2ece901094550b81ab5051a72256761514d6',  // wsXmrHub (Diamond) - DEPLOYED
-    wsxmrToken: '0x8890f651190c838651623de077474a98e37803ab',
-    liquidityRouter: '0x3235ffe7b51b3726bc0f398da21ed0583103f106',
+    hub: '0xe485b74fe0a6aeb590a2e655734d436daa1dec8a',  // wsXmrHub (Diamond) - DEPLOYED
+    wsxmrToken: '0xd48d298650fcd0c1c8478ee4c3ee077f16171697',
+    liquidityRouter: '0x4ca832cb79514d05a7162257d8bd316ad6fc46a9',
     // Default LP vault to use for mints (the active LP running the LP node)
     defaultLpVault: '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB'
 };
@@ -218,6 +218,13 @@ export const ABIS = {
         'function getVaultAtIndex(uint256 index) external view returns (address)',
         'function getPendingReturns(address user, address token) external view returns (uint256)',
         'function hasActiveVault(address lpAddress) external view returns (bool)',
+
+        // Co-LP operations
+        'function userOpenCoLP(address lpVault, uint256 wsxmrAmount, uint256 deadline) external returns (uint256 tokenId)',
+        'function unwindCoLP(uint256 tokenId, uint256 deadline) external',
+        'function rebalanceCoLP(uint256 tokenId, uint16 newRangeBps, uint256 deadline) external',
+        'function getCoLPCapacity(address lpVault) external view returns (uint256 maxWsxmrAcceptable)',
+        'function setMaxCoLPRange(uint16 newMaxBps) external',
 
         // Oracle (RedStoneOracleFacet — user can update prices with RedStone data)
         'function updateOraclePrices(bytes[] calldata) external payable',
