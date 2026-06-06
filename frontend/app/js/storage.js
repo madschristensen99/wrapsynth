@@ -219,6 +219,14 @@ export function getSwapHistory() {
 }
 
 /**
+ * Load swap history (alias for getSwapHistory)
+ * @returns {Array} Array of completed swaps
+ */
+export function loadSwapHistory() {
+    return getSwapHistory();
+}
+
+/**
  * Clear swap history
  */
 export function clearSwapHistory() {

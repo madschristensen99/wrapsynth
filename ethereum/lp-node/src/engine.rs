@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{sleep, Duration};
 use tracing::{debug, error, info, warn};
 
-const MONERO_CONFIRMATIONS: u64 = 10;
+const MONERO_CONFIRMATIONS: u64 = 1;
 const POLL_INTERVAL_SECS: u64 = 30;
 const BURN_SAFETY_MARGIN_BLOCKS: u64 = 4320; // ~6 hours at 5s/block
 const PRICE_POLL_INTERVAL_SECS: u64 = 30;
@@ -296,8 +296,20 @@ impl SwapEngine {
     async fn process_pending_mints(&self) -> Result<()> {
         // Get all non-completed mints
         let mints = self.db.get_all_mint_tasks()?;
+        let current_block = self.evm.get_block_number().await.unwrap_or(0);
 
         for mut mint in mints {
+            // Check if mint has expired
+            if mint.timeout > 0 && current_block >= mint.timeout && 
+               !matches!(mint.status, MintStatus::Completed | MintStatus::Cancelled) {
+                warn!("Mint {} has expired (timeout: {}, current: {})", 
+                    hex::encode(mint.request_id), mint.timeout, current_block);
+                if let Err(e) = self.handle_mint_expired(&mut mint).await {
+                    error!("Error handling expired mint: {}", e);
+                }
+                continue;
+            }
+
             match mint.status {
                 MintStatus::Pending => {
                     // Step 1: Verify user locked XMR
@@ -332,13 +344,70 @@ impl SwapEngine {
         Ok(())
     }
 
+    async fn handle_mint_expired(&self, mint: &mut MintTask) -> Result<()> {
+        info!("Handling expired mint: {}", hex::encode(mint.request_id));
+
+        // Call cancelMint on the contract
+        let request_id = FixedBytes::from_slice(&mint.request_id);
+        match self.evm.cancel_mint(request_id).await {
+            Ok(tx_hash) => {
+                info!("Cancelled mint on EVM: {:?}", tx_hash);
+            }
+            Err(e) => {
+                warn!("Failed to cancel mint on EVM (may already be cancelled): {}", e);
+            }
+        }
+
+        // Sweep XMR from deposit address back to LP wallet
+        if let (Some(deposit_address), Some(lp_private_spend), Some(lp_private_view)) = (
+            &mint.deposit_address,
+            &mint.lp_private_spend,
+            &mint.lp_private_view,
+        ) {
+            info!("Attempting to sweep XMR from deposit address: {}", deposit_address);
+            match self.monero.sweep_from_swap_address(
+                deposit_address,
+                lp_private_spend,
+                lp_private_view,
+            ).await {
+                Ok(tx_hash) => {
+                    if tx_hash == "no_funds" {
+                        info!("No XMR to sweep from deposit address (user never sent funds)");
+                    } else {
+                        info!("Successfully swept XMR in transaction: {}", tx_hash);
+                        mint.monero_claim_txid = Some(tx_hash);
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to sweep XMR from deposit address: {}", e);
+                    warn!("Funds may remain at address: {}", deposit_address);
+                }
+            }
+        } else {
+            warn!("Missing swap keys or deposit address - cannot sweep XMR");
+        }
+
+        // Update status
+        mint.status = MintStatus::Cancelled;
+        mint.updated_at = current_timestamp();
+        self.db.update_mint_task(mint)?;
+
+        Ok(())
+    }
+
     async fn handle_mint_pending(&self, mint: &mut MintTask) -> Result<()> {
         info!("Checking for XMR lock: {}", hex::encode(mint.request_id));
 
         // Verify the user has locked XMR on Monero
         let verified = self
             .monero
-            .verify_mint_lock(mint.xmr_amount, &mint.claim_commitment, 1)
+            .verify_mint_lock(
+                mint.xmr_amount,
+                &mint.claim_commitment,
+                mint.deposit_address.as_deref(),
+                &mint.lp_private_view,
+                1
+            )
             .await?;
 
         if verified {
@@ -357,7 +426,13 @@ impl SwapEngine {
         // Verify sufficient confirmations
         let verified = self
             .monero
-            .verify_mint_lock(mint.xmr_amount, &mint.claim_commitment, MONERO_CONFIRMATIONS)
+            .verify_mint_lock(
+                mint.xmr_amount,
+                &mint.claim_commitment,
+                mint.deposit_address.as_deref(),
+                &mint.lp_private_view,
+                MONERO_CONFIRMATIONS
+            )
             .await?;
 
         if verified {
@@ -366,8 +441,37 @@ impl SwapEngine {
                 hex::encode(mint.request_id)
             );
 
-            // Call setMintReady on EVM
+            // Check on-chain status first to avoid calling setMintReady if already called
             let request_id = FixedBytes::from_slice(&mint.request_id);
+            info!("Checking on-chain status before calling setMintReady...");
+            let on_chain_status = self.evm.get_mint_status(request_id).await;
+            
+            if let Ok(status) = on_chain_status {
+                info!("On-chain mint status: {}", status);
+                if status >= 3 { // Already READY or beyond
+                    info!("Mint already ready on-chain (status: {}), updating local state", status);
+                    mint.status = MintStatus::Ready;
+                    mint.updated_at = current_timestamp();
+                    self.db.update_mint_task(mint)?;
+                    return Ok(());
+                }
+            } else {
+                warn!("Failed to check on-chain status: {:?}", on_chain_status);
+            }
+
+            // Update oracle prices using Node.js script (RedStone SDK only works in JS)
+            info!("Updating oracle prices via RedStone...");
+            match self.update_redstone_prices().await {
+                Ok(tx_hash) => {
+                    info!("Oracle prices updated: {}", tx_hash);
+                }
+                Err(e) => {
+                    warn!("Failed to update oracle prices: {}", e);
+                    // Continue anyway - setMintReady will fail with StalePrice if needed
+                }
+            }
+
+            // Call setMintReady on EVM
             let tx_hash = self
                 .evm
                 .set_mint_ready(request_id)
@@ -384,27 +488,39 @@ impl SwapEngine {
         Ok(())
     }
 
-    async fn handle_mint_ready(&self, mint: &mut MintTask) -> Result<()> {
-        info!("Claiming XMR for mint: {}", hex::encode(mint.request_id));
-
-        // In production, we would extract the secret from the user's claim transaction
-        // For now, we'll use a placeholder
-        let secret = [0u8; 32]; // PLACEHOLDER
-
-        // Sweep the PTLC to claim XMR
-        let tx_hash = self
-            .monero
-            .sweep_ptlc(&secret)
+    async fn update_redstone_prices(&self) -> Result<String> {
+        use tokio::process::Command;
+        
+        let output = Command::new("node")
+            .arg("update-prices.js")
+            .current_dir(std::env::current_dir()?)
+            .output()
             .await
-            .context("Failed to sweep PTLC on Monero")?;
+            .context("Failed to execute Node.js price updater")?;
+        
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Price update script failed: {}", stderr);
+        }
+        
+        let tx_hash = String::from_utf8(output.stdout)
+            .context("Invalid UTF-8 in script output")?
+            .trim()
+            .to_string();
+        
+        Ok(tx_hash)
+    }
 
-        mint.revealed_secret = Some(secret);
-        mint.monero_claim_txid = Some(tx_hash);
-        mint.status = MintStatus::XmrClaimed;
-        mint.updated_at = current_timestamp();
-        self.db.update_mint_task(mint)?;
+    async fn handle_mint_ready(&self, mint: &mut MintTask) -> Result<()> {
+        info!("Mint ready - waiting for user to finalize: {}", hex::encode(mint.request_id));
 
-        info!("XMR claimed on Monero: {}", mint.monero_claim_txid.as_ref().unwrap());
+        // LP has called setMintReady() - now wait for user to call finalizeMint()
+        // The user will reveal their secret when they finalize
+        // We'll watch for the MintFinalized event to extract the secret and claim XMR
+        
+        // Nothing to do here - just wait for user finalization
+        // The status stays as Ready until we see MintFinalized event
+        
         Ok(())
     }
 
@@ -514,15 +630,22 @@ impl SwapEngine {
                 drift_bps, age
             );
 
-            match self.evm.update_oracle_prices(prices.xmr_price, prices.dai_price).await {
-                Ok(tx_hash) => {
-                    info!(
-                        "Oracle updated: xmr={} dai={} drift={}bps age={}s tx={:?}",
-                        prices.xmr_price, prices.dai_price, drift_bps, age, tx_hash
-                    );
+            match self.oracle.fetch_redstone_data_packages().await {
+                Ok(redstone_data) => {
+                    match self.evm.update_oracle_prices_redstone(redstone_data).await {
+                        Ok(tx_hash) => {
+                            info!(
+                                "Oracle updated: xmr={} dai={} drift={}bps age={}s tx={:?}",
+                                prices.xmr_price, prices.dai_price, drift_bps, age, tx_hash
+                            );
+                        }
+                        Err(e) => {
+                            error!("Failed to push oracle prices: {}", e);
+                        }
+                    }
                 }
                 Err(e) => {
-                    error!("Failed to push oracle prices: {}", e);
+                    error!("Failed to fetch RedStone data packages: {}", e);
                 }
             }
         } else {

@@ -192,6 +192,13 @@
                             <h3>Deposit XMR</h3>
                             <p class="step-status">Waiting for LP to provide deposit address...</p>
                             <p class="step-explanation">The LP provides a public key that combines with your secret to generate a shared one-time Monero address. <strong>Send exactly the displayed amount to this address.</strong></p>
+                            <div id="mint-deadline-warning" class="alert alert-error hidden" style="margin-bottom: 1rem;">
+                                <strong>⚠️ MINT EXPIRED</strong>
+                                <p>This mint has expired. Do NOT send XMR to this address. Please cancel and start a new mint.</p>
+                            </div>
+                            <div id="mint-deadline-timer" class="alert alert-warning hidden" style="margin-bottom: 1rem;">
+                                <strong>⏰ Time Remaining:</strong> <span id="mint-time-remaining">--</span>
+                            </div>
                             <div id="mint-deposit-info" class="deposit-info hidden">
                                 <div class="qr-container">
                                     <canvas id="mint-qr-code"></canvas>
@@ -201,7 +208,10 @@
                                     <button class="btn-copy" data-copy="mint-xmr-address"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg></button>
                                 </div>
                                 <p class="amount-required">Send exactly: <strong id="mint-exact-amount"></strong> XMR</p>
-                                <p class="step-status">Monitoring blockchain...</p>
+                                <div id="mint-deposit-status">
+                                    <button id="confirm-sent-xmr" class="btn btn-primary" style="margin-top: 16px;">I've Sent the XMR</button>
+                                    <p class="step-status hidden" id="waiting-lp-verification">⏳ Waiting for LP to verify your transaction...</p>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -548,6 +558,16 @@ cargo build --release</code>
                             <span class="activity-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
                             <span class="activity-text">Waiting for transactions...</span>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Transaction History -->
+                <div class="info-card-container" id="swap-history-container" style="margin-bottom: 2rem;">
+                    <div class="info-card-header">
+                        <h3><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle; margin-right: 6px;"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>Your Transaction History</h3>
+                    </div>
+                    <div id="swap-history-list" class="swap-history-list">
+                        <p style="text-align: center; color: var(--text-secondary); padding: 2rem;">No transactions yet. Start your first mint or burn!</p>
                     </div>
                 </div>
 
