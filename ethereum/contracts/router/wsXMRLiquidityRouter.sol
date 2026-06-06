@@ -8,6 +8,7 @@ import {INonfungiblePositionManager} from "../interfaces/external/INonfungiblePo
 import {IUniswapV3Pool} from "../interfaces/external/IUniswapV3Pool.sol";
 import {IUniswapV3Factory} from "../interfaces/external/IUniswapV3Factory.sol";
 import {GnosisAddresses} from "../GnosisAddresses.sol";
+import {TickMath} from "../libraries/TickMath.sol";
 
 /**
  * @title wsXMRLiquidityRouter
@@ -92,7 +93,7 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
 
         uint256 collateralPrice = 1e18;
         uint160 sqrtPriceX96 = _priceToSqrtPriceX96(centerXmrPrice, collateralPrice);
-        int24 centerTick = _getTickAtSqrtRatio(sqrtPriceX96);
+        int24 centerTick = TickMath.getTickAtSqrtRatio(sqrtPriceX96);
 
         int24 halfWidth = int24(int256(uint256(rangeBps) / 2));
         tickLower = centerTick - halfWidth;
@@ -214,8 +215,8 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
 
         uint160 sqrtPriceX96 = _priceToSqrtPriceX96(xmrPrice, 1e18);
 
-        uint160 sqrtLower = _getSqrtRatioAtTick(tickLower);
-        uint160 sqrtUpper = _getSqrtRatioAtTick(tickUpper);
+        uint160 sqrtLower = TickMath.getSqrtRatioAtTick(tickLower);
+        uint160 sqrtUpper = TickMath.getSqrtRatioAtTick(tickUpper);
         return sqrtPriceX96 <= sqrtLower || sqrtPriceX96 >= sqrtUpper;
     }
 
@@ -252,57 +253,6 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         return uint160((sqrtPrice * (1 << 96)) / 1e9);
     }
 
-    function _getTickAtSqrtRatio(uint160 sqrtPriceX96) private pure returns (int24 tick) {
-        uint256 ratio = uint256(sqrtPriceX96) * uint256(sqrtPriceX96);
-        ratio = (ratio << 32) / 1e18; // scale to Q128.128-ish
-
-        // Binary search for tick
-        int24 lo = MIN_TICK;
-        int24 hi = MAX_TICK;
-        while (lo <= hi) {
-            int24 mid = (lo + hi) / 2;
-            uint160 midSqrt = _getSqrtRatioAtTick(mid);
-            if (midSqrt <= sqrtPriceX96) {
-                tick = mid;
-                lo = mid + 1;
-            } else {
-                hi = mid - 1;
-            }
-        }
-    }
-
-    function _getSqrtRatioAtTick(int24 tick) private pure returns (uint160 sqrtPriceX96) {
-        uint256 absTick = tick < 0 ? uint256(-int256(tick)) : uint256(int256(tick));
-        if (absTick > uint256(int256(MAX_TICK))) absTick = uint256(int256(MAX_TICK));
-
-        uint256 ratio = (absTick & 0x1) != 0
-            ? 0xfffcb933bd6fad37aa2d162d1a594001
-            : 0x100000000000000000000000000000000;
-        if ((absTick & 0x2) != 0) ratio = (ratio * 0xfff97272373d413259a46990580e213a) >> 128;
-        if ((absTick & 0x4) != 0) ratio = (ratio * 0xfff2e50f5f656932ef12357cf3c7fdcc) >> 128;
-        if ((absTick & 0x8) != 0) ratio = (ratio * 0xffe5caca7e10e4e61c3624eaa0941cd0) >> 128;
-        if ((absTick & 0x10) != 0) ratio = (ratio * 0xffcb9843d60f6159c9db58835c926644) >> 128;
-        if ((absTick & 0x20) != 0) ratio = (ratio * 0xff973b41fa98c081472e6896dfb254c0) >> 128;
-        if ((absTick & 0x40) != 0) ratio = (ratio * 0xff2ea16466c96a3843ec78b326b52861) >> 128;
-        if ((absTick & 0x80) != 0) ratio = (ratio * 0xfe5dee046a99a2a811c461f1969c3053) >> 128;
-        if ((absTick & 0x100) != 0) ratio = (ratio * 0xfcbe86c7900a88aedcffc83b479aa3a4) >> 128;
-        if ((absTick & 0x200) != 0) ratio = (ratio * 0xf987a7253ac413176f2b074cf7815e54) >> 128;
-        if ((absTick & 0x400) != 0) ratio = (ratio * 0xf3392b0822b70005940c7a398e4b70f3) >> 128;
-        if ((absTick & 0x800) != 0) ratio = (ratio * 0xe7159475a2c29b7443b29c7fa6e889d9) >> 128;
-        if ((absTick & 0x1000) != 0) ratio = (ratio * 0xd097f3bdfd2022b8845ad8f792aa5825) >> 128;
-        if ((absTick & 0x2000) != 0) ratio = (ratio * 0xa9f746462d870fdf8a65dc1f90e061e5) >> 128;
-        if ((absTick & 0x4000) != 0) ratio = (ratio * 0x70d869a156d2a1b890bb3df62baf32f7) >> 128;
-        if ((absTick & 0x8000) != 0) ratio = (ratio * 0x31be135f97d08fd981231505542fcfa6) >> 128;
-        if ((absTick & 0x10000) != 0) ratio = (ratio * 0x9aa508b5b7a84e1c677de54f3e99bc9) >> 128;
-        if ((absTick & 0x20000) != 0) ratio = (ratio * 0x5d6af8dedb81196699c329225ee604) >> 128;
-        if ((absTick & 0x40000) != 0) ratio = (ratio * 0x2216e584f5fa1ea926041bedfe98) >> 128;
-        if ((absTick & 0x80000) != 0) ratio = (ratio * 0x48a170391f7dc42444e8fa2) >> 128;
-
-        if (tick > 0) ratio = type(uint256).max / ratio;
-
-        sqrtPriceX96 = uint160((ratio >> 32) + (ratio % (1 << 32) == 0 ? 0 : 1));
-    }
-
     function _getAmountsAtSqrtPrice(uint256 tokenId, uint160 sqrtPriceX96)
         private view
         returns (uint256 daiAmount, uint256 wsxmrAmount)
@@ -312,8 +262,8 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
 
         if (liq == 0) return (0, 0);
 
-        uint160 sqrtLower = _getSqrtRatioAtTick(tickLower);
-        uint160 sqrtUpper = _getSqrtRatioAtTick(tickUpper);
+        uint160 sqrtLower = TickMath.getSqrtRatioAtTick(tickLower);
+        uint160 sqrtUpper = TickMath.getSqrtRatioAtTick(tickUpper);
 
         uint160 sqrtPrice = sqrtPriceX96;
         if (sqrtPrice < sqrtLower) sqrtPrice = sqrtLower;

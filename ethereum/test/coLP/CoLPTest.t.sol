@@ -493,4 +493,116 @@ contract CoLPTest is Test {
 
         console.log("PASS: mint untouched - balance:", balance);
     }
+
+    // ========== TEST 13: Mint timeout configuration ==========
+
+    function test_SetMintTimeoutBlocks_ValidRange() public {
+        vm.startPrank(lp);
+        VaultFacet(address(hub)).setMintTimeoutBlocks(360); // min
+        wsXmrStorage.Vault memory vault1 = _getVault(lp);
+        assertEq(vault1.mintTimeoutBlocks, 360);
+
+        VaultFacet(address(hub)).setMintTimeoutBlocks(17280); // max
+        wsXmrStorage.Vault memory vault2 = _getVault(lp);
+        assertEq(vault2.mintTimeoutBlocks, 17280);
+
+        VaultFacet(address(hub)).setMintTimeoutBlocks(7200); // middle
+        wsXmrStorage.Vault memory vault3 = _getVault(lp);
+        assertEq(vault3.mintTimeoutBlocks, 7200);
+
+        console.log("PASS: setMintTimeoutBlocks valid range");
+        vm.stopPrank();
+    }
+
+    function test_SetMintTimeoutBlocks_BelowMinReverts() public {
+        vm.prank(lp);
+        vm.expectRevert();
+        VaultFacet(address(hub)).setMintTimeoutBlocks(359);
+        console.log("PASS: setMintTimeoutBlocks below min reverts");
+    }
+
+    function test_SetMintTimeoutBlocks_AboveMaxReverts() public {
+        vm.prank(lp);
+        vm.expectRevert();
+        VaultFacet(address(hub)).setMintTimeoutBlocks(17281);
+        console.log("PASS: setMintTimeoutBlocks above max reverts");
+    }
+
+    // ========== TEST 14: Burn timeout configuration ==========
+
+    function test_SetBurnTimeoutBlocks_ValidRange() public {
+        vm.startPrank(lp);
+        VaultFacet(address(hub)).setBurnTimeoutBlocks(360); // min
+        wsXmrStorage.Vault memory vault1 = _getVault(lp);
+        assertEq(vault1.burnTimeoutBlocks, 360);
+
+        VaultFacet(address(hub)).setBurnTimeoutBlocks(17280); // max
+        wsXmrStorage.Vault memory vault2 = _getVault(lp);
+        assertEq(vault2.burnTimeoutBlocks, 17280);
+
+        VaultFacet(address(hub)).setBurnTimeoutBlocks(7200); // middle
+        wsXmrStorage.Vault memory vault3 = _getVault(lp);
+        assertEq(vault3.burnTimeoutBlocks, 7200);
+
+        console.log("PASS: setBurnTimeoutBlocks valid range");
+        vm.stopPrank();
+    }
+
+    function test_SetBurnTimeoutBlocks_BelowMinReverts() public {
+        vm.prank(lp);
+        vm.expectRevert();
+        VaultFacet(address(hub)).setBurnTimeoutBlocks(359);
+        console.log("PASS: setBurnTimeoutBlocks below min reverts");
+    }
+
+    function test_SetBurnTimeoutBlocks_AboveMaxReverts() public {
+        vm.prank(lp);
+        vm.expectRevert();
+        VaultFacet(address(hub)).setBurnTimeoutBlocks(17281);
+        console.log("PASS: setBurnTimeoutBlocks above max reverts");
+    }
+
+    // ========== TEST 15: Custom mint timeout affects cancel behavior ==========
+
+    function test_CustomMintTimeout_AffectsCancel() public {
+        // Set very short timeout (30 min = 360 blocks)
+        vm.prank(lp);
+        VaultFacet(address(hub)).setMintTimeoutBlocks(360);
+
+        address user4 = makeAddr("user4");
+        vm.deal(user4, 100 ether);
+
+        bytes32 secret4 = bytes32(uint256(0x44444444));
+        (uint256 px4, uint256 py4) = Ed25519.scalarMultBase(uint256(secret4));
+        bytes32 commitment4 = keccak256(abi.encodePacked(px4, py4));
+
+        vm.prank(user4);
+        bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user4, 20000000000, commitment4);
+
+        // Warp past timeout (360 blocks at ~5s = 30 min, add buffer)
+        vm.warp(block.timestamp + 31 minutes);
+        vm.roll(block.number + 400);
+
+        // LP should be able to cancel
+        vm.prank(lp);
+        MintFacet(address(hub)).cancelMint(requestId);
+
+        console.log("PASS: custom mint timeout affects cancel");
+    }
+
+    // ========== TEST 16: Non-LP cannot set timeout ==========
+
+    function test_SetTimeout_NonLPReverts() public {
+        address rando = makeAddr("rando");
+
+        vm.prank(rando);
+        vm.expectRevert();
+        VaultFacet(address(hub)).setMintTimeoutBlocks(720);
+
+        vm.prank(rando);
+        vm.expectRevert();
+        VaultFacet(address(hub)).setBurnTimeoutBlocks(720);
+
+        console.log("PASS: non-LP cannot set timeout");
+    }
 }
