@@ -278,7 +278,12 @@ export class MintFlow {
         }
 
         this.state = 'initiated';
-        updateSwapState({ requestId: this.requestId, state: this.state });
+        updateSwapState({ 
+            requestId: this.requestId, 
+            state: this.state,
+            commitment: this.agent.getCommitment(),
+            publicSpendKey: toHex(this.agent.keySet.publicSpendKey)
+        });
     }
 
     async notifyLP() {
@@ -374,8 +379,8 @@ export class MintFlow {
         startStatusPolling(this);
 
         // Check if MintReady was already called (in case we're resuming)
-        const { readHub } = await import('./web3.js');
-        const mintRequest = await readHub('mintRequests', [this.requestId]);
+        const { readHub } = await import('./viemClient.js');
+        const mintRequest = await readHub('getMintRequest', [this.requestId]);
         
         if (mintRequest.status === 3) { // MintStatus.READY = 3
             console.log('Mint is already ready (status check)');
@@ -410,15 +415,15 @@ export class MintFlow {
 
         // LP has confirmed - now wait for user to claim wsXMR
         console.log('LP confirmed XMR received. Waiting for user to claim wsXMR...');
-        this.setupClaimButton();
+        await this.setupClaimButton();
         
         return new Promise((resolve) => {
             this.userClaimResolve = resolve;
         });
     }
 
-    setupClaimButton() {
-        const { showClaimWsXmrButton } = require('./ui.js');
+    async setupClaimButton() {
+        const { showClaimWsXmrButton } = await import('./ui.js');
         showClaimWsXmrButton(() => {
             console.log('User clicked Claim wsXMR');
             if (this.userClaimResolve) {
@@ -572,6 +577,17 @@ export class MintFlow {
                 showMintDepositInfo(this.depositAddress, this.xmrAmount);
                 
                 await this.waitForLPReady();
+                await this.finalize();
+                break;
+            case 'lp-verifying':
+                // LP is verifying the XMR deposit, wait for them to call setMintReady
+                console.log('Resuming from lp-verifying state...');
+                await this.waitForLPReady();
+                await this.finalize();
+                break;
+            case 'lp-ready':
+                // LP has called setMintReady, we can finalize
+                console.log('Resuming from lp-ready state...');
                 await this.finalize();
                 break;
             case 'finalize':

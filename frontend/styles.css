@@ -1804,6 +1804,37 @@ body.app-page .container {
     100% { left: 100%; }
 }
 
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.spin {
+    animation: spin 1s linear infinite;
+}
+
+/* Percentage buttons */
+.percentage-btn {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.75rem;
+    min-width: 45px;
+    background: rgba(249, 115, 22, 0.1);
+    border: 1px solid rgba(249, 115, 22, 0.3);
+    border-radius: 6px;
+    color: #fb923c;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.percentage-btn:hover {
+    background: rgba(249, 115, 22, 0.2);
+    border-color: rgba(249, 115, 22, 0.5);
+}
+
+.percentage-btn:active {
+    background: rgba(249, 115, 22, 0.3);
+}
+
 .btn-content {
     position: relative;
     display: flex;
@@ -2288,6 +2319,10 @@ body.app-page .container {
 
 .legend-dot.used-dot {
     background: #f97316;
+}
+
+.legend-dot.pending-dot {
+    background: #a855f7;
 }
 
 .legend-dot.free-dot {

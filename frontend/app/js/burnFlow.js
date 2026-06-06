@@ -23,10 +23,6 @@ export class BurnFlow {
     async start(lpVault, wsxmrAmount, destination) {
         console.log('Starting burn flow:', { lpVault, wsxmrAmount, destination });
 
-        if (wsxmrAmount < SWAP_CONFIG.minBurnAmount) {
-            throw new Error(`Minimum burn amount is ${SWAP_CONFIG.minBurnAmount} wsXMR`);
-        }
-
         if (!destination || destination.length < 95) {
             throw new Error('Invalid Monero destination address');
         }

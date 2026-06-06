@@ -101,6 +101,13 @@
                 <span class="stat-label">XMR Price</span>
                 <span class="stat-value" id="xmr-price-stat">--</span>
             </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+                <button id="update-prices-btn" class="btn btn-small" style="padding: 0.4rem 0.8rem; font-size: 0.85rem;" title="Update oracle prices with RedStone data">
+                    <span class="btn-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg></span>
+                    <span>Update Prices</span>
+                </button>
+            </div>
         </div>
 
         <!-- Contracts Not Deployed Banner -->
@@ -246,6 +253,12 @@
                 <div class="form-group">
                     <label>Amount (wsXMR)</label>
                     <input type="number" id="burn-amount" placeholder="0.0" step="0.00000001" min="0">
+                    <div style="display: flex; gap: 0.4rem; margin-top: 0.5rem; align-items: center;">
+                        <button type="button" class="percentage-btn" data-percentage="25">25%</button>
+                        <button type="button" class="percentage-btn" data-percentage="50">50%</button>
+                        <button type="button" class="percentage-btn" data-percentage="100">MAX</button>
+                        <span id="burn-percentage-feedback" style="font-size: 0.75rem; color: #fb923c; margin-left: 0.5rem; opacity: 0; transition: opacity 0.3s;"></span>
+                    </div>
                     <span class="helper-text">Your balance: <span id="burn-user-balance">0</span> wsXMR</span>
                 </div>
                 <div class="form-group">
@@ -330,6 +343,13 @@
                                 <div class="stat-details">
                                     <span class="stat-label">Active Debt</span>
                                     <span class="stat-value" id="lp-debt">0 wsXMR</span>
+                                </div>
+                            </div>
+                            <div class="vault-stat-card">
+                                <div class="stat-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
+                                <div class="stat-details">
+                                    <span class="stat-label">Pending Debt</span>
+                                    <span class="stat-value" id="lp-pending-debt">0 wsXMR</span>
                                 </div>
                             </div>
                             <div class="vault-stat-card">
