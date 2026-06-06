@@ -114,7 +114,8 @@ contract DeployGnosis is Script {
             uint160 sqrtPriceX96 = abi.decode(data, (uint160));
             if (sqrtPriceX96 == 0) {
                 console.log("Initializing pool at $390 XMR...");
-                uint160 targetSqrtPriceX96 = _priceToSqrtPriceX96(XMR_PRICE, 1e18);
+                bool sDAIIsToken0 = SDAI < address(wsxmr);
+                uint160 targetSqrtPriceX96 = _priceToSqrtPriceX96(XMR_PRICE, 1e18, sDAIIsToken0);
                 (bool ok,) = pool.call(abi.encodeWithSignature("initialize(uint160)", targetSqrtPriceX96));
                 require(ok, "Pool initialization failed");
                 console.log("Pool initialized");
@@ -178,10 +179,16 @@ contract DeployGnosis is Script {
         console.log("5. Test co-LP with testCoLPNow.js");
     }
 
-    function _priceToSqrtPriceX96(uint256 xmrPrice, uint256 collateralPrice) internal pure returns (uint160) {
-        // Calculate price ratio: sDAI/wsXMR
-        // wsXMR has 8 decimals, sDAI has 18 decimals
-        uint256 priceRatio = (collateralPrice * 1e18) / (xmrPrice * 1e8);
+    function _priceToSqrtPriceX96(uint256 xmrPrice, uint256 collateralPrice, bool sDAIIsToken0) internal pure returns (uint160) {
+        // Uniswap V3 price = token1/token0
+        // If sDAI is token0: price = wsXMR/sDAI = (collateralPrice * 1e8) / (xmrPrice * 1e18)
+        // If wsXMR is token0: price = sDAI/wsXMR = (xmrPrice * 1e18) / (collateralPrice * 1e8)
+        uint256 priceRatio;
+        if (sDAIIsToken0) {
+            priceRatio = (collateralPrice * 1e8) / (xmrPrice * 1e18);
+        } else {
+            priceRatio = (xmrPrice * 1e18) / (collateralPrice * 1e8);
+        }
         uint256 sqrtPrice = _sqrt(priceRatio * 1e18);
         return uint160((sqrtPrice * (1 << 96)) / 1e9);
     }

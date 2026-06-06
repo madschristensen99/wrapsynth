@@ -22,6 +22,7 @@ import {
     hideContractsBanner,
     showMintTab,
     showBurnTab,
+    showCoLPTab,
     populateVaults,
     showVaultInfo,
     updateMintProgress,
@@ -43,11 +44,12 @@ import { MintFlow } from './mintFlow.js';
 import { BurnFlow } from './burnFlow.js';
 import { getLPPanel } from './lpPanel.js';
 import { getPoolFlow } from './poolFlow.js';
+import { getCoLPFlow } from './coLPFlow.js';
 import { getDashboard } from './dashboard.js';
 import { hasActiveSwap, loadActiveSwap, loadActiveSwaps, saveActiveSwap, addOrUpdateActiveSwap, removeActiveSwap, clearActiveSwap } from './storage.js';
 import { CONTRACTS } from './config.js';
 import { displaySwapHistory } from './swapHistory.js';
-import { loadRecentActivity } from './activityFeed.js';
+import { loadRecentActivity, startActivityFeedWatcher } from './activityFeed.js';
 import { updateProtocolStats } from './protocolStats.js';
 
 // Global state
@@ -205,6 +207,7 @@ async function init() {
     
     // Load activity feed and protocol stats
     loadRecentActivity();
+    startActivityFeedWatcher();
     updateProtocolStats();
     
     // Update stats every 60 seconds
@@ -234,6 +237,7 @@ function setupEventHandlers() {
     // Tab switching
     elements.tabMint.addEventListener('click', () => showMintTab());
     elements.tabBurn.addEventListener('click', () => showBurnTab());
+    elements.tabCoLP.addEventListener('click', () => handleCoLPTab());
     elements.tabLp.addEventListener('click', () => handleLpTab());
     
     // Mint flow
@@ -245,6 +249,32 @@ function setupEventHandlers() {
     elements.startBurn.addEventListener('click', handleStartBurn);
     elements.burnVaultSelect.addEventListener('change', () => handleVaultSelect(false));
     
+    // Co-LP handlers
+    const coLpVaultSelect = document.getElementById('co-lp-vault-select');
+    if (coLpVaultSelect) {
+        coLpVaultSelect.addEventListener('change', handleCoLPVaultSelect);
+    }
+    const coLpOpenBtn = document.getElementById('co-lp-open');
+    if (coLpOpenBtn) {
+        coLpOpenBtn.addEventListener('click', handleCoLPOpen);
+    }
+    const coLpUnwindBtn = document.getElementById('co-lp-unwind');
+    if (coLpUnwindBtn) {
+        coLpUnwindBtn.addEventListener('click', handleCoLPUnwind);
+    }
+    const coLpRebalanceBtn = document.getElementById('co-lp-rebalance');
+    if (coLpRebalanceBtn) {
+        coLpRebalanceBtn.addEventListener('click', handleCoLPRebalance);
+    }
+    const coLpSetRangeBtn = document.getElementById('co-lp-set-range');
+    if (coLpSetRangeBtn) {
+        coLpSetRangeBtn.addEventListener('click', handleCoLPSetRange);
+    }
+    const coLpRefreshBtn = document.getElementById('co-lp-refresh-positions');
+    if (coLpRefreshBtn) {
+        coLpRefreshBtn.addEventListener('click', handleRefreshCoLPPositions);
+    }
+
     // Burn percentage buttons
     document.querySelectorAll('.percentage-btn').forEach(btn => {
         btn.addEventListener('click', handleBurnPercentage);
@@ -616,6 +646,321 @@ async function checkForActiveSwapOnChain(userAddress) {
 }
 
 /**
+ * Handle Co-LP tab click - load capacity and show appropriate view
+ */
+async function handleCoLPTab() {
+    showCoLPTab();
+    await refreshCoLPBalance();
+    await checkCoLPLPStatus();
+    await handleRefreshCoLPPositions();
+}
+
+/**
+ * Refresh and render user's active Co-LP positions
+ */
+async function handleRefreshCoLPPositions() {
+    const listEl = document.getElementById('co-lp-positions-list');
+    const refreshBtn = document.getElementById('co-lp-refresh-positions');
+    if (!listEl) return;
+
+    const address = getUserAddress();
+    if (!address) {
+        listEl.innerHTML = '<div class="positions-empty">Connect wallet to see your positions</div>';
+        return;
+    }
+
+    // Show loading state
+    if (refreshBtn) refreshBtn.classList.add('spinning');
+    listEl.innerHTML = '<div class="positions-empty">Loading positions...</div>';
+
+    try {
+        const coLPFlow = getCoLPFlow();
+        await coLPFlow.init();
+        const positions = await coLPFlow.getUserActivePositions();
+
+        if (positions.length === 0) {
+            listEl.innerHTML = '<div class="positions-empty">No active Co-LP positions yet. Open one below!</div>';
+            return;
+        }
+
+        listEl.innerHTML = positions.map(p => {
+            const vaultShort = `${p.vault.slice(0, 6)}...${p.vault.slice(-4)}`;
+            return `
+                <div class="position-card" data-token-id="${p.tokenId}">
+                    <div class="position-info">
+                        <span class="position-token">#${p.tokenId}</span>
+                        <span class="position-meta">Vault: ${vaultShort} · ${p.wsxmrAmount} wsXMR · Range: ${p.rangeBps} bps</span>
+                    </div>
+                    <div class="position-actions">
+                        <button class="btn-rebalance" data-token-id="${p.tokenId}">Rebalance</button>
+                        <button class="btn-unwind" data-token-id="${p.tokenId}">Close</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        // Wire up action buttons on each card
+        listEl.querySelectorAll('.btn-rebalance').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tokenId = btn.dataset.tokenId;
+                const tokenIdInput = document.getElementById('co-lp-token-id');
+                if (tokenIdInput) tokenIdInput.value = tokenId;
+                // Scroll to manage section
+                tokenIdInput?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            });
+        });
+        listEl.querySelectorAll('.btn-unwind').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const tokenId = btn.dataset.tokenId;
+                const tokenIdInput = document.getElementById('co-lp-token-id');
+                if (tokenIdInput) tokenIdInput.value = tokenId;
+                await handleCoLPUnwind();
+            });
+        });
+
+    } catch (error) {
+        console.error('Error refreshing Co-LP positions:', error);
+        listEl.innerHTML = `<div class="positions-empty">Could not load positions: ${error.message}</div>`;
+    } finally {
+        if (refreshBtn) refreshBtn.classList.remove('spinning');
+    }
+}
+
+/**
+ * Render positions list HTML from array
+ */
+function renderCoLPPositions(positions) {
+    const listEl = document.getElementById('co-lp-positions-list');
+    if (!listEl) return;
+
+    if (positions.length === 0) {
+        listEl.innerHTML = '<div class="positions-empty">No active Co-LP positions</div>';
+        return;
+    }
+}
+
+/**
+ * Refresh wsXMR balance shown in Co-LP panel
+ */
+async function refreshCoLPBalance() {
+    try {
+        const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js');
+        const address = getUserAddress();
+        const balanceEl = document.getElementById('co-lp-user-balance');
+        if (address && balanceEl) {
+            const balance = await getWsXmrBalance(address);
+            balanceEl.textContent = (Number(balance) / 1e8).toFixed(4);
+        } else if (balanceEl) {
+            balanceEl.textContent = '0';
+        }
+    } catch (error) {
+        console.warn('Could not refresh Co-LP balance:', error.message);
+    }
+}
+
+/**
+ * Check if user is an LP and show LP-only settings
+ */
+async function checkCoLPLPStatus() {
+    try {
+        const coLPFlow = getCoLPFlow();
+        const isLP = await coLPFlow.isLP();
+        const settingsEl = document.getElementById('co-lp-lp-settings');
+        if (settingsEl) {
+            if (isLP) {
+                settingsEl.classList.remove('hidden');
+                // Load current max range from vault
+                const userAddress = getUserAddress();
+                if (userAddress) {
+                    const vault = await coLPFlow.getVault(userAddress);
+                    const maxRangeInput = document.getElementById('co-lp-max-range');
+                    if (maxRangeInput && vault && vault.maxCoLPRangeBps) {
+                        maxRangeInput.value = Number(vault.maxCoLPRangeBps);
+                    }
+                }
+            } else {
+                settingsEl.classList.add('hidden');
+            }
+        }
+    } catch (error) {
+        console.warn('Error checking LP status for Co-LP:', error.message);
+    }
+}
+
+/**
+ * Handle Co-LP vault selection - fetch and display capacity
+ */
+async function handleCoLPVaultSelect() {
+    const select = document.getElementById('co-lp-vault-select');
+    const capacityDiv = document.getElementById('co-lp-capacity');
+    if (!select || !capacityDiv) return;
+
+    const lpVault = select.value;
+    if (!lpVault) {
+        capacityDiv.classList.add('hidden');
+        return;
+    }
+
+    try {
+        const coLPFlow = getCoLPFlow();
+        const capacity = await coLPFlow.getCoLPCapacity(lpVault);
+        const capacityWsxmr = Number(capacity) / 1e8;
+
+        capacityDiv.innerHTML = `<p><strong>Co-LP Capacity:</strong> ${capacityWsxmr.toFixed(4)} wsXMR available</p>`;
+        capacityDiv.classList.remove('hidden');
+    } catch (error) {
+        console.warn('Could not fetch Co-LP capacity:', error.message);
+        capacityDiv.classList.add('hidden');
+    }
+}
+
+/**
+ * Handle open Co-LP position
+ */
+async function handleCoLPOpen() {
+    const amountInput = document.getElementById('co-lp-amount');
+    const vaultSelect = document.getElementById('co-lp-vault-select');
+
+    if (!getUserAddress()) {
+        showError('Wallet Required', 'Please connect your wallet');
+        return;
+    }
+
+    const amount = parseFloat(amountInput?.value);
+    const vaultAddress = vaultSelect?.value;
+
+    if (!amount || amount <= 0) {
+        showError('Invalid Input', 'Enter a valid wsXMR amount');
+        return;
+    }
+    if (!vaultAddress) {
+        showError('Invalid Input', 'Select an LP vault');
+        return;
+    }
+
+    try {
+        const coLPFlow = getCoLPFlow();
+        await coLPFlow.init();
+
+        // Default deadline: 10 minutes from now
+        const deadline = Math.floor(Date.now() / 1000) + 600;
+
+        const { receipt, tokenId } = await coLPFlow.userOpenCoLP(vaultAddress, amount, deadline);
+
+        if (tokenId) {
+            showSuccess('Position Opened', `Co-LP position created with token ID: ${tokenId}`);
+        } else {
+            showSuccess('Position Opened', 'Co-LP position created successfully');
+        }
+
+        await refreshCoLPBalance();
+        // Refresh capacity display
+        await handleCoLPVaultSelect();
+        // Refresh active positions list
+        await handleRefreshCoLPPositions();
+    } catch (error) {
+        console.error('Open Co-LP error:', error);
+        showError('Open Co-LP Error', error.message);
+    }
+}
+
+/**
+ * Handle unwind Co-LP position
+ */
+async function handleCoLPUnwind() {
+    const tokenIdInput = document.getElementById('co-lp-token-id');
+    const tokenId = tokenIdInput?.value?.trim();
+
+    if (!getUserAddress()) {
+        showError('Wallet Required', 'Please connect your wallet');
+        return;
+    }
+    if (!tokenId || isNaN(Number(tokenId))) {
+        showError('Invalid Input', 'Enter a valid position token ID');
+        return;
+    }
+
+    try {
+        const coLPFlow = getCoLPFlow();
+        await coLPFlow.init();
+
+        const deadline = Math.floor(Date.now() / 1000) + 600;
+        await coLPFlow.unwindCoLP(tokenId, deadline);
+
+        showSuccess('Position Unwound', `Co-LP position ${tokenId} has been closed`);
+        await handleRefreshCoLPPositions();
+    } catch (error) {
+        console.error('Unwind Co-LP error:', error);
+        showError('Unwind Co-LP Error', error.message);
+    }
+}
+
+/**
+ * Handle rebalance Co-LP position
+ */
+async function handleCoLPRebalance() {
+    const tokenIdInput = document.getElementById('co-lp-token-id');
+    const rangeBpsInput = document.getElementById('co-lp-rebalance-bps');
+    const tokenId = tokenIdInput?.value?.trim();
+    const rangeBps = Number(rangeBpsInput?.value);
+
+    if (!getUserAddress()) {
+        showError('Wallet Required', 'Please connect your wallet');
+        return;
+    }
+    if (!tokenId || isNaN(Number(tokenId))) {
+        showError('Invalid Input', 'Enter a valid position token ID');
+        return;
+    }
+    if (!rangeBps || rangeBps < 1000 || rangeBps > 10000) {
+        showError('Invalid Input', 'Range must be between 1000 and 10000 bps');
+        return;
+    }
+
+    try {
+        const coLPFlow = getCoLPFlow();
+        await coLPFlow.init();
+
+        const deadline = Math.floor(Date.now() / 1000) + 600;
+        await coLPFlow.rebalanceCoLP(tokenId, rangeBps, deadline);
+
+        showSuccess('Position Rebalanced', `Co-LP position ${tokenId} rebalanced to ${rangeBps} bps range`);
+        await handleRefreshCoLPPositions();
+    } catch (error) {
+        console.error('Rebalance Co-LP error:', error);
+        showError('Rebalance Co-LP Error', error.message);
+    }
+}
+
+/**
+ * Handle set max Co-LP range (LP only)
+ */
+async function handleCoLPSetRange() {
+    const maxRangeInput = document.getElementById('co-lp-max-range');
+    const newMaxBps = Number(maxRangeInput?.value);
+
+    if (!getUserAddress()) {
+        showError('Wallet Required', 'Please connect your wallet');
+        return;
+    }
+    if (!newMaxBps || newMaxBps < 1000 || newMaxBps > 10000) {
+        showError('Invalid Input', 'Range must be between 1000 and 10000 bps');
+        return;
+    }
+
+    try {
+        const coLPFlow = getCoLPFlow();
+        await coLPFlow.init();
+
+        await coLPFlow.setMaxCoLPRange(newMaxBps);
+        showSuccess('Range Updated', `Max Co-LP range set to ${newMaxBps} bps`);
+    } catch (error) {
+        console.error('Set range error:', error);
+        showError('Set Range Error', error.message);
+    }
+}
+
+/**
  * Handle LP tab click - check if user is an LP and show appropriate view
  */
 async function handleLpTab() {
@@ -624,11 +969,13 @@ async function handleLpTab() {
     // Hide other panels
     elements.mintPanel.classList.add('hidden');
     elements.burnPanel.classList.add('hidden');
+    elements.coLPPanel.classList.add('hidden');
     elements.lpPanel.classList.remove('hidden');
     
     // Update tab buttons
     elements.tabMint.classList.remove('active');
     elements.tabBurn.classList.remove('active');
+    elements.tabCoLP.classList.remove('active');
     elements.tabLp.classList.add('active');
     
     // Check if user is connected

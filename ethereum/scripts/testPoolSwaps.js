@@ -7,8 +7,8 @@ require('dotenv').config();
 const { ethers } = require('ethers');
 
 const SDAI_ADDRESS = '0xaf204776c7245bF4147c2612BF6e5972Ee483701';
-const WSXMR_ADDRESS = '0x8890f651190c838651623de077474a98e37803ab';
-const POOL_ADDRESS = '0x3235ffe7B51b3726BC0F398da21eD0583103F106'; // from earlier: hub.liquidityRouter()
+const WSXMR_ADDRESS = '0xd48d298650fcd0c1c8478ee4c3ee077f16171697';
+const POOL_ADDRESS = '0x4ca832cb79514d05a7162257d8bd316ad6fc46a9'; // hub.liquidityRouter()
 // Wait, that's the router. Need the actual pool.
 const SWAP_ROUTER = '0xc6D25285D5C5b62b7ca26D6092751A145D50e9Be';
 const UNI_V3_FACTORY = '0xe32F7dD7e3f098D518ff19A22d5f028e076489B1';
@@ -66,14 +66,78 @@ async function main() {
     console.log('  token1:', token1);
     console.log('');
 
-    if (liquidity.eq(0)) {
-        console.error('Pool has ZERO liquidity!');
-        process.exit(1);
-    }
-
     const sdai = new ethers.Contract(SDAI_ADDRESS, erc20Abi, wallet);
     const wsxmr = new ethers.Contract(WSXMR_ADDRESS, erc20Abi, wallet);
     const swapRouter = new ethers.Contract(SWAP_ROUTER, routerAbi, wallet);
+    const positionManager = new ethers.Contract(
+        '0xAE8fbE656a77519a7490054274910129c9244FA3',
+        [
+            'function mint(tuple(address token0, address token1, uint24 fee, int24 tickLower, int24 tickUpper, uint256 amount0Desired, uint256 amount1Desired, uint256 amount0Min, uint256 amount1Min, address recipient, uint256 deadline)) external payable returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)'
+        ],
+        wallet
+    );
+
+    if (liquidity.eq(0)) {
+        console.log('Pool has zero active liquidity. Adding an in-range position first...');
+        console.log('');
+
+        const sdaiBalance = await sdai.balanceOf(wallet.address);
+        const wsxmrBalance = await wsxmr.balanceOf(wallet.address);
+        console.log('Wallet balances for liquidity:');
+        console.log('  wsXMR:', ethers.utils.formatUnits(wsxmrBalance, 8));
+        console.log('  sDAI:', ethers.utils.formatUnits(sdaiBalance, 18));
+        console.log('');
+
+        if (sdaiBalance.eq(0) || wsxmrBalance.eq(0)) {
+            console.error('Need both sDAI and wsXMR to add liquidity!');
+            process.exit(1);
+        }
+
+        // Approve position manager
+        const approveSDAI = await sdai.approve('0xAE8fbE656a77519a7490054274910129c9244FA3', sdaiBalance, {
+            maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+            maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+        });
+        await approveSDAI.wait();
+        const approveWSXMR = await wsxmr.approve('0xAE8fbE656a77519a7490054274910129c9244FA3', wsxmrBalance, {
+            maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+            maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+        });
+        await approveWSXMR.wait();
+        console.log('Approved PositionManager for both tokens');
+
+        // Pool price is extremely skewed; a full-range position would require
+        // impractical token ratios. Use a narrow range around the current tick.
+        const currentTick = slot0.tick;
+        const tickSpacing = 60;
+        const tickLower = Math.floor((currentTick - 30) / tickSpacing) * tickSpacing;
+        const tickUpper = Math.ceil((currentTick + 30) / tickSpacing) * tickSpacing;
+        console.log('Current tick:', currentTick, '- adding liquidity at range', tickLower, 'to', tickUpper);
+
+        const deadline = Math.floor(Date.now() / 1000) + 600;
+        const mintParams = {
+            token0: token0,
+            token1: token1,
+            fee: POOL_FEE,
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            amount0Desired: token0 === SDAI_ADDRESS ? sdaiBalance : wsxmrBalance,
+            amount1Desired: token0 === SDAI_ADDRESS ? wsxmrBalance : sdaiBalance,
+            amount0Min: 0,
+            amount1Min: 0,
+            recipient: wallet.address,
+            deadline: deadline
+        };
+
+        const mintTx = await positionManager.mint(mintParams, {
+            gasLimit: 500000,
+            maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+            maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+        });
+        const mintReceipt = await mintTx.wait();
+        console.log('In-range position minted! TX:', mintTx.hash);
+        console.log('');
+    }
 
     const sdaiBalance = await sdai.balanceOf(wallet.address);
     const wsxmrBalance = await wsxmr.balanceOf(wallet.address);

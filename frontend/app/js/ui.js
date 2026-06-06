@@ -26,11 +26,13 @@ const elements = {
     // Tabs
     tabMint: null,
     tabBurn: null,
+    tabCoLP: null,
     tabLp: null,
     
     // Panels
     mintPanel: null,
     burnPanel: null,
+    coLPPanel: null,
     lpPanel: null,
     
     // Mint panel elements
@@ -86,11 +88,13 @@ export function initUI() {
     // Tabs
     elements.tabMint = document.getElementById('tab-mint');
     elements.tabBurn = document.getElementById('tab-burn');
+    elements.tabCoLP = document.getElementById('tab-co-lp');
     elements.tabLp = document.getElementById('tab-lp');
     
     // Panels
     elements.mintPanel = document.getElementById('mint-panel');
     elements.burnPanel = document.getElementById('burn-panel');
+    elements.coLPPanel = document.getElementById('co-lp-panel');
     elements.lpPanel = document.getElementById('lp-panel');
     
     // Mint panel elements
@@ -269,9 +273,11 @@ export function hideContractsBanner() {
 export function showMintTab() {
     elements.tabMint.classList.add('active');
     elements.tabBurn.classList.remove('active');
+    elements.tabCoLP.classList.remove('active');
     elements.tabLp.classList.remove('active');
     elements.mintPanel.classList.remove('hidden');
     elements.burnPanel.classList.add('hidden');
+    elements.coLPPanel.classList.add('hidden');
     elements.lpPanel.classList.add('hidden');
 }
 
@@ -281,9 +287,11 @@ export function showMintTab() {
 export async function showBurnTab() {
     elements.tabBurn.classList.add('active');
     elements.tabMint.classList.remove('active');
+    elements.tabCoLP.classList.remove('active');
     elements.tabLp.classList.remove('active');
     elements.burnPanel.classList.remove('hidden');
     elements.mintPanel.classList.add('hidden');
+    elements.coLPPanel.classList.add('hidden');
     elements.lpPanel.classList.add('hidden');
     
     // Update balance when showing burn tab
@@ -311,6 +319,12 @@ export function populateVaults(vaults) {
     
     elements.mintVaultSelect.innerHTML = mintOptions;
     elements.burnVaultSelect.innerHTML = burnOptions;
+    
+    // Also populate Co-LP vault select
+    const coLpVaultSelect = document.getElementById('co-lp-vault-select');
+    if (coLpVaultSelect) {
+        coLpVaultSelect.innerHTML = mintOptions;
+    }
     
     // Also populate the Active LP Vaults display
     const vaultsList = document.getElementById('vaults-list');
@@ -558,6 +572,17 @@ export function hideModal() {
 /**
  * Show success modal
  */
+export function showCoLPTab() {
+    elements.tabCoLP.classList.add('active');
+    elements.tabMint.classList.remove('active');
+    elements.tabBurn.classList.remove('active');
+    elements.tabLp.classList.remove('active');
+    elements.coLPPanel.classList.remove('hidden');
+    elements.mintPanel.classList.add('hidden');
+    elements.burnPanel.classList.add('hidden');
+    elements.lpPanel.classList.add('hidden');
+}
+
 export function showSuccess(title, message) {
     showModal(title, `<p style="color: var(--success-color);">✅ ${message}</p>`);
 }

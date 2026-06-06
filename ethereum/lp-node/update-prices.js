@@ -9,7 +9,7 @@ const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 
-const HUB_ADDRESS = process.env.HUB_ADDRESS || '0xd32e2ece901094550b81ab5051a72256761514d6';
+const HUB_ADDRESS = process.env.HUB_ADDRESS || '0xe485b74fe0a6aeb590a2e655734d436daa1dec8a';
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const RPC_URL = process.env.GNOSIS_RPC_URL || 'https://rpc.gnosischain.com';
 
