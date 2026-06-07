@@ -52,21 +52,23 @@ WrapSynth is a multi-chain monorepo with clear separation between implementation
 
 ### 🌐 Live Deployment — Gnosis Chain (ChainID: 100)
 
-Deployed June 6, 2026. Collateral: **sDAI**. Oracle: **RedStone** pull oracle.
+Deployed June 7, 2026. Collateral: **sDAI**. Oracle: **RedStone** pull oracle.
 
 | Contract | Address |
 | --- | --- |
-| **wsXMR Token** | [`0xd48d298650fcd0c1c8478ee4c3ee077f16171697`](https://gnosisscan.io/address/0xd48d298650fcd0c1c8478ee4c3ee077f16171697) |
-| **wsXmrHub** | [`0xe485b74fe0a6aeb590a2e655734d436daa1dec8a`](https://gnosisscan.io/address/0xe485b74fe0a6aeb590a2e655734d436daa1dec8a) |
-| **RedStoneOracleFacet** | [`0xcb85ee56254f925e910e8bbe4c34b5e285fdae34`](https://gnosisscan.io/address/0xcb85ee56254f925e910e8bbe4c34b5e285fdae34) |
-| **VaultFacet** | [`0x3c6a147b3aced0ed207d75343462db1c863923cd`](https://gnosisscan.io/address/0x3c6a147b3aced0ed207d75343462db1c863923cd) |
-| **MintFacet** | [`0x6933456daa0f3018b7f3ab6fbf08c66bda011c4a`](https://gnosisscan.io/address/0x6933456daa0f3018b7f3ab6fbf08c66bda011c4a) |
-| **BurnFacet** | [`0xd2ae40b9427ac197b3847fbe677f7027bf00a728`](https://gnosisscan.io/address/0xd2ae40b9427ac197b3847fbe677f7027bf00a728) |
-| **LiquidationFacet** | [`0x813523c2f43e81e0b5e10c072037f817b6495851`](https://gnosisscan.io/address/0x813523c2f43e81e0b5e10c072037f817b6495851) |
-| **YieldFacet** | [`0x5989690092ffcc195663c0ab4da3c71bea705049`](https://gnosisscan.io/address/0x5989690092ffcc195663c0ab4da3c71bea705049) |
-| **LiquidityRouter** | [`0x4ca832cb79514d05a7162257d8bd316ad6fc46a9`](https://gnosisscan.io/address/0x4ca832cb79514d05a7162257d8bd316ad6fc46a9) |
+| **wsXMR Token** | [`0x2d8d62dd1aff2daafdef9ac4d02b732529342016`](https://gnosisscan.io/address/0x2d8d62dd1aff2daafdef9ac4d02b732529342016) |
+| **wsXmrHub** | [`0x14e5f2da5cef85446952f1f1c3218d392740b23a`](https://gnosisscan.io/address/0x14e5f2da5cef85446952f1f1c3218d392740b23a) |
+| **RedStoneOracleFacet** | [`0xe5f338111c416d53be910d93fd5748b345ed7321`](https://gnosisscan.io/address/0xe5f338111c416d53be910d93fd5748b345ed7321) |
+| **VaultFacet** | [`0x8a3e1c1cdd88b22dce7a55f0d9412c480f886192`](https://gnosisscan.io/address/0x8a3e1c1cdd88b22dce7a55f0d9412c480f886192) |
+| **MintFacet** | [`0x2d01e62a2a07760953a9cbf8507f33d92f11e3b8`](https://gnosisscan.io/address/0x2d01e62a2a07760953a9cbf8507f33d92f11e3b8) |
+| **BurnFacet** | [`0xbbf7dc2c91bd55ea47878d064e5d28e772959e94`](https://gnosisscan.io/address/0xbbf7dc2c91bd55ea47878d064e5d28e772959e94) |
+| **LiquidationFacet** | [`0x802b9d5bdf814d16d28f68658c07fd60cf420719`](https://gnosisscan.io/address/0x802b9d5bdf814d16d28f68658c07fd60cf420719) |
+| **YieldFacet** | [`0xe98c27f979af940bcec76ca9dc461e7918bc136a`](https://gnosisscan.io/address/0xe98c27f979af940bcec76ca9dc461e7918bc136a) |
+| **LiquidityRouter** | [`0xc2ad4d38ca14eaf6fb7801f795c67c694d0df597`](https://gnosisscan.io/address/0xc2ad4d38ca14eaf6fb7801f795c67c694d0df597) |
 
-External: **sDAI** [`0xaf204776c7245bF4147c2612BF6e5972Ee483701`](https://gnosisscan.io/address/0xaf204776c7245bF4147c2612BF6e5972Ee483701)
+**External Contracts:**
+- **sDAI** [`0xaf204776c7245bF4147c2612BF6e5972Ee483701`](https://gnosisscan.io/address/0xaf204776c7245bF4147c2612BF6e5972Ee483701)
+- **Uniswap V3 Pool (wsXMR/sDAI)** [`0xb07bfc2591fAd1612FD2B77180e52733C4B7410E`](https://gnosisscan.io/address/0xb07bfc2591fAd1612FD2B77180e52733C4B7410E) | [📊 GeckoTerminal](https://www.geckoterminal.com/xdai/pools/0xb07bfc2591fad1612fd2b77180e52733c4b7410e)
 
 ### Solana — Anchor Program
 
