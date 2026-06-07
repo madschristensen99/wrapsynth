@@ -235,22 +235,32 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
     // ========== INTERNAL: TICK MATH ==========
 
     /// @dev Convert oracle XMR price (USD, 18 decimals) to sqrtPriceX96 for the sDAI/wsXMR pool.
-    ///      sDAI is pegged ~$1 so collateralPrice ≈ 1e18.
+    ///      Both wsXMR and sDAI have 8 decimals. sDAI ≈ $1.
     ///      Uniswap V3 price = token1/token0.
-    ///      If sDAI is token0: price = wsXMR/sDAI = (collateralPrice * 1e8) / (xmrPrice * 1e18)
-    ///      If wsXMR is token0: price = sDAI/wsXMR = (xmrPrice * 1e18) / (collateralPrice * 1e8)
+    ///      If sDAI is token0: price = wsXMR/sDAI ≈ xmrPrice (in USD)
+    ///      If wsXMR is token0: price = sDAI/wsXMR ≈ 1/xmrPrice
     function _priceToSqrtPriceX96(uint256 xmrPrice, uint256 collateralPrice)
         private view returns (uint160)
     {
-        uint256 priceRatio;
+        // xmrPrice is in 18 decimals (e.g., 390e18 for $390)
+        // We need sqrtPriceX96 = sqrt(price) * 2^96
+        uint256 sqrtPriceX96;
+        
         if (sDAIIsToken0) {
-            priceRatio = (collateralPrice * 1e8) / (xmrPrice * 1e18);
+            // price = xmrPrice / 1e18 (both tokens have same decimals)
+            // sqrtPriceX96 = sqrt(xmrPrice / 1e18) * 2^96
+            // = sqrt(xmrPrice) / sqrt(1e18) * 2^96
+            // = sqrt(xmrPrice) * 2^96 / 1e9
+            uint256 sqrtPrice = _sqrt(xmrPrice * 1e18); // sqrt(xmrPrice) in 1e18 precision
+            sqrtPriceX96 = (sqrtPrice * (1 << 96)) / 1e9;
         } else {
-            priceRatio = (xmrPrice * 1e18) / (collateralPrice * 1e8);
+            // price = 1e18 / xmrPrice
+            // sqrtPriceX96 = sqrt(1e18 / xmrPrice) * 2^96
+            uint256 sqrtPrice = _sqrt((1e36) / xmrPrice); // sqrt(1/xmrPrice) in 1e18 precision
+            sqrtPriceX96 = (sqrtPrice * (1 << 96)) / 1e9;
         }
-
-        uint256 sqrtPrice = _sqrt(priceRatio * 1e18);
-        return uint160((sqrtPrice * (1 << 96)) / 1e9);
+        
+        return uint160(sqrtPriceX96);
     }
 
     function _getAmountsAtSqrtPrice(uint256 tokenId, uint160 sqrtPriceX96)

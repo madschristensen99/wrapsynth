@@ -7,11 +7,10 @@ require('dotenv').config();
 const { ethers } = require('ethers');
 
 const SDAI_ADDRESS = '0xaf204776c7245bF4147c2612BF6e5972Ee483701';
-const WSXMR_ADDRESS = '0xd48d298650fcd0c1c8478ee4c3ee077f16171697';
-const POOL_ADDRESS = '0x4ca832cb79514d05a7162257d8bd316ad6fc46a9'; // hub.liquidityRouter()
-// Wait, that's the router. Need the actual pool.
+const WSXMR_ADDRESS = '0xc85c4082748aca1927827a0409aaaaf13384741c';
+const POOL_ADDRESS = '0x3f9372abe49d587a16005f465a3319722105434a'; // sDAI/wsXMR pool
 const SWAP_ROUTER = '0xc6D25285D5C5b62b7ca26D6092751A145D50e9Be';
-const UNI_V3_FACTORY = '0xe32F7dD7e3f098D518ff19A22d5f028e076489B1';
+const UNI_V3_FACTORY = '0xae8fbe656a77519a7490054274910129c9244fa3';
 
 const POOL_FEE = 3000;
 
