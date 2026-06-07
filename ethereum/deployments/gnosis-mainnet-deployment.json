@@ -1,19 +1,20 @@
 {
   "network": "Gnosis Chain Mainnet",
   "chainId": 100,
-  "deploymentDate": "2026-06-06",
-  "deployer": "See .env PRIVATE_KEY",
+  "deploymentDate": "2026-06-06T19:21:00Z",
+  "deployer": "0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB",
   "contracts": {
-    "wsXMR": "0xd48d298650fcd0c1c8478ee4c3ee077f16171697",
-    "wsXmrHub": "0xe485b74fe0a6aeb590a2e655734d436daa1dec8a",
-    "liquidityRouter": "0x4ca832cb79514d05a7162257d8bd316ad6fc46a9",
+    "wsXMR": "0xf0861d198a36d77ed1ff41bb17372a7f2f29d801",
+    "wsXmrHub": "0x4451f9d8efbd035153f90f4f4fd16d9b83c34002",
+    "liquidityRouter": "0x63d80901cebce18f40433eb7c91785e7e5c08d74",
+    "uniswapV3Pool": "0x3119a3d32179b4086ee6abcc4105faec540ebe20",
     "facets": {
-      "RedStoneOracleFacet": "0xcb85ee56254f925e910e8bbe4c34b5e285fdae34",
-      "VaultFacet": "0x3c6a147b3aced0ed207d75343462db1c863923cd",
-      "MintFacet": "0x6933456daa0f3018b7f3ab6fbf08c66bda011c4a",
-      "BurnFacet": "0xd2ae40b9427ac197b3847fbe677f7027bf00a728",
-      "LiquidationFacet": "0x813523c2f43e81e0b5e10c072037f817b6495851",
-      "YieldFacet": "0x5989690092ffcc195663c0ab4da3c71bea705049"
+      "RedStoneOracleFacet": "0xcc8d367989329c8113de5a999a93454b394bbd1f",
+      "VaultFacet": "0x18540abde264837a08e06dbde44e8864945d4680",
+      "MintFacet": "0xd02e404dcd32349cc0c8afe0f2b4184dbb8ea12e",
+      "BurnFacet": "0x8452943081de2c08737e011afe1f6fd75738651f",
+      "LiquidationFacet": "0x6bfd1ccc1ca48568e4e2c82d06f1901170fcb489",
+      "YieldFacet": "0x92e026eb41d0600638919f3d38d06259647fdc19"
     }
   },
   "externalContracts": {
@@ -22,8 +23,8 @@
     "UniswapV3PositionManager": "0x83f705098d58b4a3aebcbb78126fe8451aa80724"
   },
   "verification": {
-    "status": "All contracts verified on Gnosisscan",
-    "explorer": "https://gnosisscan.io"
+    "status": "All contracts verified on Blockscout",
+    "explorer": "https://gnosis.blockscout.com"
   },
   "nextSteps": [
     "1. Configure LP node .env file with PRIVATE_KEY and MONERO_PRIVATE_KEY",

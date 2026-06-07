@@ -115,7 +115,10 @@ contract DeployGnosis is Script {
             if (sqrtPriceX96 == 0) {
                 console.log("Initializing pool at $390 XMR...");
                 bool sDAIIsToken0 = SDAI < address(wsxmr);
-                uint160 targetSqrtPriceX96 = _priceToSqrtPriceX96(XMR_PRICE, 1e18, sDAIIsToken0);
+                console.log("sDAI is token0:", sDAIIsToken0);
+                console.log("XMR_PRICE:", XMR_PRICE);
+                uint160 targetSqrtPriceX96 = _priceToSqrtPriceX96(XMR_PRICE, sDAIIsToken0);
+                console.log("Calculated sqrtPriceX96:", targetSqrtPriceX96);
                 (bool ok,) = pool.call(abi.encodeWithSignature("initialize(uint160)", targetSqrtPriceX96));
                 require(ok, "Pool initialization failed");
                 console.log("Pool initialized");
@@ -179,18 +182,23 @@ contract DeployGnosis is Script {
         console.log("5. Test co-LP with testCoLPNow.js");
     }
 
-    function _priceToSqrtPriceX96(uint256 xmrPrice, uint256 collateralPrice, bool sDAIIsToken0) internal pure returns (uint160) {
+    function _priceToSqrtPriceX96(uint256 xmrPrice, bool sDAIIsToken0) internal pure returns (uint160) {
         // Uniswap V3 price = token1/token0
-        // If sDAI is token0: price = wsXMR/sDAI = (collateralPrice * 1e8) / (xmrPrice * 1e18)
-        // If wsXMR is token0: price = sDAI/wsXMR = (xmrPrice * 1e18) / (collateralPrice * 1e8)
-        uint256 priceRatio;
+        // Both wsXMR and sDAI have 8 decimals
+        // If sDAI is token0: price = wsXMR/sDAI ≈ xmrPrice (in USD)
+        // If wsXMR is token0: price = sDAI/wsXMR ≈ 1/xmrPrice
+        uint256 sqrtPriceX96;
         if (sDAIIsToken0) {
-            priceRatio = (collateralPrice * 1e8) / (xmrPrice * 1e18);
+            // price = xmrPrice / 1e18, then convert to Q64.96
+            // sqrtPriceX96 = sqrt(xmrPrice / 1e18) * 2^96
+            uint256 sqrtPrice = _sqrt(xmrPrice * 1e18); // sqrt(xmrPrice) in 1e18 scale
+            sqrtPriceX96 = (sqrtPrice * (1 << 96)) / 1e9;
         } else {
-            priceRatio = (xmrPrice * 1e18) / (collateralPrice * 1e8);
+            // price = 1e18 / xmrPrice, then convert to Q64.96
+            uint256 sqrtPrice = _sqrt((1e36) / xmrPrice); // sqrt(1/xmrPrice) in 1e18 scale
+            sqrtPriceX96 = (sqrtPrice * (1 << 96)) / 1e9;
         }
-        uint256 sqrtPrice = _sqrt(priceRatio * 1e18);
-        return uint160((sqrtPrice * (1 << 96)) / 1e9);
+        return uint160(sqrtPriceX96);
     }
 
     function _sqrt(uint256 x) internal pure returns (uint256 y) {
