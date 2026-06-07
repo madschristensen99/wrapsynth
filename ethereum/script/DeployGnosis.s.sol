@@ -194,18 +194,18 @@ contract DeployGnosis is Script {
         // So: 1e8 wsXMR = xmrPrice * 1e18 / 1e18 sDAI = xmrPrice sDAI
         // Price ratio = xmrPrice * 1e18 / 1e8 = xmrPrice * 1e10
         
-        // At $390/XMR: 1 wsXMR (10^8 units) = 390 sDAI (390 * 10^18 units)
+        // At $305/XMR: 1 wsXMR (10^8 units) = 305 sDAI (305 * 10^18 units)
         // Uniswap price = token1/token0 in raw units
-        // When wsXMR is token0: price = sDAI/wsXMR = (390 * 10^18) / 10^8 = 390 * 10^10
-        // tick = log(390 * 10^10) / log(1.0001) ≈ 280000
+        // When wsXMR is token0: price = sDAI/wsXMR = (305 * 10^18) / 10^8 = 305 * 10^10
+        // tick = log(305 * 10^10) / log(1.0001) ≈ 287000
         
         int24 targetTick;
         if (sDAIIsToken0) {
-            // price = wsXMR/sDAI = 10^8 / (390 * 10^18) = 1/(390 * 10^10)
-            targetTick = -280000;
+            // price = wsXMR/sDAI = 10^8 / (305 * 10^18) = 1/(305 * 10^10)
+            targetTick = -287000;
         } else {
-            // price = sDAI/wsXMR = (390 * 10^18) / 10^8 = 390 * 10^10
-            targetTick = 280000;
+            // price = sDAI/wsXMR = (305 * 10^18) / 10^8 = 305 * 10^10
+            targetTick = 287000;
         }
         
         return TickMath.getSqrtRatioAtTick(targetTick);

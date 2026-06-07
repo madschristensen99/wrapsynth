@@ -95,7 +95,8 @@ export function generateKeysFromSeed(seedPhrase) {
 
 /**
  * Generate commitment from secret for contract verification
- * This is what gets stored on-chain
+ * Matches Solidity Ed25519Helper.computeCommitment:
+ *   keccak256(abi.encodePacked(px, py))
  * 
  * @param {bigint} secret - Private key (spend key)
  * @returns {string} Commitment hash (bytes32)
@@ -103,15 +104,23 @@ export function generateKeysFromSeed(seedPhrase) {
 export function generateCommitment(secret) {
     // Reduce secret modulo group order
     const secretReduced = secret % ED25519_L;
-    
+
     // Generate Ed25519 public key: P = secret * G
     const publicKeyPoint = Point.BASE.multiply(secretReduced);
-    
-    // Get compressed Ed25519 point (32 bytes) - this IS the commitment
-    // The LP node expects the actual public key point, not a hash
-    const publicKeyBytes = publicKeyPoint.toRawBytes();
-    const commitment = toHex(publicKeyBytes); // toHex already adds 0x prefix
-    
+
+    // Extract affine coordinates to match Solidity's abi.encodePacked(px, py)
+    const affine = publicKeyPoint.toAffine();
+    const px = affine.x;
+    const py = affine.y;
+
+    // Encode as abi.encodePacked(uint256, uint256): 32-byte big-endian each
+    const pxHex = px.toString(16).padStart(64, '0');
+    const pyHex = py.toString(16).padStart(64, '0');
+    const packedHex = '0x' + pxHex + pyHex;
+
+    // keccak256 hash - matches Solidity exactly
+    const commitment = keccak256(packedHex);
+
     return commitment;
 }
 

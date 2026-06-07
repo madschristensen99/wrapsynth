@@ -471,22 +471,25 @@ impl MoneroClient {
         Ok(None)
     }
 
-    /// Generate unique swap keys for a Farcaster atomic swap
-    /// 
-    /// Returns LP's keys (s_b, v_b) and combined keys with user's commitment (P_a)
+    /// Generate swap keys for a mint.
+    ///
+    /// If `user_commitment` is a valid compressed Ed25519 point (Farcaster mode),
+    /// the deposit address is a 2-of-2 combined address.
+    ///
+    /// If it is not a valid point (e.g. a keccak256 hash commitment like WrapSynth
+    /// stores on-chain), we fall back to an LP-only deposit address.
     pub fn generate_swap_keys(&self, user_commitment: &[u8; 32]) -> Result<SwapKeys> {
         // Generate random LP keypair for this swap
         let mut rng = OsRng;
-        
+
         // Generate s_b (LP's private spend key for this swap)
         let mut lp_scalar_bytes = [0u8; 32];
         rng.fill_bytes(&mut lp_scalar_bytes);
         let lp_scalar = Scalar::from_bytes_mod_order(lp_scalar_bytes);
-        // Use the canonical scalar bytes for PrivateKey creation
         let canonical_bytes = lp_scalar.to_bytes();
         let lp_private_spend = PrivateKey::from_slice(&canonical_bytes)
             .map_err(|e| anyhow!("Failed to create LP private spend key: {:?}", e))?;
-        
+
         // Generate v_b (LP's private view key for this swap)
         let mut lp_view_bytes = [0u8; 32];
         rng.fill_bytes(&mut lp_view_bytes);
@@ -494,52 +497,73 @@ impl MoneroClient {
         let canonical_view_bytes = lp_view_scalar.to_bytes();
         let lp_private_view = PrivateKey::from_slice(&canonical_view_bytes)
             .map_err(|e| anyhow!("Failed to create LP private view key: {:?}", e))?;
-        
+
         // Derive LP's public keys
         let lp_public_spend = PublicKey::from_private_key(&lp_private_spend);
         let lp_public_view = PublicKey::from_private_key(&lp_private_view);
-        
-        // Parse user's commitment as P_a (user's public spend key)
-        let user_compressed = CompressedEdwardsY::from_slice(user_commitment)
-            .map_err(|_| anyhow!("Invalid user commitment format"))?;
-        let user_point = user_compressed.decompress()
-            .ok_or_else(|| anyhow!("Invalid user commitment - not a valid Ed25519 point"))?;
-        
-        // Parse LP's public spend key as point
-        let lp_public_bytes = lp_public_spend.as_bytes();
-        let lp_compressed = CompressedEdwardsY::from_slice(lp_public_bytes)
-            .map_err(|_| anyhow!("Invalid LP public key format"))?;
-        let lp_point = lp_compressed.decompress()
-            .ok_or_else(|| anyhow!("Invalid LP public key"))?;
-        
-        // Compute P_a + P_b (combined public spend key)
-        let combined_spend_point = user_point + lp_point;
-        let combined_public_spend_bytes = combined_spend_point.compress().to_bytes();
-        let combined_public_spend = PublicKey::from_slice(&combined_public_spend_bytes)
-            .map_err(|e| anyhow!("Failed to create combined public spend key: {:?}", e))?;
-        
-        // For view key, we just use LP's view key (user will combine with their v_a)
-        let combined_public_view = lp_public_view;
-        
-        // Create deposit address from combined keys
-        let deposit_address = Address::standard(
+
+        // Try to parse user's commitment as a compressed Ed25519 point.
+        // WrapSynth stores keccak256(px||py) on-chain, which is NOT a valid
+        // curve point, so this will fail for WrapSynth mints.
+        let combined_public_spend;
+        let deposit_address;
+
+        if let Ok(user_compressed) = CompressedEdwardsY::from_slice(user_commitment) {
+            if let Some(user_point) = user_compressed.decompress() {
+                // Farcaster mode: user_commitment is a real Ed25519 public key
+                let lp_public_bytes = lp_public_spend.as_bytes();
+                if let Ok(lp_compressed) = CompressedEdwardsY::from_slice(lp_public_bytes) {
+                    if let Some(lp_point) = lp_compressed.decompress() {
+                        let combined_spend_point = user_point + lp_point;
+                        let combined_bytes = combined_spend_point.compress().to_bytes();
+                        combined_public_spend = PublicKey::from_slice(&combined_bytes)
+                            .map_err(|e| anyhow!("Failed to create combined public spend key: {:?}", e))?;
+
+                        deposit_address = Address::standard(
+                            self.network,
+                            combined_public_spend,
+                            lp_public_view,
+                        );
+
+                        info!("Generated Farcaster 2-of-2 swap keys");
+                        info!("LP public spend: {}", hex::encode(lp_public_spend.as_bytes()));
+                        info!("Combined public spend: {}", hex::encode(combined_public_spend.as_bytes()));
+                        info!("Deposit address: {}", deposit_address);
+
+                        return Ok(SwapKeys {
+                            lp_private_spend,
+                            lp_private_view,
+                            lp_public_spend,
+                            lp_public_view,
+                            combined_public_spend,
+                            combined_public_view: lp_public_view,
+                            deposit_address,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Fallback: WrapSynth mode — commitment is a hash, not a public key.
+        // Generate an LP-only deposit address.
+        combined_public_spend = lp_public_spend;
+        deposit_address = Address::standard(
             self.network,
-            combined_public_spend,
-            combined_public_view,
+            lp_public_spend,
+            lp_public_view,
         );
-        
-        info!("Generated swap keys for atomic swap");
+
+        info!("Generated LP-only deposit address (commitment is a hash, not an Ed25519 point)");
         info!("LP public spend: {}", hex::encode(lp_public_spend.as_bytes()));
-        info!("Combined public spend: {}", hex::encode(combined_public_spend.as_bytes()));
         info!("Deposit address: {}", deposit_address);
-        
+
         Ok(SwapKeys {
             lp_private_spend,
             lp_private_view,
             lp_public_spend,
             lp_public_view,
             combined_public_spend,
-            combined_public_view,
+            combined_public_view: lp_public_view,
             deposit_address,
         })
     }

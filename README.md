@@ -201,6 +201,24 @@ cargo run --release
 
 The LP node manages vaults, watches chain events, talks to a Monero RPC wallet, and pushes RedStone prices on-chain (`oracle.rs` pulls from `api.redstone.finance`).
 
+### Frontend
+
+The frontend is a static HTML/JS/CSS app. Serve it from the repo root with any static-file server:
+
+```bash
+# From the project root (so the frontend is served at /frontend/)
+cd wrapsynth
+python3 -m http.server 8080
+```
+
+Then open:
+- **`http://localhost:8080/frontend/`** — landing page
+- **`http://localhost:8080/frontend/app/`** — dApp interface
+
+Requires MetaMask (or any injected `window.ethereum` wallet) connected to **Gnosis Chain (ChainID: 100)**.
+
+For development with live-reload, any static server works (e.g. `npx serve`, `python3 -m http.server`, VS Code Live Server).
+
 ### Solana (Anchor)
 
 ```bash

@@ -63,7 +63,10 @@ const elements = {
     modalOverlay: null,
     modalTitle: null,
     modalBody: null,
-    modalCloseBtn: null
+    modalCloseBtn: null,
+    
+    // Withdraw returns
+    withdrawReturnsBtn: null
 };
 
 /**
@@ -129,6 +132,9 @@ export function initUI() {
     elements.modalBody = document.getElementById('modal-body');
     elements.modalCloseBtn = document.getElementById('modal-close-btn');
     
+    // Withdraw returns
+    elements.withdrawReturnsBtn = document.getElementById('withdraw-returns-btn');
+    
     // Setup modal close handlers
     const modalClose = document.querySelector('.modal-close');
     modalClose.addEventListener('click', hideModal);
@@ -156,6 +162,19 @@ export function showWalletConnected(address, balance) {
 }
 
 /**
+ * Show/hide withdraw returns button based on pending amount
+ */
+export function setWithdrawReturnsVisible(visible) {
+    if (elements.withdrawReturnsBtn) {
+        if (visible) {
+            elements.withdrawReturnsBtn.classList.remove('hidden');
+        } else {
+            elements.withdrawReturnsBtn.classList.add('hidden');
+        }
+    }
+}
+
+/**
  * Show wallet disconnected state
  */
 export function showWalletDisconnected() {
@@ -178,8 +197,9 @@ export function updateBalance(balance) {
  * Show resume banner with list of active swaps
  * @param {Array} swaps - Array of active swap states
  * @param {Function} onResume - Callback when user clicks resume on a swap (receives swap object)
+ * @param {Function} onResolve - Callback when user clicks resolve on an unresumable swap
  */
-export function showResumeBanner(swaps, onResume) {
+export function showResumeBanner(swaps, onResume, onResolve) {
     if (!swaps || swaps.length === 0) {
         hideResumeBanner();
         return;
@@ -193,6 +213,11 @@ export function showResumeBanner(swaps, onResume) {
     // Build list
     elements.resumeSwapList.innerHTML = '';
     for (const swap of swaps) {
+        const container = document.createElement('div');
+        container.className = 'resume-swap-item';
+        container.dataset.requestId = swap.requestId || '';
+        container.style.cssText = 'display: flex; flex-direction: column; gap: 0.25rem;';
+
         const row = document.createElement('div');
         row.className = 'resume-swap-row';
         row.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.5rem 0.75rem; background: rgba(255,255,255,0.5); border-radius: 8px;';
@@ -206,22 +231,31 @@ export function showResumeBanner(swaps, onResume) {
 
         row.innerHTML = `
             <span style="font-size: 0.85rem;">
-                <strong>${typeLabel}</strong> ${amount} 
+                <strong>${typeLabel}</strong> ${amount}
                 <span style="color: var(--text-muted);">(${stateLabel})</span>
                 ${vaultShort ? `<span style="color: var(--text-muted); font-size: 0.75rem;"> ${vaultShort}</span>` : ''}
             </span>
         `;
 
+        const canResume = swap.publicSpendKey != null && swap.publicSpendKey !== '';
+
         const btn = document.createElement('button');
         btn.className = 'btn btn-small';
-        btn.textContent = 'Resume';
-        btn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.8rem;';
+        btn.textContent = canResume ? 'Resume' : 'Resolve';
+        btn.style.cssText = canResume
+            ? 'padding: 0.25rem 0.75rem; font-size: 0.8rem;'
+            : 'padding: 0.25rem 0.75rem; font-size: 0.8rem; background: transparent; color: var(--text-secondary); border: 1px solid var(--border-color);';
         btn.addEventListener('click', () => {
-            if (onResume) onResume(swap);
+            if (canResume) {
+                if (onResume) onResume(swap);
+            } else {
+                if (onResolve) onResolve(swap);
+            }
         });
         row.appendChild(btn);
 
-        elements.resumeSwapList.appendChild(row);
+        container.appendChild(row);
+        elements.resumeSwapList.appendChild(container);
     }
 
     elements.resumeBanner.classList.remove('hidden');
@@ -243,6 +277,29 @@ function formatSwapState(state) {
         'completed': 'Complete'
     };
     return labels[state] || state;
+}
+
+/**
+ * Show inline error on a resume banner swap item.
+ * @param {string} requestId - The swap's requestId
+ * @param {string} message - Error message to display
+ */
+export function showResumeError(requestId, message) {
+    if (!elements.resumeSwapList) return;
+    const item = elements.resumeSwapList.querySelector(
+        `.resume-swap-item[data-request-id="${requestId}"]`
+    );
+    if (!item) return;
+
+    // Remove any existing error
+    const existing = item.querySelector('.resume-error');
+    if (existing) existing.remove();
+
+    const errDiv = document.createElement('div');
+    errDiv.className = 'resume-error';
+    errDiv.style.cssText = 'font-size: 0.8rem; color: var(--error-color); padding: 0.25rem 0.75rem; background: rgba(255,0,0,0.05); border-radius: 6px;';
+    errDiv.textContent = message;
+    item.appendChild(errDiv);
 }
 
 /**

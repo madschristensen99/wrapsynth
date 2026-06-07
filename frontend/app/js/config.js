@@ -20,6 +20,7 @@ export const CONTRACTS = {
     hub: '0xe485b74fe0a6aeb590a2e655734d436daa1dec8a',  // wsXmrHub (Diamond) - DEPLOYED
     wsxmrToken: '0xd48d298650fcd0c1c8478ee4c3ee077f16171697',
     liquidityRouter: '0x4ca832cb79514d05a7162257d8bd316ad6fc46a9',
+    sDAI: '0xaf204776c7245bF4147c2612BF6e5972Ee483701',
     // Default LP vault to use for mints (the active LP running the LP node)
     defaultLpVault: '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB'
 };

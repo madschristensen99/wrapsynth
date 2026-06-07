@@ -173,15 +173,26 @@ export class MintFlow {
         updateSwapState({ state: this.state });
 
         console.log('Initializing Phantom Agent...');
-        
+
         this.agent = getPhantomAgent();
         const agentData = await this.agent.initialize('MINT', this.xmrAmount.toString());
 
         console.log('Agent initialized:', agentData);
 
+        // Store seed for later resume (encrypted in browser)
+        const { storeSeed } = await import('./seedStorage.js');
+        const publicSpendKeyHex = toHex(this.agent.keySet.publicSpendKey);
+        try {
+            await storeSeed(this.agent.seed, publicSpendKeyHex);
+            console.log('Seed stored for resume');
+        } catch (e) {
+            console.warn('Could not store seed:', e.message);
+        }
+
         updateSwapState({
             moneroAddress: agentData.moneroAddress,
-            commitment: agentData.commitment
+            commitment: agentData.commitment,
+            publicSpendKey: publicSpendKeyHex
         });
     }
 
@@ -278,8 +289,9 @@ export class MintFlow {
         }
 
         this.state = 'initiated';
-        updateSwapState({ 
-            requestId: this.requestId, 
+        updateSwapState({
+            type: 'mint',
+            requestId: this.requestId,
             state: this.state,
             commitment: this.agent.getCommitment(),
             publicSpendKey: toHex(this.agent.keySet.publicSpendKey)
@@ -439,9 +451,9 @@ export class MintFlow {
         console.log('Finalizing mint...');
 
         const secret = this.agent.getSecret();
-        
-        const receipt = await writeHub('finalizeMint', [this.requestId, secret]);
-        
+
+        const receipt = await writeHub('finalizeMint', [this.requestId, secret], 0n, 1000000n);
+
         console.log('Mint finalized, tx:', receipt.transactionHash);
 
         this.complete();
@@ -503,7 +515,27 @@ export class MintFlow {
         this.state = savedState.state;
 
         this.agent = getPhantomAgent();
-        await this.agent.initialize('MINT', this.xmrAmount.toString());
+
+        // Try to restore existing seed from storage using saved publicSpendKey
+        const savedPublicSpendKey = savedState.publicSpendKey;
+        if (savedPublicSpendKey) {
+            console.log('Restoring agent from saved publicSpendKey...');
+            const restored = await this.agent.loadExistingSeed(savedPublicSpendKey);
+            if (!restored) {
+                throw new Error(
+                    'Could not restore swap secret from browser storage. ' +
+                    'You may need to sign the decryption message in your wallet, ' +
+                    'or clear this swap and start fresh.'
+                );
+            }
+            console.log('Agent restored from saved seed');
+        } else {
+            throw new Error(
+                'No publicSpendKey found in saved swap state. ' +
+                'This swap was created before auto-save was enabled. ' +
+                'Please clear this swap and start a new mint.'
+            );
+        }
 
         switch (this.state) {
             case 'quote':
