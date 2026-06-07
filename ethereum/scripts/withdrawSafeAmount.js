@@ -3,9 +3,7 @@ require('dotenv').config();
 const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
-
-const HUB_ADDRESS = '0xd32e2ece901094550b81ab5051a72256761514d6'; // Gnosis Mainnet - June 4, 2026
-const SDAI_ADDRESS = '0xaf204776c7245bF4147c2612BF6e5972Ee483701';
+const { HUB_ADDRESS, SDAI_ADDRESS } = require('./deploymentConfig');
 
 async function main() {
     const provider = new ethers.providers.JsonRpcProvider('https://rpc.gnosischain.com');

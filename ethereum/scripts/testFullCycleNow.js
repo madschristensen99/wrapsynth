@@ -7,12 +7,7 @@ require('dotenv').config();
 const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
-
-// GNOSIS MAINNET DEPLOYMENT (June 6, 2026 - FIXED)
-const HUB_ADDRESS = '0x25795946e50751e8b046867b79bad7a8cb1dbee5';
-const WSXMR_ADDRESS = '0xc85c4082748aca1927827a0409aaaaf13384741c';
-const WXDAI_ADDRESS = '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d';
-const ED25519_HELPER = '0x7EBdE733CE8Bac20984f919e4d2E66e9eE86f2a3';
+const { HUB_ADDRESS, WSXMR_ADDRESS, WXDAI_ADDRESS, ED25519_HELPER } = require('./deploymentConfig');
 
 async function main() {
     if (!process.env.PRIVATE_KEY) {

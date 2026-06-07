@@ -5,12 +5,7 @@
 
 require('dotenv').config();
 const { ethers } = require('ethers');
-
-const SDAI_ADDRESS = '0xaf204776c7245bF4147c2612BF6e5972Ee483701';
-const WSXMR_ADDRESS = '0xc85c4082748aca1927827a0409aaaaf13384741c';
-const POOL_ADDRESS = '0x3f9372abe49d587a16005f465a3319722105434a'; // sDAI/wsXMR pool
-const SWAP_ROUTER = '0xc6D25285D5C5b62b7ca26D6092751A145D50e9Be';
-const UNI_V3_FACTORY = '0xae8fbe656a77519a7490054274910129c9244fa3';
+const { HUB_ADDRESS, SDAI_ADDRESS, WSXMR_ADDRESS, POOL_ADDRESS, SWAP_ROUTER, UNI_V3_FACTORY } = require('./deploymentConfig');
 
 const POOL_FEE = 3000;
 
@@ -25,6 +20,13 @@ async function main() {
     console.log('Wallet:', wallet.address);
     console.log('');
 
+    // Check wsXMR balance
+    const wsxmrCheckAbi = ['function balanceOf(address) external view returns (uint256)'];
+    const wsxmrCheck = new ethers.Contract(WSXMR_ADDRESS, wsxmrCheckAbi, provider);
+    const initialBalance = await wsxmrCheck.balanceOf(wallet.address);
+    console.log('Initial wsXMR balance:', ethers.utils.formatUnits(initialBalance, 8));
+    console.log('');
+
     const factoryAbi = ['function getPool(address,address,uint24) external view returns (address)'];
     const poolAbi = [
         'function slot0() external view returns (uint160 sqrtPriceX96,int24 tick,uint16 observationIndex,uint16 observationCardinality,uint16 observationCardinalityNext,uint8 feeProtocol,bool unlocked)',
@@ -35,6 +37,7 @@ async function main() {
     const erc20Abi = [
         'function balanceOf(address) external view returns (uint256)',
         'function approve(address spender, uint256 amount) external returns (bool)',
+        'function transfer(address to, uint256 amount) external returns (bool)',
         'function decimals() external view returns (uint8)',
         'function symbol() external view returns (string)'
     ];
@@ -76,121 +79,63 @@ async function main() {
         wallet
     );
 
-    if (liquidity.eq(0)) {
-        console.log('Pool has zero active liquidity. Adding an in-range position first...');
-        console.log('');
+    // Skip adding liquidity - test with existing pool liquidity from Co-LP
+    console.log('Testing swaps with existing pool liquidity from Co-LP positions...');
+    console.log('');
 
-        const sdaiBalance = await sdai.balanceOf(wallet.address);
-        const wsxmrBalance = await wsxmr.balanceOf(wallet.address);
-        console.log('Wallet balances for liquidity:');
-        console.log('  wsXMR:', ethers.utils.formatUnits(wsxmrBalance, 8));
-        console.log('  sDAI:', ethers.utils.formatUnits(sdaiBalance, 18));
-        console.log('');
-
-        if (sdaiBalance.eq(0) || wsxmrBalance.eq(0)) {
-            console.error('Need both sDAI and wsXMR to add liquidity!');
-            process.exit(1);
-        }
-
-        // Approve position manager
-        const approveSDAI = await sdai.approve('0xAE8fbE656a77519a7490054274910129c9244FA3', sdaiBalance, {
-            maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
-            maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
-        });
-        await approveSDAI.wait();
-        const approveWSXMR = await wsxmr.approve('0xAE8fbE656a77519a7490054274910129c9244FA3', wsxmrBalance, {
-            maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
-            maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
-        });
-        await approveWSXMR.wait();
-        console.log('Approved PositionManager for both tokens');
-
-        // Pool price is extremely skewed; a full-range position would require
-        // impractical token ratios. Use a narrow range around the current tick.
-        const currentTick = slot0.tick;
-        const tickSpacing = 60;
-        const tickLower = Math.floor((currentTick - 30) / tickSpacing) * tickSpacing;
-        const tickUpper = Math.ceil((currentTick + 30) / tickSpacing) * tickSpacing;
-        console.log('Current tick:', currentTick, '- adding liquidity at range', tickLower, 'to', tickUpper);
-
-        const deadline = Math.floor(Date.now() / 1000) + 600;
-        const mintParams = {
-            token0: token0,
-            token1: token1,
-            fee: POOL_FEE,
-            tickLower: tickLower,
-            tickUpper: tickUpper,
-            amount0Desired: token0 === SDAI_ADDRESS ? sdaiBalance : wsxmrBalance,
-            amount1Desired: token0 === SDAI_ADDRESS ? wsxmrBalance : sdaiBalance,
-            amount0Min: 0,
-            amount1Min: 0,
-            recipient: wallet.address,
-            deadline: deadline
-        };
-
-        const mintTx = await positionManager.mint(mintParams, {
-            gasLimit: 500000,
-            maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
-            maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
-        });
-        const mintReceipt = await mintTx.wait();
-        console.log('In-range position minted! TX:', mintTx.hash);
-        console.log('');
-    }
-
-    const sdaiBalance = await sdai.balanceOf(wallet.address);
-    const wsxmrBalance = await wsxmr.balanceOf(wallet.address);
+    const sdaiBalanceAfterLP = await sdai.balanceOf(wallet.address);
+    const wsxmrBalanceAfterLP = await wsxmr.balanceOf(wallet.address);
     const sdaiSymbol = await sdai.symbol();
     const wsxmrSymbol = await wsxmr.symbol();
     const sdaiDecimals = await sdai.decimals();
     const wsxmrDecimals = await wsxmr.decimals();
 
     console.log('Wallet balances:');
-    console.log('  ', wsxmrSymbol + ':', ethers.utils.formatUnits(wsxmrBalance, wsxmrDecimals));
-    console.log('  ', sdaiSymbol + ':', ethers.utils.formatUnits(sdaiBalance, sdaiDecimals));
+    console.log('  ', wsxmrSymbol + ':', ethers.utils.formatUnits(wsxmrBalanceAfterLP, wsxmrDecimals));
+    console.log('  ', sdaiSymbol + ':', ethers.utils.formatUnits(sdaiBalanceAfterLP, sdaiDecimals));
     console.log('');
 
-    if (wsxmrBalance.eq(0) && sdaiBalance.eq(0)) {
+    if (wsxmrBalanceAfterLP.eq(0) && sdaiBalanceAfterLP.eq(0)) {
         console.error('No tokens to swap!');
         process.exit(1);
     }
 
-    // --- Swap 1: wsXMR -> sDAI ---
-    if (wsxmrBalance.gt(1000)) {
+    // --- Swap 1: wsXMR -> sDAI (via SwapHelper) ---
+    if (wsxmrBalanceAfterLP.gt(10)) {
         const wsxmrSwapAmount = ethers.BigNumber.from('1000'); // 0.00001 wsXMR
         console.log('Swap 1: wsXMR -> sDAI');
         console.log('  Amount in:', ethers.utils.formatUnits(wsxmrSwapAmount, wsxmrDecimals), wsxmrSymbol);
 
-        const approve1 = await wsxmr.approve(SWAP_ROUTER, wsxmrSwapAmount, {
+        // Approve SwapHelper to spend tokens
+        const swapHelperAddr = '0x638f37995F762388621c8a6AE48671d1BD591AAc';
+        const approve1 = await wsxmr.approve(swapHelperAddr, wsxmrSwapAmount, {
             maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
             maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
         });
         await approve1.wait();
-        console.log('  Approved');
+        console.log('  Approved SwapHelper');
 
-        const deadline = Math.floor(Date.now() / 1000) + 600;
-        const params1 = {
-            tokenIn: WSXMR_ADDRESS,
-            tokenOut: SDAI_ADDRESS,
-            fee: POOL_FEE,
-            recipient: wallet.address,
-            deadline: deadline,
-            amountIn: wsxmrSwapAmount,
-            amountOutMinimum: 0, // test script, accept any slippage
-            sqrtPriceLimitX96: 0
-        };
-
-        const swap1 = await swapRouter.exactInputSingle(params1, {
-            gasLimit: 300000,
-            maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
-            maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
-        });
+        // Call SwapHelper
+        const swapHelperAbi = ['function swap(address pool, address recipient, bool zeroForOne, int256 amountSpecified, uint160 sqrtPriceLimitX96) external returns (int256, int256)'];
+        const swapHelper = new ethers.Contract(swapHelperAddr, swapHelperAbi, wallet);
+        
+        const swap1 = await swapHelper.swap(
+            poolAddr,
+            wallet.address,
+            true, // zeroForOne (wsXMR -> sDAI)
+            wsxmrSwapAmount,
+            0, // no price limit
+            {
+                gasLimit: 300000,
+                maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+                maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+            }
+        );
         const receipt1 = await swap1.wait();
         console.log('  Swap TX:', swap1.hash);
 
-        // Parse output from event
         const sdaiAfter1 = await sdai.balanceOf(wallet.address);
-        const sdaiReceived = sdaiAfter1.sub(sdaiBalance);
+        const sdaiReceived = sdaiAfter1.sub(sdaiBalanceAfterLP);
         console.log('  sDAI received:', ethers.utils.formatUnits(sdaiReceived, sdaiDecimals));
         console.log('');
     } else {
@@ -199,36 +144,37 @@ async function main() {
 
     // --- Swap 2: sDAI -> wsXMR ---
     const sdaiBalanceAfter1 = await sdai.balanceOf(wallet.address);
-    if (sdaiBalanceAfter1.gt(ethers.utils.parseUnits('0.0001', sdaiDecimals))) {
-        const sdaiSwapAmount = sdaiBalanceAfter1.div(2); // swap half of sDAI
+    if (sdaiBalanceAfter1.gt(ethers.utils.parseUnits('0.001', sdaiDecimals))) {
+        const sdaiSwapAmount = ethers.utils.parseUnits('0.001', sdaiDecimals); // 0.001 sDAI
         console.log('Swap 2: sDAI -> wsXMR');
         console.log('  Amount in:', ethers.utils.formatUnits(sdaiSwapAmount, sdaiDecimals), sdaiSymbol);
 
-        const approve2 = await sdai.approve(SWAP_ROUTER, sdaiSwapAmount, {
+        // Approve SwapHelper
+        const swapHelperAddr = '0x638f37995F762388621c8a6AE48671d1BD591AAc';
+        const approve2 = await sdai.approve(swapHelperAddr, sdaiSwapAmount, {
             maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
             maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
         });
         await approve2.wait();
-        console.log('  Approved');
+        console.log('  Approved SwapHelper');
 
-        const deadline = Math.floor(Date.now() / 1000) + 600;
-        const params2 = {
-            tokenIn: SDAI_ADDRESS,
-            tokenOut: WSXMR_ADDRESS,
-            fee: POOL_FEE,
-            recipient: wallet.address,
-            deadline: deadline,
-            amountIn: sdaiSwapAmount,
-            amountOutMinimum: 0,
-            sqrtPriceLimitX96: 0
-        };
-
-        const swap2 = await swapRouter.exactInputSingle(params2, {
-            gasLimit: 300000,
-            maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
-            maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
-        });
-        await swap2.wait();
+        // Call SwapHelper
+        const swapHelperAbi = ['function swap(address pool, address recipient, bool zeroForOne, int256 amountSpecified, uint160 sqrtPriceLimitX96) external returns (int256, int256)'];
+        const swapHelper = new ethers.Contract(swapHelperAddr, swapHelperAbi, wallet);
+        
+        const swap2 = await swapHelper.swap(
+            poolAddr,
+            wallet.address,
+            false, // zeroForOne = false (sDAI -> wsXMR)
+            sdaiSwapAmount,
+            0, // no price limit
+            {
+                gasLimit: 300000,
+                maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+                maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+            }
+        );
+        const receipt2 = await swap2.wait();
         console.log('  Swap TX:', swap2.hash);
 
         const wsxmrAfter2 = await wsxmr.balanceOf(wallet.address);
@@ -238,7 +184,209 @@ async function main() {
         console.log('Skip swap 2: not enough sDAI');
     }
 
-    console.log('Pool swap test complete!');
+    console.log('✅ Basic swaps complete!');
+    console.log('');
+
+    // --- Test Co-LP Position + Fee Collection ---
+    console.log('=== Co-LP Position & Fee Collection Test ===');
+    console.log('');
+
+    const hubAbi = [
+        'function liquidityRouter() external view returns (address)',
+        'function userOpenCoLP(address user, uint256 wsxmrAmount, uint256 deadline) external returns (uint256 tokenId)',
+        'function collectCoLPFees(uint256 tokenId) external returns (uint256 amount0, uint256 amount1)',
+        'function getPendingCoLPReturns(address user) external view returns (uint256)'
+    ];
+    const hub = new ethers.Contract(HUB_ADDRESS, hubAbi, wallet);
+
+    // Check if we have an existing Co-LP position from previous tests
+    const positionManagerFullAbi = [
+        'function balanceOf(address owner) external view returns (uint256)',
+        'function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256)',
+        'function positions(uint256 tokenId) external view returns (uint96 nonce, address operator, address token0, address token1, uint24 fee, int24 tickLower, int24 tickUpper, uint128 liquidity, uint256 feeGrowthInside0LastX128, uint256 feeGrowthInside1LastX128, uint128 tokensOwed0, uint128 tokensOwed1)'
+    ];
+    const positionMgr = new ethers.Contract('0xAE8fbE656a77519a7490054274910129c9244FA3', positionManagerFullAbi, provider);
+    
+    const numPositions = await positionMgr.balanceOf(wallet.address);
+    console.log('Existing NFT positions:', numPositions.toString());
+
+    let coLPTokenId = null;
+    
+    // Check if we have existing positions
+    if (numPositions.gt(0)) {
+        // Get the last position
+        const lastTokenId = await positionMgr.tokenOfOwnerByIndex(wallet.address, numPositions.sub(1));
+        const position = await positionMgr.positions(lastTokenId);
+        
+        // Check if it's our pool
+        if ((position.token0.toLowerCase() === SDAI_ADDRESS.toLowerCase() && position.token1.toLowerCase() === WSXMR_ADDRESS.toLowerCase()) ||
+            (position.token0.toLowerCase() === WSXMR_ADDRESS.toLowerCase() && position.token1.toLowerCase() === SDAI_ADDRESS.toLowerCase())) {
+            coLPTokenId = lastTokenId;
+            console.log('Found existing Co-LP position, tokenId:', coLPTokenId.toString());
+            console.log('  Liquidity:', position.liquidity.toString());
+            console.log('  Fees owed - token0:', position.tokensOwed0.toString(), 'token1:', position.tokensOwed1.toString());
+        }
+    }
+
+    // If no existing position, create one
+    if (!coLPTokenId) {
+        console.log('Creating new Co-LP position...');
+        
+        const wsxmrBalanceForCoLP = await wsxmr.balanceOf(wallet.address);
+        if (wsxmrBalanceForCoLP.lt(ethers.utils.parseUnits('0.0001', 8))) {
+            console.log('⚠️  Not enough wsXMR for Co-LP, skipping Co-LP test');
+        } else {
+            const coLPAmount = ethers.utils.parseUnits('0.0001', 8); // 0.0001 wsXMR
+            
+            // Approve hub
+            const approveCoLP = await wsxmr.approve(HUB_ADDRESS, coLPAmount, {
+                maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+                maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+            });
+            await approveCoLP.wait();
+            console.log('  Approved hub for wsXMR');
+
+            // Update prices before Co-LP
+            const wrappedHub = WrapperBuilder.wrap(hub).usingDataService({
+                dataServiceId: 'redstone-primary-prod',
+                uniqueSignersCount: 1,
+                dataFeeds: ['XMR', 'DAI']
+            }, ['https://oracle-gateway-1.a.redstone.finance']);
+
+            try {
+                const updatePricesTx = await wrappedHub.updatePrices({
+                    maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+                    maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+                });
+                await updatePricesTx.wait();
+                console.log('  Prices updated');
+            } catch (e) {
+                console.log('  Price update failed (may not have oracle facet), continuing...');
+            }
+
+            const deadline = Math.floor(Date.now() / 1000) + 600;
+            const coLPTx = await hub.userOpenCoLP(wallet.address, coLPAmount, deadline, {
+                gasLimit: 800000,
+                maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+                maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+            });
+            const coLPReceipt = await coLPTx.wait();
+            console.log('  Co-LP TX:', coLPTx.hash);
+
+            // Get the new token ID from the receipt
+            const numPositionsAfter = await positionMgr.balanceOf(wallet.address);
+            coLPTokenId = await positionMgr.tokenOfOwnerByIndex(wallet.address, numPositionsAfter.sub(1));
+            console.log('  Created Co-LP position, tokenId:', coLPTokenId.toString());
+        }
+    }
+
+    // Do some swaps to generate fees
+    if (coLPTokenId) {
+        console.log('');
+        console.log('Doing swaps to generate fees...');
+        
+        // Swap 1: Tiny wsXMR -> sDAI to generate fees
+        const wsxmrForSwap = await wsxmr.balanceOf(wallet.address);
+        if (wsxmrForSwap.gt(5)) {
+            const swapAmount = ethers.BigNumber.from('5'); // 0.00000005 wsXMR
+            const approveSwap = await wsxmr.approve(SWAP_ROUTER, swapAmount, {
+                maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+                maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+            });
+            await approveSwap.wait();
+
+            const deadline = Math.floor(Date.now() / 1000) + 600;
+            const swapParams = {
+                tokenIn: WSXMR_ADDRESS,
+                tokenOut: SDAI_ADDRESS,
+                fee: POOL_FEE,
+                recipient: wallet.address,
+                deadline: deadline,
+                amountIn: swapAmount,
+                amountOutMinimum: 0,
+                sqrtPriceLimitX96: 0
+            };
+
+            try {
+                const swapTx = await swapRouter.exactInputSingle(swapParams, {
+                    gasLimit: 300000,
+                    maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+                    maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+                });
+                await swapTx.wait();
+                console.log('  Swap 1 TX:', swapTx.hash);
+            } catch (e) {
+                console.log('  Swap 1 failed:', e.message.split('\n')[0]);
+            }
+        }
+
+        // Swap 2: Tiny sDAI -> wsXMR to generate fees
+        const sdaiForSwap = await sdai.balanceOf(wallet.address);
+        if (sdaiForSwap.gt(ethers.utils.parseUnits('0.00001', 18))) {
+            const swapAmount = ethers.utils.parseUnits('0.00001', 18); // 0.00001 sDAI
+            const approveSwap = await sdai.approve(SWAP_ROUTER, swapAmount, {
+                maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+                maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+            });
+            await approveSwap.wait();
+
+            const deadline = Math.floor(Date.now() / 1000) + 600;
+            const swapParams = {
+                tokenIn: SDAI_ADDRESS,
+                tokenOut: WSXMR_ADDRESS,
+                fee: POOL_FEE,
+                recipient: wallet.address,
+                deadline: deadline,
+                amountIn: swapAmount,
+                amountOutMinimum: 0,
+                sqrtPriceLimitX96: 0
+            };
+
+            try {
+                const swapTx = await swapRouter.exactInputSingle(swapParams, {
+                    gasLimit: 300000,
+                    maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+                    maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+                });
+                await swapTx.wait();
+                console.log('  Swap 2 TX:', swapTx.hash);
+            } catch (e) {
+                console.log('  Swap 2 failed:', e.message.split('\n')[0]);
+            }
+        }
+
+        console.log('');
+        console.log('Collecting Co-LP fees...');
+        
+        // Check position before collecting
+        const positionBefore = await positionMgr.positions(coLPTokenId);
+        console.log('  Fees before collection:');
+        console.log('    token0:', positionBefore.tokensOwed0.toString());
+        console.log('    token1:', positionBefore.tokensOwed1.toString());
+
+        try {
+            const collectTx = await hub.collectCoLPFees(coLPTokenId, {
+                gasLimit: 500000,
+                maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+                maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+            });
+            const collectReceipt = await collectTx.wait();
+            console.log('  Collect TX:', collectTx.hash);
+
+            // Check position after collecting
+            const positionAfter = await positionMgr.positions(coLPTokenId);
+            console.log('  Fees after collection:');
+            console.log('    token0:', positionAfter.tokensOwed0.toString());
+            console.log('    token1:', positionAfter.tokensOwed1.toString());
+            
+            console.log('✅ Fee collection complete!');
+        } catch (e) {
+            console.log('  Fee collection failed:', e.message.split('\n')[0]);
+        }
+    }
+
+    console.log('');
+    console.log('🎉 Comprehensive pool test complete!');
 }
 
 main().catch(console.error);
