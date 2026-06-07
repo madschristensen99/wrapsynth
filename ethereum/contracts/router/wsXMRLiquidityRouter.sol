@@ -9,6 +9,7 @@ import {IUniswapV3Pool} from "../interfaces/external/IUniswapV3Pool.sol";
 import {IUniswapV3Factory} from "../interfaces/external/IUniswapV3Factory.sol";
 import {GnosisAddresses} from "../GnosisAddresses.sol";
 import {TickMath} from "../libraries/TickMath.sol";
+import {FullMath} from "../libraries/FullMath.sol";
 
 /**
  * @title wsXMRLiquidityRouter
@@ -91,30 +92,110 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
     ) {
         if (block.timestamp > deadline) revert DeadlineExpired();
 
-        uint256 collateralPrice = 1e18;
-        uint160 sqrtPriceX96 = _priceToSqrtPriceX96(centerXmrPrice, collateralPrice);
-        int24 centerTick = TickMath.getTickAtSqrtRatio(sqrtPriceX96);
+        // Get current pool tick and price
+        (uint160 sqrtPriceX96, int24 currentTick, , , , , ) = IUniswapV3Pool(pool).slot0();
+        int24 centerTick = currentTick;
 
         int24 halfWidth = int24(int256(uint256(rangeBps) / 2));
-        tickLower = centerTick - halfWidth;
-        tickUpper = centerTick + halfWidth;
+        
+        // Calculate tick bounds, ensuring we don't exceed MAX_TICK or MIN_TICK
+        // Use int256 to avoid overflow in intermediate calculations
+        int256 lowerCandidate = int256(centerTick) - int256(halfWidth);
+        int256 upperCandidate = int256(centerTick) + int256(halfWidth);
+        
+        tickLower = lowerCandidate < int256(MIN_TICK) ? MIN_TICK : int24(lowerCandidate);
+        tickUpper = upperCandidate > int256(MAX_TICK) ? MAX_TICK : int24(upperCandidate);
 
-        // Snap to tick spacing
+        // Snap to tick spacing - ensure we stay within bounds
+        if (tickLower < MIN_TICK) {
+            tickLower = MIN_TICK;
+        }
+        if (tickUpper > MAX_TICK) {
+            tickUpper = MAX_TICK;
+        }
+        
         tickLower = (tickLower / TICK_SPACING) * TICK_SPACING;
         tickUpper = (tickUpper / TICK_SPACING) * TICK_SPACING;
-
-        if (tickLower < MIN_TICK) tickLower = (MIN_TICK / TICK_SPACING) * TICK_SPACING;
-        if (tickUpper > MAX_TICK) tickUpper = (MAX_TICK / TICK_SPACING) * TICK_SPACING;
+        
+        // Double-check bounds after snapping
+        if (tickLower < MIN_TICK) tickLower = MIN_TICK;
+        if (tickUpper > MAX_TICK) tickUpper = MAX_TICK;
         if (tickLower >= tickUpper) revert InvalidRange();
 
-        // Approve position manager
-        IERC20(sDAI).forceApprove(positionManager, daiAmount);
-        IERC20(wsXMR).forceApprove(positionManager, wsxmrAmount);
+        // Final validation: ensure ticks are within absolute bounds
+        require(tickLower >= MIN_TICK && tickLower <= MAX_TICK, "tickLower out of bounds");
+        require(tickUpper >= MIN_TICK && tickUpper <= MAX_TICK, "tickUpper out of bounds");
+
+        // Calculate optimal token amounts based on current price and position range
+        uint160 sqrtLower = TickMath.getSqrtRatioAtTick(tickLower);
+        uint160 sqrtUpper = TickMath.getSqrtRatioAtTick(tickUpper);
+        
+        uint256 amount0Desired;
+        uint256 amount1Desired;
+        
+        if (sqrtPriceX96 <= sqrtLower) {
+            // Price below range - only need token0 (wsXMR if wsXMR is token0, else sDAI)
+            amount0Desired = sDAIIsToken0 ? daiAmount : wsxmrAmount;
+            amount1Desired = 0;
+        } else if (sqrtPriceX96 >= sqrtUpper) {
+            // Price above range - only need token1 (sDAI if wsXMR is token0, else wsXMR)
+            amount0Desired = 0;
+            amount1Desired = sDAIIsToken0 ? wsxmrAmount : daiAmount;
+        } else {
+            // Price in range - calculate ratio needed
+            // For a given liquidity L, amounts are:
+            // amount0 = L * (sqrt(upper) - sqrt(price)) / (sqrt(upper) * sqrt(price))
+            // amount1 = L * (sqrt(price) - sqrt(lower))
+            
+            // Calculate liquidity from each token and use the smaller one
+            uint256 amount0Avail = sDAIIsToken0 ? daiAmount : wsxmrAmount;
+            uint256 amount1Avail = sDAIIsToken0 ? wsxmrAmount : daiAmount;
+            
+            // L from amount0: L = amount0 * sqrt(upper) * sqrt(price) / (sqrt(upper) - sqrt(price)) / 2^96
+            uint256 liq0;
+            uint256 sqrtDiff0 = sqrtUpper > sqrtPriceX96 ? sqrtUpper - sqrtPriceX96 : 0;
+            if (sqrtDiff0 > 0) {
+                // Use FullMath for precision: multiply before dividing
+                uint256 numerator = FullMath.mulDiv(amount0Avail, uint256(sqrtPriceX96), 1 << 96);
+                liq0 = FullMath.mulDiv(numerator, uint256(sqrtUpper), sqrtDiff0);
+            } else {
+                liq0 = type(uint256).max; // Price at or above upper, token0 not needed
+            }
+            
+            // L from amount1: L = amount1 * 2^96 / (sqrt(price) - sqrt(lower))
+            uint256 liq1;
+            uint256 sqrtDiff1 = sqrtPriceX96 > sqrtLower ? sqrtPriceX96 - sqrtLower : 0;
+            if (sqrtDiff1 > 0) {
+                liq1 = FullMath.mulDiv(amount1Avail, 1 << 96, sqrtDiff1);
+            } else {
+                liq1 = type(uint256).max; // Price at or below lower, token1 not needed
+            }
+            
+            // Use the smaller liquidity and calculate exact amounts
+            uint256 minLiq = liq0 < liq1 ? liq0 : liq1;
+            if (minLiq > type(uint128).max) minLiq = type(uint128).max;
+            uint128 targetLiq = uint128(minLiq);
+            
+            // Calculate exact amounts for this liquidity using the same sqrtDiff values
+            if (sqrtDiff0 > 0) {
+                amount0Desired = (uint256(targetLiq) * (1 << 96) * sqrtDiff0)
+                    / (uint256(sqrtUpper) * uint256(sqrtPriceX96));
+            } else {
+                amount0Desired = 0;
+            }
+            
+            if (sqrtDiff1 > 0) {
+                amount1Desired = (uint256(targetLiq) * sqrtDiff1) / (1 << 96);
+            } else {
+                amount1Desired = 0;
+            }
+        }
+        
+        // Approve position manager with the exact amounts we'll use
+        IERC20(sDAI).forceApprove(positionManager, sDAIIsToken0 ? amount0Desired : amount1Desired);
+        IERC20(wsXMR).forceApprove(positionManager, sDAIIsToken0 ? amount1Desired : amount0Desired);
 
         (address _token0, address _token1) = sDAIIsToken0 ? (sDAI, wsXMR) : (wsXMR, sDAI);
-        (uint256 amount0Desired, uint256 amount1Desired) = sDAIIsToken0
-            ? (daiAmount, wsxmrAmount)
-            : (wsxmrAmount, daiAmount);
 
         INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
             token0: _token0,
@@ -235,30 +316,27 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
     // ========== INTERNAL: TICK MATH ==========
 
     /// @dev Convert oracle XMR price (USD, 18 decimals) to sqrtPriceX96 for the sDAI/wsXMR pool.
-    ///      Both wsXMR and sDAI have 8 decimals. sDAI ≈ $1.
-    ///      Uniswap V3 price = token1/token0.
-    ///      If sDAI is token0: price = wsXMR/sDAI ≈ xmrPrice (in USD)
-    ///      If wsXMR is token0: price = sDAI/wsXMR ≈ 1/xmrPrice
+    ///      Calculates: sqrtPriceX96 = sqrt(price) * 2^96
+    ///      where price = (xmrPrice/collateralPrice) * 10^(decimal_diff)
     function _priceToSqrtPriceX96(uint256 xmrPrice, uint256 collateralPrice)
-        private view returns (uint160)
+        private pure returns (uint160)
     {
-        // xmrPrice is in 18 decimals (e.g., 390e18 for $390)
-        // We need sqrtPriceX96 = sqrt(price) * 2^96
-        uint256 sqrtPriceX96;
+        // Price ratio in USD terms (both 1e18)
+        // 1 wsXMR (1e8) = (xmrPrice/collateralPrice) sDAI (1e18)
+        // Uniswap price = sDAI/wsXMR in raw units = (xmrPrice/collateralPrice) * 1e10
         
-        if (sDAIIsToken0) {
-            // price = xmrPrice / 1e18 (both tokens have same decimals)
-            // sqrtPriceX96 = sqrt(xmrPrice / 1e18) * 2^96
-            // = sqrt(xmrPrice) / sqrt(1e18) * 2^96
-            // = sqrt(xmrPrice) * 2^96 / 1e9
-            uint256 sqrtPrice = _sqrt(xmrPrice * 1e18); // sqrt(xmrPrice) in 1e18 precision
-            sqrtPriceX96 = (sqrtPrice * (1 << 96)) / 1e9;
-        } else {
-            // price = 1e18 / xmrPrice
-            // sqrtPriceX96 = sqrt(1e18 / xmrPrice) * 2^96
-            uint256 sqrtPrice = _sqrt((1e36) / xmrPrice); // sqrt(1/xmrPrice) in 1e18 precision
-            sqrtPriceX96 = (sqrtPrice * (1 << 96)) / 1e9;
-        }
+        // Calculate: sqrt((xmrPrice/collateralPrice) * 1e10) * 2^96
+        // = sqrt(xmrPrice * 1e10 / collateralPrice) * 2^96
+        // = sqrt(xmrPrice * 1e10) / sqrt(collateralPrice) * 2^96
+        
+        // To avoid overflow, calculate: sqrt(xmrPrice) * sqrt(1e10) * 2^96 / sqrt(collateralPrice)
+        uint256 sqrtXmrPrice = _sqrt(xmrPrice);
+        uint256 sqrtCollateralPrice = _sqrt(collateralPrice);
+        uint256 sqrt1e10 = 100000; // sqrt(1e10) = 1e5
+        
+        // sqrtPriceX96 = (sqrtXmrPrice * sqrt1e10 * 2^96) / sqrtCollateralPrice
+        // Shift left by 96 bits
+        uint256 sqrtPriceX96 = (sqrtXmrPrice * sqrt1e10 * (1 << 96)) / sqrtCollateralPrice;
         
         return uint160(sqrtPriceX96);
     }
@@ -279,8 +357,8 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         if (sqrtPrice < sqrtLower) sqrtPrice = sqrtLower;
         if (sqrtPrice > sqrtUpper) sqrtPrice = sqrtUpper;
 
-        uint256 diff0 = sqrtUpper - sqrtPrice;
-        uint256 diff1 = sqrtPrice - sqrtLower;
+        uint256 diff0 = sqrtUpper > sqrtPrice ? sqrtUpper - sqrtPrice : 0;
+        uint256 diff1 = sqrtPrice > sqrtLower ? sqrtPrice - sqrtLower : 0;
 
         uint256 amount0 = (uint256(liq) * (1 << 96) * diff0)
             / (uint256(sqrtUpper) * uint256(sqrtPrice));

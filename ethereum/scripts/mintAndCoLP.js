@@ -3,10 +3,7 @@ require('dotenv').config();
 const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
-
-const HUB_ADDRESS = '0x25795946e50751e8b046867b79bad7a8cb1dbee5';
-const WSXMR_ADDRESS = '0xc85c4082748aca1927827a0409aaaaf13384741c';
-const ED25519_HELPER = '0x7EBdE733CE8Bac20984f919e4d2E66e9eE86f2a3';
+const { HUB_ADDRESS, WSXMR_ADDRESS, ED25519_HELPER } = require('./deploymentConfig');
 
 async function main() {
     if (!process.env.PRIVATE_KEY) {
@@ -66,7 +63,7 @@ async function main() {
     const secretHex = ethers.utils.hexlify(secret);
     console.log('  Secret (save this!):', secretHex);
     const commitment = await ed25519Helper.computeCommitment(secret);
-    const xmrAmount = ethers.BigNumber.from('200000000'); // produces 20000 wsXMR (0.0002)
+    const xmrAmount = ethers.BigNumber.from('100000000'); // produces 10000 wsXMR (0.0001) - smaller amount
     const griefingDeposit = ethers.utils.parseEther('0.001');
 
     const mintTx = await hub.initiateMint(

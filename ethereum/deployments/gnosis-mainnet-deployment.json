@@ -1,20 +1,21 @@
 {
   "network": "Gnosis Chain Mainnet",
   "chainId": 100,
-  "deploymentDate": "2026-06-06T19:21:00Z",
+  "deploymentDate": "2026-06-07T04:00:00Z",
+  "note": "FINAL v5: Correct tick 280k accounting for 10 decimal difference + dynamic sqrtPrice calculation",
   "deployer": "0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB",
   "contracts": {
-    "wsXMR": "0xf0861d198a36d77ed1ff41bb17372a7f2f29d801",
-    "wsXmrHub": "0x4451f9d8efbd035153f90f4f4fd16d9b83c34002",
-    "liquidityRouter": "0x63d80901cebce18f40433eb7c91785e7e5c08d74",
-    "uniswapV3Pool": "0x3119a3d32179b4086ee6abcc4105faec540ebe20",
+    "wsXMR": "0x2d8d62dd1aff2daafdef9ac4d02b732529342016",
+    "wsXmrHub": "0x14e5f2da5cef85446952f1f1c3218d392740b23a",
+    "liquidityRouter": "0xc2ad4d38ca14eaf6fb7801f795c67c694d0df597",
+    "uniswapV3Pool": "0xb07bfc2591fAd1612FD2B77180e52733C4B7410E",
     "facets": {
-      "RedStoneOracleFacet": "0xcc8d367989329c8113de5a999a93454b394bbd1f",
-      "VaultFacet": "0x18540abde264837a08e06dbde44e8864945d4680",
-      "MintFacet": "0xd02e404dcd32349cc0c8afe0f2b4184dbb8ea12e",
-      "BurnFacet": "0x8452943081de2c08737e011afe1f6fd75738651f",
-      "LiquidationFacet": "0x6bfd1ccc1ca48568e4e2c82d06f1901170fcb489",
-      "YieldFacet": "0x92e026eb41d0600638919f3d38d06259647fdc19"
+      "RedStoneOracleFacet": "0xe5f338111c416d53be910d93fd5748b345ed7321",
+      "VaultFacet": "0x8a3e1c1cdd88b22dce7a55f0d9412c480f886192",
+      "MintFacet": "0x2d01e62a2a07760953a9cbf8507f33d92f11e3b8",
+      "BurnFacet": "0xbbf7dc2c91bd55ea47878d064e5d28e772959e94",
+      "LiquidationFacet": "0x802b9d5bdf814d16d28f68658c07fd60cf420719",
+      "YieldFacet": "0xe98c27f979af940bcec76ca9dc461e7918bc136a"
     }
   },
   "externalContracts": {

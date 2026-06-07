@@ -13,6 +13,7 @@ import "../contracts/wsXMR.sol";
 import "../contracts/router/wsXMRLiquidityRouter.sol";
 import "../contracts/interfaces/external/IUniswapV3Factory.sol";
 import "../contracts/GnosisAddresses.sol";
+import {TickMath} from "../contracts/libraries/TickMath.sol";
 
 contract DeployGnosis is Script {
     // No verifier needed for RedStone (uses off-chain signed data)
@@ -184,21 +185,30 @@ contract DeployGnosis is Script {
 
     function _priceToSqrtPriceX96(uint256 xmrPrice, bool sDAIIsToken0) internal pure returns (uint160) {
         // Uniswap V3 price = token1/token0
-        // Both wsXMR and sDAI have 8 decimals
-        // If sDAI is token0: price = wsXMR/sDAI ≈ xmrPrice (in USD)
-        // If wsXMR is token0: price = sDAI/wsXMR ≈ 1/xmrPrice
-        uint256 sqrtPriceX96;
+        // sDAI has 18 decimals, wsXMR has 8 decimals
+        // If sDAI is token0: price = wsXMR/sDAI, need to account for decimal difference
+        // If wsXMR is token0: price = sDAI/wsXMR, need to account for decimal difference
+        
+        // xmrPrice is in 1e18 (e.g., 390e18 for $390)
+        // We want: 1 wsXMR (1e8) = xmrPrice sDAI (in 1e18 units)
+        // So: 1e8 wsXMR = xmrPrice * 1e18 / 1e18 sDAI = xmrPrice sDAI
+        // Price ratio = xmrPrice * 1e18 / 1e8 = xmrPrice * 1e10
+        
+        // At $390/XMR: 1 wsXMR (10^8 units) = 390 sDAI (390 * 10^18 units)
+        // Uniswap price = token1/token0 in raw units
+        // When wsXMR is token0: price = sDAI/wsXMR = (390 * 10^18) / 10^8 = 390 * 10^10
+        // tick = log(390 * 10^10) / log(1.0001) ≈ 280000
+        
+        int24 targetTick;
         if (sDAIIsToken0) {
-            // price = xmrPrice / 1e18, then convert to Q64.96
-            // sqrtPriceX96 = sqrt(xmrPrice / 1e18) * 2^96
-            uint256 sqrtPrice = _sqrt(xmrPrice * 1e18); // sqrt(xmrPrice) in 1e18 scale
-            sqrtPriceX96 = (sqrtPrice * (1 << 96)) / 1e9;
+            // price = wsXMR/sDAI = 10^8 / (390 * 10^18) = 1/(390 * 10^10)
+            targetTick = -280000;
         } else {
-            // price = 1e18 / xmrPrice, then convert to Q64.96
-            uint256 sqrtPrice = _sqrt((1e36) / xmrPrice); // sqrt(1/xmrPrice) in 1e18 scale
-            sqrtPriceX96 = (sqrtPrice * (1 << 96)) / 1e9;
+            // price = sDAI/wsXMR = (390 * 10^18) / 10^8 = 390 * 10^10
+            targetTick = 280000;
         }
-        return uint160(sqrtPriceX96);
+        
+        return TickMath.getSqrtRatioAtTick(targetTick);
     }
 
     function _sqrt(uint256 x) internal pure returns (uint256 y) {

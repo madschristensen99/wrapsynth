@@ -149,6 +149,32 @@ contract PoolSwapTest is Test, IUniswapV3SwapCallback {
 
         // Anti-regression: the buggy inverted-price formula always produces tick ~170,605
         assertTrue(tick != BUGGY_TICK, "Pool has the known-buggy tick (170605) from inverted price formula");
+        
+        // Validate price is reasonable for XMR (~$390)
+        // sDAI has 18 decimals, wsXMR has 8 decimals
+        // Expected tick for $390 XMR should be around -57000 to -60000
+        // (negative because wsXMR is token0, so price = sDAI/wsXMR < 1)
+        bool sDAIIsToken0 = GnosisAddresses.SDAI < address(wsxmr);
+        
+        if (sDAIIsToken0) {
+            // sDAI is token0, wsXMR is token1
+            // Pool price = token1/token0 = wsXMR/sDAI (in token units with decimals)
+            // 1 wsXMR (1e8) = 390 sDAI (390e18), so price = 390e18/1e8 = 390e10
+            // But Uniswap price is inverted for display, so tick is NEGATIVE
+            // For $390 XMR, expected tick is around -57000
+            assertGt(tick, -65000, "Tick too low for $390 XMR (sDAI is token0)");
+            assertLt(tick, -50000, "Tick too high for $390 XMR (sDAI is token0)");
+        } else {
+            // wsXMR is token0, sDAI is token1
+            // Pool price = token1/token0 = sDAI/wsXMR (in raw units)
+            // 1 wsXMR (1e8) = 300 sDAI (300e18), so price = 300e18/1e8 = 300e10 = 3e12
+            // tick = log_1.0001(3e12) ≈ 276000
+            // For $300-400 XMR range, tick should be ~270000-290000
+            assertGt(tick, 270000, "Tick too low for $300-400 XMR (wsXMR is token0)");
+            assertLt(tick, 290000, "Tick too high for $300-400 XMR (wsXMR is token0)");
+        }
+        
+        console.log("Price validation passed - tick is in expected range for $390 XMR");
     }
 
     function test_AddLiquidityAndSwapBothDirections() public {
@@ -351,10 +377,10 @@ contract PoolSwapTest is Test, IUniswapV3SwapCallback {
         vm.stopPrank();
 
         // 2. Give user wsXMR directly (skip expensive mint cycle)
-        deal(address(wsxmr), user, 50 * 1e8);
+        deal(address(wsxmr), user, 2 * 1e8);
 
-        // 3. Open Co-LP
-        uint256 wsxmrToDeposit = 25 * 1e8;
+        // 3. Open Co-LP (smaller amount for higher tick range)
+        uint256 wsxmrToDeposit = 1 * 1e8;
         vm.prank(user);
         wsxmr.approve(address(hub), type(uint256).max);
         vm.prank(user);
