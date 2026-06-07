@@ -248,7 +248,10 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         if (originalStatus == MintStatus.PENDING || originalStatus == MintStatus.KEY_PROVIDED) {
             // Timeout before LP marked ready - user gets griefing deposit back
             if (depositToTransfer > 0) {
-                pendingReturns[request.initiator][address(0)] += depositToTransfer;
+                (bool success, ) = payable(request.initiator).call{value: depositToTransfer}("");
+                if (!success) {
+                    pendingReturns[request.initiator][address(0)] += depositToTransfer;
+                }
                 emit ReturnQueued(request.initiator, address(0), depositToTransfer);
             }
         } else {

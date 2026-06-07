@@ -1543,6 +1543,24 @@ body.app-page .container {
     color: var(--text-secondary-light);
 }
 
+.btn-withdraw-returns {
+    margin-top: 0.5rem;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--accent-orange);
+    background: transparent;
+    border: 1px solid var(--accent-orange);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-withdraw-returns:hover {
+    background: var(--accent-orange);
+    color: #000;
+}
+
 /* Stats Bar */
 .stats-bar {
     display: flex;

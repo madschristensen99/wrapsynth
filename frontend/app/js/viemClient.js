@@ -160,24 +160,33 @@ export async function readHub(functionName, args = []) {
 
 /**
  * Write to Hub contract (Diamond)
+ * @param {string} functionName - Contract function name
+ * @param {Array} args - Function arguments
+ * @param {bigint} value - ETH value to send (default: 0n)
+ * @param {bigint} gas - Optional gas limit override
  */
-export async function writeHub(functionName, args = [], value = 0n) {
+export async function writeHub(functionName, args = [], value = 0n, gas = undefined) {
     const client = getWalletClient();
-    
-    const { request } = await getPublicClient().simulateContract({
+
+    const simOpts = {
         address: CONTRACTS.hub,
         abi: parsedABIs.hub,
         functionName,
         args,
         value,
         account: userAddress
-    });
-    
+    };
+    if (gas !== undefined) {
+        simOpts.gas = gas;
+    }
+
+    const { request } = await getPublicClient().simulateContract(simOpts);
+
     const hash = await client.writeContract(request);
-    
+
     // Wait for transaction confirmation
     const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
-    
+
     return receipt;
 }
 

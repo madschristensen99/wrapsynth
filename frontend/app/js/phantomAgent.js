@@ -6,7 +6,7 @@ import { toHex } from 'https://esm.sh/viem@2.7.0';
 import { getUserAddress } from './viemClient.js';
 import { createKeySet } from './seedManager.js';
 import { storeSeed, loadSeed, hasStoredSeed } from './seedStorage.js';
-import { showSeedGenerationModal, showSeedInputModal } from './seedUI.js';
+import { showSeedGenerationModal } from './seedUI.js';
 
 /**
  * Phantom Agent State
@@ -84,35 +84,41 @@ class PhantomAgent {
     }
 
     /**
-     * Load existing seed from encrypted storage or prompt user
-     * @param {string} publicSpendKey - Public key to identify stored seed
+     * Load existing seed from encrypted storage.
+     * Returns false if not found — caller must handle recovery.
+     * @param {string} publicSpendKey - Hex public key to identify stored seed
+     * @returns {Promise<boolean>} true if restored, false if not found
      */
     async loadExistingSeed(publicSpendKey = null) {
         console.log('Attempting to load existing seed...');
-        
-        // Try to load from encrypted storage
-        if (publicSpendKey && hasStoredSeed(publicSpendKey.toString(16))) {
+
+        if (!publicSpendKey) {
+            console.warn('No publicSpendKey provided, cannot restore seed');
+            return false;
+        }
+
+        const lookupKey = publicSpendKey.startsWith('0x')
+            ? publicSpendKey
+            : '0x' + publicSpendKey;
+
+        if (hasStoredSeed(lookupKey)) {
             console.log('Found stored seed, requesting decryption...');
-            const seed = await loadSeed(publicSpendKey.toString(16));
+            const seed = await loadSeed(lookupKey);
             if (seed) {
                 this.seed = seed;
                 this.keySet = createKeySet(seed);
                 this.secret = this.keySet.secret;
                 this.commitment = this.keySet.commitment;
                 this.isInitialized = true;
+                console.log('Seed restored successfully');
                 return true;
             }
+            console.warn('Stored seed found but decryption failed');
+        } else {
+            console.warn('No stored seed found for publicSpendKey:', lookupKey.slice(0, 20) + '...');
         }
-        
-        // Prompt user to input seed
-        console.log('Prompting user for seed phrase...');
-        const seedData = await showSeedInputModal(publicSpendKey);
-        this.seed = seedData.seed;
-        this.keySet = seedData.keySet;
-        this.secret = this.keySet.secret;
-        this.commitment = this.keySet.commitment;
-        this.isInitialized = true;
-        return true;
+
+        return false;
     }
 
     /**

@@ -7,6 +7,7 @@ import {
     getUserAddress,
     getWsXmrBalance,
     readHub,
+    writeHub,
     onAccountsChanged,
     onChainChanged
 } from './viemClient.js';
@@ -32,12 +33,14 @@ import {
     completeBurnStep,
     showSuccess,
     showError,
+    showResumeError,
     disableInputs,
     enableInputs,
     resetMintUI,
     resetBurnUI,
     setupCopyButtons,
-    getElements
+    getElements,
+    setWithdrawReturnsVisible
 } from './ui.js';
 
 import { MintFlow } from './mintFlow.js';
@@ -46,7 +49,7 @@ import { getLPPanel } from './lpPanel.js';
 import { getPoolFlow } from './poolFlow.js';
 import { getCoLPFlow } from './coLPFlow.js';
 import { getDashboard } from './dashboard.js';
-import { hasActiveSwap, loadActiveSwap, loadActiveSwaps, saveActiveSwap, addOrUpdateActiveSwap, removeActiveSwap, clearActiveSwap } from './storage.js';
+import { hasActiveSwap, loadActiveSwap, loadActiveSwaps, saveActiveSwap, addOrUpdateActiveSwap, removeActiveSwap, clearActiveSwap, setSwapsArray, getActiveSwapByRequestId } from './storage.js';
 import { CONTRACTS } from './config.js';
 import { displaySwapHistory } from './swapHistory.js';
 import { loadRecentActivity, startActivityFeedWatcher } from './activityFeed.js';
@@ -233,6 +236,9 @@ function setupEventHandlers() {
     
     // Wallet connection
     elements.connectWallet.addEventListener('click', handleConnectWallet);
+    if (elements.withdrawReturnsBtn) {
+        elements.withdrawReturnsBtn.addEventListener('click', handleWithdrawReturns);
+    }
     
     // Tab switching
     elements.tabMint.addEventListener('click', () => showMintTab());
@@ -416,12 +422,20 @@ async function handleConnectWallet() {
  */
 function autoResumeSwap(swap) {
     if (!swap) return;
+
+    // Don't auto-resume swaps that can't be resumed (no stored secret)
+    if (!swap.publicSpendKey) {
+        console.log('Skipping auto-resume: swap has no publicSpendKey');
+        return;
+    }
+
     if (swap.type === 'mint') {
         showMintTab();
         currentMintFlow = new MintFlow();
         trackMintProgress(currentMintFlow);
         currentMintFlow.resume(swap).catch(err => {
             console.error('Auto-resume mint error:', err);
+            showResumeError(swap.requestId, err.message || 'Could not resume your mint. Please clear the swap and start fresh.');
         });
     } else if (swap.type === 'burn') {
         showBurnTab();
@@ -429,6 +443,7 @@ function autoResumeSwap(swap) {
         trackBurnProgress(currentBurnFlow);
         currentBurnFlow.resume(swap).catch(err => {
             console.error('Auto-resume burn error:', err);
+            showResumeError(swap.requestId, err.message || 'Could not resume your burn. Please clear the swap and start fresh.');
         });
     }
 }
@@ -448,6 +463,7 @@ async function handleAccountChange(newAddress) {
         showWalletConnected(newAddress, balance);
         await loadVaults();
         await checkForActiveSwapOnChain(newAddress);
+        await checkPendingReturns(newAddress);
         
         // Auto-resume most recent swap, but keep banner visible for all
         const allSwaps = loadActiveSwaps();
@@ -458,6 +474,56 @@ async function handleAccountChange(newAddress) {
     } else {
         console.log('Account disconnected');
         showWalletDisconnected();
+        setWithdrawReturnsVisible(false);
+    }
+}
+
+/**
+ * Check if user has pending returns and show/hide button
+ */
+async function checkPendingReturns(address) {
+    try {
+        const ethReturns = await readHub('getPendingReturns', [address, '0x0000000000000000000000000000000000000000']);
+        const sDAIReturns = await readHub('getPendingReturns', [address, CONTRACTS.sDAI]);
+        setWithdrawReturnsVisible(ethReturns > 0n || sDAIReturns > 0n);
+    } catch (error) {
+        console.warn('Could not check pending returns:', error.message);
+        setWithdrawReturnsVisible(false);
+    }
+}
+
+/**
+ * Handle withdraw returns button click
+ */
+async function handleWithdrawReturns() {
+    const address = getUserAddress();
+    if (!address) return;
+    
+    try {
+        const ethReturns = await readHub('getPendingReturns', [address, '0x0000000000000000000000000000000000000000']);
+        const sDAIReturns = await readHub('getPendingReturns', [address, CONTRACTS.sDAI]);
+        
+        const txs = [];
+        
+        if (ethReturns > 0n) {
+            const receipt = await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
+            txs.push(receipt.transactionHash);
+        }
+        
+        if (sDAIReturns > 0n) {
+            const receipt = await writeHub('withdrawReturns', [CONTRACTS.sDAI]);
+            txs.push(receipt.transactionHash);
+        }
+        
+        if (txs.length > 0) {
+            showSuccess('Returns Withdrawn', `Withdrew from ${txs.length} token(s).`);
+            setWithdrawReturnsVisible(false);
+        } else {
+            showError('No Returns', 'You have no pending returns to withdraw.');
+        }
+    } catch (error) {
+        console.error('Error withdrawing returns:', error);
+        showError('Withdraw Failed', error.message || 'Could not withdraw returns.');
     }
 }
 
@@ -500,7 +566,7 @@ async function checkForActiveSwap() {
     console.log('Found saved swaps in localStorage:', swaps);
     
     // Show banner for all swaps - on-chain check will happen when wallet connects
-    showResumeBanner(swaps, handleResumeSwap);
+    showResumeBanner(swaps, handleResumeSwap, handleResolveSwap);
 }
 
 /**
@@ -562,7 +628,7 @@ async function checkForActiveSwapOnChain(userAddress) {
                 else state = 'awaiting-lp-key';  // PENDING without LP key
 
                 const xmrAmount = Number(mintReq.xmrAmount) / 1e12;
-                const swap = {
+                let swap = {
                     type: 'mint',
                     state,
                     requestId,
@@ -572,6 +638,11 @@ async function checkForActiveSwapOnChain(userAddress) {
                     griefingDeposit: mintReq.griefingDeposit.toString(),
                     lastUpdated: Date.now()
                 };
+                // Preserve local-only fields (e.g. publicSpendKey) from existing entry
+                const existing = getActiveSwapByRequestId(requestId);
+                if (existing) {
+                    swap = { ...existing, ...swap };
+                }
                 addOrUpdateActiveSwap(swap);
                 foundSwaps.push(swap);
                 console.log('[CHAIN CHECK] Active mint found:', { requestId, state, xmrAmount });
@@ -607,7 +678,7 @@ async function checkForActiveSwapOnChain(userAddress) {
                 else state = 'evm-request';
 
                 const xmrAmount = Number(burnReq.xmrAmount) / 1e12;
-                const swap = {
+                let swap = {
                     type: 'burn',
                     state,
                     requestId,
@@ -616,6 +687,11 @@ async function checkForActiveSwapOnChain(userAddress) {
                     xmrAmount,
                     lastUpdated: Date.now()
                 };
+                // Preserve local-only fields from existing entry
+                const existing = getActiveSwapByRequestId(requestId);
+                if (existing) {
+                    swap = { ...existing, ...swap };
+                }
                 addOrUpdateActiveSwap(swap);
                 foundSwaps.push(swap);
                 console.log('[CHAIN CHECK] Active burn found:', { requestId, state, xmrAmount });
@@ -624,17 +700,24 @@ async function checkForActiveSwapOnChain(userAddress) {
 
         // ─── Prune stale localStorage entries ────────────────────────────────
         const allSwaps = loadActiveSwaps();
+        const seen = new Map();
         for (const swap of allSwaps) {
-            if (swap.requestId && !activeRequestIds.has(swap.requestId)) {
-                console.log('[CHAIN CHECK] Pruning stale swap from localStorage:', swap.requestId);
-                removeActiveSwap(swap.requestId);
+            if (!swap.requestId) continue;
+            if (!activeRequestIds.has(swap.requestId)) continue;
+            const existing = seen.get(swap.requestId);
+            if (!existing || (swap.lastUpdated || 0) > (existing.lastUpdated || 0)) {
+                seen.set(swap.requestId, swap);
             }
+        }
+        const pruned = Array.from(seen.values());
+        if (pruned.length !== allSwaps.length) {
+            setSwapsArray(pruned);
         }
 
         // ─── Show banner ───────────────────────────────────────────────────────
         const remaining = loadActiveSwaps();
         if (remaining.length > 0) {
-            showResumeBanner(remaining, handleResumeSwap);
+            showResumeBanner(remaining, handleResumeSwap, handleResolveSwap);
             console.log('[CHAIN CHECK] Banner shown with', remaining.length, 'active swap(s)');
         } else {
             hideResumeBanner();
@@ -1051,14 +1134,19 @@ async function handleResumeSwap(specificSwap) {
         showError('Resume Error', 'No active swap found');
         return;
     }
-    
+
+    if (!swap.publicSpendKey) {
+        showResumeError(swap.requestId, 'This swap was created before auto-save. Click Resolve to cancel it on-chain.');
+        return;
+    }
+
     try {
         // Ensure wallet is connected
         const address = getUserAddress();
         if (!address) {
             await handleConnectWallet();
         }
-        
+
         // Resume appropriate flow
         if (swap.type === 'mint') {
             // Try to load the seed for this mint if we have the publicSpendKey
@@ -1098,10 +1186,70 @@ async function handleResumeSwap(specificSwap) {
         }
         
         // Banner stays visible so user can see other active swaps
-        
+
     } catch (error) {
         console.error('Error resuming swap:', error);
         showError('Resume Error', error.message);
+    }
+}
+
+/**
+ * Handle resolve swap (called when user clicks Resolve on an unresumable swap).
+ * Attempts to cancel PENDING swaps on-chain to recover deposits/tokens.
+ */
+async function handleResolveSwap(swap) {
+    if (!swap) return;
+
+    // Ensure wallet is connected before any on-chain action
+    let address = getUserAddress();
+    if (!address) {
+        try {
+            address = await handleConnectWallet();
+        } catch (e) {
+            showError('Wallet Required', 'Please connect your wallet to resolve this swap.');
+            return;
+        }
+    }
+
+    try {
+        // PENDING mint: cancel on-chain to recover griefing deposit
+        if (swap.type === 'mint' && (swap.state === 'awaiting-lp-key' || swap.state === 'evm-init' || swap.state === 'initiated')) {
+            console.log('Resolving stale mint on-chain:', swap.requestId);
+            const { writeHub } = await import('./viemClient.js');
+            const receipt = await writeHub('cancelMint', [swap.requestId]);
+            console.log('cancelMint tx:', receipt.transactionHash);
+            showSuccess('Mint Cancelled', 'Your griefing deposit has been refunded.');
+        }
+        // REQUESTED burn: cancel on-chain to recover wsXMR
+        else if (swap.type === 'burn' && swap.state === 'evm-request') {
+            console.log('Resolving stale burn on-chain:', swap.requestId);
+            const { writeHub } = await import('./viemClient.js');
+            const receipt = await writeHub('cancelBurn', [swap.requestId]);
+            console.log('cancelBurn tx:', receipt.transactionHash);
+            showSuccess('Burn Cancelled', 'Your wsXMR has been returned.');
+        }
+        // Beyond PENDING/REQUESTED: stuck without secret, just clear locally
+        else {
+            showSuccess('Swap Cleared', 'The swap has been removed from your browser.');
+        }
+
+        // Remove from localStorage
+        if (swap.requestId) {
+            removeActiveSwap(swap.requestId);
+        } else {
+            clearActiveSwap();
+        }
+
+        // Refresh banner
+        const remaining = loadActiveSwaps();
+        if (remaining.length > 0) {
+            showResumeBanner(remaining, handleResumeSwap, handleResolveSwap);
+        } else {
+            hideResumeBanner();
+        }
+    } catch (error) {
+        console.error('Error resolving swap:', error);
+        showError('Resolve Failed', error.message || 'Could not resolve this swap on-chain.');
     }
 }
 

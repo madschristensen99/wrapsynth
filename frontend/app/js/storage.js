@@ -29,7 +29,7 @@ function getSwapsArray() {
     }
 }
 
-function setSwapsArray(swaps) {
+export function setSwapsArray(swaps) {
     localStorage.setItem(ACTIVE_SWAPS_KEY, JSON.stringify(swaps));
 }
 
@@ -56,6 +56,14 @@ export function addOrUpdateActiveSwap(swap) {
 
         if (idx >= 0 && requestId) {
             swaps[idx] = { ...swaps[idx], ...enriched };
+        } else if (requestId) {
+            // New swap with requestId: replace any temporary entry of same type
+            const tempIdx = swaps.findIndex(s => !s.requestId && s.type === swap.type);
+            if (tempIdx >= 0) {
+                swaps[tempIdx] = enriched;
+            } else {
+                swaps.push(enriched);
+            }
         } else {
             swaps.push(enriched);
         }
@@ -162,6 +170,9 @@ export function updateSwapState(updates) {
             setSwapsArray(swaps);
             return;
         }
+        // requestId provided but not found — add as new swap
+        addOrUpdateActiveSwap(updates);
+        return;
     }
 
     if (swaps.length === 0) {
