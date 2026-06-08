@@ -59,13 +59,6 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         _;
     }
     
-    modifier nonReentrant() {
-        if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
-        _reentrancyStatus = _ENTERED;
-        _;
-        _reentrancyStatus = _NOT_ENTERED;
-    }
-    
     // ========== CONSTRUCTOR ==========
     
     constructor(

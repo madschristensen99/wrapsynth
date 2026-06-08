@@ -396,20 +396,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             }
         }
     }
-    
-    
-    function _calculateCollateralRatio(uint256 collateralShares, uint256 debtAmount) internal view returns (uint256) {
-        uint256 xmrPrice = IOracleFacet(address(this)).getXmrPrice();
-        uint256 collateralPrice = IOracleFacet(address(this)).getCollateralPrice();
-        return CollateralLogic.calculateRatioFromShares(
-            collateralShares,
-            debtAmount,
-            GnosisAddresses.SDAI,
-            collateralPrice,
-            xmrPrice
-        );
-    }
-    
+
     function _calculateCRWithPositions(address vaultAddr, uint256 debtAmount)
         internal view returns (uint256)
     {
