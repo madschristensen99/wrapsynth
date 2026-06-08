@@ -39,7 +39,7 @@ library Ed25519 {
         uint m = q;
 
         // use bigModExp precompile
-        assembly {
+        assembly ("memory-safe") {
             let p := mload(0x40)
             mstore(p, 0x20)
             mstore(add(p, 0x20), 0x20)

@@ -61,6 +61,7 @@ import { updateProtocolStats } from './protocolStats.js';
 // Global state
 let currentMintFlow = null;
 let currentBurnFlow = null;
+let cachedVaults = [];
 
 /**
  * Fetch XMR price from CoinGecko free API
@@ -263,6 +264,7 @@ function setupEventHandlers() {
     elements.startMint.addEventListener('click', handleStartMint);
     elements.cancelMint.addEventListener('click', handleCancelMint);
     elements.mintVaultSelect.addEventListener('change', () => handleVaultSelect(true));
+    elements.mintAmount.addEventListener('input', updateMintCapacityDisplay);
     
     // Burn flow
     elements.startBurn.addEventListener('click', handleStartBurn);
@@ -1396,6 +1398,8 @@ async function loadVaults() {
                         freeCollateral
                     });
 
+                    const maxMintCapacityXmr = xmrPrice > 0 ? (freeCollateral * collPrice) / xmrPrice : 0;
+
                     const vault = {
                         address: vaultAddress,
                         name: `LP Vault ${vaultAddress.slice(0, 6)}...${vaultAddress.slice(-4)}`,
@@ -1406,6 +1410,7 @@ async function loadVaults() {
                         pendingCollateral,
                         bufferCollateral,
                         freeCollateral,
+                        maxMintCapacityXmr,
                     };
                     console.log('Adding active vault:', vault);
                     activeVaults.push(vault);
@@ -1449,11 +1454,54 @@ async function loadVaults() {
             });
         }
         
+        cachedVaults = activeVaults;
         populateVaults(activeVaults);
+        updateMintCapacityDisplay();
         
     } catch (error) {
         console.error('Error loading vaults:', error);
     }
+}
+
+/**
+ * Update the mint capacity indicator below the amount input
+ */
+function updateMintCapacityDisplay() {
+    const elements = getElements();
+    const capacityEl = document.getElementById('mint-capacity-info');
+    if (!capacityEl) return;
+
+    const vaultAddress = elements.mintVaultSelect.value;
+    const amountStr = elements.mintAmount.value;
+    const amount = parseFloat(amountStr);
+
+    if (!vaultAddress) {
+        capacityEl.classList.add('hidden');
+        return;
+    }
+
+    const vault = cachedVaults.find(v => v.address.toLowerCase() === vaultAddress.toLowerCase());
+    if (!vault || vault.maxMintCapacityXmr === undefined) {
+        capacityEl.classList.add('hidden');
+        return;
+    }
+
+    const maxCap = vault.maxMintCapacityXmr;
+    const maxCapFormatted = maxCap < 0.0001 ? maxCap.toExponential(2) : maxCap.toFixed(4).replace(/\.?0+$/, '');
+
+    let html = `Max capacity: <strong>${maxCapFormatted} XMR</strong>`;
+
+    if (!isNaN(amount) && amount > 0) {
+        if (amount > maxCap) {
+            html += ` <span style="color: var(--error-color);">(exceeds capacity)</span>`;
+        } else {
+            const pct = maxCap > 0 ? ((amount / maxCap) * 100).toFixed(1) : '0';
+            html += ` <span style="color: var(--text-muted);">(${pct}% of capacity)</span>`;
+        }
+    }
+
+    capacityEl.innerHTML = html;
+    capacityEl.classList.remove('hidden');
 }
 
 /**
@@ -1482,6 +1530,10 @@ async function handleVaultSelect(isMint) {
         };
         
         showVaultInfo(vaultInfo, isMint);
+
+        if (isMint) {
+            updateMintCapacityDisplay();
+        }
         
     } catch (error) {
         console.warn('Could not fetch vault info (contracts may not be deployed):', error.message);

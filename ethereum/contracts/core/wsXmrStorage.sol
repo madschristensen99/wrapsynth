@@ -137,6 +137,7 @@ contract wsXmrStorage {
         uint256 normalizedDebtAmount;
         BurnStatus status;
         bytes32 userClaimCommitment;  // User's Ed25519 public point commitment for deriving Monero receive address
+        uint256 xmrPriceAtRequest;      // XMR price locked at request time (18 decimals) for fair settlement
     }
     
     struct PositionMetadata {

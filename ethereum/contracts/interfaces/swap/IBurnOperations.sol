@@ -7,18 +7,22 @@ import {IErrors} from "../IErrors.sol";
 /**
  * @title IBurnOperations
  * @notice Interface for wsXMR -> XMR atomic swap burn operations
- * @dev Three-step handshake with slashing for LP non-compliance
+ * @dev Three-step atomic swap burn with guaranteed value redemption
  * 
  * Flow:
- * 1. User calls requestBurn() - wsXMR burned, collateral locked
+ * 1. User calls requestBurn() - wsXMR burned, collateral locked, XMR price locked
  * 2. LP locks XMR on Monero, calls proposeHash() with secret hash
  * 3. User verifies Monero lock, calls confirmMoneroLock()
  * 4. User claims XMR on Monero (LP sees secret)
  * 5. LP calls finalizeBurn() with secret to unlock collateral
  * 
  * Failure modes:
- * - LP never responds: User calls cancelBurn() after timeout
- * - LP doesn't reveal secret: User calls claimSlashedCollateral()
+ * - No LP responds: User calls abortBurn() to get wsXMR back,
+ *   or forceSettleBurn() for guaranteed par sDAI at locked price
+ * - LP proposes but holder doesn't commit: resolveDeclinedProposal() after timeout
+ *   (wsXMR restored to holder)
+ * - LP doesn't reveal secret after commit: User calls claimSlashedCollateral()
+ *   (holder receives par sDAI at locked price + reward)
  */
 interface IBurnOperations is IErrors {
     // Note: BurnRequest struct is defined in wsXmrStorage
@@ -41,6 +45,9 @@ interface IBurnOperations is IErrors {
     event BurnRewardShortfall(bytes32 indexed requestId, uint256 expected, uint256 actual);
     event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 collateralSeized);
     event BurnCancelled(bytes32 indexed requestId);
+    event BurnAborted(bytes32 indexed requestId);
+    event BurnForceSettled(bytes32 indexed requestId, uint256 sDAIPayout);
+    event BurnProposalDeclined(bytes32 indexed requestId);
     
     // ========== ERRORS ==========
     
@@ -56,7 +63,7 @@ interface IBurnOperations is IErrors {
     // ========== FUNCTIONS ==========
     
     /// @notice Request a burn (Step 1)
-    /// @dev Burns wsXMR and locks collateral
+    /// @dev Burns wsXMR, locks collateral, and records XMR price for settlement.
     /// @param wsxmrAmount Amount of wsXMR to burn
     /// @param lpVault LP vault to handle the burn
     /// @param user Address whose wsXMR to burn (must be msg.sender)
@@ -69,7 +76,7 @@ interface IBurnOperations is IErrors {
     ) external returns (bytes32 requestId);
     
     /// @notice Request burn from router's internal balance
-    /// @dev Only callable by authorized liquidity router
+    /// @dev Only callable by authorized liquidity router.
     function requestBurnFromRouter(
         uint256 wsxmrAmount,
         address lpVault,
@@ -91,13 +98,24 @@ interface IBurnOperations is IErrors {
     /// @param secret The secret to reveal
     function finalizeBurn(bytes32 requestId, bytes32 secret) external;
     
-    /// @notice Claim slashed collateral after LP failure
+    /// @notice Claim slashed collateral after LP commits but fails to reveal
+    /// @dev Holder receives par sDAI at locked price + reward
     /// @param requestId The burn request ID
     function claimSlashedCollateral(bytes32 requestId) external;
     
-    /// @notice Cancel burn after timeout (permissionless cleanup)
+    /// @notice Holder aborts a REQUESTED burn after timeout. wsXMR restored.
     /// @param requestId The burn request ID
-    function cancelBurn(bytes32 requestId) external;
+    function abortBurn(bytes32 requestId) external;
+    
+    /// @notice Holder force-settles a REQUESTED burn after timeout for guaranteed par sDAI.
+    /// @dev wsXMR stays burned. Holder receives par value in sDAI at locked price.
+    /// @param requestId The burn request ID
+    function forceSettleBurn(bytes32 requestId) external;
+    
+    /// @notice Resolve a declined proposal after timeout (permissionless).
+    /// @dev wsXMR restored to holder.
+    /// @param requestId The burn request ID
+    function resolveDeclinedProposal(bytes32 requestId) external;
     
     // ========== VIEW FUNCTIONS ==========
     

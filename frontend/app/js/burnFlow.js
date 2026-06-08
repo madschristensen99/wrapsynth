@@ -55,9 +55,11 @@ export class BurnFlow {
         const agentData = await this.agent.initialize('BURN', this.wsxmrAmount.toString(), this.destination);
 
         console.log('Agent initialized:', agentData);
+        console.log('Derived Monero address for receiving XMR:', agentData.moneroAddress);
 
         updateSwapState({
-            moneroAddress: agentData.moneroAddress
+            moneroAddress: agentData.moneroAddress,
+            message: `Your XMR will be sent to: ${agentData.moneroAddress}`
         });
     }
 
@@ -176,7 +178,7 @@ export class BurnFlow {
     }
 
     async waitForLPProposal() {
-        console.log('Waiting for LP to propose secret hash...');
+        console.log('Waiting for LP to propose secret hash and send XMR...');
         this.lpProposeStartTime = Date.now();
 
         // Update countdown in swap state while waiting
@@ -186,7 +188,7 @@ export class BurnFlow {
             updateSwapState({
                 requestId: this.requestId,
                 lpStatus: 'waiting',
-                lpMessage: 'Waiting for LP to lock XMR and propose hash...',
+                lpMessage: 'LP is sending XMR to your Monero address...',
                 lpProposeRemaining: remaining
             });
         }, SWAP_CONFIG.pollInterval);
@@ -198,7 +200,7 @@ export class BurnFlow {
                 'HashProposed',
                 { requestId: this.requestId },
                 (log) => {
-                    console.log('HashProposed event received');
+                    console.log('HashProposed event received - LP has sent XMR!');
                     this.secretHash = log.args.secretHash;
                     clearInterval(countdownInterval);
                     unwatch();
@@ -211,37 +213,69 @@ export class BurnFlow {
             setTimeout(() => {
                 clearInterval(countdownInterval);
                 unwatch();
-                reject(new Error('LP proposal timeout'));
+                reject(new Error('LP proposal timeout - LP did not send XMR in time'));
             }, this.lpProposeTimeout);
         });
     }
 
     async confirmMoneroLock() {
         this.state = 'confirm-lock';
-        updateSwapState({ requestId: this.requestId, state: this.state });
+        updateSwapState({ 
+            requestId: this.requestId, 
+            state: this.state,
+            message: 'Waiting for you to verify XMR arrival in your Monero wallet...'
+        });
 
-        console.log('User confirming Monero lock...');
-        console.log('Please verify XMR has been received at:', this.destination);
+        console.log('\n=== MONERO VERIFICATION REQUIRED ===');
+        console.log('LP has sent XMR to your Monero address!');
+        console.log('\nYour receiving address:', this.destination);
+        console.log('Expected amount:', this.wsxmrAmount, 'XMR');
+        console.log('\nIMPORTANT: Check your Monero wallet to verify the funds arrived.');
+        console.log('You can use:');
+        console.log('  - Monero GUI wallet');
+        console.log('  - Monero CLI wallet');
+        console.log('  - MyMonero web wallet');
+        console.log('  - Or any other Monero wallet that supports your address');
+        console.log('\nOnce verified, click OK in the confirmation dialog.');
+        console.log('====================================\n');
 
+        // Show user-friendly dialog with better instructions
         const confirmed = confirm(
-            `Have you received XMR at your Monero address?\n\n` +
-            `Address: ${this.destination}\n` +
-            `Expected amount: ~${this.wsxmrAmount} XMR\n\n` +
-            `Click OK only after verifying the transaction in your Monero wallet.`
+            `🔍 VERIFY MONERO TRANSACTION\n\n` +
+            `The LP has sent XMR to your Monero wallet!\n\n` +
+            `📍 Your address:\n${this.destination}\n\n` +
+            `💰 Expected amount: ${this.wsxmrAmount} XMR\n\n` +
+            `⚠️ IMPORTANT: Open your Monero wallet and verify that:\n` +
+            `   1. The transaction appears in your wallet\n` +
+            `   2. The amount matches (${this.wsxmrAmount} XMR)\n` +
+            `   3. The transaction has at least 1 confirmation\n\n` +
+            `✅ Click OK ONLY after verifying in your Monero wallet\n` +
+            `❌ Click Cancel if you haven't received the XMR yet`
         );
 
         if (!confirmed) {
-            throw new Error('User did not confirm Monero lock');
+            updateSwapState({
+                requestId: this.requestId,
+                message: 'Waiting for you to verify... Check your Monero wallet and try again.'
+            });
+            throw new Error('User has not verified Monero receipt yet. Please check your wallet and try again.');
         }
+
+        console.log('User confirmed XMR receipt, submitting on-chain confirmation...');
+        updateSwapState({
+            requestId: this.requestId,
+            message: 'Submitting confirmation to blockchain...'
+        });
 
         const receipt = await writeHub('confirmMoneroLock', [this.requestId]);
         
-        console.log('Monero lock confirmed, tx:', receipt.transactionHash);
+        console.log('✅ Monero lock confirmed on-chain, tx:', receipt.transactionHash);
 
         updateSwapState({
             requestId: this.requestId,
             state: 'lp-finalize',
-            confirmTxHash: receipt.transactionHash
+            confirmTxHash: receipt.transactionHash,
+            message: 'Confirmed! Waiting for LP to finalize...'
         });
 
         this.state = 'lp-finalize';

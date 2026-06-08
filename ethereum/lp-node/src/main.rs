@@ -168,7 +168,6 @@ async fn main() -> Result<()> {
                 db.clone(), 
                 evm.clone(), 
                 monero.clone(),
-                config.oracle_config.is_price_pusher,
                 None,
             ));
             
@@ -269,12 +268,11 @@ async fn main() -> Result<()> {
                 }
             });
 
-            // Initialize swap engine with oracle config
+            // Initialize swap engine with arbitrage bot
             let swap_engine = Arc::new(engine::SwapEngine::new(
                 db.clone(), 
                 evm.clone(), 
                 monero.clone(),
-                config.oracle_config.is_price_pusher,
                 arbitrage_bot,
             ));
 
