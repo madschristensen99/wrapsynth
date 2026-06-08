@@ -8,6 +8,7 @@ interface IErrors {
     error InsufficientCollateral();
     error InsufficientDebt();
     error InsufficientBond();
+    error InsufficientDeposit();
     error InvalidValue();
     error InvalidSecret();
     error InvalidStatus();

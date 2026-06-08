@@ -47,7 +47,6 @@ interface IMintOperations is IErrors {
     // ========== ERRORS ==========
     
     error InvalidTimeout();
-    error InsufficientDeposit();
     error MintAlreadyExists();
     error TimeoutNotReached();
     

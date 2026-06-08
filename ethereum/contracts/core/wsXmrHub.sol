@@ -226,14 +226,15 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     /// @param lpAddress The LP address to check
     /// @return ratio The collateralization ratio (e.g., 150 = 150%)
     function getVaultHealth(address lpAddress) external view returns (uint256 ratio) {
-        Vault memory vault = _vaults[lpAddress];
-        uint256 actualDebt = (vault.normalizedDebt * globalDebtIndex) / 1e18;
+        uint256 normalizedDebt = _vaults[lpAddress].normalizedDebt;
+        uint256 collateralShares = _vaults[lpAddress].collateralShares;
+        uint256 actualDebt = (normalizedDebt * globalDebtIndex) / 1e18;
         
         if (actualDebt == 0) return type(uint256).max;
         
         // Convert sDAI shares to DAI
         (bool success, bytes memory data) = GnosisAddresses.SDAI.staticcall(
-            abi.encodeWithSignature("convertToAssets(uint256)", vault.collateralShares)
+            abi.encodeWithSignature("convertToAssets(uint256)", collateralShares)
         );
         require(success && data.length >= 32, "convertToAssets failed");
         uint256 collateralAmount = abi.decode(data, (uint256));
@@ -272,7 +273,7 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         address facet = _selectorToFacet[msg.sig];
         if (facet == address(0)) revert("Function does not exist");
         
-        assembly {
+        assembly ("memory-safe") {
             // C1: Save previous transient flag and restore after delegatecall.
             // This prevents the flag from persisting across the entire transaction.
             let prev := tload(_DELEGATE_CONTEXT_SLOT)

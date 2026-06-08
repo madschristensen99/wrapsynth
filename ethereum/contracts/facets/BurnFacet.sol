@@ -58,7 +58,6 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         if (vault.minBurnAmount > 0 && wsxmrAmount < vault.minBurnAmount) revert BelowMinimumBurn();
         
         bytes32[] storage vaultBurns = vaultBurnRequests[lpVault];
-        // Count active requests without cleanup - cleanup is now a separate keeper function
         uint256 activeCount = 0;
         for (uint256 i = 0; i < vaultBurns.length; i++) {
             BurnStatus status = burnRequests[vaultBurns[i]].status;
@@ -68,38 +67,20 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         }
         if (activeCount >= MAX_BURN_REQUESTS_PER_VAULT) revert MaxBurnRequestsReached();
         
-        // Calculate collateral needed for burn
         (uint256 collateralToLock, uint256 rewardCollateral) = calculateBurnCollateral(lpVault, wsxmrAmount);
         uint256 totalLock = collateralToLock + rewardCollateral;
         
-        // Only check if vault has enough collateral - debt check removed
-        // Users can burn any wsXMR they hold as long as vault is sufficiently collateralized
-        if (vault.collateralShares < totalLock) revert InsufficientCollateral();
-        
-        // Get current debt for post-burn health check
-        uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
-        uint256 remainingCollateral = vault.collateralShares - totalLock;
-        uint256 remainingDebt = actualDebt > wsxmrAmount ? actualDebt - wsxmrAmount : 0;
-        if (remainingDebt > 0) {
-            uint256 xmrPrice = _getXmrPriceFromStorage();
-            uint256 collateralPrice = _getCollateralPriceFromStorage();
-            uint256 postBurnRatio = YieldLogic.calculateVaultCollateralRatio(
-                remainingCollateral,
-                remainingDebt + vault.pendingDebt,
-                collateralPrice,
-                xmrPrice
-            );
-            if (postBurnRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
-        }
-        
-        bytes32 requestId = keccak256(abi.encodePacked(user, lpVault, wsxmrAmount, ++_requestNonce));
-        if (burnRequests[requestId].status != BurnStatus.INVALID) revert BurnAlreadyExists();
+        // Check available unlocked collateral (total model: collateralShares = total, lockedCollateral = reserved)
+        uint256 availableCollateral = vault.collateralShares > vault.lockedCollateral
+            ? vault.collateralShares - vault.lockedCollateral
+            : 0;
+        if (availableCollateral < totalLock) revert InsufficientCollateral();
         
         if (!fromRouter) {
             IwsXmrHub(address(this)).burnTokens(user, wsxmrAmount);
         }
         
-        vault.collateralShares -= totalLock;
+        // B1: Total collateral model - never subtract from collateralShares when locking
         vault.lockedCollateral += totalLock;
         
         uint256 normalizedBurnAmount = (wsxmrAmount * 1e18 + globalDebtIndex - 1) / globalDebtIndex;
@@ -110,21 +91,25 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         globalTotalDebt -= wsxmrAmount;
         globalPendingBurnDebt += wsxmrAmount;
         
-        burnRequests[requestId] = BurnRequest({
-            requestId: requestId,
-            user: user,
-            lpVault: lpVault,
-            wsxmrAmount: wsxmrAmount,
-            xmrAmount: wsxmrAmount * XMR_TO_WSXMR_DIVISOR,
-            lockedCollateral: collateralToLock,
-            rewardCollateral: rewardCollateral,
-            secretHash: bytes32(0),
-            deadline: block.number + vault.burnTimeoutBlocks,
-            vaultLiquidationNonce: vault.liquidationNonce,
-            normalizedDebtAmount: normalizedBurnAmount,
-            status: BurnStatus.REQUESTED,
-            userClaimCommitment: claimCommitment
-        });
+        bytes32 requestId = keccak256(abi.encodePacked(user, lpVault, wsxmrAmount, ++_requestNonce));
+        if (burnRequests[requestId].status != BurnStatus.INVALID) revert BurnAlreadyExists();
+        
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        
+        BurnRequest storage req = burnRequests[requestId];
+        req.requestId = requestId;
+        req.user = user;
+        req.lpVault = lpVault;
+        req.wsxmrAmount = wsxmrAmount;
+        req.xmrAmount = wsxmrAmount * XMR_TO_WSXMR_DIVISOR;
+        req.lockedCollateral = collateralToLock;
+        req.rewardCollateral = rewardCollateral;
+        req.deadline = block.number + vault.burnTimeoutBlocks;
+        req.vaultLiquidationNonce = vault.liquidationNonce;
+        req.normalizedDebtAmount = normalizedBurnAmount;
+        req.status = BurnStatus.REQUESTED;
+        req.userClaimCommitment = claimCommitment;
+        req.xmrPriceAtRequest = xmrPrice;
         
         userBurnRequests[user].push(requestId);
         vaultBurnRequests[lpVault].push(requestId);
@@ -150,7 +135,6 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         Vault storage vault = _vaults[request.lpVault];
         if (msg.sender != vault.lpAddress) revert Unauthorized();
         if (secretHash == bytes32(0)) revert InvalidSecret();
-        
         request.secretHash = secretHash;
         request.status = BurnStatus.PROPOSED;
         request.deadline = block.number + BURN_COMMIT_TIMEOUT_BLOCKS;
@@ -197,10 +181,8 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
-        // B2: Grace window - LP can finalize until deadline + grace
         if (block.number >= request.deadline + BURN_FINALIZE_GRACE_BLOCKS) revert DeadlineExpired();
         
-        // Verify the secret matches the hash
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
         bytes32 computedHash = keccak256(abi.encodePacked(px, py));
         if (computedHash != request.secretHash) revert InvalidSecret();
@@ -209,10 +191,9 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         Vault storage vault = _vaults[request.lpVault];
         
-        // B4: Unified reward accounting - pay full reward on successful finalize
         uint256 safeReward = request.rewardCollateral;
         
-        vault.collateralShares += request.lockedCollateral;
+        // B2: Total collateral model - release lock only, collateralShares already includes base
         vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
         globalPendingBurnDebt -= request.wsxmrAmount;
         
@@ -234,58 +215,47 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
-        // B2: Slash only after deadline + grace (no overlap with finalize window)
         if (block.number < request.deadline + BURN_FINALIZE_GRACE_BLOCKS) revert DeadlineNotExpired();
         if (msg.sender != request.user) revert Unauthorized();
         
         Vault storage vault = _vaults[request.lpVault];
         
-        // B1: Par-capped slash settlement (matches LiquidationFacet._settleCommittedBurnSlash)
-        // User receives min(par, locked) + reward; excess locked collateral returns to vault.
-        // Known residual: if XMR appreciates >30% within commit window, user is capped at
-        // lockedCollateral (under par). This is inherent to fixed-ratio locking and accepted.
-        uint256 xmrPrice = _getXmrPriceFromStorage();
         uint256 collateralPrice = _getCollateralPriceFromStorage();
-        uint256 parValueUsd = (request.wsxmrAmount * xmrPrice) / WSXMR_DECIMALS;
+        uint256 parValueUsd = (request.wsxmrAmount * request.xmrPriceAtRequest) / WSXMR_DECIMALS;
         uint256 parDaiAmount = (parValueUsd * SDAI_DECIMALS) / collateralPrice;
         uint256 parShares = _daiToShares(parDaiAmount);
 
         uint256 userBase = parShares < request.lockedCollateral
             ? parShares
             : request.lockedCollateral;
-        uint256 lpRefund = request.lockedCollateral - userBase;
         uint256 userPayout = userBase + request.rewardCollateral;
 
+        // B2: Total collateral model - release lock only
         vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
-        if (lpRefund > 0) {
-            vault.collateralShares += lpRefund;
-        }
         globalPendingBurnDebt -= request.wsxmrAmount;
 
         pendingReturns[request.user][GnosisAddresses.SDAI] += userPayout;
         globalPendingSDAI += userPayout;
         emit ReturnQueued(request.user, GnosisAddresses.SDAI, userPayout);
-
+        
         request.status = BurnStatus.SLASHED;
         emit BurnSlashed(requestId, request.user, userPayout);
         
         _reentrancyStatus = _NOT_ENTERED;
     }
     
-    function cancelBurn(bytes32 requestId) external {
+    function abortBurn(bytes32 requestId) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
         
         BurnRequest storage request = burnRequests[requestId];
-        if (request.status != BurnStatus.REQUESTED && request.status != BurnStatus.PROPOSED) {
-            revert InvalidStatus();
-        }
+        if (request.status != BurnStatus.REQUESTED) revert InvalidStatus();
         if (block.number < request.deadline) revert DeadlineNotExpired();
+        if (msg.sender != request.user) revert Unauthorized();
         
         Vault storage vault = _vaults[request.lpVault];
         
         if (request.vaultLiquidationNonce == vault.liquidationNonce) {
-            vault.collateralShares += (request.lockedCollateral + request.rewardCollateral);
             vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
             vault.normalizedDebt += request.normalizedDebtAmount;
             globalTotalDebt += request.wsxmrAmount;
@@ -293,10 +263,72 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         globalPendingBurnDebt -= request.wsxmrAmount;
         
+        // Restore wsXMR to holder
         IwsXmrHub(address(this)).mintTokens(request.user, request.wsxmrAmount);
         
         request.status = BurnStatus.CANCELLED;
-        emit BurnCancelled(requestId);
+        emit BurnAborted(requestId);
+        
+        _reentrancyStatus = _NOT_ENTERED;
+    }
+    
+    function forceSettleBurn(bytes32 requestId) external {
+        if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
+        _reentrancyStatus = _ENTERED;
+        
+        BurnRequest storage request = burnRequests[requestId];
+        if (request.status != BurnStatus.REQUESTED) revert InvalidStatus();
+        if (block.number < request.deadline) revert DeadlineNotExpired();
+        if (msg.sender != request.user) revert Unauthorized();
+        
+        Vault storage vault = _vaults[request.lpVault];
+        
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
+        uint256 parValueUsd = (request.wsxmrAmount * request.xmrPriceAtRequest) / WSXMR_DECIMALS;
+        uint256 parDaiAmount = (parValueUsd * SDAI_DECIMALS) / collateralPrice;
+        uint256 parShares = _daiToShares(parDaiAmount);
+        
+        uint256 userBase = parShares < request.lockedCollateral
+            ? parShares
+            : request.lockedCollateral;
+
+        vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
+        globalPendingBurnDebt -= request.wsxmrAmount;
+        
+        // Pay par value to holder (no reward for force-settle)
+        pendingReturns[request.user][GnosisAddresses.SDAI] += userBase;
+        globalPendingSDAI += userBase;
+        emit ReturnQueued(request.user, GnosisAddresses.SDAI, userBase);
+        
+        request.status = BurnStatus.SLASHED;
+        emit BurnForceSettled(requestId, userBase);
+        
+        _reentrancyStatus = _NOT_ENTERED;
+    }
+    
+    function resolveDeclinedProposal(bytes32 requestId) external {
+        if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
+        _reentrancyStatus = _ENTERED;
+        
+        BurnRequest storage request = burnRequests[requestId];
+        if (request.status != BurnStatus.PROPOSED) revert InvalidStatus();
+        if (block.number < request.deadline) revert DeadlineNotExpired();
+        
+        Vault storage vault = _vaults[request.lpVault];
+        
+        if (request.vaultLiquidationNonce == vault.liquidationNonce) {
+            vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
+            vault.normalizedDebt += request.normalizedDebtAmount;
+            globalTotalDebt += request.wsxmrAmount;
+        }
+        
+        globalPendingBurnDebt -= request.wsxmrAmount;
+        
+        // Restore wsXMR to holder
+        IwsXmrHub(address(this)).mintTokens(request.user, request.wsxmrAmount);
+        
+        request.status = BurnStatus.CANCELLED;
+        emit BurnProposalDeclined(requestId);
         
         _reentrancyStatus = _NOT_ENTERED;
     }
@@ -426,21 +458,23 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     
     /// @notice Returns all function selectors implemented by this facet
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](14);
+        bytes4[] memory sels = new bytes4[](16);
         sels[0] = this.requestBurn.selector;
         sels[1] = this.requestBurnFromRouter.selector;
         sels[2] = this.proposeHash.selector;
         sels[3] = this.confirmMoneroLock.selector;
         sels[4] = this.finalizeBurn.selector;
         sels[5] = this.claimSlashedCollateral.selector;
-        sels[6] = this.cancelBurn.selector;
-        sels[7] = this.getBurnRequest.selector;
-        sels[8] = this.getUserBurnRequests.selector;
-        sels[9] = this.getVaultBurnRequests.selector;
-        sels[10] = this.calculateBurnCollateral.selector;
-        sels[11] = this.meetsMinimumBurn.selector;
-        sels[12] = this.getActiveBurnCount.selector;
-        sels[13] = this.cleanupVaultBurnRequests.selector;
+        sels[6] = this.abortBurn.selector;
+        sels[7] = this.forceSettleBurn.selector;
+        sels[8] = this.resolveDeclinedProposal.selector;
+        sels[9] = this.getBurnRequest.selector;
+        sels[10] = this.getUserBurnRequests.selector;
+        sels[11] = this.getVaultBurnRequests.selector;
+        sels[12] = this.calculateBurnCollateral.selector;
+        sels[13] = this.meetsMinimumBurn.selector;
+        sels[14] = this.getActiveBurnCount.selector;
+        sels[15] = this.cleanupVaultBurnRequests.selector;
         return sels;
     }
 }

@@ -271,10 +271,10 @@ contract E2EComprehensiveTest is Test {
         vm.roll(block.number + 17281);
         console.log("  Jumped 24 hours + 1 second");
         
-        // LP cancels the abandoned request
-        vm.prank(lp);
-        BurnFacet(address(hub)).cancelBurn(burnId);
-        console.log("  LP cancelled abandoned burn");
+        // User aborts the abandoned request
+        vm.prank(user);
+        BurnFacet(address(hub)).abortBurn(burnId);
+        console.log("  User aborted abandoned burn");
         console.log("  PASS - Abandoned burn handled\n");
     }
     
@@ -298,10 +298,10 @@ contract E2EComprehensiveTest is Test {
         vm.roll(block.number + 34561);
         console.log("  Jumped 48 hours + 1 second");
         
-        // LP cancels
+        // Anyone can resolve the declined proposal after timeout
         vm.prank(lp);
-        BurnFacet(address(hub)).cancelBurn(burnId);
-        console.log("  LP cancelled after user abandoned");
+        BurnFacet(address(hub)).resolveDeclinedProposal(burnId);
+        console.log("  LP resolved declined proposal");
         console.log("  PASS\n");
     }
     

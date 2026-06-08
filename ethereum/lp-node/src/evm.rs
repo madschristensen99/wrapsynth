@@ -93,11 +93,28 @@ sol! {
             uint256 timeout;
             uint256 griefingDeposit;
             uint256 lpBond;
-            uint8 status;
-            uint256 vaultMintNonce;
             uint256 normalizedDebtAmount;
+            uint256 vaultMintNonce;
+            uint8 status;
         }
         function mintRequests(bytes32 requestId) external view returns (MintRequest memory);
+        
+        struct BurnRequest {
+            bytes32 requestId;
+            address user;
+            address lpVault;
+            uint256 wsxmrAmount;
+            uint256 xmrAmount;
+            uint256 lockedCollateral;
+            uint256 rewardCollateral;
+            bytes32 secretHash;
+            uint256 deadline;
+            uint256 vaultLiquidationNonce;
+            uint256 normalizedDebtAmount;
+            uint8 status;
+            bytes32 userClaimCommitment;
+        }
+        function burnRequests(bytes32 requestId) external view returns (BurnRequest memory);
         
         // Oracle functions
         function updateOraclePrices(bytes[] calldata updateData) external payable;
@@ -378,6 +395,23 @@ impl EvmClient {
         Ok(stream.into_stream())
     }
 
+    /// Subscribe to BurnCommitted events
+    pub async fn subscribe_burn_committed(
+        &self,
+    ) -> Result<SubscriptionStream<Log>> {
+        let filter = Filter::new()
+            .address(self.vault_manager)
+            .event_signature(VaultManager::BurnCommitted::SIGNATURE_HASH);
+
+        let stream = self
+            .provider
+            .subscribe_logs(&filter)
+            .await
+            .context("Failed to subscribe to BurnCommitted events")?;
+
+        Ok(stream.into_stream())
+    }
+
     /// Subscribe to MintInitiated events
     pub async fn subscribe_mint_initiated(
         &self,
@@ -407,6 +441,39 @@ impl EvmClient {
             .get_logs(&filter)
             .await
             .context("Failed to query historical MintInitiated events")?;
+
+        Ok(logs)
+    }
+
+    /// Subscribe to MintFinalized events
+    pub async fn subscribe_mint_finalized(
+        &self,
+    ) -> Result<SubscriptionStream<Log>> {
+        let filter = Filter::new()
+            .address(self.vault_manager)
+            .event_signature(VaultManager::MintFinalized::SIGNATURE_HASH);
+
+        let stream = self
+            .provider
+            .subscribe_logs(&filter)
+            .await
+            .context("Failed to subscribe to MintFinalized events")?;
+
+        Ok(stream.into_stream())
+    }
+
+    /// Query historical MintFinalized events
+    pub async fn get_historical_mint_finalized_events(&self, from_block: u64) -> Result<Vec<Log>> {
+        let filter = Filter::new()
+            .address(self.vault_manager)
+            .event_signature(VaultManager::MintFinalized::SIGNATURE_HASH)
+            .from_block(from_block);
+
+        let logs = self
+            .provider
+            .get_logs(&filter)
+            .await
+            .context("Failed to query historical MintFinalized events")?;
 
         Ok(logs)
     }
@@ -443,6 +510,22 @@ impl EvmClient {
         Ok(decoded.data)
     }
 
+    /// Parse a BurnCommitted event
+    pub fn parse_burn_committed(&self, log: &Log) -> Result<VaultManager::BurnCommitted> {
+        // Convert alloy RPC log to primitives log
+        let prim_log = alloy::primitives::Log {
+            address: log.address(),
+            data: alloy::primitives::LogData::new_unchecked(
+                log.topics().to_vec(),
+                log.data().data.clone(),
+            ),
+        };
+        
+        let decoded = VaultManager::BurnCommitted::decode_log(&prim_log, true)
+            .context("Failed to decode BurnCommitted event")?;
+        Ok(decoded.data)
+    }
+
     /// Parse a MintInitiated event
     pub fn parse_mint_initiated(&self, log: &Log) -> Result<VaultManager::MintInitiated> {
         // Convert alloy RPC log to primitives log
@@ -456,6 +539,21 @@ impl EvmClient {
         
         let decoded = VaultManager::MintInitiated::decode_log(&prim_log, true)
             .context("Failed to decode MintInitiated event")?;
+        Ok(decoded.data)
+    }
+
+    /// Parse a MintFinalized event
+    pub fn parse_mint_finalized(&self, log: &Log) -> Result<VaultManager::MintFinalized> {
+        let prim_log = alloy::primitives::Log {
+            address: log.address(),
+            data: alloy::primitives::LogData::new_unchecked(
+                log.topics().to_vec(),
+                log.data().data.clone(),
+            ),
+        };
+        
+        let decoded = VaultManager::MintFinalized::decode_log(&prim_log, true)
+            .context("Failed to decode MintFinalized event")?;
         Ok(decoded.data)
     }
 
@@ -562,6 +660,14 @@ impl EvmClient {
         let contract = VaultManager::new(self.vault_manager, &self.provider);
         let request = contract.mintRequests(request_id).call().await
             .map_err(|e| anyhow!("Failed to query mint request: {}", e))?;
+        Ok(request._0)
+    }
+
+    /// Get burn request from on-chain
+    pub async fn get_burn_request(&self, request_id: FixedBytes<32>) -> Result<VaultManager::BurnRequest> {
+        let contract = VaultManager::new(self.vault_manager, &self.provider);
+        let request = contract.burnRequests(request_id).call().await
+            .map_err(|e| anyhow!("Failed to query burn request: {}", e))?;
         Ok(request._0)
     }
 
@@ -1081,6 +1187,13 @@ impl EvmClient {
         let contract = VaultManager::new(self.vault_manager, &self.provider);
         let mint_request = contract.mintRequests(request_id).call().await?;
         Ok(mint_request._0.status)
+    }
+
+    /// Get the current status of a burn request
+    pub async fn get_burn_status(&self, request_id: FixedBytes<32>) -> Result<u8> {
+        let contract = VaultManager::new(self.vault_manager, &self.provider);
+        let burn_request = contract.burnRequests(request_id).call().await?;
+        Ok(burn_request._0.status)
     }
 
     /// Update oracle prices using RedStone signed data packages

@@ -33,7 +33,9 @@ pub enum MintStatus {
 pub enum BurnStatus {
     /// Detected BurnRequested event
     Requested,
-    /// Generated secret and committed on EVM
+    /// LP generated secret and proposed hash on EVM
+    Proposed,
+    /// User confirmed Monero lock on EVM
     Committed,
     /// XMR PTLC created on Monero
     XmrLocked,

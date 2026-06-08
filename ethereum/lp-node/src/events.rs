@@ -39,6 +39,16 @@ impl EventListener {
             }
         }
 
+        // Query historical mint finalized events
+        let finalized_logs = self.evm.get_historical_mint_finalized_events(from_block).await?;
+        info!("Found {} historical MintFinalized events", finalized_logs.len());
+
+        for log in &finalized_logs {
+            if let Err(e) = self.handle_mint_finalized_event(log).await {
+                error!("Error processing historical MintFinalized event: {}", e);
+            }
+        }
+
         // Query historical burn events
         let burn_logs = self.evm.get_historical_burn_events(from_block).await?;
         info!("Found {} historical BurnRequested events", burn_logs.len());
@@ -66,11 +76,19 @@ impl EventListener {
             error!("Error scanning historical events: {}", e);
         }
 
-        // Spawn burn event listener
+        // Spawn burn requested event listener
         let listener = self.clone();
         tokio::spawn(async move {
-            if let Err(e) = listener.listen_burn_events().await {
-                error!("Burn event listener error: {}", e);
+            if let Err(e) = listener.listen_burn_requested_events().await {
+                error!("Burn requested event listener error: {}", e);
+            }
+        });
+
+        // Spawn burn committed event listener
+        let listener = self.clone();
+        tokio::spawn(async move {
+            if let Err(e) = listener.listen_burn_committed_events().await {
+                error!("Burn committed event listener error: {}", e);
             }
         });
 
@@ -82,28 +100,62 @@ impl EventListener {
             }
         });
 
+        // Spawn mint finalized event listener
+        let listener = self.clone();
+        tokio::spawn(async move {
+            if let Err(e) = listener.listen_mint_finalized_events().await {
+                error!("Mint finalized event listener error: {}", e);
+            }
+        });
+
         info!("Event listeners started");
         Ok(())
     }
 
     /// Listen for BurnRequested events with auto-reconnect on disconnect/reorg
-    async fn listen_burn_events(&self) -> Result<()> {
+    async fn listen_burn_requested_events(&self) -> Result<()> {
         info!("Listening for BurnRequested events");
 
         loop {
             match self.evm.subscribe_burn_requested().await {
                 Ok(mut stream) => {
-                    info!("Burn event subscription established");
+                    info!("BurnRequested event subscription established");
                     while let Some(log) = stream.next().await {
                         if let Err(e) = self.handle_burn_requested_event(&log).await {
                             error!("Error handling BurnRequested event: {}", e);
                         }
                     }
-                    warn!("Burn event stream ended, reconnecting in 5s...");
+                    warn!("BurnRequested event stream ended, reconnecting in 5s...");
                 }
                 Err(e) => {
                     error!(
                         "Failed to subscribe to BurnRequested events: {}, retrying in 5s...",
+                        e
+                    );
+                }
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        }
+    }
+
+    /// Listen for BurnCommitted events with auto-reconnect on disconnect/reorg
+    async fn listen_burn_committed_events(&self) -> Result<()> {
+        info!("Listening for BurnCommitted events");
+
+        loop {
+            match self.evm.subscribe_burn_committed().await {
+                Ok(mut stream) => {
+                    info!("BurnCommitted event subscription established");
+                    while let Some(log) = stream.next().await {
+                        if let Err(e) = self.handle_burn_committed_event(&log).await {
+                            error!("Error handling BurnCommitted event: {}", e);
+                        }
+                    }
+                    warn!("BurnCommitted event stream ended, reconnecting in 5s...");
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to subscribe to BurnCommitted events: {}, retrying in 5s...",
                         e
                     );
                 }
@@ -130,6 +182,32 @@ impl EventListener {
                 Err(e) => {
                     error!(
                         "Failed to subscribe to MintInitiated events: {}, retrying in 5s...",
+                        e
+                    );
+                }
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        }
+    }
+
+    /// Listen for MintFinalized events with auto-reconnect on disconnect/reorg
+    async fn listen_mint_finalized_events(&self) -> Result<()> {
+        info!("Listening for MintFinalized events");
+
+        loop {
+            match self.evm.subscribe_mint_finalized().await {
+                Ok(mut stream) => {
+                    info!("Mint finalized event subscription established");
+                    while let Some(log) = stream.next().await {
+                        if let Err(e) = self.handle_mint_finalized_event(&log).await {
+                            error!("Error handling MintFinalized event: {}", e);
+                        }
+                    }
+                    warn!("Mint finalized event stream ended, reconnecting in 5s...");
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to subscribe to MintFinalized events: {}, retrying in 5s...",
                         e
                     );
                 }
@@ -187,6 +265,47 @@ impl EventListener {
 
         self.db.insert_burn_task(&task)?;
         info!("Burn task created: {}", hex::encode(task.request_id));
+
+        Ok(())
+    }
+
+    /// Handle a BurnCommitted event
+    async fn handle_burn_committed_event(&self, log: &alloy::rpc::types::Log) -> Result<()> {
+        let event = self.evm.parse_burn_committed(log)?;
+
+        info!(
+            "BurnCommitted event: requestId={}, deadline={}",
+            hex::encode(event.requestId),
+            event.deadline
+        );
+
+        // Update the burn task status from Proposed to Committed
+        let request_id: [u8; 32] = event.requestId.into();
+        
+        if let Some(mut burn) = self.db.get_burn_task(&request_id)? {
+            if burn.status == BurnStatus::Proposed {
+                burn.status = BurnStatus::Committed;
+                burn.deadline = event.deadline.to::<u64>();
+                burn.updated_at = current_timestamp();
+                self.db.update_burn_task(&burn)?;
+                
+                info!(
+                    "Burn task {} status updated to Committed",
+                    hex::encode(request_id)
+                );
+            } else {
+                warn!(
+                    "Received BurnCommitted for request {} but status is {:?}, not Proposed",
+                    hex::encode(request_id),
+                    burn.status
+                );
+            }
+        } else {
+            warn!(
+                "Received BurnCommitted event for unknown request: {}",
+                hex::encode(request_id)
+            );
+        }
 
         Ok(())
     }
@@ -283,6 +402,52 @@ impl EventListener {
 
         self.db.insert_mint_task(&task)?;
         info!("Mint task created: {}", hex::encode(task.request_id));
+
+        Ok(())
+    }
+
+    /// Handle a MintFinalized event
+    async fn handle_mint_finalized_event(&self, log: &alloy::rpc::types::Log) -> Result<()> {
+        let event = self.evm.parse_mint_finalized(log)?;
+
+        let request_id: [u8; 32] = event.requestId.into();
+        let secret: [u8; 32] = event.secret.into();
+
+        info!(
+            "MintFinalized event: requestId={}, secret={}",
+            hex::encode(request_id),
+            hex::encode(secret)
+        );
+
+        // Look up the mint task in the database
+        let mut mint = match self.db.get_mint_task(&request_id)? {
+            Some(task) => task,
+            None => {
+                warn!("No mint task found for requestId {}, skipping", hex::encode(request_id));
+                return Ok(());
+            }
+        };
+
+        // Only process if the mint is in Ready state (waiting for user to finalize)
+        if mint.status != MintStatus::Ready {
+            info!(
+                "Mint {} is not in Ready status (current: {:?}), skipping secret storage",
+                hex::encode(request_id),
+                mint.status
+            );
+            return Ok(());
+        }
+
+        // Store the revealed secret and transition to XmrClaimed
+        mint.revealed_secret = Some(secret);
+        mint.status = MintStatus::XmrClaimed;
+        mint.updated_at = current_timestamp();
+        self.db.update_mint_task(&mint)?;
+
+        info!(
+            "Mint {} secret stored, status updated to XmrClaimed. Engine will sweep XMR on next poll.",
+            hex::encode(request_id)
+        );
 
         Ok(())
     }

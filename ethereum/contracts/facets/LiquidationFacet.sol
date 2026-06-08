@@ -44,23 +44,18 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
     function _settleCommittedBurnSlash(
         BurnRequest storage burnReq,
         Vault storage v,
-        uint256 xmrPrice,
         uint256 collateralPrice
     ) internal {
-        uint256 parValueUsd = (burnReq.wsxmrAmount * xmrPrice) / WSXMR_DECIMALS;
+        uint256 parValueUsd = (burnReq.wsxmrAmount * burnReq.xmrPriceAtRequest) / WSXMR_DECIMALS;
         uint256 parDaiAmount = (parValueUsd * SDAI_DECIMALS) / collateralPrice;
         uint256 parShares = _daiToShares(parDaiAmount);
 
         uint256 userBase = parShares < burnReq.lockedCollateral
             ? parShares
             : burnReq.lockedCollateral;
-        uint256 lpRefund = burnReq.lockedCollateral - userBase;
         uint256 userPayout = userBase + burnReq.rewardCollateral;
 
         v.lockedCollateral -= (burnReq.lockedCollateral + burnReq.rewardCollateral);
-        if (lpRefund > 0) {
-            v.collateralShares += lpRefund;
-        }
         globalPendingBurnDebt -= burnReq.wsxmrAmount;
 
         pendingReturns[burnReq.user][GnosisAddresses.SDAI] += userPayout;
@@ -125,9 +120,8 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             BurnRequest storage burnReq = burnRequests[vaultBurns[i]];
             
             if (burnReq.status == BurnStatus.REQUESTED || burnReq.status == BurnStatus.PROPOSED) {
-                // Force-cancel: user hasn't asserted Monero lock yet, safe to unwind
+                // Force-cancel: unwind burn to free collateral for liquidation
                 if (burnReq.vaultLiquidationNonce == vault.liquidationNonce) {
-                    vault.collateralShares += (burnReq.lockedCollateral + burnReq.rewardCollateral);
                     vault.lockedCollateral -= (burnReq.lockedCollateral + burnReq.rewardCollateral);
                     vault.normalizedDebt += burnReq.normalizedDebtAmount;
                     globalTotalDebt += burnReq.wsxmrAmount;
@@ -142,7 +136,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
                 
             } else if (burnReq.status == BurnStatus.COMMITTED) {
                 // Settle committed burn: par-capped slash (user gets par + reward, excess to vault)
-                _settleCommittedBurnSlash(burnReq, vault, xmrPrice, collateralPrice);
+                _settleCommittedBurnSlash(burnReq, vault, collateralPrice);
             }
         }
         
@@ -279,19 +273,19 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             
             if (burnReq.status == BurnStatus.REQUESTED || burnReq.status == BurnStatus.PROPOSED) {
                 if (burnReq.vaultLiquidationNonce == oldV.liquidationNonce) {
-                    oldV.collateralShares += (burnReq.lockedCollateral + burnReq.rewardCollateral);
                     oldV.lockedCollateral -= (burnReq.lockedCollateral + burnReq.rewardCollateral);
                     oldV.normalizedDebt += burnReq.normalizedDebtAmount;
                     globalTotalDebt += burnReq.wsxmrAmount;
                 }
                 globalPendingBurnDebt -= burnReq.wsxmrAmount;
                 IwsXmrHub(address(this)).mintTokens(burnReq.user, burnReq.wsxmrAmount);
+                
                 burnReq.status = BurnStatus.CANCELLED;
                 emit BurnCancelled(burnReq.requestId);
                 
             } else if (burnReq.status == BurnStatus.COMMITTED) {
                 // Settle committed burn: par-capped slash (user gets par + reward, excess to vault)
-                _settleCommittedBurnSlash(burnReq, oldV, xmrPrice, collateralPrice);
+                _settleCommittedBurnSlash(burnReq, oldV, collateralPrice);
             }
         }
         

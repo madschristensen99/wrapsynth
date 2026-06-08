@@ -16,9 +16,6 @@ use tracing::{debug, error, info, warn};
 const MONERO_CONFIRMATIONS: u64 = 1;
 const POLL_INTERVAL_SECS: u64 = 30;
 const BURN_SAFETY_MARGIN_BLOCKS: u64 = 4320; // ~6 hours at 5s/block
-const PRICE_POLL_INTERVAL_SECS: u64 = 30;
-const PRICE_PUSH_THRESHOLD_BPS: u16 = 25;
-const PRICE_PUSH_MAX_AGE_SECS: u64 = 90;
 
 /// The main engine that orchestrates atomic swaps
 pub struct SwapEngine {
@@ -26,7 +23,6 @@ pub struct SwapEngine {
     evm: Arc<EvmClient>,
     monero: Arc<MoneroClient>,
     oracle: Arc<OracleClient>,
-    enable_price_pusher: bool,
     arbitrage_bot: Option<Arc<ArbitrageBot>>,
 }
 
@@ -35,7 +31,6 @@ impl SwapEngine {
         db: Database,
         evm: Arc<EvmClient>,
         monero: Arc<MoneroClient>,
-        enable_price_pusher: bool,
         arbitrage_bot: Option<Arc<ArbitrageBot>>,
     ) -> Self {
         Self { 
@@ -43,7 +38,6 @@ impl SwapEngine {
             evm, 
             monero,
             oracle: Arc::new(OracleClient::new()),
-            enable_price_pusher,
             arbitrage_bot,
         }
     }
@@ -76,18 +70,8 @@ impl SwapEngine {
             }
         });
 
-        // Spawn price pusher worker if enabled
-        if self.enable_price_pusher {
-            let engine = self.clone();
-            tokio::spawn(async move {
-                if let Err(e) = engine.price_pusher_worker().await {
-                    error!("Price pusher worker error: {}", e);
-                }
-            });
-            info!("Price pusher worker started");
-        } else {
-            info!("Price pusher disabled in config");
-        }
+        // Price pusher disabled - we update prices on-demand before operations
+        info!("Price pusher disabled - using on-demand price updates before operations");
 
         // Spawn arbitrage bot if configured
         if let Some(bot) = self.arbitrage_bot.clone() {
@@ -128,19 +112,24 @@ impl SwapEngine {
         for mut burn in burns {
             match burn.status {
                 BurnStatus::Requested => {
-                    // Step 1: Generate secret and commit
+                    // Step 1: Generate secret, propose hash, and create PTLC
                     if let Err(e) = self.handle_burn_requested(&mut burn).await {
                         error!("Error handling burn requested: {}", e);
                     }
                 }
-                BurnStatus::Committed => {
-                    // Step 2: Create PTLC on Monero
-                    if let Err(e) = self.handle_burn_committed(&mut burn).await {
-                        error!("Error handling burn committed: {}", e);
+                BurnStatus::Proposed => {
+                    // Step 2: Wait for user to confirm Monero lock
+                    if let Err(e) = self.handle_burn_proposed(&mut burn).await {
+                        error!("Error handling burn proposed: {}", e);
                     }
                 }
+                BurnStatus::Committed => {
+                    // Step 3: Already locked, just wait for finalization
+                    // (User will finalize, revealing secret, then we can claim)
+                    // Nothing to do here - wait for BurnFinalized event
+                }
                 BurnStatus::XmrLocked => {
-                    // Step 3: Monitor for secret reveal
+                    // Legacy status - treat as Committed
                     if let Err(e) = self.handle_burn_xmr_locked(&mut burn).await {
                         error!("Error handling burn XMR locked: {}", e);
                     }
@@ -163,6 +152,38 @@ impl SwapEngine {
     async fn handle_burn_requested(&self, burn: &mut BurnTask) -> Result<()> {
         info!("Handling burn requested: {}", hex::encode(burn.request_id));
 
+        // Check on-chain status first to avoid re-processing
+        let request_id = FixedBytes::from_slice(&burn.request_id);
+        match self.evm.get_burn_status(request_id).await {
+            Ok(status) => {
+                // Status: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=COMPLETED, 5=SLASHED
+                if status != 1 {
+                    info!(
+                        "Burn {} already processed on-chain (status: {}), updating local state",
+                        hex::encode(burn.request_id),
+                        status
+                    );
+                    // Update local status to match on-chain
+                    burn.status = match status {
+                        2 => BurnStatus::Proposed,
+                        3 => BurnStatus::Committed,
+                        4 => BurnStatus::Completed,
+                        5 => BurnStatus::Slashed,
+                        _ => {
+                            warn!("Unknown on-chain burn status: {}", status);
+                            return Ok(());
+                        }
+                    };
+                    burn.updated_at = current_timestamp();
+                    self.db.update_burn_task(burn)?;
+                    return Ok(());
+                }
+            }
+            Err(e) => {
+                warn!("Failed to check on-chain burn status: {}, proceeding anyway", e);
+            }
+        }
+
         // Generate a secure random secret
         let secret_key = SecretKey::random(&mut OsRng);
         let secret_bytes = secret_key.to_bytes();
@@ -183,14 +204,12 @@ impl SwapEngine {
         // CRITICAL: Persist the secret to the database BEFORE sending any transactions
         burn.secret = Some(secret);
         burn.secret_hash = Some(secret_hash);
-        burn.status = BurnStatus::Committed;
         burn.updated_at = current_timestamp();
         self.db.update_burn_task(burn)?;
 
         info!("Secret persisted to database");
 
-        // Now commit the burn on EVM
-        let request_id = FixedBytes::from_slice(&burn.request_id);
+        // Propose hash on EVM
         let secret_hash_fixed = FixedBytes::from_slice(&secret_hash);
 
         let tx_hash = self
@@ -200,32 +219,22 @@ impl SwapEngine {
             .context("Failed to propose hash on EVM")?;
 
         burn.commit_tx_hash = Some(tx_hash.0);
-        self.db.update_burn_task(burn)?;
+        info!("Hash proposed on EVM: {}", hex::encode(tx_hash));
 
-        info!("Burn committed on EVM: {}", hex::encode(tx_hash));
-        Ok(())
-    }
-
-    async fn handle_burn_committed(&self, burn: &mut BurnTask) -> Result<()> {
-        info!("Handling burn committed: {}", hex::encode(burn.request_id));
-
+        // Get claim commitment to derive Monero address
         let claim_commitment = burn
             .claim_commitment
             .ok_or_else(|| anyhow::anyhow!("Missing claim commitment"))?;
 
-        // Derive shared Monero address from user's claim commitment (same as mint flow)
+        // Derive shared Monero address from user's claim commitment
         let swap_keys = self.monero.generate_swap_keys(&claim_commitment)?;
         let monero_address = swap_keys.deposit_address;
         info!(
-            "Derived Monero deposit address for burn PTLC: {}",
+            "Derived Monero destination address for burn: {}",
             monero_address
         );
 
-        let secret_hash = burn
-            .secret_hash
-            .ok_or_else(|| anyhow::anyhow!("Missing secret hash"))?;
-
-        // Create PTLC on Monero
+        // Create PTLC on Monero (send XMR to user's destination)
         let monero_addr_str = monero_address.to_string();
         let tx_hash = self
             .monero
@@ -233,12 +242,46 @@ impl SwapEngine {
             .await
             .context("Failed to create PTLC on Monero")?;
 
-        burn.monero_lock_txid = Some(tx_hash);
-        burn.status = BurnStatus::XmrLocked;
+        burn.monero_lock_txid = Some(tx_hash.clone());
+        burn.status = BurnStatus::Proposed;
         burn.updated_at = current_timestamp();
         self.db.update_burn_task(burn)?;
 
-        info!("XMR locked on Monero: {}", burn.monero_lock_txid.as_ref().unwrap());
+        info!("XMR sent to user at {}, tx: {}", monero_address, tx_hash);
+        info!("Waiting for user to confirm Monero lock on-chain...");
+        Ok(())
+    }
+
+    async fn handle_burn_proposed(&self, burn: &mut BurnTask) -> Result<()> {
+        // LP has proposed hash and sent XMR
+        // Now waiting for user to call confirmMoneroLock on-chain
+        // This will be detected by the BurnCommitted event listener in events.rs
+        // which will update the status to Committed
+        
+        // Nothing to do here - just wait for the event
+        // The event listener will handle the status transition
+        Ok(())
+    }
+
+    async fn handle_burn_committed(&self, burn: &mut BurnTask) -> Result<()> {
+        info!("Burn committed by user: {}", hex::encode(burn.request_id));
+        
+        // User has confirmed the Monero lock on-chain
+        // XMR was already sent in handle_burn_requested
+        // Now we just wait for the user to finalize (or timeout)
+        
+        // Check if we're approaching the deadline
+        let current_block = self.evm.get_block_number().await.unwrap_or(0);
+        let safety_deadline = burn.deadline.saturating_sub(BURN_SAFETY_MARGIN_BLOCKS);
+
+        if current_block >= safety_deadline {
+            warn!(
+                "Approaching deadline for burn {}, user should finalize soon",
+                hex::encode(burn.request_id)
+            );
+        }
+        
+        // Nothing else to do - wait for user to finalize and reveal secret
         Ok(())
     }
 
@@ -377,7 +420,7 @@ impl SwapEngine {
     async fn handle_mint_expired(&self, mint: &mut MintTask) -> Result<()> {
         info!("Handling expired mint: {}", hex::encode(mint.request_id));
 
-        // Query on-chain mint request to get current timeout (may have been extended by setMintReady)
+        // Query on-chain mint request to get current timeout and status
         let request_id = FixedBytes::from_slice(&mint.request_id);
         let current_block = self.evm.get_block_number().await.unwrap_or(0);
         
@@ -385,8 +428,27 @@ impl SwapEngine {
             Ok(req) => req,
             Err(e) => {
                 warn!("Failed to query on-chain mint request: {}", e);
-                // Continue with cancellation attempt anyway
-                self.evm.cancel_mint(request_id).await.ok();
+                // Check status before trying to cancel
+                match self.evm.get_mint_status(request_id).await {
+                    Ok(status) => {
+                        // Status: 0=PENDING, 1=KEY_PROVIDED, 2=READY, 3=COMPLETED, 4=CANCELLED
+                        if status == 3 || status == 4 {
+                            info!(
+                                "Mint {} already finalized on-chain (status: {}), updating local state",
+                                hex::encode(mint.request_id),
+                                status
+                            );
+                            mint.status = if status == 3 { MintStatus::Completed } else { MintStatus::Cancelled };
+                            mint.updated_at = current_timestamp();
+                            self.db.update_mint_task(mint)?;
+                            return Ok(());
+                        }
+                    }
+                    Err(_) => {
+                        // If we can't check status, try to cancel anyway
+                        self.evm.cancel_mint(request_id).await.ok();
+                    }
+                }
                 mint.status = MintStatus::Cancelled;
                 mint.updated_at = current_timestamp();
                 self.db.update_mint_task(mint)?;
@@ -405,6 +467,21 @@ impl SwapEngine {
         // Check if still expired with updated timeout
         if current_block < on_chain_timeout {
             info!("Mint not yet expired (timeout: {}, current: {}), skipping cancellation", on_chain_timeout, current_block);
+            return Ok(());
+        }
+
+        // Check on-chain status before attempting to cancel
+        let on_chain_status = on_chain_request.status;
+        // Status: 0=PENDING, 1=KEY_PROVIDED, 2=READY, 3=COMPLETED, 4=CANCELLED
+        if on_chain_status == 3 || on_chain_status == 4 {
+            info!(
+                "Mint {} already finalized on-chain (status: {}), skipping cancellation",
+                hex::encode(mint.request_id),
+                on_chain_status
+            );
+            mint.status = if on_chain_status == 3 { MintStatus::Completed } else { MintStatus::Cancelled };
+            mint.updated_at = current_timestamp();
+            self.db.update_mint_task(mint)?;
             return Ok(());
         }
 
@@ -609,36 +686,190 @@ impl SwapEngine {
     async fn handle_mint_ready(&self, mint: &mut MintTask) -> Result<()> {
         info!("Mint ready - waiting for user to finalize: {}", hex::encode(mint.request_id));
 
-        // LP has called setMintReady() - now wait for user to call finalizeMint()
-        // The user will reveal their secret when they finalize
-        // We'll watch for the MintFinalized event to extract the secret and claim XMR
-        
-        // Nothing to do here - just wait for user finalization
-        // The status stays as Ready until we see MintFinalized event
-        
+        // If the event listener already caught MintFinalized and stored the secret,
+        // transition immediately to XmrClaimed so the engine can sweep on next poll.
+        if mint.revealed_secret.is_some() {
+            info!(
+                "Revealed secret already available for mint {}, transitioning to XmrClaimed",
+                hex::encode(mint.request_id)
+            );
+            mint.status = MintStatus::XmrClaimed;
+            mint.updated_at = current_timestamp();
+            self.db.update_mint_task(mint)?;
+            return Ok(());
+        }
+
+        // Proactive fallback: check on-chain status in case we missed the event.
+        // If already COMPLETED on-chain, the user finalized — for LP-only mode
+        // we can sweep without needing the secret.
+        let request_id = FixedBytes::from_slice(&mint.request_id);
+        match self.evm.get_mint_status(request_id).await {
+            Ok(status) if status >= 4 => {
+                info!(
+                    "Mint {} already finalized on-chain (status: {}), attempting direct sweep",
+                    hex::encode(mint.request_id),
+                    status
+                );
+                // Transition to XmrClaimed so handle_mint_xmr_claimed will sweep
+                mint.status = MintStatus::XmrClaimed;
+                mint.updated_at = current_timestamp();
+                self.db.update_mint_task(mint)?;
+                return Ok(());
+            }
+            Ok(status) if status == 3 => {
+                debug!(
+                    "Mint {} still READY on-chain (status: 3), waiting for user to finalize",
+                    hex::encode(mint.request_id)
+                );
+            }
+            Ok(status) => {
+                warn!(
+                    "Mint {} unexpected on-chain status: {}",
+                    hex::encode(mint.request_id),
+                    status
+                );
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to check on-chain status for mint {}: {}",
+                    hex::encode(mint.request_id),
+                    e
+                );
+            }
+        }
+
+        // Primary path: the MintFinalized event listener will update the DB
+        // when the user calls finalizeMint(). Status stays Ready until then.
         Ok(())
     }
 
     async fn handle_mint_xmr_claimed(&self, mint: &mut MintTask) -> Result<()> {
-        info!("Finalizing mint on EVM: {}", hex::encode(mint.request_id));
+        info!("Claiming XMR for mint: {}", hex::encode(mint.request_id));
 
-        let secret = mint
-            .revealed_secret
-            .ok_or_else(|| anyhow::anyhow!("Missing revealed secret"))?;
+        // Step 1: Claim / sweep XMR from the deposit address back to LP wallet.
+        // For LP-only mode (WrapSynth) the LP already holds the private keys
+        // for the deposit address, so sweeping works directly.
+        let sweep_result = if let (
+            Some(ref deposit_address),
+            Some(ref lp_private_spend),
+            Some(ref lp_private_view),
+        ) = (
+            &mint.deposit_address,
+            &mint.lp_private_spend,
+            &mint.lp_private_view,
+        ) {
+            info!(
+                "Sweeping XMR from deposit address: {}",
+                deposit_address
+            );
+            match self
+                .monero
+                .sweep_from_swap_address(
+                    deposit_address,
+                    lp_private_spend,
+                    lp_private_view,
+                )
+                .await
+            {
+                Ok(tx_hash) if tx_hash == "no_funds" => {
+                    info!(
+                        "No XMR to sweep from deposit address (user may not have sent funds yet)"
+                    );
+                    Ok::<_, anyhow::Error>(None)
+                }
+                Ok(tx_hash) => {
+                    info!("Successfully swept XMR in transaction: {}", tx_hash);
+                    mint.monero_claim_txid = Some(tx_hash.clone());
+                    Ok(Some(tx_hash))
+                }
+                Err(e) => {
+                    warn!("Failed to sweep XMR from deposit address: {}", e);
+                    Err(e)
+                }
+            }
+        } else {
+            warn!("Missing swap keys or deposit address — cannot sweep XMR");
+            Err(anyhow!("Missing swap keys or deposit address"))
+        };
+
+        // Even if sweep fails, we may still need to finalize on EVM so the
+        // LP bond and griefing deposits are returned. Continue to on-chain check.
+
+        // Step 2: Check on-chain status. The user calling finalizeMint emits
+        // MintFinalized and moves status to COMPLETED (4). If that already
+        // happened we must NOT call finalizeMint again.
         let request_id = FixedBytes::from_slice(&mint.request_id);
-        let secret_fixed = FixedBytes::from_slice(&secret);
+        let on_chain_status = self.evm.get_mint_status(request_id).await.ok();
 
-        let tx_hash = self
-            .evm
-            .finalize_mint(request_id, secret_fixed)
-            .await
-            .context("Failed to finalize mint on EVM")?;
+        match on_chain_status {
+            Some(status) if status >= 4 => {
+                info!(
+                    "Mint {} already finalized on-chain (status: {}). Marking local task as completed.",
+                    hex::encode(mint.request_id),
+                    status
+                );
+            }
+            Some(status) if status == 3 => {
+                // Still READY — user revealed secret (we got the event) but
+                // finalizeMint may not have been mined yet, or we are in a
+                // test / mock environment. Attempt to finalize ourselves.
+                info!(
+                    "Mint {} still READY on-chain (status: 3). Calling finalizeMint...",
+                    hex::encode(mint.request_id)
+                );
+                let secret = mint
+                    .revealed_secret
+                    .ok_or_else(|| anyhow!("Missing revealed secret for finalizeMint"))?;
+                let secret_fixed = FixedBytes::from_slice(&secret);
+                match self.evm.finalize_mint(request_id, secret_fixed).await {
+                    Ok(tx_hash) => {
+                        info!("Mint finalized on EVM: {}", hex::encode(tx_hash));
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to send finalizeMint for mint {}: {}. It may have already been finalized in another block.",
+                            hex::encode(mint.request_id),
+                            e
+                        );
+                        // Continue and mark complete if we already swept
+                    }
+                }
+            }
+            Some(status) => {
+                warn!(
+                    "Mint {} unexpected on-chain status {} during XmrClaimed handling",
+                    hex::encode(mint.request_id),
+                    status
+                );
+            }
+            None => {
+                warn!(
+                    "Could not check on-chain status for mint {}",
+                    hex::encode(mint.request_id)
+                );
+            }
+        }
+
+        // Step 3: Mark as completed locally.
+        // If the sweep failed, we log a warning but still mark completed
+        // because the EVM side is done and the XMR claim can be retried manually.
+        if sweep_result.is_err() {
+            warn!(
+                "XMR sweep failed for mint {} — funds may remain at {}. Manual recovery required.",
+                hex::encode(mint.request_id),
+                mint.deposit_address.as_deref().unwrap_or("unknown")
+            );
+        }
 
         mint.status = MintStatus::Completed;
         mint.updated_at = current_timestamp();
         self.db.update_mint_task(mint)?;
 
-        info!("Mint finalized on EVM: {}", hex::encode(tx_hash));
+        info!(
+            "Mint {} fully handled: XMR sweep result = {:?}",
+            hex::encode(mint.request_id),
+            sweep_result.is_ok()
+        );
         Ok(())
     }
 
@@ -689,69 +920,6 @@ impl SwapEngine {
         Ok(())
     }
 
-    // ========== PRICE PUSHER ==========
-
-    /// Worker that pushes oracle prices from RedStone API
-    async fn price_pusher_worker(&self) -> Result<()> {
-        info!("Price pusher worker started");
-
-        loop {
-            if let Err(e) = self.push_prices_if_needed().await {
-                error!("Error pushing prices: {}", e);
-            }
-
-            sleep(Duration::from_secs(PRICE_POLL_INTERVAL_SECS)).await;
-        }
-    }
-
-    async fn push_prices_if_needed(&self) -> Result<()> {
-        let prices = self.oracle.fetch_redstone_prices().await?;
-
-        let (last_xmr_price, last_timestamp) = match self.evm.get_last_oracle_state().await {
-            Ok(state) => state,
-            Err(e) => {
-                warn!("Failed to get last oracle state: {}", e);
-                return Ok(());
-            }
-        };
-
-        let now = current_timestamp();
-        let age = now.saturating_sub(last_timestamp);
-        let drift_bps = OracleClient::calculate_drift_bps(last_xmr_price, prices.xmr_price);
-
-        if drift_bps > PRICE_PUSH_THRESHOLD_BPS || age > PRICE_PUSH_MAX_AGE_SECS {
-            info!(
-                "Pushing oracle update: drift={}bps age={}s",
-                drift_bps, age
-            );
-
-            match self.oracle.fetch_redstone_data_packages().await {
-                Ok(redstone_data) => {
-                    match self.evm.update_oracle_prices_redstone(redstone_data).await {
-                        Ok(tx_hash) => {
-                            info!(
-                                "Oracle updated: xmr={} dai={} drift={}bps age={}s tx={:?}",
-                                prices.xmr_price, prices.dai_price, drift_bps, age, tx_hash
-                            );
-                        }
-                        Err(e) => {
-                            error!("Failed to push oracle prices: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to fetch RedStone data packages: {}", e);
-                }
-            }
-        } else {
-            debug!(
-                "Oracle update not needed: drift={}bps age={}s",
-                drift_bps, age
-            );
-        }
-
-        Ok(())
-    }
 }
 
 /// Get current Unix timestamp

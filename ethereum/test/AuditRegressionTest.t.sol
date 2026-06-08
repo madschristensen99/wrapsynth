@@ -46,6 +46,9 @@ contract AuditRegressionTest is Test {
     uint256 constant DAI_PRICE_8DEC = 1_00000000;     // $1 in 8 decimals
 
     function setUp() public {
+        string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
+        vm.createSelectFork(rpcUrl);
+
         vm.deal(address(this), 1_000_000 ether);
         vm.deal(lp, 100 ether);
         vm.deal(user, 100 ether);
