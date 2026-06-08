@@ -366,18 +366,28 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         IERC20(GnosisAddresses.SDAI).safeTransfer(liquidityRouter, sharesNeeded);
         IERC20(wsxmrToken).safeTransfer(liquidityRouter, wsxmrAmount);
         
-        (uint256 _tokenId, uint128 liquidity, int24 tickLower, int24 tickUpper) =
+        (uint256 _tokenId, uint128 liquidity, int24 tickLower, int24 tickUpper, uint256 daiConsumed, uint256 wsxmrConsumed) =
             IwsXmrLiquidityRouter(liquidityRouter).mintConcentratedPosition(
-                sharesNeeded, wsxmrAmount, rangeBps, xmrPrice, deadline
+                sharesNeeded, wsxmrAmount, rangeBps, xmrPrice, deadline, uint16(DEFAULT_COLP_SLIPPAGE_BPS)
             );
         tokenId = _tokenId;
-        
-        vault.deployedSDAIShares += sharesNeeded;
+
+        // M2: Reconcile accounting with actual consumed amounts. Leftover tokens swept back to hub.
+        uint256 leftoverDai = sharesNeeded > daiConsumed ? sharesNeeded - daiConsumed : 0;
+        uint256 leftoverWsxmr = wsxmrAmount > wsxmrConsumed ? wsxmrAmount - wsxmrConsumed : 0;
+        if (leftoverDai > 0) {
+            vault.collateralShares += leftoverDai;
+        }
+        if (leftoverWsxmr > 0) {
+            pendingReturns[msg.sender][wsxmrToken] += leftoverWsxmr;
+        }
+
+        vault.deployedSDAIShares += daiConsumed;
         _positionMetadata[tokenId] = PositionMetadata({
             vaultOwner: lpVault,
             user: msg.sender,
-            sDAISharesOriginal: sharesNeeded,
-            wsxmrOriginal: wsxmrAmount,
+            sDAISharesOriginal: daiConsumed,
+            wsxmrOriginal: wsxmrConsumed,
             tickLower: tickLower,
             tickUpper: tickUpper,
             liquidity: liquidity,
@@ -385,8 +395,8 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         });
         _vaultPositions[lpVault].push(tokenId);
         _userPositions[msg.sender].push(tokenId);
-        
-        emit CoLPDeployed(lpVault, msg.sender, tokenId, sharesNeeded, wsxmrAmount, rangeBps);
+
+        emit CoLPDeployed(lpVault, msg.sender, tokenId, daiConsumed, wsxmrConsumed, rangeBps);
     }
 
     /// @notice Collect accumulated fees from a co-LP position.
@@ -455,8 +465,8 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         
         address user = meta.user;
         (uint256 daiOut, uint256 wsxmrOut) = IwsXmrLiquidityRouter(liquidityRouter)
-            .drainPosition(tokenId);
-        
+            .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS));
+
         uint256 keeperFee = 0;
         if (!isOwner) {
             keeperFee = (daiOut * COLP_REBALANCE_FEE_BPS) / BPS_DENOMINATOR;
@@ -670,7 +680,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         Vault storage vault = _vaults[meta.vaultOwner];
         
         (uint256 daiOut, uint256 wsxmrOut) = IwsXmrLiquidityRouter(liquidityRouter)
-            .drainPosition(tokenId);
+            .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS));
         
         if (vault.deployedSDAIShares >= meta.sDAISharesOriginal) {
             vault.deployedSDAIShares -= meta.sDAISharesOriginal;
@@ -725,19 +735,29 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         IERC20(GnosisAddresses.SDAI).safeTransfer(liquidityRouter, daiAmount);
         IERC20(wsxmrToken).safeTransfer(liquidityRouter, wsxmrAmount);
         
-        (uint256 _tokenId, uint128 liquidity, int24 tickLower, int24 tickUpper) =
+        (uint256 _tokenId, uint128 liquidity, int24 tickLower, int24 tickUpper, uint256 daiConsumed, uint256 wsxmrConsumed) =
             IwsXmrLiquidityRouter(liquidityRouter).mintConcentratedPosition(
-                daiAmount, wsxmrAmount, rangeBps, xmrPrice, deadline
+                daiAmount, wsxmrAmount, rangeBps, xmrPrice, deadline, uint16(DEFAULT_COLP_SLIPPAGE_BPS)
             );
         tokenId = _tokenId;
-        
-        vault.deployedSDAIShares += daiAmount;
-        
+
+        // M2: Reconcile accounting with actual consumed amounts
+        uint256 leftoverDai = daiAmount > daiConsumed ? daiAmount - daiConsumed : 0;
+        uint256 leftoverWsxmr = wsxmrAmount > wsxmrConsumed ? wsxmrAmount - wsxmrConsumed : 0;
+        if (leftoverDai > 0) {
+            vault.collateralShares += leftoverDai;
+        }
+        if (leftoverWsxmr > 0) {
+            pendingReturns[user][wsxmrToken] += leftoverWsxmr;
+        }
+
+        vault.deployedSDAIShares += daiConsumed;
+
         _positionMetadata[tokenId] = PositionMetadata({
             vaultOwner: lpVault,
             user: user,
-            sDAISharesOriginal: daiAmount,
-            wsxmrOriginal: wsxmrAmount,
+            sDAISharesOriginal: daiConsumed,
+            wsxmrOriginal: wsxmrConsumed,
             tickLower: tickLower,
             tickUpper: tickUpper,
             liquidity: liquidity,
@@ -745,7 +765,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         });
         _vaultPositions[lpVault].push(tokenId);
         _userPositions[user].push(tokenId);
-        
-        emit CoLPDeployed(lpVault, user, tokenId, daiAmount, wsxmrAmount, rangeBps);
+
+        emit CoLPDeployed(lpVault, user, tokenId, daiConsumed, wsxmrConsumed, rangeBps);
     }
 }

@@ -447,7 +447,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             PositionMetadata memory meta = _positionMetadata[tokenId];
             
             (uint256 daiOut, uint256 wsxmrOut) = IwsXmrLiquidityRouter(liquidityRouter)
-                .drainPosition(tokenId);
+                .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS));
             
             if (daiOut > 0) {
                 vault.collateralShares += daiOut;
