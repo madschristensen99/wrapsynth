@@ -58,15 +58,15 @@ export const NETWORKS = {
 export const DEPLOYMENTS = {
     GNOSIS: {
         chainId: 100,
-        wrappedMonero: '0xd48d298650fcd0c1c8478ee4c3ee077f16171697',
-        wsXmrHub: '0xe485b74fe0a6aeb590a2e655734d436daa1dec8a',
-        oracleFacet: '0xcb85ee56254f925e910e8bbe4c34b5e285fdae34',
-        vaultFacet: '0x3c6a147b3aced0ed207d75343462db1c863923cd',
-        mintFacet: '0x6933456daa0f3018b7f3ab6fbf08c66bda011c4a',
-        burnFacet: '0xd2ae40b9427ac197b3847fbe677f7027bf00a728',
-        liquidationFacet: '0x813523c2f43e81e0b5e10c072037f817b6495851',
-        yieldFacet: '0x5989690092ffcc195663c0ab4da3c71bea705049',
-        liquidityRouter: '0x4ca832cb79514d05a7162257d8bd316ad6fc46a9',
+        wrappedMonero: '0x48AAec97bD8ccB3bDE02D492929712f071E710eb',
+        wsXmrHub: '0x025B1499B5f4E51a0053aB1742B2Ecd545615e5a',
+        oracleFacet: '0xb3100e342ED58779CAFa1456174CfB2C00B8A2f1',
+        vaultFacet: '0xD4db0241e706D5ED966F15474E1Bb19Be303Ee79',
+        mintFacet: '0x792c52F3E0208b90A60A4188f711f4Bc1ED45634',
+        burnFacet: '0xe229AEcCf13687e5AAa890F6d8991ddEbDa66417',
+        liquidationFacet: '0x7196fB6da654D0E63Ffc628Ce8E5B4501eE7Ea0c',
+        yieldFacet: '0x1068D8B354F9C53e7ba932882E9898010fE32730',
+        liquidityRouter: '0xEE5F9dd5F6736b556ee306467e9aE295a7fd0de5',
         sDAI: '0xaf204776c7245bF4147c2612BF6e5972Ee483701', // Savings DAI on Gnosis
         wxDAI: '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d', // Wrapped xDAI
         pythOracle: '0x2880aB155794e7179c9eE2e38200202908C17B43',

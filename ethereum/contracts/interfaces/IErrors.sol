@@ -14,4 +14,5 @@ interface IErrors {
     error Unauthorized();
     error DeadlineExpired();
     error OnlyHub();
+    error InvalidCommitment();
 }

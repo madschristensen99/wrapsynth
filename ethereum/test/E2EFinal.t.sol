@@ -128,7 +128,7 @@ contract E2EFinalTest is Test {
         // User burns half
         uint256 burnAmount = balance / 2;
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(burnAmount, lp, user);
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(burnAmount, lp, user, bytes32(uint256(1)));
         console.log("[6] Burn requested:", burnAmount, "\n");
         
         // LP proposes hash (using Ed25519)

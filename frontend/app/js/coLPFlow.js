@@ -40,13 +40,37 @@ export class CoLPFlow {
      * @param {number} deadline - Unix timestamp deadline
      * @returns {Promise<Object>} transaction receipt with tokenId
      */
+    async updatePrices() {
+        const { updateOraclePrices } = await import('./redstoneWrapper.js?v=' + Date.now());
+        await updateOraclePrices();
+        console.log('✅ Oracle prices updated for Co-LP');
+    }
+
     async userOpenCoLP(lpVault, wsxmrAmount, deadline) {
-        const amount = parseUnits(wsxmrAmount.toString(), DECIMALS.wsXMR);
+        // Push fresh prices first — getCoLPCapacity and userOpenCoLP both need them
+        try {
+            await this.updatePrices();
+        } catch (priceErr) {
+            console.warn('⚠️ Could not update oracle prices:', priceErr.message);
+            console.log('ℹ️ Continuing anyway — transaction will revert if prices are stale');
+        }
 
-        // Approve wsXMR to hub diamond
-        await writeWsxmr('approve', [CONTRACTS.hub, amount]);
+        const amount = parseUnits(wsxmrAmount, DECIMALS.wsXMR);
 
-        const receipt = await writeHub('userOpenCoLP', [lpVault, amount, BigInt(deadline)]);
+        // Run pre-flight diagnostics
+        const preflight = await this.preflightUserOpenCoLP(lpVault, amount);
+        if (!preflight.ok) {
+            throw new Error(`Co-LP preflight failed:\n${preflight.issues.join('\n')}`);
+        }
+
+        // Check allowance before approving to avoid unnecessary txs
+        const currentAllowance = await this.getWsxmrAllowance();
+        if (currentAllowance < amount) {
+            await writeWsxmr('approve', [CONTRACTS.hub, amount]);
+        }
+
+        // userOpenCoLP mints a UniV3 NFT — needs high gas limit
+        const receipt = await writeHub('userOpenCoLP', [lpVault, amount, BigInt(deadline)], 0n, 2000000n);
         console.log('Co-LP position opened, tx:', receipt.transactionHash);
 
         // Try to extract tokenId from event logs
@@ -65,7 +89,14 @@ export class CoLPFlow {
      * @returns {Promise<Object>} transaction receipt
      */
     async unwindCoLP(tokenId, deadline) {
-        const receipt = await writeHub('unwindCoLP', [BigInt(tokenId), BigInt(deadline)]);
+        // Push fresh prices first — unwind reads oracle for tick calculations
+        try {
+            await this.updatePrices();
+        } catch (priceErr) {
+            console.warn('⚠️ Could not update oracle prices:', priceErr.message);
+        }
+
+        const receipt = await writeHub('unwindCoLP', [BigInt(tokenId), BigInt(deadline)], 0n, 2000000n);
         console.log('Co-LP position unwound, tx:', receipt.transactionHash);
         return receipt;
     }
@@ -100,13 +131,84 @@ export class CoLPFlow {
      * @returns {Promise<Object>} vault data tuple
      */
     async getVault(lpVault) {
+        return await readHub('getVault', [lpVault]);
+    }
+
+    /**
+     * @notice Run pre-flight diagnostics before userOpenCoLP and log everything
+     * @param {string} lpVault - LP vault address
+     * @param {bigint} amount - wsXMR amount in atomic units
+     * @returns {Promise<{ok: boolean, issues: string[], data: Object}>}
+     */
+    async preflightUserOpenCoLP(lpVault, amount) {
         const publicClient = getPublicClient();
-        return await publicClient.readContract({
-            address: CONTRACTS.hub,
-            abi: parseAbi(ABIS.hub),
-            functionName: 'getVault',
-            args: [lpVault]
-        });
+        const blockers = [];
+        const warnings = [];
+        const data = {};
+
+        try {
+            // 1. Vault state
+            const vault = await this.getVault(lpVault);
+            data.vault = vault;
+            if (!vault.active) blockers.push(`Vault ${lpVault} is not active`);
+            data.collateralShares = vault.collateralShares?.toString?.() ?? vault.collateralShares;
+            data.lockedCollateral = vault.lockedCollateral?.toString?.() ?? vault.lockedCollateral;
+            data.maxCoLPRangeBps = vault.maxCoLPRangeBps ?? vault[13]; // tuple index fallback
+
+            // 2. Oracle prices (best-effort: view reads through diamond fallback often revert)
+            try {
+                const xmrPrice = await readHub('getXmrPrice');
+                const collPrice = await readHub('getCollateralPrice');
+                data.xmrPrice = xmrPrice.toString();
+                data.collPrice = collPrice.toString();
+                if (xmrPrice === 0n) warnings.push('XMR oracle price is 0 (likely stale)');
+                if (collPrice === 0n) warnings.push('Collateral oracle price is 0 (likely stale)');
+            } catch (oracleErr) {
+                warnings.push(`Oracle price read failed — prices may be stale; transaction will revert if so`);
+                data.xmrPrice = 'unavailable';
+                data.collPrice = 'unavailable';
+            }
+
+            // 3. Pool initialization
+            const poolAbi = ['function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)'];
+            const slot0 = await publicClient.readContract({
+                address: CONTRACTS.uniswapV3Pool, abi: parseAbi(poolAbi), functionName: 'slot0'
+            });
+            data.poolSqrtPriceX96 = slot0[0].toString();
+            data.poolTick = slot0[1];
+            if (slot0[0] === 0n) blockers.push('Uniswap V3 pool is not initialized (sqrtPriceX96 = 0)');
+
+            // 4. Capacity
+            const capacity = await this.getCoLPCapacity(lpVault);
+            data.capacity = capacity.toString();
+            if (capacity === 0n) blockers.push('Co-LP capacity is 0 (vault has no idle collateral)');
+            if (capacity < amount) blockers.push(`Co-LP capacity (${capacity}) < requested amount (${amount})`);
+
+            // 5. User balance
+            const balance = await this.getWsxmrBalance();
+            data.userBalance = balance.toString();
+            if (balance < amount) blockers.push(`User wsXMR balance (${balance}) < requested amount (${amount})`);
+
+            // 6. Allowance
+            const allowance = await this.getWsxmrAllowance();
+            data.userAllowance = allowance.toString();
+            if (allowance < amount) warnings.push(`Allowance (${allowance}) < requested amount — approval will be submitted`);
+
+            // 7. Amount sanity
+            if (amount === 0n) blockers.push('Amount is 0');
+            if (amount < 10000n) warnings.push('Amount < 0.0001 wsXMR — may be too small for UniV3');
+
+            const issues = [...blockers, ...warnings.map(w => `[warn] ${w}`)];
+            console.log('[CoLP Preflight] data:', data);
+            console.log('[CoLP Preflight] blockers:', blockers);
+            console.log('[CoLP Preflight] warnings:', warnings);
+
+            return { ok: blockers.length === 0, issues, data };
+        } catch (err) {
+            blockers.push(`Preflight query failed: ${err.message}`);
+            console.error('[CoLP Preflight] query error:', err);
+            return { ok: false, issues: blockers, data };
+        }
     }
 
     /**

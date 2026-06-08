@@ -39,7 +39,7 @@ async function main() {
         'function provideLPKey(bytes32 requestId, bytes32 lpPublicKey) external',
         'function setMintReady(bytes32 requestId) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
-        'function requestBurn(uint256 wsxmrAmount, address lpVault, address burnRecipient) external returns (bytes32)',
+        'function requestBurn(uint256 wsxmrAmount, address lpVault, address burnRecipient, bytes32 claimCommitment) external returns (bytes32)',
         'function proposeHash(bytes32 requestId, bytes32 secretHash) external',
         'function confirmMoneroLock(bytes32 requestId) external',
         'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
@@ -176,8 +176,9 @@ async function main() {
         const approveTx = await wsxmr.approve(HUB_ADDRESS, burnAmount);
         await approveTx.wait();
         
-        const burnRequestId = await hub.callStatic.requestBurn(burnAmount, wallet.address, wallet.address);
-        const burnTx = await hub.requestBurn(burnAmount, wallet.address, wallet.address);
+        const dummyCommitment = ethers.utils.id('test');
+        const burnRequestId = await hub.callStatic.requestBurn(burnAmount, wallet.address, wallet.address, dummyCommitment);
+        const burnTx = await hub.requestBurn(burnAmount, wallet.address, wallet.address, dummyCommitment);
         await burnTx.wait();
         
         console.log('✅ Burn requested!');
@@ -335,9 +336,10 @@ async function main() {
     const approveTx = await wsxmr.approve(HUB_ADDRESS, burnAmount);
     await approveTx.wait();
     
+    const dummyCommitment = ethers.utils.id('test');
     // requestBurn returns the requestId directly
-    const burnRequestId = await hub.callStatic.requestBurn(burnAmount, wallet.address, wallet.address);
-    const burnTx = await hub.requestBurn(burnAmount, wallet.address, wallet.address);
+    const burnRequestId = await hub.callStatic.requestBurn(burnAmount, wallet.address, wallet.address, dummyCommitment);
+    const burnTx = await hub.requestBurn(burnAmount, wallet.address, wallet.address, dummyCommitment);
     await burnTx.wait();
     
     console.log('✅ Burn requested!');

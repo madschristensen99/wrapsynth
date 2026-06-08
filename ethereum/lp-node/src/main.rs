@@ -1,4 +1,5 @@
 mod api;
+mod arbitrage;
 mod cli;
 mod db;
 mod engine;
@@ -8,7 +9,7 @@ mod monero;
 mod oracle;
 mod quote;
 
-use alloy::primitives::Address;
+use alloy::primitives::{Address, U256};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
@@ -162,12 +163,13 @@ async fn main() -> Result<()> {
                 lp_vault_bytes,
             ));
             
-            // Initialize swap engine
+            // Initialize swap engine (no arbitrage in process-pending mode)
             let swap_engine = Arc::new(engine::SwapEngine::new(
                 db.clone(), 
                 evm.clone(), 
                 monero.clone(),
                 config.oracle_config.is_price_pusher,
+                None,
             ));
             
             // Calculate from_block based on hours
@@ -241,12 +243,39 @@ async fn main() -> Result<()> {
             );
             info!("Quote generator initialized");
 
+            // Initialize arbitrage bot if enabled
+            let arbitrage_bot = config.arbitrage_config.as_ref().and_then(|cfg| {
+                if cfg.enabled {
+                    info!("Arbitrage bot enabled");
+                    let max_sdai = cfg.max_trade_sdai.parse::<u128>().unwrap_or(0);
+                    let max_wsxmr = cfg.max_trade_wsxmr.parse::<u128>().unwrap_or(0);
+                    Some(Arc::new(arbitrage::ArbitrageBot::new(
+                        evm.clone(),
+                        cfg.pool_address,
+                        config.network_config.wsxmr_token,
+                        cfg.sdai_address,
+                        cfg.swap_helper,
+                        cfg.factory_address,
+                        cfg.threshold_bps,
+                        U256::from(max_sdai),
+                        U256::from(max_wsxmr),
+                        cfg.slippage_bps,
+                        cfg.poll_interval_secs,
+                        cfg.min_profit_bps,
+                    )))
+                } else {
+                    info!("Arbitrage bot disabled");
+                    None
+                }
+            });
+
             // Initialize swap engine with oracle config
             let swap_engine = Arc::new(engine::SwapEngine::new(
                 db.clone(), 
                 evm.clone(), 
                 monero.clone(),
                 config.oracle_config.is_price_pusher,
+                arbitrage_bot,
             ));
 
             // Start API server in background
@@ -321,6 +350,8 @@ struct ConfigFile {
     admin: AdminConfig,
     quote: QuoteConfig,
     oracle: OracleConfig,
+    #[serde(default)]
+    arbitrage: Option<ArbitrageConfig>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -377,6 +408,21 @@ struct OracleConfig {
     poll_interval_secs: u64,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+struct ArbitrageConfig {
+    enabled: bool,
+    pool_address: Address,
+    swap_helper: Address,
+    sdai_address: Address,
+    factory_address: Address,
+    threshold_bps: u16,
+    max_trade_sdai: String,
+    max_trade_wsxmr: String,
+    slippage_bps: u16,
+    poll_interval_secs: u64,
+    min_profit_bps: u16,
+}
+
 /// Runtime configuration combining config file and environment variables
 struct Config {
     network_config: NetworkConfig,
@@ -389,6 +435,7 @@ struct Config {
     admin_config: AdminConfig,
     quote_config: QuoteConfig,
     oracle_config: OracleConfig,
+    arbitrage_config: Option<ArbitrageConfig>,
 }
 
 impl Config {
@@ -446,6 +493,7 @@ impl Config {
             admin_config: config_file.admin,
             quote_config: config_file.quote,
             oracle_config: config_file.oracle,
+            arbitrage_config: config_file.arbitrage,
         })
     }
 

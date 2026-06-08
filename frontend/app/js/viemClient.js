@@ -57,6 +57,13 @@ export async function connectWallet() {
     const [address] = await walletClient.requestAddresses();
     userAddress = address;
 
+    // Recreate wallet client with the account so writeContract works reliably
+    walletClient = createWalletClient({
+        account: address,
+        chain: gnosis,
+        transport: custom(window.ethereum)
+    });
+
     // Ensure we're on the correct network
     await switchToGnosisChain();
 
@@ -182,11 +189,36 @@ export async function writeHub(functionName, args = [], value = 0n, gas = undefi
 
     const { request } = await getPublicClient().simulateContract(simOpts);
 
-    const hash = await client.writeContract(request);
+    const hash = await client.writeContract({ ...request, account: userAddress });
 
     // Wait for transaction confirmation
     const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
 
+    return receipt;
+}
+
+/**
+ * Write to hub contract WITHOUT simulation — useful when RPC simulation
+ * fails with "internal error" on complex diamond proxy calls.
+ * @param {string} functionName
+ * @param {array} args
+ * @param {bigint} value
+ * @param {bigint} gas
+ */
+export async function writeHubUnsafe(functionName, args = [], value = 0n, gas = 3000000n) {
+    const client = getWalletClient();
+
+    const hash = await client.writeContract({
+        address: CONTRACTS.hub,
+        abi: parsedABIs.hub,
+        functionName,
+        args,
+        value,
+        gas,
+        account: userAddress
+    });
+
+    const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
     return receipt;
 }
 
@@ -218,7 +250,7 @@ export async function writeWsxmr(functionName, args = []) {
         account: userAddress
     });
     
-    const hash = await client.writeContract(request);
+    const hash = await client.writeContract({ ...request, account: userAddress });
     const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
     
     return receipt;

@@ -15,12 +15,13 @@ export const NETWORKS = {
     }
 };
 
-// Contract addresses - Deployed on Gnosis Chain Mainnet (Diamond Architecture) - June 6, 2026
+// Contract addresses - Deployed on Gnosis Chain Mainnet (Diamond Architecture) - June 8, 2026
 export const CONTRACTS = {
-    hub: '0xe485b74fe0a6aeb590a2e655734d436daa1dec8a',  // wsXmrHub (Diamond) - DEPLOYED
-    wsxmrToken: '0xd48d298650fcd0c1c8478ee4c3ee077f16171697',
-    liquidityRouter: '0x4ca832cb79514d05a7162257d8bd316ad6fc46a9',
+    hub: '0x025B1499B5f4E51a0053aB1742B2Ecd545615e5a',  // wsXmrHub (Diamond)
+    wsxmrToken: '0x48AAec97bD8ccB3bDE02D492929712f071E710eb',
+    liquidityRouter: '0xEE5F9dd5F6736b556ee306467e9aE295a7fd0de5',
     sDAI: '0xaf204776c7245bF4147c2612BF6e5972Ee483701',
+    uniswapV3Pool: '0xfDb145F8cCDAE25120DC6E57F75eE1B288C50D90',
     // Default LP vault to use for mints (the active LP running the LP node)
     defaultLpVault: '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB'
 };
@@ -193,7 +194,7 @@ export const ABIS = {
         'function calculateMintFee(address lpVault, uint256 wsxmrAmount) external view returns (uint256)',
 
         // Burn flow — 4-step: requestBurn → proposeHash → confirmMoneroLock → finalizeBurn
-        'function requestBurn(uint256 wsxmrAmount, address lpVault, address user) external returns (bytes32 requestId)',
+        'function requestBurn(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment) external returns (bytes32 requestId)',
         'function proposeHash(bytes32 requestId, bytes32 secretHash) external',
         'function confirmMoneroLock(bytes32 requestId) external',
         'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
@@ -227,6 +228,57 @@ export const ABIS = {
         'function getCoLPCapacity(address lpVault) external view returns (uint256 maxWsxmrAcceptable)',
         'function setMaxCoLPRange(uint16 newMaxBps) external',
 
+        // Errors (so viem can decode reverts instead of showing "internal error")
+        'error StalePrice()',
+        'error PriceNormalizedToZero()',
+        'error RefundFailed()',
+        'error VaultDoesNotExist()',
+        'error ZeroAmount()',
+        'error InsufficientLPBuffer()',
+        'error DeadlineExpired()',
+        'error Unauthorized()',
+        'error ReentrancyGuard()',
+        'error ZeroAddress()',
+        'error AlreadyInitialized()',
+        'error InvalidRange()',
+        'error PositionNotFound()',
+        'error InsufficientCollateral()',
+        'error InsufficientDebt()',
+        'error InsufficientBond()',
+        'error InvalidValue()',
+        'error InvalidSecret()',
+        'error InvalidStatus()',
+        'error OnlyHub()',
+        'error BelowMinimumBurn()',
+        'error MaxBurnRequestsReached()',
+        'error BurnAlreadyExists()',
+        'error OnlyUserCanInitiate()',
+        'error OnlyRouter()',
+        'error DeadlineNotExpired()',
+        'error GracePeriodOnlyUser()',
+        'error BurnInvalidatedByLiquidation()',
+        'error InvalidCommitment()',
+        'error InvalidTimeout()',
+        'error InsufficientDeposit()',
+        'error MintAlreadyExists()',
+        'error TimeoutNotReached()',
+        'error VaultAlreadyExists()',
+        'error MaxVaultsReached()',
+        'error ExceedsMaxMargin()',
+        'error ETHTransferFailed()',
+        'error VaultHealthy()',
+        'error CancelBurnsFirst()',
+        'error InvalidPoolFeeTier()',
+        'error CooldownActive()',
+        'error XMRNotDipped()',
+        'error WarChestEmpty()',
+        'error InvalidSpotPrice()',
+        'error InvalidEMAPrice()',
+        'error PriceExponentMismatch()',
+        'error InvalidConfig()',
+        'error PoolNotInitialized()',
+        'error PoolAlreadyInitialized()',
+
         // Oracle (RedStoneOracleFacet — user can update prices with RedStone data)
         'function updateOraclePrices(bytes[] calldata) external payable',
         'function getXmrPrice() external view returns (uint256)',
@@ -240,7 +292,7 @@ export const ABIS = {
         'event MintReady(bytes32 indexed requestId)',
         'event MintFinalized(bytes32 indexed requestId, bytes32 secret)',
         'event MintCancelled(bytes32 indexed requestId)',
-        'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral)',
+        'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment)',
         'event HashProposed(bytes32 indexed requestId, bytes32 secretHash)',
         'event BurnCommitted(bytes32 indexed requestId, uint256 deadline)',
         'event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 reward)',

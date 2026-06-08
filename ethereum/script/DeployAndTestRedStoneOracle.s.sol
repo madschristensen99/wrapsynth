@@ -120,7 +120,7 @@ contract DeployAndTestRedStoneOracle is Script {
         // Burn half
         if (wsxmrBalance > 0) {
             console.log("\nRequesting burn...");
-            hubBurn.requestBurn(wsxmrBalance / 2, deployer, deployer);
+            hubBurn.requestBurn(wsxmrBalance / 2, deployer, deployer, bytes32(uint256(1)));
             console.log("SUCCESS: BURN REQUESTED!\n");
         }
 

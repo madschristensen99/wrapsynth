@@ -202,15 +202,15 @@ export class MintFlow {
         try {
             // Try to get price with 2 minute staleness tolerance
             await readHub('getXmrPrice', []);
-            console.log('✅ Oracle prices are fresh');
+            console.log('Oracle prices are fresh');
         } catch (error) {
             // Prices are stale - try to update them
-            console.warn('⚠️ Oracle prices are stale, attempting update...');
+            console.warn('Oracle prices are stale, attempting update...');
             try {
                 await this.updatePrices();
             } catch (updateError) {
-                console.warn('⚠️ Could not update prices from UI:', updateError.message);
-                console.log('ℹ️ Continuing anyway - LP node should handle price updates');
+                console.warn('Could not update prices from UI:', updateError.message);
+                console.log('Continuing anyway - LP node should handle price updates');
                 // Don't throw - the LP node will update prices
             }
         }
@@ -219,7 +219,7 @@ export class MintFlow {
     async updatePrices() {
         const { updateOraclePrices } = await import('./redstoneWrapper.js?v=' + Date.now());
         await updateOraclePrices();
-        console.log('✅ Prices updated, continuing with mint');
+        console.log('Prices updated, continuing with mint');
     }
 
     async initiateOnEVM() {
@@ -305,7 +305,7 @@ export class MintFlow {
         // Wait for LP to call provideLPKey() on-chain
         const lpPublicKey = await this.waitForLPKey();
         
-        console.log('✅ LP public key received:', lpPublicKey);
+        console.log('LP public key received:', lpPublicKey);
         
         // Get the deposit address from LP server (it computes the proper Monero address)
         console.log('Fetching deposit address from LP server...');
@@ -313,8 +313,8 @@ export class MintFlow {
             const status = await this.lpClient.getMintStatus(this.requestId);
             if (status.deposit_address) {
                 this.depositAddress = status.deposit_address;
-                console.log('📍 Monero Deposit Address:', this.depositAddress);
-                console.log('� Send exactly', this.xmrAmount, 'XMR to this address');
+                console.log('Monero Deposit Address:', this.depositAddress);
+                console.log('Send exactly', this.xmrAmount, 'XMR to this address');
             } else {
                 throw new Error('LP server did not provide deposit address');
             }
@@ -573,7 +573,7 @@ export class MintFlow {
                 if (savedState.depositAddress && savedState.depositAddress.startsWith('4')) {
                     // Valid Monero address from saved state
                     this.depositAddress = savedState.depositAddress;
-                    console.log('📍 Restored Monero Deposit Address:', this.depositAddress);
+                    console.log('Restored Monero Deposit Address:', this.depositAddress);
                 } else {
                     // Fetch from LP server
                     console.log('Fetching deposit address from LP server...');
@@ -581,7 +581,7 @@ export class MintFlow {
                         const status = await this.lpClient.getMintStatus(this.requestId);
                         if (status.deposit_address) {
                             this.depositAddress = status.deposit_address;
-                            console.log('📍 Fetched Monero Deposit Address:', this.depositAddress);
+                            console.log('Fetched Monero Deposit Address:', this.depositAddress);
                         } else {
                             throw new Error('LP server did not provide deposit address');
                         }
@@ -591,7 +591,7 @@ export class MintFlow {
                     }
                 }
                 
-                console.log('💡 Send exactly', this.xmrAmount, 'XMR to this address');
+                console.log('Send exactly', this.xmrAmount, 'XMR to this address');
                 
                 // Update state to deposit (not lp-ready) so UI shows deposit info
                 this.state = 'deposit';
