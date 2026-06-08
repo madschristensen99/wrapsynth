@@ -208,8 +208,9 @@ contract CoLPTest is Test {
         wsXmrStorage.PositionMetadata memory meta = _getPositionMetadata(tokenId);
         assertEq(meta.vaultOwner, lp, "vaultOwner should be lp");
         assertEq(meta.user, user, "user should be user");
-        assertEq(meta.wsxmrOriginal, wsxmrToDeposit, "wsxmrOriginal should match");
-        assertTrue(meta.sDAISharesOriginal > 0, "sDAISharesOriginal should be > 0");
+        assertLe(meta.wsxmrOriginal, wsxmrToDeposit, "wsxmrOriginal should be <= requested");
+        assertGt(meta.wsxmrOriginal, 0, "wsxmrOriginal should be > 0");
+        assertGt(meta.sDAISharesOriginal, 0, "sDAISharesOriginal should be > 0");
 
         console.log("PASS: userOpenCoLP - tokenId:", tokenId);
     }

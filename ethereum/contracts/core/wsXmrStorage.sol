@@ -51,6 +51,7 @@ contract wsXmrStorage {
     uint256 public constant MIN_COLP_RANGE_BPS = 1000;
     uint256 public constant MAX_COLP_RANGE_BPS = 10000;
     uint256 public constant DEFAULT_COLP_RANGE_BPS = 2500;
+    uint256 public constant DEFAULT_COLP_SLIPPAGE_BPS = 50; // 0.5%
     uint256 public constant COLP_REBALANCE_FEE_BPS = 10;
     uint16 public constant UNISWAP_V3_FEE_TIER = 3000;
     

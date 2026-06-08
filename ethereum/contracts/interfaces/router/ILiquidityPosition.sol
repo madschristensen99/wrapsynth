@@ -12,6 +12,7 @@ interface ILiquidityPosition {
     error PositionNotFound();
     error InvalidRange();
     error DeadlineExpired();
+    error SlippageExceeded();
 
     // ========== MUTATING (onlyDiamond) ==========
 
@@ -22,29 +23,36 @@ interface ILiquidityPosition {
     /// @param rangeBps Full width in bps (e.g. 2000 = ±10% around center)
     /// @param centerXmrPrice Oracle XMR price used to compute the center tick
     /// @param deadline Transaction deadline
+    /// @param slippageBps Max acceptable slippage in bps (e.g. 50 = 0.5%)
     /// @return tokenId V3 NFT id (owned by the diamond)
     /// @return liquidity Amount of liquidity minted
     /// @return tickLower Lower tick (snapped to tick spacing)
     /// @return tickUpper Upper tick (snapped to tick spacing)
+    /// @return daiConsumed Actual sDAI amount consumed by the mint
+    /// @return wsxmrConsumed Actual wsXMR amount consumed by the mint
     function mintConcentratedPosition(
         uint256 daiAmount,
         uint256 wsxmrAmount,
         uint16 rangeBps,
         uint256 centerXmrPrice,
-        uint256 deadline
+        uint256 deadline,
+        uint16 slippageBps
     ) external returns (
         uint256 tokenId,
         uint128 liquidity,
         int24 tickLower,
-        int24 tickUpper
+        int24 tickUpper,
+        uint256 daiConsumed,
+        uint256 wsxmrConsumed
     );
 
     /// @notice Drain all liquidity from a position and collect tokens to diamond.
     ///         Burns the NFT after draining.
     /// @param tokenId V3 NFT id (diamond must own it)
+    /// @param slippageBps Max acceptable slippage in bps (e.g. 50 = 0.5%)
     /// @return daiOut DAI recovered
     /// @return wsxmrOut wsXMR recovered
-    function drainPosition(uint256 tokenId)
+    function drainPosition(uint256 tokenId, uint16 slippageBps)
         external returns (uint256 daiOut, uint256 wsxmrOut);
 
     /// @notice Collect accumulated fees on a position to the diamond.

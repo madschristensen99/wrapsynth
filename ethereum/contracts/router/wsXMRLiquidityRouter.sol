@@ -35,6 +35,7 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
     int24 public constant TICK_SPACING = 60;
     int24 private constant MIN_TICK = -887272;
     int24 private constant MAX_TICK = 887272;
+    uint256 private constant BPS_DENOMINATOR = 10000;
 
     // ========== CONSTRUCTOR ==========
 
@@ -82,15 +83,19 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         uint256 daiAmount,
         uint256 wsxmrAmount,
         uint16 rangeBps,
-        uint256 centerXmrPrice,
-        uint256 deadline
+        uint256 /* centerXmrPrice */, // M2: router currently uses slot0 tick, not oracle price
+        uint256 deadline,
+        uint16 slippageBps
     ) external onlyDiamond returns (
         uint256 tokenId,
         uint128 liquidity,
         int24 tickLower,
-        int24 tickUpper
+        int24 tickUpper,
+        uint256 daiConsumed,
+        uint256 wsxmrConsumed
     ) {
         if (block.timestamp > deadline) revert DeadlineExpired();
+        if (slippageBps >= BPS_DENOMINATOR) revert SlippageExceeded();
 
         // Get current pool tick and price
         (uint160 sqrtPriceX96, int24 currentTick, , , , , ) = IUniswapV3Pool(pool).slot0();
@@ -197,6 +202,14 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
 
         (address _token0, address _token1) = sDAIIsToken0 ? (sDAI, wsXMR) : (wsXMR, sDAI);
 
+        // Compute slippage floors: at least (100% - slippageBps) of each desired amount must be consumed
+        uint256 amount0Min = amount0Desired > 0
+            ? (amount0Desired * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR
+            : 0;
+        uint256 amount1Min = amount1Desired > 0
+            ? (amount1Desired * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR
+            : 0;
+
         INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
             token0: _token0,
             token1: _token1,
@@ -205,29 +218,62 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
             tickUpper: tickUpper,
             amount0Desired: amount0Desired,
             amount1Desired: amount1Desired,
-            amount0Min: 0,
-            amount1Min: 0,
+            amount0Min: amount0Min,
+            amount1Min: amount1Min,
             recipient: address(this),
             deadline: deadline
         });
 
-        (tokenId, liquidity, , ) = INonfungiblePositionManager(positionManager).mint(params);
+        uint256 amount0;
+        uint256 amount1;
+        (tokenId, liquidity, amount0, amount1) = INonfungiblePositionManager(positionManager).mint(params);
+
+        // M2: Sweep any leftover tokens back to hub so they don't strand in the router
+        uint256 leftoverSDAI = IERC20(sDAI).balanceOf(address(this));
+        uint256 leftoverWSXMR = IERC20(wsXMR).balanceOf(address(this));
+        if (leftoverSDAI > 0) {
+            IERC20(sDAI).safeTransfer(hub, leftoverSDAI);
+        }
+        if (leftoverWSXMR > 0) {
+            IERC20(wsXMR).safeTransfer(hub, leftoverWSXMR);
+        }
+
+        // Map token0/token1 consumed back to sDAI/wsXMR for caller accounting
+        (daiConsumed, wsxmrConsumed) = sDAIIsToken0
+            ? (amount0, amount1)
+            : (amount1, amount0);
     }
 
-    function drainPosition(uint256 tokenId)
+    function drainPosition(uint256 tokenId, uint16 slippageBps)
         external onlyDiamond
         returns (uint256 daiOut, uint256 wsxmrOut)
     {
+        if (slippageBps >= BPS_DENOMINATOR) revert SlippageExceeded();
+
         (, , , , , , , uint128 liq, , , , ) =
             INonfungiblePositionManager(positionManager).positions(tokenId);
 
         if (liq > 0) {
+            // Query expected amounts for slippage protection on decreaseLiquidity
+            (uint160 sqrtPriceX96, , , , , , ) = IUniswapV3Pool(pool).slot0();
+            (uint256 expectedDai, uint256 expectedWsxmr) = _getAmountsAtSqrtPrice(tokenId, sqrtPriceX96);
+
+            (uint256 min0, uint256 min1) = sDAIIsToken0
+                ? (
+                    expectedDai > 0 ? (expectedDai * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR : 0,
+                    expectedWsxmr > 0 ? (expectedWsxmr * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR : 0
+                  )
+                : (
+                    expectedWsxmr > 0 ? (expectedWsxmr * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR : 0,
+                    expectedDai > 0 ? (expectedDai * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR : 0
+                  );
+
             INonfungiblePositionManager.DecreaseLiquidityParams memory decParams =
                 INonfungiblePositionManager.DecreaseLiquidityParams({
                     tokenId: tokenId,
                     liquidity: liq,
-                    amount0Min: 0,
-                    amount1Min: 0,
+                    amount0Min: min0,
+                    amount1Min: min1,
                     deadline: block.timestamp
                 });
             INonfungiblePositionManager(positionManager).decreaseLiquidity(decParams);
