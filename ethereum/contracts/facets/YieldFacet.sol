@@ -31,18 +31,20 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         
         uint256 sDAIToSpend = (yieldWarChest * BUY_CHUNK_PERCENT) / 100;
         if (sDAIToSpend == 0) revert WarChestEmpty();
-        
+
+        // L1: Carve keeper reward out before redeeming so it stays backed
+        uint256 keeperReward = (sDAIToSpend * 200) / 10000;
+        uint256 sDAIForSwap = sDAIToSpend - keeperReward;
+
         yieldWarChest -= sDAIToSpend;
         lastBuyTimestamp = block.timestamp;
-        
-        uint256 daiAmount = ISavingsDAI(GnosisAddresses.SDAI).redeem(sDAIToSpend, address(this), address(this));
-        
+
+        uint256 daiAmount = ISavingsDAI(GnosisAddresses.SDAI).redeem(sDAIForSwap, address(this), address(this));
+
         IERC20(GnosisAddresses.XDAI).forceApprove(GnosisAddresses.UNISWAP_V3_ROUTER, daiAmount);
-        
-        // TODO H1: Implement TWAP for better MEV protection
-        // For now, use spot oracle (documented MEV risk)
+
         uint256 minWsxmr = (daiAmount * PRICE_PRECISION * (10000 - MEV_SLIPPAGE_BPS)) / (spotPrice * 10000);
-        
+
         ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
             tokenIn: GnosisAddresses.XDAI,
             tokenOut: wsxmrToken,
@@ -53,10 +55,10 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
             amountOutMinimum: minWsxmr,
             sqrtPriceLimitX96: 0
         });
-        
+
         uint256 wsxmrBought = ISwapRouter(GnosisAddresses.UNISWAP_V3_ROUTER).exactInputSingle(params);
-        
-        uint256 keeperReward = (sDAIToSpend * 200) / 10000;
+
+        // Queue keeper reward in sDAI shares (still backed, never redeemed to xDAI)
         if (keeperReward > 0) {
             pendingReturns[msg.sender][GnosisAddresses.SDAI] += keeperReward;
             globalPendingSDAI += keeperReward;

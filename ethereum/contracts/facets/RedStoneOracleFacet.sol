@@ -34,7 +34,15 @@ contract RedStoneOracleFacet is wsXmrStorage, IOracleFacet, PrimaryProdDataServi
         // RedStone returns 8 decimals, convert to int192
         lastXmrPrice = int192(int256(xmrPrice));
         lastXmrPriceTimestamp = block.timestamp;
-        
+
+        // M1: Update on-chain EMA accumulator
+        uint256 newPrice = uint256(xmrPrice) * 1e10;
+        if (xmrEmaPrice == 0) {
+            xmrEmaPrice = newPrice;
+        } else {
+            xmrEmaPrice = (EMA_ALPHA_NUMERATOR * newPrice + (EMA_DENOMINATOR - EMA_ALPHA_NUMERATOR) * xmrEmaPrice) / EMA_DENOMINATOR;
+        }
+
         lastCollateralPrice = int192(int256(daiPrice));
         lastCollateralPriceTimestamp = block.timestamp;
         
@@ -81,7 +89,9 @@ contract RedStoneOracleFacet is wsXmrStorage, IOracleFacet, PrimaryProdDataServi
     
     /// @inheritdoc IOracleFacet
     function getXmrEmaPrice() external view returns (uint256) {
-        return getXmrPriceWithAge(2 minutes);
+        if (block.timestamp > lastXmrPriceTimestamp + 2 minutes) revert StalePrice();
+        if (xmrEmaPrice == 0) revert StalePrice();
+        return xmrEmaPrice;
     }
     
     /// @inheritdoc IOracleFacet
