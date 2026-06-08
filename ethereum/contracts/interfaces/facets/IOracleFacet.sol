@@ -12,6 +12,7 @@ interface IOracleFacet {
     error StalePrice();
     error PriceNormalizedToZero();
     error RefundFailed();
+    error PriceDeviationTooHigh();
     
     // ========== CONSTANTS ==========
     // Note: Constants are defined in wsXmrStorage:
