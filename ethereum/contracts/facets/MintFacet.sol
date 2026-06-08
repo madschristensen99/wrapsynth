@@ -168,6 +168,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         
         MintRequest storage request = mintRequests[requestId];
         if (request.status != MintStatus.READY) revert InvalidStatus();
+        if (secret == bytes32(0)) revert InvalidSecret();
         
         // Verify the secret matches the commitment
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
