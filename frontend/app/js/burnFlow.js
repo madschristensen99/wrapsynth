@@ -1,9 +1,8 @@
 // Burn Flow - wsXMR to XMR (5-step Diamond Architecture)
 
 import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG } from './config.js';
-import { readHub, writeHub, readWsxmr, writeWsxmr, watchContractEvent, getUserAddress } from './viemClient.js';
+import { readHub, writeHub, writeHubUnsafe, readWsxmr, writeWsxmr, watchContractEvent, getUserAddress } from './viemClient.js';
 import { getPhantomAgent } from './phantomAgent.js';
-import { getLPClient } from './lpClient.js';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
 import { keccak256, toHex } from 'https://esm.sh/viem@2.7.0';
 
@@ -17,7 +16,8 @@ export class BurnFlow {
         this.destination = null;
         this.secretHash = null;
         this.eventWatchers = [];
-        this.lpClient = getLPClient();
+        this.lpProposeStartTime = null;
+        this.lpProposeTimeout = 1800000; // 30 minutes in ms
     }
 
     async start(lpVault, wsxmrAmount, destination) {
@@ -61,6 +61,12 @@ export class BurnFlow {
         });
     }
 
+    async updatePrices() {
+        const { updateOraclePrices } = await import('./redstoneWrapper.js?v=' + Date.now());
+        await updateOraclePrices();
+        console.log('Oracle prices updated for burn');
+    }
+
     async requestBurnOnEVM() {
         this.state = 'evm-request';
         updateSwapState({ state: this.state });
@@ -73,16 +79,83 @@ export class BurnFlow {
         await writeWsxmr('approve', [CONTRACTS.hub, wsxmrAmountAtomic]);
         console.log('wsXMR approved for burn');
 
-        const receipt = await writeHub('requestBurn', [
-            wsxmrAmountAtomic,
-            this.lpVault,
-            userAddress
-        ]);
+        // Push fresh prices before attempting requestBurn
+        try {
+            await this.updatePrices();
+        } catch (priceErr) {
+            console.warn('Could not update oracle prices:', priceErr.message);
+            console.log('Continuing anyway — transaction will revert if prices are stale');
+        }
+
+        // Get the user's Ed25519 commitment (same as mint flow)
+        const claimCommitment = this.agent.getCommitment();
+        console.log('Using claim commitment for burn:', claimCommitment);
+
+        let receipt;
+        const attemptRequestBurn = async () => {
+            return await writeHub('requestBurn', [
+                wsxmrAmountAtomic,
+                this.lpVault,
+                userAddress,
+                claimCommitment
+            ]);
+        };
+
+        try {
+            receipt = await attemptRequestBurn();
+        } catch (error) {
+            const isStalePrice = error.message && (
+                error.message.includes('0x19abf40e') ||
+                error.message.includes('StalePrice')
+            );
+
+            if (isStalePrice) {
+                console.warn('Oracle prices stale, pushing fresh prices...');
+                updateSwapState({ state: 'evm-request', message: 'Pushing fresh oracle prices...' });
+
+                try {
+                    await this.updatePrices();
+                    console.log('Fresh prices pushed, retrying requestBurn...');
+                } catch (updateErr) {
+                    console.warn('Price update failed:', updateErr.message);
+                    // Fall back to polling if proactive update fails
+                    let fresh = false;
+                    for (let i = 0; i < 20; i++) {
+                        await new Promise(r => setTimeout(r, 3000));
+                        try {
+                            await readHub('getXmrPrice', []);
+                            fresh = true;
+                            break;
+                        } catch (pollError) {
+                            if (!pollError.message.includes('0x19abf40e') && !pollError.message.includes('StalePrice')) {
+                                throw pollError;
+                            }
+                        }
+                    }
+                    if (!fresh) {
+                        throw new Error('Oracle prices are still stale after 60 seconds. Please wait for the LP node to update prices, then try again.');
+                    }
+                }
+
+                receipt = await attemptRequestBurn();
+            } else if (error.message && error.message.includes('internal error')) {
+                console.warn('RPC simulation failed with internal error, retrying without simulation...');
+                updateSwapState({ state: 'evm-request', message: 'Submitting burn request (bypassing simulation)...' });
+                receipt = await writeHubUnsafe('requestBurn', [
+                    wsxmrAmountAtomic,
+                    this.lpVault,
+                    userAddress,
+                    claimCommitment
+                ], 0n, 3000000n);
+            } else {
+                throw error;
+            }
+        }
 
         console.log('Burn requested, tx:', receipt.transactionHash);
 
         const burnRequestedEvent = receipt.logs.find(log => 
-            log.topics[0] === keccak256(toHex('BurnRequested(bytes32,address,address,uint256,uint256,uint256)'))
+            log.topics[0] === keccak256(toHex('BurnRequested(bytes32,address,address,uint256,uint256,uint256,bytes32)'))
         );
 
         if (burnRequestedEvent) {
@@ -104,27 +177,19 @@ export class BurnFlow {
 
     async waitForLPProposal() {
         console.log('Waiting for LP to propose secret hash...');
+        this.lpProposeStartTime = Date.now();
 
-        const pollStatus = async () => {
-            try {
-                const status = await this.lpClient.getBurnStatus(this.requestId);
-                console.log('Burn status:', status);
-                
-                if (status.status === 'HASH_PROPOSED' || status.status === 'COMMITTED') {
-                    this.secretHash = status.secret_hash;
-                    return true;
-                }
-                
-                updateSwapState({
-                    requestId: this.requestId,
-                    lpStatus: status.status,
-                    lpMessage: status.message
-                });
-            } catch (error) {
-                console.warn('LP status poll failed:', error);
-            }
-            return false;
-        };
+        // Update countdown in swap state while waiting
+        const countdownInterval = setInterval(() => {
+            const elapsed = Date.now() - this.lpProposeStartTime;
+            const remaining = Math.max(0, this.lpProposeTimeout - elapsed);
+            updateSwapState({
+                requestId: this.requestId,
+                lpStatus: 'waiting',
+                lpMessage: 'Waiting for LP to lock XMR and propose hash...',
+                lpProposeRemaining: remaining
+            });
+        }, SWAP_CONFIG.pollInterval);
 
         return new Promise((resolve, reject) => {
             const unwatch = watchContractEvent(
@@ -135,27 +200,19 @@ export class BurnFlow {
                 (log) => {
                     console.log('HashProposed event received');
                     this.secretHash = log.args.secretHash;
-                    clearInterval(pollInterval);
+                    clearInterval(countdownInterval);
                     unwatch();
                     resolve();
                 }
             );
 
-            const pollInterval = setInterval(async () => {
-                if (await pollStatus()) {
-                    clearInterval(pollInterval);
-                    unwatch();
-                    resolve();
-                }
-            }, SWAP_CONFIG.pollInterval);
-
             this.eventWatchers.push(unwatch);
 
             setTimeout(() => {
-                clearInterval(pollInterval);
+                clearInterval(countdownInterval);
                 unwatch();
                 reject(new Error('LP proposal timeout'));
-            }, 1800000);
+            }, this.lpProposeTimeout);
         });
     }
 

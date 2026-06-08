@@ -87,13 +87,13 @@ describe("Burning Lifecycle and Slashing Mechanics", function () {
   describe("Edge Cases", function () {
     it("Should revert when burning zero amount", async function () {
       await expect(
-        vaultManager.connect(user1).requestBurn(0, lp1.address)
+        vaultManager.connect(user1).requestBurn(0, lp1.address, user1.address, ethers.id("test"))
       ).to.be.revertedWithCustomError(vaultManager, "ZeroAmount");
     });
 
     it("Should revert when burning to non-existent vault", async function () {
       await expect(
-        vaultManager.connect(user1).requestBurn(BURN_AMOUNT, user2.address)
+        vaultManager.connect(user1).requestBurn(BURN_AMOUNT, user2.address, user1.address, ethers.id("test"))
       ).to.be.revertedWithCustomError(vaultManager, "VaultDoesNotExist");
     });
 
@@ -101,7 +101,7 @@ describe("Burning Lifecycle and Slashing Mechanics", function () {
       const excessiveAmount = ethers.parseUnits("1000000", 8);
       
       await expect(
-        vaultManager.connect(user1).requestBurn(excessiveAmount, lp1.address)
+        vaultManager.connect(user1).requestBurn(excessiveAmount, lp1.address, user1.address, ethers.id("test"))
       ).to.be.revertedWithCustomError(vaultManager, "InsufficientDebt");
     });
   });

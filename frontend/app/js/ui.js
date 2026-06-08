@@ -207,8 +207,8 @@ export function showResumeBanner(swaps, onResume, onResolve) {
 
     // Update title
     elements.resumeBannerTitle.textContent = swaps.length === 1
-        ? 'Active swap detected!'
-        : `${swaps.length} active swaps detected!`;
+        ? 'Active operation detected!'
+        : `${swaps.length} active operations detected!`;
 
     // Build list
     elements.resumeSwapList.innerHTML = '';
@@ -269,12 +269,16 @@ function formatSwapState(state) {
         'awaiting-lp-key': 'Awaiting LP',
         'deposit': 'Deposit XMR',
         'lp-ready': 'LP Ready',
+        'lp-verifying': 'LP Verifying',
         'lp-confirm': 'LP Confirming',
         'finalize': 'Finalizing',
         'evm-request': 'Requesting',
         'lp-propose': 'LP Proposing',
+        'confirm-lock': 'Claiming XMR',
+        'lp-finalize': 'Finalizing',
         'committed': 'Committed',
-        'completed': 'Complete'
+        'completed': 'Complete',
+        'expired': 'Expired'
     };
     return labels[state] || state;
 }
@@ -324,6 +328,16 @@ export function hideContractsBanner() {
     elements.contractsBanner.classList.add('hidden');
 }
 
+const ACTIVE_TAB_KEY = 'wrapsynth-active-tab';
+
+export function saveActiveTab(tab) {
+    try {
+        localStorage.setItem(ACTIVE_TAB_KEY, tab);
+    } catch (e) {
+        // ignore (private browsing mode)
+    }
+}
+
 /**
  * Switch to mint tab
  */
@@ -336,6 +350,7 @@ export function showMintTab() {
     elements.burnPanel.classList.add('hidden');
     elements.coLPPanel.classList.add('hidden');
     elements.lpPanel.classList.add('hidden');
+    saveActiveTab('mint');
 }
 
 /**
@@ -350,7 +365,8 @@ export async function showBurnTab() {
     elements.mintPanel.classList.add('hidden');
     elements.coLPPanel.classList.add('hidden');
     elements.lpPanel.classList.add('hidden');
-    
+    saveActiveTab('burn');
+
     // Update balance when showing burn tab
     const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js');
     const address = getUserAddress();
@@ -563,12 +579,15 @@ export function showClaimWsXmrButton(onClaim) {
         claimButton = document.createElement('button');
         claimButton.className = 'btn btn-primary claim-wsxmr-btn';
         claimButton.innerHTML = `
-            <span class="btn-icon">${getIconSVG('check')}</span>
-            <span>Claim wsXMR</span>
+            <span class="claim-glow"></span>
+            <span class="claim-content">
+                <span class="claim-icon">${getIconSVG('zap')}</span>
+                <span class="claim-text">Claim wsXMR</span>
+            </span>
         `;
         elements.mintActions.appendChild(claimButton);
     }
-    
+
     claimButton.classList.remove('hidden');
     claimButton.onclick = onClaim;
     
@@ -589,7 +608,11 @@ export function updateBurnProgress(step, status = null) {
             stepEl.classList.add('active');
             if (status) {
                 const statusEl = stepEl.querySelector('.step-status');
-                statusEl.textContent = status;
+                if (status.includes('Waiting')) {
+                    statusEl.innerHTML = `<svg class="spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:6px;color:var(--accent-orange);"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> ${status}`;
+                } else {
+                    statusEl.textContent = status;
+                }
             }
         } else {
             stepEl.classList.remove('active');
@@ -638,17 +661,57 @@ export function showCoLPTab() {
     elements.mintPanel.classList.add('hidden');
     elements.burnPanel.classList.add('hidden');
     elements.lpPanel.classList.add('hidden');
+    saveActiveTab('co-lp');
 }
 
 export function showSuccess(title, message) {
-    showModal(title, `<p style="color: var(--success-color);">✅ ${message}</p>`);
+    showModal(title, `<p style="color: var(--success-color);">${message}</p>`);
+}
+
+/**
+ * Show mint complete inline banner + confetti (no modal)
+ */
+export function showMintComplete(amount) {
+    const mintPanel = document.getElementById('mint-panel');
+    if (!mintPanel) return;
+
+    // Remove any existing banner
+    const existing = mintPanel.querySelector('.mint-complete-banner');
+    if (existing) existing.remove();
+
+    const banner = document.createElement('div');
+    banner.className = 'mint-complete-banner';
+    banner.innerHTML = `
+        <div class="mint-complete-inner">
+            <h3>Mint Complete</h3>
+            <p>Successfully minted ${amount} wsXMR!</p>
+        </div>
+        <span class="mint-complete-timer">0s ago</span>
+    `;
+    mintPanel.insertBefore(banner, mintPanel.firstChild);
+
+    const timerEl = banner.querySelector('.mint-complete-timer');
+    let seconds = 0;
+    const timerId = setInterval(() => {
+        seconds++;
+        if (seconds >= 60) {
+            clearInterval(timerId);
+            banner.remove();
+            return;
+        }
+        if (timerEl) {
+            timerEl.textContent = seconds + 's ago';
+        }
+    }, 1000);
+
+    launchConfetti();
 }
 
 /**
  * Show error modal
  */
 export function showError(title, message) {
-    showModal(title, `<p style="color: var(--error-color);">❌ ${message}</p>`, true);
+    showModal(title, `<p style="color: var(--error-color);">${message}</p>`, true);
 }
 
 /**
@@ -711,13 +774,13 @@ export function setupCopyButtons() {
         btn.addEventListener('click', () => {
             const targetId = btn.getAttribute('data-copy');
             const targetEl = document.getElementById(targetId);
-            
+
             if (targetEl) {
                 const text = targetEl.textContent;
                 navigator.clipboard.writeText(text).then(() => {
-                    btn.textContent = '✅';
+                    btn.innerHTML = getIconSVG('check');
                     setTimeout(() => {
-                        btn.textContent = '📋';
+                        btn.innerHTML = getIconSVG('clipboard');
                     }, 2000);
                 });
             }
@@ -831,6 +894,117 @@ function makePieChart(usedPct, pendingPct, bufferPct, freePct) {
         <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#10b981" stroke-width="${strokeW}" stroke-dasharray="${freeDash}" stroke-dashoffset="${freeOff}" transform="rotate(-90 ${cx} ${cy})"/>
         <circle cx="${cx}" cy="${cy}" r="${r - strokeW / 2}" fill="var(--bg-card-light)"/>
     </svg>`;
+}
+
+/**
+ * Launch confetti - heavy rain falling from top of screen
+ */
+export function launchConfetti() {
+    const canvas = document.createElement('canvas');
+    canvas.id = 'confetti-canvas';
+    document.body.appendChild(canvas);
+
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const particles = [];
+    const colors = ['#ff6b00', '#ff9f43', '#10b981', '#3b82f6', '#a855f7', '#ef4444', '#fbbf24'];
+    const totalParticles = 350;
+
+    function spawnParticle(delay = 0) {
+        const w = canvas.width;
+        const isStrip = Math.random() > 0.4;
+        const size = Math.random() * 5 + 3;
+        const stripRatio = isStrip ? (Math.random() > 0.5 ? 2.5 : 0.4) : 1;
+
+        particles.push({
+            x: Math.random() * (w + 200) - 100,
+            y: -Math.random() * 100 - 10 - delay,
+            vx: (Math.random() - 0.5) * 3,
+            vy: Math.random() * 3 + 5,
+            w: isStrip ? size * stripRatio : size,
+            h: isStrip ? size / stripRatio : size,
+            color: colors[Math.floor(Math.random() * colors.length)],
+            rotation: Math.random() * 360,
+            rotationSpeed: (Math.random() - 0.5) * 8,
+            drag: 0.985,
+            gravity: 0.18 + Math.random() * 0.12,
+            opacity: 0,
+            fadeIn: 0.02 + Math.random() * 0.03,
+            decay: 0.004 + Math.random() * 0.006,
+            maxOpacity: 0.7 + Math.random() * 0.3,
+            phase: 'in'
+        });
+    }
+
+    for (let i = 0; i < totalParticles; i++) {
+        spawnParticle(i * 1.2);
+    }
+
+    let animationId;
+    function animate() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        let active = 0;
+
+        for (const p of particles) {
+            if (p.opacity <= 0 && p.phase === 'out') continue;
+            active++;
+
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vy += p.gravity;
+            p.vx *= p.drag;
+            p.vy *= p.drag;
+            p.rotation += p.rotationSpeed;
+
+            if (p.phase === 'in') {
+                p.opacity += p.fadeIn;
+                if (p.opacity >= p.maxOpacity) {
+                    p.opacity = p.maxOpacity;
+                    p.phase = 'falling';
+                }
+            } else if (p.phase === 'falling') {
+                p.opacity -= p.decay;
+                if (p.opacity <= 0) {
+                    p.opacity = 0;
+                    p.phase = 'out';
+                }
+            }
+
+            ctx.save();
+            ctx.translate(p.x, p.y);
+            ctx.rotate((p.rotation * Math.PI) / 180);
+            ctx.globalAlpha = Math.max(0, p.opacity);
+            ctx.fillStyle = p.color;
+            ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+            ctx.restore();
+        }
+
+        if (active > 0) {
+            animationId = requestAnimationFrame(animate);
+        } else {
+            cancelAnimationFrame(animationId);
+            canvas.remove();
+        }
+    }
+
+    animate();
+
+    // Resize handler
+    const onResize = () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    };
+    window.addEventListener('resize', onResize);
+    // Clean up resize listener when canvas removed
+    const observer = new MutationObserver(() => {
+        if (!document.body.contains(canvas)) {
+            window.removeEventListener('resize', onResize);
+            observer.disconnect();
+        }
+    });
+    observer.observe(document.body, { childList: true });
 }
 
 /**

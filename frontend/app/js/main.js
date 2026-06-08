@@ -24,6 +24,7 @@ import {
     showMintTab,
     showBurnTab,
     showCoLPTab,
+    saveActiveTab,
     populateVaults,
     showVaultInfo,
     updateMintProgress,
@@ -32,6 +33,8 @@ import {
     updateBurnProgress,
     completeBurnStep,
     showSuccess,
+    showMintComplete,
+    launchConfetti,
     showError,
     showResumeError,
     disableInputs,
@@ -113,7 +116,7 @@ async function fetch24hVolume() {
         
         const hubAbi = parseAbi([
             'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, uint256 timeout)',
-            'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral)'
+            'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment)'
         ]);
         
         const [mintEvents, burnEvents] = await Promise.all([
@@ -224,7 +227,17 @@ async function init() {
     // Listen for account/chain changes
     onAccountsChanged(handleAccountChange);
     onChainChanged(handleChainChange);
-    
+
+    // Restore previously active tab
+    const savedTab = localStorage.getItem('wrapsynth-active-tab');
+    if (savedTab === 'burn') {
+        await showBurnTab();
+    } else if (savedTab === 'co-lp') {
+        await handleCoLPTab();
+    } else if (savedTab === 'lp') {
+        await handleLpTab();
+    }
+
     console.log('[SUCCESS] Phantom Agent ready');
 }
 
@@ -400,7 +413,11 @@ async function handleConnectWallet() {
         
         // Load vaults
         await loadVaults();
-        
+
+        // Refresh Co-LP state
+        await refreshCoLPBalance();
+        await handleRefreshCoLPPositions();
+
         // Check for active swaps on chain
         await checkForActiveSwapOnChain(address);
         
@@ -462,6 +479,8 @@ async function handleAccountChange(newAddress) {
         }
         showWalletConnected(newAddress, balance);
         await loadVaults();
+        await refreshCoLPBalance();
+        await handleRefreshCoLPPositions();
         await checkForActiveSwapOnChain(newAddress);
         await checkPendingReturns(newAddress);
         
@@ -549,6 +568,8 @@ async function handleChainChange(chainId) {
             }
             showWalletConnected(address, balance);
             await loadVaults();
+            await refreshCoLPBalance();
+            await handleRefreshCoLPPositions();
         }
     } catch (error) {
         console.error('Error handling chain change:', error);
@@ -600,6 +621,11 @@ async function checkForActiveSwapOnChain(userAddress) {
             mintRequestIds = [];
         }
 
+        // Get current block number for timeout checking
+        const { getPublicClient } = await import('./viemClient.js');
+        const publicClient = getPublicClient();
+        const currentBlock = await publicClient.getBlockNumber();
+
         for (const requestId of mintRequestIds) {
             let mintReq;
             try {
@@ -611,6 +637,14 @@ async function checkForActiveSwapOnChain(userAddress) {
 
             // Status: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
             if (mintReq.status === 1 || mintReq.status === 2 || mintReq.status === 3) {
+                // Check if mint has expired
+                const timeout = Number(mintReq.timeout);
+                if (currentBlock >= timeout) {
+                    console.log('[CHAIN CHECK] Mint expired:', { requestId, timeout, currentBlock });
+                    // Don't add to active list - it's expired and should be cancelled
+                    continue;
+                }
+
                 activeRequestIds.add(requestId);
 
                 let lpPublicKey = '0x0000000000000000000000000000000000000000000000000000000000000000';
@@ -671,6 +705,16 @@ async function checkForActiveSwapOnChain(userAddress) {
 
             // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=FINALIZED, 5=CANCELLED, 6=SLASHED
             if (burnReq.status === 1 || burnReq.status === 2 || burnReq.status === 3) {
+                // Check if burn has expired (only for REQUESTED/PROPOSED status)
+                if (burnReq.status === 1 || burnReq.status === 2) {
+                    const deadline = Number(burnReq.deadline);
+                    if (currentBlock >= deadline) {
+                        console.log('[CHAIN CHECK] Burn expired:', { requestId, deadline, currentBlock });
+                        // Don't add to active list - it's expired and can be cancelled
+                        continue;
+                    }
+                }
+
                 activeRequestIds.add(requestId);
                 let state;
                 if (burnReq.status === 3) state = 'committed';
@@ -909,10 +953,10 @@ async function handleCoLPOpen() {
         return;
     }
 
-    const amount = parseFloat(amountInput?.value);
+    const amountRaw = amountInput?.value?.trim();
     const vaultAddress = vaultSelect?.value;
 
-    if (!amount || amount <= 0) {
+    if (!amountRaw || parseFloat(amountRaw) <= 0) {
         showError('Invalid Input', 'Enter a valid wsXMR amount');
         return;
     }
@@ -928,7 +972,7 @@ async function handleCoLPOpen() {
         // Default deadline: 10 minutes from now
         const deadline = Math.floor(Date.now() / 1000) + 600;
 
-        const { receipt, tokenId } = await coLPFlow.userOpenCoLP(vaultAddress, amount, deadline);
+        const { receipt, tokenId } = await coLPFlow.userOpenCoLP(vaultAddress, amountRaw, deadline);
 
         if (tokenId) {
             showSuccess('Position Opened', `Co-LP position created with token ID: ${tokenId}`);
@@ -1060,7 +1104,8 @@ async function handleLpTab() {
     elements.tabBurn.classList.remove('active');
     elements.tabCoLP.classList.remove('active');
     elements.tabLp.classList.add('active');
-    
+    saveActiveTab('lp');
+
     // Check if user is connected
     const userAddress = getUserAddress();
     if (!userAddress) {
@@ -1223,10 +1268,39 @@ async function handleResolveSwap(swap) {
         // REQUESTED burn: cancel on-chain to recover wsXMR
         else if (swap.type === 'burn' && swap.state === 'evm-request') {
             console.log('Resolving stale burn on-chain:', swap.requestId);
-            const { writeHub } = await import('./viemClient.js');
-            const receipt = await writeHub('cancelBurn', [swap.requestId]);
-            console.log('cancelBurn tx:', receipt.transactionHash);
-            showSuccess('Burn Cancelled', 'Your wsXMR has been returned.');
+            const { writeHub, getPublicClient } = await import('./viemClient.js');
+            const publicClient = getPublicClient();
+            
+            // Check burn request status and deadline before cancelling
+            const burnReq = await readHub('getBurnRequest', [swap.requestId]);
+            const currentBlock = await publicClient.getBlockNumber();
+            
+            // BurnStatus: 0=INVALID,1=REQUESTED,2=PROPOSED,3=COMMITTED,4=CANCELLED,5=COMPLETED,6=SLASHED
+            const status = Number(burnReq.status);
+            const deadline = burnReq.deadline;
+            
+            console.log('Burn status:', status, 'deadline:', deadline, 'current block:', currentBlock);
+            
+            if (status === 4 || status === 5 || status === 6) {
+                // Already resolved on-chain, just clear locally
+                showSuccess('Burn Already Resolved', 'This burn has already been cancelled, completed, or slashed on-chain.');
+            } else if (status === 1 || status === 2) {
+                if (currentBlock >= deadline) {
+                    const receipt = await writeHub('cancelBurn', [swap.requestId]);
+                    console.log('cancelBurn tx:', receipt.transactionHash);
+                    showSuccess('Burn Cancelled', 'Your wsXMR has been returned.');
+                } else {
+                    const blocksRemaining = Number(deadline - currentBlock);
+                    const estSeconds = blocksRemaining * 5; // ~5s per block on Gnosis
+                    const mins = Math.floor(estSeconds / 60);
+                    const secs = estSeconds % 60;
+                    showError('Cannot Cancel Yet', `Deadline has not expired. Please wait ~${mins}m ${secs}s more (${blocksRemaining} blocks) before you can cancel this burn.`);
+                    return; // Don't clear from storage
+                }
+            } else {
+                showError('Invalid Status', 'This burn request has an unexpected status. Please check the block explorer.');
+                return;
+            }
         }
         // Beyond PENDING/REQUESTED: stuck without secret, just clear locally
         else {
@@ -1450,9 +1524,10 @@ async function handleStartMint() {
         // Start the flow with the LP vault that has the running LP node
         await currentMintFlow.start(CONTRACTS.defaultLpVault, amount);
         
-        // Success
-        showSuccess('Mint Complete', `Successfully minted ${amount} wsXMR!`);
-        
+        // Success - confetti explosion instead of modal
+        showMintComplete(amount);
+        launchConfetti();
+
         // Update balance
         const address = getUserAddress();
         const balance = await getWsXmrBalance(address);
@@ -1617,20 +1692,28 @@ function trackBurnProgress(flow) {
                 completeBurnStep('init');
                 updateBurnProgress('evm-request', 'Submitting burn request...');
                 break;
-            case 'lp-commit':
+            case 'lp-propose':
                 completeBurnStep('evm-request');
-                updateBurnProgress('lp-commit', 'Waiting for LP to lock XMR...');
+                let lpStatus = 'Waiting for LP to lock XMR...';
+                if (flow.lpProposeStartTime) {
+                    const elapsed = Date.now() - flow.lpProposeStartTime;
+                    const remaining = Math.max(0, flow.lpProposeTimeout - elapsed);
+                    const mins = Math.floor(remaining / 60000);
+                    const secs = Math.floor((remaining % 60000) / 1000);
+                    lpStatus = `Waiting for LP to lock XMR... ${mins}:${secs.toString().padStart(2, '0')} remaining`;
+                }
+                updateBurnProgress('lp-propose', lpStatus);
                 break;
-            case 'claim-xmr':
-                completeBurnStep('lp-commit');
-                updateBurnProgress('claim-xmr', 'Claiming XMR on Monero chain...');
+            case 'confirm-lock':
+                completeBurnStep('lp-propose');
+                updateBurnProgress('confirm-lock', 'Claiming XMR on Monero chain...');
                 break;
-            case 'finalize':
-                completeBurnStep('claim-xmr');
-                updateBurnProgress('finalize', 'Finalizing on EVM...');
+            case 'lp-finalize':
+                completeBurnStep('confirm-lock');
+                updateBurnProgress('lp-finalize', 'Finalizing on EVM...');
                 break;
             case 'completed':
-                completeBurnStep('finalize');
+                completeBurnStep('lp-finalize');
                 clearInterval(checkState);
                 break;
         }

@@ -9,7 +9,7 @@ use alloy::sol_types::SolEvent;
 use anyhow::{anyhow, Context, Result};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 // Define contract ABIs using Alloy's sol! macro
 sol! {
@@ -19,7 +19,17 @@ sol! {
         function allowance(address owner, address spender) external view returns (uint256);
         function balanceOf(address account) external view returns (uint256);
     }
-    
+
+    #[sol(rpc)]
+    contract SavingsDAI {
+        function deposit(uint256 assets, address receiver) external payable returns (uint256 shares);
+        function withdraw(uint256 assets, address receiver, address owner) external returns (uint256 shares);
+        function previewDeposit(uint256 assets) external view returns (uint256);
+        function previewWithdraw(uint256 assets) external view returns (uint256);
+        function convertToShares(uint256 assets) external view returns (uint256);
+        function convertToAssets(uint256 shares) external view returns (uint256);
+    }
+
     #[sol(rpc)]
     contract WETH9 {
         function deposit() external payable;
@@ -36,6 +46,38 @@ sol! {
         event PricesUpdated(uint256 xmrPrice, uint256 daiPrice, uint256 timestamp);
     }
     
+    #[sol(rpc)]
+    contract UniswapV3Factory {
+        function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool);
+    }
+
+    #[sol(rpc)]
+    contract UniswapV3Pool {
+        function slot0() external view returns (
+            uint160 sqrtPriceX96,
+            int24 tick,
+            uint16 observationIndex,
+            uint16 observationCardinality,
+            uint16 observationCardinalityNext,
+            uint8 feeProtocol,
+            bool unlocked
+        );
+        function liquidity() external view returns (uint128);
+        function token0() external view returns (address);
+        function token1() external view returns (address);
+    }
+
+    #[sol(rpc)]
+    contract SwapHelper {
+        function swap(
+            address pool,
+            address recipient,
+            bool zeroForOne,
+            int256 amountSpecified,
+            uint160 sqrtPriceLimitX96
+        ) external returns (int256 amount0, int256 amount1);
+    }
+
     #[sol(rpc)]
     contract VaultManager {
         // View functions
@@ -66,18 +108,20 @@ sol! {
             address indexed user,
             address indexed lpVault,
             uint256 wsxmrAmount,
-            uint256 xmrAmount
+            uint256 xmrAmount,
+            uint256 rewardCollateral,
+            bytes32 claimCommitment
         );
 
         event BurnCommitted(
             bytes32 indexed requestId,
-            bytes32 secretHash,
             uint256 deadline
         );
 
         event BurnFinalized(
             bytes32 indexed requestId,
-            bytes32 secret
+            bytes32 secret,
+            uint256 rewardPaid
         );
 
         event MintInitiated(
@@ -114,7 +158,7 @@ sol! {
         function depositCollateral(uint256 _amount) external;
         function provideLPKey(bytes32 _requestId, bytes32 _lpPublicKey) external;
         function withdrawCollateral(uint256 _amount) external;
-        function commitBurn(bytes32 requestId, bytes32 secretHash) external;
+        function proposeHash(bytes32 requestId, bytes32 secretHash) external;
         function finalizeBurn(bytes32 requestId, bytes32 secret) external;
         function setMintReady(bytes32 requestId) external;
         function cancelMint(bytes32 requestId) external;
@@ -415,36 +459,39 @@ impl EvmClient {
         Ok(decoded.data)
     }
 
-    /// Commit a burn by providing the secret hash
-    pub async fn commit_burn(
+    /// Propose hash for a burn by providing the secret hash
+    pub async fn propose_hash(
         &self,
         request_id: FixedBytes<32>,
         secret_hash: FixedBytes<32>,
     ) -> Result<FixedBytes<32>> {
         info!(
-            "Committing burn for request {} with secret_hash {}",
+            "Proposing hash for burn request {} with secret_hash {}",
             hex::encode(request_id),
             hex::encode(secret_hash)
         );
 
-        // Update Pyth prices first to prevent StalePrice errors
-        self.update_pyth_prices().await?;
-
         let contract = VaultManager::new(self.vault_manager, &self.provider);
         
-        let call = contract.commitBurn(request_id, secret_hash);
+        let call = contract.proposeHash(request_id, secret_hash);
         
         let pending_tx = call
             .send()
             .await
-            .context("Failed to send commitBurn transaction")?;
+            .map_err(|e| {
+                error!("proposeHash send failed: {:?}", e);
+                anyhow::anyhow!("Failed to send proposeHash transaction: {:?}", e)
+            })?;
 
         let receipt = pending_tx
             .get_receipt()
             .await
-            .context("Failed to get commitBurn receipt")?;
+            .map_err(|e| {
+                error!("proposeHash receipt failed: {:?}", e);
+                anyhow::anyhow!("Failed to get proposeHash receipt: {:?}", e)
+            })?;
 
-        info!("Burn committed in tx: {:?}", receipt.transaction_hash);
+        info!("Hash proposed in tx: {:?}", receipt.transaction_hash);
         Ok(receipt.transaction_hash)
     }
 
@@ -508,6 +555,14 @@ impl EvmClient {
 
         info!("LP key provided in tx: {:?}", receipt.transaction_hash);
         Ok(receipt.transaction_hash)
+    }
+
+    /// Get mint request from on-chain
+    pub async fn get_mint_request(&self, request_id: FixedBytes<32>) -> Result<VaultManager::MintRequest> {
+        let contract = VaultManager::new(self.vault_manager, &self.provider);
+        let request = contract.mintRequests(request_id).call().await
+            .map_err(|e| anyhow!("Failed to query mint request: {}", e))?;
+        Ok(request._0)
     }
 
     /// Cancel an expired mint
@@ -636,6 +691,146 @@ impl EvmClient {
             .get_block_number()
             .await
             .context("Failed to get block number")
+    }
+
+        // ========== ARBITRAGE / POOL METHODS ==========
+
+    /// Get current pool state (tick, sqrtPriceX96, token ordering)
+    pub async fn get_pool_state(&self, pool_address: Address, wsxmr_address: Address) -> Result<crate::arbitrage::PoolState> {
+        let pool = UniswapV3Pool::new(pool_address, &self.provider);
+
+        let slot0 = pool.slot0().call().await
+            .context("Failed to query pool slot0")?;
+
+        let token0 = pool.token0().call().await
+            .context("Failed to query pool token0")?._0;
+
+        let wsxmr_is_token0 = token0 == wsxmr_address;
+
+        Ok(crate::arbitrage::PoolState {
+            sqrt_price_x96: {
+                let bytes = slot0.sqrtPriceX96.to_be_bytes::<20>();
+                let mut padded = [0u8; 32];
+                padded[12..32].copy_from_slice(&bytes);
+                U256::from_be_bytes(padded)
+            },
+            tick: {
+                let raw: u32 = slot0.tick.bits();
+                ((raw << 8) as i32) >> 8
+            },
+            token0,
+            token1: pool.token1().call().await.context("Failed to query pool token1")?._0,
+            wsxmr_is_token0,
+        })
+    }
+
+    /// Get native xDAI balance of the wallet
+    pub async fn get_xdai_balance(&self) -> Result<U256> {
+        let address = self.wallet.default_signer().address();
+        let balance = self.provider.get_balance(address).await
+            .context("Failed to get xDAI balance")?;
+        Ok(balance)
+    }
+
+    /// Wrap xDAI into sDAI via SavingsDAI deposit
+    pub async fn wrap_xdai_to_sdai(&self, sdai_address: Address, amount: U256) -> Result<FixedBytes<32>> {
+        let sdai = SavingsDAI::new(sdai_address, &self.provider);
+        let recipient = self.wallet.default_signer().address();
+
+        info!("Wrapping {} xDAI into sDAI for {}", amount, recipient);
+
+        // Deposit xDAI (sent as msg.value) to get sDAI shares
+        let call = sdai.deposit(amount, recipient);
+        let pending_tx = call.value(amount).send().await
+            .context("Failed to send sDAI deposit transaction")?;
+
+        let receipt = pending_tx.get_receipt().await
+            .context("Failed to get sDAI deposit receipt")?;
+
+        info!("xDAI wrapped to sDAI: {:?}", receipt.transaction_hash);
+        Ok(receipt.transaction_hash)
+    }
+
+    /// Verify a pool address against the Uniswap V3 factory
+    pub async fn verify_pool_address(&self, factory_address: Address, token_a: Address, token_b: Address, fee: u32) -> Result<Address> {
+        let factory = UniswapV3Factory::new(factory_address, &self.provider);
+        let fee_uint = alloy::primitives::Uint::<24, 1>::from(fee as u64);
+        let pool = factory.getPool(token_a, token_b, fee_uint).call().await
+            .context("Failed to query factory for pool")?.pool;
+        Ok(pool)
+    }
+
+    /// Get ERC20 token balance for the wallet address
+    pub async fn get_token_balance(&self, token: Address) -> Result<U256> {
+        let erc20 = ERC20::new(token, &self.provider);
+        let address = self.wallet.default_signer().address();
+        let balance = erc20.balanceOf(address).call().await
+            .context("Failed to query token balance")?._0;
+        Ok(balance)
+    }
+
+    /// Approve a token spender
+    pub async fn approve_token(&self, token: Address, spender: Address, amount: U256) -> Result<FixedBytes<32>> {
+        let erc20 = ERC20::new(token, &self.provider);
+
+        // Check current allowance first
+        let owner = self.wallet.default_signer().address();
+        let current_allowance = erc20.allowance(owner, spender).call().await
+            .context("Failed to query allowance")?._0;
+
+        if current_allowance >= amount {
+            debug!("Allowance already sufficient for {:?}", token);
+            // Return zero hash as no tx needed
+            return Ok(FixedBytes::from_slice(&[0u8; 32]));
+        }
+
+        info!("Approving {:?} for spender {:?} amount {}", token, spender, amount);
+
+        let call = erc20.approve(spender, amount);
+        let pending_tx = call.send().await
+            .context("Failed to send approve transaction")?;
+
+        let receipt = pending_tx.get_receipt().await
+            .context("Failed to get approve receipt")?;
+
+        info!("Approval confirmed: {:?}", receipt.transaction_hash);
+        Ok(receipt.transaction_hash)
+    }
+
+    /// Execute a swap via SwapHelper direct pool swap (like testPoolSwaps.js)
+    pub async fn execute_swap(
+        &self,
+        swap_helper: Address,
+        pool_address: Address,
+        zero_for_one: bool,
+        amount_in: U256,
+    ) -> Result<FixedBytes<32>> {
+        let helper = SwapHelper::new(swap_helper, &self.provider);
+        let recipient = self.wallet.default_signer().address();
+
+        // Convert amount to signed int256 (positive = exact input)
+        let amount_specified = alloy::primitives::I256::from_raw(amount_in);
+
+        info!(
+            "Executing swap via helper: pool={} zeroForOne={} amount={}",
+            pool_address, zero_for_one, amount_in
+        );
+
+        let call = helper.swap(
+            pool_address,
+            recipient,
+            zero_for_one,
+            amount_specified,
+            alloy::primitives::U160::ZERO,
+        );
+        let pending_tx = call.send().await
+            .context("Failed to send swap transaction")?;
+
+        let receipt = pending_tx.get_receipt().await
+            .context("Failed to get swap receipt")?;
+
+        info!("Swap executed: {:?}", receipt.transaction_hash);
+        Ok(receipt.transaction_hash)
     }
 
     /// Get vault information for the LP

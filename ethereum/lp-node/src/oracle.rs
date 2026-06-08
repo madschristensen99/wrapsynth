@@ -3,7 +3,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
 const REDSTONE_API_URL: &str = "https://api.redstone.finance/prices";
 const REDSTONE_DATA_PACKAGES_URL: &str = "https://oracle-gateway-1.a.redstone.finance/data-packages/latest";

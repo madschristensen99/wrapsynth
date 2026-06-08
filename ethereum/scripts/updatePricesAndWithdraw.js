@@ -8,7 +8,7 @@ const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 
-const HUB_ADDRESS = '0xe485b74fe0a6aeb590a2e655734d436daa1dec8a'; // June 6, 2026
+const HUB_ADDRESS = '0x025B1499B5f4E51a0053aB1742B2Ecd545615e5a'; // June 8, 2026
 const SDAI_ADDRESS = '0xaf204776c7245bF4147c2612BF6e5972Ee483701';
 
 async function main() {

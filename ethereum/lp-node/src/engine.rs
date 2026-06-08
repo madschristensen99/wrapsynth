@@ -1,8 +1,9 @@
+use crate::arbitrage::ArbitrageBot;
 use crate::db::{BurnStatus, BurnTask, Database, MintStatus, MintTask};
 use crate::evm::EvmClient;
 use crate::monero::MoneroClient;
 use crate::oracle::OracleClient;
-use alloy::primitives::FixedBytes;
+use alloy::primitives::{Address, FixedBytes, U256};
 use anyhow::{anyhow, Context, Result};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::SecretKey;
@@ -26,16 +27,24 @@ pub struct SwapEngine {
     monero: Arc<MoneroClient>,
     oracle: Arc<OracleClient>,
     enable_price_pusher: bool,
+    arbitrage_bot: Option<Arc<ArbitrageBot>>,
 }
 
 impl SwapEngine {
-    pub fn new(db: Database, evm: Arc<EvmClient>, monero: Arc<MoneroClient>, enable_price_pusher: bool) -> Self {
+    pub fn new(
+        db: Database,
+        evm: Arc<EvmClient>,
+        monero: Arc<MoneroClient>,
+        enable_price_pusher: bool,
+        arbitrage_bot: Option<Arc<ArbitrageBot>>,
+    ) -> Self {
         Self { 
             db, 
             evm, 
             monero,
             oracle: Arc::new(OracleClient::new()),
             enable_price_pusher,
+            arbitrage_bot,
         }
     }
 
@@ -78,6 +87,18 @@ impl SwapEngine {
             info!("Price pusher worker started");
         } else {
             info!("Price pusher disabled in config");
+        }
+
+        // Spawn arbitrage bot if configured
+        if let Some(bot) = self.arbitrage_bot.clone() {
+            tokio::spawn(async move {
+                if let Err(e) = bot.start().await {
+                    error!("Arbitrage bot error: {}", e);
+                }
+            });
+            info!("Arbitrage bot worker started");
+        } else {
+            info!("Arbitrage bot not configured");
         }
 
         info!("All workers started");
@@ -174,9 +195,9 @@ impl SwapEngine {
 
         let tx_hash = self
             .evm
-            .commit_burn(request_id, secret_hash_fixed)
+            .propose_hash(request_id, secret_hash_fixed)
             .await
-            .context("Failed to commit burn on EVM")?;
+            .context("Failed to propose hash on EVM")?;
 
         burn.commit_tx_hash = Some(tx_hash.0);
         self.db.update_burn_task(burn)?;
@@ -188,18 +209,27 @@ impl SwapEngine {
     async fn handle_burn_committed(&self, burn: &mut BurnTask) -> Result<()> {
         info!("Handling burn committed: {}", hex::encode(burn.request_id));
 
-        // Get the user's Monero address (in production, this would be in the event data)
-        // For now, we'll use a placeholder
-        let user_monero_address = "PLACEHOLDER_MONERO_ADDRESS";
+        let claim_commitment = burn
+            .claim_commitment
+            .ok_or_else(|| anyhow::anyhow!("Missing claim commitment"))?;
+
+        // Derive shared Monero address from user's claim commitment (same as mint flow)
+        let swap_keys = self.monero.generate_swap_keys(&claim_commitment)?;
+        let monero_address = swap_keys.deposit_address;
+        info!(
+            "Derived Monero deposit address for burn PTLC: {}",
+            monero_address
+        );
 
         let secret_hash = burn
             .secret_hash
             .ok_or_else(|| anyhow::anyhow!("Missing secret hash"))?;
 
         // Create PTLC on Monero
+        let monero_addr_str = monero_address.to_string();
         let tx_hash = self
             .monero
-            .create_ptlc(user_monero_address, burn.xmr_amount, &secret_hash)
+            .create_ptlc(&monero_addr_str, burn.xmr_amount, &secret_hash)
             .await
             .context("Failed to create PTLC on Monero")?;
 
@@ -347,8 +377,38 @@ impl SwapEngine {
     async fn handle_mint_expired(&self, mint: &mut MintTask) -> Result<()> {
         info!("Handling expired mint: {}", hex::encode(mint.request_id));
 
-        // Call cancelMint on the contract
+        // Query on-chain mint request to get current timeout (may have been extended by setMintReady)
         let request_id = FixedBytes::from_slice(&mint.request_id);
+        let current_block = self.evm.get_block_number().await.unwrap_or(0);
+        
+        let on_chain_request = match self.evm.get_mint_request(request_id).await {
+            Ok(req) => req,
+            Err(e) => {
+                warn!("Failed to query on-chain mint request: {}", e);
+                // Continue with cancellation attempt anyway
+                self.evm.cancel_mint(request_id).await.ok();
+                mint.status = MintStatus::Cancelled;
+                mint.updated_at = current_timestamp();
+                self.db.update_mint_task(mint)?;
+                return Ok(());
+            }
+        };
+
+        // Update our local timeout if it differs from on-chain
+        let on_chain_timeout = on_chain_request.timeout.to::<u64>();
+        if on_chain_timeout != mint.timeout {
+            info!("Timeout was extended on-chain: {} -> {}", mint.timeout, on_chain_timeout);
+            mint.timeout = on_chain_timeout;
+            self.db.update_mint_task(mint)?;
+        }
+
+        // Check if still expired with updated timeout
+        if current_block < on_chain_timeout {
+            info!("Mint not yet expired (timeout: {}, current: {}), skipping cancellation", on_chain_timeout, current_block);
+            return Ok(());
+        }
+
+        // Call cancelMint on the contract
         match self.evm.cancel_mint(request_id).await {
             Ok(tx_hash) => {
                 info!("Cancelled mint on EVM: {:?}", tx_hash);

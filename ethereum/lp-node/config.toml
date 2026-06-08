@@ -8,19 +8,19 @@ rpc_url = "https://rpc.gnosischain.com"
 ws_url = "wss://gnosis-rpc.publicnode.com"
 explorer = "https://gnosisscan.io"
 
-# Deployed contract addresses (GNOSIS MAINNET - DEPLOYED June 4, 2026)
+# Deployed contract addresses (GNOSIS MAINNET - DEPLOYED June 8, 2026)
 # wsXmrHub acts as the vault manager (diamond proxy)
-vault_manager = "0xe485b74fe0a6aeb590a2e655734d436daa1dec8a"
-wsxmr_token = "0xd48d298650fcd0c1c8478ee4c3ee077f16171697"
-liquidity_router = "0x4ca832cb79514d05a7162257d8bd316ad6fc46a9"
+vault_manager = "0x025B1499B5f4E51a0053aB1742B2Ecd545615e5a"
+wsxmr_token = "0x48AAec97bD8ccB3bDE02D492929712f071E710eb"
+liquidity_router = "0xEE5F9dd5F6736b556ee306467e9aE295a7fd0de5"
 
 # Facet addresses (for reference - all calls go through vault_manager)
-redstone_oracle_facet = "0xcb85ee56254f925e910e8bbe4c34b5e285fdae34"
-vault_facet = "0x3c6a147b3aced0ed207d75343462db1c863923cd"
-mint_facet = "0x6933456daa0f3018b7f3ab6fbf08c66bda011c4a"
-burn_facet = "0xd2ae40b9427ac197b3847fbe677f7027bf00a728"
-liquidation_facet = "0x813523c2f43e81e0b5e10c072037f817b6495851"
-yield_facet = "0x5989690092ffcc195663c0ab4da3c71bea705049"
+redstone_oracle_facet = "0xb3100e342ED58779CAFa1456174CfB2C00B8A2f1"
+vault_facet = "0xD4db0241e706D5ED966F15474E1Bb19Be303Ee79"
+mint_facet = "0x792c52F3E0208b90A60A4188f711f4Bc1ED45634"
+burn_facet = "0xe229AEcCf13687e5AAa890F6d8991ddEbDa66417"
+liquidation_facet = "0x7196fB6da654D0E63Ffc628Ce8E5B4501eE7Ea0c"
+yield_facet = "0x1068D8B354F9C53e7ba932882E9898010fE32730"
 
 # Oracle configuration
 pyth_oracle = "0x2880aB155794e7179c9eE2e38200202908C17B43"
@@ -91,3 +91,17 @@ is_price_pusher = false  # Set to true for only ONE LP node per deployment
 push_threshold_bps = 25  # Push if price drifts > 0.25%
 max_age_secs = 90  # Push if last update older than 90 seconds
 poll_interval_secs = 30  # Check prices every 30 seconds
+
+[arbitrage]
+# Arbitrage bot configuration - keeps wsXMR price aligned with real XMR price
+enabled = true
+pool_address = "0xb07bfc2591fAd1612FD2B77180e52733C4B7410E"
+swap_helper = "0x638f37995F762388621c8a6AE48671d1BD591AAc"
+sdai_address = "0xaf204776c7245bF4147c2612BF6e5972Ee483701"
+factory_address = "0xe32F7dD7e3f098D518ff19A22d5f028e076489B1"
+threshold_bps = 100  # Trade if pool price deviates > 1% from oracle (100 basis points)
+max_trade_sdai = "100000000000000000"  # 0.1 sDAI max per trade
+max_trade_wsxmr = "100000000000"  # 1,000 wsXMR max per trade (8 decimals)
+slippage_bps = 100  # 1% slippage tolerance
+poll_interval_secs = 15  # Check for arbitrage every 15 seconds
+min_profit_bps = 50  # Minimum 0.5% profit after fees to trade

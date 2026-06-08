@@ -132,6 +132,7 @@ contract wsXmrStorage {
         uint256 vaultLiquidationNonce;
         uint256 normalizedDebtAmount;
         BurnStatus status;
+        bytes32 userClaimCommitment;  // User's Ed25519 public point commitment for deriving Monero receive address
     }
     
     struct PositionMetadata {

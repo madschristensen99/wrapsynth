@@ -22,6 +22,7 @@ pub struct MoneroClient {
     daemon_fallbacks: Vec<String>,
     wallet_rpc_url: Option<String>,
     http_client: Arc<Client>,
+    wallet_http_client: Arc<Client>,
     private_spend_key: PrivateKey,
     private_view_key: PrivateKey,
     address: Address,
@@ -111,6 +112,13 @@ impl MoneroClient {
             .build()
             .context("Failed to create HTTP client")?;
 
+        // Create separate HTTP client for wallet RPC with longer timeout (60s)
+        // Wallet operations like refresh, sweep_all can take a long time
+        let wallet_http_client = Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .context("Failed to create wallet HTTP client")?;
+
         // Fallback Monero daemon nodes
         let daemon_fallbacks = vec![
             "https://xmr.hexide.com".to_string(),
@@ -132,6 +140,7 @@ impl MoneroClient {
             daemon_fallbacks,
             wallet_rpc_url,
             http_client: Arc::new(http_client),
+            wallet_http_client: Arc::new(wallet_http_client),
             private_spend_key,
             private_view_key,
             address,
@@ -148,7 +157,7 @@ impl MoneroClient {
         let wallet_url = self.wallet_rpc_url.as_ref()
             .ok_or_else(|| anyhow!("Wallet RPC not configured"))?;
 
-        let response = self.http_client
+        let response = self.wallet_http_client
             .post(wallet_url)
             .json(&serde_json::json!({
                 "jsonrpc": "2.0",

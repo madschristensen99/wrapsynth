@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use futures::StreamExt;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// Event listener that subscribes to EVM events and creates tasks
 pub struct EventListener {
@@ -86,42 +86,56 @@ impl EventListener {
         Ok(())
     }
 
-    /// Listen for BurnRequested events
+    /// Listen for BurnRequested events with auto-reconnect on disconnect/reorg
     async fn listen_burn_events(&self) -> Result<()> {
         info!("Listening for BurnRequested events");
 
-        let mut stream = self
-            .evm
-            .subscribe_burn_requested()
-            .await
-            .context("Failed to subscribe to BurnRequested events")?;
-
-        while let Some(log) = stream.next().await {
-            if let Err(e) = self.handle_burn_requested_event(&log).await {
-                error!("Error handling BurnRequested event: {}", e);
+        loop {
+            match self.evm.subscribe_burn_requested().await {
+                Ok(mut stream) => {
+                    info!("Burn event subscription established");
+                    while let Some(log) = stream.next().await {
+                        if let Err(e) = self.handle_burn_requested_event(&log).await {
+                            error!("Error handling BurnRequested event: {}", e);
+                        }
+                    }
+                    warn!("Burn event stream ended, reconnecting in 5s...");
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to subscribe to BurnRequested events: {}, retrying in 5s...",
+                        e
+                    );
+                }
             }
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         }
-
-        Ok(())
     }
 
-    /// Listen for MintInitiated events
+    /// Listen for MintInitiated events with auto-reconnect on disconnect/reorg
     async fn listen_mint_events(&self) -> Result<()> {
         info!("Listening for MintInitiated events");
 
-        let mut stream = self
-            .evm
-            .subscribe_mint_initiated()
-            .await
-            .context("Failed to subscribe to MintInitiated events")?;
-
-        while let Some(log) = stream.next().await {
-            if let Err(e) = self.handle_mint_initiated_event(&log).await {
-                error!("Error handling MintInitiated event: {}", e);
+        loop {
+            match self.evm.subscribe_mint_initiated().await {
+                Ok(mut stream) => {
+                    info!("Mint event subscription established");
+                    while let Some(log) = stream.next().await {
+                        if let Err(e) = self.handle_mint_initiated_event(&log).await {
+                            error!("Error handling MintInitiated event: {}", e);
+                        }
+                    }
+                    warn!("Mint event stream ended, reconnecting in 5s...");
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to subscribe to MintInitiated events: {}, retrying in 5s...",
+                        e
+                    );
+                }
             }
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         }
-
-        Ok(())
     }
 
     /// Handle a BurnRequested event
@@ -134,12 +148,22 @@ impl EventListener {
             return Ok(());
         }
 
+        let claim_commitment: [u8; 32] = event.claimCommitment.into();
+        
         info!(
-            "BurnRequested event: requestId={}, user={}, wsxmrAmount={}, xmrAmount={}",
+            "BurnRequested event: requestId={}, user={}, wsxmrAmount={}, xmrAmount={}, claimCommitment={}",
             hex::encode(event.requestId),
             event.user,
             event.wsxmrAmount,
-            event.xmrAmount
+            event.xmrAmount,
+            hex::encode(claim_commitment)
+        );
+
+        // Generate swap keys from user's claim commitment (same as mint flow)
+        let swap_keys = self.monero.generate_swap_keys(&claim_commitment)?;
+        info!(
+            "Derived swap deposit address for burn: {}",
+            swap_keys.deposit_address
         );
 
         // Create a burn task
@@ -158,6 +182,7 @@ impl EventListener {
             secret_hash: None,
             monero_lock_txid: None,
             commit_tx_hash: None,
+            claim_commitment: Some(claim_commitment),
         };
 
         self.db.insert_burn_task(&task)?;

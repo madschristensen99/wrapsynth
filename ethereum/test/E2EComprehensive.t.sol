@@ -122,7 +122,7 @@ contract E2EComprehensiveTest is Test {
         // Burn
         uint256 burnAmount = balance / 2;
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(burnAmount, lp, user);
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(burnAmount, lp, user, bytes32(uint256(1)));
         
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -264,7 +264,7 @@ contract E2EComprehensiveTest is Test {
         
         // User requests burn
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(balance / 2, lp, user);
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(balance / 2, lp, user, bytes32(uint256(1)));
         console.log("  Burn requested");
         
         // Jump past BURN_REQUEST_TIMEOUT (24 hours)
@@ -284,7 +284,7 @@ contract E2EComprehensiveTest is Test {
         uint256 balance = _mintTokensForUser(user);
         
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(balance / 2, lp, user);
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(balance / 2, lp, user, bytes32(uint256(1)));
         
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -312,7 +312,7 @@ contract E2EComprehensiveTest is Test {
         uint256 burnAmount = balance / 2;
         
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(burnAmount, lp, user);
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(burnAmount, lp, user, bytes32(uint256(1)));
         
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -342,7 +342,7 @@ contract E2EComprehensiveTest is Test {
         uint256 balance = _mintTokensForUser(user);
         
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(balance / 2, lp, user);
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(balance / 2, lp, user, bytes32(uint256(1)));
         
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -425,7 +425,7 @@ contract E2EComprehensiveTest is Test {
         
         // User1 starts a burn
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(existingBalance / 2, lp, user);
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(existingBalance / 2, lp, user, bytes32(uint256(1)));
         console.log("  User1 started burn");
         
         // User2 starts a mint at the same time

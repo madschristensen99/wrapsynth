@@ -2,6 +2,14 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sled::Db;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn current_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
 
 /// Status of a mint operation
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -89,6 +97,8 @@ pub struct BurnTask {
     pub monero_lock_txid: Option<String>,
     /// EVM transaction hash for commitBurn
     pub commit_tx_hash: Option<[u8; 32]>,
+    /// User's Ed25519 claim commitment for deriving Monero receive address
+    pub claim_commitment: Option<[u8; 32]>,
 }
 
 /// Quote for mint or burn operation

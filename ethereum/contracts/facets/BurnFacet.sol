@@ -22,29 +22,30 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         wsXmrStorage(_wsxmrToken, _verifierProxy) 
     {}
     
-    function requestBurn(uint256 wsxmrAmount, address lpVault, address user) external returns (bytes32) {
+    function requestBurn(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment) external returns (bytes32) {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
         
         if (msg.sender != user) revert OnlyUserCanInitiate();
-        bytes32 requestId = _requestBurn(wsxmrAmount, lpVault, user, false);
+        bytes32 requestId = _requestBurn(wsxmrAmount, lpVault, user, claimCommitment, false);
         
         _reentrancyStatus = _NOT_ENTERED;
         return requestId;
     }
     
-    function requestBurnFromRouter(uint256 wsxmrAmount, address lpVault, address user) external returns (bytes32) {
+    function requestBurnFromRouter(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment) external returns (bytes32) {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
         
         if (msg.sender != liquidityRouter) revert OnlyRouter();
-        bytes32 requestId = _requestBurn(wsxmrAmount, lpVault, user, true);
+        bytes32 requestId = _requestBurn(wsxmrAmount, lpVault, user, claimCommitment, true);
         
         _reentrancyStatus = _NOT_ENTERED;
         return requestId;
     }
     
-    function _requestBurn(uint256 wsxmrAmount, address lpVault, address user, bool fromRouter) internal returns (bytes32) {
+    function _requestBurn(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment, bool fromRouter) internal returns (bytes32) {
+        if (claimCommitment == bytes32(0)) revert InvalidCommitment();
         if (wsxmrAmount == 0) revert ZeroAmount();
         if (lpVault == address(0)) revert ZeroAddress();
         if (user == address(0)) revert ZeroAddress();
@@ -122,13 +123,14 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
             deadline: block.number + vault.burnTimeoutBlocks,
             vaultLiquidationNonce: vault.liquidationNonce,
             normalizedDebtAmount: normalizedBurnAmount,
-            status: BurnStatus.REQUESTED
+            status: BurnStatus.REQUESTED,
+            userClaimCommitment: claimCommitment
         });
         
         userBurnRequests[user].push(requestId);
         vaultBurnRequests[lpVault].push(requestId);
         
-        emit BurnRequested(requestId, user, lpVault, wsxmrAmount, wsxmrAmount * XMR_TO_WSXMR_DIVISOR, rewardCollateral);
+        emit BurnRequested(requestId, user, lpVault, wsxmrAmount, wsxmrAmount * XMR_TO_WSXMR_DIVISOR, rewardCollateral, claimCommitment);
         return requestId;
     }
     
