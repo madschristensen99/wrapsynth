@@ -32,11 +32,22 @@ contract RedStoneOracleFacet is wsXmrStorage, IOracleFacet, PrimaryProdDataServi
         uint256 daiPrice = getOracleNumericValueFromTxMsg(DAI_FEED_ID);
         
         // RedStone returns 8 decimals, convert to int192
+        uint256 oldPrice = uint256(uint192(lastXmrPrice)) * 1e10;
+        uint256 newPrice = uint256(xmrPrice) * 1e10;
+
+        // M4: Deviation guard — reject updates that move more than MAX_PRICE_DEVIATION_BPS
+        if (oldPrice > 0) {
+            uint256 diff = oldPrice > newPrice ? oldPrice - newPrice : newPrice - oldPrice;
+            if ((diff * BPS_DENOMINATOR) / oldPrice > MAX_PRICE_DEVIATION_BPS) revert PriceDeviationTooHigh();
+        }
+
+        // M4: Extract and store the signed payload timestamp, not block.timestamp
+        uint256 payloadTimestamp = extractTimestampsAndAssertAllAreEqual() / 1000;
+
         lastXmrPrice = int192(int256(xmrPrice));
-        lastXmrPriceTimestamp = block.timestamp;
+        lastXmrPriceTimestamp = payloadTimestamp;
 
         // M1: Update on-chain EMA accumulator
-        uint256 newPrice = uint256(xmrPrice) * 1e10;
         if (xmrEmaPrice == 0) {
             xmrEmaPrice = newPrice;
         } else {
@@ -44,7 +55,7 @@ contract RedStoneOracleFacet is wsXmrStorage, IOracleFacet, PrimaryProdDataServi
         }
 
         lastCollateralPrice = int192(int256(daiPrice));
-        lastCollateralPriceTimestamp = block.timestamp;
+        lastCollateralPriceTimestamp = payloadTimestamp;
         
         // Refund any sent ETH (not needed for RedStone)
         if (msg.value > 0) {

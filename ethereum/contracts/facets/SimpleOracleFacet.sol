@@ -28,13 +28,24 @@ contract SimpleOracleFacet is wsXmrStorage, IOracleFacet {
     function updatePrices(uint256 xmrPrice, uint256 daiPrice) external {
         require(msg.sender == priceUpdater || msg.sender == deployer, "Only updater");
         require(xmrPrice > 0 && daiPrice > 0, "Invalid prices");
-        
+
+        uint256 newPrice = xmrPrice * 1e10;
+
+        // M4: Deviation guard — reject updates that move more than MAX_PRICE_DEVIATION_BPS
+        // Deployer can bypass for emergency updates
+        if (msg.sender != deployer) {
+            uint256 oldPrice = uint256(uint192(lastXmrPrice)) * 1e10;
+            if (oldPrice > 0) {
+                uint256 diff = oldPrice > newPrice ? oldPrice - newPrice : newPrice - oldPrice;
+                require((diff * BPS_DENOMINATOR) / oldPrice <= MAX_PRICE_DEVIATION_BPS, "Price deviation too high");
+            }
+        }
+
         // Prices come in 8 decimals from RedStone, store as int192
         lastXmrPrice = int192(int256(xmrPrice));
         lastXmrPriceTimestamp = block.timestamp;
 
         // M1: Update on-chain EMA accumulator
-        uint256 newPrice = xmrPrice * 1e10;
         if (xmrEmaPrice == 0) {
             xmrEmaPrice = newPrice;
         } else {

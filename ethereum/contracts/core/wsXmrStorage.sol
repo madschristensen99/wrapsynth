@@ -40,6 +40,7 @@ contract wsXmrStorage {
     uint256 public constant MEV_SLIPPAGE_BPS = 100;
     uint256 public constant EMA_DENOMINATOR = 1000;
     uint256 public constant EMA_ALPHA_NUMERATOR = 182; // ≈ 0.182, ~10-period EMA
+    uint256 public constant MAX_PRICE_DEVIATION_BPS = 2000; // 20%
     uint256 public constant MAX_BURN_REQUESTS_PER_VAULT = 50;
     uint256 public constant MAX_VAULT_COUNT = 10000;
     uint256 public constant MIN_BURN_AMOUNT = 1e4; // 0.0001 wsXMR (~$0.04 at $400/XMR)
