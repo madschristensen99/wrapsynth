@@ -236,7 +236,7 @@ contract AuditRegressionTest is Test {
         //   4: yieldFacet, 5: oracleFacet, 6: facets mapping, 7: liquidityRouter,
         //   8: lastXmrPrice, 9: lastXmrPriceTimestamp, 10: lastCollateralPrice,
         //   11: lastCollateralPriceTimestamp, 12: lastBuyTimestamp, 13: globalTotalDebt,
-        //   14: globalDebtIndex
+        //   14: globalDebtIndex  (N2: MUST update if wsXmrStorage layout changes)
         bytes32 globalDebtIndexSlot = bytes32(uint256(14));
         vm.store(address(hub), globalDebtIndexSlot, bytes32(uint256(0.5e18)));
 
