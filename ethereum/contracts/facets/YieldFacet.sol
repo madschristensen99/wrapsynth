@@ -113,7 +113,7 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         Vault storage vault = _vaults[lpVault];
         if (vault.collateralShares == 0) return;
         
-        uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+        uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
         uint256 xmrPrice = _getXmrPriceFromStorage();
         uint256 collateralPrice = _getCollateralPriceFromStorage();
         
@@ -163,7 +163,7 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
     
     function getVaultExtractableYield(address lpVault) external view returns (uint256) {
         Vault storage vault = _vaults[lpVault];
-        uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+        uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
         uint256 pendingDebt = vault.pendingDebt;
         uint256 xmrPrice = _getXmrPriceFromStorage();
         uint256 collateralPrice = _getCollateralPriceFromStorage();

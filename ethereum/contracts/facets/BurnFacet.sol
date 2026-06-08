@@ -3,7 +3,6 @@ pragma solidity ^0.8.28;
 
 import {wsXmrStorage} from "../core/wsXmrStorage.sol";
 import {IBurnFacet} from "../interfaces/facets/IBurnFacet.sol";
-import {IOracleFacet} from "../interfaces/facets/IOracleFacet.sol";
 import {IwsXmrHub} from "../interfaces/core/IwsXmrHub.sol";
 import {Ed25519} from "../Ed25519.sol";
 import {CollateralLogic} from "../libraries/CollateralLogic.sol";
@@ -78,7 +77,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         if (vault.collateralShares < totalLock) revert InsufficientCollateral();
         
         // Get current debt for post-burn health check
-        uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+        uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
         uint256 remainingCollateral = vault.collateralShares - totalLock;
         uint256 remainingDebt = actualDebt > wsxmrAmount ? actualDebt - wsxmrAmount : 0;
         if (remainingDebt > 0) {
