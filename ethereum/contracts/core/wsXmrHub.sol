@@ -44,6 +44,8 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     }
     
     modifier onlyDelegateCall() {
+        // C1: Origin check defeats reentrancy bypass. Legitimate calls always come from the hub calling itself.
+        if (msg.sender != address(this)) revert Unauthorized();
         bool inContext;
         assembly {
             inContext := tload(_DELEGATE_CONTEXT_SLOT)
@@ -150,6 +152,7 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         if (!facets[facet]) revert Unauthorized();
         
         for (uint256 i = 0; i < selectors.length; i++) {
+            if (_selectorToFacet[selectors[i]] != address(0)) revert("Selector collision");
             _selectorToFacet[selectors[i]] = facet;
         }
     }
@@ -277,15 +280,17 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         if (facet == address(0)) revert("Function does not exist");
         
         assembly {
-            // Set transient delegate context flag using TSTORE (EIP-1153)
-            // NOTE: This will revert if called via STATICCALL (view functions)
-            // Per EIP-1153 spec: "TSTORE in STATICCALL results in an exception"
+            // C1: Save previous transient flag and restore after delegatecall.
+            // This prevents the flag from persisting across the entire transaction.
+            let prev := tload(_DELEGATE_CONTEXT_SLOT)
             tstore(_DELEGATE_CONTEXT_SLOT, 1)
             
             let ptr := mload(0x40)
             calldatacopy(ptr, 0, calldatasize())
             let result := delegatecall(gas(), facet, ptr, calldatasize(), 0, 0)
             returndatacopy(ptr, 0, returndatasize())
+            
+            tstore(_DELEGATE_CONTEXT_SLOT, prev)
             
             switch result
             case 0 { revert(ptr, returndatasize()) }

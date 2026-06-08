@@ -5,7 +5,6 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {wsXmrStorage} from "../core/wsXmrStorage.sol";
 import {IVaultFacet} from "../interfaces/facets/IVaultFacet.sol";
-import {IOracleFacet} from "../interfaces/facets/IOracleFacet.sol";
 import {ISavingsDAI} from "../interfaces/external/ISavingsDAI.sol";
 import {GnosisAddresses} from "../GnosisAddresses.sol";
 import {CollateralLogic} from "../libraries/CollateralLogic.sol";
@@ -182,7 +181,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         
         // Check health ratio
         uint256 newCollateralAmount = vault.collateralShares - shares;
-        uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+        uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
         uint256 totalObligations = actualDebt + vault.pendingDebt;
         
         if (totalObligations > 0) {
@@ -521,13 +520,13 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
     /// @inheritdoc IVaultFacet
     function getVaultHealth(address lpAddress) external view returns (uint256 ratio) {
         Vault memory vault = _vaults[lpAddress];
-        uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+        uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
         return _calculateCollateralRatio(vault.collateralShares, actualDebt);
     }
     
     /// @inheritdoc IVaultFacet
     function getVaultDebt(address lpAddress) external view returns (uint256) {
-        return IOracleFacet(oracleFacet).denormalizeDebt(_vaults[lpAddress].normalizedDebt);
+        return _denormalizeDebt(_vaults[lpAddress].normalizedDebt);
     }
     
     /// @inheritdoc IVaultFacet
@@ -614,7 +613,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         Vault storage vault = _vaults[lpAddress];
         if (vault.collateralShares == 0) return;
         
-        uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+        uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
         
         // Skip yield calculation if no debt - no point checking prices
         if (actualDebt == 0 && vault.pendingDebt == 0) return;

@@ -246,6 +246,18 @@ contract wsXmrStorage {
         return normalized;
     }
     
+    /// @dev Internal helper to denormalize debt using the hub's live globalDebtIndex
+    /// @notice H2: Must be internal so it reads from delegated (hub) storage, not an external facet's frozen storage
+    function _denormalizeDebt(uint256 normalizedDebt) internal view returns (uint256) {
+        return (normalizedDebt * globalDebtIndex) / 1e18;
+    }
+    
+    /// @dev Internal helper to normalize debt using the hub's live globalDebtIndex
+    function _normalizeDebt(uint256 actualDebt) internal view returns (uint256) {
+        if (globalDebtIndex == 0) return actualDebt;
+        return (actualDebt * 1e18) / globalDebtIndex;
+    }
+    
     // ========== STORAGE GAPS ==========
     
     /**

@@ -3,7 +3,6 @@ pragma solidity ^0.8.28;
 
 import {wsXmrStorage} from "../core/wsXmrStorage.sol";
 import {IMintFacet} from "../interfaces/facets/IMintFacet.sol";
-import {IOracleFacet} from "../interfaces/facets/IOracleFacet.sol";
 import {IwsXmrHub} from "../interfaces/core/IwsXmrHub.sol";
 import {Ed25519} from "../Ed25519.sol";
 import {CollateralLogic} from "../libraries/CollateralLogic.sol";
@@ -58,7 +57,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             if (wsxmrValueUsd > maxMintAllowed) revert InvalidValue();
         }
         
-        uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+        uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
         uint256 totalProjectedDebt = actualDebt + vault.pendingDebt + wsxmrAmount;
         
         uint256 availableCollateral = vault.collateralShares > vault.lockedCollateral 
@@ -150,7 +149,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         
         _syncVaultYield(request.lpVault);
         
-        uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+        uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
         uint256 projectedDebtWithThisMint = actualDebt + request.wsxmrAmount;
         uint256 availableCollateral = vault.collateralShares > vault.lockedCollateral
             ? vault.collateralShares - vault.lockedCollateral
@@ -246,12 +245,9 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         emit MintCancelled(requestId);
         
         if (originalStatus == MintStatus.PENDING || originalStatus == MintStatus.KEY_PROVIDED) {
-            // Timeout before LP marked ready - user gets griefing deposit back
+            // Timeout before LP marked ready - user gets griefing deposit back via pull
             if (depositToTransfer > 0) {
-                (bool success, ) = payable(request.initiator).call{value: depositToTransfer}("");
-                if (!success) {
-                    pendingReturns[request.initiator][address(0)] += depositToTransfer;
-                }
+                pendingReturns[request.initiator][address(0)] += depositToTransfer;
                 emit ReturnQueued(request.initiator, address(0), depositToTransfer);
             }
         } else {

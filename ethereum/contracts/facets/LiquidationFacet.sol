@@ -85,7 +85,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         uint256 collateralPrice;
         
         if (vault.collateralShares > 0) {
-            actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+            actualDebt = _denormalizeDebt(vault.normalizedDebt);
             xmrPrice = _getXmrPriceFromStorage();
             collateralPrice = _getCollateralPriceFromStorage();
             
@@ -104,7 +104,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
                 yieldWarChest += yieldShares;
             }
         } else {
-            actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+            actualDebt = _denormalizeDebt(vault.normalizedDebt);
         }
         if (actualDebt == 0) revert InsufficientDebt();
         if (debtToClear > actualDebt) {
@@ -182,7 +182,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         // TODO M3: Implement proper socialization (war chest backing or index increase)
         // Current implementation just tracks for transparency
         if (vault.normalizedDebt > 0 && vault.collateralShares == 0) {
-            uint256 badDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+            uint256 badDebt = _denormalizeDebt(vault.normalizedDebt);
             if (badDebt > 0) {
                 vault.normalizedDebt = 0;
                 globalBadDebt += badDebt;
@@ -221,7 +221,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         uint256 collateralPrice = _getCollateralPriceFromStorage();
         
         if (oldV.collateralShares > 0) {
-            oldDebt = IOracleFacet(oracleFacet).denormalizeDebt(oldV.normalizedDebt);
+            oldDebt = _denormalizeDebt(oldV.normalizedDebt);
             uint256 yieldShares = YieldLogic.calculateExtractableYield(
                 oldV.collateralShares,
                 oldV.lockedCollateral,
@@ -236,12 +236,12 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
                 yieldWarChest += yieldShares;
             }
         } else {
-            oldDebt = IOracleFacet(oracleFacet).denormalizeDebt(oldV.normalizedDebt);
+            oldDebt = _denormalizeDebt(oldV.normalizedDebt);
         }
         
         // Extract yield from new vault
         if (newV.collateralShares > 0) {
-            uint256 newDebtBefore = IOracleFacet(oracleFacet).denormalizeDebt(newV.normalizedDebt);
+            uint256 newDebtBefore = _denormalizeDebt(newV.normalizedDebt);
             uint256 yieldShares = YieldLogic.calculateExtractableYield(
                 newV.collateralShares,
                 newV.lockedCollateral,
@@ -291,7 +291,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         }
         
         // Recalculate debt after burn settlements
-        oldDebt = IOracleFacet(oracleFacet).denormalizeDebt(oldV.normalizedDebt);
+        oldDebt = _denormalizeDebt(oldV.normalizedDebt);
         
         // C2: Capture absorbed collateral to prevent yield-siphon
         uint256 absorbedCollateral = oldV.collateralShares;
@@ -312,7 +312,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         oldV.mintNonce++;
         
         // Verify new vault is healthy after takeover
-        uint256 newDebt = IOracleFacet(oracleFacet).denormalizeDebt(newV.normalizedDebt);
+        uint256 newDebt = _denormalizeDebt(newV.normalizedDebt);
         uint256 newRatio = _calculateCRWithPositions(msg.sender, newDebt);
         if (newRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
         
@@ -323,7 +323,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
     
     function isVaultLiquidatable(address lpVault) external view returns (bool) {
         Vault memory vault = _vaults[lpVault];
-        uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+        uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
         if (!vault.active || actualDebt == 0) return false;
         
         uint256 ratio = _calculateCRWithPositions(lpVault, actualDebt);
@@ -332,7 +332,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
     
     function calculateLiquidation(address lpVault, uint256 debtToClear) external view returns (uint256 collateralSeized, uint256 actualDebtCleared) {
         Vault memory vault = _vaults[lpVault];
-        uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+        uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
         
         if (debtToClear > actualDebt) {
             debtToClear = actualDebt;
@@ -374,7 +374,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         for (uint256 i = startIndex; i < startIndex + maxResults && i < totalVaults; i++) {
             address vaultAddr = vaultList[i];
             Vault memory vault = _vaults[vaultAddr];
-            uint256 actualDebt = IOracleFacet(oracleFacet).denormalizeDebt(vault.normalizedDebt);
+            uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
             
             if (vault.active && actualDebt > 0) {
                 uint256 ratio = _calculateCRWithPositions(vaultAddr, actualDebt);
