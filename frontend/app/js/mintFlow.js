@@ -3,11 +3,10 @@
 import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG } from './config.js';
 import { readHub, writeHub, watchContractEvent, getUserAddress } from './viemClient.js';
 import { getPhantomAgent } from './phantomAgent.js';
-import { getLPClient } from './lpClient.js';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
 import { keccak256, toHex, parseEther } from 'https://esm.sh/viem@2.7.0';
 import { startDeadlineTimer, startStatusPolling, stopTimers } from './mintFlowTimers.js';
-import { showLPVerificationStatus } from './ui.js';
+import { showLPVerificationStatus, updateMintProgress } from './ui.js';
 
 export class MintFlow {
     constructor() {
@@ -21,7 +20,6 @@ export class MintFlow {
         this.timeout = null;
         this.depositAddress = null;
         this.eventWatchers = [];
-        this.lpClient = getLPClient();
     }
 
     async start(lpVault, xmrAmount) {
@@ -43,7 +41,9 @@ export class MintFlow {
         await this.checkOracleFreshness();
         await this.initiateOnEVM();
         await this.notifyLP();
+        if (this.state === 'expired') return;
         await this.waitForLPReady();
+        if (this.state === 'expired') return;
         await this.finalize();
     }
 
@@ -137,35 +137,18 @@ export class MintFlow {
             xmrAmount: this.xmrAmount
         });
 
-        console.log('Getting quote from LP server...');
+        console.log('Getting quote from on-chain vault...');
         
-        try {
-            const userAddress = getUserAddress();
-            const quote = await this.lpClient.quoteMint({
-                xmrAmount: this.xmrAmount,
-                userAddress
-            });
-
-            console.log('Quote received:', quote);
-            
-            this.lpVault = quote.lp_vault || this.lpVault;
-            this.griefingDeposit = BigInt(quote.griefing_deposit || '1000000000000000');
-            this.wsxmrAmount = BigInt(quote.wsxmr_amount);
-            
-            updateSwapState({
-                quote,
-                griefingDeposit: this.griefingDeposit.toString(),
-                wsxmrAmount: this.wsxmrAmount.toString()
-            });
-        } catch (error) {
-            console.warn('LP server unavailable, using on-chain fallback:', error);
-            
-            const vault = await readHub('getVault', [this.lpVault]);
-            this.griefingDeposit = vault.mintGriefingDeposit;
-            
-            const xmrAtomic = BigInt(Math.floor(this.xmrAmount * Math.pow(10, DECIMALS.XMR)));
-            this.wsxmrAmount = await readHub('calculateWsxmrAmount', [xmrAtomic]);
-        }
+        const vault = await readHub('getVault', [this.lpVault]);
+        this.griefingDeposit = vault.mintGriefingDeposit;
+        
+        const xmrAtomic = BigInt(Math.floor(this.xmrAmount * Math.pow(10, DECIMALS.XMR)));
+        this.wsxmrAmount = await readHub('calculateWsxmrAmount', [xmrAtomic]);
+        
+        updateSwapState({
+            griefingDeposit: this.griefingDeposit.toString(),
+            wsxmrAmount: this.wsxmrAmount.toString()
+        });
     }
 
     async initializeAgent() {
@@ -207,6 +190,7 @@ export class MintFlow {
             // Prices are stale - try to update them
             console.warn('Oracle prices are stale, attempting update...');
             try {
+                updateMintProgress('evm-init', 'Updating XMR price onchain...');
                 await this.updatePrices();
             } catch (updateError) {
                 console.warn('Could not update prices from UI:', updateError.message);
@@ -270,8 +254,14 @@ export class MintFlow {
             this.requestId = mintInitiatedEvent.topics[1];
             console.log('Request ID:', this.requestId);
             
+            // Query the on-chain mint request to get the blockchain timeout
+            const mintReq = await readHub('getMintRequest', [this.requestId]);
+            this.timeout = mintReq.timeout;
+            console.log('Mint timeout (block):', this.timeout.toString());
+            
             // Save complete swap state to localStorage
             const { addOrUpdateActiveSwap } = await import('./storage.js');
+            const publicSpendKey = toHex(this.agent.keySet.publicSpendKey);
             addOrUpdateActiveSwap({
                 type: 'mint',
                 requestId: this.requestId,
@@ -281,6 +271,8 @@ export class MintFlow {
                 wsxmrAmount: this.wsxmrAmount.toString(),
                 griefingDeposit: this.griefingDeposit.toString(),
                 txHash: receipt.transactionHash,
+                timeout: this.timeout.toString(),
+                publicSpendKey: publicSpendKey,
                 timestamp: Date.now(),
                 lastUpdated: Date.now()
             });
@@ -302,26 +294,27 @@ export class MintFlow {
         console.log('Waiting for LP to provide public key...');
         updateSwapState({ requestId: this.requestId, state: 'awaiting-lp-key', message: 'Waiting for LP to provide public key...' });
         
-        // Wait for LP to call provideLPKey() on-chain
+        // Start deadline timer immediately so user sees countdown from the start
+        await startDeadlineTimer(this);
+        
+        // Wait for LP to call provideLPKey() on-chain (polls indefinitely, checks expiry)
         const lpPublicKey = await this.waitForLPKey();
+        
+        // If null returned, mint expired on-chain while waiting
+        if (!lpPublicKey) {
+            console.log('Mint expired on-chain while waiting for LP key');
+            this.state = 'expired';
+            updateSwapState({ requestId: this.requestId, state: 'expired', message: 'Mint expired. Cancel to refund your deposit.' });
+            return;
+        }
         
         console.log('LP public key received:', lpPublicKey);
         
-        // Get the deposit address from LP server (it computes the proper Monero address)
-        console.log('Fetching deposit address from LP server...');
-        try {
-            const status = await this.lpClient.getMintStatus(this.requestId);
-            if (status.deposit_address) {
-                this.depositAddress = status.deposit_address;
-                console.log('Monero Deposit Address:', this.depositAddress);
-                console.log('Send exactly', this.xmrAmount, 'XMR to this address');
-            } else {
-                throw new Error('LP server did not provide deposit address');
-            }
-        } catch (error) {
-            console.error('Failed to get deposit address from LP server:', error);
-            throw new Error('Could not get deposit address from LP. Please try again.');
-        }
+        // Derive shared Monero deposit address locally using LP's public key
+        console.log('Deriving shared Monero deposit address...');
+        this.depositAddress = await this.agent.deriveSharedMoneroAddress(lpPublicKey);
+        console.log('Monero Deposit Address:', this.depositAddress);
+        console.log('Send exactly', this.xmrAmount, 'XMR to this address');
         
         updateSwapState({
             requestId: this.requestId,
@@ -336,28 +329,49 @@ export class MintFlow {
     async waitForLPKey() {
         console.log('Polling for LP public key on-chain...');
         
-        const maxAttempts = 60; // 5 minutes (5s intervals)
-        
-        for (let i = 0; i < maxAttempts; i++) {
+        // If we don't have the on-chain timeout yet, query it now
+        if (!this.timeout) {
             try {
+                const mintReq = await readHub('getMintRequest', [this.requestId]);
+                this.timeout = mintReq.timeout;
+                console.log('Queried on-chain timeout (block):', this.timeout.toString());
+            } catch (e) {
+                console.warn('Could not query on-chain timeout, will skip expiry check:', e.message);
+            }
+        }
+        
+        let attempt = 0;
+        while (true) {
+            try {
+                // First check if the mint has expired on-chain
+                if (this.timeout) {
+                    const { getPublicClient } = await import('./viemClient.js');
+                    const publicClient = getPublicClient();
+                    const currentBlock = await publicClient.getBlockNumber();
+                    if (currentBlock >= this.timeout) {
+                        console.log('Mint timeout reached on-chain while waiting for LP key');
+                        return null;
+                    }
+                }
+                
                 const lpPublicKey = await readHub('lpPublicKeys', [this.requestId]);
                 
                 if (lpPublicKey && lpPublicKey !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
                     return lpPublicKey;
                 }
                 
-                if (i % 6 === 0) { // Log every 30 seconds
+                if (attempt % 6 === 0) { // Log every 30 seconds
                     console.log('Still waiting for LP to provide public key...');
                 }
                 
                 await new Promise(resolve => setTimeout(resolve, 5000));
+                attempt++;
             } catch (error) {
                 console.error('Error checking for LP key:', error);
                 await new Promise(resolve => setTimeout(resolve, 5000));
+                attempt++;
             }
         }
-        
-        throw new Error('Timeout waiting for LP to provide public key. LP may be offline.');
     }
 
     async waitForLPReady() {
@@ -385,7 +399,7 @@ export class MintFlow {
         // The state will change to 'lp-ready' when MintReady event is received
 
         // Start deadline countdown timer
-        startDeadlineTimer(this);
+        await startDeadlineTimer(this);
         
         // Start periodic status checking (now just a placeholder)
         startStatusPolling(this);
@@ -452,7 +466,38 @@ export class MintFlow {
 
         const secret = this.agent.getSecret();
 
-        const receipt = await writeHub('finalizeMint', [this.requestId, secret], 0n, 1000000n);
+        let receipt;
+        try {
+            receipt = await writeHub('finalizeMint', [this.requestId, secret], 0n, 1000000n);
+        } catch (error) {
+            const isStalePrice = error.message && (
+                error.message.includes('StalePrice') ||
+                error.message.includes('0x19abf40e')
+            );
+            if (isStalePrice) {
+                console.warn('StalePrice on finalizeMint - attempting to update oracle prices...');
+                try {
+                    updateMintProgress('finalize', 'Updating XMR price onchain...');
+                    await this.updatePrices();
+                    console.log('Prices updated, retrying finalizeMint...');
+                    receipt = await writeHub('finalizeMint', [this.requestId, secret], 0n, 1000000n);
+                } catch (retryError) {
+                    const stillStale = retryError.message && (
+                        retryError.message.includes('StalePrice') ||
+                        retryError.message.includes('0x19abf40e')
+                    );
+                    if (stillStale) {
+                        throw new Error(
+                            'Oracle prices are stale. The LP node typically updates prices automatically. ' +
+                            'Please wait 1-2 minutes and try again.'
+                        );
+                    }
+                    throw retryError;
+                }
+            } else {
+                throw error;
+            }
+        }
 
         console.log('Mint finalized, tx:', receipt.transactionHash);
 
@@ -513,6 +558,9 @@ export class MintFlow {
         this.xmrAmount = savedState.xmrAmount;
         this.requestId = savedState.requestId;
         this.state = savedState.state;
+        if (savedState.timeout) {
+            this.timeout = BigInt(savedState.timeout);
+        }
 
         this.agent = getPhantomAgent();
 
@@ -564,31 +612,25 @@ export class MintFlow {
             case 'initiated':
             case 'awaiting-lp-key':
                 await this.notifyLP();
+                if (this.state === 'expired') return;
                 await this.waitForLPReady();
+                if (this.state === 'expired') return;
                 await this.finalize();
                 break;
             case 'deposit':
             case 'lp-ready':
-                // Check if we have a valid deposit address, otherwise fetch from LP server
+                // Check if we have a valid deposit address, otherwise derive locally
                 if (savedState.depositAddress && savedState.depositAddress.startsWith('4')) {
                     // Valid Monero address from saved state
                     this.depositAddress = savedState.depositAddress;
                     console.log('Restored Monero Deposit Address:', this.depositAddress);
+                } else if (savedState.lpPublicKey) {
+                    // Derive from saved LP public key locally
+                    console.log('Deriving deposit address from saved LP public key...');
+                    this.depositAddress = await this.agent.deriveSharedMoneroAddress(savedState.lpPublicKey);
+                    console.log('Derived Monero Deposit Address:', this.depositAddress);
                 } else {
-                    // Fetch from LP server
-                    console.log('Fetching deposit address from LP server...');
-                    try {
-                        const status = await this.lpClient.getMintStatus(this.requestId);
-                        if (status.deposit_address) {
-                            this.depositAddress = status.deposit_address;
-                            console.log('Fetched Monero Deposit Address:', this.depositAddress);
-                        } else {
-                            throw new Error('LP server did not provide deposit address');
-                        }
-                    } catch (error) {
-                        console.error('Failed to get deposit address:', error);
-                        throw new Error('Could not get deposit address from LP. Please try again.');
-                    }
+                    throw new Error('No deposit address or LP public key found in saved swap state.');
                 }
                 
                 console.log('Send exactly', this.xmrAmount, 'XMR to this address');

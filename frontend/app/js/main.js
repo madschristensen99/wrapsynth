@@ -37,6 +37,7 @@ import {
     launchConfetti,
     showError,
     showResumeError,
+    showResumeSuccess,
     disableInputs,
     enableInputs,
     resetMintUI,
@@ -441,6 +442,10 @@ async function handleConnectWallet() {
  */
 function autoResumeSwap(swap) {
     if (!swap) return;
+    if (isResuming) {
+        console.log('Manual resume in progress, skipping auto-resume');
+        return;
+    }
 
     // Don't auto-resume swaps that can't be resumed (no stored secret)
     if (!swap.publicSpendKey) {
@@ -449,13 +454,29 @@ function autoResumeSwap(swap) {
     }
 
     if (swap.type === 'mint') {
-        showMintTab();
-        currentMintFlow = new MintFlow();
-        trackMintProgress(currentMintFlow);
-        currentMintFlow.resume(swap).catch(err => {
-            console.error('Auto-resume mint error:', err);
-            showResumeError(swap.requestId, err.message || 'Could not resume your mint. Please clear the swap and start fresh.');
+        // Pre-check: don't auto-resume if seed is missing
+        // publicSpendKey has '0x' prefix (from toHex); keep it for correct lookup
+        const pubKeyHex = swap.publicSpendKey;
+        import('./seedStorage.js').then(({ hasStoredSeed }) => {
+            if (!hasStoredSeed(pubKeyHex)) {
+                console.log('Auto-resume skipped: seed not found for', swap.requestId.slice(0,10));
+                return;
+            }
+            showMintTab();
+            currentMintFlow = new MintFlow();
+            trackMintProgress(currentMintFlow);
+            currentMintFlow.resume(swap).catch(err => {
+                console.error('Auto-resume mint error:', err);
+                const isStuck = (swap.state === 'lp-ready' || swap.state === 'finalize');
+                showResumeError(swap.requestId, err.message || 'Could not resume your mint. ' + (isStuck ? 'Click Dismiss to hide this swap.' : 'Please clear the swap and start fresh.'));
+                if (isStuck) {
+                    addDismissButtonToSwapItem(swap.requestId);
+                } else {
+                    addClearButtonToSwapItem(swap.requestId);
+                }
+            });
         });
+        return;
     } else if (swap.type === 'burn') {
         showBurnTab();
         currentBurnFlow = new BurnFlow();
@@ -494,6 +515,13 @@ async function handleAccountChange(newAddress) {
         }
     } else {
         console.log('Account disconnected');
+        // Try to silently reconnect before showing disconnected state
+        const { ensureConnected } = await import('./viemClient.js');
+        const reconnected = await ensureConnected();
+        if (reconnected) {
+            console.log('Silently reconnected:', reconnected);
+            return handleAccountChange(reconnected);
+        }
         showWalletDisconnected();
         setWithdrawReturnsVisible(false);
     }
@@ -583,12 +611,12 @@ async function handleChainChange(chainId) {
  * Check for active swap on startup (localStorage only)
  */
 async function checkForActiveSwap() {
-    const swaps = loadActiveSwaps();
+    const swaps = loadActiveSwaps().filter(s => !s.dismissed);
     if (swaps.length === 0) return;
-    
+
     console.log('Found saved swaps in localStorage:', swaps);
-    
-    // Show banner for all swaps - on-chain check will happen when wallet connects
+
+    // Show banner for non-dismissed swaps - on-chain check will happen when wallet connects
     showResumeBanner(swaps, handleResumeSwap, handleResolveSwap);
 }
 
@@ -674,14 +702,17 @@ async function checkForActiveSwapOnChain(userAddress) {
                     griefingDeposit: mintReq.griefingDeposit.toString(),
                     lastUpdated: Date.now()
                 };
-                // Preserve local-only fields (e.g. publicSpendKey) from existing entry
+                // Preserve local-only fields (e.g. publicSpendKey, dismissed) from existing entry
                 const existing = getActiveSwapByRequestId(requestId);
                 if (existing) {
                     swap = { ...existing, ...swap };
+                    if (existing.dismissed) {
+                        console.log('[CHAIN CHECK] Preserving dismissed flag for', requestId.slice(0, 14));
+                    }
                 }
                 addOrUpdateActiveSwap(swap);
                 foundSwaps.push(swap);
-                console.log('[CHAIN CHECK] Active mint found:', { requestId, state, xmrAmount });
+                console.log('[CHAIN CHECK] Active mint found:', { requestId, state, xmrAmount, dismissed: swap.dismissed });
             }
         }
 
@@ -737,10 +768,13 @@ async function checkForActiveSwapOnChain(userAddress) {
                 const existing = getActiveSwapByRequestId(requestId);
                 if (existing) {
                     swap = { ...existing, ...swap };
+                    if (existing.dismissed) {
+                        console.log('[CHAIN CHECK] Preserving dismissed flag for burn', requestId.slice(0, 14));
+                    }
                 }
                 addOrUpdateActiveSwap(swap);
                 foundSwaps.push(swap);
-                console.log('[CHAIN CHECK] Active burn found:', { requestId, state, xmrAmount });
+                console.log('[CHAIN CHECK] Active burn found:', { requestId, state, xmrAmount, dismissed: swap.dismissed });
             }
         }
 
@@ -751,17 +785,28 @@ async function checkForActiveSwapOnChain(userAddress) {
             if (!swap.requestId) continue;
             if (!activeRequestIds.has(swap.requestId)) continue;
             const existing = seen.get(swap.requestId);
-            if (!existing || (swap.lastUpdated || 0) > (existing.lastUpdated || 0)) {
+            if (!existing) {
+                seen.set(swap.requestId, swap);
+            } else if (swap.dismissed && !existing.dismissed) {
+                // Prefer dismissed entries even if older — user explicitly hid this swap
+                seen.set(swap.requestId, swap);
+            } else if ((swap.lastUpdated || 0) > (existing.lastUpdated || 0)) {
                 seen.set(swap.requestId, swap);
             }
         }
         const pruned = Array.from(seen.values());
+        const dismissedCount = pruned.filter(s => s.dismissed).length;
+        if (dismissedCount > 0) {
+            console.log('[CHAIN CHECK] Dedup preserving', dismissedCount, 'dismissed swap(s)');
+        }
         if (pruned.length !== allSwaps.length) {
             setSwapsArray(pruned);
         }
 
         // ─── Show banner ───────────────────────────────────────────────────────
-        const remaining = loadActiveSwaps();
+        const all = loadActiveSwaps();
+        console.log('[CHAIN CHECK] All stored swaps:', all.length, all.map(s => ({ id: s.requestId?.slice(0,14), dismissed: s.dismissed })));
+        const remaining = all.filter(s => !s.dismissed);
         if (remaining.length > 0) {
             showResumeBanner(remaining, handleResumeSwap, handleResolveSwap);
             console.log('[CHAIN CHECK] Banner shown with', remaining.length, 'active swap(s)');
@@ -1171,11 +1216,18 @@ async function loadLpStats(address, vaultData) {
     }
 }
 
+let isResuming = false;
+
 /**
  * Handle resume swap (called when user clicks Resume on a specific swap)
  * @param {Object} specificSwap - Optional specific swap to resume; falls back to most recent
  */
 async function handleResumeSwap(specificSwap) {
+    if (isResuming) {
+        console.log('Resume already in progress, ignoring duplicate click');
+        return;
+    }
+
     const swap = specificSwap || loadActiveSwap();
     if (!swap) {
         showError('Resume Error', 'No active swap found');
@@ -1183,44 +1235,72 @@ async function handleResumeSwap(specificSwap) {
     }
 
     if (!swap.publicSpendKey) {
-        showResumeError(swap.requestId, 'This swap was created before auto-save. Click Resolve to cancel it on-chain.');
+        const isStuck = swap.type === 'mint' && (swap.state === 'lp-ready' || swap.state === 'finalize');
+        if (isStuck) {
+            showResumeError(swap.requestId, 'Swap secret is missing. The LP has verified your deposit but you cannot claim wsXMR without this secret. Click Resolve to see your options.');
+        } else {
+            showResumeError(swap.requestId, 'This swap was created before auto-save. Click Resolve to cancel it on-chain and recover your deposit.');
+        }
         return;
     }
 
+    isResuming = true;
+
     try {
         // Ensure wallet is connected
-        const address = getUserAddress();
+        let address = getUserAddress();
         if (!address) {
-            await handleConnectWallet();
+            const { ensureConnected } = await import('./viemClient.js');
+            address = await ensureConnected();
+            if (!address) {
+                await handleConnectWallet();
+                address = getUserAddress();
+            }
         }
 
         // Resume appropriate flow
         if (swap.type === 'mint') {
-            // Try to load the seed for this mint if we have the publicSpendKey
-            if (swap.publicSpendKey) {
-                const { loadSeed, hasStoredSeed } = await import('./seedStorage.js');
-                const { getPhantomAgent } = await import('./phantomAgent.js');
-                
-                // Remove '0x' prefix if present
-                const pubKeyHex = swap.publicSpendKey.startsWith('0x') 
-                    ? swap.publicSpendKey.slice(2) 
-                    : swap.publicSpendKey;
-                
-                if (hasStoredSeed(pubKeyHex)) {
-                    console.log('Loading seed for this mint...');
-                    const seed = await loadSeed(pubKeyHex);
-                    if (seed) {
-                        const agent = getPhantomAgent();
-                        await agent.restoreFromSeed(seed);
-                        console.log('✅ Seed restored for mint');
-                    } else {
-                        console.warn('⚠️ Could not decrypt seed - you may need to sign to decrypt');
-                    }
+            const { loadSeed, hasStoredSeed } = await import('./seedStorage.js');
+            const { getPhantomAgent } = await import('./phantomAgent.js');
+
+            // publicSpendKey from storage has '0x' prefix (from toHex in initiateOnEVM).
+            // seedStorage.js uses the key as-is, so we must NOT strip the prefix.
+            const pubKeyHex = swap.publicSpendKey;
+
+            // Check seed availability BEFORE switching tabs
+            if (!hasStoredSeed(pubKeyHex)) {
+                const isStuck = (swap.state === 'lp-ready' || swap.state === 'finalize');
+                const stateHint = isStuck
+                    ? ' The LP has verified your deposit but without the secret you cannot claim wsXMR. Click Dismiss to hide this swap.'
+                    : '';
+                showResumeError(swap.requestId, 'Swap secret not found in browser storage. This swap cannot be resumed.' + stateHint);
+                if (isStuck) {
+                    addDismissButtonToSwapItem(swap.requestId);
                 } else {
-                    console.warn('⚠️ No stored seed found for this mint - finalization may fail');
+                    addClearButtonToSwapItem(swap.requestId);
                 }
+                return;
             }
-            
+
+            // Try to decrypt — may prompt for wallet signature
+            console.log('Loading seed for this mint...');
+            const seed = await loadSeed(pubKeyHex);
+            if (!seed) {
+                const isStuck = (swap.state === 'lp-ready' || swap.state === 'finalize');
+                showResumeError(swap.requestId, 'Could not decrypt swap secret. You may have cancelled the signature prompt. ' + (isStuck ? 'Click Dismiss to hide this swap.' : 'Click "Sign to Unlock" to try again.'));
+                if (isStuck) {
+                    addDismissButtonToSwapItem(swap.requestId);
+                } else {
+                    addSignToUnlockButton(swap.requestId, pubKeyHex);
+                }
+                return;
+            }
+
+            const agent = getPhantomAgent();
+            await agent.resumeFromSeed(seed);
+            console.log('✅ Seed restored for mint');
+
+            // Only switch tabs once seed is confirmed ready
             currentMintFlow = new MintFlow();
             showMintTab();
             trackMintProgress(currentMintFlow);
@@ -1231,13 +1311,134 @@ async function handleResumeSwap(specificSwap) {
             trackBurnProgress(currentBurnFlow);
             await currentBurnFlow.resume(swap);
         }
-        
+
         // Banner stays visible so user can see other active swaps
 
     } catch (error) {
         console.error('Error resuming swap:', error);
-        showError('Resume Error', error.message);
+        const isStuck = swap.type === 'mint' && (swap.state === 'lp-ready' || swap.state === 'finalize');
+        showResumeError(swap.requestId, error.message || 'Could not resume swap.');
+        if (isStuck) {
+            addDismissButtonToSwapItem(swap.requestId);
+        } else {
+            addClearButtonToSwapItem(swap.requestId);
+        }
+    } finally {
+        isResuming = false;
     }
+}
+
+/**
+ * Add a "Clear" button to a resume banner swap item so users can remove broken swaps.
+ */
+function addClearButtonToSwapItem(requestId) {
+    const list = document.getElementById('resume-swap-list');
+    if (!list) return;
+    const item = list.querySelector(`.resume-swap-item[data-request-id="${requestId}"]`);
+    if (!item) return;
+
+    if (item.querySelector('.btn-clear-swap')) return;
+
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'btn btn-small btn-clear-swap';
+    clearBtn.textContent = 'Clear Swap';
+    clearBtn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.8rem; background: transparent; color: var(--text-secondary); border: 1px solid var(--border-color); margin-top: 0.25rem; align-self: flex-start;';
+    clearBtn.onclick = async () => {
+        const { removeActiveSwap } = await import('./storage.js');
+        removeActiveSwap(requestId);
+        item.remove();
+        const remaining = JSON.parse(localStorage.getItem('activeSwaps') || '[]');
+        if (remaining.length === 0) {
+            const banner = document.getElementById('resume-banner');
+            if (banner) banner.classList.add('hidden');
+        }
+    };
+    item.appendChild(clearBtn);
+}
+
+/**
+ * Add a "Dismiss" button that hides a swap from the banner without removing it from storage.
+ * This prevents the swap from re-appearing after refresh, since checkForActiveSwapOnChain
+ * filters out dismissed swaps. The user can still recover if they find the secret later.
+ */
+function addDismissButtonToSwapItem(requestId) {
+    const list = document.getElementById('resume-swap-list');
+    if (!list) return;
+    const item = list.querySelector(`.resume-swap-item[data-request-id="${requestId}"]`);
+    if (!item) return;
+
+    if (item.querySelector('.btn-dismiss-swap')) return;
+
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-small btn-dismiss-swap';
+    btn.textContent = 'Dismiss';
+    btn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.8rem; background: transparent; color: var(--text-secondary); border: 1px solid var(--border-color); margin-top: 0.25rem; align-self: flex-start;';
+    btn.onclick = () => {
+        const swap = getActiveSwapByRequestId(requestId);
+        if (swap) {
+            swap.dismissed = true;
+            swap.lastUpdated = Date.now();
+            addOrUpdateActiveSwap(swap);
+            console.log('[DISMISS] Swap marked dismissed:', requestId.slice(0, 14), 'dismissed=', swap.dismissed);
+        } else {
+            console.warn('[DISMISS] Swap not found in storage:', requestId.slice(0, 14));
+        }
+        item.remove();
+        const remaining = loadActiveSwaps().filter(s => !s.dismissed);
+        console.log('[DISMISS] Remaining non-dismissed swaps:', remaining.length);
+        if (remaining.length > 0) {
+            showResumeBanner(remaining, handleResumeSwap, handleResolveSwap);
+        } else {
+            const banner = document.getElementById('resume-banner');
+            if (banner) banner.classList.add('hidden');
+        }
+    };
+    item.appendChild(btn);
+}
+
+/**
+ * Add a "Sign to Unlock" button that retries decrypting the seed.
+ */
+function addSignToUnlockButton(requestId, publicSpendKey) {
+    const list = document.getElementById('resume-swap-list');
+    if (!list) return;
+    const item = list.querySelector(`.resume-swap-item[data-request-id="${requestId}"]`);
+    if (!item) return;
+
+    if (item.querySelector('.btn-sign-unlock')) return;
+
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-small btn-sign-unlock';
+    btn.textContent = 'Sign to Unlock';
+    btn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.8rem; margin-top: 0.25rem; align-self: flex-start;';
+    btn.onclick = async () => {
+        btn.disabled = true;
+        btn.textContent = 'Unlocking...';
+        try {
+            const { loadSeed } = await import('./seedStorage.js');
+            const seed = await loadSeed(publicSpendKey);
+            if (!seed) {
+                btn.disabled = false;
+                btn.textContent = 'Sign to Unlock';
+                return;
+            }
+            // Remove the error and retry resume
+            const errDiv = item.querySelector('.resume-error');
+            if (errDiv) errDiv.remove();
+            const unlockBtn = item.querySelector('.btn-sign-unlock');
+            if (unlockBtn) unlockBtn.remove();
+            const clearBtn = item.querySelector('.btn-clear-swap');
+            if (clearBtn) clearBtn.remove();
+            // Trigger resume again for this specific swap
+            const swap = getActiveSwapByRequestId(requestId);
+            if (swap) handleResumeSwap(swap);
+        } catch (e) {
+            console.error('Sign to unlock failed:', e);
+            btn.disabled = false;
+            btn.textContent = 'Sign to Unlock';
+        }
+    };
+    item.appendChild(btn);
 }
 
 /**
@@ -1253,7 +1454,7 @@ async function handleResolveSwap(swap) {
         try {
             address = await handleConnectWallet();
         } catch (e) {
-            showError('Wallet Required', 'Please connect your wallet to resolve this swap.');
+            showResumeError(swap.requestId, 'Please connect your wallet to resolve this swap.');
             return;
         }
     }
@@ -1265,7 +1466,7 @@ async function handleResolveSwap(swap) {
             const { writeHub } = await import('./viemClient.js');
             const receipt = await writeHub('cancelMint', [swap.requestId]);
             console.log('cancelMint tx:', receipt.transactionHash);
-            showSuccess('Mint Cancelled', 'Your griefing deposit has been refunded.');
+            showResumeSuccess(swap.requestId, 'Mint cancelled. Your griefing deposit has been refunded.');
         }
         // REQUESTED burn: cancel on-chain to recover wsXMR
         else if (swap.type === 'burn' && swap.state === 'evm-request') {
@@ -1285,28 +1486,43 @@ async function handleResolveSwap(swap) {
             
             if (status === 4 || status === 5 || status === 6) {
                 // Already resolved on-chain, just clear locally
-                showSuccess('Burn Already Resolved', 'This burn has already been cancelled, completed, or slashed on-chain.');
+                showResumeSuccess(swap.requestId, 'This burn has already been cancelled, completed, or slashed on-chain.');
             } else if (status === 1 || status === 2) {
                 if (currentBlock >= deadline) {
                     const receipt = await writeHub('cancelBurn', [swap.requestId]);
                     console.log('cancelBurn tx:', receipt.transactionHash);
-                    showSuccess('Burn Cancelled', 'Your wsXMR has been returned.');
+                    showResumeSuccess(swap.requestId, 'Burn cancelled. Your wsXMR has been returned.');
                 } else {
                     const blocksRemaining = Number(deadline - currentBlock);
                     const estSeconds = blocksRemaining * 5; // ~5s per block on Gnosis
                     const mins = Math.floor(estSeconds / 60);
                     const secs = estSeconds % 60;
-                    showError('Cannot Cancel Yet', `Deadline has not expired. Please wait ~${mins}m ${secs}s more (${blocksRemaining} blocks) before you can cancel this burn.`);
+                    showResumeError(swap.requestId, `Deadline has not expired. Please wait ~${mins}m ${secs}s more (${blocksRemaining} blocks) before you can cancel this burn.`);
                     return; // Don't clear from storage
                 }
             } else {
-                showError('Invalid Status', 'This burn request has an unexpected status. Please check the block explorer.');
+                showResumeError(swap.requestId, 'This burn request has an unexpected status. Please check the block explorer.');
                 return;
+            }
+        }
+        // Mint is READY but user has no secret: try cancel (will likely revert), explain if stuck
+        else if (swap.type === 'mint' && (swap.state === 'lp-ready' || swap.state === 'finalize')) {
+            console.log('Mint is READY but secret is missing, trying cancel anyway:', swap.requestId);
+            try {
+                const { writeHub } = await import('./viemClient.js');
+                const receipt = await writeHub('cancelMint', [swap.requestId]);
+                console.log('cancelMint tx:', receipt.transactionHash);
+                showResumeSuccess(swap.requestId, 'Mint cancelled. Your griefing deposit has been refunded.');
+            } catch (e) {
+                console.warn('cancelMint failed for READY mint (expected):', e.message);
+                showResumeError(swap.requestId, 'This mint is already verified by the LP and cannot be cancelled on-chain. Without the swap secret your deposit is locked. Click Dismiss to hide this swap from your dashboard.');
+                addDismissButtonToSwapItem(swap.requestId);
+                return; // Don't auto-clear; let user decide
             }
         }
         // Beyond PENDING/REQUESTED: stuck without secret, just clear locally
         else {
-            showSuccess('Swap Cleared', 'The swap has been removed from your browser.');
+            showResumeSuccess(swap.requestId, 'Swap cleared from your browser.');
         }
 
         // Remove from localStorage
@@ -1325,7 +1541,7 @@ async function handleResolveSwap(swap) {
         }
     } catch (error) {
         console.error('Error resolving swap:', error);
-        showError('Resolve Failed', error.message || 'Could not resolve this swap on-chain.');
+        showResumeError(swap.requestId, error.message || 'Could not resolve this swap on-chain.');
     }
 }
 
@@ -1370,21 +1586,25 @@ async function loadVaults() {
 
                 if (hasCollateral || vaultData.active) {
                     const collAmount = Number(vaultData.collateralShares) / 1e18;
+                    const lockedAmount = Number(vaultData.lockedCollateral) / 1e18;
+                    const effectiveCollateral = Math.max(0, collAmount - lockedAmount);
                     const debtAmount = Number(vaultData.normalizedDebt) / 1e8;
                     const pendingDebtAmount = Number(vaultData.pendingDebt) / 1e8;
                     const totalDebt = debtAmount + pendingDebtAmount;
                     const debtValueUsd = debtAmount * xmrPrice;
                     const pendingDebtValueUsd = pendingDebtAmount * xmrPrice;
                     const totalDebtValueUsd = totalDebt * xmrPrice;
-                    
+
                     const usedCollateral = collPrice > 0 ? debtValueUsd / collPrice : 0;
                     const pendingCollateral = collPrice > 0 ? pendingDebtValueUsd / collPrice : 0;
                     // Buffer = extra 50% collateral required to maintain 150% ratio (on total debt)
                     const bufferCollateral = (usedCollateral + pendingCollateral) * 0.5;
-                    const freeCollateral = Math.max(0, collAmount - usedCollateral - pendingCollateral - bufferCollateral);
+                    const freeCollateral = Math.max(0, effectiveCollateral - usedCollateral - pendingCollateral - bufferCollateral);
 
                     console.log('Vault capacity:', {
                         collAmount,
+                        lockedAmount,
+                        effectiveCollateral,
                         debtAmount,
                         pendingDebtAmount,
                         totalDebt,
@@ -1398,12 +1618,24 @@ async function loadVaults() {
                         freeCollateral
                     });
 
-                    const maxMintCapacityXmr = xmrPrice > 0 ? (freeCollateral * collPrice) / xmrPrice : 0;
+                    // New debt must also maintain 150% CR, so divide free collateral by 1.5
+                    let maxMintCapacityXmr = xmrPrice > 0 ? (freeCollateral * collPrice) / (1.5 * xmrPrice) : 0;
+
+                    // Enforce maxMintBps cap if configured (mirrors MintFacet check)
+                    const maxMintBps = Number(vaultData.maxMintBps);
+                    if (maxMintBps > 0) {
+                        const collateralValueUsd = collAmount * collPrice;
+                        const maxTotalDebtCapacity = (collateralValueUsd * 100) / 150;
+                        const maxMintAllowedUsd = (maxTotalDebtCapacity * maxMintBps) / 10000;
+                        const maxMintBpsCapacity = maxMintAllowedUsd / xmrPrice;
+                        maxMintCapacityXmr = Math.min(maxMintCapacityXmr, maxMintBpsCapacity);
+                    }
 
                     const vault = {
                         address: vaultAddress,
                         name: `LP Vault ${vaultAddress.slice(0, 6)}...${vaultAddress.slice(-4)}`,
                         collateral: vaultData.collateralShares,
+                        lockedCollateral: vaultData.lockedCollateral,
                         debt: vaultData.normalizedDebt,
                         pendingDebt: vaultData.pendingDebt,
                         usedCollateral,
@@ -1496,7 +1728,7 @@ function updateMintCapacityDisplay() {
             html += ` <span style="color: var(--error-color);">(exceeds capacity)</span>`;
         } else {
             const pct = maxCap > 0 ? ((amount / maxCap) * 100).toFixed(1) : '0';
-            html += ` <span style="color: var(--text-muted);">(${pct}% of capacity)</span>`;
+            html += ` <span style="color: var(--text-muted);">(${pct}% of LP's capacity)</span>`;
         }
     }
 
@@ -1631,7 +1863,7 @@ function trackMintProgress(flow) {
                 break;
             case 'lp-verifying':
                 completeMintStep('deposit');
-                updateMintProgress('lp-confirm', 'LP is updating oracle prices and verifying your XMR deposit...');
+                updateMintProgress('lp-confirm', 'Waiting for Monero confirmations (~15–30 min)...');
                 break;
             case 'lp-ready':
             case 'lp-confirm':
@@ -1641,6 +1873,10 @@ function trackMintProgress(flow) {
             case 'finalize':
                 completeMintStep('lp-confirm');
                 updateMintProgress('finalize', 'Revealing secret and minting wsXMR...');
+                break;
+            case 'expired':
+                updateMintProgress('deposit', 'Mint expired. Cancel to refund your deposit.');
+                clearInterval(checkState);
                 break;
             case 'completed':
                 completeMintStep('finalize');

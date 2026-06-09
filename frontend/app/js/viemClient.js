@@ -106,6 +106,30 @@ export function getUserAddress() {
 }
 
 /**
+ * Ensure wallet is connected. Silently tries to get the current address
+ * from MetaMask without prompting if already authorized.
+ */
+export async function ensureConnected() {
+    if (userAddress) return userAddress;
+    if (!walletClient || !window.ethereum) return null;
+    try {
+        const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+        if (accounts && accounts.length > 0) {
+            userAddress = accounts[0];
+            walletClient = createWalletClient({
+                account: userAddress,
+                chain: gnosis,
+                transport: custom(window.ethereum)
+            });
+            return userAddress;
+        }
+    } catch (e) {
+        console.warn('ensureConnected failed:', e.message);
+    }
+    return null;
+}
+
+/**
  * Get public client
  */
 export function getPublicClient() {

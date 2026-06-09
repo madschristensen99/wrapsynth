@@ -7,6 +7,7 @@ import { getUserAddress } from './viemClient.js';
 import { createKeySet } from './seedManager.js';
 import { storeSeed, loadSeed, hasStoredSeed } from './seedStorage.js';
 import { showSeedGenerationModal } from './seedUI.js';
+import { computeDepositAddress } from './moneroCrypto.js';
 
 /**
  * Phantom Agent State
@@ -202,31 +203,24 @@ class PhantomAgent {
 
     /**
      * Derive shared Monero address from LP's public key
-     * Uses ECDH (Elliptic Curve Diffie-Hellman) to combine keys
+     * Uses Ed25519 point addition to combine keys and derives a real Monero address
      * @param {string} lpPublicKeyHex - LP's Ed25519 public key (0x-prefixed hex)
-     * @returns {string} Shared Monero address
+     * @returns {Promise<string>} Shared Monero address
      */
-    deriveSharedMoneroAddress(lpPublicKeyHex) {
+    async deriveSharedMoneroAddress(lpPublicKeyHex) {
         if (!this.keySet) {
             throw new Error('Agent not initialized');
         }
-        
-        // For now, return a placeholder that shows the concept
-        // TODO: Implement proper ECDH key combination and Monero address derivation
-        // This requires:
-        // 1. Multiply LP's public key by user's private spend key (ECDH)
-        // 2. Derive shared spend key and view key
-        // 3. Generate Monero address from shared keys
-        
-        const lpKeyShort = lpPublicKeyHex.slice(0, 10) + '...' + lpPublicKeyHex.slice(-8);
-        const userKeyShort = this.keySet.publicSpendKey.toString(16).slice(0, 10);
-        
+
+        const userPublicKeyHex = '0x' + this.keySet.publicSpendKey.toString(16).padStart(64, '0');
+
         console.log('Deriving shared Monero address:');
-        console.log('  LP Public Key:', lpKeyShort);
-        console.log('  User Secret:', '0x' + this.seed.split(' ').slice(0, 2).join('') + '...');
-        
-        // Placeholder format - shows it's a shared/derived address
-        return `XMR_SHARED_${userKeyShort}_${lpKeyShort}`;
+        console.log('  LP Public Key:', lpPublicKeyHex.slice(0, 10) + '...' + lpPublicKeyHex.slice(-8));
+        console.log('  User Public Key:', userPublicKeyHex.slice(0, 10) + '...' + userPublicKeyHex.slice(-8));
+
+        const address = await computeDepositAddress(userPublicKeyHex, lpPublicKeyHex);
+        console.log('  Derived deposit address:', address);
+        return address;
     }
 
     /**

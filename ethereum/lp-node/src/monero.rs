@@ -119,20 +119,47 @@ impl MoneroClient {
             .build()
             .context("Failed to create wallet HTTP client")?;
 
-        // Fallback Monero daemon nodes
+        // Fallback Monero daemon nodes — comprehensive public node list
         let daemon_fallbacks = vec![
+            "https://xmr-node.cakewallet.com:18081".to_string(),
+            "https://node.sethforprivacy.com".to_string(),
+            "https://node.sethforprivacy.com:443".to_string(),
+            "https://connect.xmr-node.org".to_string(),
+            "https://connect.xmr-node.org:443".to_string(),
+            "https://rpc.monerosafe.com".to_string(),
+            "https://node.monerosafe.com".to_string(),
+            "https://node.mon3ro.com".to_string(),
             "https://xmr.hexide.com".to_string(),
             "https://monero.econanon.com:443".to_string(),
             "https://monerorpc.scentle5s.net".to_string(),
             "https://node.xmr.surf".to_string(),
-            "https://xmr2.doggett.tech:18089".to_string(),
             "https://xmr.visnova.pl".to_string(),
-            "https://xmr-node.cakewallet.com:18081".to_string(),
             "https://dewitte.fiatfaucet.com".to_string(),
+            "https://chad.fiatfaucet.com".to_string(),
+            "https://kowalski.fiatfaucet.com".to_string(),
             "https://xmr.unshakled.net:443".to_string(),
+            "https://xmr.unshakled.net".to_string(),
             "https://xmr.cryptostorm.is".to_string(),
             "https://xmr.ci.vet:443".to_string(),
             "https://monero.openinternet.io".to_string(),
+            "https://xmr.okade.pro:443".to_string(),
+            "https://xmr4.doggett.tech:18089".to_string(),
+            "https://xmr.hostingwire.net".to_string(),
+            "https://xmr.0xrpc.io".to_string(),
+            "https://xmr.surveillance.monster".to_string(),
+            "https://xmr3.doggett.tech:18089".to_string(),
+            "https://kuk.fan".to_string(),
+            "https://monero.definitelynotafed.com:443".to_string(),
+            "https://monero.definitelynotafed.com".to_string(),
+            "https://xmr5.doggett.tech:18089".to_string(),
+            "https://xmr.letmego.me".to_string(),
+            "https://xmr.letmego.me:443".to_string(),
+            "https://monero-rpc.cheems.de.box.skhron.com.ua:18089".to_string(),
+            "https://xmrnode.thecorn.net".to_string(),
+            "https://xmr1.doggett.tech:18089".to_string(),
+            "https://xmr.thinhhv.com:443".to_string(),
+            "https://xmr2.doggett.tech:18089".to_string(),
+            "https://xmr.jayjonkman.nl:18089".to_string(),
         ];
 
         Ok(Self {
@@ -488,20 +515,28 @@ impl MoneroClient {
     /// If it is not a valid point (e.g. a keccak256 hash commitment like WrapSynth
     /// stores on-chain), we fall back to an LP-only deposit address.
     pub fn generate_swap_keys(&self, user_commitment: &[u8; 32]) -> Result<SwapKeys> {
-        // Generate random LP keypair for this swap
-        let mut rng = OsRng;
+        // Deterministically derive LP swap keys from user commitment + LP master key.
+        // This ensures the same mint always produces the same deposit address,
+        // so the frontend can track it consistently across LP node restarts.
+        use sha2::{Sha256, Digest};
 
-        // Generate s_b (LP's private spend key for this swap)
-        let mut lp_scalar_bytes = [0u8; 32];
-        rng.fill_bytes(&mut lp_scalar_bytes);
+        // Derive s_b (LP's private spend key for this swap)
+        let mut spend_hasher = Sha256::new();
+        spend_hasher.update(self.private_spend_key.as_bytes());
+        spend_hasher.update(user_commitment);
+        spend_hasher.update(b"swap_spend");
+        let lp_scalar_bytes: [u8; 32] = spend_hasher.finalize().into();
         let lp_scalar = Scalar::from_bytes_mod_order(lp_scalar_bytes);
         let canonical_bytes = lp_scalar.to_bytes();
         let lp_private_spend = PrivateKey::from_slice(&canonical_bytes)
             .map_err(|e| anyhow!("Failed to create LP private spend key: {:?}", e))?;
 
-        // Generate v_b (LP's private view key for this swap)
-        let mut lp_view_bytes = [0u8; 32];
-        rng.fill_bytes(&mut lp_view_bytes);
+        // Derive v_b (LP's private view key for this swap)
+        let mut view_hasher = Sha256::new();
+        view_hasher.update(self.private_view_key.as_bytes());
+        view_hasher.update(user_commitment);
+        view_hasher.update(b"swap_view");
+        let lp_view_bytes: [u8; 32] = view_hasher.finalize().into();
         let lp_view_scalar = Scalar::from_bytes_mod_order(lp_view_bytes);
         let canonical_view_bytes = lp_view_scalar.to_bytes();
         let lp_private_view = PrivateKey::from_slice(&canonical_view_bytes)
@@ -673,8 +708,8 @@ impl MoneroClient {
 
         // Check if wallet RPC is configured and ready
         if self.wallet_rpc_url.is_none() {
-            warn!("Wallet RPC not configured - skipping verification (UNSAFE for production)");
-            return Ok(true); // TODO: Remove this bypass for production
+            warn!("Wallet RPC not configured - cannot verify mint lock");
+            return Ok(false);
         }
 
         // Check if wallet RPC is ready by trying to get height
@@ -686,12 +721,12 @@ impl MoneroClient {
             Err(e) => {
                 warn!("Wallet RPC not ready yet (still syncing): {}", e);
                 warn!("Skipping verification for now - wallet needs to finish initial sync");
-                return Ok(true); // TODO: Implement proper retry logic
+                return Ok(false);
             }
         };
 
         if !wallet_ready {
-            return Ok(true); // TODO: Remove this bypass
+            return Ok(false);
         }
 
         // Get the swap's private keys for importing into wallet

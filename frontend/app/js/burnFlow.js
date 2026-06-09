@@ -4,6 +4,7 @@ import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG } from './config.js';
 import { readHub, writeHub, writeHubUnsafe, readWsxmr, writeWsxmr, watchContractEvent, getUserAddress } from './viemClient.js';
 import { getPhantomAgent } from './phantomAgent.js';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
+import { updateBurnProgress } from './ui.js';
 import { keccak256, toHex } from 'https://esm.sh/viem@2.7.0';
 
 export class BurnFlow {
@@ -64,6 +65,7 @@ export class BurnFlow {
     }
 
     async updatePrices() {
+        updateBurnProgress('evm-request', 'Updating XMR price onchain...');
         const { updateOraclePrices } = await import('./redstoneWrapper.js?v=' + Date.now());
         await updateOraclePrices();
         console.log('Oracle prices updated for burn');

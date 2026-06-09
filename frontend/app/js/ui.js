@@ -237,16 +237,23 @@ export function showResumeBanner(swaps, onResume, onResolve) {
             </span>
         `;
 
-        const canResume = swap.publicSpendKey != null && swap.publicSpendKey !== '';
+        // Burns are always resumable; mints need the stored publicSpendKey to regenerate the secret
+        const canResume = swap.type === 'burn'
+            ? true
+            : (swap.publicSpendKey != null && swap.publicSpendKey !== '');
+        // A mint is only truly claimable if the LP has verified it AND we still have the secret.
+        // Without the secret we cannot generate the view key to verify the LP's proof.
+        const isClaimableMint = swap.type === 'mint' && (swap.state === 'lp-ready' || swap.state === 'finalize') && canResume;
+        const showResume = canResume || isClaimableMint;
 
         const btn = document.createElement('button');
         btn.className = 'btn btn-small';
-        btn.textContent = canResume ? 'Resume' : 'Resolve';
-        btn.style.cssText = canResume
+        btn.textContent = showResume ? 'Resume' : 'Resolve';
+        btn.style.cssText = showResume
             ? 'padding: 0.25rem 0.75rem; font-size: 0.8rem;'
             : 'padding: 0.25rem 0.75rem; font-size: 0.8rem; background: transparent; color: var(--text-secondary); border: 1px solid var(--border-color);';
         btn.addEventListener('click', () => {
-            if (canResume) {
+            if (showResume) {
                 if (onResume) onResume(swap);
             } else {
                 if (onResolve) onResolve(swap);
@@ -304,6 +311,29 @@ export function showResumeError(requestId, message) {
     errDiv.style.cssText = 'font-size: 0.8rem; color: var(--error-color); padding: 0.25rem 0.75rem; background: rgba(255,0,0,0.05); border-radius: 6px;';
     errDiv.textContent = message;
     item.appendChild(errDiv);
+}
+
+/**
+ * Show inline success on a resume banner swap item.
+ * @param {string} requestId - The swap's requestId
+ * @param {string} message - Success message to display
+ */
+export function showResumeSuccess(requestId, message) {
+    if (!elements.resumeSwapList) return;
+    const item = elements.resumeSwapList.querySelector(
+        `.resume-swap-item[data-request-id="${requestId}"]`
+    );
+    if (!item) return;
+
+    // Remove any existing success/error
+    const existing = item.querySelector('.resume-success, .resume-error');
+    if (existing) existing.remove();
+
+    const succDiv = document.createElement('div');
+    succDiv.className = 'resume-success';
+    succDiv.style.cssText = 'font-size: 0.8rem; color: var(--success-color); padding: 0.25rem 0.75rem; background: rgba(0,255,0,0.05); border-radius: 6px;';
+    succDiv.textContent = message;
+    item.appendChild(succDiv);
 }
 
 /**
@@ -496,21 +526,36 @@ export function showVaultInfo(vaultData, isMint = true) {
  */
 export function updateMintProgress(step, status = null) {
     const steps = elements.mintProgress.querySelectorAll('.progress-step');
-    
+
     steps.forEach(stepEl => {
         const stepName = stepEl.getAttribute('data-step');
-        
+
         if (stepName === step) {
             stepEl.classList.add('active');
+            stepEl.classList.remove('completed');
+            // Ensure body is measured for smooth animation
+            const body = stepEl.querySelector('.step-body');
+            if (body) {
+                body.style.willChange = 'grid-template-rows';
+                requestAnimationFrame(() => {
+                    body.style.willChange = '';
+                });
+            }
             if (status) {
                 const statusEl = stepEl.querySelector('.step-status');
-                statusEl.textContent = status;
+                if (statusEl) {
+                    if (status.includes('Waiting')) {
+                        statusEl.innerHTML = `<svg class="spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:6px;color:var(--accent-orange);"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> ${status}`;
+                    } else {
+                        statusEl.textContent = status;
+                    }
+                }
             }
         } else {
             stepEl.classList.remove('active');
         }
     });
-    
+
     elements.mintProgress.classList.remove('hidden');
 }
 
@@ -522,6 +567,14 @@ export function completeMintStep(step) {
     if (stepEl) {
         stepEl.classList.add('completed');
         stepEl.classList.remove('active');
+        // Collapse status to a compact done message
+        const statusEl = stepEl.querySelector('.step-status');
+        if (statusEl && !statusEl.dataset.originalText) {
+            statusEl.dataset.originalText = statusEl.textContent;
+        }
+        if (statusEl) {
+            statusEl.textContent = 'Done';
+        }
     }
 }
 
@@ -561,6 +614,7 @@ export function showLPVerificationStatus() {
     }
     if (elements.waitingLpVerification) {
         elements.waitingLpVerification.classList.remove('hidden');
+        elements.waitingLpVerification.innerHTML = `<svg class="spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:6px;color:var(--accent-orange);"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Waiting for LP to verify your transaction...<br><span style="font-size:0.8rem;color:var(--text-muted);margin-left:20px;display:block;margin-top:4px;">The LP waits for 10+ Monero blockchain confirmations before marking your deposit as verified (~15–30 min).</span>`;
     }
 }
 
@@ -600,25 +654,35 @@ export function showClaimWsXmrButton(onClaim) {
  */
 export function updateBurnProgress(step, status = null) {
     const steps = elements.burnProgress.querySelectorAll('.progress-step');
-    
+
     steps.forEach(stepEl => {
         const stepName = stepEl.getAttribute('data-step');
-        
+
         if (stepName === step) {
             stepEl.classList.add('active');
+            stepEl.classList.remove('completed');
+            const body = stepEl.querySelector('.step-body');
+            if (body) {
+                body.style.willChange = 'grid-template-rows';
+                requestAnimationFrame(() => {
+                    body.style.willChange = '';
+                });
+            }
             if (status) {
                 const statusEl = stepEl.querySelector('.step-status');
-                if (status.includes('Waiting')) {
-                    statusEl.innerHTML = `<svg class="spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:6px;color:var(--accent-orange);"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> ${status}`;
-                } else {
-                    statusEl.textContent = status;
+                if (statusEl) {
+                    if (status.includes('Waiting')) {
+                        statusEl.innerHTML = `<svg class="spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:6px;color:var(--accent-orange);"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> ${status}`;
+                    } else {
+                        statusEl.textContent = status;
+                    }
                 }
             }
         } else {
             stepEl.classList.remove('active');
         }
     });
-    
+
     elements.burnProgress.classList.remove('hidden');
 }
 
@@ -630,6 +694,13 @@ export function completeBurnStep(step) {
     if (stepEl) {
         stepEl.classList.add('completed');
         stepEl.classList.remove('active');
+        const statusEl = stepEl.querySelector('.step-status');
+        if (statusEl && !statusEl.dataset.originalText) {
+            statusEl.dataset.originalText = statusEl.textContent;
+        }
+        if (statusEl) {
+            statusEl.textContent = 'Done';
+        }
     }
 }
 
