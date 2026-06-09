@@ -97,6 +97,7 @@ async fn main() -> Result<()> {
     let evm = Arc::new(
         evm::EvmClient::new(
             config.network_config.ws_url.clone(),
+            config.network_config.rpc_url.clone(),
             config.private_key.clone(),
             config.network_config.vault_manager,
             config.lp_vault_address,
@@ -354,6 +355,7 @@ struct ConfigFile {
 
 /// Contract addresses read from the canonical root deployment.json
 #[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct DeploymentJson {
     chain_id: u64,
     rpc_url: String,
@@ -367,11 +369,11 @@ struct DeploymentJson {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct DeploymentContracts {
+    #[serde(rename = "wsXMR")]
     ws_xmr: String,
-    #[serde(rename = "wsXmrHub")]
     ws_xmr_hub: String,
-    #[serde(rename = "liquidityRouter")]
     liquidity_router: String,
     facets: DeploymentFacets,
 }
@@ -419,6 +421,7 @@ struct DeploymentPool {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct DeploymentUrls {
     pyth_hermes: String,
     monero_daemon: String,

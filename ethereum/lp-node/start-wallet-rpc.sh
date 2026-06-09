@@ -6,7 +6,7 @@
 WALLET_FILE="./lp-wallet"
 WALLET_PASSWORD="lp-password-change-me"
 RPC_PORT=18082
-DAEMON_URL="https://xmr.hexide.com"
+DAEMON_URL="https://xmr-node.cakewallet.com:18081"
 
 # Load private key from .env
 source .env

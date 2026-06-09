@@ -47,7 +47,10 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         
         if (vault.maxMintBps > 0) {
             uint256 collateralPrice = _getCollateralPriceFromStorage();
-            uint256 collateralValueUsd = (vault.collateralShares * collateralPrice) / SDAI_DECIMALS;
+            uint256 availableForMint = vault.collateralShares > vault.lockedCollateral
+                ? vault.collateralShares - vault.lockedCollateral
+                : 0;
+            uint256 collateralValueUsd = (availableForMint * collateralPrice) / SDAI_DECIMALS;
             uint256 maxTotalDebtCapacity = (collateralValueUsd * RATIO_PRECISION) / COLLATERAL_RATIO;
             uint256 maxMintAllowed = (maxTotalDebtCapacity * vault.maxMintBps) / BPS_DENOMINATOR;
             

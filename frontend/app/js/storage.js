@@ -49,20 +49,24 @@ export function loadActiveSwaps() {
  */
 export function addOrUpdateActiveSwap(swap) {
     try {
-        const swaps = getSwapsArray();
+        let swaps = getSwapsArray();
         const requestId = swap.requestId;
-        const idx = swaps.findIndex(s => s.requestId === requestId);
         const enriched = { ...swap, lastUpdated: Date.now() };
 
-        if (idx >= 0 && requestId) {
-            swaps[idx] = { ...swaps[idx], ...enriched };
-        } else if (requestId) {
-            // New swap with requestId: replace any temporary entry of same type
-            const tempIdx = swaps.findIndex(s => !s.requestId && s.type === swap.type);
-            if (tempIdx >= 0) {
-                swaps[tempIdx] = enriched;
+        if (requestId) {
+            // Remove any duplicate entries for this requestId first
+            swaps = swaps.filter((s, i) => s.requestId !== requestId || i === swaps.findIndex(x => x.requestId === requestId));
+            const idx = swaps.findIndex(s => s.requestId === requestId);
+            if (idx >= 0) {
+                swaps[idx] = { ...swaps[idx], ...enriched };
             } else {
-                swaps.push(enriched);
+                // New swap with requestId: replace any temporary entry of same type
+                const tempIdx = swaps.findIndex(s => !s.requestId && s.type === swap.type);
+                if (tempIdx >= 0) {
+                    swaps[tempIdx] = enriched;
+                } else {
+                    swaps.push(enriched);
+                }
             }
         } else {
             swaps.push(enriched);

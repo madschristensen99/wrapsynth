@@ -3,6 +3,8 @@
  * Implements Ed25519 point addition and Monero address derivation
  */
 
+import { keccak256 as viemKeccak256, hexToBytes as viemHexToBytes } from 'https://esm.sh/viem@2.7.0';
+
 // Using @noble/ed25519 for Ed25519 operations
 // This is a lightweight, audited library for Ed25519 cryptography
 // Install via: <script type="module"> import from CDN
@@ -65,17 +67,8 @@ export function deriveMoneroAddress(publicSpendKey, publicViewKey, mainnet = tru
  * @returns {Uint8Array}
  */
 function keccak256(data) {
-    // Use @noble/hashes for Keccak-256
-    // For now, use a simple implementation or import from CDN
-    // This is a placeholder - in production, use @noble/hashes
-    
-    // Import keccak256 from ethers.js which is already loaded
-    if (typeof ethers !== 'undefined') {
-        const hash = ethers.keccak256(data);
-        return ethers.getBytes(hash);
-    }
-    
-    throw new Error('Keccak-256 implementation not available');
+    const hash = viemKeccak256(data);
+    return viemHexToBytes(hash);
 }
 
 /**

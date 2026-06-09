@@ -237,9 +237,14 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         uint256 xmrPrice = _getXmrPriceFromStorage();  // 18 decimals (normalized)
         uint256 daiPrice = _getCollateralPriceFromStorage();  // 18 decimals (normalized)
         
-        // Convert idle sDAI shares to DAI
+        // Only count unlocked collateral toward health ratio
+        uint256 availableShares = vault.collateralShares > vault.lockedCollateral
+            ? vault.collateralShares - vault.lockedCollateral
+            : 0;
+
+        // Convert unlocked sDAI shares to DAI
         (bool success, bytes memory data) = GnosisAddresses.SDAI.staticcall(
-            abi.encodeWithSignature("convertToAssets(uint256)", vault.collateralShares)
+            abi.encodeWithSignature("convertToAssets(uint256)", availableShares)
         );
         require(success && data.length >= 32, "convertToAssets failed");
         uint256 idleDai = abi.decode(data, (uint256));

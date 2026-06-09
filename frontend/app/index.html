@@ -181,38 +181,43 @@
                         </span>
                     </button>
                 
+                <!-- Persistent deadline banner (visible across all steps) -->
+                <div id="mint-deadline-warning" class="alert alert-error hidden" style="margin-bottom: 1rem;">
+                    <strong>⚠️ MINT EXPIRED</strong>
+                    <p>This mint has expired. Do NOT send XMR to this address. Please cancel and start a new mint.</p>
+                </div>
+                <div id="mint-deadline-timer" class="alert alert-warning hidden" style="margin-bottom: 1rem;">
+                    <strong><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:6px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Time Remaining:</strong> <span id="mint-time-remaining">--</span>
+                </div>
+
                 <!-- Mint Progress States -->
                 <div id="mint-progress" class="progress-container hidden">
                     <div class="progress-step" data-step="init">
-                        <div class="step-indicator">1</div>
-                        <div class="step-content">
+                        <div class="step-row">
                             <h3>Initialize Swap Agent</h3>
-                            <p class="step-status">Waiting for signature...</p>
+                            <span class="step-status">Waiting for signature...</span>
+                        </div>
+                        <div class="step-body">
                             <p class="step-explanation">Sign a message to create a one-time secret for this swap. This secret will later unlock your wsXMR tokens. No gas fee yet.</p>
                         </div>
                     </div>
                     <div class="progress-step" data-step="evm-init">
-                        <div class="step-indicator">2</div>
-                        <div class="step-content">
+                        <div class="step-row">
                             <h3>Lock Griefing Deposit</h3>
-                            <p class="step-status">Submitting to blockchain...</p>
+                            <span class="step-status">Submitting to blockchain...</span>
+                        </div>
+                        <div class="step-body">
                             <p class="step-explanation">You pay a refundable griefing deposit in xDAI. This proves you're serious about the swap and prevents spam. <strong>Follow through with the XMR deposit and the LP returns it.</strong> If you abandon the swap, the LP keeps it as compensation for locked capital.</p>
-                            <p class="step-explanation step-penalty"><span class="penalty-icon">&#9888;</span> <strong>Penalty:</strong> If you don't send XMR within the timeout, the LP can claim your deposit.</p>
+                            <p class="step-explanation step-penalty"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:4px;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> <strong>Penalty:</strong> If you don't send XMR within the timeout, the LP can claim your deposit.</p>
                         </div>
                     </div>
                     <div class="progress-step" data-step="deposit">
-                        <div class="step-indicator">3</div>
-                        <div class="step-content">
+                        <div class="step-row">
                             <h3>Deposit XMR</h3>
-                            <p class="step-status">Waiting for LP to provide deposit address...</p>
+                            <span class="step-status">Waiting for LP to provide deposit address...</span>
+                        </div>
+                        <div class="step-body">
                             <p class="step-explanation">The LP provides a public key that combines with your secret to generate a shared one-time Monero address. <strong>Send exactly the displayed amount to this address.</strong></p>
-                            <div id="mint-deadline-warning" class="alert alert-error hidden" style="margin-bottom: 1rem;">
-                                <strong>⚠️ MINT EXPIRED</strong>
-                                <p>This mint has expired. Do NOT send XMR to this address. Please cancel and start a new mint.</p>
-                            </div>
-                            <div id="mint-deadline-timer" class="alert alert-warning hidden" style="margin-bottom: 1rem;">
-                                <strong>⏰ Time Remaining:</strong> <span id="mint-time-remaining">--</span>
-                            </div>
                             <div id="mint-deposit-info" class="deposit-info hidden">
                                 <div class="qr-container">
                                     <canvas id="mint-qr-code"></canvas>
@@ -230,18 +235,21 @@
                         </div>
                     </div>
                     <div class="progress-step" data-step="lp-confirm">
-                        <div class="step-indicator">4</div>
-                        <div class="step-content">
+                        <div class="step-row">
                             <h3>LP Confirms Receipt</h3>
-                            <p class="step-status">Waiting for LP to verify XMR...</p>
-                            <p class="step-explanation">The LP scans the Monero blockchain to confirm your deposit. Once verified, they mark the mint as ready. Your griefing deposit is now safe.</p>
+                            <span class="step-status">Waiting for LP to verify XMR...</span>
+                        </div>
+                        <div class="step-body">
+                            <p class="step-explanation">The LP scans the Monero blockchain to confirm your deposit. <strong>They typically wait for 10+ confirmations</strong> to ensure the transaction is irreversible before marking the mint as ready. Your griefing deposit is now safe.</p>
+                            <p class="step-explanation">The Monero blockchain produces a new block approximately every 2 minutes, so full confirmation can take 15–30 minutes depending on network conditions.</p>
                         </div>
                     </div>
                     <div class="progress-step" data-step="finalize">
-                        <div class="step-indicator">5</div>
-                        <div class="step-content">
+                        <div class="step-row">
                             <h3>Reveal Secret & Receive wsXMR</h3>
-                            <p class="step-status">Finalizing on blockchain...</p>
+                            <span class="step-status">Finalizing on blockchain...</span>
+                        </div>
+                        <div class="step-body">
                             <p class="step-explanation">You reveal the secret you created in Step 1. The contract verifies it and mints wsXMR directly to your wallet. Your griefing deposit is refunded.</p>
                         </div>
                     </div>
@@ -291,39 +299,39 @@
                 <!-- Burn Progress States -->
                 <div id="burn-progress" class="progress-container hidden">
                     <div class="progress-step" data-step="init">
-                        <div class="step-indicator">1</div>
-                        <div class="step-content">
+                        <div class="step-row">
                             <h3>Initialize Phantom Agent</h3>
-                            <p class="step-status">Waiting for signature...</p>
+                            <span class="step-status">Waiting for signature...</span>
                         </div>
+                        <div class="step-body"></div>
                     </div>
                     <div class="progress-step" data-step="evm-request">
-                        <div class="step-indicator">2</div>
-                        <div class="step-content">
+                        <div class="step-row">
                             <h3>Request Burn on EVM</h3>
-                            <p class="step-status">Pending...</p>
+                            <span class="step-status">Pending...</span>
                         </div>
+                        <div class="step-body"></div>
                     </div>
                     <div class="progress-step" data-step="lp-propose">
-                        <div class="step-indicator">3</div>
-                        <div class="step-content">
+                        <div class="step-row">
                             <h3>LP Proposes Hash</h3>
-                            <p class="step-status">Waiting for LP to lock XMR...</p>
+                            <span class="step-status">Waiting for LP to lock XMR...</span>
                         </div>
+                        <div class="step-body"></div>
                     </div>
                     <div class="progress-step" data-step="confirm-lock">
-                        <div class="step-indicator">4</div>
-                        <div class="step-content">
+                        <div class="step-row">
                             <h3>Confirm Monero Lock</h3>
-                            <p class="step-status">Waiting for confirmation...</p>
+                            <span class="step-status">Waiting for confirmation...</span>
                         </div>
+                        <div class="step-body"></div>
                     </div>
                     <div class="progress-step" data-step="lp-finalize">
-                        <div class="step-indicator">5</div>
-                        <div class="step-content">
+                        <div class="step-row">
                             <h3>LP Finalizes</h3>
-                            <p class="step-status">Pending...</p>
+                            <span class="step-status">Pending...</span>
                         </div>
+                        <div class="step-body"></div>
                     </div>
                 </div>
                 </div>

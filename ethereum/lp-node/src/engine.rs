@@ -432,14 +432,14 @@ impl SwapEngine {
                 // Check status before trying to cancel
                 match self.evm.get_mint_status(request_id).await {
                     Ok(status) => {
-                        // Status: 0=PENDING, 1=KEY_PROVIDED, 2=READY, 3=COMPLETED, 4=CANCELLED
-                        if status == 3 || status == 4 {
+                        // Status: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
+                        if status == 4 || status == 5 {
                             info!(
                                 "Mint {} already finalized on-chain (status: {}), updating local state",
                                 hex::encode(mint.request_id),
                                 status
                             );
-                            mint.status = if status == 3 { MintStatus::Completed } else { MintStatus::Cancelled };
+                            mint.status = if status == 4 { MintStatus::Completed } else { MintStatus::Cancelled };
                             mint.updated_at = current_timestamp();
                             self.db.update_mint_task(mint)?;
                             return Ok(());
@@ -473,14 +473,14 @@ impl SwapEngine {
 
         // Check on-chain status before attempting to cancel
         let on_chain_status = on_chain_request.status;
-        // Status: 0=PENDING, 1=KEY_PROVIDED, 2=READY, 3=COMPLETED, 4=CANCELLED
-        if on_chain_status == 3 || on_chain_status == 4 {
+        // Status: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
+        if on_chain_status == 4 || on_chain_status == 5 {
             info!(
                 "Mint {} already finalized on-chain (status: {}), skipping cancellation",
                 hex::encode(mint.request_id),
                 on_chain_status
             );
-            mint.status = if on_chain_status == 3 { MintStatus::Completed } else { MintStatus::Cancelled };
+            mint.status = if on_chain_status == 4 { MintStatus::Completed } else { MintStatus::Cancelled };
             mint.updated_at = current_timestamp();
             self.db.update_mint_task(mint)?;
             return Ok(());
@@ -579,57 +579,36 @@ impl SwapEngine {
                 hex::encode(mint.request_id)
             );
 
-            // Check on-chain status first to avoid calling setMintReady if already called
             let request_id = FixedBytes::from_slice(&mint.request_id);
-            info!("Checking on-chain status before calling setMintReady...");
-            
-            // Try to get on-chain status, but if it fails, assume PENDING and try to provide LP key
-            let should_provide_key = match self.evm.get_mint_status(request_id).await {
-                Ok(status) => {
-                    info!("On-chain mint status: {}", status);
-                    
-                    // Status 4 = COMPLETED, Status 5 = CANCELLED
-                    if status >= 4 {
-                        info!("Mint already finalized on-chain (status: {}), marking as completed", status);
-                        mint.status = if status == 4 { MintStatus::Completed } else { MintStatus::Cancelled };
-                        mint.updated_at = current_timestamp();
-                        self.db.update_mint_task(mint)?;
-                        return Ok(());
-                    }
-                    
-                    if status == 3 { // READY
-                        info!("Mint already ready on-chain (status: {}), updating local state", status);
-                        mint.status = MintStatus::Ready;
-                        mint.updated_at = current_timestamp();
-                        self.db.update_mint_task(mint)?;
-                        return Ok(());
-                    }
-                    
-                    status == 0 // PENDING - need to provide LP key
-                }
+
+            // Check if LP key was already provided on-chain (getMintRequest doesn't exist on deployed contract)
+            let lp_key_set = match self.evm.get_lp_public_key(request_id).await {
+                Ok(key) => key != FixedBytes::from([0u8; 32]),
                 Err(e) => {
-                    warn!("Failed to check on-chain status: {}, assuming PENDING and will try to provide LP key", e);
-                    true // Assume PENDING if we can't check
+                    warn!("Failed to check lpPublicKeys on-chain: {}, assuming not set", e);
+                    false
                 }
             };
-            
-            // Provide LP key if needed
-            if should_provide_key {
+
+            // Provide LP key if not already on-chain
+            if !lp_key_set {
                 info!("Providing LP key before setMintReady...");
-                
                 if let Some(lp_public_spend_bytes) = mint.lp_public_spend {
                     match self.evm.provide_lp_key(request_id, lp_public_spend_bytes.into()).await {
                         Ok(tx_hash) => {
                             info!("LP key provided on-chain: {:?}", tx_hash);
                         }
                         Err(e) => {
-                            // If provideLPKey fails, it might already be provided - continue anyway
-                            warn!("Failed to provide LP key (may already be provided): {}", e);
+                            warn!("Failed to provide LP key for mint {}, cannot proceed to setMintReady: {}", hex::encode(mint.request_id), e);
+                            return Err(anyhow!("Failed to provide LP key for mint {}: {}", hex::encode(mint.request_id), e));
                         }
                     }
                 } else {
-                    warn!("LP public key not found in mint task, skipping provideLPKey");
+                    warn!("LP public key not found in mint task, cannot proceed to setMintReady");
+                    return Err(anyhow!("LP public key missing for mint {}", hex::encode(mint.request_id)));
                 }
+            } else {
+                info!("LP key already provided on-chain, skipping provideLPKey");
             }
 
             // Update oracle prices using Node.js script (RedStone SDK only works in JS)
@@ -645,17 +624,51 @@ impl SwapEngine {
             }
 
             // Call setMintReady on EVM
-            let tx_hash = self
-                .evm
-                .set_mint_ready(request_id)
-                .await
-                .context("Failed to set mint ready on EVM")?;
-
-            mint.status = MintStatus::Ready;
-            mint.updated_at = current_timestamp();
-            self.db.update_mint_task(mint)?;
-
-            info!("Mint ready set on EVM: {}", hex::encode(tx_hash));
+            match self.evm.set_mint_ready(request_id).await {
+                Ok(tx_hash) => {
+                    info!("Mint ready set on EVM: {}", hex::encode(tx_hash));
+                    mint.status = MintStatus::Ready;
+                    mint.updated_at = current_timestamp();
+                    self.db.update_mint_task(mint)?;
+                }
+                Err(e) => {
+                    let err_str = e.to_string();
+                    if err_str.contains("execution reverted") || err_str.contains("InvalidStatus") {
+                        warn!("setMintReady reverted for mint {}: {}", hex::encode(mint.request_id), e);
+                        // Query actual on-chain status before updating local state
+                        match self.evm.get_mint_status(request_id).await {
+                            Ok(3) => {
+                                info!("Mint {} is READY on-chain, updating local state", hex::encode(mint.request_id));
+                                mint.status = MintStatus::Ready;
+                                mint.updated_at = current_timestamp();
+                                self.db.update_mint_task(mint)?;
+                            }
+                            Ok(4) => {
+                                info!("Mint {} is COMPLETED on-chain, updating local state", hex::encode(mint.request_id));
+                                mint.status = MintStatus::XmrClaimed;
+                                mint.updated_at = current_timestamp();
+                                self.db.update_mint_task(mint)?;
+                            }
+                            Ok(5) => {
+                                info!("Mint {} is CANCELLED on-chain, updating local state", hex::encode(mint.request_id));
+                                mint.status = MintStatus::Cancelled;
+                                mint.updated_at = current_timestamp();
+                                self.db.update_mint_task(mint)?;
+                            }
+                            Ok(status) => {
+                                warn!("Mint {} unexpected on-chain status {} after setMintReady revert", hex::encode(mint.request_id), status);
+                                return Err(anyhow!("setMintReady reverted and mint is not in a final state: {}", e));
+                            }
+                            Err(status_err) => {
+                                warn!("Failed to query on-chain status after setMintReady revert: {}", status_err);
+                                return Err(anyhow!("setMintReady reverted: {}", e));
+                            }
+                        }
+                    } else {
+                        return Err(anyhow!("Failed to set mint ready on EVM: {}", e));
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -705,14 +718,25 @@ impl SwapEngine {
         // we can sweep without needing the secret.
         let request_id = FixedBytes::from_slice(&mint.request_id);
         match self.evm.get_mint_status(request_id).await {
-            Ok(status) if status >= 4 => {
+            Ok(status) if status == 4 => {
                 info!(
-                    "Mint {} already finalized on-chain (status: {}), attempting direct sweep",
+                    "Mint {} already COMPLETED on-chain (status: {}), attempting direct sweep",
                     hex::encode(mint.request_id),
                     status
                 );
                 // Transition to XmrClaimed so handle_mint_xmr_claimed will sweep
                 mint.status = MintStatus::XmrClaimed;
+                mint.updated_at = current_timestamp();
+                self.db.update_mint_task(mint)?;
+                return Ok(());
+            }
+            Ok(status) if status == 5 => {
+                info!(
+                    "Mint {} already CANCELLED on-chain (status: {}), nothing to sweep",
+                    hex::encode(mint.request_id),
+                    status
+                );
+                mint.status = MintStatus::Cancelled;
                 mint.updated_at = current_timestamp();
                 self.db.update_mint_task(mint)?;
                 return Ok(());

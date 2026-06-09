@@ -98,7 +98,8 @@ sol! {
             uint8 status;
         }
         function mintRequests(bytes32 requestId) external view returns (MintRequest memory);
-        
+        function getMintRequest(bytes32 requestId) external view returns (MintRequest memory);
+
         struct BurnRequest {
             bytes32 requestId;
             address user;
@@ -237,6 +238,7 @@ pub struct EvmClient {
     vault_manager: Address,
     lp_vault_address: Address,
     pyth_endpoint: String,
+    rpc_url: String,
     nonce: Arc<RwLock<Option<u64>>>,
 }
 
@@ -244,6 +246,7 @@ impl EvmClient {
     /// Create a new EVM client
     pub async fn new(
         ws_url: String,
+        rpc_url: String,
         private_key: String,
         vault_manager: Address,
         lp_vault_address: Address,
@@ -276,6 +279,7 @@ impl EvmClient {
             vault_manager,
             lp_vault_address,
             pyth_endpoint,
+            rpc_url,
             nonce: Arc::new(RwLock::new(None)),
         })
     }
@@ -635,31 +639,78 @@ impl EvmClient {
     pub async fn provide_lp_key(&self, request_id: FixedBytes<32>, lp_public_key: FixedBytes<32>) -> Result<FixedBytes<32>> {
         info!("Providing LP key for request {}", hex::encode(request_id));
 
-        let contract = VaultManager::new(self.vault_manager, &self.provider);
-        
-        let call = contract.provideLPKey(request_id, lp_public_key);
-        
-        let pending_tx = match call.send().await {
-            Ok(tx) => tx,
-            Err(e) => {
-                error!("Failed to send provideLPKey transaction: {:?}", e);
-                return Err(anyhow!("Failed to send provideLPKey transaction: {}", e));
+        let http_url: reqwest::Url = self.rpc_url.parse()
+            .context("Invalid HTTP RPC URL")?;
+
+        let max_retries = 3;
+        let mut last_error = None;
+
+        for attempt in 1..=max_retries {
+            let http_provider = ProviderBuilder::new()
+                .with_recommended_fillers()
+                .wallet(self.wallet.clone())
+                .on_http(http_url.clone());
+
+            let contract = VaultManager::new(self.vault_manager, &http_provider);
+
+            let call = contract.provideLPKey(request_id, lp_public_key)
+                .from(self.lp_vault_address);
+
+            let pending_tx = match tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                call.send()
+            ).await {
+                Ok(Ok(tx)) => tx,
+                Ok(Err(e)) => {
+                    error!("Failed to send provideLPKey transaction (attempt {}/{}): {:?}", attempt, max_retries, e);
+                    last_error = Some(anyhow!("Failed to send provideLPKey transaction: {}", e));
+                    if attempt < max_retries {
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                        continue;
+                    }
+                    return Err(last_error.unwrap());
+                }
+                Err(_) => {
+                    error!("Timeout sending provideLPKey transaction after 30s (attempt {}/{})", attempt, max_retries);
+                    last_error = Some(anyhow!("Timeout sending provideLPKey transaction"));
+                    if attempt < max_retries {
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                        continue;
+                    }
+                    return Err(last_error.unwrap());
+                }
+            };
+
+            info!("provideLPKey transaction sent, waiting for receipt...");
+
+            let receipt = match tokio::time::timeout(
+                std::time::Duration::from_secs(60),
+                pending_tx.get_receipt()
+            ).await {
+                Ok(Ok(r)) => r,
+                Ok(Err(e)) => {
+                    return Err(anyhow!("Failed to get provideLPKey receipt: {}", e));
+                }
+                Err(_) => {
+                    return Err(anyhow!("Timeout waiting for provideLPKey receipt after 60s"));
+                }
+            };
+
+            if !receipt.inner.status() {
+                return Err(anyhow!("provideLPKey transaction reverted in tx: {:?}", receipt.transaction_hash));
             }
-        };
 
-        let receipt = pending_tx
-            .get_receipt()
-            .await
-            .context("Failed to get provideLPKey receipt")?;
+            info!("LP key provided in tx: {:?}", receipt.transaction_hash);
+            return Ok(receipt.transaction_hash);
+        }
 
-        info!("LP key provided in tx: {:?}", receipt.transaction_hash);
-        Ok(receipt.transaction_hash)
+        Err(last_error.unwrap_or_else(|| anyhow!("provideLPKey failed after {} attempts", max_retries)))
     }
 
     /// Get mint request from on-chain
     pub async fn get_mint_request(&self, request_id: FixedBytes<32>) -> Result<VaultManager::MintRequest> {
         let contract = VaultManager::new(self.vault_manager, &self.provider);
-        let request = contract.mintRequests(request_id).call().await
+        let request = contract.getMintRequest(request_id).call().await
             .map_err(|e| anyhow!("Failed to query mint request: {}", e))?;
         Ok(request._0)
     }
@@ -704,29 +755,54 @@ impl EvmClient {
     pub async fn set_mint_ready(&self, request_id: FixedBytes<32>) -> Result<FixedBytes<32>> {
         info!("Setting mint ready for request {}", hex::encode(request_id));
 
-        let contract = VaultManager::new(self.vault_manager, &self.provider);
-        
+        let http_url: reqwest::Url = self.rpc_url.parse()
+            .context("Invalid HTTP RPC URL")?;
+        let http_provider = ProviderBuilder::new()
+            .with_recommended_fillers()
+            .wallet(self.wallet.clone())
+            .on_http(http_url);
+
+        let contract = VaultManager::new(self.vault_manager, &http_provider);
+
         // Set the bond value (0.001 xDAI = 1000000000000000 wei)
         // TODO: Query this from the vault instead of hardcoding
         let bond_value = alloy::primitives::U256::from(1000000000000000u64);
-        
-        let call = contract.setMintReady(request_id).value(bond_value);
-        
-        let pending_tx = call
-            .send()
-            .await
-            .map_err(|e| {
-                error!("Failed to send setMintReady transaction: {:?}", e);
-                anyhow!("Failed to send setMintReady transaction: {}", e)
-            })?;
 
-        let receipt = pending_tx
-            .get_receipt()
-            .await
-            .map_err(|e| {
-                error!("Failed to get setMintReady receipt: {:?}", e);
-                anyhow!("Failed to get setMintReady receipt: {}", e)
-            })?;
+        let call = contract.setMintReady(request_id)
+            .from(self.lp_vault_address)
+            .value(bond_value);
+
+        let pending_tx = match tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            call.send()
+        ).await {
+            Ok(Ok(tx)) => tx,
+            Ok(Err(e)) => {
+                error!("Failed to send setMintReady transaction: {:?}", e);
+                return Err(anyhow!("Failed to send setMintReady transaction: {}", e));
+            }
+            Err(_) => {
+                error!("Timeout sending setMintReady transaction after 30s");
+                return Err(anyhow!("Timeout sending setMintReady transaction"));
+            }
+        };
+
+        let receipt = match tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            pending_tx.get_receipt()
+        ).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => {
+                return Err(anyhow!("Failed to get setMintReady receipt: {}", e));
+            }
+            Err(_) => {
+                return Err(anyhow!("Timeout waiting for setMintReady receipt after 60s"));
+            }
+        };
+
+        if !receipt.inner.status() {
+            return Err(anyhow!("setMintReady transaction reverted in tx: {:?}", receipt.transaction_hash));
+        }
 
         info!("Mint ready set in tx: {:?}", receipt.transaction_hash);
         Ok(receipt.transaction_hash)
@@ -1186,7 +1262,14 @@ impl EvmClient {
     /// Get the current status of a mint request
     pub async fn get_mint_status(&self, request_id: FixedBytes<32>) -> Result<u8> {
         let contract = VaultManager::new(self.vault_manager, &self.provider);
-        let mint_request = contract.mintRequests(request_id).call().await?;
+        let mint_request = match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            contract.getMintRequest(request_id).call()
+        ).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => return Err(anyhow!("Failed to query mint request: {}", e)),
+            Err(_) => return Err(anyhow!("Timeout querying mint request status")),
+        };
         Ok(mint_request._0.status)
     }
 

@@ -349,20 +349,41 @@ impl EventListener {
             existing_key.unwrap() != alloy::primitives::FixedBytes::from([0u8; 32]);
         
         if !key_already_provided {
-            match self.evm.provide_lp_key(
-                request_id_bytes.into(),
-                lp_public_key_array.into()
-            ).await {
-                Ok(tx_hash) => {
-                    info!("LP key submitted on-chain: {:?}", tx_hash);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to submit LP key on-chain: {}", e);
-                    // Continue anyway - we still store it in DB for API fallback
+            let mut last_error = None;
+            for attempt in 1..=3 {
+                match self.evm.provide_lp_key(
+                    request_id_bytes.into(),
+                    lp_public_key_array.into()
+                ).await {
+                    Ok(tx_hash) => {
+                        info!("LP key submitted on-chain: {:?}", tx_hash);
+                        last_error = None;
+                        break;
+                    }
+                    Err(e) => {
+                        last_error = Some(e);
+                        if attempt < 3 {
+                            warn!("Failed to submit LP key on-chain (attempt {}/{}), retrying in 3s...", attempt, 3);
+                            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                        } else {
+                            tracing::error!("Failed to submit LP key on-chain after 3 attempts: {}", e);
+                        }
+                    }
                 }
             }
         } else {
             info!("LP key already provided for this request, skipping on-chain submission");
+        }
+
+        // Check if mint task already exists (don't overwrite existing state)
+        let request_id_bytes: [u8; 32] = event.requestId.into();
+        if let Some(existing) = self.db.get_mint_task(&request_id_bytes)? {
+            info!(
+                "Mint task {} already exists in DB with status {:?}, skipping historical event replay",
+                hex::encode(request_id_bytes),
+                existing.status
+            );
+            return Ok(());
         }
 
         // Create a mint task with swap keys

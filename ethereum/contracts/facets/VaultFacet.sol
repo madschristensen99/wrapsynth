@@ -532,7 +532,10 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
     function getVaultHealth(address lpAddress) external view returns (uint256 ratio) {
         Vault memory vault = _vaults[lpAddress];
         uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
-        return _calculateCollateralRatio(vault.collateralShares, actualDebt);
+        uint256 availableCollateral = vault.collateralShares > vault.lockedCollateral
+            ? vault.collateralShares - vault.lockedCollateral
+            : 0;
+        return _calculateCollateralRatio(availableCollateral, actualDebt);
     }
     
     /// @inheritdoc IVaultFacet

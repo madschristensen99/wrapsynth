@@ -2050,93 +2050,96 @@ body.app-page .container {
 
 /* Progress Container */
 .progress-container {
-    margin-top: 2rem;
-    padding: 2rem;
-    background: var(--bg-input);
-    border: 1px solid var(--border-color);
-    border-radius: 16px;
+    margin-top: 1.5rem;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 0;
 }
 
 .progress-step {
-    display: flex;
-    gap: 1.5rem;
-    padding: 1.5rem;
-    margin-bottom: 1rem;
-    background: white;
-    border: 1px solid var(--border-color);
-    border-radius: 12px;
-    opacity: 0.5;
-    transition: all 0.3s ease;
-}
-
-.progress-step.active {
+    border-bottom: 1px solid var(--border-color);
+    padding: 0;
+    margin: 0;
     opacity: 1;
-    border-color: var(--primary);
-    box-shadow: 0 0 20px rgba(255, 107, 0, 0.2);
 }
 
-.progress-step.completed {
-    opacity: 1;
-    border-color: var(--secondary);
+.progress-step:last-child {
+    border-bottom: none;
 }
 
-.step-indicator {
-    flex-shrink: 0;
-    width: 48px;
-    height: 48px;
+.step-row {
     display: flex;
+    justify-content: space-between;
     align-items: center;
-    justify-content: center;
-    background: var(--border-color);
-    border-radius: 50%;
-    font-weight: 700;
-    color: var(--text-secondary-light);
+    padding: 1rem 0;
+    gap: 1rem;
+    cursor: default;
 }
 
-.progress-step.active .step-indicator {
-    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
-    color: white;
+.step-row h3 {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-muted-light);
+    margin: 0;
+    transition: color 0.3s ease, font-weight 0.3s ease;
 }
 
-.progress-step.completed .step-indicator {
-    background: var(--secondary);
-    color: white;
-}
-
-.step-content h3 {
-    font-size: 1.1rem;
-    margin-bottom: 0.5rem;
+.progress-step.active .step-row h3 {
     color: var(--text-primary-light);
+    font-weight: 600;
+}
+
+.progress-step.completed .step-row h3 {
+    color: var(--text-primary-light);
+    font-weight: 500;
 }
 
 .step-status {
-    font-size: 0.9rem;
-    color: var(--text-secondary-light);
+    font-size: 0.8rem;
+    color: var(--text-muted-light);
+    flex-shrink: 0;
+    transition: color 0.3s ease;
+}
+
+.progress-step.active .step-status {
+    color: var(--primary);
+}
+
+.progress-step.completed .step-status {
+    color: var(--secondary);
+}
+
+.step-body {
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    transition: max-height 0.5s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease 0.1s;
+}
+
+.progress-step.active .step-body {
+    max-height: 3000px;
+    opacity: 1;
 }
 
 .step-explanation {
     font-size: 0.85rem;
     color: var(--text-secondary-light);
-    margin-top: 0.5rem;
     line-height: 1.6;
-    padding: 0.5rem 0.75rem;
-    background: var(--bg-card-light);
-    border-radius: 8px;
-    border-left: 3px solid var(--primary);
+    padding: 0 0 1rem 0;
+    margin: 0;
+    background: transparent;
+    border-left: none;
+    border-radius: 0;
 }
 
 .step-explanation.step-penalty {
-    border-left-color: #ef4444;
-    background: rgba(239, 68, 68, 0.08);
-    color: #991b1b;
+    color: #c2410c;
+    padding: 0.25rem 0;
 }
 
 .penalty-icon {
     margin-right: 0.25rem;
-}
-
-.progress-step.active .step-explanation {
-    color: var(--text-secondary-light);
 }
 
 .deposit-info {
