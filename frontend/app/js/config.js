@@ -23,11 +23,11 @@ export const NETWORKS = {
 
 // Contract addresses - source of truth: ../../deployment.json
 export const CONTRACTS = {
-    hub: DC.wsXmrHub || '0x96E2694a8277aaFE947D1A94eC0a4dD0C7A2Ffb7',
-    wsxmrToken: DC.wsXMR || '0xA39aF84413936f677159B1238B18016696e900Bb',
-    liquidityRouter: DC.liquidityRouter || '0xa5a504e715edc1567a4f23643aDAFaD8D955cB07',
+    hub: DC.wsXmrHub || '0x5645c2b053297c69e9ac543851943a96b65d0925',
+    wsxmrToken: DC.wsXMR || '0xbb364f197a8429bfa7a991bbbfc104a4dc53f6fa',
+    liquidityRouter: DC.liquidityRouter || '0xdc0d3eddd8ee8b63611156de39b6f05cad2bb0b0',
     sDAI: DE.sDAI || '0xaf204776c7245bF4147c2612BF6e5972Ee483701',
-    uniswapV3Pool: DP.uniswapV3Pool || '0x29711831EE1A9f15210d32815F333B9fD42BDe55',
+    uniswapV3Pool: DP.uniswapV3Pool || '0xa62580f4cf7ac62075fd425a2e64b953baff623c',
     // Default LP vault to use for mints (the active LP running the LP node)
     defaultLpVault: DLC.defaultLpVault || '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB'
 };
@@ -188,7 +188,7 @@ export const RAW_ABIS = {
 export const ABIS = {
     hub: [
         // Mint flow
-        'function initiateMint(address lpVault, address recipient, uint256 xmrAmount, bytes32 claimCommitment) external payable returns (bytes32 requestId)',
+        'function initiateMint(address lpVault, address recipient, uint256 xmrAmount, bytes32 claimCommitment, bytes32 userPublicKey) external payable returns (bytes32 requestId)',
         'function provideLPKey(bytes32 requestId, bytes32 lpPublicKey) external',
         'function setMintReady(bytes32 requestId) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',

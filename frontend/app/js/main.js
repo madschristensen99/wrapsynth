@@ -1463,10 +1463,23 @@ async function handleResolveSwap(swap) {
         // PENDING mint: cancel on-chain to recover griefing deposit
         if (swap.type === 'mint' && (swap.state === 'awaiting-lp-key' || swap.state === 'evm-init' || swap.state === 'initiated')) {
             console.log('Resolving stale mint on-chain:', swap.requestId);
-            const { writeHub } = await import('./viemClient.js');
-            const receipt = await writeHub('cancelMint', [swap.requestId]);
-            console.log('cancelMint tx:', receipt.transactionHash);
-            showResumeSuccess(swap.requestId, 'Mint cancelled. Your griefing deposit has been refunded.');
+            const { readHub, writeHub } = await import('./viemClient.js');
+            const mintReq = await readHub('getMintRequest', [swap.requestId]);
+            const status = Number(mintReq.status);
+            // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
+            if (status === 5) {
+                await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
+                showResumeSuccess(swap.requestId, 'Mint was already cancelled. Your griefing deposit has been claimed.');
+            } else if (status === 1 || status === 2 || status === 3) {
+                const receipt = await writeHub('cancelMint', [swap.requestId]);
+                console.log('cancelMint tx:', receipt.transactionHash);
+                showResumeSuccess(swap.requestId, 'Mint cancelled. Your griefing deposit has been refunded.');
+            } else if (status === 4) {
+                showResumeSuccess(swap.requestId, 'This mint has already completed on-chain.');
+            } else {
+                showResumeError(swap.requestId, `Unexpected mint status (${status}). Check block explorer.`);
+                return;
+            }
         }
         // REQUESTED burn: cancel on-chain to recover wsXMR
         else if (swap.type === 'burn' && swap.state === 'evm-request') {

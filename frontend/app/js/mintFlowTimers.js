@@ -67,19 +67,50 @@ export async function startDeadlineTimer(mintFlow) {
                     refundBtn.textContent = 'Cancel Mint & Refund Deposit';
                     refundBtn.onclick = async () => {
                         refundBtn.disabled = true;
-                        refundBtn.textContent = 'Cancelling...';
+                        refundBtn.textContent = 'Checking status...';
                         try {
-                            const { writeHub } = await import('./viemClient.js');
-                            const receipt = await writeHub('cancelMint', [mintFlow.requestId]);
-                            console.log('cancelMint tx:', receipt.transactionHash);
-                            timerElement.innerHTML = '<strong style="color:var(--success-color);">Cancelled & Refunded</strong>';
-                            refundBtn.remove();
-                            const { clearActiveSwap } = await import('./storage.js');
-                            clearActiveSwap();
-                            const { resetMintUI } = await import('./ui.js');
-                            resetMintUI();
+                            const { readHub, writeHub } = await import('./viemClient.js');
+                            
+                            // Check current on-chain status before deciding action
+                            const mintReq = await readHub('getMintRequest', [mintFlow.requestId]);
+                            const status = Number(mintReq.status);
+                            // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
+                            
+                            if (status === 5) {
+                                // Already cancelled by LP node; claim refund via withdrawReturns
+                                refundBtn.textContent = 'Claiming refund...';
+                                const receipt = await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
+                                console.log('withdrawReturns tx:', receipt.transactionHash);
+                                timerElement.innerHTML = '<strong style="color:var(--success-color);">Refunded</strong>';
+                                refundBtn.remove();
+                                const { clearActiveSwap } = await import('./storage.js');
+                                clearActiveSwap();
+                                const { resetMintUI } = await import('./ui.js');
+                                resetMintUI();
+                            } else if (status === 1 || status === 2 || status === 3) {
+                                // Still cancellable; call cancelMint
+                                refundBtn.textContent = 'Cancelling...';
+                                const receipt = await writeHub('cancelMint', [mintFlow.requestId]);
+                                console.log('cancelMint tx:', receipt.transactionHash);
+                                timerElement.innerHTML = '<strong style="color:var(--success-color);">Cancelled & Refunded</strong>';
+                                refundBtn.remove();
+                                const { clearActiveSwap } = await import('./storage.js');
+                                clearActiveSwap();
+                                const { resetMintUI } = await import('./ui.js');
+                                resetMintUI();
+                            } else if (status === 4) {
+                                // Already completed
+                                timerElement.innerHTML = '<strong style="color:var(--success-color);">Mint Completed</strong>';
+                                refundBtn.remove();
+                                const { clearActiveSwap } = await import('./storage.js');
+                                clearActiveSwap();
+                                const { resetMintUI } = await import('./ui.js');
+                                resetMintUI();
+                            } else {
+                                throw new Error(`Unexpected mint status: ${status}`);
+                            }
                         } catch (err) {
-                            console.error('Cancel mint failed:', err);
+                            console.error('Cancel/claim refund failed:', err);
                             refundBtn.disabled = false;
                             refundBtn.textContent = 'Cancel Mint & Refund Deposit';
                             timerElement.innerHTML += `<br><span style="font-size:0.75rem;color:var(--error-color);">${err.message}</span>`;

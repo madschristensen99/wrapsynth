@@ -8,6 +8,7 @@ mod events;
 mod monero;
 mod oracle;
 mod quote;
+mod wallet_rpc_manager;
 
 use alloy::primitives::{Address, U256};
 use anyhow::{Context, Result};
@@ -143,16 +144,44 @@ async fn main() -> Result<()> {
         }
         Some(Commands::ProcessPending { hours }) => {
             info!("Scanning for pending requests from the last {} hours", hours);
-            
-            // Initialize Monero client
+
+            // Initialize Monero client (first without wallet RPC to derive keys)
+            let temp_monero = monero::MoneroClient::new(
+                config.monero_config.daemon_url.clone(),
+                config.monero_private_key.clone(),
+            )
+            .context("Failed to initialize Monero client")?;
+
+            let monero_address = temp_monero.get_address().unwrap_or_default();
+            let spend_key = temp_monero.get_spend_key_hex();
+            let view_key = temp_monero.get_view_key_hex();
+
+            // Auto-start monero-wallet-rpc if not configured or not reachable
             let wallet_rpc_url = env::var("MONERO_WALLET_RPC_URL").ok();
+            let wallet_dir = format!("{}/monero-wallet", config.db_path);
+            let _wallet_manager = wallet_rpc_manager::WalletRpcManager::auto_start(
+                wallet_rpc_url.as_deref(),
+                &config.monero_config.daemon_url,
+                &wallet_dir,
+                &spend_key,
+                &view_key,
+                &monero_address,
+            )
+            .await
+            .context("Failed to auto-start monero-wallet-rpc")?;
+
+            let effective_rpc_url = _wallet_manager
+                .as_ref()
+                .map(|m| m.rpc_url().to_string())
+                .or(wallet_rpc_url);
+
             let monero = Arc::new(
                 monero::MoneroClient::new_with_wallet_rpc(
                     config.monero_config.daemon_url.clone(),
                     config.monero_private_key.clone(),
-                    wallet_rpc_url,
+                    effective_rpc_url,
                 )
-                .context("Failed to initialize Monero client")?
+                .context("Failed to initialize Monero client with wallet RPC")?
             );
             
             // Initialize event listener
@@ -203,25 +232,47 @@ async fn main() -> Result<()> {
             info!("Database initialized");
             info!("EVM client initialized");
 
-            // Initialize Monero client
+            // Initialize Monero client (first without wallet RPC to derive keys)
+            let temp_monero = monero::MoneroClient::new(
+                config.monero_config.daemon_url.clone(),
+                config.monero_private_key.clone(),
+            )
+            .context("Failed to initialize Monero client")?;
+
+            let monero_address = temp_monero.get_address().unwrap_or_default();
+            let spend_key = temp_monero.get_spend_key_hex();
+            let view_key = temp_monero.get_view_key_hex();
+
+            // Auto-start monero-wallet-rpc if not configured or not reachable
             let wallet_rpc_url = env::var("MONERO_WALLET_RPC_URL").ok();
+            let wallet_dir = format!("{}/monero-wallet", config.db_path);
+            let wallet_manager = wallet_rpc_manager::WalletRpcManager::auto_start(
+                wallet_rpc_url.as_deref(),
+                &config.monero_config.daemon_url,
+                &wallet_dir,
+                &spend_key,
+                &view_key,
+                &monero_address,
+            )
+            .await
+            .context("Failed to auto-start monero-wallet-rpc")?;
+
+            let effective_rpc_url = wallet_manager
+                .as_ref()
+                .map(|m| m.rpc_url().to_string())
+                .or(wallet_rpc_url);
+
+            // Create the real Monero client with the effective wallet RPC URL
             let monero = Arc::new(
                 monero::MoneroClient::new_with_wallet_rpc(
                     config.monero_config.daemon_url.clone(),
                     config.monero_private_key.clone(),
-                    wallet_rpc_url,
+                    effective_rpc_url,
                 )
-                .context("Failed to initialize Monero client")?
+                .context("Failed to initialize Monero client with wallet RPC")?
             );
             info!("Monero client initialized");
-
-            // Display Monero address
-            match monero.get_address() {
-                Ok(address) => info!("Monero wallet address: {}", address),
-                Err(e) => {
-                    tracing::warn!("Failed to get Monero address: {}", e);
-                }
-            }
+            info!("Monero wallet address: {}", monero_address);
 
             // Initialize event listener
             let lp_vault_bytes: [u8; 20] = config.lp_vault_address.into();

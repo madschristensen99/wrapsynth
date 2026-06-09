@@ -118,6 +118,7 @@ contract wsXmrStorage {
         uint256 wsxmrAmount;
         uint256 feeAmount;
         bytes32 claimCommitment;
+        bytes32 userPublicKey;       // User's compressed Ed25519 public key for 2-of-2 address derivation
         uint256 timeout;
         uint256 griefingDeposit;
         uint256 lpBond;              // LP bond posted when setMintReady called

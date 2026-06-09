@@ -132,7 +132,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         bytes32 testSecret = bytes32(uint256(0xabcdef));
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(testSecret));
         bytes32 commitment = keccak256(abi.encodePacked(px, py));
-        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 20000000000, commitment);
+        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 20000000000, commitment, bytes32(uint256(0xdeadbeef)));
         vm.stopPrank();
 
         bytes32[] memory userMints = _getUserMintRequests(user);
@@ -317,7 +317,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
 
         // Mint keeping under 150% CR (M-2 fix no longer counts wsXMR as collateral)
         vm.prank(user2);
-        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user2, 85_000_000_000, commitment2);
+        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user2, 85_000_000_000, commitment2, bytes32(uint256(0xdeadbeef)));
 
         bytes32[] memory user2Mints = _getUserMintRequests(user2);
         
@@ -490,7 +490,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         bytes32 commitment3 = keccak256(abi.encodePacked(px3, py3));
 
         vm.prank(user3);
-        bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user3, 20000000000, commitment3);
+        bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user3, 20000000000, commitment3, bytes32(uint256(0xdeadbeef)));
 
         bytes32 lpPublicKey3 = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
@@ -591,7 +591,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         bytes32 commitment4 = keccak256(abi.encodePacked(px4, py4));
 
         vm.prank(user4);
-        bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user4, 20000000000, commitment4);
+        bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user4, 20000000000, commitment4, bytes32(uint256(0xdeadbeef)));
 
         // Warp past timeout (360 blocks at ~5s = 30 min, add buffer)
         vm.warp(block.timestamp + 31 minutes);

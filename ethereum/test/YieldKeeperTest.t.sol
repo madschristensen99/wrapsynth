@@ -115,7 +115,7 @@ contract YieldKeeperTest is Test {
         bytes32 testSecret = bytes32(uint256(0xabcdef));
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(testSecret));
         bytes32 commitment = keccak256(abi.encodePacked(px, py));
-        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 20000000000, commitment);
+        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 20000000000, commitment, bytes32(uint256(0xdeadbeef)));
         vm.stopPrank();
 
         bytes32[] memory userMints = _getUserMintRequests(user);

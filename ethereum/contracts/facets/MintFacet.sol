@@ -22,12 +22,14 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         address lpVault,
         address recipient,
         uint256 xmrAmount,
-        bytes32 claimCommitment
+        bytes32 claimCommitment,
+        bytes32 userPublicKey
     ) external payable returns (bytes32 requestId) {
         if (lpVault == address(0)) revert ZeroAddress();
         if (recipient == address(0)) revert ZeroAddress();
         if (xmrAmount == 0) revert ZeroAmount();
         if (claimCommitment == bytes32(0)) revert InvalidCommitment();
+        if (userPublicKey == bytes32(0)) revert InvalidCommitment();
         if (!_vaults[lpVault].active) revert VaultDoesNotExist();
         if (xmrAmount < 1e4) revert ZeroAmount();
         
@@ -92,6 +94,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             wsxmrAmount: wsxmrAmount,
             feeAmount: feeAmount,
             claimCommitment: claimCommitment,
+            userPublicKey: userPublicKey,
             timeout: timeoutBlock,
             griefingDeposit: msg.value,
             lpBond: 0,  // Bond posted later when LP calls setMintReady
@@ -112,6 +115,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             wsxmrAmount,
             feeAmount,
             claimCommitment,
+            userPublicKey,
             timeoutBlock
         );
     }

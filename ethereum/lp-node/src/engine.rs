@@ -3,7 +3,7 @@ use crate::db::{BurnStatus, BurnTask, Database, MintStatus, MintTask};
 use crate::evm::EvmClient;
 use crate::monero::MoneroClient;
 use crate::oracle::OracleClient;
-use alloy::primitives::{Address, FixedBytes, U256};
+use alloy::primitives::FixedBytes;
 use anyhow::{anyhow, Context, Result};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::SecretKey;
@@ -253,7 +253,7 @@ impl SwapEngine {
         Ok(())
     }
 
-    async fn handle_burn_proposed(&self, burn: &mut BurnTask) -> Result<()> {
+    async fn handle_burn_proposed(&self, _burn: &mut BurnTask) -> Result<()> {
         // LP has proposed hash and sent XMR
         // Now waiting for user to call confirmMoneroLock on-chain
         // This will be detected by the BurnCommitted event listener in events.rs

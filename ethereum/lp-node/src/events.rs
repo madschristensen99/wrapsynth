@@ -1,7 +1,7 @@
 use crate::db::{BurnStatus, BurnTask, Database, MintStatus, MintTask};
 use crate::evm::EvmClient;
 use crate::monero::MoneroClient;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use futures::StreamExt;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -330,7 +330,8 @@ impl EventListener {
 
         // Generate atomic swap keys for Farcaster protocol
         let claim_commitment: [u8; 32] = event.claimCommitment.into();
-        let swap_keys = self.monero.generate_swap_keys(&claim_commitment)?;
+        let user_public_key: [u8; 32] = event.userPublicKey.into();
+        let swap_keys = self.monero.generate_swap_keys_with_pubkey(&claim_commitment, &user_public_key)?;
         
         info!(
             "Generated swap keys - Deposit address: {}",
@@ -343,12 +344,16 @@ impl EventListener {
         let mut lp_public_key_array = [0u8; 32];
         lp_public_key_array.copy_from_slice(lp_public_spend_bytes);
         
-        // Check if LP key was already provided (to avoid revert on historical event replay)
+        // Check if LP key was already provided or if mint has moved past PENDING status
+        // (to avoid revert on historical event replay)
         let existing_key = self.evm.get_lp_public_key(request_id_bytes.into()).await;
         let key_already_provided = existing_key.is_ok() && 
             existing_key.unwrap() != alloy::primitives::FixedBytes::from([0u8; 32]);
         
-        if !key_already_provided {
+        let mint_status = self.evm.get_mint_request_status(request_id_bytes.into()).await;
+        let is_still_pending = mint_status.as_ref().map(|s| *s == 1).unwrap_or(false); // 1 = PENDING
+        
+        if !key_already_provided && is_still_pending {
             let mut last_error = None;
             for attempt in 1..=3 {
                 match self.evm.provide_lp_key(
@@ -361,18 +366,23 @@ impl EventListener {
                         break;
                     }
                     Err(e) => {
-                        last_error = Some(e);
                         if attempt < 3 {
-                            warn!("Failed to submit LP key on-chain (attempt {}/{}), retrying in 3s...", attempt, 3);
+                            warn!("Failed to submit LP key on-chain (attempt {}/{}): {}, retrying in 3s...", attempt, 3, e);
+                            last_error = Some(e);
                             tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
                         } else {
                             tracing::error!("Failed to submit LP key on-chain after 3 attempts: {}", e);
+                            last_error = Some(e);
                         }
                     }
                 }
             }
         } else {
-            info!("LP key already provided for this request, skipping on-chain submission");
+            if !is_still_pending {
+                info!("Mint request no longer in PENDING status (status: {:?}), skipping LP key submission", mint_status);
+            } else {
+                info!("LP key already provided for this request, skipping on-chain submission");
+            }
         }
 
         // Check if mint task already exists (don't overwrite existing state)

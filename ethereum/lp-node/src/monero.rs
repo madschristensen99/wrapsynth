@@ -7,10 +7,8 @@ use reqwest::Client;
 use std::str::FromStr;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
-use rand::rngs::OsRng;
-use rand::RngCore;
 use curve25519_dalek::{
-    edwards::{CompressedEdwardsY, EdwardsPoint},
+    edwards::CompressedEdwardsY,
     scalar::Scalar,
 };
 
@@ -213,6 +211,16 @@ impl MoneroClient {
     /// Get the Monero address
     pub fn get_address(&self) -> Result<String> {
         Ok(self.address.to_string())
+    }
+
+    /// Get the private spend key as a hex string.
+    pub fn get_spend_key_hex(&self) -> String {
+        hex::encode(self.private_spend_key.as_bytes())
+    }
+
+    /// Get the private view key as a hex string.
+    pub fn get_view_key_hex(&self) -> String {
+        hex::encode(self.private_view_key.as_bytes())
     }
 
     /// Get current blockchain height from daemon
@@ -495,7 +503,7 @@ impl MoneroClient {
     pub async fn scan_for_revealed_secret(
         &self,
         secret_hash: &[u8; 32],
-        min_height: u64,
+        _min_height: u64,
     ) -> Result<Option<[u8; 32]>> {
         debug!(
             "Scanning for revealed secret matching hash {}",
@@ -611,7 +619,84 @@ impl MoneroClient {
             deposit_address,
         })
     }
-    
+
+    /// Generate swap keys using the user's actual Ed25519 public key.
+    ///
+    /// Unlike `generate_swap_keys` which tries to parse the commitment as a public key,
+    /// this function uses the provided `user_public_key` directly for 2-of-2 address
+    /// derivation. Used when the user's public key is available on-chain.
+    pub fn generate_swap_keys_with_pubkey(
+        &self,
+        user_commitment: &[u8; 32],
+        user_public_key: &[u8; 32],
+    ) -> Result<SwapKeys> {
+        use sha2::{Sha256, Digest};
+
+        // Derive s_b (LP's private spend key for this swap)
+        let mut spend_hasher = Sha256::new();
+        spend_hasher.update(self.private_spend_key.as_bytes());
+        spend_hasher.update(user_commitment);
+        spend_hasher.update(b"swap_spend");
+        let lp_scalar_bytes: [u8; 32] = spend_hasher.finalize().into();
+        let lp_scalar = Scalar::from_bytes_mod_order(lp_scalar_bytes);
+        let canonical_bytes = lp_scalar.to_bytes();
+        let lp_private_spend = PrivateKey::from_slice(&canonical_bytes)
+            .map_err(|e| anyhow!("Failed to create LP private spend key: {:?}", e))?;
+
+        // Derive v_b (LP's private view key for this swap)
+        let mut view_hasher = Sha256::new();
+        view_hasher.update(self.private_view_key.as_bytes());
+        view_hasher.update(user_commitment);
+        view_hasher.update(b"swap_view");
+        let lp_view_bytes: [u8; 32] = view_hasher.finalize().into();
+        let lp_view_scalar = Scalar::from_bytes_mod_order(lp_view_bytes);
+        let canonical_view_bytes = lp_view_scalar.to_bytes();
+        let lp_private_view = PrivateKey::from_slice(&canonical_view_bytes)
+            .map_err(|e| anyhow!("Failed to create LP private view key: {:?}", e))?;
+
+        // Derive LP's public keys
+        let lp_public_spend = PublicKey::from_private_key(&lp_private_spend);
+        let lp_public_view = PublicKey::from_private_key(&lp_private_view);
+
+        // Use the provided user public key for 2-of-2 address derivation
+        let user_compressed = CompressedEdwardsY::from_slice(user_public_key)
+            .map_err(|e| anyhow!("Invalid user public key: {:?}", e))?;
+        let user_point = user_compressed.decompress()
+            .ok_or_else(|| anyhow!("User public key is not on the curve"))?;
+
+        let lp_public_bytes = lp_public_spend.as_bytes();
+        let lp_compressed = CompressedEdwardsY::from_slice(lp_public_bytes)
+            .map_err(|e| anyhow!("Invalid LP public key: {:?}", e))?;
+        let lp_point = lp_compressed.decompress()
+            .ok_or_else(|| anyhow!("LP public key is not on the curve"))?;
+
+        let combined_spend_point = user_point + lp_point;
+        let combined_bytes = combined_spend_point.compress().to_bytes();
+        let combined_public_spend = PublicKey::from_slice(&combined_bytes)
+            .map_err(|e| anyhow!("Failed to create combined public spend key: {:?}", e))?;
+
+        let deposit_address = Address::standard(
+            self.network,
+            combined_public_spend,
+            lp_public_view,
+        );
+
+        info!("Generated Farcaster 2-of-2 swap keys (with explicit user public key)");
+        info!("LP public spend: {}", hex::encode(lp_public_spend.as_bytes()));
+        info!("Combined public spend: {}", hex::encode(combined_public_spend.as_bytes()));
+        info!("Deposit address: {}", deposit_address);
+
+        Ok(SwapKeys {
+            lp_private_spend,
+            lp_private_view,
+            lp_public_spend,
+            lp_public_view,
+            combined_public_spend,
+            combined_public_view: lp_public_view,
+            deposit_address,
+        })
+    }
+
     /// Verify XMR was locked to a specific swap address
     pub async fn verify_swap_lock(
         &self,
@@ -651,8 +736,8 @@ impl MoneroClient {
         &self,
         lp_private_spend: &PrivateKey,
         user_secret: &[u8; 32],
-        destination: &str,
-        amount: u64,
+        _destination: &str,
+        _amount: u64,
     ) -> Result<String> {
         info!("Claiming XMR from atomic swap");
         
@@ -699,91 +784,127 @@ impl MoneroClient {
             Address::from_str(addr_str)
                 .map_err(|e| anyhow!("Invalid deposit address: {:?}", e))?
         } else {
-            // Generate from claim commitment if not provided
             let swap_keys = self.generate_swap_keys(claim_commitment)?;
             swap_keys.deposit_address
         };
-        
+
         info!("Checking for deposits to address: {}", deposit_address);
 
-        // Check if wallet RPC is configured and ready
-        if self.wallet_rpc_url.is_none() {
-            warn!("Wallet RPC not configured - cannot verify mint lock");
-            return Ok(false);
-        }
-
-        // Check if wallet RPC is ready by trying to get height
-        let wallet_ready = match self.call_wallet_rpc::<serde_json::Value>(
-            "get_height",
-            serde_json::json!({})
-        ).await {
-            Ok(_) => true,
-            Err(e) => {
-                warn!("Wallet RPC not ready yet (still syncing): {}", e);
-                warn!("Skipping verification for now - wallet needs to finish initial sync");
-                return Ok(false);
-            }
-        };
-
-        if !wallet_ready {
-            return Ok(false);
-        }
-
-        // Get the swap's private keys for importing into wallet
-        let (swap_spend_key, swap_view_key) = if let Some(view_key_bytes) = lp_private_view {
-            // We have the view key, but need spend key too for full import
-            let swap_keys = self.generate_swap_keys(claim_commitment)?;
-            (swap_keys.lp_private_spend, PrivateKey::from_slice(view_key_bytes)
-                .map_err(|e| anyhow!("Invalid LP private view key: {:?}", e))?)
+        // Get the swap view key so we can use it for daemon fallback scanning
+        let swap_view_key = if let Some(view_key_bytes) = lp_private_view {
+            PrivateKey::from_slice(view_key_bytes)
+                .map_err(|e| anyhow!("Invalid LP private view key: {:?}", e))?
         } else {
-            // Generate swap keys to get both keys
             let swap_keys = self.generate_swap_keys(claim_commitment)?;
-            (swap_keys.lp_private_spend, swap_keys.lp_private_view)
+            swap_keys.lp_private_view
         };
 
-        // Import this swap address into wallet RPC for tracking
-        info!("Importing swap address into wallet RPC...");
-        self.import_swap_address_to_wallet(&deposit_address, &swap_spend_key, &swap_view_key).await?;
+        // --- Path A: wallet RPC (fastest when available) ---
+        if self.wallet_rpc_url.is_some() {
+            match self.verify_mint_lock_via_wallet_rpc(
+                expected_amount,
+                &deposit_address,
+                &swap_view_key,
+                min_confirmations,
+            ).await {
+                Ok(true) => return Ok(true),
+                Ok(false) => {
+                    info!("Wallet RPC found no deposit; falling back to daemon scan...");
+                }
+                Err(e) => {
+                    let err_str = e.to_string();
+                    if err_str.contains("Failed to call wallet RPC")
+                        || err_str.contains("Connection refused")
+                        || err_str.contains("connect")
+                        || err_str.contains("dns error")
+                    {
+                        warn!("Wallet RPC unreachable ({}). Falling back to daemon scan...", e);
+                    } else if err_str.contains("syncing") || err_str.contains("sync") {
+                        warn!("Wallet RPC still syncing. Falling back to daemon scan...");
+                    } else {
+                        warn!("Wallet RPC error ({}). Falling back to daemon scan...", e);
+                    }
+                }
+            }
+        } else {
+            info!("Wallet RPC not configured - verifying via daemon scan");
+        }
 
-        // Refresh wallet to sync with blockchain
-        info!("Refreshing wallet to sync with blockchain...");
+        // --- Path B: daemon fallback ---
+        self.verify_mint_lock_via_daemon(
+            expected_amount,
+            &deposit_address,
+            &swap_view_key,
+            min_confirmations,
+        ).await
+    }
+
+    /// Verify mint lock using wallet RPC (primary, fastest path)
+    async fn verify_mint_lock_via_wallet_rpc(
+        &self,
+        expected_amount: u64,
+        deposit_address: &Address,
+        swap_view_key: &PrivateKey,
+        min_confirmations: u64,
+    ) -> Result<bool> {
+        // Quick health check: try get_height (fails fast if RPC is down)
+        let _: serde_json::Value = self
+            .call_wallet_rpc("get_height", serde_json::json!({}))
+            .await?;
+
+        // Import swap address for tracking
+        let swap_spend_key = PrivateKey::from_slice(swap_view_key.as_bytes())
+            .map_err(|e| anyhow!("Invalid swap view key for import: {:?}", e))?;
+        self.import_swap_address_to_wallet(deposit_address, &swap_spend_key, swap_view_key)
+            .await?;
+
+        // Refresh wallet (sync with blockchain)
+        info!("Refreshing swap wallet to sync with blockchain...");
         self.refresh_wallet().await?;
+        info!("Refresh complete (or timed out — wallet continues syncing in background)");
 
-        // Get current height
+        // Check if wallet has detected any balance
+        let balance_result: Result<serde_json::Value> = self.call_wallet_rpc(
+            "get_balance",
+            serde_json::json!({"account_index": 0})
+        ).await;
+        match balance_result {
+            Ok(bal) => {
+                if let (Some(balance), Some(unlocked)) = (
+                    bal.get("balance").and_then(|v| v.as_u64()),
+                    bal.get("unlocked_balance").and_then(|v| v.as_u64())
+                ) {
+                    info!("Swap wallet balance: {} atomic units (unlocked: {})", balance, unlocked);
+                }
+            }
+            Err(e) => {
+                warn!("Could not check swap wallet balance: {}", e);
+            }
+        }
+
         let current_height = self.get_height().await?;
-        
-        // Look back far enough to catch recent deposits
         let min_height = current_height.saturating_sub(100);
-        
+
         info!("Querying wallet RPC for incoming transfers from height {}...", min_height);
-        
-        // Get incoming transfers from wallet RPC
+
         let transfers = self.get_incoming_transfers(min_height).await?;
-        
         info!("Found {} incoming transfers", transfers.len());
-        
-        // Check if any transfer matches our criteria
+
         for transfer in transfers {
-            let confirmations = if current_height > transfer.block_height {
-                current_height - transfer.block_height
-            } else {
-                0
-            };
-            
-            // Check if amount matches (with small tolerance)
-            let amount_matches = transfer.amount >= expected_amount.saturating_sub(1_000_000); // 0.001 XMR tolerance
-            
+            let confirmations = current_height.saturating_sub(transfer.block_height);
+            let amount_matches = transfer.amount >= expected_amount.saturating_sub(1_000_000);
+
             info!(
                 "Checking transfer: {} XMR in tx {} with {} confirmations",
                 transfer.amount as f64 / 1e12,
                 transfer.tx_hash,
                 confirmations
             );
-            
+
             if amount_matches {
                 if confirmations >= min_confirmations {
                     info!(
-                        "✓ Verified deposit: {} XMR in tx {} with {} confirmations",
+                        "✓ Verified deposit via wallet RPC: {} XMR in tx {} with {} confirmations",
                         transfer.amount as f64 / 1e12,
                         transfer.tx_hash,
                         confirmations
@@ -799,27 +920,173 @@ impl MoneroClient {
             }
         }
 
-        info!("No matching deposit found to address {}", deposit_address);
+        info!("No matching deposit found via wallet RPC to address {}", deposit_address);
         Ok(false)
     }
 
-    /// Import a swap address into wallet RPC for tracking
-    /// This allows the wallet to automatically detect incoming transfers to this address
+    /// Verify mint lock by scanning blocks directly via Monero daemon (fallback path)
+    async fn verify_mint_lock_via_daemon(
+        &self,
+        expected_amount: u64,
+        deposit_address: &Address,
+        swap_view_key: &PrivateKey,
+        min_confirmations: u64,
+    ) -> Result<bool> {
+        info!("Scanning daemon for deposits to {} ...", deposit_address);
+
+        let current_height = self.get_height().await?;
+        let min_height = current_height.saturating_sub(100);
+        let scan_range = min_height..=current_height;
+        let total_blocks = scan_range.clone().count();
+        let mut total_txs_checked = 0usize;
+
+        for (idx, height) in scan_range.enumerate() {
+            if idx % 25 == 0 {
+                info!("Daemon scan progress: {}/{} blocks (height {}, {} txs checked so far)",
+                    idx, total_blocks, height, total_txs_checked);
+            }
+
+            let block_data = match self.get_block_by_height(height).await {
+                Ok(b) => b,
+                Err(e) => {
+                    warn!("Failed to fetch block {}: {}", height, e);
+                    continue;
+                }
+            };
+
+            let tx_hashes = block_data.get("tx_hashes").and_then(|v| v.as_array());
+            let tx_count = tx_hashes.as_ref().map(|a| a.len()).unwrap_or(0);
+            if tx_count > 0 {
+                info!("Block {} has {} tx(s) to check", height, tx_count);
+            }
+
+            if let Some(txs) = tx_hashes {
+                for tx_hash_val in txs {
+                    if let Some(tx_hash) = tx_hash_val.as_str() {
+                        total_txs_checked += 1;
+                        match self.check_tx_for_swap_address(
+                            tx_hash,
+                            deposit_address,
+                            swap_view_key,
+                            expected_amount,
+                            height,
+                        ).await {
+                            Ok(Some((amount, confirmations))) => {
+                                if confirmations >= min_confirmations {
+                                    info!(
+                                        "✓ Verified deposit via daemon: {} XMR in tx {} (block {}, {} confs)",
+                                        amount as f64 / 1e12,
+                                        tx_hash,
+                                        height,
+                                        confirmations
+                                    );
+                                    return Ok(true);
+                                } else {
+                                    info!(
+                                        "Found deposit in tx {} but only {} confirmations (need {})",
+                                        tx_hash, confirmations, min_confirmations
+                                    );
+                                    return Ok(false);
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                warn!("Error checking tx {}: {}", tx_hash, e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        info!("No matching deposit found via daemon scan to address {} (checked {} txs across {} blocks)",
+            deposit_address, total_txs_checked, total_blocks);
+        Ok(false)
+    }
+
+    /// Import a swap address into wallet RPC for tracking.
+    /// Creates a view-only wallet via generate_from_keys so that get_transfers
+    /// can detect deposits to this swap address.
+    /// Returns the generated wallet filename.
     async fn import_swap_address_to_wallet(
         &self,
         address: &Address,
-        spend_key: &PrivateKey,
+        _spend_key: &PrivateKey,
         view_key: &PrivateKey,
-    ) -> Result<()> {
-        // For now, we'll use the main wallet and rely on get_incoming_transfers
-        // In production, you might want to use generate_from_keys to create a view-only wallet
-        // or use import_key_images for better tracking
-        
-        // The wallet RPC will automatically track transactions to addresses it knows about
-        // when we call refresh_wallet() and get_incoming_transfers()
-        
-        info!("Swap address ready for tracking: {}", address);
-        Ok(())
+    ) -> Result<String> {
+        if self.wallet_rpc_url.is_none() {
+            anyhow::bail!("Wallet RPC not configured");
+        }
+
+        let address_str = address.to_string();
+        // Deterministic filename from SHA256 of address (first 16 hex chars)
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(address_str.as_bytes());
+        let hash = hex::encode(hasher.finalize());
+        let filename = format!("wrapsynth_swap_{}", &hash[..16]);
+
+        let current_height = self.get_height().await.unwrap_or(0);
+        // Scan only last 100 blocks for speed on public nodes.
+        // The deposit is always recent because the LP only starts checking
+        // after the mint is initiated on-chain.
+        let restore_height = current_height.saturating_sub(100).max(1);
+
+        // Try to create a view-only wallet for this swap address.
+        // generate_from_keys automatically switches the wallet RPC to the new wallet.
+        let create_result: Result<serde_json::Value> = self.call_wallet_rpc(
+            "generate_from_keys",
+            serde_json::json!({
+                "filename": &filename,
+                "address": &address_str,
+                "viewkey": hex::encode(view_key.as_bytes()),
+                "password": "",
+                "language": "English",
+                "restore_height": restore_height
+            })
+        ).await;
+
+        match create_result {
+            Ok(result) => {
+                info!("Created view-only wallet '{}' for swap address {} (rpc result: {:?})", filename, address_str, result);
+                // Verify the wallet RPC is now tracking the correct address
+                let addr_result: Result<serde_json::Value> = self.call_wallet_rpc(
+                    "get_address",
+                    serde_json::json!({"account_index": 0})
+                ).await;
+                match addr_result {
+                    Ok(addr_json) => {
+                        if let Some(current_addr) = addr_json.get("address").and_then(|v| v.as_str()) {
+                            info!("Wallet RPC now tracking address: {}", current_addr);
+                            if current_addr != address_str {
+                                warn!("Wallet RPC address mismatch! Expected {}, got {}", address_str, current_addr);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Could not verify wallet address after generate_from_keys: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                let err_str = e.to_string();
+                // Wallet may already exist; try to open it
+                if err_str.contains("already exists") || err_str.contains("exists") {
+                    info!("Swap wallet '{}' already exists, opening it...", filename);
+                    self.call_wallet_rpc::<serde_json::Value>(
+                        "open_wallet",
+                        serde_json::json!({
+                            "filename": &filename,
+                            "password": ""
+                        })
+                    ).await.ok();
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+
+        Ok(filename)
     }
 
     /// Check if a transaction has outputs to a specific swap address
@@ -845,41 +1112,107 @@ impl MoneroClient {
         Ok(None)
     }
 
-    /// Get transaction data from daemon
+    /// Get transaction data from daemon.
+    /// Tries JSON-RPC first, then REST /get_transactions endpoint as fallback
+    /// (public nodes often restrict JSON-RPC get_transactions but allow REST).
     async fn get_transaction(&self, tx_hash: &str) -> Result<serde_json::Value> {
         let mut urls = vec![self.daemon_url.clone()];
         urls.extend(self.daemon_fallbacks.clone());
-        
-        for url in urls {
-            let rpc_url = format!("{}/get_transactions", url);
-            
+
+        // --- Path 1: JSON-RPC get_transactions ---
+        for url in &urls {
+            let rpc_url = format!("{}/json_rpc", url);
+
             match self.http_client
                 .post(&rpc_url)
                 .json(&serde_json::json!({
-                    "txs_hashes": [tx_hash],
-                    "decode_as_json": true
+                    "jsonrpc": "2.0",
+                    "id": "0",
+                    "method": "get_transactions",
+                    "params": {
+                        "txs_hashes": [tx_hash],
+                        "decode_as_json": true
+                    }
                 }))
                 .send()
                 .await
             {
                 Ok(response) => {
-                    if let Ok(result) = response.json::<serde_json::Value>().await {
-                        if let Some(txs) = result.get("txs").and_then(|v| v.as_array()) {
-                            if let Some(tx) = txs.first() {
-                                if let Some(as_json) = tx.get("as_json").and_then(|v| v.as_str()) {
-                                    if let Ok(tx_data) = serde_json::from_str::<serde_json::Value>(as_json) {
-                                        return Ok(tx_data);
+                    match response.json::<serde_json::Value>().await {
+                        Ok(body) => {
+                            if body.get("error").is_some() {
+                                warn!("get_transactions JSON-RPC error from {}", url);
+                                continue;
+                            }
+                            let result = body.get("result").unwrap_or(&body);
+                            if let Some(txs) = result.get("txs").and_then(|v| v.as_array()) {
+                                if let Some(tx) = txs.first() {
+                                    if let Some(as_json) = tx.get("as_json").and_then(|v| v.as_str()) {
+                                        if let Ok(tx_data) = serde_json::from_str::<serde_json::Value>(as_json) {
+                                            return Ok(tx_data);
+                                        }
                                     }
                                 }
                             }
                         }
+                        Err(e) => {
+                            warn!("Failed to parse get_transactions JSON-RPC from {}: {}", url, e);
+                        }
                     }
                 }
-                Err(_) => continue,
+                Err(e) => {
+                    warn!("Failed to call get_transactions JSON-RPC on {}: {}", url, e);
+                }
             }
         }
-        
-        Err(anyhow!("Failed to get transaction {}", tx_hash))
+
+        // --- Path 2: REST /get_transactions endpoint ---
+        for url in &urls {
+            let rest_url = format!("{}/get_transactions", url);
+
+            match self.http_client
+                .post(&rest_url)
+                .json(&serde_json::json!({
+                    "txs_hashes": [tx_hash],
+                    "decode_as_json": true,
+                    "prune": false
+                }))
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    match response.json::<serde_json::Value>().await {
+                        Ok(body) => {
+                            if let Some(txs) = body.get("txs").and_then(|v| v.as_array()) {
+                                if let Some(tx) = txs.first() {
+                                    if let Some(as_json) = tx.get("as_json").and_then(|v| v.as_str()) {
+                                        if let Ok(tx_data) = serde_json::from_str::<serde_json::Value>(as_json) {
+                                            info!("Got transaction {} via REST endpoint {}", tx_hash, url);
+                                            return Ok(tx_data);
+                                        }
+                                    }
+                                    // Some REST endpoints return data directly without as_json wrapper
+                                    if let Some(data) = tx.get("data") {
+                                        if let Ok(tx_data) = serde_json::from_str::<serde_json::Value>(data.as_str().unwrap_or("")) {
+                                            return Ok(tx_data);
+                                        }
+                                    }
+                                }
+                            }
+                            warn!("REST get_transactions from {} missing expected fields", url);
+                        }
+                        Err(e) => {
+                            warn!("Failed to parse REST get_transactions from {}: {}", url, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    debug!("Failed to call REST get_transactions on {}: {}", url, e);
+                }
+            }
+        }
+
+        Err(anyhow!("Failed to get transaction {} from all daemon nodes (tried JSON-RPC and REST)", tx_hash))
     }
 
     /// Scan transaction outputs using private view key to detect outputs to our address
@@ -891,7 +1224,7 @@ impl MoneroClient {
         expected_amount: u64,
     ) -> Result<Option<u64>> {
         use curve25519_dalek::scalar::Scalar;
-        use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
+        use curve25519_dalek::edwards::CompressedEdwardsY;
         use sha2::{Sha256, Digest};
         
         // Get transaction public key (R) from extra field
@@ -970,17 +1303,30 @@ impl MoneroClient {
         Ok(None)
     }
 
-    /// Extract transaction public key from extra field
+    /// Extract transaction public key from extra field.
+    /// Handles both JSON-array format and hex-string format returned by daemon.
     fn extract_tx_public_key(&self, tx_data: &serde_json::Value) -> Result<[u8; 32]> {
-        if let Some(extra) = tx_data.get("extra").and_then(|v| v.as_array()) {
+        let extra = tx_data.get("extra").ok_or_else(|| anyhow!("Missing extra field"))?;
+
+        // Try hex-string first (daemon /get_transactions decode_as_json format)
+        if let Some(extra_hex) = extra.as_str() {
+            let extra_hex = extra_hex.trim_start_matches("0x");
+            if let Ok(bytes) = hex::decode(extra_hex) {
+                if let Some(key) = Self::parse_extra_field_for_tx_pubkey(&bytes) {
+                    return Ok(key);
+                }
+            }
+        }
+
+        // Fallback: JSON array format (if somehow pre-parsed)
+        if let Some(arr) = extra.as_array() {
             let mut i = 0;
-            while i < extra.len() {
-                if let Some(tag) = extra[i].as_u64() {
-                    if tag == 1 && i + 32 < extra.len() {
-                        // Next 32 bytes are the tx public key
+            while i < arr.len() {
+                if let Some(tag) = arr[i].as_u64() {
+                    if tag == 1 && i + 32 < arr.len() {
                         let mut key_bytes = [0u8; 32];
                         for j in 0..32 {
-                            if let Some(byte) = extra[i + 1 + j].as_u64() {
+                            if let Some(byte) = arr[i + 1 + j].as_u64() {
                                 key_bytes[j] = byte as u8;
                             }
                         }
@@ -990,7 +1336,42 @@ impl MoneroClient {
                 i += 1;
             }
         }
+
         Err(anyhow!("Transaction public key not found in extra field"))
+    }
+
+    /// Walk raw Monero extra-field bytes and extract the tx public key (tag 0x01).
+    fn parse_extra_field_for_tx_pubkey(extra: &[u8]) -> Option<[u8; 32]> {
+        let mut i = 0;
+        while i < extra.len() {
+            let tag = extra[i];
+            match tag {
+                0x01 => {
+                    // tx public key: 32 bytes follow
+                    if i + 1 + 32 <= extra.len() {
+                        let mut key = [0u8; 32];
+                        key.copy_from_slice(&extra[i + 1..i + 1 + 32]);
+                        return Some(key);
+                    }
+                    return None;
+                }
+                0x02 => {
+                    // extra nonce: 1-byte length then data
+                    if i + 1 >= extra.len() {
+                        return None;
+                    }
+                    let len = extra[i + 1] as usize;
+                    i += 2 + len;
+                    continue;
+                }
+                _ => {
+                    // unknown tag — tx pubkey is almost always first/second,
+                    // so stop here to avoid mis-parsing
+                    return None;
+                }
+            }
+        }
+        None
     }
 
     /// Scan a specific block for transactions to a given address
@@ -999,6 +1380,7 @@ impl MoneroClient {
         address: &Address,
         block_height: u64,
         expected_amount: u64,
+        view_key: &PrivateKey,
     ) -> Result<Option<(String, u64, u64)>> {
         // Get block from daemon
         let block_data = self.get_block_by_height(block_height).await?;
@@ -1006,9 +1388,9 @@ impl MoneroClient {
         if let Some(txs) = block_data.get("tx_hashes").and_then(|v| v.as_array()) {
             for tx_hash_val in txs {
                 if let Some(tx_hash) = tx_hash_val.as_str() {
-                    // Get transaction details
+                    // Use check_tx_for_swap_address which uses get_transaction with REST fallback
                     if let Ok(Some((amount, confirmations))) = 
-                        self.check_transaction_for_address(tx_hash, address, expected_amount, block_height).await 
+                        self.check_tx_for_swap_address(tx_hash, address, view_key, expected_amount, block_height).await 
                     {
                         return Ok(Some((tx_hash.to_string(), amount, confirmations)));
                     }
@@ -1019,14 +1401,15 @@ impl MoneroClient {
         Ok(None)
     }
 
-    /// Get block by height from daemon
+    /// Get block by height from daemon via JSON-RPC.
+    /// Monero get_block returns block data in result.json as a string.
     async fn get_block_by_height(&self, height: u64) -> Result<serde_json::Value> {
         let mut urls = vec![self.daemon_url.clone()];
         urls.extend(self.daemon_fallbacks.clone());
-        
+
         for url in urls {
             let rpc_url = format!("{}/json_rpc", url);
-            
+
             match self.http_client
                 .post(&rpc_url)
                 .json(&serde_json::json!({
@@ -1042,19 +1425,37 @@ impl MoneroClient {
             {
                 Ok(response) => {
                     match response.json::<serde_json::Value>().await {
-                        Ok(result) => {
-                            if let Some(block) = result.get("result") {
-                                return Ok(block.clone());
+                        Ok(body) => {
+                            if let Some(error) = body.get("error") {
+                                warn!("get_block JSON-RPC error from {}: {}", url, error);
+                                continue;
                             }
+                            if let Some(result) = body.get("result") {
+                                // Monero get_block returns block in result.json as a string
+                                if let Some(json_str) = result.get("json").and_then(|v| v.as_str()) {
+                                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_str) {
+                                        return Ok(parsed);
+                                    }
+                                }
+                                // Some nodes may return block data directly in result
+                                if result.get("tx_hashes").is_some() {
+                                    return Ok(result.clone());
+                                }
+                            }
+                            warn!("Unexpected get_block response from {}: {:?}", url, body);
                         }
-                        Err(_) => continue,
+                        Err(e) => {
+                            warn!("Failed to parse get_block response from {}: {}", url, e);
+                        }
                     }
                 }
-                Err(_) => continue,
+                Err(e) => {
+                    warn!("Failed to call get_block on {}: {}", url, e);
+                }
             }
         }
-        
-        Err(anyhow!("Failed to get block at height {}", height))
+
+        Err(anyhow!("Failed to get block at height {} from all daemon nodes", height))
     }
 
     /// Check if a transaction contains outputs to the given address
@@ -1064,6 +1465,7 @@ impl MoneroClient {
         address: &Address,
         expected_amount: u64,
         tx_block_height: u64,
+        view_key: &PrivateKey,
     ) -> Result<Option<(u64, u64)>> {
         // Get transaction details from daemon
         let mut urls = vec![self.daemon_url.clone()];
@@ -1088,8 +1490,8 @@ impl MoneroClient {
                                 for tx in txs {
                                     if let Some(as_json) = tx.get("as_json").and_then(|v| v.as_str()) {
                                         if let Ok(tx_data) = serde_json::from_str::<serde_json::Value>(as_json) {
-                                            // Check outputs using view key
-                                            if let Some(_) = self.scan_transaction_outputs(&tx_data, address, expected_amount).await? {
+                                            // Check outputs using swap view key
+                                            if let Some(_) = self.scan_transaction_outputs(&tx_data, address, view_key, expected_amount).await? {
                                                 // We found an output to our address
                                                 let current_height = self.get_height().await?;
                                                 let confirmations = if current_height > tx_block_height {
@@ -1115,15 +1517,16 @@ impl MoneroClient {
         Ok(None)
     }
 
-    /// Scan transaction outputs using the private view key to detect outputs to our address
+    /// Scan transaction outputs using the provided private view key to detect outputs to our address
     async fn scan_transaction_outputs(
         &self,
         tx_data: &serde_json::Value,
         target_address: &Address,
+        view_key: &PrivateKey,
         expected_amount: u64,
     ) -> Result<Option<u64>> {
         use curve25519_dalek::scalar::Scalar;
-        use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
+        use curve25519_dalek::edwards::CompressedEdwardsY;
         use sha2::{Sha256, Digest};
         
         // Extract the public spend key from the target address
@@ -1134,34 +1537,12 @@ impl MoneroClient {
             .ok_or_else(|| anyhow!("Invalid spend key point"))?;
         
         // Get transaction public key (R) from extra field
-        let tx_public_key_bytes = if let Some(extra) = tx_data.get("extra").and_then(|v| v.as_array()) {
-            // Parse extra field to find tx public key (tag 0x01)
-            let mut result = None;
-            let mut i = 0;
-            while i < extra.len() {
-                if let Some(tag) = extra[i].as_u64() {
-                    if tag == 1 && i + 32 < extra.len() {
-                        // Next 32 bytes are the tx public key
-                        let mut key_bytes = [0u8; 32];
-                        for j in 0..32 {
-                            if let Some(byte) = extra[i + 1 + j].as_u64() {
-                                key_bytes[j] = byte as u8;
-                            }
-                        }
-                        result = Some(key_bytes);
-                        break;
-                    }
-                }
-                i += 1;
+        let tx_public_key_bytes = match self.extract_tx_public_key(tx_data) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                debug!("Failed to extract tx public key: {}", e);
+                return Ok(None);
             }
-            result
-        } else {
-            None
-        };
-
-        let tx_public_key_bytes = match tx_public_key_bytes {
-            Some(bytes) => bytes,
-            None => return Ok(None),
         };
 
         // Parse tx public key as Edwards point
@@ -1170,8 +1551,8 @@ impl MoneroClient {
             .decompress()
             .ok_or_else(|| anyhow!("Invalid tx public key point"))?;
 
-        // Compute shared secret: a*R (where a is our private view key, R is tx public key)
-        let view_key_bytes = self.private_view_key.as_bytes();
+        // Compute shared secret: a*R (where a is the provided view key, R is tx public key)
+        let view_key_bytes = view_key.as_bytes();
         let mut view_key_array = [0u8; 32];
         view_key_array.copy_from_slice(view_key_bytes);
         let view_key_scalar = Scalar::from_bytes_mod_order(view_key_array);

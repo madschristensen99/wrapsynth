@@ -136,7 +136,7 @@ contract AuditRegressionTest is Test {
         bytes32 commitment = keccak256(abi.encodePacked(px, py));
 
         vm.prank(user);
-        bytes32 reqId = MintFacet(address(hub)).initiateMint{value: griefingDeposit}(lp, user, 50000000000, commitment);
+        bytes32 reqId = MintFacet(address(hub)).initiateMint{value: griefingDeposit}(lp, user, 50000000000, commitment, bytes32(uint256(0xdeadbeef)));
 
         // Warp past timeout
         vm.roll(block.number + 1000);
@@ -170,7 +170,7 @@ contract AuditRegressionTest is Test {
         bytes32 commitment = keccak256(abi.encodePacked(px, py));
 
         vm.prank(user);
-        bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, xmrAmount, commitment);
+        bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, xmrAmount, commitment, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(lp);
         MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)));
@@ -213,7 +213,7 @@ contract AuditRegressionTest is Test {
         bytes32 commitment = keccak256(abi.encodePacked(px, py));
 
         vm.prank(user);
-        bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, xmrAmount, commitment);
+        bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, xmrAmount, commitment, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(lp);
         MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)));
@@ -295,7 +295,7 @@ contract AuditRegressionTest is Test {
         bytes32 commitment = keccak256(abi.encodePacked(px, py));
 
         vm.prank(user);
-        bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, xmrAmount, commitment);
+        bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, xmrAmount, commitment, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(lp);
         MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)));
@@ -352,7 +352,7 @@ contract AuditRegressionTest is Test {
         bytes32 commitmentA = keccak256(abi.encodePacked(pxA, pyA));
 
         vm.prank(user);
-        bytes32 reqA = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(vaultA, user, xmrAmountA, commitmentA);
+        bytes32 reqA = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(vaultA, user, xmrAmountA, commitmentA, bytes32(uint256(0xdeadbeef)));
         vm.prank(vaultA);
         MintFacet(address(hub)).provideLPKey(reqA, bytes32(uint256(0xdeadbeef)));
         vm.prank(vaultA);
@@ -369,7 +369,7 @@ contract AuditRegressionTest is Test {
         bytes32 commitmentB = keccak256(abi.encodePacked(pxB, pyB));
 
         vm.prank(user);
-        bytes32 reqB = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(vaultB, user, xmrAmountB, commitmentB);
+        bytes32 reqB = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(vaultB, user, xmrAmountB, commitmentB, bytes32(uint256(0xdeadbeef)));
         vm.prank(vaultB);
         MintFacet(address(hub)).provideLPKey(reqB, bytes32(uint256(0xbbbb)));
         vm.prank(vaultB);
@@ -438,7 +438,7 @@ contract AuditRegressionTest is Test {
         bytes32 commitment = keccak256(abi.encodePacked(px, py));
 
         vm.prank(user);
-        bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, xmrAmount, commitment);
+        bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, xmrAmount, commitment, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(lp);
         MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)));
@@ -471,9 +471,9 @@ contract AuditRegressionTest is Test {
 
         // Initiate two mints
         vm.prank(user);
-        bytes32 reqA = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 10_000_000_000, commitmentA);
+        bytes32 reqA = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 10_000_000_000, commitmentA, bytes32(uint256(0xdeadbeef)));
         vm.prank(user);
-        bytes32 reqB = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 10_000_000_000, commitmentB);
+        bytes32 reqB = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 10_000_000_000, commitmentB, bytes32(uint256(0xdeadbeef)));
 
         // pendingDebt now includes BOTH mints
         // Provide keys and ready both
@@ -532,7 +532,7 @@ contract AuditRegressionTest is Test {
         (uint256 px1, uint256 py1) = Ed25519.scalarMultBase(uint256(0x1111));
         bytes32 commitment1 = keccak256(abi.encodePacked(px1, py1));
         vm.prank(user);
-        bytes32 mintId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 100000000000, commitment1);
+        bytes32 mintId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 100000000000, commitment1, bytes32(uint256(0xdeadbeef)));
         vm.prank(lp);
         MintFacet(address(hub)).provideLPKey(mintId, bytes32(uint256(0xABCD)));
         vm.prank(lp);
@@ -575,7 +575,7 @@ contract AuditRegressionTest is Test {
         // Should revert because mint far exceeds maxMintBps of available collateral
         vm.prank(user);
         vm.expectRevert(IErrors.InvalidValue.selector);
-        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, xmrAmount, commitment3);
+        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, xmrAmount, commitment3, bytes32(uint256(0xdeadbeef)));
     }
 
     /// @notice Regression: getVaultHealth must subtract lockedCollateral
@@ -588,7 +588,7 @@ contract AuditRegressionTest is Test {
         (uint256 px1, uint256 py1) = Ed25519.scalarMultBase(uint256(0x1111));
         bytes32 commitment1 = keccak256(abi.encodePacked(px1, py1));
         vm.prank(user);
-        bytes32 mintId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 100000000000, commitment1);
+        bytes32 mintId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 100000000000, commitment1, bytes32(uint256(0xdeadbeef)));
         vm.prank(lp);
         MintFacet(address(hub)).provideLPKey(mintId, bytes32(uint256(0xABCD)));
         vm.prank(lp);

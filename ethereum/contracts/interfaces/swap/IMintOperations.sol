@@ -36,6 +36,7 @@ interface IMintOperations is IErrors {
         uint256 wsxmrAmount,
         uint256 feeAmount,
         bytes32 claimCommitment,
+        bytes32 userPublicKey,
         uint256 timeout
     );
     
@@ -57,12 +58,14 @@ interface IMintOperations is IErrors {
     /// @param recipient Address to receive wsXMR
     /// @param xmrAmount Amount of XMR in atomic units (12 decimals)
     /// @param claimCommitment Ed25519 commitment (keccak256 of public point)
+    /// @param userPublicKey User's compressed Ed25519 public key for address derivation
     /// @return requestId Unique identifier for this request
     function initiateMint(
         address lpVault,
         address recipient,
         uint256 xmrAmount,
-        bytes32 claimCommitment
+        bytes32 claimCommitment,
+        bytes32 userPublicKey
     ) external payable returns (bytes32 requestId);
     
     /// @notice LP provides their Ed25519 public key for atomic swap

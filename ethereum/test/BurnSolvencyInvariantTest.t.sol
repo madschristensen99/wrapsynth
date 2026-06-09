@@ -576,7 +576,7 @@ contract BurnSolvencyInvariantTest is Test {
         bytes32 commitment = keccak256(abi.encodePacked(px, py));
 
         vm.prank(_user);
-        bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(_lp, _user, xmrAmount, commitment);
+        bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(_lp, _user, xmrAmount, commitment, bytes32(uint256(0xdeadbeef)));
 
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(_lp);

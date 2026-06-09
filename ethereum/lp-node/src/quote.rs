@@ -94,12 +94,12 @@ impl QuoteGenerator {
     }
 
     /// Calculate wsXMR amount from XMR amount and price
-    fn calculate_wsxmr_amount(&self, xmr_amount: u64, xmr_price: u64) -> Result<u64> {
+    fn calculate_wsxmr_amount(&self, xmr_amount: u64, _xmr_price: u64) -> Result<u64> {
         Ok(xmr_amount / 10000)
     }
 
     /// Calculate XMR amount from wsXMR amount and price
-    fn calculate_xmr_amount(&self, wsxmr_amount: u64, xmr_price: u64) -> Result<u64> {
+    fn calculate_xmr_amount(&self, wsxmr_amount: u64, _xmr_price: u64) -> Result<u64> {
         Ok(wsxmr_amount * 10000)
     }
 

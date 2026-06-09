@@ -369,27 +369,29 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
 
     /// @dev Convert oracle XMR price (USD, 18 decimals) to sqrtPriceX96 for the sDAI/wsXMR pool.
     ///      Calculates: sqrtPriceX96 = sqrt(price) * 2^96
-    ///      where price = (xmrPrice/collateralPrice) * 10^(decimal_diff)
+    ///      where price = token1/token0 in raw units, accounting for decimal difference.
+    ///      When sDAI is token0: price = wsXMR/sDAI = collateralPrice / (xmrPrice * 1e10)
+    ///      When wsXMR is token0: price = sDAI/wsXMR = (xmrPrice * 1e10) / collateralPrice
     function _priceToSqrtPriceX96(uint256 xmrPrice, uint256 collateralPrice)
-        private pure returns (uint160)
+        private view returns (uint160)
     {
-        // Price ratio in USD terms (both 1e18)
-        // 1 wsXMR (1e8) = (xmrPrice/collateralPrice) sDAI (1e18)
-        // Uniswap price = sDAI/wsXMR in raw units = (xmrPrice/collateralPrice) * 1e10
-        
-        // Calculate: sqrt((xmrPrice/collateralPrice) * 1e10) * 2^96
-        // = sqrt(xmrPrice * 1e10 / collateralPrice) * 2^96
-        // = sqrt(xmrPrice * 1e10) / sqrt(collateralPrice) * 2^96
-        
-        // To avoid overflow, calculate: sqrt(xmrPrice) * sqrt(1e10) * 2^96 / sqrt(collateralPrice)
         uint256 sqrtXmrPrice = _sqrt(xmrPrice);
         uint256 sqrtCollateralPrice = _sqrt(collateralPrice);
         uint256 sqrt1e10 = 100000; // sqrt(1e10) = 1e5
-        
-        // sqrtPriceX96 = (sqrtXmrPrice * sqrt1e10 * 2^96) / sqrtCollateralPrice
-        // Shift left by 96 bits
-        uint256 sqrtPriceX96 = (sqrtXmrPrice * sqrt1e10 * (1 << 96)) / sqrtCollateralPrice;
-        
+        uint256 sqrtPriceX96;
+
+        if (sDAIIsToken0) {
+            // price = wsXMR/sDAI = collateralPrice / (xmrPrice * 1e10)
+            // sqrtPriceX96 = sqrt(collateralPrice / (xmrPrice * 1e10)) * 2^96
+            //              = sqrtCollateralPrice * 2^96 / (sqrtXmrPrice * 1e5)
+            sqrtPriceX96 = (sqrtCollateralPrice * (1 << 96)) / (sqrtXmrPrice * sqrt1e10);
+        } else {
+            // price = sDAI/wsXMR = (xmrPrice * 1e10) / collateralPrice
+            // sqrtPriceX96 = sqrt(xmrPrice * 1e10 / collateralPrice) * 2^96
+            //              = sqrtXmrPrice * 1e5 * 2^96 / sqrtCollateralPrice
+            sqrtPriceX96 = (sqrtXmrPrice * sqrt1e10 * (1 << 96)) / sqrtCollateralPrice;
+        }
+
         return uint160(sqrtPriceX96);
     }
 
@@ -412,9 +414,16 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         uint256 diff0 = sqrtUpper > sqrtPrice ? sqrtUpper - sqrtPrice : 0;
         uint256 diff1 = sqrtPrice > sqrtLower ? sqrtPrice - sqrtLower : 0;
 
-        uint256 amount0 = (uint256(liq) * (1 << 96) * diff0)
-            / (uint256(sqrtUpper) * uint256(sqrtPrice));
-        uint256 amount1 = (uint256(liq) * diff1) / (1 << 96);
+        // Use FullMath.mulDiv to prevent arithmetic overflow with large liquidity values.
+        // amount0 = L * 2^96 * (sqrtUpper - sqrtPrice) / (sqrtUpper * sqrtPrice)
+        uint256 amount0 = FullMath.mulDiv(
+            uint256(liq) << 96,
+            diff0,
+            sqrtUpper
+        ) / sqrtPrice;
+
+        // amount1 = L * (sqrtPrice - sqrtLower) / 2^96
+        uint256 amount1 = FullMath.mulDiv(uint256(liq), diff1, 1 << 96);
 
         (daiAmount, wsxmrAmount) = sDAIIsToken0
             ? (amount0, amount1)

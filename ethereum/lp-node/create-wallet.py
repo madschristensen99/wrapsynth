@@ -17,8 +17,8 @@ with open('.env', 'r') as f:
 WALLET_FILE = "lp-wallet"
 WALLET_PASSWORD = "lp-password-change-me"
 RPC_PORT = 18082
-DAEMON_URL = "https://xmr.hexide.com"
-RESTORE_HEIGHT = 3690400
+DAEMON_URL = "https://xmr-node.cakewallet.com:18081"
+RESTORE_HEIGHT = 3242000  # June 9, 2026 - fresh wallet, no history
 
 print(f"Creating wallet from private key...")
 print(f"Wallet file: {WALLET_FILE}")

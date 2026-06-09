@@ -184,31 +184,25 @@ contract DeployGnosis is Script {
     }
 
     function _priceToSqrtPriceX96(uint256 xmrPrice, bool sDAIIsToken0) internal pure returns (uint160) {
-        // Uniswap V3 price = token1/token0
-        // sDAI has 18 decimals, wsXMR has 8 decimals
-        // If sDAI is token0: price = wsXMR/sDAI, need to account for decimal difference
-        // If wsXMR is token0: price = sDAI/wsXMR, need to account for decimal difference
-        
         // xmrPrice is in 1e18 (e.g., 390e18 for $390)
-        // We want: 1 wsXMR (1e8) = xmrPrice sDAI (in 1e18 units)
-        // So: 1e8 wsXMR = xmrPrice * 1e18 / 1e18 sDAI = xmrPrice sDAI
-        // Price ratio = xmrPrice * 1e18 / 1e8 = xmrPrice * 1e10
-        
-        // At $305/XMR: 1 wsXMR (10^8 units) = 305 sDAI (305 * 10^18 units)
-        // Uniswap price = token1/token0 in raw units
-        // When wsXMR is token0: price = sDAI/wsXMR = (305 * 10^18) / 10^8 = 305 * 10^10
-        // tick = log(305 * 10^10) / log(1.0001) ≈ 287000
-        
-        int24 targetTick;
+        // collateralPrice is 1e18 (sDAI ≈ $1)
+        // 1 wsXMR (1e8) = (xmrPrice/collateralPrice) sDAI (in 1e18)
+        uint256 sqrtXmrPrice = _sqrt(xmrPrice);
+        uint256 sqrtCollateralPrice = _sqrt(1e18);
+        uint256 sqrt1e10 = 100000; // sqrt(1e10) = 1e5
+        uint256 sqrtPriceX96;
+
         if (sDAIIsToken0) {
-            // price = wsXMR/sDAI = 10^8 / (305 * 10^18) = 1/(305 * 10^10)
-            targetTick = -287000;
+            // price = wsXMR/sDAI = collateralPrice / (xmrPrice * 1e10)
+            // sqrtPriceX96 = sqrt(collateralPrice / (xmrPrice * 1e10)) * 2^96
+            sqrtPriceX96 = (sqrtCollateralPrice * (1 << 96)) / (sqrtXmrPrice * sqrt1e10);
         } else {
-            // price = sDAI/wsXMR = (305 * 10^18) / 10^8 = 305 * 10^10
-            targetTick = 287000;
+            // price = sDAI/wsXMR = (xmrPrice * 1e10) / collateralPrice
+            // sqrtPriceX96 = sqrt(xmrPrice * 1e10 / collateralPrice) * 2^96
+            sqrtPriceX96 = (sqrtXmrPrice * sqrt1e10 * (1 << 96)) / sqrtCollateralPrice;
         }
-        
-        return TickMath.getSqrtRatioAtTick(targetTick);
+
+        return uint160(sqrtPriceX96);
     }
 
     function _sqrt(uint256 x) internal pure returns (uint256 y) {

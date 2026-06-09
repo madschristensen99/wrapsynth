@@ -17,11 +17,11 @@ import { keccak256 as viemKeccak256, hexToBytes as viemHexToBytes } from 'https:
  */
 export async function addEd25519Points(pointA, pointB) {
     // Import noble/ed25519 dynamically
-    const { Point } = await import('https://esm.sh/@noble/ed25519@2.0.0');
+    const ed = await import('https://esm.sh/@noble/ed25519@2.0.0');
     
     // Decompress points from compressed Edwards Y coordinates
-    const pA = Point.fromHex(pointA);
-    const pB = Point.fromHex(pointB);
+    const pA = ed.ExtendedPoint.fromHex(pointA);
+    const pB = ed.ExtendedPoint.fromHex(pointB);
     
     // Add the points
     const combined = pA.add(pB);
@@ -72,33 +72,42 @@ function keccak256(data) {
 }
 
 /**
- * Base58 encoding (Monero variant)
+ * Base58 encoding (Monero variant - block-based)
+ * Monero splits data into 8-byte blocks, encodes each block independently,
+ * and pads with leading '1's to fixed width per block.
  * @param {Uint8Array} data
  * @returns {string}
  */
 function base58Encode(data) {
     const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-    
-    // Convert bytes to bigint
-    let num = 0n;
-    for (let i = 0; i < data.length; i++) {
-        num = num * 256n + BigInt(data[i]);
+    const BLOCK_SIZE = 8;
+    const ENCODED_BLOCK_SIZES = [0, 2, 3, 5, 6, 7, 8, 9, 11];
+
+    function encodeBlock(block) {
+        let num = 0n;
+        for (let i = 0; i < block.length; i++) {
+            num = num * 256n + BigInt(block[i]);
+        }
+        let encoded = '';
+        while (num > 0n) {
+            const remainder = num % 58n;
+            num = num / 58n;
+            encoded = ALPHABET[Number(remainder)] + encoded;
+        }
+        // Pad with leading '1's (represents 0 in base58) to fixed block width
+        const targetLen = ENCODED_BLOCK_SIZES[block.length];
+        while (encoded.length < targetLen) {
+            encoded = '1' + encoded;
+        }
+        return encoded;
     }
-    
-    // Convert to base58
-    let encoded = '';
-    while (num > 0n) {
-        const remainder = num % 58n;
-        num = num / 58n;
-        encoded = ALPHABET[Number(remainder)] + encoded;
+
+    let result = '';
+    for (let i = 0; i < data.length; i += BLOCK_SIZE) {
+        const block = data.slice(i, i + BLOCK_SIZE);
+        result += encodeBlock(block);
     }
-    
-    // Add leading '1's for leading zero bytes
-    for (let i = 0; i < data.length && data[i] === 0; i++) {
-        encoded = '1' + encoded;
-    }
-    
-    return encoded;
+    return result;
 }
 
 /**
@@ -123,9 +132,9 @@ export async function computeDepositAddress(userCommitment, lpPublicKey, lpPriva
     
     if (lpPrivateViewKey) {
         // Derive public view key from private view key
-        const { Point } = await import('https://esm.sh/@noble/ed25519@2.0.0');
+        const ed = await import('https://esm.sh/@noble/ed25519@2.0.0');
         const privKeyBytes = hexToBytes(lpPrivateViewKey);
-        combinedViewKey = Point.BASE.multiply(BigInt('0x' + bytesToHex(privKeyBytes))).toRawBytes();
+        combinedViewKey = ed.ExtendedPoint.BASE.multiply(BigInt('0x' + bytesToHex(privKeyBytes))).toRawBytes();
     } else {
         // Fallback: use LP's public spend key as view key (not cryptographically correct but works for demo)
         combinedViewKey = lpBytes;
