@@ -113,6 +113,7 @@ sol! {
             uint256 normalizedDebtAmount;
             uint8 status;
             bytes32 userClaimCommitment;
+            uint256 xmrPriceAtRequest;
         }
         function burnRequests(bytes32 requestId) external view returns (BurnRequest memory);
         
