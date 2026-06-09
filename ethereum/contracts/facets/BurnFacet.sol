@@ -5,10 +5,7 @@ import {wsXmrStorage} from "../core/wsXmrStorage.sol";
 import {IBurnFacet} from "../interfaces/facets/IBurnFacet.sol";
 import {IwsXmrHub} from "../interfaces/core/IwsXmrHub.sol";
 import {Ed25519} from "../Ed25519.sol";
-import {CollateralLogic} from "../libraries/CollateralLogic.sol";
 import {YieldLogic} from "../libraries/YieldLogic.sol";
-import {BurnLogic} from "../libraries/BurnLogic.sol";
-import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {GnosisAddresses} from "../GnosisAddresses.sol";
 
 contract BurnFacet is wsXmrStorage, IBurnFacet {
@@ -193,8 +190,10 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         uint256 safeReward = request.rewardCollateral;
         
-        // B2: Total collateral model - release lock only, collateralShares already includes base
+        // Total collateral model: release the reservation, AND remove the paid-out reward
+        // from vault equity (it leaves the vault to the holder).
         vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
+        vault.collateralShares -= safeReward;
         globalPendingBurnDebt -= request.wsxmrAmount;
         
         if (safeReward > 0) {
@@ -230,8 +229,10 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
             : request.lockedCollateral;
         uint256 userPayout = userBase + request.rewardCollateral;
 
-        // B2: Total collateral model - release lock only
+        // Total collateral model: release the reservation, AND remove the paid-out amount
+        // (par + reward) from vault equity.
         vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
+        vault.collateralShares -= userPayout;
         globalPendingBurnDebt -= request.wsxmrAmount;
 
         pendingReturns[request.user][GnosisAddresses.SDAI] += userPayout;
@@ -293,6 +294,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
             : request.lockedCollateral;
 
         vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
+        vault.collateralShares -= userBase;
         globalPendingBurnDebt -= request.wsxmrAmount;
         
         // Pay par value to holder (no reward for force-settle)
@@ -346,11 +348,16 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     }
     
     function calculateBurnCollateral(address lpVault, uint256 wsxmrAmount) public view returns (uint256 baseLock, uint256 rewardLock) {
-        uint256 collateralValue = _getCollateralValueForDebt(wsxmrAmount);
-        uint256 baseDai = (collateralValue * BURN_LOCK_RATIO) / RATIO_PRECISION;
+        // Compute off PAR directly, converting USD -> DAI via collateral price so the lock
+        // is in the same units as the slash/settle side (which divide par USD by collateralPrice).
+        uint256 parUsd = (wsxmrAmount * _getXmrPriceFromStorage()) / WSXMR_DECIMALS;
+        uint256 parDai = (parUsd * SDAI_DECIMALS) / _getCollateralPriceFromStorage();
+
+        uint256 baseDai = (parDai * BURN_LOCK_RATIO) / RATIO_PRECISION; // buffer over par
         baseLock = _daiToShares(baseDai);
-        uint256 rewardUsd = (collateralValue * _vaults[lpVault].burnRewardBps) / BPS_DENOMINATOR;
-        rewardLock = _daiToShares(rewardUsd);
+
+        uint256 rewardDai = (parDai * _vaults[lpVault].burnRewardBps) / BPS_DENOMINATOR;
+        rewardLock = _daiToShares(rewardDai);
     }
     
     function meetsMinimumBurn(address lpVault, uint256 wsxmrAmount) external view returns (bool) {
@@ -411,14 +418,6 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
             vault.collateralShares -= yieldShares;
             yieldWarChest += yieldShares;
         }
-    }
-    
-    function _getCollateralValueForDebt(uint256 debtAmount) internal view returns (uint256) {
-        return CollateralLogic.getCollateralValueForDebt(debtAmount, _getXmrPriceFromStorage(), COLLATERAL_RATIO);
-    }
-    
-    function _usdToCollateral(uint256 usdValue) internal view returns (uint256) {
-        return CollateralLogic.usdToCollateral(usdValue, _getCollateralPriceFromStorage());
     }
     
     function _daiToShares(uint256 daiAmount) internal view returns (uint256) {

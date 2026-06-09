@@ -44,7 +44,10 @@ contract wsXmrStorage {
     uint256 public constant MAX_BURN_REQUESTS_PER_VAULT = 50;
     uint256 public constant MAX_VAULT_COUNT = 10000;
     uint256 public constant MIN_BURN_AMOUNT = 1e4; // 0.0001 wsXMR (~$0.04 at $400/XMR)
-    uint256 public constant BURN_LOCK_RATIO = 130;
+    // Collateral reserved per burn as a buffer OVER PAR (not the vault solvency ratio).
+    // Par is fixed at request via xmrPriceAtRequest, so this only needs to cover DAI depeg
+    // between request and settlement (sDAI yield only improves coverage).
+    uint256 public constant BURN_LOCK_RATIO = 110;
     
     uint256 public constant XMR_TO_WSXMR_DIVISOR = 1e4;
     uint256 public constant WSXMR_DECIMALS = 1e8;
