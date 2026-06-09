@@ -128,6 +128,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.REQUESTED) revert InvalidStatus();
+        if (block.number >= request.deadline) revert DeadlineExpired();
         
         Vault storage vault = _vaults[request.lpVault];
         if (msg.sender != vault.lpAddress) revert Unauthorized();
