@@ -14,6 +14,7 @@ import {wsXMR} from "../contracts/wsXMR.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {GnosisAddresses} from "../contracts/GnosisAddresses.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
+import {IErrors} from "../contracts/interfaces/IErrors.sol";
 
 contract MockVerifierProxy {
     function verify(bytes calldata) external pure returns (bool) {
@@ -401,6 +402,41 @@ contract BurnSolvencyInvariantTest is Test {
         assertLe(sharesAfter, sharesBefore - userPayout, "collateralShares must drop by at least userPayout");
 
         _assertSolvencyInvariant();
+    }
+
+    /// @notice proposeHash must revert if the request deadline has expired.
+    ///         This prevents LP front-running after timeout to block holder's forceSettleBurn.
+    function test_ProposeHash_AfterDeadline_Reverts() public {
+        _createVaultAndDeposit(lp, 100 ether);
+        _updatePrices();
+        _configureVault(lp);
+
+        uint256 minted = _mintForUser(user, lp);
+
+        vm.prank(user);
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)));
+
+        // Roll past the request timeout
+        vm.roll(block.number + 34561);
+
+        // LP should NOT be able to propose after deadline
+        bytes32 burnSecret = bytes32(uint256(0xcafebabe));
+        (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
+        bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
+
+        vm.prank(lp);
+        vm.expectRevert(IErrors.DeadlineExpired.selector);
+        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash);
+
+        // Holder can now force-settle and receive par
+        vm.prank(user);
+        BurnFacet(address(hub)).forceSettleBurn(burnId);
+
+        wsXmrStorage.BurnRequest memory req = _getBurnRequest(burnId);
+        assertEq(uint256(req.status), uint256(wsXmrStorage.BurnStatus.SLASHED), "Should be SLASHED after force settle");
+
+        uint256 userBase = _getPendingReturns(user, GnosisAddresses.SDAI);
+        assertGt(userBase, 0, "User should receive par value");
     }
 
     // ========== FIX 2: LOCK RATIO ==========
