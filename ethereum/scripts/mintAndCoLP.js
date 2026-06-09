@@ -16,7 +16,7 @@ async function main() {
     console.log('Wallet:', wallet.address);
 
     const hubAbi = [
-        'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment) external payable returns (bytes32)',
+        'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment, bytes32 userPublicKey) external payable returns (bytes32)',
         'function provideLPKey(bytes32 requestId, bytes32 lpPublicKey) external',
         'function setMintReady(bytes32 requestId) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
@@ -66,11 +66,15 @@ async function main() {
     const xmrAmount = ethers.BigNumber.from('100000000'); // produces 10000 wsXMR (0.0001) - smaller amount
     const griefingDeposit = ethers.utils.parseEther('0.001');
 
+    const [userPubX, userPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(secret));
+    const userPublicKey = ethers.utils.hexZeroPad(userPubX.toHexString(), 32);
+
     const mintTx = await hub.initiateMint(
         wallet.address,
         wallet.address,
         xmrAmount,
         commitment,
+        userPublicKey,
         { value: griefingDeposit, gasLimit: 500000, maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'), maxFeePerGas: ethers.utils.parseUnits('20', 'gwei') }
     );
     const mintReceipt = await mintTx.wait();

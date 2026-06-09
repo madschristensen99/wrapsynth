@@ -1,7 +1,7 @@
 // Viem client setup for EVM interactions
 // Uses createPublicClient and createWalletClient as required
 
-import { createPublicClient, createWalletClient, custom, http, parseAbi } from 'https://esm.sh/viem@2.7.0';
+import { createPublicClient, createWalletClient, custom, http, fallback, parseAbi } from 'https://esm.sh/viem@2.7.0';
 import { gnosis } from 'https://esm.sh/viem@2.7.0/chains';
 import { NETWORKS, CONTRACTS, ABIS, RAW_ABIS } from './config.js';
 
@@ -24,11 +24,25 @@ let userAddress = null;
 /**
  * Initialize viem clients
  */
+function getTransport() {
+    // If MetaMask is available, use it for reads — bypasses CORS and rate limits entirely
+    if (typeof window !== 'undefined' && window.ethereum) {
+        try {
+            return custom(window.ethereum);
+        } catch (e) {
+            console.warn('[viemClient] MetaMask transport unavailable, falling back to HTTP');
+        }
+    }
+    // Fallback to HTTP RPCs for users without a wallet
+    const transports = NETWORKS.gnosis.rpcUrls.map(url => http(url));
+    return fallback(transports, { rank: false });
+}
+
 export async function initializeClients() {
-    // Create public client for reading data
+    // Create public client with hybrid transport (MetaMask > HTTP fallback)
     publicClient = createPublicClient({
         chain: gnosis,
-        transport: http(NETWORKS.gnosis.rpcUrl)
+        transport: getTransport()
     });
 
     // Check if MetaMask is available
@@ -88,7 +102,7 @@ async function switchToGnosisChain() {
                     chainId: '0x64',
                     chainName: NETWORKS.gnosis.name,
                     nativeCurrency: NETWORKS.gnosis.nativeCurrency,
-                    rpcUrls: [NETWORKS.gnosis.rpcUrl],
+                    rpcUrls: NETWORKS.gnosis.rpcUrls,
                     blockExplorerUrls: [NETWORKS.gnosis.blockExplorer]
                 }]
             });

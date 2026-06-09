@@ -23,16 +23,21 @@ const MINT_INITIATED_EVENT = {
 };
 
 const DEPLOYMENT_BLOCK = 46400000n;
+const MAX_BLOCK_RANGE = 49999n; // Ankr / OnFinality limit is 50,000
 
 export async function updateProtocolStats() {
     try {
         const publicClient = getPublicClient();
+        const currentBlock = await publicClient.getBlockNumber();
+        const fromBlock = currentBlock - MAX_BLOCK_RANGE > DEPLOYMENT_BLOCK
+            ? currentBlock - MAX_BLOCK_RANGE
+            : DEPLOYMENT_BLOCK;
 
-        // Fetch mint events for "Total Minted Ever"
+        // Fetch mint events (capped to RPC provider block-range limit)
         const mintEvents = await publicClient.getLogs({
             address: CONTRACTS.hub,
             event: MINT_INITIATED_EVENT,
-            fromBlock: DEPLOYMENT_BLOCK,
+            fromBlock,
             toBlock: 'latest'
         }).catch(err => {
             console.warn('[Protocol Stats] Mint events fetch failed:', err);

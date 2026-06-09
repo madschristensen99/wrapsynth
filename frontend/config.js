@@ -21,10 +21,18 @@ export const NETWORKS = {
         },
         rpcUrls: {
             default: {
-                http: ['https://rpc.gnosischain.com'],
+                http: [
+                    'https://rpc.ankr.com/gnosis',
+                    'https://gnosis.api.onfinality.io/public',
+                    'https://rpc.gnosis.gateway.fm'
+                ],
             },
             public: {
-                http: ['https://rpc.gnosischain.com'],
+                http: [
+                    'https://rpc.ankr.com/gnosis',
+                    'https://gnosis.api.onfinality.io/public',
+                    'https://rpc.gnosis.gateway.fm'
+                ],
             },
         },
         blockExplorers: {
@@ -64,15 +72,15 @@ export const NETWORKS = {
 export const DEPLOYMENTS = {
     GNOSIS: {
         chainId: 100,
-        wrappedMonero: DC.wsXMR || '0xbb364f197a8429bfa7a991bbbfc104a4dc53f6fa',
-        wsXmrHub: DC.wsXmrHub || '0x5645c2b053297c69e9ac543851943a96b65d0925',
-        oracleFacet: DF.RedStoneOracleFacet || '0xb502ba05f00676bd55ed951b08666a6cfe99cdef',
-        vaultFacet: DF.VaultFacet || '0x171d6bb8b98028029cf5dd378b1e4a726109100c',
-        mintFacet: DF.MintFacet || '0xec28421b11ccbfe0f55e71144b25d2a799576d52',
-        burnFacet: DF.BurnFacet || '0x0075de0e72d69a5753afd4527127f29ee5363ce2',
-        liquidationFacet: DF.LiquidationFacet || '0x934afb0585668de5394c7b204371120a7a4d2252',
-        yieldFacet: DF.YieldFacet || '0xa661b4090189cb54dbab8fb895ed356c52e870f7',
-        liquidityRouter: DC.liquidityRouter || '0xdc0d3eddd8ee8b63611156de39b6f05cad2bb0b0',
+        wrappedMonero: DC.wsXMR || '0xf1AfA7DFF4F5feFba2c3C3D0e0e4BADeE2681225',
+        wsXmrHub: DC.wsXmrHub || '0xc75a388ce5d04a3831733937e8CaEc6e23bC24c4',
+        oracleFacet: DF.RedStoneOracleFacet || '0xCbE66353a44ffe0ab97Fc211a49a9c6efC0b2707',
+        vaultFacet: DF.VaultFacet || '0x80dF75a0999619E51aEA40E9484c7Aea7Cf19F5C',
+        mintFacet: DF.MintFacet || '0x52c5C8E817dF71788DD6bDe69C748F5868f2250a',
+        burnFacet: DF.BurnFacet || '0x2CA8CFFC50320A2c13A9e02807Db291Cfb654604',
+        liquidationFacet: DF.LiquidationFacet || '0xc9c9C664A5757bF6bb7A4fb2EC885Ff83541e596',
+        yieldFacet: DF.YieldFacet || '0x035B50d75458C309B750bb7b4a2778b761E142C3',
+        liquidityRouter: DC.liquidityRouter || '0x0D1CF3C6F0F71b99AB02049a46fbeBF7c3BFFf97',
         sDAI: DE.sDAI || '0xaf204776c7245bF4147c2612BF6e5972Ee483701',
         wxDAI: DE.wxDAI || '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d',
         pythOracle: DE.PythOracle || '0x2880aB155794e7179c9eE2e38200202908C17B43',

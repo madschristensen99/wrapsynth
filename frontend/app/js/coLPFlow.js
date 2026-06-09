@@ -265,10 +265,10 @@ export class CoLPFlow {
 
         const publicClient = getPublicClient();
         const currentBlock = await publicClient.getBlockNumber();
-        // Scan last 30 days (~518k blocks on Gnosis 5s block time)
-        const blocksPerDay = 17280n;
-        const fromBlock = currentBlock - (30n * blocksPerDay);
-        const safeFromBlock = fromBlock < 0n ? 0n : fromBlock;
+        // Scan last ~2.75 days max (48,000 blocks) to stay within RPC provider limits
+        const MAX_SCAN_BLOCKS = 48000n;
+        const fromBlock = currentBlock > MAX_SCAN_BLOCKS ? currentBlock - MAX_SCAN_BLOCKS : 0n;
+        const safeFromBlock = fromBlock;
 
         const hubAbi = parseAbi([
             'event CoLPDeployed(address indexed vault, address indexed user, uint256 indexed tokenId, uint256 sDAIShares, uint256 wsxmrAmount, uint16 rangeBps)',

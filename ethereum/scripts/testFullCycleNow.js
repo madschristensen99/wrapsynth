@@ -58,7 +58,7 @@ async function main() {
         'function getPendingReturns(address user, address token) external view returns (uint256)',
         'function withdrawReturns(address token) external',
         'function withdrawCollateral(uint256 amount) external',
-        'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment) external payable returns (bytes32)',
+        'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment, bytes32 userPublicKey) external payable returns (bytes32)',
         'function provideLPKey(bytes32 requestId, bytes32 lpPublicKey) external',
         'function setMintReady(bytes32 requestId) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
@@ -266,19 +266,26 @@ async function main() {
     console.log('Expected wsXMR (raw):', expectedWsXmr.toString());
     console.log('Expected wsXMR:', ethers.utils.formatUnits(expectedWsXmr, 8));
     
-    // Generate secret and compute Ed25519 commitment
+    // Generate secret and compute Ed25519 commitment + public key
     const secret = ethers.utils.randomBytes(32);
     const claimCommitment = await ed25519Helper.computeCommitment(secret);
+    
+    // Compute user's Ed25519 public key for initiateMint
+    const [userPubX, userPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(secret));
+    const userPublicKey = ethers.utils.hexZeroPad(userPubX.toHexString(), 32);
+    
     const griefingDeposit = ethers.utils.parseEther('0.001');
     
     console.log('Secret:', ethers.utils.hexlify(secret));
     console.log('Commitment:', claimCommitment);
+    console.log('User Public Key:', userPublicKey);
     
     const mintTx = await hub.initiateMint(
         wallet.address,
         wallet.address,
         xmrAmount,
         claimCommitment,
+        userPublicKey,
         { value: griefingDeposit, gasLimit: 500000 }
     );
     const mintReceipt = await mintTx.wait();
