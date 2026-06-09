@@ -56,6 +56,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         uint256 userPayout = userBase + burnReq.rewardCollateral;
 
         v.lockedCollateral -= (burnReq.lockedCollateral + burnReq.rewardCollateral);
+        v.collateralShares -= userPayout;
         globalPendingBurnDebt -= burnReq.wsxmrAmount;
 
         pendingReturns[burnReq.user][GnosisAddresses.SDAI] += userPayout;
