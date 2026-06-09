@@ -32,21 +32,9 @@ contract RedStoneOracleFacet is wsXmrStorage, IOracleFacet, PrimaryProdDataServi
         uint256 daiPrice = getOracleNumericValueFromTxMsg(DAI_FEED_ID);
         
         // RedStone returns 8 decimals, convert to int192
-        uint256 oldPrice = uint256(uint192(lastXmrPrice)) * 1e10;
         uint256 newPrice = uint256(xmrPrice) * 1e10;
 
-        // H3: Deviation guard — compare against EMA (smoother) rather than last spot.
-        // Falls back to oldPrice on first update when EMA is uninitialized.
-        // Staleness-scaled: if last update is >90s old, skip guard so a stuck oracle
-        // can re-anchor before the 2-minute staleness threshold halts all operations.
-        uint256 timeSinceUpdate = block.timestamp - lastXmrPriceTimestamp;
-        if (timeSinceUpdate < 90 seconds) {
-            uint256 baselinePrice = xmrEmaPrice > 0 ? xmrEmaPrice : oldPrice;
-            if (baselinePrice > 0) {
-                uint256 diff = baselinePrice > newPrice ? baselinePrice - newPrice : newPrice - baselinePrice;
-                if ((diff * BPS_DENOMINATOR) / baselinePrice > MAX_PRICE_DEVIATION_BPS) revert PriceDeviationTooHigh();
-            }
-        }
+        _assertDeviation(newPrice);
 
         // M4: Extract and store the signed payload timestamp, not block.timestamp
         uint256 payloadTimestamp = extractTimestampsAndAssertAllAreEqual() / 1000;
@@ -54,17 +42,36 @@ contract RedStoneOracleFacet is wsXmrStorage, IOracleFacet, PrimaryProdDataServi
         lastXmrPrice = int192(int256(xmrPrice));
         lastXmrPriceTimestamp = payloadTimestamp;
 
-        // M1: Update on-chain EMA accumulator
+        _updateEma(newPrice);
+
+        lastCollateralPrice = int192(int256(daiPrice));
+        lastCollateralPriceTimestamp = payloadTimestamp;
+        
+        _refundSender();
+    }
+
+    /// @dev H3: Deviation guard — compare against EMA (smoother) rather than last spot.
+    function _assertDeviation(uint256 newPrice) internal view {
+        uint256 timeSinceUpdate = block.timestamp - lastXmrPriceTimestamp;
+        if (timeSinceUpdate >= 90 seconds) return;
+        uint256 oldPrice = uint256(uint192(lastXmrPrice)) * 1e10;
+        uint256 baselinePrice = xmrEmaPrice > 0 ? xmrEmaPrice : oldPrice;
+        if (baselinePrice == 0) return;
+        uint256 diff = baselinePrice > newPrice ? baselinePrice - newPrice : newPrice - baselinePrice;
+        if ((diff * BPS_DENOMINATOR) / baselinePrice > MAX_PRICE_DEVIATION_BPS) revert PriceDeviationTooHigh();
+    }
+
+    /// @dev M1: Update on-chain EMA accumulator
+    function _updateEma(uint256 newPrice) internal {
         if (xmrEmaPrice == 0) {
             xmrEmaPrice = newPrice;
         } else {
             xmrEmaPrice = (EMA_ALPHA_NUMERATOR * newPrice + (EMA_DENOMINATOR - EMA_ALPHA_NUMERATOR) * xmrEmaPrice) / EMA_DENOMINATOR;
         }
+    }
 
-        lastCollateralPrice = int192(int256(daiPrice));
-        lastCollateralPriceTimestamp = payloadTimestamp;
-        
-        // Refund any sent ETH (not needed for RedStone)
+    /// @dev Refund any sent ETH
+    function _refundSender() internal {
         if (msg.value > 0) {
             (bool success, ) = msg.sender.call{value: msg.value}("");
             if (!success) revert RefundFailed();
