@@ -143,7 +143,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         
         // Atomic unwind all deployed positions before seizure
         if (_vaultPositions[lpVault].length > 0) {
-            _unwindAllVaultPositions(lpVault);
+            _unwindAllVaultPositions(lpVault, xmrPrice);
         }
         
         // Prices already fetched above, reuse for seizure calculation
@@ -287,7 +287,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         
         // Unwind old vault positions
         if (_vaultPositions[oldVault].length > 0) {
-            _unwindAllVaultPositions(oldVault);
+            _unwindAllVaultPositions(oldVault, xmrPrice);
         }
         
         // Recalculate debt after burn settlements
@@ -425,7 +425,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         }
     }
     
-    function _unwindAllVaultPositions(address lpVault) internal {
+    function _unwindAllVaultPositions(address lpVault, uint256 xmrPrice) internal {
         Vault storage vault = _vaults[lpVault];
         
         while (_vaultPositions[lpVault].length > 0) {
@@ -434,7 +434,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             PositionMetadata memory meta = _positionMetadata[tokenId];
             
             (uint256 daiOut, uint256 wsxmrOut) = IwsXmrLiquidityRouter(liquidityRouter)
-                .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS));
+                .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS), xmrPrice);
             
             if (daiOut > 0) {
                 vault.collateralShares += daiOut;

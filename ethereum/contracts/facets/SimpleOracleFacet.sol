@@ -31,9 +31,10 @@ contract SimpleOracleFacet is wsXmrStorage, IOracleFacet {
 
         uint256 newPrice = xmrPrice * 1e10;
 
-        // M4: Deviation guard — reject updates that move more than MAX_PRICE_DEVIATION_BPS
-        // Deployer can bypass for emergency updates
-        if (msg.sender != deployer) {
+        // H3: Deviation guard — reject updates that move more than MAX_PRICE_DEVIATION_BPS.
+        // Staleness-scaled: if last update is >90s old, skip guard so a stuck oracle can re-anchor.
+        uint256 timeSinceUpdate = block.timestamp - lastXmrPriceTimestamp;
+        if (msg.sender != deployer && timeSinceUpdate < 90 seconds) {
             uint256 oldPrice = uint256(uint192(lastXmrPrice)) * 1e10;
             if (oldPrice > 0) {
                 uint256 diff = oldPrice > newPrice ? oldPrice - newPrice : newPrice - oldPrice;

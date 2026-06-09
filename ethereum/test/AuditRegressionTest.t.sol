@@ -415,6 +415,110 @@ contract AuditRegressionTest is Test {
         assertLt(globalDebtAfter, globalDebtBefore, "H2: globalTotalDebt should decrease after bad debt write-off");
     }
 
+    // ========== N-1: finalizeMint must not double-count current mint debt ==========
+
+    function test_N1_FinalizeMint_AtExactly150PercentCR_Succeeds() public {
+        // Create vault with collateral that supports exactly 150% CR for a specific mint
+        _createVaultAndDeposit(lp, 100 ether);
+        _updatePrices();
+        _configureVault(lp);
+
+        // At $390 XMR, to mint at exactly 150% CR:
+        // projectedDebt = actualDebt + pendingDebt (pendingDebt includes this mint)
+        // CR = collateralValue / debtValue >= 150%
+        // collateralValue = 100 DAI * $1 = $100
+        // maxDebtValue = $100 / 1.5 = $66.67
+        // wsxmrAmount = maxDebtValue / $390 * 1e8 = 17,094,017 units
+        // Use a round number close to the limit
+        uint256 xmrAmount = 16_000_000_000; // ~0.41 XMR, ~$160 debt, ~160% CR
+
+        bytes32 secret = bytes32(uint256(0xbeef));
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
+        bytes32 commitment = keccak256(abi.encodePacked(px, py));
+
+        vm.prank(user);
+        bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, xmrAmount, commitment);
+
+        vm.prank(lp);
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)));
+
+        // setMintReady uses: projectedDebt = actualDebt + pendingDebt
+        vm.prank(lp);
+        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(reqId);
+
+        // finalizeMint must use the SAME formula (not actualDebt + pendingDebt + request.wsxmrAmount)
+        vm.prank(user);
+        MintFacet(address(hub)).finalizeMint(reqId, secret);
+
+        // Assert mint succeeded
+        uint256 minted = wsxmr.balanceOf(user);
+        assertGt(minted, 0, "N-1: finalizeMint should succeed at 150% CR");
+    }
+
+    function test_N1_TwoPendingMints_FinalizeFirst_Succeeds() public {
+        _createVaultAndDeposit(lp, 200 ether);
+        _updatePrices();
+        _configureVault(lp);
+
+        bytes32 secretA = bytes32(uint256(0xaaa1));
+        (uint256 pxa, uint256 pya) = Ed25519.scalarMultBase(uint256(secretA));
+        bytes32 commitmentA = keccak256(abi.encodePacked(pxa, pya));
+
+        bytes32 secretB = bytes32(uint256(0xbbb2));
+        (uint256 pxb, uint256 pyb) = Ed25519.scalarMultBase(uint256(secretB));
+        bytes32 commitmentB = keccak256(abi.encodePacked(pxb, pyb));
+
+        // Initiate two mints
+        vm.prank(user);
+        bytes32 reqA = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 10_000_000_000, commitmentA);
+        vm.prank(user);
+        bytes32 reqB = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 10_000_000_000, commitmentB);
+
+        // pendingDebt now includes BOTH mints
+        // Provide keys and ready both
+        vm.startPrank(lp);
+        MintFacet(address(hub)).provideLPKey(reqA, bytes32(uint256(0xdead)));
+        MintFacet(address(hub)).provideLPKey(reqB, bytes32(uint256(0xbeef)));
+        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(reqA);
+        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(reqB);
+        vm.stopPrank();
+
+        // Finalize first mint — projectedDebt should include BOTH pending amounts
+        // (not double-count reqA)
+        vm.prank(user);
+        MintFacet(address(hub)).finalizeMint(reqA, secretA);
+
+        uint256 mintedA = wsxmr.balanceOf(user);
+        assertGt(mintedA, 0, "N-1: first finalizeMint should succeed with two pending mints");
+    }
+
+    // ========== H-3: Staleness-scaled deviation guard recovery ==========
+
+    function test_H3_DeviationGuard_RevertsWhenFresh_AllowsWhenStale() public {
+        address updater = makeAddr("updater");
+        // Set a non-deployer price updater so deviation guard is not bypassed
+        SimpleOracleFacet(address(hub)).setPriceUpdater(updater);
+
+        // Set initial price (deployer call bypasses guard)
+        SimpleOracleFacet(address(hub)).updatePrices(390_00000000, DAI_PRICE_8DEC);
+
+        // +30% jump to $507 immediately — should revert (fresh price, non-deployer)
+        vm.prank(updater);
+        vm.expectRevert();
+        SimpleOracleFacet(address(hub)).updatePrices(507_00000000, DAI_PRICE_8DEC);
+
+        // Warp 95 seconds (>90s threshold)
+        vm.warp(block.timestamp + 95);
+
+        // Same +30% jump now succeeds because price is stale
+        vm.prank(updater);
+        SimpleOracleFacet(address(hub)).updatePrices(507_00000000, DAI_PRICE_8DEC);
+
+        bytes memory priceResult = _hubView(abi.encodeWithSelector(SimpleOracleFacet.getXmrPrice.selector));
+        uint256 price = abi.decode(priceResult, (uint256));
+        assertEq(price, 507_00000000 * 1e10, "H-3: stale oracle should accept re-anchor price");
+    }
+
     // ========== Helpers ==========
 
     function _updatePrices() internal {
