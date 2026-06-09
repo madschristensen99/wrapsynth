@@ -113,7 +113,7 @@ contract E2EAdvancedScenariosTest is Test {
         
         vm.prank(user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user, xmrAmount, commitment);
+            lp, user, xmrAmount, commitment, bytes32(px));
         
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
@@ -194,7 +194,7 @@ contract E2EAdvancedScenariosTest is Test {
         
         vm.prank(user1);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp1, user1, 50000000000, commitment);
+            lp1, user1, 50000000000, commitment, bytes32(px));
         console.log("[2] User1 initiated mint with 1 hour timeout");
         
         // Warp time forward 2 hours (past timeout)

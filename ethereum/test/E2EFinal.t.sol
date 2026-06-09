@@ -101,7 +101,7 @@ contract E2EFinalTest is Test {
         
         vm.prank(user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user, xmrAmount, testCommitment);
+            lp, user, xmrAmount, testCommitment, bytes32(px));
         console.log("[2] User initiated mint");
         console.log("    Request ID:", vm.toString(requestId), "\n");
         

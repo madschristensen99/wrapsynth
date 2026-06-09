@@ -254,7 +254,8 @@ contract E2EFullCycleTest is Test {
             lp,
             user,
             xmrAmount,
-            commitment);
+            commitment,
+            bytes32(px));
         console.log("[OK] Mint initiated");
         console.log("  Request ID:", vm.toString(mintRequestId));
         

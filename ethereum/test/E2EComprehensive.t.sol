@@ -103,7 +103,7 @@ contract E2EComprehensiveTest is Test {
         // Mint
         vm.prank(user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user, xmrAmount, commitment);
+            lp, user, xmrAmount, commitment, bytes32(px));
         
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
@@ -154,7 +154,7 @@ contract E2EComprehensiveTest is Test {
         
         vm.prank(user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user, xmrAmount, commitment);
+            lp, user, xmrAmount, commitment, bytes32(px));
         console.log("  Mint initiated with 1 hour timeout");
         
         // Jump past timeout
@@ -179,7 +179,7 @@ contract E2EComprehensiveTest is Test {
         
         vm.prank(user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user, xmrAmount, commitment);
+            lp, user, xmrAmount, commitment, bytes32(px));
         
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
@@ -208,7 +208,7 @@ contract E2EComprehensiveTest is Test {
         
         vm.prank(user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user, xmrAmount, commitment);
+            lp, user, xmrAmount, commitment, bytes32(px));
         
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
@@ -241,7 +241,7 @@ contract E2EComprehensiveTest is Test {
         
         vm.prank(user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user, xmrAmount, commitment);
+            lp, user, xmrAmount, commitment, bytes32(px));
         
         // Jump past timeout
         vm.roll(block.number + 721);
@@ -378,7 +378,7 @@ contract E2EComprehensiveTest is Test {
         
         vm.prank(user);
         bytes32 requestId1 = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user, xmrAmount, commitment1);
+            lp, user, xmrAmount, commitment1, bytes32(px1));
         
         // User 2 mints with different secret
         bytes32 secret2 = bytes32(uint256(987654321));
@@ -387,7 +387,7 @@ contract E2EComprehensiveTest is Test {
         
         vm.prank(user2);
         bytes32 requestId2 = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user2, xmrAmount, commitment2);
+            lp, user2, xmrAmount, commitment2, bytes32(px2));
         
         console.log("  Two concurrent mints initiated");
         
@@ -436,7 +436,7 @@ contract E2EComprehensiveTest is Test {
         
         vm.prank(user2);
         bytes32 mintId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user2, xmrAmount, commitment2);
+            lp, user2, xmrAmount, commitment2, bytes32(px2));
         console.log("  User2 started mint");
         
         // Process both
@@ -474,7 +474,7 @@ contract E2EComprehensiveTest is Test {
         
         vm.prank(_user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, _user, xmrAmount, commitment);
+            lp, _user, xmrAmount, commitment, bytes32(px));
         
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
