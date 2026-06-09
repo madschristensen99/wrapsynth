@@ -21,22 +21,22 @@ WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Us
 
 | Contract | Address |
 |---|---|
-| wsXMR Token | [`0xBB364F197A8429bFA7A991bBbFc104a4DC53F6Fa`](https://gnosisscan.io/address/0xBB364F197A8429bFA7A991bBbFc104a4DC53F6Fa) |
-| wsXmrHub | [`0x5645C2B053297c69e9Ac543851943A96b65D0925`](https://gnosisscan.io/address/0x5645C2B053297c69e9Ac543851943A96b65D0925) |
-| Liquidity Router | [`0xDC0D3EDdd8eE8b63611156DE39B6F05CaD2BB0b0`](https://gnosisscan.io/address/0xDC0D3EDdd8eE8b63611156DE39B6F05CaD2BB0b0) |
-| wsXMR/sDAI UniV3 Pool | [`0xa62580f4cf7aC62075Fd425a2E64B953bAfF623c`](https://gnosisscan.io/address/0xa62580f4cf7aC62075Fd425a2E64B953bAfF623c) |
+| wsXMR Token | [`0xf1AfA7DFF4F5feFba2c3C3D0e0e4BADeE2681225`](https://gnosisscan.io/address/0xf1AfA7DFF4F5feFba2c3C3D0e0e4BADeE2681225) |
+| wsXmrHub | [`0xc75a388ce5d04a3831733937e8CaEc6e23bC24c4`](https://gnosisscan.io/address/0xc75a388ce5d04a3831733937e8CaEc6e23bC24c4) |
+| Liquidity Router | [`0x0D1CF3C6F0F71b99AB02049a46fbeBF7c3BFFf97`](https://gnosisscan.io/address/0x0D1CF3C6F0F71b99AB02049a46fbeBF7c3BFFf97) |
+| wsXMR/sDAI UniV3 Pool | [`0xDF8E9163944013782181D4f2e60f34e79971dE64`](https://gnosisscan.io/address/0xDF8E9163944013782181D4f2e60f34e79971dE64) |
 
 <details>
 <summary>Facet addresses</summary>
 
 | Facet | Address |
 |---|---|
-| RedStoneOracleFacet | [`0xb502ba05f00676bd55ed951b08666a6cfe99cdef`](https://gnosisscan.io/address/0xb502ba05f00676bd55ed951b08666a6cfe99cdef) |
-| VaultFacet | [`0x171d6bb8b98028029cf5dd378b1e4a726109100c`](https://gnosisscan.io/address/0x171d6bb8b98028029cf5dd378b1e4a726109100c) |
-| MintFacet | [`0xec28421b11ccbfe0f55e71144b25d2a799576d52`](https://gnosisscan.io/address/0xec28421b11ccbfe0f55e71144b25d2a799576d52) |
-| BurnFacet | [`0x0075de0e72d69a5753afd4527127f29ee5363ce2`](https://gnosisscan.io/address/0x0075de0e72d69a5753afd4527127f29ee5363ce2) |
-| LiquidationFacet | [`0x934afb0585668de5394c7b204371120a7a4d2252`](https://gnosisscan.io/address/0x934afb0585668de5394c7b204371120a7a4d2252) |
-| YieldFacet | [`0xa661b4090189cb54dbab8fb895ed356c52e870f7`](https://gnosisscan.io/address/0xa661b4090189cb54dbab8fb895ed356c52e870f7) |
+| RedStoneOracleFacet | [`0xCbE66353a44ffe0ab97Fc211a49a9c6efC0b2707`](https://gnosisscan.io/address/0xCbE66353a44ffe0ab97Fc211a49a9c6efC0b2707) |
+| VaultFacet | [`0x80dF75a0999619E51aEA40E9484c7Aea7Cf19F5C`](https://gnosisscan.io/address/0x80dF75a0999619E51aEA40E9484c7Aea7Cf19F5C) |
+| MintFacet | [`0x52c5C8E817dF71788DD6bDe69C748F5868f2250a`](https://gnosisscan.io/address/0x52c5C8E817dF71788DD6bDe69C748F5868f2250a) |
+| BurnFacet | [`0x2CA8CFFC50320A2c13A9e02807Db291Cfb654604`](https://gnosisscan.io/address/0x2CA8CFFC50320A2c13A9e02807Db291Cfb654604) |
+| LiquidationFacet | [`0xc9c9C664A5757bF6bb7A4fb2EC885Ff83541e596`](https://gnosisscan.io/address/0xc9c9C664A5757bF6bb7A4fb2EC885Ff83541e596) |
+| YieldFacet | [`0x035B50d75458C309B750bb7b4a2778b761E142C3`](https://gnosisscan.io/address/0x035B50d75458C309B750bb7b4a2778b761E142C3) |
 
 Full deployment manifest (external contracts, pool config, LP defaults): [`deployment.json`](./deployment.json)
 </details>

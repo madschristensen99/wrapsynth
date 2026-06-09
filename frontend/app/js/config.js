@@ -11,7 +11,11 @@ export const NETWORKS = {
     gnosis: {
         id: D.chainId || 100,
         name: 'Gnosis Chain',
-        rpcUrl: D.rpcUrl || 'https://rpc.gnosischain.com',
+        rpcUrls: [
+            'https://rpc.ankr.com/gnosis',
+            'https://gnosis.api.onfinality.io/public',
+            'https://rpc.gnosis.gateway.fm'
+        ],
         blockExplorer: D.explorer || 'https://gnosisscan.io',
         nativeCurrency: {
             name: 'xDAI',
@@ -23,11 +27,11 @@ export const NETWORKS = {
 
 // Contract addresses - source of truth: ../../deployment.json
 export const CONTRACTS = {
-    hub: DC.wsXmrHub || '0x5645c2b053297c69e9ac543851943a96b65d0925',
-    wsxmrToken: DC.wsXMR || '0xbb364f197a8429bfa7a991bbbfc104a4dc53f6fa',
-    liquidityRouter: DC.liquidityRouter || '0xdc0d3eddd8ee8b63611156de39b6f05cad2bb0b0',
+    hub: DC.wsXmrHub || '0xc75a388ce5d04a3831733937e8CaEc6e23bC24c4',
+    wsxmrToken: DC.wsXMR || '0xf1AfA7DFF4F5feFba2c3C3D0e0e4BADeE2681225',
+    liquidityRouter: DC.liquidityRouter || '0x0D1CF3C6F0F71b99AB02049a46fbeBF7c3BFFf97',
     sDAI: DE.sDAI || '0xaf204776c7245bF4147c2612BF6e5972Ee483701',
-    uniswapV3Pool: DP.uniswapV3Pool || '0xa62580f4cf7ac62075fd425a2e64b953baff623c',
+    uniswapV3Pool: DP.uniswapV3Pool || '0xDF8E9163944013782181D4f2e60f34e79971dE64',
     // Default LP vault to use for mints (the active LP running the LP node)
     defaultLpVault: DLC.defaultLpVault || '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB'
 };

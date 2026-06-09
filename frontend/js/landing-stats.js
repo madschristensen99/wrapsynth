@@ -1,13 +1,18 @@
 // Landing Page Live Stats - Fetch from Gnosis Mainnet
 // Contract addresses are loaded from the canonical deployment.json (window.DEPLOYMENT).
-import { createPublicClient, http, formatUnits, parseAbi } from 'https://esm.sh/viem@2.7.0';
+import { createPublicClient, http, fallback, formatUnits, parseAbi } from 'https://esm.sh/viem@2.7.0';
 import { gnosis } from 'https://esm.sh/viem@2.7.0/chains';
 
 const D = window.DEPLOYMENT || {};
+const RPC_URLS = [
+    'https://rpc.ankr.com/gnosis',
+    'https://gnosis.api.onfinality.io/public',
+    D.rpcUrl || 'https://rpc.gnosis.gateway.fm'
+];
+
 const CONFIG = {
-    HUB_ADDRESS: D.contracts?.wsXmrHub || '0x5645c2b053297c69e9ac543851943a96b65d0925',
-    WSXMR_ADDRESS: D.contracts?.wsXMR || '0xbb364f197a8429bfa7a991bbbfc104a4dc53f6fa',
-    RPC_URL: D.rpcUrl || 'https://rpc.gnosischain.com'
+    HUB_ADDRESS: D.contracts?.wsXmrHub || '0xc75a388ce5d04a3831733937e8CaEc6e23bC24c4',
+    WSXMR_ADDRESS: D.contracts?.wsXMR || '0xf1AfA7DFF4F5feFba2c3C3D0e0e4BADeE2681225'
 };
 
 const HUB_ABI = parseAbi([
@@ -60,7 +65,7 @@ const WSXMR_ABI = parseAbi([
 
 const publicClient = createPublicClient({
     chain: gnosis,
-    transport: http(CONFIG.RPC_URL)
+    transport: fallback(RPC_URLS.map(url => http(url)), { rank: false })
 });
 
 async function fetchXMRPrice() {
@@ -194,7 +199,7 @@ async function updateLandingStats() {
         
         try {
             const currentBlock = await publicClient.getBlockNumber();
-            const fromBlock = currentBlock - 100000n; // Last ~100k blocks (about 2 weeks on Gnosis)
+            const fromBlock = currentBlock > 48000n ? currentBlock - 48000n : 0n; // Last ~48k blocks (capped for RPC limits)
             
             // Fetch mint events
             const [mintInitiated, mintFinalized, mintCancelled] = await Promise.all([
