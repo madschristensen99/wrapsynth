@@ -3,8 +3,8 @@ import { createPublicClient, http, formatUnits, parseAbi } from 'https://esm.sh/
 import { gnosis } from 'https://esm.sh/viem@2.7.0/chains';
 
 const CONFIG = {
-    HUB_ADDRESS: '0x025B1499B5f4E51a0053aB1742B2Ecd545615e5a',
-    WSXMR_ADDRESS: '0x48AAec97bD8ccB3bDE02D492929712f071E710eb',
+    HUB_ADDRESS: '0x96E2694a8277aaFE947D1A94eC0a4dD0C7A2Ffb7',
+    WSXMR_ADDRESS: '0xA39aF84413936f677159B1238B18016696e900Bb',
     RPC_URL: 'https://rpc.gnosischain.com'
 };
 

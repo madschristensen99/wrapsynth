@@ -180,7 +180,8 @@ impl SwapEngine {
                 }
             }
             Err(e) => {
-                warn!("Failed to check on-chain burn status: {}, proceeding anyway", e);
+                warn!("Failed to check on-chain burn status: {}, aborting", e);
+                return Ok(());
             }
         }
 
