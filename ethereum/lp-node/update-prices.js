@@ -2,16 +2,20 @@
 /**
  * RedStone price updater - called by Rust LP node
  * Returns transaction hash of price update
+ * Contract addresses are read from the canonical root deployment.json.
  */
 
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 
-const HUB_ADDRESS = process.env.HUB_ADDRESS || '0x025B1499B5f4E51a0053aB1742B2Ecd545615e5a';
+const deployment = JSON.parse(fs.readFileSync(path.join(__dirname, '../../deployment.json'), 'utf8'));
+const HUB_ADDRESS = process.env.HUB_ADDRESS || deployment.contracts.wsXmrHub;
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
-const RPC_URL = process.env.GNOSIS_RPC_URL || 'https://rpc.gnosischain.com';
+const RPC_URL = process.env.GNOSIS_RPC_URL || deployment.rpcUrl;
 
 async function updatePrices() {
     try {

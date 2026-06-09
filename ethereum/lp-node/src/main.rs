@@ -352,6 +352,93 @@ struct ConfigFile {
     arbitrage: Option<ArbitrageConfig>,
 }
 
+/// Contract addresses read from the canonical root deployment.json
+#[derive(Debug, Deserialize, Clone)]
+struct DeploymentJson {
+    chain_id: u64,
+    rpc_url: String,
+    ws_url: String,
+    explorer: String,
+    contracts: DeploymentContracts,
+    external_contracts: DeploymentExternalContracts,
+    pool: DeploymentPool,
+    urls: DeploymentUrls,
+    lp_config: DeploymentLpConfig,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct DeploymentContracts {
+    ws_xmr: String,
+    #[serde(rename = "wsXmrHub")]
+    ws_xmr_hub: String,
+    #[serde(rename = "liquidityRouter")]
+    liquidity_router: String,
+    facets: DeploymentFacets,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct DeploymentFacets {
+    #[serde(rename = "RedStoneOracleFacet")]
+    redstone_oracle_facet: String,
+    #[serde(rename = "VaultFacet")]
+    vault_facet: String,
+    #[serde(rename = "MintFacet")]
+    mint_facet: String,
+    #[serde(rename = "BurnFacet")]
+    burn_facet: String,
+    #[serde(rename = "LiquidationFacet")]
+    liquidation_facet: String,
+    #[serde(rename = "YieldFacet")]
+    yield_facet: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct DeploymentExternalContracts {
+    #[serde(rename = "sDAI")]
+    s_dai: String,
+    #[serde(rename = "wxDAI")]
+    wx_dai: String,
+    #[serde(rename = "UniswapV3Factory")]
+    uniswap_v3_factory: String,
+    #[serde(rename = "UniswapV3PositionManager")]
+    uniswap_v3_position_manager: String,
+    #[serde(rename = "SwapHelper")]
+    swap_helper: String,
+    #[serde(rename = "Ed25519Helper")]
+    ed25519_helper: String,
+    #[serde(rename = "PythOracle")]
+    pyth_oracle: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct DeploymentPool {
+    #[serde(rename = "uniswapV3Pool")]
+    uniswap_v3_pool: String,
+    #[serde(rename = "feeTier")]
+    fee_tier: u32,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct DeploymentUrls {
+    pyth_hermes: String,
+    monero_daemon: String,
+    monero_network: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct DeploymentLpConfig {
+    #[serde(rename = "defaultLpVault")]
+    default_lp_vault: String,
+    #[serde(rename = "apiPort")]
+    api_port: u16,
+    #[serde(rename = "minCollateralRatio")]
+    min_collateral_ratio: u16,
+    #[serde(rename = "liquidationThreshold")]
+    liquidation_threshold: u16,
+    #[serde(rename = "targetCollateralRatio")]
+    target_collateral_ratio: u16,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 struct NetworkConfig {
     chain_id: u64,
@@ -437,23 +524,61 @@ struct Config {
 }
 
 impl Config {
-    /// Load configuration from config.toml and environment variables
+    /// Load configuration from config.toml, deployment.json, and environment variables.
+    /// Contract addresses are read from the canonical root deployment.json;
+    /// operational settings (ports, intervals, thresholds) come from config.toml.
     fn load() -> Result<Self> {
-        // Read config file
+        // Read operational config file
         let config_path = env::var("CONFIG_PATH").unwrap_or_else(|_| "config.toml".to_string());
         let config_content = fs::read_to_string(&config_path)
             .with_context(|| format!("Failed to read config file: {}", config_path))?;
         let config_file: ConfigFile = toml::from_str(&config_content)
             .context("Failed to parse config.toml")?;
 
+        // Read canonical deployment.json (relative to lp-node directory)
+        let deployment_path = env::var("DEPLOYMENT_JSON")
+            .unwrap_or_else(|_| "../../deployment.json".to_string());
+        let deployment_content = fs::read_to_string(&deployment_path)
+            .with_context(|| format!("Failed to read deployment.json: {}", deployment_path))?;
+        let deployment: DeploymentJson = serde_json::from_str(&deployment_content)
+            .context("Failed to parse deployment.json")?;
+
+        info!("Loaded canonical deployment.json from {}", deployment_path);
+
         // Determine which network to use
         let network = env::var("NETWORK").unwrap_or_else(|_| "gnosis".to_string());
-        let network_config = match network.as_str() {
+        let mut network_config = match network.as_str() {
             "gnosis" => config_file.gnosis,
             "unichain" => config_file.unichain_testnet
                 .context("Unichain testnet config not found in config.toml")?,
             _ => anyhow::bail!("Invalid NETWORK: {}. Must be 'gnosis' or 'unichain'", network),
         };
+
+        // Override contract addresses from deployment.json (single source of truth)
+        network_config.vault_manager = deployment.contracts.ws_xmr_hub.parse()
+            .context("Invalid vault_manager address in deployment.json")?;
+        network_config.wsxmr_token = deployment.contracts.ws_xmr.parse()
+            .context("Invalid wsxmr_token address in deployment.json")?;
+        network_config.pyth_oracle = deployment.external_contracts.pyth_oracle.parse()
+            .context("Invalid pyth_oracle address in deployment.json")?;
+        network_config.pyth_hermes_url = deployment.urls.pyth_hermes.clone();
+
+        info!("Using vault_manager from deployment.json: {}", network_config.vault_manager);
+        info!("Using wsxmr_token from deployment.json: {}", network_config.wsxmr_token);
+
+        // Override arbitrage contract addresses from deployment.json
+        let mut arbitrage_config = config_file.arbitrage;
+        if let Some(ref mut arb) = arbitrage_config {
+            arb.pool_address = deployment.pool.uniswap_v3_pool.parse()
+                .context("Invalid pool_address in deployment.json")?;
+            arb.swap_helper = deployment.external_contracts.swap_helper.parse()
+                .context("Invalid swap_helper address in deployment.json")?;
+            arb.sdai_address = deployment.external_contracts.s_dai.parse()
+                .context("Invalid sDAI address in deployment.json")?;
+            arb.factory_address = deployment.external_contracts.uniswap_v3_factory.parse()
+                .context("Invalid factory address in deployment.json")?;
+            info!("Arbitrage addresses loaded from deployment.json");
+        }
 
         // Load sensitive data from environment variables
         let private_key = env::var("PRIVATE_KEY")
@@ -473,8 +598,9 @@ impl Config {
         // Allow overriding config file values with environment variables
         let monero_config = MoneroConfig {
             daemon_url: env::var("MONERO_DAEMON_URL")
-                .unwrap_or(config_file.monero.daemon_url),
-            network: config_file.monero.network,
+                .unwrap_or(deployment.urls.monero_daemon),
+            network: env::var("MONERO_NETWORK")
+                .unwrap_or(deployment.urls.monero_network),
         };
 
         let db_path = env::var("DB_PATH")
@@ -491,7 +617,7 @@ impl Config {
             admin_config: config_file.admin,
             quote_config: config_file.quote,
             oracle_config: config_file.oracle,
-            arbitrage_config: config_file.arbitrage,
+            arbitrage_config,
         })
     }
 

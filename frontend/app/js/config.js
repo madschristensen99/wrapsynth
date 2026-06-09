@@ -1,12 +1,18 @@
 // Configuration for Phantom Agent
-// Network and contract addresses
+// Contract addresses are loaded from the canonical root deployment.json (window.DEPLOYMENT).
+
+const D = window.DEPLOYMENT || {};
+const DC = D.contracts || {};
+const DE = D.externalContracts || {};
+const DP = D.pool || {};
+const DLC = D.lpConfig || {};
 
 export const NETWORKS = {
     gnosis: {
-        id: 100,
+        id: D.chainId || 100,
         name: 'Gnosis Chain',
-        rpcUrl: 'https://rpc.gnosischain.com',
-        blockExplorer: 'https://gnosisscan.io',
+        rpcUrl: D.rpcUrl || 'https://rpc.gnosischain.com',
+        blockExplorer: D.explorer || 'https://gnosisscan.io',
         nativeCurrency: {
             name: 'xDAI',
             symbol: 'xDAI',
@@ -15,15 +21,15 @@ export const NETWORKS = {
     }
 };
 
-// Contract addresses - Deployed on Gnosis Chain Mainnet (Diamond Architecture) - June 9, 2026
+// Contract addresses - source of truth: ../../deployment.json
 export const CONTRACTS = {
-    hub: '0x96E2694a8277aaFE947D1A94eC0a4dD0C7A2Ffb7',  // wsXmrHub (Diamond)
-    wsxmrToken: '0xA39aF84413936f677159B1238B18016696e900Bb',
-    liquidityRouter: '0xa5a504e715edc1567a4f23643aDAFaD8D955cB07',
-    sDAI: '0xaf204776c7245bF4147c2612BF6e5972Ee483701',
-    uniswapV3Pool: '0x29711831EE1A9f15210d32815F333B9fD42BDe55',
+    hub: DC.wsXmrHub || '0x96E2694a8277aaFE947D1A94eC0a4dD0C7A2Ffb7',
+    wsxmrToken: DC.wsXMR || '0xA39aF84413936f677159B1238B18016696e900Bb',
+    liquidityRouter: DC.liquidityRouter || '0xa5a504e715edc1567a4f23643aDAFaD8D955cB07',
+    sDAI: DE.sDAI || '0xaf204776c7245bF4147c2612BF6e5972Ee483701',
+    uniswapV3Pool: DP.uniswapV3Pool || '0x29711831EE1A9f15210d32815F333B9fD42BDe55',
     // Default LP vault to use for mints (the active LP running the LP node)
-    defaultLpVault: '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB'
+    defaultLpVault: DLC.defaultLpVault || '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB'
 };
 
 // LP Server Configuration

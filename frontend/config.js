@@ -1,6 +1,12 @@
 // ============================================
 // WrapSynth Configuration
 // ============================================
+// Contract addresses are loaded from the canonical root deployment.json (window.DEPLOYMENT).
+
+const D = window.DEPLOYMENT || {};
+const DC = D.contracts || {};
+const DF = DC.facets || {};
+const DE = D.externalContracts || {};
 
 // Network configurations
 export const NETWORKS = {
@@ -58,21 +64,21 @@ export const NETWORKS = {
 export const DEPLOYMENTS = {
     GNOSIS: {
         chainId: 100,
-        wrappedMonero: '0xA39aF84413936f677159B1238B18016696e900Bb',
-        wsXmrHub: '0x96E2694a8277aaFE947D1A94eC0a4dD0C7A2Ffb7',
-        oracleFacet: '0x95c330A78fC2c1391F9fC5519Baf39418483cbc8',
-        vaultFacet: '0x2c244b821b86fEcF9e2b0FCe5E84354Cd526a0Ef',
-        mintFacet: '0x5A9D7a0B502BE50e38712fd02bcfCC8E67556226',
-        burnFacet: '0x83f7889FEaCC655D9075d74f33594143c9678CcF',
-        liquidationFacet: '0x408262AED9f204EF9bfD0D856Bb75495AB9D844f',
-        yieldFacet: '0xf4E919af88Cf6Fd62F33E131dCb1AF53A9B9C7D4',
-        liquidityRouter: '0xa5a504e715edc1567a4f23643aDAFaD8D955cB07',
-        sDAI: '0xaf204776c7245bF4147c2612BF6e5972Ee483701', // Savings DAI on Gnosis
-        wxDAI: '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d', // Wrapped xDAI
-        pythOracle: '0x2880aB155794e7179c9eE2e38200202908C17B43',
-        ed25519Helper: '0x7EBdE733CE8Bac20984f919e4d2E66e9eE86f2a3',
+        wrappedMonero: DC.wsXMR || '0xA39aF84413936f677159B1238B18016696e900Bb',
+        wsXmrHub: DC.wsXmrHub || '0x96E2694a8277aaFE947D1A94eC0a4dD0C7A2Ffb7',
+        oracleFacet: DF.RedStoneOracleFacet || '0x95c330A78fC2c1391F9fC5519Baf39418483cbc8',
+        vaultFacet: DF.VaultFacet || '0x2c244b821b86fEcF9e2b0FCe5E84354Cd526a0Ef',
+        mintFacet: DF.MintFacet || '0x5A9D7a0B502BE50e38712fd02bcfCC8E67556226',
+        burnFacet: DF.BurnFacet || '0x83f7889FEaCC655D9075d74f33594143c9678CcF',
+        liquidationFacet: DF.LiquidationFacet || '0x408262AED9f204EF9bfD0D856Bb75495AB9D844f',
+        yieldFacet: DF.YieldFacet || '0xf4E919af88Cf6Fd62F33E131dCb1AF53A9B9C7D4',
+        liquidityRouter: DC.liquidityRouter || '0xa5a504e715edc1567a4f23643aDAFaD8D955cB07',
+        sDAI: DE.sDAI || '0xaf204776c7245bF4147c2612BF6e5972Ee483701',
+        wxDAI: DE.wxDAI || '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d',
+        pythOracle: DE.PythOracle || '0x2880aB155794e7179c9eE2e38200202908C17B43',
+        ed25519Helper: DE.Ed25519Helper || '0x7EBdE733CE8Bac20984f919e4d2E66e9eE86f2a3',
         initialMoneroBlock: 3607954,
-        deployedAt: '2026-06-09T00:00:00.000Z',
+        deployedAt: D.deploymentDate || '2026-06-09T00:00:00.000Z',
     },
     UNICHAIN_SEPOLIA: {
         chainId: 1301,
