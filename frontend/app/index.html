@@ -769,6 +769,12 @@ cargo build --release</code>
         } catch (e) {}
     })();
     </script>
+    <!-- Load canonical deployment.json before any app modules -->
+    <script type="module">
+        const res = await fetch('/deployment.json');
+        if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status);
+        window.DEPLOYMENT = await res.json();
+    </script>
     <script type="module" src="./js/main.js"></script>
 </body>
 </html>

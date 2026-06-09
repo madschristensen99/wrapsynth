@@ -1,11 +1,13 @@
 // Landing Page Live Stats - Fetch from Gnosis Mainnet
+// Contract addresses are loaded from the canonical deployment.json (window.DEPLOYMENT).
 import { createPublicClient, http, formatUnits, parseAbi } from 'https://esm.sh/viem@2.7.0';
 import { gnosis } from 'https://esm.sh/viem@2.7.0/chains';
 
+const D = window.DEPLOYMENT || {};
 const CONFIG = {
-    HUB_ADDRESS: '0x96E2694a8277aaFE947D1A94eC0a4dD0C7A2Ffb7',
-    WSXMR_ADDRESS: '0xA39aF84413936f677159B1238B18016696e900Bb',
-    RPC_URL: 'https://rpc.gnosischain.com'
+    HUB_ADDRESS: D.contracts?.wsXmrHub || '0x96E2694a8277aaFE947D1A94eC0a4dD0C7A2Ffb7',
+    WSXMR_ADDRESS: D.contracts?.wsXMR || '0xA39aF84413936f677159B1238B18016696e900Bb',
+    RPC_URL: D.rpcUrl || 'https://rpc.gnosischain.com'
 };
 
 const HUB_ABI = parseAbi([

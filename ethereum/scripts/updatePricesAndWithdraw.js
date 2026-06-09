@@ -1,22 +1,26 @@
 #!/usr/bin/env node
 /**
  * Update oracle prices and withdraw LP collateral
+ * Contract addresses are read from the canonical root deployment.json.
  */
 
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 
-const HUB_ADDRESS = '0x025B1499B5f4E51a0053aB1742B2Ecd545615e5a'; // June 8, 2026
-const SDAI_ADDRESS = '0xaf204776c7245bF4147c2612BF6e5972Ee483701';
+const deployment = JSON.parse(fs.readFileSync(path.join(__dirname, '../../deployment.json'), 'utf8'));
+const HUB_ADDRESS = deployment.contracts.wsXmrHub;
+const SDAI_ADDRESS = deployment.externalContracts.sDAI;
 
 async function main() {
     if (!process.env.PRIVATE_KEY) {
         throw new Error('PRIVATE_KEY not set in .env');
     }
 
-    const provider = new ethers.providers.JsonRpcProvider('https://rpc.gnosischain.com');
+    const provider = new ethers.providers.JsonRpcProvider(deployment.rpcUrl);
     const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
     
     console.log('LP address:', wallet.address);
