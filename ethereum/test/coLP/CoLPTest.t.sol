@@ -13,9 +13,16 @@ import {wsXMR} from "../../contracts/wsXMR.sol";
 import {wsXMRLiquidityRouter} from "../../contracts/router/wsXMRLiquidityRouter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IUniswapV3Factory} from "../../contracts/interfaces/external/IUniswapV3Factory.sol";
+import {ISwapRouter} from "../../contracts/interfaces/external/ISwapRouter.sol";
 import {GnosisAddresses} from "../../contracts/GnosisAddresses.sol";
 import {Ed25519} from "../../contracts/Ed25519.sol";
 import {wsXmrStorage} from "../../contracts/core/wsXmrStorage.sol";
+import {TickMath} from "../../contracts/libraries/TickMath.sol";
+import {IUniswapV3Pool} from "../../contracts/interfaces/external/IUniswapV3Pool.sol";
+
+interface IUniswapV3SwapCallback {
+    function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external;
+}
 
 contract MockVerifierProxy {
     function verify(bytes calldata) external pure returns (bool) {
@@ -23,7 +30,7 @@ contract MockVerifierProxy {
     }
 }
 
-contract CoLPTest is Test {
+contract CoLPTest is Test, IUniswapV3SwapCallback {
     address constant WXDAI = 0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d;
 
     wsXmrHub public hub;
@@ -327,6 +334,9 @@ contract CoLPTest is Test {
         // Raise XMR price to make vault liquidatable (wsXMR debt becomes more valuable in USD)
         SimpleOracleFacet(address(hub)).updatePrices(2000_00000000, 1_00000000); // $2000 XMR
 
+        // M3: Sync pool price to oracle so drainPosition slippage bounds are consistent
+        _pushPoolPriceUp(10 ether);
+
         // Check liquidatable
         bool liquidatable = _isVaultLiquidatable(lp);
         assertTrue(liquidatable, "vault should be liquidatable");
@@ -387,6 +397,9 @@ contract CoLPTest is Test {
 
         // Move price far outside range
         SimpleOracleFacet(address(hub)).updatePrices(800_00000000, 1_00000000); // $800 XMR
+
+        // M3: Sync pool price to oracle so drainPosition slippage bounds are consistent
+        _pushPoolPriceUp(10 ether);
 
         bool outOfRange = router.isPositionOutOfRange(tokenId, 800 * 1e18);
         assertTrue(outOfRange, "position should be out of range");
@@ -661,6 +674,68 @@ contract CoLPTest is Test {
     }
 
     // ========== TEST 18: Collect Co-LP fees with trading ==========
+
+    // Helper: sync pool sqrtPriceX96 and tick to match oracle via direct storage write.
+    // M3: drainPosition uses oracle price for slippage, so tests that change oracle
+    // must also sync the pool to avoid slippage reverts on decreaseLiquidity.
+    function _syncPoolPriceToOracle(uint256 xmrPrice) internal {
+        uint160 sqrtPriceX96 = _oraclePriceToSqrtPriceX96(xmrPrice, 1e18);
+        int24 tick = TickMath.getTickAtSqrtRatio(sqrtPriceX96);
+        address poolAddr = router.pool();
+        bytes32 currentSlot = vm.load(poolAddr, bytes32(0));
+        // Preserve bits 184+, replace sqrtPriceX96 (bits 0-159) and tick (bits 160-183)
+        uint256 highBits = uint256(currentSlot) & ~uint256((1 << 184) - 1);
+        uint256 newSlot = highBits | (uint256(uint24(tick)) << 160) | uint256(sqrtPriceX96);
+        vm.store(poolAddr, bytes32(0), bytes32(newSlot));
+    }
+
+    function _oraclePriceToSqrtPriceX96(uint256 xmrPrice, uint256 collateralPrice) internal pure returns (uint160) {
+        uint256 sqrtXmrPrice = _sqrt(xmrPrice);
+        uint256 sqrtCollateralPrice = _sqrt(collateralPrice);
+        uint256 sqrt1e10 = 100000;
+        uint256 sqrtPriceX96 = (sqrtXmrPrice * sqrt1e10 * (1 << 96)) / sqrtCollateralPrice;
+        return uint160(sqrtPriceX96);
+    }
+
+    function _sqrt(uint256 x) internal pure returns (uint256) {
+        if (x == 0) return 0;
+        uint256 z = (x + 1) / 2;
+        uint256 y = x;
+        while (z < y) {
+            y = z;
+            z = (x / z + z) / 2;
+        }
+        return y;
+    }
+
+    // Uniswap V3 swap callback - pool calls this during swap to settle tokens
+    function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata) external {
+        if (amount0Delta > 0) {
+            address token0 = IUniswapV3Pool(msg.sender).token0();
+            IERC20(token0).transfer(msg.sender, uint256(amount0Delta));
+        }
+        if (amount1Delta > 0) {
+            address token1 = IUniswapV3Pool(msg.sender).token1();
+            IERC20(token1).transfer(msg.sender, uint256(amount1Delta));
+        }
+    }
+
+    // Helper: push pool price up by buying wsXMR with sDAI via direct pool.swap
+    function _pushPoolPriceUp(uint256 swapAmount) internal {
+        address poolAddr = router.pool();
+        bool wsxmrIsToken0 = address(wsxmr) < GnosisAddresses.SDAI;
+        deal(address(wsxmr), address(this), 1 * 1e8);
+        deal(GnosisAddresses.SDAI, address(this), swapAmount);
+        wsxmr.approve(poolAddr, type(uint256).max);
+        IERC20(GnosisAddresses.SDAI).approve(poolAddr, type(uint256).max);
+        IUniswapV3Pool(poolAddr).swap(
+            address(this),
+            !wsxmrIsToken0, // zeroForOne = !wsxmrIsToken0 means token1->token0 (sDAI -> wsXMR if sDAI is token1)
+            int256(swapAmount),
+            wsxmrIsToken0 ? TickMath.MAX_SQRT_RATIO - 1 : TickMath.MIN_SQRT_RATIO + 1,
+            ""
+        );
+    }
 
     function test_CollectCoLPFees_AfterSwaps() public {
         uint256 wsxmrBalance = wsxmr.balanceOf(user);

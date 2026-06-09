@@ -50,9 +50,10 @@ interface ILiquidityPosition {
     ///         Burns the NFT after draining.
     /// @param tokenId V3 NFT id (diamond must own it)
     /// @param slippageBps Max acceptable slippage in bps (e.g. 50 = 0.5%)
+    /// @param oracleXmrPrice Oracle XMR price (18 decimals) for slippage bounds
     /// @return daiOut DAI recovered
     /// @return wsxmrOut wsXMR recovered
-    function drainPosition(uint256 tokenId, uint16 slippageBps)
+    function drainPosition(uint256 tokenId, uint16 slippageBps, uint256 oracleXmrPrice)
         external returns (uint256 daiOut, uint256 wsxmrOut);
 
     /// @notice Collect accumulated fees on a position to the diamond.

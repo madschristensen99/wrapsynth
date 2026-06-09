@@ -250,7 +250,7 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
             : (amount1, amount0);
     }
 
-    function drainPosition(uint256 tokenId, uint16 slippageBps)
+    function drainPosition(uint256 tokenId, uint16 slippageBps, uint256 oracleXmrPrice)
         external onlyDiamond
         returns (uint256 daiOut, uint256 wsxmrOut)
     {
@@ -260,9 +260,9 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
             INonfungiblePositionManager(positionManager).positions(tokenId);
 
         if (liq > 0) {
-            // Query expected amounts for slippage protection on decreaseLiquidity
-            (uint160 sqrtPriceX96, , , , , , ) = IUniswapV3Pool(pool).slot0();
-            (uint256 expectedDai, uint256 expectedWsxmr) = _getAmountsAtSqrtPrice(tokenId, sqrtPriceX96);
+            // M3 residual: Use oracle price for slippage bounds, not manipulable slot0
+            uint160 oracleSqrtPriceX96 = _priceToSqrtPriceX96(oracleXmrPrice, 1e18);
+            (uint256 expectedDai, uint256 expectedWsxmr) = _getAmountsAtSqrtPrice(tokenId, oracleSqrtPriceX96);
 
             (uint256 min0, uint256 min1) = sDAIIsToken0
                 ? (

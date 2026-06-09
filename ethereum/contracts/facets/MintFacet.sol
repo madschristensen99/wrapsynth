@@ -150,11 +150,11 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         _syncVaultYield(request.lpVault);
         
         uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
-        uint256 projectedDebtWithThisMint = actualDebt + request.wsxmrAmount;
+        uint256 projectedDebt = actualDebt + vault.pendingDebt;
         uint256 availableCollateral = vault.collateralShares > vault.lockedCollateral
             ? vault.collateralShares - vault.lockedCollateral
             : 0;
-        uint256 currentRatio = _calculateCollateralRatio(availableCollateral, projectedDebtWithThisMint);
+        uint256 currentRatio = _calculateCollateralRatio(availableCollateral, projectedDebt);
         if (currentRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
         
         request.status = MintStatus.READY;
@@ -182,7 +182,8 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         uint256 availableCollateral = vault.collateralShares > vault.lockedCollateral
             ? vault.collateralShares - vault.lockedCollateral
             : 0;
-        uint256 projectedDebt = _denormalizeDebt(vault.normalizedDebt) + vault.pendingDebt + request.wsxmrAmount;
+        // N-1: pendingDebt already includes request.wsxmrAmount (decremented at line 205)
+        uint256 projectedDebt = _denormalizeDebt(vault.normalizedDebt) + vault.pendingDebt;
         uint256 crAfterSync = _calculateCollateralRatio(availableCollateral, projectedDebt);
         if (crAfterSync < COLLATERAL_RATIO) revert InsufficientCollateral();
         

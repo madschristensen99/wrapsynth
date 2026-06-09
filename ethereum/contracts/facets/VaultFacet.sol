@@ -466,7 +466,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         
         address user = meta.user;
         (uint256 daiOut, uint256 wsxmrOut) = IwsXmrLiquidityRouter(liquidityRouter)
-            .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS));
+            .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS), xmrPrice);
 
         uint256 keeperFee = 0;
         if (!isOwner) {
@@ -488,8 +488,8 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
             emit CoLPRebalanced(tokenId, newTokenId, meta.vaultOwner, user, msg.sender, newRangeBps);
         } else {
             if (daiOut > 0) {
-                uint256 shares = ISavingsDAI(GnosisAddresses.SDAI).deposit(daiOut, address(this));
-                vault.collateralShares += shares;
+                // daiOut is already sDAI tokens (not xDAI), add directly to collateral
+                vault.collateralShares += daiOut;
             }
             if (wsxmrOut > 0) {
                 pendingReturns[user][wsxmrToken] += wsxmrOut;
@@ -679,9 +679,10 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
     function _unwindAndDistribute(uint256 tokenId, bool fromLiquidation) internal {
         PositionMetadata memory meta = _positionMetadata[tokenId];
         Vault storage vault = _vaults[meta.vaultOwner];
+        uint256 xmrPrice = _getXmrPriceFromStorage();
         
         (uint256 daiOut, uint256 wsxmrOut) = IwsXmrLiquidityRouter(liquidityRouter)
-            .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS));
+            .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS), xmrPrice);
         
         if (vault.deployedSDAIShares >= meta.sDAISharesOriginal) {
             vault.deployedSDAIShares -= meta.sDAISharesOriginal;
