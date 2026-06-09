@@ -178,6 +178,14 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         Vault storage vault = _vaults[request.lpVault];
         _syncVaultYield(request.lpVault);
         
+        // Low: Re-check CR after yield sync to ensure vault is still healthy
+        uint256 availableCollateral = vault.collateralShares > vault.lockedCollateral
+            ? vault.collateralShares - vault.lockedCollateral
+            : 0;
+        uint256 projectedDebt = _denormalizeDebt(vault.normalizedDebt) + vault.pendingDebt + request.wsxmrAmount;
+        uint256 crAfterSync = _calculateCollateralRatio(availableCollateral, projectedDebt);
+        if (crAfterSync < COLLATERAL_RATIO) revert InsufficientCollateral();
+        
         if (request.vaultMintNonce != vault.mintNonce) {
             request.status = MintStatus.CANCELLED;
             if (request.griefingDeposit > 0) {
@@ -325,7 +333,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         uint256 yieldShares = YieldLogic.syncVaultYield(
             vault.collateralShares,
             vault.lockedCollateral,
-            lpPrincipalShares[lpAddress],
+            lpPrincipalDeposits[lpAddress],
             vault.normalizedDebt,
             vault.pendingDebt,
             globalDebtIndex,

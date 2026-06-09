@@ -35,10 +35,12 @@ contract RedStoneOracleFacet is wsXmrStorage, IOracleFacet, PrimaryProdDataServi
         uint256 oldPrice = uint256(uint192(lastXmrPrice)) * 1e10;
         uint256 newPrice = uint256(xmrPrice) * 1e10;
 
-        // M4: Deviation guard — reject updates that move more than MAX_PRICE_DEVIATION_BPS
-        if (oldPrice > 0) {
-            uint256 diff = oldPrice > newPrice ? oldPrice - newPrice : newPrice - oldPrice;
-            if ((diff * BPS_DENOMINATOR) / oldPrice > MAX_PRICE_DEVIATION_BPS) revert PriceDeviationTooHigh();
+        // H3: Deviation guard — compare against EMA (smoother) rather than last spot.
+        // Falls back to oldPrice on first update when EMA is uninitialized.
+        uint256 baselinePrice = xmrEmaPrice > 0 ? xmrEmaPrice : oldPrice;
+        if (baselinePrice > 0) {
+            uint256 diff = baselinePrice > newPrice ? baselinePrice - newPrice : newPrice - baselinePrice;
+            if ((diff * BPS_DENOMINATOR) / baselinePrice > MAX_PRICE_DEVIATION_BPS) revert PriceDeviationTooHigh();
         }
 
         // M4: Extract and store the signed payload timestamp, not block.timestamp

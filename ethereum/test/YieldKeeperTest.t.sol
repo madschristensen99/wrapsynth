@@ -192,19 +192,16 @@ contract YieldKeeperTest is Test {
         require(success, "canTriggerBuyAndBurn call failed");
         (bool possible, string memory reason) = abi.decode(result, (bool, string));
 
-        // War chest has yield from setUp mint flow (976 shares), so reason is price not dipped
-        assertFalse(possible, "Should not be possible - XMR not dipped");
-        assertEq(reason, "XMR price not dipped", "Reason should be XMR not dipped");
+        // H-1 fix: No phantom yield on fresh deposits, so war chest is empty
+        assertFalse(possible, "Should not be possible - war chest empty");
+        assertEq(reason, "War chest empty", "Reason should be War chest empty");
     }
 
     // ========== TEST 4: triggerBuyAndBurn cooldown reverts ==========
 
     function test_TriggerBuyAndBurn_CooldownReverts() public {
-        // Ensure war chest has yield
-        vm.warp(block.timestamp + 365 days);
-        vm.roll(block.number + 100000);
-        _updatePrices();
-        YieldFacet(address(hub)).syncVaultYield(lp);
+        // Inject yield directly (vm.warp does not accrue sDAI yield on Gnosis fork)
+        _injectWarChestYield(1000 ether);
 
         // Mock EMA to allow trigger
         _mockEmaPrice(400 * 1e18); // EMA higher than spot (300)
@@ -279,11 +276,8 @@ contract YieldKeeperTest is Test {
     // ========== TEST 8: triggerBuyAndBurn keeper gets reward ==========
 
     function test_TriggerBuyAndBurn_KeeperGetsReward() public {
-        // Ensure war chest has yield
-        vm.warp(block.timestamp + 365 days);
-        vm.roll(block.number + 100000);
-        _updatePrices();
-        YieldFacet(address(hub)).syncVaultYield(lp);
+        // Inject yield directly (vm.warp does not accrue sDAI yield on Gnosis fork)
+        _injectWarChestYield(1000 ether);
 
         // Warp past cooldown
         vm.warp(block.timestamp + 25 hours);
@@ -310,10 +304,8 @@ contract YieldKeeperTest is Test {
     // ========== TEST 9: triggerBuyAndBurn reduces war chest ==========
 
     function test_TriggerBuyAndBurn_ReducesWarChest() public {
-        vm.warp(block.timestamp + 365 days);
-        vm.roll(block.number + 100000);
-        _updatePrices();
-        YieldFacet(address(hub)).syncVaultYield(lp);
+        // Inject yield directly (vm.warp does not accrue sDAI yield on Gnosis fork)
+        _injectWarChestYield(1000 ether);
 
         uint256 warChestBefore = _getYieldWarChest();
 
@@ -329,7 +321,7 @@ contract YieldKeeperTest is Test {
         uint256 warChestAfter = _getYieldWarChest();
         console.log("War chest before:", warChestBefore);
         console.log("War chest after:", warChestAfter);
-        assertLe(warChestAfter, warChestBefore, "War chest should decrease or stay same if empty");
+        assertLt(warChestAfter, warChestBefore, "War chest should decrease after buy-and-burn");
     }
 
     // ========== HELPERS ==========
@@ -382,5 +374,13 @@ contract YieldKeeperTest is Test {
     function _updatePrices() internal {
         // Refresh oracle prices to prevent StalePrice revert
         SimpleOracleFacet(address(hub)).updatePrices(300_00000000, 118_00000000);
+    }
+
+    // H-1 fix: On Gnosis fork, vm.warp does not cause sDAI yield to accrue (rate only updates on interaction).
+    // We inject shares directly so tests can exercise triggerBuyAndBurn without relying on phantom yield.
+    function _injectWarChestYield(uint256 shares) internal {
+        deal(GnosisAddresses.SDAI, address(hub), shares);
+        // yieldWarChest is at slot 15 in wsXmrStorage
+        vm.store(address(hub), bytes32(uint256(15)), bytes32(shares));
     }
 }

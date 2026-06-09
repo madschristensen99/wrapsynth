@@ -83,7 +83,7 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         uint256 daiAmount,
         uint256 wsxmrAmount,
         uint16 rangeBps,
-        uint256 /* centerXmrPrice */, // M2: router currently uses slot0 tick, not oracle price
+        uint256 centerXmrPrice,
         uint256 deadline,
         uint16 slippageBps
     ) external onlyDiamond returns (
@@ -97,9 +97,15 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (slippageBps >= BPS_DENOMINATOR) revert SlippageExceeded();
 
-        // Get current pool tick and price
+        // M3: Use oracle price for center tick, not manipulable slot0()
         (uint160 sqrtPriceX96, int24 currentTick, , , , , ) = IUniswapV3Pool(pool).slot0();
-        int24 centerTick = currentTick;
+        int24 centerTick;
+        if (centerXmrPrice > 0) {
+            uint160 oracleSqrtPriceX96 = _priceToSqrtPriceX96(centerXmrPrice, 1e18);
+            centerTick = TickMath.getTickAtSqrtRatio(oracleSqrtPriceX96);
+        } else {
+            centerTick = currentTick;
+        }
 
         int24 halfWidth = int24(int256(uint256(rangeBps) / 2));
         

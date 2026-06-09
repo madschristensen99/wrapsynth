@@ -88,7 +88,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             uint256 yieldShares = YieldLogic.calculateExtractableYield(
                 vault.collateralShares,
                 vault.lockedCollateral,
-                lpPrincipalShares[lpVault],
+                lpPrincipalDeposits[lpVault],
                 actualDebt,
                 vault.pendingDebt,
                 xmrPrice,
@@ -173,25 +173,20 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         vault.collateralShares -= collateralToSeize;
         globalTotalDebt -= debtToClear;
         
-        // M3: Socialize bad debt via globalDebtIndex decrease
+        // H2: Write off bad debt from global totals. Do NOT scale globalDebtIndex
+        // (that would incorrectly shrink healthy vaults' denormalized debts).
         if (vault.normalizedDebt > 0 && vault.collateralShares == 0) {
             uint256 badDebt = _denormalizeDebt(vault.normalizedDebt);
             if (badDebt > 0) {
                 vault.normalizedDebt = 0;
+                if (badDebt > globalTotalDebt) {
+                    globalTotalDebt = 0;
+                } else {
+                    globalTotalDebt -= badDebt;
+                }
                 globalBadDebt += badDebt;
                 emit BadDebtWrittenOff(lpVault, badDebt);
-
-                if (globalTotalDebt > badDebt) {
-                    uint256 remainingDebt = globalTotalDebt - badDebt;
-                    uint256 newIndex = (globalDebtIndex * remainingDebt) / globalTotalDebt;
-                    globalDebtIndex = newIndex > 1e6 ? newIndex : 1e6;
-                    globalTotalDebt = remainingDebt;
-                    emit BadDebtSocialized(lpVault, badDebt, globalDebtIndex);
-                } else {
-                    globalTotalDebt = 0;
-                    globalDebtIndex = 1e18;
-                    emit BadDebtSocialized(lpVault, badDebt, 1e18);
-                }
+                emit BadDebtSocialized(lpVault, badDebt, globalDebtIndex);
             }
         }
         
@@ -230,7 +225,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             uint256 yieldShares = YieldLogic.calculateExtractableYield(
                 oldV.collateralShares,
                 oldV.lockedCollateral,
-                lpPrincipalShares[oldVault],
+                lpPrincipalDeposits[oldVault],
                 oldDebt,
                 oldV.pendingDebt,
                 xmrPrice,
@@ -250,7 +245,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             uint256 yieldShares = YieldLogic.calculateExtractableYield(
                 newV.collateralShares,
                 newV.lockedCollateral,
-                lpPrincipalShares[msg.sender],
+                lpPrincipalDeposits[msg.sender],
                 newDebtBefore,
                 newV.pendingDebt,
                 xmrPrice,

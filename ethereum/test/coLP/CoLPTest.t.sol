@@ -308,9 +308,9 @@ contract CoLPTest is Test {
         (uint256 px2, uint256 py2) = Ed25519.scalarMultBase(uint256(secret2));
         bytes32 commitment2 = keccak256(abi.encodePacked(px2, py2));
 
-        // Mint ~14M wsXMR units (close to CR limit at $390 with ~$96 collateral after Co-LP)
+        // Mint keeping under 150% CR (M-2 fix no longer counts wsXMR as collateral)
         vm.prank(user2);
-        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user2, 140_000_000_000, commitment2);
+        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user2, 85_000_000_000, commitment2);
 
         bytes32[] memory user2Mints = _getUserMintRequests(user2);
         
@@ -325,7 +325,7 @@ contract CoLPTest is Test {
         MintFacet(address(hub)).finalizeMint(user2Mints[0], secret2);
 
         // Raise XMR price to make vault liquidatable (wsXMR debt becomes more valuable in USD)
-        SimpleOracleFacet(address(hub)).updatePrices(1000_00000000, 1_00000000); // $1000 XMR
+        SimpleOracleFacet(address(hub)).updatePrices(2000_00000000, 1_00000000); // $2000 XMR
 
         // Check liquidatable
         bool liquidatable = _isVaultLiquidatable(lp);
