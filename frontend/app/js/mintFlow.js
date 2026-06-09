@@ -215,12 +215,14 @@ export class MintFlow {
         const userAddress = getUserAddress();
         const xmrAmountAtomic = BigInt(Math.floor(this.xmrAmount * Math.pow(10, DECIMALS.XMR)));
         const commitment = this.agent.getCommitment();
+        const userPublicKey = '0x' + this.agent.keySet.publicSpendKey.toString(16).padStart(64, '0');
 
         console.log('Initiating mint with params:', {
             lpVault: this.lpVault,
             initiator: userAddress,
             wsxmrAmount: this.wsxmrAmount.toString(),
             commitment,
+            userPublicKey,
             griefingDeposit: this.griefingDeposit.toString()
         });
 
@@ -232,7 +234,8 @@ export class MintFlow {
                     this.lpVault,
                     userAddress,
                     xmrAmountAtomic,
-                    commitment
+                    commitment,
+                    userPublicKey
                 ],
                 this.griefingDeposit
             );
@@ -529,8 +532,18 @@ export class MintFlow {
 
         if (this.requestId) {
             try {
-                await writeHub('cancelMint', [this.requestId]);
-                console.log('Mint request canceled on EVM');
+                const mintReq = await readHub('getMintRequest', [this.requestId]);
+                const status = Number(mintReq.status);
+                // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
+                if (status === 5) {
+                    await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
+                    console.log('Mint already cancelled; claimed refund via withdrawReturns');
+                } else if (status === 1 || status === 2 || status === 3) {
+                    await writeHub('cancelMint', [this.requestId]);
+                    console.log('Mint request canceled on EVM');
+                } else {
+                    console.warn(`Mint status is ${status}; no cancel action possible`);
+                }
             } catch (error) {
                 console.error('Error canceling mint on EVM:', error);
             }
@@ -599,13 +612,20 @@ export class MintFlow {
                 await this.finalize();
                 break;
             case 'evm-init':
-                // Transaction to initiate on EVM was started but may have failed
-                // Retry from initiateOnEVM
+                // Transaction to initiate on EVM was started.
+                // If we already have a requestId + txHash, the tx succeeded;
+                // just proceed. Otherwise retry initiation.
                 console.log('Resuming from evm-init state...');
-                await this.getQuote();
-                await this.checkOracleFreshness();
-                await this.initiateOnEVM();
-                await this.notifyLP();
+                if (this.requestId && savedState.txHash) {
+                    console.log('Existing requestId found, skipping re-initiation:', this.requestId);
+                    this.state = 'initiated';
+                    await this.notifyLP();
+                } else {
+                    await this.getQuote();
+                    await this.checkOracleFreshness();
+                    await this.initiateOnEVM();
+                    await this.notifyLP();
+                }
                 await this.waitForLPReady();
                 await this.finalize();
                 break;

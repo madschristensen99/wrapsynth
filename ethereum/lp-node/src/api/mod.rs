@@ -9,12 +9,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{info, warn};
+use tracing::info;
 use alloy::primitives::Address;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
-use crate::db::{Database, QuoteDirection};
+use crate::db::Database;
 use crate::evm::EvmClient;
 use crate::monero::MoneroClient;
 use crate::oracle::OracleClient;

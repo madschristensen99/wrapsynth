@@ -150,28 +150,28 @@ contract PoolSwapTest is Test, IUniswapV3SwapCallback {
         // Anti-regression: the buggy inverted-price formula always produces tick ~170,605
         assertTrue(tick != BUGGY_TICK, "Pool has the known-buggy tick (170605) from inverted price formula");
         
-        // Validate price is reasonable for XMR (~$390)
+        // Validate price is reasonable for XMR (~$300-390)
         // sDAI has 18 decimals, wsXMR has 8 decimals
-        // Expected tick for $390 XMR should be around -57000 to -60000
-        // (negative because wsXMR is token0, so price = sDAI/wsXMR < 1)
+        // When sDAI is token0: price = wsXMR/sDAI = 1e8 / (xmrPrice * 1e18 / 1e18) = 1/(xmrPrice*1e10)
+        //   tick = log_1.0001(1/(xmrPrice*1e10)) ≈ -287000 for $300 XMR
+        // When wsXMR is token0: price = sDAI/wsXMR = (xmrPrice * 1e18 / 1e18) / 1e8 = xmrPrice*1e10
+        //   tick = log_1.0001(xmrPrice*1e10) ≈ +287000 for $300 XMR
         bool sDAIIsToken0 = GnosisAddresses.SDAI < address(wsxmr);
         
         if (sDAIIsToken0) {
             // sDAI is token0, wsXMR is token1
-            // Pool price = token1/token0 = wsXMR/sDAI (in token units with decimals)
-            // 1 wsXMR (1e8) = 390 sDAI (390e18), so price = 390e18/1e8 = 390e10
-            // But Uniswap price is inverted for display, so tick is NEGATIVE
-            // For $390 XMR, expected tick is around -57000
-            assertGt(tick, -65000, "Tick too low for $390 XMR (sDAI is token0)");
-            assertLt(tick, -50000, "Tick too high for $390 XMR (sDAI is token0)");
+            // Pool price = token1/token0 = wsXMR/sDAI
+            // For $300-400 XMR, tick should be approximately -284000 to -290000
+            assertGt(tick, -295000, "Tick too low for $300-400 XMR (sDAI is token0)");
+            assertLt(tick, -280000, "Tick too high for $300-400 XMR (sDAI is token0)");
         } else {
             // wsXMR is token0, sDAI is token1
             // Pool price = token1/token0 = sDAI/wsXMR (in raw units)
-            // 1 wsXMR (1e8) = 300 sDAI (300e18), so price = 300e18/1e8 = 300e10 = 3e12
-            // tick = log_1.0001(3e12) ≈ 276000
-            // For $300-400 XMR range, tick should be ~270000-290000
-            assertGt(tick, 270000, "Tick too low for $300-400 XMR (wsXMR is token0)");
-            assertLt(tick, 290000, "Tick too high for $300-400 XMR (wsXMR is token0)");
+            // 1 wsXMR (1e8) = 300 sDAI (300e18), so price = 300e18/1e8 = 300*1e10
+            // tick = log_1.0001(300*1e10) ≈ 287000
+            // For $300-400 XMR range, tick should be ~280000-295000
+            assertGt(tick, 280000, "Tick too low for $300-400 XMR (wsXMR is token0)");
+            assertLt(tick, 295000, "Tick too high for $300-400 XMR (wsXMR is token0)");
         }
         
         console.log("Price validation passed - tick is in expected range for $390 XMR");
@@ -289,7 +289,7 @@ contract PoolSwapTest is Test, IUniswapV3SwapCallback {
         bytes32 testSecret = bytes32(uint256(0xabcdef));
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(testSecret));
         bytes32 commitment = keccak256(abi.encodePacked(px, py));
-        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 20000000000, commitment);
+        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 20000000000, commitment, bytes32(uint256(0xdeadbeef)));
         vm.stopPrank();
 
         // Get the actual mint request ID from hub
@@ -415,6 +415,54 @@ contract PoolSwapTest is Test, IUniswapV3SwapCallback {
 
         assertGt(daiPendingAfter, daiPendingBefore, "LP should have earned sDAI fees");
         assertGt(wsxmrPendingAfter, wsxmrPendingBefore, "User should have earned wsXMR fees");
+    }
+
+    // ========== TEST 5: Regression - Co-LP large liquidity does not overflow router math ==========
+    function test_CoLPLargeLiquidityNoOverflow() public {
+        // 1. Setup LP vault with significant collateral
+        vm.startPrank(lp);
+        VaultFacet(address(hub)).createVault();
+        VaultFacet(address(hub)).setMaxMintBps(0);
+        VaultFacet(address(hub)).setMinBurnAmount(0);
+        VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
+        VaultFacet(address(hub)).setMintReadyBond(0.001 ether);
+
+        deal(GnosisAddresses.SDAI, lp, 1000 ether);
+        IERC20(GnosisAddresses.SDAI).approve(address(hub), 1000 ether);
+        VaultFacet(address(hub)).depositShares(100 ether);
+        vm.stopPrank();
+
+        // 2. Give user wsXMR directly (skip mint cycle)
+        deal(address(wsxmr), user, 10 * 1e8); // 10 wsXMR
+
+        // 3. Open Co-LP with large amount to create substantial liquidity
+        uint256 wsxmrToDeposit = 5 * 1e8; // 5 wsXMR
+        vm.prank(user);
+        wsxmr.approve(address(hub), type(uint256).max);
+        vm.prank(user);
+        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        assertTrue(tokenId > 0, "Co-LP should return valid tokenId");
+
+        console.log("Co-LP tokenId:", tokenId);
+        console.log("Pool liquidity after Co-LP:", IUniswapV3Pool(poolAddr).liquidity());
+
+        // 4. Regression: router.getPositionAmountsAtPrice must NOT overflow with large liquidity
+        // The on-chain bug was: uint256(liq) * (1 << 96) * diff0 overflowed uint256
+        // when liquidity was ~3.4e23. This test creates a position and verifies
+        // the router can compute its value without reverting.
+        (uint256 daiAmt, uint256 wsxmrAmt) = router.getPositionAmountsAtPrice(tokenId, XMR_PRICE);
+        console.log("Position sDAI value:", daiAmt);
+        console.log("Position wsXMR value:", wsxmrAmt);
+        // Values should be non-zero for an in-range position
+        assertGt(daiAmt + wsxmrAmt, 0, "Position amounts should be non-zero");
+
+        // 5. Regression: withdrawCollateral must work after Co-LP creation
+        // The contract calls _getVaultPositionTotalsAtOracle which delegates to
+        // the router's _getAmountsAtSqrtPrice. Prior to the fix this overflowed.
+        uint256 withdrawShares = 1e15; // very small withdrawal
+        vm.prank(lp);
+        VaultFacet(address(hub)).withdrawCollateral(withdrawShares);
+        console.log("Small collateral withdrawal succeeded after Co-LP");
     }
 
     // Helper to get user's mint requests

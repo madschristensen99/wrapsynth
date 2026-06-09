@@ -10,6 +10,28 @@ const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 const { HUB_ADDRESS, WSXMR_ADDRESS, WXDAI_ADDRESS, ED25519_HELPER } = require('./deploymentConfig');
 
+// Retry helper for RedStone calls with exponential backoff
+async function retryRedStone(fn, maxRetries = 3) {
+    let lastError;
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await fn();
+        } catch (err) {
+            lastError = err;
+            const isTimeout = err.message && (
+                err.message.includes('timeout') ||
+                err.message.includes('AggregateError') ||
+                err.message.includes('ETIMEDOUT')
+            );
+            if (!isTimeout || i === maxRetries - 1) throw err;
+            const delay = 2000 * Math.pow(2, i); // 2s, 4s, 8s
+            console.log(`  RedStone timeout, retrying in ${delay/1000}s... (attempt ${i+2}/${maxRetries})`);
+            await new Promise(r => setTimeout(r, delay));
+        }
+    }
+    throw lastError;
+}
+
 async function main() {
     if (!process.env.PRIVATE_KEY) {
         console.error('PRIVATE_KEY environment variable not set');
@@ -101,7 +123,7 @@ async function main() {
 
     // --- STEP 1: Push fresh RedStone prices FIRST (needed for _syncVaultYield in depositCollateral) ---
     console.log('Step 1: Push fresh oracle prices');
-    const priceTx = await wrappedHub.updateOraclePrices([], { gasLimit: 500000 });
+    const priceTx = await retryRedStone(() => wrappedHub.updateOraclePrices([], { gasLimit: 500000 }));
     console.log('  TX:', priceTx.hash);
     await priceTx.wait();
     console.log('  Prices updated');
@@ -145,7 +167,7 @@ async function main() {
 
         // Prices may have gone stale during mint — refresh
         console.log('  Refreshing prices...');
-        const refreshTx = await wrappedHub.updateOraclePrices([], { gasLimit: 500000 });
+        const refreshTx = await retryRedStone(() => wrappedHub.updateOraclePrices([], { gasLimit: 500000 }));
         await refreshTx.wait();
         console.log('  Prices refreshed:', refreshTx.hash);
 
@@ -193,7 +215,7 @@ async function main() {
 
     // Ensure prices are fresh before Co-LP (reads oracle for tick calc)
     console.log('  Pushing fresh prices before Co-LP...');
-    const preCoLPTx = await wrappedHub.updateOraclePrices([], { gasLimit: 500000 });
+    const preCoLPTx = await retryRedStone(() => wrappedHub.updateOraclePrices([], { gasLimit: 500000 }));
     await preCoLPTx.wait();
     console.log('  Prices pushed:', preCoLPTx.hash);
 

@@ -66,7 +66,9 @@ async function getOrCreateEncryptionKey() {
 function getStorageKey(userAddress, publicSpendKey) {
     // Format: chainId/contractAddress/publicKey/userAddress
     // For WrapSynth, we use a simplified version since we don't have multiple contracts
-    return `wrapsynth/${publicSpendKey}/${userAddress}`;
+    // Normalize address to lowercase because localStorage is case-sensitive and
+    // wallets may return checksummed or lowercase inconsistently.
+    return `wrapsynth/${publicSpendKey}/${userAddress.toLowerCase()}`;
 }
 
 /**
@@ -162,6 +164,57 @@ export function hasStoredSeed(publicSpendKey) {
  * @param {string} publicSpendKey - Public key to identify the seed
  * @returns {Promise<string|null>} Decrypted seed phrase or null if not found
  */
+async function tryDecryptSeed(stored, message, userAddress) {
+    const walletClient = getWalletClient();
+
+    console.log('Requesting signature to decrypt seed...');
+    const signature = await walletClient.signMessage({
+        account: userAddress,
+        message: message
+    });
+
+    // Derive decryption key from signature
+    const keySeed = keccak256(signature);
+    const sigKey = await window.crypto.subtle.importKey(
+        'raw',
+        hexToBytes(keySeed),
+        { name: 'AES-GCM' },
+        false,
+        ['encrypt', 'decrypt']
+    );
+
+    // Parse stored data: "v2:encryptedIV:encryptedSeed"
+    const parts = stored.slice(3).split(':');
+    if (parts.length !== 2) {
+        console.error('Invalid storage format');
+        return null;
+    }
+
+    const encryptedIV = hexToBytes(parts[0]);
+    const encryptedSeed = hexToBytes(parts[1]);
+
+    // Decrypt IV with signature-derived key
+    const zeroIV = new Uint8Array(12);
+    const iv = new Uint8Array(
+        await window.crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: zeroIV },
+            sigKey,
+            encryptedIV
+        )
+    );
+
+    // Decrypt seed with browser key
+    const browserKey = await getOrCreateEncryptionKey();
+    const decryptedSeedBytes = await window.crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv },
+        browserKey,
+        encryptedSeed
+    );
+
+    const decoder = new TextDecoder();
+    return decoder.decode(decryptedSeedBytes);
+}
+
 export async function loadSeed(publicSpendKey) {
     const userAddress = getUserAddress();
     if (!userAddress) {
@@ -170,7 +223,7 @@ export async function loadSeed(publicSpendKey) {
 
     const storageKey = getStorageKey(userAddress, publicSpendKey);
     const stored = localStorage.getItem(storageKey);
-    
+
     if (!stored) {
         return null;
     }
@@ -181,61 +234,28 @@ export async function loadSeed(publicSpendKey) {
         return null;
     }
 
+    // Try new lowercase message first
     try {
-        // Request signature from user (same message as storage)
         const message = `WrapSynth seed storage: ${storageKey}`;
-        const walletClient = getWalletClient();
-        
-        console.log('Requesting signature to decrypt seed...');
-        const signature = await walletClient.signMessage({
-            account: userAddress,
-            message: message
-        });
-
-        // Derive decryption key from signature
-        const keySeed = keccak256(signature);
-        const sigKey = await window.crypto.subtle.importKey(
-            'raw',
-            hexToBytes(keySeed),
-            { name: 'AES-GCM' },
-            false,
-            ['encrypt', 'decrypt']
-        );
-
-        // Parse stored data: "v2:encryptedIV:encryptedSeed"
-        const parts = stored.slice(3).split(':');
-        if (parts.length !== 2) {
-            console.error('Invalid storage format');
-            return null;
-        }
-
-        const encryptedIV = hexToBytes(parts[0]);
-        const encryptedSeed = hexToBytes(parts[1]);
-
-        // Decrypt IV with signature-derived key
-        const zeroIV = new Uint8Array(12);
-        const iv = new Uint8Array(
-            await window.crypto.subtle.decrypt(
-                { name: 'AES-GCM', iv: zeroIV },
-                sigKey,
-                encryptedIV
-            )
-        );
-
-        // Decrypt seed with browser key
-        const browserKey = await getOrCreateEncryptionKey();
-        const decryptedSeedBytes = await window.crypto.subtle.decrypt(
-            { name: 'AES-GCM', iv },
-            browserKey,
-            encryptedSeed
-        );
-
-        const decoder = new TextDecoder();
-        const seed = decoder.decode(decryptedSeedBytes);
-
+        const seed = await tryDecryptSeed(stored, message, userAddress);
         console.log('[SUCCESS] Seed decrypted successfully');
         return seed;
     } catch (error) {
+        // If the wallet returned a mixed-case address when the seed was stored,
+        // the signature was computed over a message with the raw address.
+        // Try the legacy message as a fallback.
+        if (userAddress !== userAddress.toLowerCase()) {
+            console.warn('Decryption with lowercase key failed, trying legacy mixed-case key...');
+            try {
+                const legacyStorageKey = `wrapsynth/${publicSpendKey}/${userAddress}`;
+                const legacyMessage = `WrapSynth seed storage: ${legacyStorageKey}`;
+                const seed = await tryDecryptSeed(stored, legacyMessage, userAddress);
+                console.log('[SUCCESS] Seed decrypted with legacy key');
+                return seed;
+            } catch (legacyError) {
+                console.error('Legacy decryption also failed:', legacyError);
+            }
+        }
         console.error('Failed to decrypt seed:', error);
         return null;
     }

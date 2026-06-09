@@ -90,6 +90,7 @@ sol! {
             uint256 wsxmrAmount;
             uint256 feeAmount;
             bytes32 claimCommitment;
+            bytes32 userPublicKey;
             uint256 timeout;
             uint256 griefingDeposit;
             uint256 lpBond;
@@ -152,6 +153,7 @@ sol! {
             uint256 wsxmrAmount,
             uint256 feeAmount,
             bytes32 claimCommitment,
+            bytes32 userPublicKey,
             uint256 timeout
         );
 
@@ -633,6 +635,13 @@ impl EvmClient {
         let contract = VaultManager::new(self.vault_manager, &self.provider);
         let key = contract.lpPublicKeys(request_id).call().await?;
         Ok(key._0)
+    }
+
+    /// Get mint request status (0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED)
+    pub async fn get_mint_request_status(&self, request_id: FixedBytes<32>) -> Result<u8> {
+        let contract = VaultManager::new(self.vault_manager, &self.provider);
+        let request = contract.mintRequests(request_id).call().await?;
+        Ok(request._0.status)
     }
 
     /// Provide LP's public key for Farcaster atomic swap

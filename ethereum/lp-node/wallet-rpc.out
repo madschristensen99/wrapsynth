@@ -1,0 +1,22 @@
+Starting Monero Wallet RPC...
+Wallet file: ./lp-wallet
+RPC port: 18082
+Daemon: https://xmr-node.cakewallet.com:18081
+This is the RPC monero wallet. It needs to connect to a monero
+daemon to work correctly.
+
+Monero 'Fluorine Fermi' (v0.18.4.5-release)
+[0;36m2026-06-09 18:33:00.626	I [0;36mSetting log level = 1
+[0m[0;36m2026-06-09 18:33:00.627	I [0;36mLogging to: monero-wallet-rpc.log
+[0mLogging to monero-wallet-rpc.log
+[0;33m2026-06-09 18:33:00.627	W [0;33mLoading wallet...
+[0m[0;36m2026-06-09 18:33:00.628	I [0;36msetting daemon to https://xmr-node.cakewallet.com:18081
+[0m[0;36m2026-06-09 18:33:00.628	I [0;36m[PARSE URI] regex not matched for uri: ^(([^:]*?)://)?(\[(.*)\](:(\d+))?)(.*)?
+[0m[0;36m2026-06-09 18:33:00.628	I [0;36mGenerating SSL certificate
+[0m[0;36m2026-06-09 18:33:01.367	I [0;36mringdb path set to /home/remsee/.shared-ringdb
+[0m[0;36m2026-06-09 18:33:01.378	I [0;36m[PARSE URI] regex not matched for uri: ^(([^:]*?)://)?(\[(.*)\](:(\d+))?)(.*)?
+[0m[0;36m2026-06-09 18:33:01.378	I [0;36mGenerating SSL certificate
+[0m[0;31m2026-06-09 18:33:02.143	E [0;31me || !exists. THROW EXCEPTION: error::file_not_found
+[0m[0;33m2026-06-09 18:33:02.143	W [0;33m/home/ubuntu/build/monero/src/wallet/wallet2.cpp:6506:N5tools5error15file_error_baseILi1EEE: file not found "./lp-wallet.keys"
+[0m[0;31m2026-06-09 18:33:02.144	E [0;31mWallet initialization failed: file not found "./lp-wallet.keys"
+[0m

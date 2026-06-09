@@ -1,5 +1,5 @@
-use alloy::primitives::{Address, U256};
-use anyhow::{Context, Result};
+use alloy::primitives::U256;
+use anyhow::Result;
 use std::sync::Arc;
 use tracing::info;
 

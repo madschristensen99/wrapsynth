@@ -5,8 +5,8 @@ import { gnosis } from 'https://esm.sh/viem@2.7.0/chains';
 
 const D = window.DEPLOYMENT || {};
 const CONFIG = {
-    HUB_ADDRESS: D.contracts?.wsXmrHub || '0x96E2694a8277aaFE947D1A94eC0a4dD0C7A2Ffb7',
-    WSXMR_ADDRESS: D.contracts?.wsXMR || '0xA39aF84413936f677159B1238B18016696e900Bb',
+    HUB_ADDRESS: D.contracts?.wsXmrHub || '0x5645c2b053297c69e9ac543851943a96b65d0925',
+    WSXMR_ADDRESS: D.contracts?.wsXMR || '0xbb364f197a8429bfa7a991bbbfc104a4dc53f6fa',
     RPC_URL: D.rpcUrl || 'https://rpc.gnosischain.com'
 };
 

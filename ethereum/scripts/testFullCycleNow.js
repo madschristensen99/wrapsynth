@@ -9,6 +9,28 @@ const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 const { HUB_ADDRESS, WSXMR_ADDRESS, WXDAI_ADDRESS, ED25519_HELPER } = require('./deploymentConfig');
 
+// Retry helper for RedStone calls with exponential backoff
+async function retryRedStone(fn, maxRetries = 3) {
+    let lastError;
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await fn();
+        } catch (err) {
+            lastError = err;
+            const isTimeout = err.message && (
+                err.message.includes('timeout') ||
+                err.message.includes('AggregateError') ||
+                err.message.includes('ETIMEDOUT')
+            );
+            if (!isTimeout || i === maxRetries - 1) throw err;
+            const delay = 2000 * Math.pow(2, i);
+            console.log(`  RedStone timeout, retrying in ${delay/1000}s... (attempt ${i+2}/${maxRetries})`);
+            await new Promise(r => setTimeout(r, delay));
+        }
+    }
+    throw lastError;
+}
+
 async function main() {
     if (!process.env.PRIVATE_KEY) {
         console.error('❌ PRIVATE_KEY environment variable not set');
@@ -35,6 +57,7 @@ async function main() {
         'function setVaultMarketMetrics(uint16 mintFeeBps, uint16 burnRewardBps) external',
         'function getPendingReturns(address user, address token) external view returns (uint256)',
         'function withdrawReturns(address token) external',
+        'function withdrawCollateral(uint256 amount) external',
         'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment) external payable returns (bytes32)',
         'function provideLPKey(bytes32 requestId, bytes32 lpPublicKey) external',
         'function setMintReady(bytes32 requestId) external payable',
@@ -163,7 +186,7 @@ async function main() {
         // Update prices before burn
         console.log('📊 Update Prices');
         console.log('================');
-        const updateTx = await wrappedHub.updateOraclePrices([]);
+        const updateTx = await retryRedStone(() => wrappedHub.updateOraclePrices([]));
         console.log('TX:', updateTx.hash);
         await updateTx.wait();
         console.log('✅ Prices updated\n');
@@ -226,7 +249,7 @@ async function main() {
     
     console.log('📊 Step 1: Update Prices');
     console.log('========================');
-    const updateTx = await wrappedHub.updateOraclePrices([]);
+    const updateTx = await retryRedStone(() => wrappedHub.updateOraclePrices([]));
     console.log('TX:', updateTx.hash);
     await updateTx.wait();
     console.log('✅ Prices updated');
@@ -277,7 +300,7 @@ async function main() {
     
     console.log('📊 Step 3: Update Prices Again (before setMintReady)');
     console.log('=====================================================');
-    const updateTx2 = await wrappedHub.updateOraclePrices([]);
+    const updateTx2 = await retryRedStone(() => wrappedHub.updateOraclePrices([]));
     await updateTx2.wait();
     console.log('✅ Prices refreshed');
     console.log('');
@@ -327,6 +350,28 @@ async function main() {
     console.log('Expected (after fee):', ethers.utils.formatUnits(expectedAfterFee, decimals), 'wsXMR');
     console.log('Actual balance:', ethers.utils.formatUnits(wsxmrBalance, decimals), 'wsXMR');
     console.log('✅ Fee correctly applied:', wsxmrBalance.eq(expectedAfterFee) ? 'YES' : 'NO');
+    console.log('');
+    
+    console.log('📊 Step 6.5: WITHDRAW - Small Collateral Test');
+    console.log('============================================');
+    const vaultBeforeWithdraw = await hub.getVault(wallet.address);
+    console.log('Collateral shares before:', vaultBeforeWithdraw.collateralShares.toString());
+    console.log('Locked collateral:', vaultBeforeWithdraw.lockedCollateral.toString());
+    console.log('Normalized debt:', vaultBeforeWithdraw.normalizedDebt.toString());
+    
+    // Try withdrawing a very small amount (0.001 worth of shares, or 1 share if zero)
+    const withdrawTestAmount = ethers.BigNumber.from('1000000000000000'); // 0.001 sDAI worth in shares roughly
+    try {
+        const withdrawTx = await hub.withdrawCollateral(withdrawTestAmount, { gasLimit: 500000 });
+        await withdrawTx.wait();
+        console.log('✅ Small collateral withdrawal successful!');
+        console.log('Withdrawn shares:', withdrawTestAmount.toString());
+    } catch (err) {
+        console.log('⚠️  Collateral withdrawal failed (expected if below 150% CR):', err.reason || err.message);
+    }
+    
+    const vaultAfterWithdraw = await hub.getVault(wallet.address);
+    console.log('Collateral shares after:', vaultAfterWithdraw.collateralShares.toString());
     console.log('');
     
     console.log('📊 Step 7: BURN - Request');
