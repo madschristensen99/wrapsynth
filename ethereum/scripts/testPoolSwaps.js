@@ -126,7 +126,7 @@ async function main() {
             wsxmrSwapAmount,
             0, // no price limit
             {
-                gasLimit: 300000,
+                gasLimit: 800000,
                 maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
                 maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
             }
@@ -169,7 +169,7 @@ async function main() {
             sdaiSwapAmount,
             0, // no price limit
             {
-                gasLimit: 300000,
+                gasLimit: 800000,
                 maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
                 maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
             }
@@ -309,7 +309,7 @@ async function main() {
 
             try {
                 const swapTx = await swapRouter.exactInputSingle(swapParams, {
-                    gasLimit: 300000,
+                    gasLimit: 800000,
                     maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
                     maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
                 });
@@ -344,7 +344,7 @@ async function main() {
 
             try {
                 const swapTx = await swapRouter.exactInputSingle(swapParams, {
-                    gasLimit: 300000,
+                    gasLimit: 800000,
                     maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
                     maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
                 });
