@@ -410,6 +410,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
 
         if (daiFees > 0) {
             pendingReturns[meta.vaultOwner][GnosisAddresses.SDAI] += daiFees;
+            globalPendingSDAI += daiFees;
         }
         if (wsxmrFees > 0) {
             pendingReturns[meta.user][wsxmrToken] += wsxmrFees;
@@ -634,7 +635,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         uint256 yieldShares = YieldLogic.calculateExtractableYield(
             vault.collateralShares,
             vault.lockedCollateral,
-            lpPrincipalShares[lpAddress],
+            lpPrincipalDeposits[lpAddress],
             actualDebt,
             vault.pendingDebt,
             xmrPrice,

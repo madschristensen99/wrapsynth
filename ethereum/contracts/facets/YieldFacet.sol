@@ -122,7 +122,7 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         uint256 yieldShares = YieldLogic.calculateExtractableYield(
             vault.collateralShares,
             vault.lockedCollateral,
-            lpPrincipalShares[lpVault],
+            lpPrincipalDeposits[lpVault],
             actualDebt,
             vault.pendingDebt,
             xmrPrice,
@@ -173,7 +173,7 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         return YieldLogic.calculateExtractableYield(
             vault.collateralShares,
             vault.lockedCollateral,
-            lpPrincipalShares[lpVault],
+            lpPrincipalDeposits[lpVault],
             actualDebt,
             pendingDebt,
             xmrPrice,

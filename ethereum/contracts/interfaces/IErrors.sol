@@ -16,4 +16,5 @@ interface IErrors {
     error DeadlineExpired();
     error OnlyHub();
     error InvalidCommitment();
+    error BurnExceedsVaultDebt();
 }

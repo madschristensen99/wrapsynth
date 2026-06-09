@@ -6,6 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {wsXmrStorage} from "./wsXmrStorage.sol";
 import {IwsXmrHub} from "../interfaces/core/IwsXmrHub.sol";
 import {IwsXMR} from "../interfaces/core/IwsXMR.sol";
+import {IwsXmrLiquidityRouter} from "../interfaces/router/IwsXmrLiquidityRouter.sol";
 import {VaultFacet} from "../facets/VaultFacet.sol";
 import {GnosisAddresses} from "../GnosisAddresses.sol";
 
@@ -222,29 +223,41 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     }
     
     /// @notice Get vault health ratio for a given LP
-    /// @dev Direct implementation to avoid TSTORE in staticcall issue
+    /// @dev Direct implementation to avoid TSTORE in staticcall issue.
+    ///      Includes co-LP positions so it matches LiquidationFacet CR logic.
     /// @param lpAddress The LP address to check
     /// @return ratio The collateralization ratio (e.g., 150 = 150%)
     function getVaultHealth(address lpAddress) external view returns (uint256 ratio) {
-        uint256 normalizedDebt = _vaults[lpAddress].normalizedDebt;
-        uint256 collateralShares = _vaults[lpAddress].collateralShares;
-        uint256 actualDebt = (normalizedDebt * globalDebtIndex) / 1e18;
+        Vault memory vault = _vaults[lpAddress];
+        uint256 actualDebt = (vault.normalizedDebt * globalDebtIndex) / 1e18;
         
         if (actualDebt == 0) return type(uint256).max;
-        
-        // Convert sDAI shares to DAI
-        (bool success, bytes memory data) = GnosisAddresses.SDAI.staticcall(
-            abi.encodeWithSignature("convertToAssets(uint256)", collateralShares)
-        );
-        require(success && data.length >= 32, "convertToAssets failed");
-        uint256 collateralAmount = abi.decode(data, (uint256));
         
         // Get prices from storage (set by oracle facet)
         uint256 xmrPrice = _getXmrPriceFromStorage();  // 18 decimals (normalized)
         uint256 daiPrice = _getCollateralPriceFromStorage();  // 18 decimals (normalized)
         
-        // Calculate USD values (prices are 18 decimals, collateralAmount is 18 decimals)
-        uint256 collateralValueUsd = (collateralAmount * daiPrice) / 1e18; // 18 decimals
+        // Convert idle sDAI shares to DAI
+        (bool success, bytes memory data) = GnosisAddresses.SDAI.staticcall(
+            abi.encodeWithSignature("convertToAssets(uint256)", vault.collateralShares)
+        );
+        require(success && data.length >= 32, "convertToAssets failed");
+        uint256 idleDai = abi.decode(data, (uint256));
+        
+        uint256 totalDai = idleDai;
+        
+        // Add co-LP position DAI values (ignore wsXMR — belongs to user)
+        uint256[] storage positions = _vaultPositions[lpAddress];
+        if (positions.length > 0 && liquidityRouter != address(0)) {
+            for (uint256 i = 0; i < positions.length; i++) {
+                (uint256 posDai, ) = IwsXmrLiquidityRouter(liquidityRouter)
+                    .getPositionAmountsAtPrice(positions[i], xmrPrice);
+                totalDai += posDai;
+            }
+        }
+        
+        // Calculate USD values (prices are 18 decimals, totalDai is 18 decimals)
+        uint256 collateralValueUsd = (totalDai * daiPrice) / 1e18; // 18 decimals
         uint256 debtValueUsd = (actualDebt * xmrPrice) / 1e8; // wsXMR has 8 decimals, result 18 decimals
         
         // Calculate ratio: (collateral / debt) * 100

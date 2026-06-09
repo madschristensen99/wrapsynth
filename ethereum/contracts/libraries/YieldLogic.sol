@@ -81,7 +81,7 @@ library YieldLogic {
     function syncVaultYield(
         uint256 collateralShares,
         uint256 lockedCollateral,
-        uint256 lpPrincipalShares,
+        uint256 lpPrincipalDeposits,
         uint256 normalizedDebt,
         uint256 pendingDebt,
         uint256 globalDebtIndex,
@@ -98,7 +98,7 @@ library YieldLogic {
         yieldToExtract = calculateExtractableYield(
             collateralShares,
             lockedCollateral,
-            lpPrincipalShares,
+            lpPrincipalDeposits,
             actualDebt,
             pendingDebt,
             xmrPrice,

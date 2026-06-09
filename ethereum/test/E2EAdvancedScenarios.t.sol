@@ -263,9 +263,9 @@ contract E2EAdvancedScenariosTest is Test {
         _setupVault(lp2, 150 ether);
         console.log("[1] LP1 deposited 100 xDAI, LP2 deposited 150 xDAI");
         
-        // Both mint at $390
-        uint256 lp1Minted = _performMint(lp1, user1, 100000000000); // 1 XMR
-        uint256 lp2Minted = _performMint(lp2, user2, 150000000000); // 1.5 XMR
+        // Both mint at $390 (keep under 150% CR check: projectedDebt = 2*wsxmrAmount)
+        uint256 lp1Minted = _performMint(lp1, user1, 80_000_000_000); // ~0.8 XMR
+        uint256 lp2Minted = _performMint(lp2, user2, 120_000_000_000); // ~1.2 XMR
         console.log("[2] User1 minted", lp1Minted, "from LP1");
         console.log("[3] User2 minted", lp2Minted, "from LP2");
         
@@ -325,8 +325,8 @@ contract E2EAdvancedScenariosTest is Test {
         _setupVault(lp1, 200 ether);
         console.log("[1] LP1 deposited 200 xDAI");
         
-        // Mint at $390
-        uint256 mintedAmount = _performMint(lp1, user1, 200000000000); // 2 XMR
+        // Mint at $390 (keep under 150% CR check)
+        uint256 mintedAmount = _performMint(lp1, user1, 160_000_000_000); // ~1.6 XMR
         console.log("[2] User1 minted", mintedAmount, "wsXMR at $390");
         
         // Price crashes to $200

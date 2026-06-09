@@ -54,6 +54,10 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         Vault storage vault = _vaults[lpVault];
         if (vault.minBurnAmount > 0 && wsxmrAmount < vault.minBurnAmount) revert BelowMinimumBurn();
         
+        // M1: Burn cannot exceed the vault's own debt
+        uint256 vaultActualDebt = _denormalizeDebt(vault.normalizedDebt);
+        if (wsxmrAmount > vaultActualDebt) revert BurnExceedsVaultDebt();
+        
         bytes32[] storage vaultBurns = vaultBurnRequests[lpVault];
         uint256 activeCount = 0;
         for (uint256 i = 0; i < vaultBurns.length; i++) {
@@ -407,7 +411,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         uint256 yieldShares = YieldLogic.syncVaultYield(
             vault.collateralShares,
             vault.lockedCollateral,
-            lpPrincipalShares[lpAddress],
+            lpPrincipalDeposits[lpAddress],
             vault.normalizedDebt,
             vault.pendingDebt,
             globalDebtIndex,
