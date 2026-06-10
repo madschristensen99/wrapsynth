@@ -300,7 +300,9 @@ contract E2EFullCycleTest is Test {
         bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
         
         vm.prank(lp);
-        BurnFacet(address(hub)).proposeHash(burnRequestId, burnSecretHash);
+        bytes32 lpPublicSpendKey = bytes32(uint256(0x1111111111111111111111111111111111111111111111111111111111111111));
+        bytes32 lpPublicViewKey = bytes32(uint256(0x2222222222222222222222222222222222222222222222222222222222222222));
+        BurnFacet(address(hub)).proposeHash(burnRequestId, burnSecretHash, lpPublicSpendKey, lpPublicViewKey);
         console.log("[OK] LP proposed hash");
         
         // User confirms Monero lock

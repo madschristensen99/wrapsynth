@@ -4,7 +4,8 @@ import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG } from './config.js';
 import { readHub, writeHub, writeHubUnsafe, readWsxmr, writeWsxmr, watchContractEvent, getUserAddress } from './viemClient.js';
 import { getPhantomAgent } from './phantomAgent.js';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
-import { updateBurnProgress } from './ui.js';
+import { updateBurnProgress, showBurnVerificationLoading, showBurnVerificationDetails, showBurnVerificationManual, showBurnAddressPanel } from './ui.js';
+import { getMoneroRpc } from './moneroRpc.js';
 import { keccak256, toHex } from 'https://esm.sh/viem@2.7.0';
 
 export class BurnFlow {
@@ -183,6 +184,52 @@ export class BurnFlow {
         console.log('Waiting for LP to propose secret hash and send XMR...');
         this.lpProposeStartTime = Date.now();
 
+        // First, check if HashProposed event was already emitted in the past
+        const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
+        const currentBlock = await getBlockNumber();
+        const fromBlock = currentBlock - 1000n; // Check last ~1000 blocks (about 1.5 hours on Gnosis)
+        
+        console.log(`Checking for past HashProposed events from block ${fromBlock} to ${currentBlock}...`);
+        const pastEvents = await getPastEvents(
+            CONTRACTS.hub,
+            ABIS.hub,
+            'HashProposed',
+            fromBlock,
+            'latest',
+            { requestId: this.requestId }
+        );
+
+        if (pastEvents && pastEvents.length > 0) {
+            console.log('Found existing HashProposed event - LP has already sent XMR!');
+            const event = pastEvents[0].args;
+            this.secretHash = event.secretHash;
+            const lpPublicSpendKey = event.lpPublicSpendKey;
+            const lpPublicViewKey = event.lpPublicViewKey;
+            
+            // Derive the shared Monero address
+            const { computeDepositAddress } = await import('./moneroCrypto.js');
+            const userCommitment = this.agent.getCommitment();
+            const moneroAddress = await computeDepositAddress(userCommitment, lpPublicSpendKey, lpPublicViewKey);
+            const viewKey = this.agent.getPrivateViewKeyHex();
+            
+            console.log('Derived Monero address:', moneroAddress);
+            console.log('View key:', viewKey);
+            
+            updateSwapState({
+                requestId: this.requestId,
+                lpStatus: 'found',
+                lpMessage: 'LP has sent XMR to your address',
+                secretHash: this.secretHash,
+                moneroAddress,
+                viewKey
+            });
+            showBurnAddressPanel({ moneroAddress, viewKey });
+            updateBurnProgress('lp-propose', '✓ LP committed — XMR sent');
+            return; // Event already happened, no need to wait
+        }
+
+        console.log('No past HashProposed event found, setting up watcher for new events...');
+
         // Update countdown in swap state while waiting
         const countdownInterval = setInterval(() => {
             const elapsed = Date.now() - this.lpProposeStartTime;
@@ -190,7 +237,7 @@ export class BurnFlow {
             updateSwapState({
                 requestId: this.requestId,
                 lpStatus: 'waiting',
-                lpMessage: 'LP is sending XMR to your Monero address...',
+                lpMessage: 'Waiting for LP to commit...',
                 lpProposeRemaining: remaining
             });
         }, SWAP_CONFIG.pollInterval);
@@ -201,9 +248,32 @@ export class BurnFlow {
                 ABIS.hub,
                 'HashProposed',
                 { requestId: this.requestId },
-                (log) => {
+                async (log) => {
                     console.log('HashProposed event received - LP has sent XMR!');
-                    this.secretHash = log.args.secretHash;
+                    const event = log.args;
+                    this.secretHash = event.secretHash;
+                    const lpPublicSpendKey = event.lpPublicSpendKey;
+                    const lpPublicViewKey = event.lpPublicViewKey;
+                    
+                    // Derive the shared Monero address
+                    const { computeDepositAddress } = await import('./moneroCrypto.js');
+                    const userCommitment = this.agent.getCommitment();
+                    const moneroAddress = await computeDepositAddress(userCommitment, lpPublicSpendKey, lpPublicViewKey);
+                    const viewKey = this.agent.getPrivateViewKeyHex();
+                    
+                    console.log('Derived Monero address:', moneroAddress);
+                    console.log('View key:', viewKey);
+                    
+                    updateSwapState({
+                        requestId: this.requestId,
+                        lpStatus: 'found',
+                        lpMessage: 'LP has sent XMR to your address',
+                        secretHash: this.secretHash,
+                        moneroAddress,
+                        viewKey
+                    });
+                    showBurnAddressPanel({ moneroAddress, viewKey });
+                    updateBurnProgress('lp-propose', '✓ LP committed — XMR sent');
                     clearInterval(countdownInterval);
                     unwatch();
                     resolve();
@@ -222,69 +292,202 @@ export class BurnFlow {
 
     async confirmMoneroLock() {
         this.state = 'confirm-lock';
-        updateSwapState({ 
-            requestId: this.requestId, 
+        updateSwapState({
+            requestId: this.requestId,
             state: this.state,
-            message: 'Waiting for you to verify XMR arrival in your Monero wallet...'
+            message: 'Verifying Monero transaction on blockchain...'
         });
+        updateBurnProgress('confirm-lock', 'Checking Monero blockchain...');
+        showBurnVerificationLoading();
 
-        console.log('\n=== MONERO VERIFICATION REQUIRED ===');
-        console.log('LP has sent XMR to your Monero address!');
-        console.log('\nYour receiving address:', this.destination);
+        console.log('LP has sent XMR to:', this.destination);
         console.log('Expected amount:', this.wsxmrAmount, 'XMR');
-        console.log('\nIMPORTANT: Check your Monero wallet to verify the funds arrived.');
-        console.log('You can use:');
-        console.log('  - Monero GUI wallet');
-        console.log('  - Monero CLI wallet');
-        console.log('  - MyMonero web wallet');
-        console.log('  - Or any other Monero wallet that supports your address');
-        console.log('\nOnce verified, click OK in the confirmation dialog.');
-        console.log('====================================\n');
+        console.log('Secret hash:', this.secretHash);
 
-        // Show user-friendly dialog with better instructions
-        const confirmed = confirm(
-            `🔍 VERIFY MONERO TRANSACTION\n\n` +
-            `The LP has sent XMR to your Monero wallet!\n\n` +
-            `📍 Your address:\n${this.destination}\n\n` +
-            `💰 Expected amount: ${this.wsxmrAmount} XMR\n\n` +
-            `⚠️ IMPORTANT: Open your Monero wallet and verify that:\n` +
-            `   1. The transaction appears in your wallet\n` +
-            `   2. The amount matches (${this.wsxmrAmount} XMR)\n` +
-            `   3. The transaction has at least 1 confirmation\n\n` +
-            `✅ Click OK ONLY after verifying in your Monero wallet\n` +
-            `❌ Click Cancel if you haven't received the XMR yet`
-        );
+        const moneroRpc = getMoneroRpc();
 
-        if (!confirmed) {
-            updateSwapState({
-                requestId: this.requestId,
-                message: 'Waiting for you to verify... Check your Monero wallet and try again.'
-            });
-            throw new Error('User has not verified Monero receipt yet. Please check your wallet and try again.');
+        // Fetch Monero chain status directly from public daemon (no LP server)
+        let moneroHeight = null;
+        try {
+            moneroHeight = await moneroRpc.getHeight();
+            console.log('Monero blockchain height:', moneroHeight);
+        } catch (e) {
+            console.warn('Could not reach Monero daemon:', e);
         }
 
-        console.log('User confirmed XMR receipt, submitting on-chain confirmation...');
-        updateSwapState({
-            requestId: this.requestId,
-            message: 'Submitting confirmation to blockchain...'
+        return new Promise((resolve, reject) => {
+            let scanInterval = null;
+            let timeoutId = null;
+            let confirmed = false;
+
+            const cleanup = () => {
+                if (scanInterval) clearInterval(scanInterval);
+                if (timeoutId) clearTimeout(timeoutId);
+                const btn = document.getElementById('burn-confirm-receipt');
+                const manualBtn = document.getElementById('burn-confirm-receipt-manual');
+                if (btn) btn.replaceWith(btn.cloneNode(true));
+                if (manualBtn) manualBtn.replaceWith(manualBtn.cloneNode(true));
+            };
+
+            const onConfirm = async () => {
+                if (confirmed) return;
+                confirmed = true;
+                cleanup();
+                updateBurnProgress('confirm-lock', 'Submitting confirmation to blockchain...');
+
+                try {
+                    const receipt = await writeHub('confirmMoneroLock', [this.requestId]);
+                    console.log('Monero lock confirmed on-chain, tx:', receipt.transactionHash);
+
+                    updateSwapState({
+                        requestId: this.requestId,
+                        state: 'lp-finalize',
+                        confirmTxHash: receipt.transactionHash,
+                        message: 'Confirmed! Waiting for LP to finalize...'
+                    });
+
+                    this.state = 'lp-finalize';
+                    resolve();
+                } catch (error) {
+                    console.error('confirmMoneroLock on-chain failed:', error);
+                    updateBurnProgress('confirm-lock', 'Confirmation failed — try again');
+                    confirmed = false;
+                    reject(error);
+                }
+            };
+
+            // Wire up both confirm buttons
+            const wireButtons = () => {
+                const btn = document.getElementById('burn-confirm-receipt');
+                const manualBtn = document.getElementById('burn-confirm-receipt-manual');
+                if (btn) btn.addEventListener('click', onConfirm);
+                if (manualBtn) manualBtn.addEventListener('click', onConfirm);
+            };
+            wireButtons();
+
+            // Show verification details immediately with what we know from on-chain data
+            showBurnVerificationDetails({
+                destination: this.destination || '',
+                txHash: this.secretHash ? `Secret hash: ${this.secretHash.slice(0, 16)}...${this.secretHash.slice(-16)}` : 'Unknown',
+                confirmations: moneroHeight !== null ? `Daemon height ${moneroHeight.toLocaleString()}` : 'Daemon unreachable',
+                amount: this.wsxmrAmount
+            });
+
+            // Light scan: try to find the secretHash in recent Monero tx extra data
+            // This works because the LP embeds the secret hash in the Monero PTLC transaction
+            const scanForSecretHash = async () => {
+                if (!this.secretHash || moneroHeight === null) return;
+
+                try {
+                    const targetHex = this.secretHash.toLowerCase().replace(/^0x/, '');
+                    const startHeight = Math.max(0, moneroHeight - 20);
+
+                    for (let h = moneroHeight; h >= startHeight; h--) {
+                        try {
+                            const block = await moneroRpc.daemonRpc('get_block', { height: h });
+                            const txHashes = block.tx_hashes || [];
+                            if (!txHashes.length) continue;
+
+                            // Batch fetch transactions in this block
+                            const txRes = await fetch(moneroRpc.rpcUrl + '/get_transactions', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ txs_hashes: txHashes, decode_as_json: true })
+                            });
+                            const txData = await txRes.json();
+                            if (txData.status !== 'OK') continue;
+
+                            for (const tx of (txData.txs || [])) {
+                                let txJson = tx;
+                                if (tx.as_json) {
+                                    try { txJson = JSON.parse(tx.as_json); } catch (e) {}
+                                }
+                                const extra = txJson.extra;
+                                if (!extra) continue;
+                                // extra can be hex string or array
+                                const extraHex = typeof extra === 'string'
+                                    ? extra.replace(/^0x/, '')
+                                    : Array.isArray(extra)
+                                        ? extra.map(b => b.toString(16).padStart(2, '0')).join('')
+                                        : '';
+
+                                if (extraHex.includes(targetHex)) {
+                                    console.log(`Found secretHash in Monero tx at height ${h}:`, txHashes[0]);
+                                    clearInterval(scanInterval);
+                                    scanInterval = null;
+
+                                    const txHash = txHashes[0];
+                                    const currentHeight = await moneroRpc.getHeight();
+                                    const confirmations = Math.max(0, currentHeight - h + 1);
+
+                                    showBurnVerificationDetails({
+                                        destination: this.destination || '',
+                                        txHash,
+                                        confirmations,
+                                        amount: this.wsxmrAmount
+                                    });
+                                    updateBurnProgress('confirm-lock', `Transaction found (${confirmations} confirmation${confirmations !== 1 ? 's' : ''})`);
+                                    return;
+                                }
+                            }
+                        } catch (blockErr) {
+                            // Skip failed blocks
+                        }
+                    }
+                } catch (err) {
+                    console.warn('Monero scan error:', err);
+                }
+            };
+
+            // Run one scan immediately, then every 10s for a minute
+            scanForSecretHash();
+            scanInterval = setInterval(scanForSecretHash, 10000);
+
+            // After 60s stop scanning and just show the manual confirm
+            timeoutId = setTimeout(() => {
+                if (scanInterval) {
+                    clearInterval(scanInterval);
+                    scanInterval = null;
+                }
+                const loading = document.getElementById('burn-verification-loading');
+                const details = document.getElementById('burn-verification-details');
+                if (loading && !loading.classList.contains('hidden')) {
+                    console.log('Monero scan complete — no tx found with embedded secretHash');
+                    showBurnVerificationManual();
+                    updateBurnProgress('confirm-lock', 'Waiting for you to confirm receipt...');
+                } else if (details && !details.classList.contains('hidden')) {
+                    // Tx was found, keep showing details
+                }
+            }, 60000);
         });
-
-        const receipt = await writeHub('confirmMoneroLock', [this.requestId]);
-        
-        console.log('✅ Monero lock confirmed on-chain, tx:', receipt.transactionHash);
-
-        updateSwapState({
-            requestId: this.requestId,
-            state: 'lp-finalize',
-            confirmTxHash: receipt.transactionHash,
-            message: 'Confirmed! Waiting for LP to finalize...'
-        });
-
-        this.state = 'lp-finalize';
     }
 
     async waitForLPFinalize() {
         console.log('Waiting for LP to finalize burn...');
+
+        // First, check if BurnFinalized event was already emitted in the past
+        const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
+        const currentBlock = await getBlockNumber();
+        const fromBlock = currentBlock - 1000n; // Check last ~1000 blocks
+        
+        console.log(`Checking for past BurnFinalized events from block ${fromBlock} to ${currentBlock}...`);
+        const pastEvents = await getPastEvents(
+            CONTRACTS.hub,
+            ABIS.hub,
+            'BurnFinalized',
+            fromBlock,
+            'latest',
+            { requestId: this.requestId }
+        );
+
+        if (pastEvents && pastEvents.length > 0) {
+            console.log('Found existing BurnFinalized event!');
+            const secret = pastEvents[0].args.secret;
+            console.log('Secret revealed:', secret);
+            return secret; // Event already happened, no need to wait
+        }
+
+        console.log('No past BurnFinalized event found, setting up watcher for new events...');
 
         return new Promise((resolve, reject) => {
             const unwatch = watchContractEvent(

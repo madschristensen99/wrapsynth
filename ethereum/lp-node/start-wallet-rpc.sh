@@ -3,7 +3,7 @@
 # Start monero-wallet-rpc for LP node
 # This creates a view-only wallet from the LP's private spend key
 
-WALLET_FILE="./lp-wallet"
+WALLET_FILE="./lp-wallet-fresh"
 WALLET_PASSWORD="lp-password-change-me"
 RPC_PORT=18082
 DAEMON_URL="https://xmr-node.cakewallet.com:18081"

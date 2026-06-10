@@ -66,7 +66,10 @@ const elements = {
     modalCloseBtn: null,
     
     // Withdraw returns
-    withdrawReturnsBtn: null
+    withdrawReturnsBtn: null,
+    
+    // Previous mint banner
+    previousMintBanner: null
 };
 
 /**
@@ -134,6 +137,9 @@ export function initUI() {
     
     // Withdraw returns
     elements.withdrawReturnsBtn = document.getElementById('withdraw-returns-btn');
+    
+    // Previous mint banner
+    elements.previousMintBanner = document.getElementById('previous-mint-banner');
     
     // Setup modal close handlers
     const modalClose = document.querySelector('.modal-close');
@@ -248,10 +254,16 @@ export function showResumeBanner(swaps, onResume, onResolve) {
 
         const btn = document.createElement('button');
         btn.className = 'btn btn-small';
-        btn.textContent = showResume ? 'Resume' : 'Resolve';
-        btn.style.cssText = showResume
-            ? 'padding: 0.25rem 0.75rem; font-size: 0.8rem;'
-            : 'padding: 0.25rem 0.75rem; font-size: 0.8rem; background: transparent; color: var(--text-secondary); border: 1px solid var(--border-color);';
+        if (isClaimableMint) {
+            btn.textContent = 'Claim wsXMR';
+            btn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.8rem; background: var(--success-color); color: white; border: 1px solid var(--success-color);';
+        } else if (showResume) {
+            btn.textContent = 'Resume';
+            btn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.8rem;';
+        } else {
+            btn.textContent = 'Resolve';
+            btn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.8rem; background: transparent; color: var(--text-secondary); border: 1px solid var(--border-color);';
+        }
         btn.addEventListener('click', () => {
             if (showResume) {
                 if (onResume) onResume(swap);
@@ -600,7 +612,7 @@ export function showMintDepositInfo(address, amount) {
     if (elements.waitingLpVerification) {
         elements.waitingLpVerification.classList.add('hidden');
     }
-    
+
     elements.mintDepositInfo.classList.remove('hidden');
     elements.mintActions.classList.remove('hidden');
 }
@@ -612,10 +624,49 @@ export function showLPVerificationStatus() {
     if (elements.confirmSentXmr) {
         elements.confirmSentXmr.classList.add('hidden');
     }
+    
+    // Hide deposit info by default - user can click "See TX Details" to view it
+    if (elements.mintDepositInfo) {
+        elements.mintDepositInfo.classList.add('hidden');
+    }
+    
+    // Keep deposit step body expanded so the verification status and toggle button are visible
+    const depositStep = elements.mintProgress?.querySelector('[data-step="deposit"]');
+    if (depositStep) {
+        const body = depositStep.querySelector('.step-body');
+        if (body) body.classList.add('force-open');
+    }
+
     if (elements.waitingLpVerification) {
         elements.waitingLpVerification.classList.remove('hidden');
-        elements.waitingLpVerification.innerHTML = `<svg class="spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:6px;color:var(--accent-orange);"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Waiting for LP to verify your transaction...<br><span style="font-size:0.8rem;color:var(--text-muted);margin-left:20px;display:block;margin-top:4px;">The LP waits for 10+ Monero blockchain confirmations before marking your deposit as verified (~15–30 min).</span>`;
+        elements.waitingLpVerification.innerHTML = `
+            <svg class="spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:6px;color:var(--accent-orange);"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> 
+            Waiting for LP to verify your transaction...
+            <br>
+            <span style="font-size:0.8rem;color:var(--text-muted);margin-left:20px;display:block;margin-top:4px;">
+                The LP waits for 10+ Monero blockchain confirmations before marking your deposit as verified (~15–30 min).
+            </span>
+            <button id="show-tx-details-btn" class="btn btn-secondary" style="margin-top:12px;margin-left:20px;font-size:0.85rem;padding:6px 12px;">
+                ${getIconSVG('eye')} See TX Details
+            </button>
+        `;
+        
+        // Add click handler for the button
+        const showTxDetailsBtn = document.getElementById('show-tx-details-btn');
+        if (showTxDetailsBtn && elements.mintDepositInfo) {
+            showTxDetailsBtn.onclick = () => {
+                const isHidden = elements.mintDepositInfo.classList.contains('hidden');
+                if (isHidden) {
+                    elements.mintDepositInfo.classList.remove('hidden');
+                    showTxDetailsBtn.innerHTML = `${getIconSVG('eye-off')} Hide TX Details`;
+                } else {
+                    elements.mintDepositInfo.classList.add('hidden');
+                    showTxDetailsBtn.innerHTML = `${getIconSVG('eye')} See TX Details`;
+                }
+            };
+        }
     }
+
 }
 
 /**
@@ -644,7 +695,12 @@ export function showClaimWsXmrButton(onClaim) {
 
     claimButton.classList.remove('hidden');
     claimButton.onclick = onClaim;
-    
+
+    // Hide the Cancel & Refund button once LP has confirmed
+    if (elements.cancelMint) {
+        elements.cancelMint.classList.add('hidden');
+    }
+
     // Update progress message
     updateMintProgress('lp-confirm', 'LP confirmed! Click to claim your wsXMR tokens.');
 }
@@ -779,6 +835,84 @@ export function showMintComplete(amount) {
 }
 
 /**
+ * Show burn verification loading state
+ */
+export function showBurnVerificationLoading() {
+    const loading = document.getElementById('burn-verification-loading');
+    const details = document.getElementById('burn-verification-details');
+    const manual = document.getElementById('burn-verification-manual');
+    if (loading) loading.classList.remove('hidden');
+    if (details) details.classList.add('hidden');
+    if (manual) manual.classList.add('hidden');
+}
+
+/**
+ * Show burn verification details inline
+ * @param {Object} details - { destination, txHash, confirmations, amount }
+ */
+export function showBurnVerificationDetails(details) {
+    const loading = document.getElementById('burn-verification-loading');
+    const detailsEl = document.getElementById('burn-verification-details');
+    const manual = document.getElementById('burn-verification-manual');
+
+    if (loading) loading.classList.add('hidden');
+    if (manual) manual.classList.add('hidden');
+    if (detailsEl) {
+        detailsEl.classList.remove('hidden');
+
+        const addrEl = document.getElementById('burn-verify-address');
+        const txHashEl = document.getElementById('burn-verify-tx-hash');
+        const txLinkEl = document.getElementById('burn-verify-tx-link');
+        const confsEl = document.getElementById('burn-verify-confirmations');
+        const amountEl = document.getElementById('burn-verify-amount');
+
+        if (addrEl) addrEl.textContent = details.destination || '';
+        if (txHashEl) txHashEl.textContent = details.txHash || '';
+        if (txLinkEl) {
+            txLinkEl.href = details.txHash
+                ? `https://xmrchain.net/tx/${details.txHash}`
+                : '#';
+        }
+        if (confsEl) {
+            confsEl.textContent = details.confirmations !== undefined
+                ? `${details.confirmations} confirmation${details.confirmations !== 1 ? 's' : ''}`
+                : 'Unknown';
+        }
+        if (amountEl) {
+            amountEl.textContent = details.amount !== undefined ? `${details.amount} XMR` : 'Unknown';
+        }
+    }
+}
+
+/**
+ * Show manual burn confirmation option
+ */
+export function showBurnVerificationManual() {
+    const loading = document.getElementById('burn-verification-loading');
+    const details = document.getElementById('burn-verification-details');
+    const manual = document.getElementById('burn-verification-manual');
+    if (loading) loading.classList.add('hidden');
+    if (details) details.classList.add('hidden');
+    if (manual) manual.classList.remove('hidden');
+}
+
+/**
+ * Show burn address panel with Monero address and view key
+ * @param {Object} data - { moneroAddress, viewKey }
+ */
+export function showBurnAddressPanel(data) {
+    const panel = document.getElementById('burn-address-panel');
+    const addressEl = document.getElementById('burn-monero-address');
+    const viewKeyEl = document.getElementById('burn-view-key');
+    
+    if (panel && addressEl && viewKeyEl) {
+        addressEl.textContent = data.moneroAddress || '';
+        viewKeyEl.textContent = data.viewKey || '';
+        panel.classList.remove('hidden');
+    }
+}
+
+/**
  * Show error modal
  */
 export function showError(title, message) {
@@ -866,7 +1000,6 @@ export function disableInputs(isMint = true) {
     if (isMint) {
         elements.mintAmount.disabled = true;
         elements.mintVaultSelect.disabled = true;
-        elements.startMint.disabled = true;
     } else {
         elements.burnAmount.disabled = true;
         elements.burnXmrDestination.disabled = true;
@@ -882,7 +1015,6 @@ export function enableInputs(isMint = true) {
     if (isMint) {
         elements.mintAmount.disabled = false;
         elements.mintVaultSelect.disabled = false;
-        elements.startMint.disabled = false;
     } else {
         elements.burnAmount.disabled = false;
         elements.burnXmrDestination.disabled = false;
@@ -898,7 +1030,54 @@ export function resetMintUI() {
     elements.mintProgress.classList.add('hidden');
     elements.mintDepositInfo.classList.add('hidden');
     elements.mintActions.classList.add('hidden');
+    elements.previousMintBanner?.classList.add('hidden');
     enableInputs(true);
+    const claimBtn = elements.mintActions?.querySelector('.claim-wsxmr-btn');
+    if (claimBtn) claimBtn.remove();
+    if (elements.cancelMint) elements.cancelMint.classList.remove('hidden');
+    const btnText = elements.startMint?.querySelector('.btn-text');
+    if (btnText) btnText.textContent = 'Start Mint';
+    // Clean up any forced-open step bodies
+    elements.mintProgress?.querySelectorAll('.step-body.force-open').forEach(b => b.classList.remove('force-open'));
+}
+
+/**
+ * Update Start Mint button text
+ */
+export function setStartMintButtonText(text) {
+    const btnText = elements.startMint?.querySelector('.btn-text');
+    if (btnText) btnText.textContent = text;
+}
+
+/**
+ * Show a clickable banner to resume a previous mint
+ */
+export function showPreviousMintBanner(swap, onClick) {
+    if (!elements.previousMintBanner || !swap) return;
+    const stateLabel = formatSwapState(swap.state);
+    const shortId = swap.requestId ? `${swap.requestId.slice(0, 6)}...${swap.requestId.slice(-4)}` : '';
+    const amount = swap.xmrAmount ? `${typeof swap.xmrAmount === 'number' ? swap.xmrAmount.toFixed(4) : swap.xmrAmount} XMR` : '';
+    elements.previousMintBanner.innerHTML = `
+        <span style="cursor: pointer; display: flex; align-items: center; gap: 0.5rem;" class="previous-mint-link">
+            <span style="color: var(--primary);">&#8592;</span>
+            <span>Back to <strong>Mint ${shortId}</strong> ${amount ? `(${amount})` : ''} &mdash; ${stateLabel}</span>
+        </span>
+    `;
+    const link = elements.previousMintBanner.querySelector('.previous-mint-link');
+    if (link && onClick) {
+        link.addEventListener('click', onClick);
+    }
+    elements.previousMintBanner.classList.remove('hidden');
+}
+
+/**
+ * Hide the previous mint banner
+ */
+export function hidePreviousMintBanner() {
+    if (elements.previousMintBanner) {
+        elements.previousMintBanner.classList.add('hidden');
+        elements.previousMintBanner.innerHTML = '';
+    }
 }
 
 /**

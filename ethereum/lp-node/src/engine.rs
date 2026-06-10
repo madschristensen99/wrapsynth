@@ -210,18 +210,6 @@ impl SwapEngine {
 
         info!("Secret persisted to database");
 
-        // Propose hash on EVM
-        let secret_hash_fixed = FixedBytes::from_slice(&secret_hash);
-
-        let tx_hash = self
-            .evm
-            .propose_hash(request_id, secret_hash_fixed)
-            .await
-            .context("Failed to propose hash on EVM")?;
-
-        burn.commit_tx_hash = Some(tx_hash.0);
-        info!("Hash proposed on EVM: {}", hex::encode(tx_hash));
-
         // Get claim commitment to derive Monero address
         let claim_commitment = burn
             .claim_commitment
@@ -230,6 +218,24 @@ impl SwapEngine {
         // Derive shared Monero address from user's claim commitment
         let swap_keys = self.monero.generate_swap_keys(&claim_commitment)?;
         let monero_address = swap_keys.deposit_address;
+        
+        // Extract LP public keys to store on-chain
+        let lp_public_spend_bytes = swap_keys.lp_public_spend.as_bytes();
+        let lp_public_view_bytes = swap_keys.lp_public_view.as_bytes();
+        let lp_public_spend_key = FixedBytes::from_slice(lp_public_spend_bytes);
+        let lp_public_view_key = FixedBytes::from_slice(lp_public_view_bytes);
+
+        // Propose hash on EVM with LP public keys
+        let secret_hash_fixed = FixedBytes::from_slice(&secret_hash);
+
+        let tx_hash = self
+            .evm
+            .propose_hash(request_id, secret_hash_fixed, lp_public_spend_key, lp_public_view_key)
+            .await
+            .context("Failed to propose hash on EVM")?;
+
+        burn.commit_tx_hash = Some(tx_hash.0);
+        info!("Hash proposed on EVM: {}", hex::encode(tx_hash));
         info!(
             "Derived Monero destination address for burn: {}",
             monero_address
@@ -369,10 +375,18 @@ impl SwapEngine {
 
     async fn process_pending_mints(&self) -> Result<()> {
         // Get all non-completed mints
-        let mints = self.db.get_all_mint_tasks()?;
+        let mints: Vec<_> = self.db.get_all_mint_tasks()?
+            .into_iter()
+            .filter(|m| !matches!(m.status, MintStatus::Completed | MintStatus::Cancelled))
+            .collect();
         let current_block = self.evm.get_block_number().await.unwrap_or(0);
 
+        if !mints.is_empty() {
+            info!("Processing {} pending mint task(s)", mints.len());
+        }
+
         for mut mint in mints {
+            info!("Processing mint {} with status {:?}", hex::encode(mint.request_id), mint.status);
             // Check if mint has expired
             if mint.timeout > 0 && current_block >= mint.timeout && 
                !matches!(mint.status, MintStatus::Completed | MintStatus::Cancelled) {
@@ -536,24 +550,54 @@ impl SwapEngine {
     async fn handle_mint_pending(&self, mint: &mut MintTask) -> Result<()> {
         info!("Checking for XMR lock: {}", hex::encode(mint.request_id));
 
-        // Verify the user has locked XMR on Monero
-        let verified = self
+        // First check on-chain status to avoid unnecessary Monero scans
+        let request_id = FixedBytes::from_slice(&mint.request_id);
+        if let Ok(status) = self.evm.get_mint_status(request_id).await {
+            // Status: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
+            if status == 4 {
+                info!("Mint {} already COMPLETED on-chain, updating local state", hex::encode(mint.request_id));
+                mint.status = MintStatus::Completed;
+                mint.updated_at = current_timestamp();
+                self.db.update_mint_task(mint)?;
+                return Ok(());
+            } else if status == 5 {
+                info!("Mint {} already CANCELLED on-chain, updating local state", hex::encode(mint.request_id));
+                mint.status = MintStatus::Cancelled;
+                mint.updated_at = current_timestamp();
+                self.db.update_mint_task(mint)?;
+                return Ok(());
+            } else if status == 3 {
+                info!("Mint {} already READY on-chain, updating local state", hex::encode(mint.request_id));
+                mint.status = MintStatus::Ready;
+                mint.updated_at = current_timestamp();
+                self.db.update_mint_task(mint)?;
+                return Ok(());
+            }
+        }
+
+        // Verify the user has locked XMR on Monero (incremental scanning)
+        let (verified, new_scanned_height) = self
             .monero
             .verify_mint_lock(
                 mint.xmr_amount,
                 &mint.claim_commitment,
                 mint.deposit_address.as_deref(),
                 &mint.lp_private_view,
-                1
+                1,
+                mint.last_scanned_height,
             )
             .await?;
 
+        // Always update the last scanned height to avoid re-scanning
+        mint.last_scanned_height = Some(new_scanned_height);
+        
         if verified {
             info!("XMR lock verified for mint {}", hex::encode(mint.request_id));
             mint.status = MintStatus::XmrLocked;
-            mint.updated_at = current_timestamp();
-            self.db.update_mint_task(mint)?;
         }
+        
+        mint.updated_at = current_timestamp();
+        self.db.update_mint_task(mint)?;
 
         Ok(())
     }
@@ -561,17 +605,21 @@ impl SwapEngine {
     async fn handle_mint_xmr_locked(&self, mint: &mut MintTask) -> Result<()> {
         info!("Waiting for confirmations: {}", hex::encode(mint.request_id));
 
-        // Verify sufficient confirmations
-        let verified = self
+        // Verify sufficient confirmations (incremental scanning)
+        let (verified, new_scanned_height) = self
             .monero
             .verify_mint_lock(
                 mint.xmr_amount,
                 &mint.claim_commitment,
                 mint.deposit_address.as_deref(),
                 &mint.lp_private_view,
-                MONERO_CONFIRMATIONS
+                MONERO_CONFIRMATIONS,
+                mint.last_scanned_height,
             )
             .await?;
+
+        // Always update the last scanned height
+        mint.last_scanned_height = Some(new_scanned_height);
 
         if verified {
             info!(
@@ -581,18 +629,19 @@ impl SwapEngine {
 
             let request_id = FixedBytes::from_slice(&mint.request_id);
 
-            // Check if LP key was already provided on-chain (getMintRequest doesn't exist on deployed contract)
-            let lp_key_set = match self.evm.get_lp_public_key(request_id).await {
-                Ok(key) => key != FixedBytes::from([0u8; 32]),
+            // Check current mint status on-chain
+            let current_status = match self.evm.get_mint_status(request_id).await {
+                Ok(status) => status,
                 Err(e) => {
-                    warn!("Failed to check lpPublicKeys on-chain: {}, assuming not set", e);
-                    false
+                    warn!("Failed to check mint status on-chain: {}, assuming PENDING", e);
+                    1 // Assume PENDING
                 }
             };
 
-            // Provide LP key if not already on-chain
-            if !lp_key_set {
-                info!("Providing LP key before setMintReady...");
+            // Provide LP key if status is still PENDING (1)
+            // Skip if status is KEY_PROVIDED (2) or higher
+            if current_status == 1 {
+                info!("Mint status is PENDING, providing LP key...");
                 if let (Some(lp_public_spend_bytes), Some(lp_public_view_bytes)) = (mint.lp_public_spend, mint.lp_public_view) {
                     match self.evm.provide_lp_key(request_id, lp_public_spend_bytes.into(), lp_public_view_bytes.into()).await {
                         Ok(tx_hash) => {
@@ -607,8 +656,21 @@ impl SwapEngine {
                     warn!("LP public keys not found in mint task, cannot proceed to setMintReady");
                     return Err(anyhow!("LP public keys missing for mint {}", hex::encode(mint.request_id)));
                 }
-            } else {
-                info!("LP key already provided on-chain, skipping provideLPKey");
+            } else if current_status == 2 {
+                info!("Mint status is already KEY_PROVIDED, skipping provideLPKey");
+            } else if current_status >= 3 {
+                info!("Mint status is {} (already READY or beyond), skipping provideLPKey and setMintReady", current_status);
+                // Update local state to match on-chain
+                if current_status == 3 {
+                    mint.status = MintStatus::Ready;
+                } else if current_status == 4 {
+                    mint.status = MintStatus::XmrClaimed;
+                } else if current_status == 5 {
+                    mint.status = MintStatus::Cancelled;
+                }
+                mint.updated_at = current_timestamp();
+                self.db.update_mint_task(mint)?;
+                return Ok(());
             }
 
             // Update oracle prices using Node.js script (RedStone SDK only works in JS)
@@ -907,6 +969,20 @@ impl SwapEngine {
         loop {
             if let Err(e) = self.check_vault_health().await {
                 error!("Error checking vault health: {}", e);
+            }
+
+            // Prune old Monero transaction cache (keep last 1000 blocks)
+            if let Ok(current_height) = self.monero.get_height().await {
+                let prune_below = current_height.saturating_sub(1000);
+                match self.db.prune_monero_tx_cache(prune_below) {
+                    Ok(pruned) if pruned > 0 => {
+                        info!("Pruned {} old cached Monero transactions (below height {})", pruned, prune_below);
+                    }
+                    Err(e) => {
+                        warn!("Failed to prune Monero tx cache: {}", e);
+                    }
+                    _ => {}
+                }
             }
 
             sleep(Duration::from_secs(300)).await; // Check every 5 minutes

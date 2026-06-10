@@ -109,5 +109,5 @@ threshold_bps = 100  # Trade if pool price deviates > 1% from oracle (100 basis 
 max_trade_sdai = "100000000000000000"  # 0.1 sDAI max per trade
 max_trade_wsxmr = "100000000000"  # 1,000 wsXMR max per trade (8 decimals)
 slippage_bps = 100  # 1% slippage tolerance
-poll_interval_secs = 15  # Check for arbitrage every 15 seconds
+poll_interval_secs = 60  # Check for arbitrage every 60 seconds (reduced from 15s to avoid log spam)
 min_profit_bps = 50  # Minimum 0.5% profit after fees to trade

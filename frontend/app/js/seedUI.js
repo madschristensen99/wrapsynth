@@ -128,7 +128,8 @@ export async function showSeedGenerationModal() {
                     );
                     
                     if (shouldStore) {
-                        const stored = await storeSeed(seed, keySet.publicSpendKey.toString(16));
+                        const { toHex } = await import('https://esm.sh/viem@2.7.0');
+                        const stored = await storeSeed(seed, toHex(keySet.publicSpendKey));
                         if (!stored) {
                             alert('Failed to store seed. You can still use it manually.');
                         }
@@ -165,12 +166,16 @@ export async function showSeedGenerationModal() {
  * Returns a promise that resolves with the key set
  */
 export async function showSeedInputModal(publicSpendKey = null) {
+    // Check if we have a stored seed (do this before Promise to avoid async issues)
+    let hasStored = false;
+    let publicSpendKeyHex = null;
+    if (publicSpendKey) {
+        const { toHex } = await import('https://esm.sh/viem@2.7.0');
+        publicSpendKeyHex = toHex(publicSpendKey);
+        hasStored = hasStoredSeed(publicSpendKeyHex);
+    }
+    
     return new Promise((resolve, reject) => {
-        // Check if we have a stored seed
-        let hasStored = false;
-        if (publicSpendKey) {
-            hasStored = hasStoredSeed(publicSpendKey.toString(16));
-        }
         
         const modalHTML = `
             <div id="seed-input-overlay" class="modal-overlay">
@@ -228,7 +233,7 @@ export async function showSeedInputModal(publicSpendKey = null) {
                     loadStoredBtn.disabled = true;
                     loadStoredBtn.textContent = 'Loading...';
                     
-                    const seed = await loadSeed(publicSpendKey.toString(16));
+                    const seed = await loadSeed(publicSpendKeyHex);
                     if (seed) {
                         const keySet = createKeySet(seed);
                         overlay.remove();

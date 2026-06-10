@@ -210,8 +210,10 @@ contract wsXmrStorage {
     mapping(bytes32 => BurnRequest) public burnRequests;
     
     // LP public keys for atomic swap coordination (separate to avoid struct bloat)
-    mapping(bytes32 => bytes32) public lpPublicKeys;  // requestId => LP's Ed25519 public spend key
-    mapping(bytes32 => bytes32) public lpPublicViewKeys;  // requestId => LP's Ed25519 public view key
+    mapping(bytes32 => bytes32) public lpPublicKeys;  // requestId => LP's Ed25519 public spend key (for mints)
+    mapping(bytes32 => bytes32) public lpPublicViewKeys;  // requestId => LP's Ed25519 public view key (for mints)
+    mapping(bytes32 => bytes32) public burnLpPublicKeys;  // requestId => LP's Ed25519 public spend key (for burns)
+    mapping(bytes32 => bytes32) public burnLpPublicViewKeys;  // requestId => LP's Ed25519 public view key (for burns)
     
     // Vault list
     address[] public vaultList;

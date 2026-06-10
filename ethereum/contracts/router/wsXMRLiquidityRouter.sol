@@ -183,14 +183,16 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
             
             // Calculate exact amounts for this liquidity using the same sqrtDiff values
             if (sqrtDiff0 > 0) {
-                amount0Desired = (uint256(targetLiq) * (1 << 96) * sqrtDiff0)
-                    / (uint256(sqrtUpper) * uint256(sqrtPriceX96));
+                // Use FullMath to avoid overflow: amount0 = L * (1 << 96) * sqrtDiff0 / (sqrtUpper * sqrtPrice)
+                uint256 numerator = FullMath.mulDiv(uint256(targetLiq), 1 << 96, uint256(sqrtUpper));
+                amount0Desired = FullMath.mulDiv(numerator, sqrtDiff0, uint256(sqrtPriceX96));
             } else {
                 amount0Desired = 0;
             }
             
             if (sqrtDiff1 > 0) {
-                amount1Desired = (uint256(targetLiq) * sqrtDiff1) / (1 << 96);
+                // Use FullMath to avoid overflow: amount1 = L * sqrtDiff1 / (1 << 96)
+                amount1Desired = FullMath.mulDiv(uint256(targetLiq), sqrtDiff1, 1 << 96);
             } else {
                 amount1Desired = 0;
             }

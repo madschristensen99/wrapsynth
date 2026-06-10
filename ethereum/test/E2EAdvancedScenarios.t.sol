@@ -232,7 +232,9 @@ contract E2EAdvancedScenariosTest is Test {
         bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
         
         vm.prank(lp1);
-        BurnFacet(address(hub)).proposeHash(burnRequestId, burnSecretHash);
+        bytes32 lpPublicSpendKey = bytes32(uint256(0x1111111111111111111111111111111111111111111111111111111111111111));
+        bytes32 lpPublicViewKey = bytes32(uint256(0x2222222222222222222222222222222222222222222222222222222222222222));
+        BurnFacet(address(hub)).proposeHash(burnRequestId, burnSecretHash, lpPublicSpendKey, lpPublicViewKey);
         console.log("[3] LP1 proposed hash");
         
         // User confirms Monero lock
@@ -358,7 +360,9 @@ contract E2EAdvancedScenariosTest is Test {
         bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
         
         vm.prank(lp1);
-        BurnFacet(address(hub)).proposeHash(burnRequestId, burnSecretHash);
+        bytes32 lpPublicSpendKey = bytes32(uint256(0x1111111111111111111111111111111111111111111111111111111111111111));
+        bytes32 lpPublicViewKey = bytes32(uint256(0x2222222222222222222222222222222222222222222222222222222222222222));
+        BurnFacet(address(hub)).proposeHash(burnRequestId, burnSecretHash, lpPublicSpendKey, lpPublicViewKey);
         
         vm.prank(user1);
         BurnFacet(address(hub)).confirmMoneroLock(burnRequestId);

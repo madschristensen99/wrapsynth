@@ -96,7 +96,9 @@ contract BurnSolvencyInvariantTest is Test {
         bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
 
         vm.prank(lp);
-        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash);
+        bytes32 lpPublicSpendKey = bytes32(uint256(0x1111111111111111111111111111111111111111111111111111111111111111));
+        bytes32 lpPublicViewKey = bytes32(uint256(0x2222222222222222222222222222222222222222222222222222222222222222));
+        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash, lpPublicSpendKey, lpPublicViewKey);
 
         vm.prank(user);
         BurnFacet(address(hub)).confirmMoneroLock(burnId);
@@ -140,7 +142,9 @@ contract BurnSolvencyInvariantTest is Test {
         bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
 
         vm.prank(lp);
-        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash);
+        bytes32 lpPublicSpendKey = bytes32(uint256(0x1111111111111111111111111111111111111111111111111111111111111111));
+        bytes32 lpPublicViewKey = bytes32(uint256(0x2222222222222222222222222222222222222222222222222222222222222222));
+        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash, lpPublicSpendKey, lpPublicViewKey);
 
         vm.prank(user);
         BurnFacet(address(hub)).confirmMoneroLock(burnId);
@@ -255,7 +259,9 @@ contract BurnSolvencyInvariantTest is Test {
         bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
 
         vm.prank(lp);
-        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash);
+        bytes32 lpPublicSpendKey = bytes32(uint256(0x1111111111111111111111111111111111111111111111111111111111111111));
+        bytes32 lpPublicViewKey = bytes32(uint256(0x2222222222222222222222222222222222222222222222222222222222222222));
+        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash, lpPublicSpendKey, lpPublicViewKey);
 
         wsXmrStorage.Vault memory vaultBefore = _getVault(lp);
         uint256 sharesBefore = vaultBefore.collateralShares;
@@ -297,7 +303,9 @@ contract BurnSolvencyInvariantTest is Test {
         bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
 
         vm.prank(lp);
-        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash);
+        bytes32 lpPublicSpendKey = bytes32(uint256(0x1111111111111111111111111111111111111111111111111111111111111111));
+        bytes32 lpPublicViewKey = bytes32(uint256(0x2222222222222222222222222222222222222222222222222222222222222222));
+        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash, lpPublicSpendKey, lpPublicViewKey);
 
         vm.prank(user);
         BurnFacet(address(hub)).confirmMoneroLock(burnId);
@@ -369,7 +377,9 @@ contract BurnSolvencyInvariantTest is Test {
         bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
 
         vm.prank(lp);
-        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash);
+        bytes32 lpPublicSpendKey = bytes32(uint256(0x1111111111111111111111111111111111111111111111111111111111111111));
+        bytes32 lpPublicViewKey = bytes32(uint256(0x2222222222222222222222222222222222222222222222222222222222222222));
+        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash, lpPublicSpendKey, lpPublicViewKey);
 
         vm.prank(user);
         BurnFacet(address(hub)).confirmMoneroLock(burnId);
@@ -425,8 +435,10 @@ contract BurnSolvencyInvariantTest is Test {
         bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
 
         vm.prank(lp);
+        bytes32 lpPublicSpendKey = bytes32(uint256(0x1111111111111111111111111111111111111111111111111111111111111111));
+        bytes32 lpPublicViewKey = bytes32(uint256(0x2222222222222222222222222222222222222222222222222222222222222222));
         vm.expectRevert(IErrors.DeadlineExpired.selector);
-        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash);
+        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash, lpPublicSpendKey, lpPublicViewKey);
 
         // Holder can now force-settle and receive par
         vm.prank(user);
@@ -487,7 +499,9 @@ contract BurnSolvencyInvariantTest is Test {
         bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
 
         vm.prank(lp);
-        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash);
+        bytes32 lpPublicSpendKey = bytes32(uint256(0x1111111111111111111111111111111111111111111111111111111111111111));
+        bytes32 lpPublicViewKey = bytes32(uint256(0x2222222222222222222222222222222222222222222222222222222222222222));
+        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash, lpPublicSpendKey, lpPublicViewKey);
 
         vm.prank(user);
         BurnFacet(address(hub)).confirmMoneroLock(burnId);

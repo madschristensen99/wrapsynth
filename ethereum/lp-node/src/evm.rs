@@ -180,7 +180,7 @@ sol! {
         function provideLPKey(bytes32 _requestId, bytes32 _lpPublicSpendKey, bytes32 _lpPublicViewKey) external;
         function lpPublicViewKeys(bytes32 requestId) external view returns (bytes32);
         function withdrawCollateral(uint256 _amount) external;
-        function proposeHash(bytes32 requestId, bytes32 secretHash) external;
+        function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external;
         function finalizeBurn(bytes32 requestId, bytes32 secret) external;
         function setMintReady(bytes32 requestId) external;
         function cancelMint(bytes32 requestId) external;
@@ -565,11 +565,13 @@ impl EvmClient {
         Ok(decoded.data)
     }
 
-    /// Propose hash for a burn by providing the secret hash
+    /// Propose hash for a burn by providing the secret hash and LP public keys
     pub async fn propose_hash(
         &self,
         request_id: FixedBytes<32>,
         secret_hash: FixedBytes<32>,
+        lp_public_spend_key: FixedBytes<32>,
+        lp_public_view_key: FixedBytes<32>,
     ) -> Result<FixedBytes<32>> {
         info!(
             "Proposing hash for burn request {} with secret_hash {}",
@@ -579,7 +581,7 @@ impl EvmClient {
 
         let contract = VaultManager::new(self.vault_manager, &self.provider);
         
-        let call = contract.proposeHash(request_id, secret_hash);
+        let call = contract.proposeHash(request_id, secret_hash, lp_public_spend_key, lp_public_view_key);
         
         let pending_tx = call
             .send()
@@ -649,19 +651,11 @@ impl EvmClient {
     pub async fn provide_lp_key(&self, request_id: FixedBytes<32>, lp_public_spend_key: FixedBytes<32>, lp_public_view_key: FixedBytes<32>) -> Result<FixedBytes<32>> {
         info!("Providing LP keys for request {}", hex::encode(request_id));
 
-        let http_url: reqwest::Url = self.rpc_url.parse()
-            .context("Invalid HTTP RPC URL")?;
-
         let max_retries = 3;
         let mut last_error = None;
 
         for attempt in 1..=max_retries {
-            let http_provider = ProviderBuilder::new()
-                .with_recommended_fillers()
-                .wallet(self.wallet.clone())
-                .on_http(http_url.clone());
-
-            let contract = VaultManager::new(self.vault_manager, &http_provider);
+            let contract = VaultManager::new(self.vault_manager, &self.provider);
 
             let call = contract.provideLPKey(request_id, lp_public_spend_key, lp_public_view_key)
                 .from(self.lp_vault_address);

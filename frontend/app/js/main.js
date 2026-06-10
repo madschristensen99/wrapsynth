@@ -1,5 +1,6 @@
 // Main Application Entry Point
 // Phantom Agent - Deterministic Ephemeral Browser Wallet for XMR ⇄ wsXMR Swaps
+console.log('🔄 WrapSynth Frontend v2.0 - CAPACITY FIX LOADED');
 
 import { 
     initializeClients, 
@@ -30,6 +31,7 @@ import {
     updateMintProgress,
     completeMintStep,
     showMintDepositInfo,
+    showLPVerificationStatus,
     updateBurnProgress,
     completeBurnStep,
     showSuccess,
@@ -44,7 +46,10 @@ import {
     resetBurnUI,
     setupCopyButtons,
     getElements,
-    setWithdrawReturnsVisible
+    setWithdrawReturnsVisible,
+    setStartMintButtonText,
+    showPreviousMintBanner,
+    hidePreviousMintBanner
 } from './ui.js';
 
 import { MintFlow } from './mintFlow.js';
@@ -53,8 +58,8 @@ import { getLPPanel } from './lpPanel.js';
 import { getPoolFlow } from './poolFlow.js';
 import { getCoLPFlow } from './coLPFlow.js';
 import { getDashboard } from './dashboard.js';
-import { hasActiveSwap, loadActiveSwap, loadActiveSwaps, saveActiveSwap, addOrUpdateActiveSwap, removeActiveSwap, clearActiveSwap, setSwapsArray, getActiveSwapByRequestId } from './storage.js';
-import { CONTRACTS } from './config.js';
+import { hasActiveSwap, loadActiveSwap, loadActiveSwaps, saveActiveSwap, addOrUpdateActiveSwap, removeActiveSwap, clearActiveSwap, setSwapsArray, getActiveSwapByRequestId, saveToHistory } from './storage.js';
+import { CONTRACTS, SWAP_CONFIG } from './config.js';
 import { displaySwapHistory } from './swapHistory.js';
 import { loadRecentActivity, startActivityFeedWatcher } from './activityFeed.js';
 import { updateProtocolStats } from './protocolStats.js';
@@ -62,6 +67,7 @@ import { updateProtocolStats } from './protocolStats.js';
 // Global state
 let currentMintFlow = null;
 let currentBurnFlow = null;
+let mintProgressInterval = null;
 let cachedVaults = [];
 
 // Price cache with TTL to avoid API rate limits
@@ -264,6 +270,14 @@ async function init() {
         fetch24hVolume();
         loadRecentActivity();
         updateProtocolStats();
+
+        // Re-check active swap statuses on chain if wallet is connected
+        const connectedAddress = getUserAddress();
+        if (connectedAddress && hasActiveSwap()) {
+            checkForActiveSwapOnChain(connectedAddress).catch(err =>
+                console.warn('[Periodic] Active swap chain check failed:', err.message)
+            );
+        }
     }, 60000);
 
     // Refresh XMR price every 5 minutes (CoinGecko free-tier friendly)
@@ -487,7 +501,7 @@ async function handleConnectWallet() {
  */
 function autoResumeSwap(swap) {
     if (!swap) return;
-    if (isResuming) {
+    if (currentResumingSwapId) {
         console.log('Manual resume in progress, skipping auto-resume');
         return;
     }
@@ -509,6 +523,7 @@ function autoResumeSwap(swap) {
             }
             showMintTab();
             currentMintFlow = new MintFlow();
+            setStartMintButtonText('Start New Mint');
             trackMintProgress(currentMintFlow);
             currentMintFlow.resume(swap).catch(err => {
                 console.error('Auto-resume mint error:', err);
@@ -1261,19 +1276,19 @@ async function loadLpStats(address, vaultData) {
     }
 }
 
-let isResuming = false;
+let currentResumingSwapId = null;
 
 /**
  * Handle resume swap (called when user clicks Resume on a specific swap)
  * @param {Object} specificSwap - Optional specific swap to resume; falls back to most recent
  */
 async function handleResumeSwap(specificSwap) {
-    if (isResuming) {
-        console.log('Resume already in progress, ignoring duplicate click');
+    const swap = specificSwap || loadActiveSwap();
+    if (currentResumingSwapId === swap?.requestId) {
+        console.log('Resume already in progress for this swap, ignoring duplicate click');
         return;
     }
 
-    const swap = specificSwap || loadActiveSwap();
     if (!swap) {
         showError('Resume Error', 'No active swap found');
         return;
@@ -1289,7 +1304,7 @@ async function handleResumeSwap(specificSwap) {
         return;
     }
 
-    isResuming = true;
+    currentResumingSwapId = swap.requestId;
 
     try {
         // Ensure wallet is connected
@@ -1302,6 +1317,72 @@ async function handleResumeSwap(specificSwap) {
                 address = getUserAddress();
             }
         }
+
+        // ─── Validate on-chain status before resuming ─────────────────────────
+        if (swap.requestId) {
+            try {
+                if (swap.type === 'mint') {
+                    const mintReq = await readHub('getMintRequest', [swap.requestId]);
+                    const status = Number(mintReq.status);
+                    // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
+                    if (status === 5) {
+                        console.log('Resume aborted: mint was cancelled on-chain');
+                        saveToHistory({ ...swap, status: 'Cancelled', completedAt: Date.now() });
+                        removeActiveSwap(swap.requestId);
+                        showResumeError(swap.requestId, 'This mint was cancelled on-chain. If you had a griefing deposit, withdraw it via Pending Returns.');
+                        currentResumingSwapId = null;
+                        return;
+                    }
+                    if (status === 4) {
+                        console.log('Resume aborted: mint already completed on-chain');
+                        saveToHistory({ ...swap, status: 'Completed', completedAt: Date.now() });
+                        removeActiveSwap(swap.requestId);
+                        showResumeSuccess(swap.requestId, 'This mint was already finalized on-chain.');
+                        currentResumingSwapId = null;
+                        return;
+                    }
+                    if (status === 0) {
+                        console.log('Resume aborted: mint is invalid on-chain');
+                        removeActiveSwap(swap.requestId);
+                        showResumeError(swap.requestId, 'This mint is no longer valid on-chain.');
+                        currentResumingSwapId = null;
+                        return;
+                    }
+                } else if (swap.type === 'burn') {
+                    const burnReq = await readHub('getBurnRequest', [swap.requestId]);
+                    const status = Number(burnReq.status);
+                    // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=FINALIZED, 5=CANCELLED, 6=SLASHED
+                    if (status === 5) {
+                        console.log('Resume aborted: burn was cancelled on-chain');
+                        saveToHistory({ ...swap, status: 'Cancelled', completedAt: Date.now() });
+                        removeActiveSwap(swap.requestId);
+                        showResumeError(swap.requestId, 'This burn was cancelled on-chain.');
+                        currentResumingSwapId = null;
+                        return;
+                    }
+                    if (status === 4 || status === 6) {
+                        console.log('Resume aborted: burn already finalized/slashed on-chain');
+                        saveToHistory({ ...swap, status: 'Completed', completedAt: Date.now() });
+                        removeActiveSwap(swap.requestId);
+                        showResumeSuccess(swap.requestId, 'This burn was already resolved on-chain.');
+                        currentResumingSwapId = null;
+                        return;
+                    }
+                    if (status === 0) {
+                        console.log('Resume aborted: burn is invalid on-chain');
+                        removeActiveSwap(swap.requestId);
+                        showResumeError(swap.requestId, 'This burn is no longer valid on-chain.');
+                        currentResumingSwapId = null;
+                        return;
+                    }
+                }
+            } catch (err) {
+                console.warn('Could not verify on-chain status before resume; continuing anyway:', err.message);
+            }
+        }
+
+        // Clean up any in-panel previous-mint banner before switching flows
+        hidePreviousMintBanner();
 
         // Resume appropriate flow
         if (swap.type === 'mint') {
@@ -1327,26 +1408,13 @@ async function handleResumeSwap(specificSwap) {
                 return;
             }
 
-            // Try to decrypt — may prompt for wallet signature
-            console.log('Loading seed for this mint...');
-            const seed = await loadSeed(pubKeyHex);
-            if (!seed) {
-                const isStuck = (swap.state === 'lp-ready' || swap.state === 'finalize');
-                showResumeError(swap.requestId, 'Could not decrypt swap secret. You may have cancelled the signature prompt. ' + (isStuck ? 'Click Dismiss to hide this swap.' : 'Click "Sign to Unlock" to try again.'));
-                if (isStuck) {
-                    addDismissButtonToSwapItem(swap.requestId);
-                } else {
-                    addSignToUnlockButton(swap.requestId, pubKeyHex);
-                }
-                return;
-            }
+            // Pre-check that seed exists before attempting resume
+            // The actual decryption will happen inside mintFlow.resume()
+            console.log('Seed found in storage, preparing to resume...');
 
-            const agent = getPhantomAgent();
-            await agent.resumeFromSeed(seed);
-            console.log('✅ Seed restored for mint');
-
-            // Only switch tabs once seed is confirmed ready
+            // Switch tabs and let mintFlow.resume() handle seed loading
             currentMintFlow = new MintFlow();
+            setStartMintButtonText('Start New Mint');
             showMintTab();
             trackMintProgress(currentMintFlow);
             await currentMintFlow.resume(swap);
@@ -1369,7 +1437,7 @@ async function handleResumeSwap(specificSwap) {
             addClearButtonToSwapItem(swap.requestId);
         }
     } finally {
-        isResuming = false;
+        currentResumingSwapId = null;
     }
 }
 
@@ -1617,18 +1685,35 @@ async function loadVaults() {
         const activeVaults = [];
         let totalCollateralWei = 0n;
 
-        // Fetch oracle prices once for capacity calculation
+        // Fetch oracle prices and globalDebtIndex for capacity calculation
         let xmrPrice = 150;   // fallback USD per XMR
         let collPrice = 1.0;  // fallback USD per sDAI
+        let globalDebtIndex = 1e18; // fallback (no scaling)
         try {
+            // Try to get fresh prices first
             const xmrPriceWei = await readHub('getXmrPrice');
             const collPriceWei = await readHub('getCollateralPrice');
+            globalDebtIndex = await readHub('globalDebtIndex');
             xmrPrice = Number(xmrPriceWei) / 1e18;
             collPrice = Number(collPriceWei) / 1e18;
-            console.log('Oracle prices:', { xmrPrice, collPrice });
+            console.log('Oracle prices (fresh):', { xmrPrice, collPrice, globalDebtIndex: globalDebtIndex.toString() });
         } catch (e) {
-            console.warn('Could not fetch oracle prices, using fallbacks:', e.message);
+            console.error('⚠️ ORACLE PRICES ARE STALE! Click "Update Prices" button to refresh.');
+            console.warn('Using hardcoded fallback prices - capacity will be INCORRECT:', e.message);
+            // Still fetch globalDebtIndex even if prices are stale
+            try {
+                globalDebtIndex = await readHub('globalDebtIndex');
+            } catch (e2) {
+                console.warn('Could not fetch globalDebtIndex:', e2.message);
+            }
         }
+
+        // Get sDAI contract for convertToAssets
+        const { getPublicClient } = await import('./viemClient.js');
+        const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
+        const publicClient = getPublicClient();
+        const sDAIAbi = parseAbi(['function convertToAssets(uint256 shares) view returns (uint256)']);
+        const sDAIAddress = CONTRACTS.sDAI;
 
         for (const vaultAddress of knownVaults) {
             try {
@@ -1643,10 +1728,28 @@ async function loadVaults() {
                 const hasCollateral = vaultData && vaultData.collateralShares && BigInt(vaultData.collateralShares.toString()) > 0n;
 
                 if (hasCollateral || vaultData.active) {
-                    const collAmount = Number(vaultData.collateralShares) / 1e18;
-                    const lockedAmount = Number(vaultData.lockedCollateral) / 1e18;
-                    const effectiveCollateral = Math.max(0, collAmount - lockedAmount);
-                    const debtAmount = Number(vaultData.normalizedDebt) / 1e8;
+                    // Convert sDAI shares to underlying DAI assets (like the contract does)
+                    const collShares = BigInt(vaultData.collateralShares.toString());
+                    const lockedShares = BigInt(vaultData.lockedCollateral.toString());
+                    const availableShares = collShares > lockedShares ? collShares - lockedShares : 0n;
+                    
+                    let collAmountDAI = Number(availableShares) / 1e18; // fallback: assume 1:1
+                    try {
+                        const assetsWei = await publicClient.readContract({
+                            address: sDAIAddress,
+                            abi: sDAIAbi,
+                            functionName: 'convertToAssets',
+                            args: [availableShares]
+                        });
+                        collAmountDAI = Number(assetsWei) / 1e18;
+                    } catch (e) {
+                        console.warn('convertToAssets failed, using shares as fallback:', e.message);
+                    }
+
+                    // Denormalize debt using globalDebtIndex (actualDebt = normalizedDebt * index / 1e18)
+                    const normalizedDebt = BigInt(vaultData.normalizedDebt.toString());
+                    const actualDebt = (normalizedDebt * BigInt(globalDebtIndex.toString())) / BigInt(1e18);
+                    const debtAmount = Number(actualDebt) / 1e8; // wsXMR has 8 decimals
                     const pendingDebtAmount = Number(vaultData.pendingDebt) / 1e8;
                     const totalDebt = debtAmount + pendingDebtAmount;
                     const debtValueUsd = debtAmount * xmrPrice;
@@ -1657,12 +1760,24 @@ async function loadVaults() {
                     const pendingCollateral = collPrice > 0 ? pendingDebtValueUsd / collPrice : 0;
                     // Buffer = extra 50% collateral required to maintain 150% ratio (on total debt)
                     const bufferCollateral = (usedCollateral + pendingCollateral) * 0.5;
-                    const freeCollateral = Math.max(0, effectiveCollateral - usedCollateral - pendingCollateral - bufferCollateral);
+                    const freeCollateral = Math.max(0, collAmountDAI - usedCollateral - pendingCollateral - bufferCollateral);
+                    
+                    console.log('💰 CAPACITY BREAKDOWN:', {
+                        collAmountDAI,
+                        usedCollateral,
+                        pendingCollateral,
+                        bufferCollateral,
+                        freeCollateral,
+                        calculation: `${collAmountDAI.toFixed(4)} - ${usedCollateral.toFixed(4)} - ${pendingCollateral.toFixed(4)} - ${bufferCollateral.toFixed(4)} = ${freeCollateral.toFixed(4)}`
+                    });
 
                     console.log('Vault capacity:', {
-                        collAmount,
-                        lockedAmount,
-                        effectiveCollateral,
+                        collShares: collShares.toString(),
+                        lockedShares: lockedShares.toString(),
+                        availableShares: availableShares.toString(),
+                        collAmountDAI,
+                        normalizedDebt: normalizedDebt.toString(),
+                        actualDebt: actualDebt.toString(),
                         debtAmount,
                         pendingDebtAmount,
                         totalDebt,
@@ -1682,7 +1797,7 @@ async function loadVaults() {
                     // Enforce maxMintBps cap if configured (mirrors MintFacet check)
                     const maxMintBps = Number(vaultData.maxMintBps);
                     if (maxMintBps > 0) {
-                        const collateralValueUsd = collAmount * collPrice;
+                        const collateralValueUsd = collAmountDAI * collPrice;
                         const maxTotalDebtCapacity = (collateralValueUsd * 100) / 150;
                         const maxMintAllowedUsd = (maxTotalDebtCapacity * maxMintBps) / 10000;
                         const maxMintBpsCapacity = maxMintAllowedUsd / xmrPrice;
@@ -1851,11 +1966,27 @@ async function handleStartMint() {
         return;
     }
     
+    // If there's already an active mint in the UI, remember it so we can offer a way back
+    let previousMintRequestId = null;
+    if (currentMintFlow && currentMintFlow.state !== 'completed' && currentMintFlow.state !== 'idle') {
+        previousMintRequestId = currentMintFlow.requestId;
+    }
+    
     try {
         disableInputs(true);
         
+        // Clear any old progress tracker interval
+        if (mintProgressInterval) {
+            clearInterval(mintProgressInterval);
+            mintProgressInterval = null;
+        }
+        
         // Create new mint flow
         currentMintFlow = new MintFlow();
+        setStartMintButtonText('Start New Mint');
+        
+        // Hide any stale previous-mint banner from earlier
+        hidePreviousMintBanner();
         
         // Setup progress tracking
         trackMintProgress(currentMintFlow);
@@ -1866,6 +1997,14 @@ async function handleStartMint() {
         // Start the flow with the LP vault that has the running LP node
         await currentMintFlow.start(CONTRACTS.defaultLpVault, amount);
         
+        // Show previous mint banner if user had another mint going
+        if (previousMintRequestId) {
+            const prevSwap = getActiveSwapByRequestId(previousMintRequestId);
+            if (prevSwap) {
+                showPreviousMintBanner(prevSwap, () => handleResumeSwap(prevSwap));
+            }
+        }
+
         // Success - confetti explosion instead of modal
         showMintComplete(amount);
         launchConfetti();
@@ -1881,6 +2020,13 @@ async function handleStartMint() {
     } catch (error) {
         console.error('Mint error:', error);
         showError('Mint Error', error.message);
+        // Keep the previous-mint banner visible on error so user can switch back
+        if (previousMintRequestId) {
+            const prevSwap = getActiveSwapByRequestId(previousMintRequestId);
+            if (prevSwap) {
+                showPreviousMintBanner(prevSwap, () => handleResumeSwap(prevSwap));
+            }
+        }
         enableInputs(true);
     }
 }
@@ -1889,6 +2035,12 @@ async function handleStartMint() {
  * Track mint flow progress
  */
 function trackMintProgress(flow) {
+    // Clean up old interval before starting a new one
+    if (mintProgressInterval) {
+        clearInterval(mintProgressInterval);
+        mintProgressInterval = null;
+    }
+
     let lastState = null;
     
     // Monitor state changes
@@ -1918,30 +2070,81 @@ function trackMintProgress(flow) {
                 updateMintProgress('deposit', 'Waiting for XMR deposit...');
                 const depositAddr = flow.depositAddress || flow.agent.getMoneroAddress();
                 showMintDepositInfo(depositAddr, flow.xmrAmount);
+                setStartMintButtonText('Start New Mint');
                 break;
             case 'lp-verifying':
                 completeMintStep('deposit');
                 updateMintProgress('lp-confirm', 'Waiting for Monero confirmations (~15–30 min)...');
+                // Show deposit info first so the "See TX Details" button can toggle it
+                const depositAddrVerifying = flow.depositAddress || (flow.agent ? flow.agent.getMoneroAddress() : null);
+                if (depositAddrVerifying) {
+                    showMintDepositInfo(depositAddrVerifying, flow.xmrAmount);
+                }
+                showLPVerificationStatus();
                 break;
             case 'lp-ready':
             case 'lp-confirm':
                 completeMintStep('deposit');
                 updateMintProgress('lp-confirm', 'LP verified! Preparing to mint...');
+                // Ensure toggle button is visible in lp-ready state
+                const toggleBtn = document.getElementById('toggle-deposit-details');
+                if (!toggleBtn) {
+                    const btn = document.createElement('button');
+                    btn.id = 'toggle-deposit-details';
+                    btn.className = 'btn btn-small btn-secondary';
+                    btn.style.cssText = 'margin-top: 12px; padding: 6px 14px; font-size: 0.8rem;';
+                    btn.textContent = 'Show Deposit Details';
+                    btn.onclick = () => toggleMintDepositDetails();
+                    const mintActions = document.getElementById('mint-actions');
+                    if (mintActions) mintActions.appendChild(btn);
+                } else {
+                    toggleBtn.classList.remove('hidden');
+                }
                 break;
             case 'finalize':
                 completeMintStep('lp-confirm');
                 updateMintProgress('finalize', 'Revealing secret and minting wsXMR...');
+                // Hide deposit details toggle button during finalize
+                const finalizeToggleBtn = document.getElementById('toggle-deposit-details');
+                if (finalizeToggleBtn) {
+                    finalizeToggleBtn.classList.add('hidden');
+                }
+                // Hide claim button during finalize
+                const finalizeClaimBtn = elements.mintActions?.querySelector('.claim-wsxmr-btn');
+                if (finalizeClaimBtn) {
+                    finalizeClaimBtn.classList.add('hidden');
+                }
                 break;
             case 'expired':
                 updateMintProgress('deposit', 'Mint expired. Cancel to refund your deposit.');
                 clearInterval(checkState);
+                mintProgressInterval = null;
                 break;
             case 'completed':
                 completeMintStep('finalize');
                 clearInterval(checkState);
+                mintProgressInterval = null;
                 break;
         }
     }, 500);
+}
+
+/**
+ * Toggle visibility of mint deposit details
+ */
+function toggleMintDepositDetails() {
+    const depositInfo = document.getElementById('mint-deposit-info');
+    const toggleBtn = document.getElementById('toggle-deposit-details');
+    
+    if (!depositInfo || !toggleBtn) return;
+    
+    if (depositInfo.classList.contains('hidden')) {
+        depositInfo.classList.remove('hidden');
+        toggleBtn.textContent = 'Hide Deposit Details';
+    } else {
+        depositInfo.classList.add('hidden');
+        toggleBtn.textContent = 'Show Deposit Details';
+    }
 }
 
 /**
@@ -1981,17 +2184,25 @@ async function handleStartBurn() {
     
     // Validate inputs
     if (!amount || amount <= 0) {
-        console.log('Invalid amount');
+        showError('Invalid Amount', 'Please enter a valid burn amount');
+        return;
+    }
+
+    if (amount < SWAP_CONFIG.minBurnAmount) {
+        showError(
+            'Amount Too Small',
+            `Minimum burn amount is ${SWAP_CONFIG.minBurnAmount} wsXMR. You entered ${amount} wsXMR.`
+        );
         return;
     }
     
     if (!destination || destination.length < 95) {
-        console.log('Invalid Monero address');
+        showError('Invalid Address', 'Please enter a valid Monero destination address');
         return;
     }
     
     if (!vaultAddress) {
-        console.log('No vault selected');
+        showError('No Vault Selected', 'Please select an LP vault');
         return;
     }
     
@@ -2020,6 +2231,7 @@ async function handleStartBurn() {
         
     } catch (error) {
         console.error('Burn error:', error);
+        showError('Burn Failed', error.message || 'Transaction failed. Check console for details.');
         enableInputs(false);
     }
 }
@@ -2052,7 +2264,8 @@ function trackBurnProgress(flow) {
                 break;
             case 'confirm-lock':
                 completeBurnStep('lp-propose');
-                updateBurnProgress('confirm-lock', 'Claiming XMR on Monero chain...');
+                // Status is managed by confirmMoneroLock inline verification UI
+                updateBurnProgress('confirm-lock');
                 break;
             case 'lp-finalize':
                 completeBurnStep('confirm-lock');

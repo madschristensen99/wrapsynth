@@ -137,7 +137,9 @@ contract E2EFinalTest is Test {
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
         bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
         vm.prank(lp);
-        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash);
+        bytes32 lpPublicSpendKey = bytes32(uint256(0x1111111111111111111111111111111111111111111111111111111111111111));
+        bytes32 lpPublicViewKey = bytes32(uint256(0x2222222222222222222222222222222222222222222222222222222222222222));
+        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash, lpPublicSpendKey, lpPublicViewKey);
         console.log("[7] LP proposed hash\n");
         
         // User confirms Monero lock

@@ -47,8 +47,7 @@ export const LP_SERVER_CONFIG = {
         quoteBurn: '/quote/burn',
         notifyMint: '/mint/notify',
         getMintStatus: '/mint/:id/status',
-        getBurnStatus: '/burn/:id/status',
-        confirmBurn: '/burn/:id/confirm'
+        getBurnStatus: '/burn/:id/status'
     }
 };
 
@@ -95,7 +94,7 @@ export const MONERO_CONFIG = {
 // Swap parameters
 export const SWAP_CONFIG = {
     minMintAmount: 0.01, // Minimum XMR to mint
-    minBurnAmount: 0, // No minimum - allow burning any amount
+    minBurnAmount: 0.0001, // Matches contract MIN_BURN_AMOUNT = 1e4 (8 decimals)
     defaultTimeout: 7200, // 2 hours in seconds (matches MAX_MINT_TIMEOUT)
     pollInterval: 5000, // 5 seconds
     maxRetries: 3
@@ -201,6 +200,7 @@ export const ABIS = {
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
         'function cancelMint(bytes32 requestId) external',
         'function lpPublicKeys(bytes32 requestId) external view returns (bytes32)',
+        'function lpPublicViewKeys(bytes32 requestId) external view returns (bytes32)',
         'function getUserMintRequests(address user) external view returns (bytes32[])',
         'function getVaultPendingMints(address lpVault) external view returns (bytes32[])',
         'function calculateWsxmrAmount(uint256 xmrAmount) external pure returns (uint256)',

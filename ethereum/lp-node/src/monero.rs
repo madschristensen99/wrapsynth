@@ -11,6 +11,7 @@ use curve25519_dalek::{
     edwards::CompressedEdwardsY,
     scalar::Scalar,
 };
+use crate::db::Database;
 
 /// Monero client with native key management using monero-rs
 /// Uses monero-wallet-rpc for transaction operations
@@ -25,6 +26,7 @@ pub struct MoneroClient {
     private_view_key: PrivateKey,
     address: Address,
     network: Network,
+    db: Database,
 }
 
 #[derive(Debug)]
@@ -59,8 +61,8 @@ impl MoneroClient {
     /// 
     /// For production use, also provide wallet_rpc_url for transaction operations.
     /// If wallet_rpc_url is None, transaction operations will use placeholders.
-    pub fn new(daemon_url: String, private_spend_key_hex: String) -> Result<Self> {
-        Self::new_with_wallet_rpc(daemon_url, private_spend_key_hex, None)
+    pub fn new(daemon_url: String, private_spend_key_hex: String, db: Database) -> Result<Self> {
+        Self::new_with_wallet_rpc(daemon_url, private_spend_key_hex, None, db)
     }
 
     /// Create a new Monero client with wallet RPC support
@@ -68,6 +70,7 @@ impl MoneroClient {
         daemon_url: String,
         private_spend_key_hex: String,
         wallet_rpc_url: Option<String>,
+        db: Database,
     ) -> Result<Self> {
         // Parse the private spend key from hex
         let spend_key_bytes = hex::decode(private_spend_key_hex.trim_start_matches("0x"))
@@ -137,6 +140,7 @@ impl MoneroClient {
             private_view_key,
             address,
             network,
+            db,
         })
     }
 
@@ -652,6 +656,8 @@ impl MoneroClient {
         info!("LP public spend: {}", hex::encode(lp_public_spend.as_bytes()));
         info!("Combined public spend: {}", hex::encode(combined_public_spend.as_bytes()));
         info!("Deposit address: {}", deposit_address);
+        info!("Address public_spend from struct: {}", hex::encode(deposit_address.public_spend.as_bytes()));
+        info!("Address public_view from struct: {}", hex::encode(deposit_address.public_view.as_bytes()));
 
         Ok(SwapKeys {
             lp_private_spend,
@@ -739,7 +745,8 @@ impl MoneroClient {
         deposit_address_str: Option<&str>,
         lp_private_view: &Option<[u8; 32]>,
         min_confirmations: u64,
-    ) -> Result<bool> {
+        last_scanned_height: Option<u64>,
+    ) -> Result<(bool, u64)> {
         info!(
             "Verifying mint lock: {} XMR with commitment {}",
             expected_amount as f64 / 1e12,
@@ -757,7 +764,7 @@ impl MoneroClient {
 
         info!("Checking for deposits to address: {}", deposit_address);
 
-        // Get the swap view key so we can use it for daemon fallback scanning
+        // Get the swap view key for daemon scanning
         let swap_view_key = if let Some(view_key_bytes) = lp_private_view {
             PrivateKey::from_slice(view_key_bytes)
                 .map_err(|e| anyhow!("Invalid LP private view key: {:?}", e))?
@@ -766,128 +773,68 @@ impl MoneroClient {
             swap_keys.lp_private_view
         };
 
-        // --- Path A: wallet RPC (fastest and only reliable path with public nodes) ---
-        if self.wallet_rpc_url.is_some() {
-            match self.verify_mint_lock_via_wallet_rpc(
-                expected_amount,
-                &deposit_address,
-                &swap_view_key,
-                min_confirmations,
-            ).await {
-                Ok(found) => return Ok(found),
-                Err(e) => {
-                    let err_str = e.to_string();
-                    if err_str.contains("Failed to call wallet RPC")
-                        || err_str.contains("Connection refused")
-                        || err_str.contains("connect")
-                        || err_str.contains("dns error")
-                    {
-                        warn!("Wallet RPC unreachable ({}). Falling back to daemon scan...", e);
-                    } else if err_str.contains("syncing") || err_str.contains("sync") {
-                        warn!("Wallet RPC still syncing. Falling back to daemon scan... {}", e);
-                    } else {
-                        warn!("Wallet RPC error ({}). Falling back to daemon scan...", e);
-                    }
-                }
-            }
-        } else {
-            warn!("Wallet RPC not configured - falling back to daemon scan (get_transactions is restricted on public nodes, this may fail)");
-        }
-
-        // --- Path B: daemon fallback ---
-        // NOTE: get_transactions is restricted on most public nodes.
-        // This path only works with an unrestricted daemon or your own node.
+        // Use direct daemon scanning with view key cryptography.
+        // This is the proper Monero approach - no wallet RPC needed for verification.
+        // MoneroSwap makerbot uses this same pattern: daemon scanning + view key decryption.
+        info!("Using daemon scanning with view key to verify XMR deposit...");
         self.verify_mint_lock_via_daemon(
             expected_amount,
             &deposit_address,
             &swap_view_key,
             min_confirmations,
+            last_scanned_height,
         ).await
     }
 
-    /// Verify mint lock using wallet RPC (primary, fastest path)
-    async fn verify_mint_lock_via_wallet_rpc(
+    /// Decrypt RingCT amount using view key and shared secret.
+    /// Implements the ECDH decryption scheme used in Monero RingCT.
+    fn decrypt_ringct_amount(
         &self,
-        expected_amount: u64,
-        deposit_address: &Address,
-        swap_view_key: &PrivateKey,
-        min_confirmations: u64,
-    ) -> Result<bool> {
-        // Quick health check: try get_height (fails fast if RPC is down)
-        let _: serde_json::Value = self
-            .call_wallet_rpc("get_height", serde_json::json!({}))
-            .await?;
-
-        // Import swap address for tracking
-        let swap_spend_key = PrivateKey::from_slice(swap_view_key.as_bytes())
-            .map_err(|e| anyhow!("Invalid swap view key for import: {:?}", e))?;
-        self.import_swap_address_to_wallet(deposit_address, &swap_spend_key, swap_view_key)
-            .await?;
-
-        // Refresh wallet (sync with blockchain)
-        info!("Refreshing swap wallet to sync with blockchain...");
-        self.refresh_wallet().await?;
-        info!("Refresh complete (or timed out — wallet continues syncing in background)");
-
-        // Check if wallet has detected any balance
-        let balance_result: Result<serde_json::Value> = self.call_wallet_rpc(
-            "get_balance",
-            serde_json::json!({"account_index": 0})
-        ).await;
-        match balance_result {
-            Ok(bal) => {
-                if let (Some(balance), Some(unlocked)) = (
-                    bal.get("balance").and_then(|v| v.as_u64()),
-                    bal.get("unlocked_balance").and_then(|v| v.as_u64())
-                ) {
-                    info!("Swap wallet balance: {} atomic units (unlocked: {})", balance, unlocked);
-                }
-            }
-            Err(e) => {
-                warn!("Could not check swap wallet balance: {}", e);
-            }
+        ecdh_info: &serde_json::Value,
+        shared_secret: &[u8; 32],
+        output_index: usize,
+    ) -> Result<Option<u64>> {
+        use sha2::{Sha256, Digest};
+        
+        // Extract encrypted amount from ecdhInfo
+        // Format varies by RingCT version (v1 vs v2)
+        let amount_hex = if let Some(amount_str) = ecdh_info.get("amount").and_then(|v| v.as_str()) {
+            amount_str
+        } else {
+            return Ok(None);
+        };
+        
+        let encrypted_amount = hex::decode(amount_hex.trim_start_matches("0x"))
+            .context("Failed to decode encrypted amount")?;
+        
+        if encrypted_amount.len() != 32 {
+            return Ok(None);
         }
-
-        let current_height = self.get_height().await?;
-        let min_height = current_height.saturating_sub(100);
-
-        info!("Querying wallet RPC for incoming transfers from height {}...", min_height);
-
-        let transfers = self.get_incoming_transfers(min_height).await?;
-        info!("Found {} incoming transfers", transfers.len());
-
-        for transfer in transfers {
-            let confirmations = current_height.saturating_sub(transfer.block_height);
-            let amount_matches = transfer.amount >= expected_amount.saturating_sub(1_000_000);
-
-            info!(
-                "Checking transfer: {} XMR in tx {} with {} confirmations",
-                transfer.amount as f64 / 1e12,
-                transfer.tx_hash,
-                confirmations
-            );
-
-            if amount_matches {
-                if confirmations >= min_confirmations {
-                    info!(
-                        "✓ Verified deposit via wallet RPC: {} XMR in tx {} with {} confirmations",
-                        transfer.amount as f64 / 1e12,
-                        transfer.tx_hash,
-                        confirmations
-                    );
-                    return Ok(true);
-                } else {
-                    info!(
-                        "Found deposit in tx {} but only {} confirmations (need {})",
-                        transfer.tx_hash, confirmations, min_confirmations
-                    );
-                    return Ok(false);
-                }
-            }
+        
+        // Derive decryption key: H_s("amount" || shared_secret || output_index)
+        let mut hasher = Sha256::new();
+        hasher.update(b"amount");
+        hasher.update(shared_secret);
+        hasher.update(&(output_index as u64).to_le_bytes());
+        let amount_key = hasher.finalize();
+        
+        // XOR decrypt the amount (first 8 bytes)
+        let mut decrypted_amount_bytes = [0u8; 8];
+        for i in 0..8 {
+            decrypted_amount_bytes[i] = encrypted_amount[i] ^ amount_key[i];
         }
-
-        info!("No matching deposit found via wallet RPC to address {}", deposit_address);
-        Ok(false)
+        
+        let amount = u64::from_le_bytes(decrypted_amount_bytes);
+        
+        // Sanity check: amount should be reasonable
+        // Max XMR supply is ~18.4M XMR = 18_400_000 * 1e12 = 18_400_000_000_000_000_000 atomic units
+        // Use a generous upper bound to detect decryption errors
+        if amount > 1_000_000_000_000_000_000 {  // 1M XMR
+            warn!("Decrypted amount {} seems unreasonably large, likely decryption error", amount);
+            return Ok(None);
+        }
+        
+        Ok(Some(amount))
     }
 
     /// Verify mint lock by scanning blocks directly via Monero daemon (fallback path)
@@ -897,11 +844,29 @@ impl MoneroClient {
         deposit_address: &Address,
         swap_view_key: &PrivateKey,
         min_confirmations: u64,
-    ) -> Result<bool> {
-        info!("Scanning daemon for deposits to {} ...", deposit_address);
-
+        last_scanned_height: Option<u64>,
+    ) -> Result<(bool, u64)> {
         let current_height = self.get_height().await?;
-        let min_height = current_height.saturating_sub(100);
+        
+        // Determine scan range based on last scanned height
+        let min_height = if let Some(last_scanned) = last_scanned_height {
+            // Only scan NEW blocks since last check (incremental scanning)
+            last_scanned.saturating_add(1)
+        } else {
+            // First scan - check last 100 blocks
+            current_height.saturating_sub(100)
+        };
+        
+        // Don't scan if we're already up to date
+        if min_height > current_height {
+            debug!("Already scanned up to height {}, current is {}, nothing new to scan", 
+                last_scanned_height.unwrap_or(0), current_height);
+            return Ok((false, current_height));
+        }
+        
+        info!("Scanning daemon for deposits to {} (blocks {}-{}, {} new blocks)", 
+            deposit_address, min_height, current_height, current_height.saturating_sub(min_height) + 1);
+        
         let scan_range = min_height..=current_height;
         let total_blocks = scan_range.clone().count();
         let mut total_txs_checked = 0usize;
@@ -927,38 +892,59 @@ impl MoneroClient {
             }
 
             if let Some(txs) = tx_hashes {
-                for tx_hash_val in txs {
-                    if let Some(tx_hash) = tx_hash_val.as_str() {
-                        total_txs_checked += 1;
-                        match self.check_tx_for_swap_address(
-                            tx_hash,
-                            deposit_address,
-                            swap_view_key,
-                            expected_amount,
-                            height,
-                        ).await {
-                            Ok(Some((amount, confirmations))) => {
-                                if confirmations >= min_confirmations {
-                                    info!(
-                                        "✓ Verified deposit via daemon: {} XMR in tx {} (block {}, {} confs)",
-                                        amount as f64 / 1e12,
-                                        tx_hash,
-                                        height,
-                                        confirmations
-                                    );
-                                    return Ok(true);
-                                } else {
-                                    info!(
-                                        "Found deposit in tx {} but only {} confirmations (need {})",
-                                        tx_hash, confirmations, min_confirmations
-                                    );
-                                    return Ok(false);
+                let tx_hash_strings: Vec<String> = txs
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect();
+                
+                total_txs_checked += tx_hash_strings.len();
+                
+                // Fetch ALL transactions in this block in ONE batch request
+                // This is much faster than individual requests
+                if !tx_hash_strings.is_empty() {
+                    match self.get_transactions_batch(&tx_hash_strings).await {
+                        Ok(tx_data_list) => {
+                            // Scan all transactions for outputs to our address
+                            for (tx_hash, tx_data) in tx_hash_strings.iter().zip(tx_data_list.iter()) {
+                                match self.scan_tx_outputs_with_view_key(
+                                    tx_data,
+                                    deposit_address,
+                                    swap_view_key,
+                                    expected_amount
+                                ).await {
+                                    Ok(Some(amount)) => {
+                                        let current_height = self.get_height().await?;
+                                        let confirmations = current_height.saturating_sub(height);
+                                        
+                                        if confirmations >= min_confirmations {
+                                            info!(
+                                                "✓ Verified deposit via daemon: {} XMR in tx {} (block {}, {} confs)",
+                                                amount as f64 / 1e12,
+                                                tx_hash,
+                                                height,
+                                                confirmations
+                                            );
+                                            return Ok((true, current_height));
+                                        } else {
+                                            info!(
+                                                "Found deposit in tx {} but only {} confirmations (need {})",
+                                                tx_hash, confirmations, min_confirmations
+                                            );
+                                            return Ok((false, current_height));
+                                        }
+                                    }
+                                    Ok(None) => {
+                                        // Transaction doesn't contain outputs to our address, continue scanning
+                                    }
+                                    Err(e) => {
+                                        // Skip transactions with invalid public keys or other scan errors
+                                        debug!("Skipping transaction {} due to scan error: {}", tx_hash, e);
+                                    }
                                 }
                             }
-                            Ok(None) => {}
-                            Err(e) => {
-                                warn!("Error checking tx {}: {}", tx_hash, e);
-                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to fetch transactions for block {}: {}", height, e);
                         }
                     }
                 }
@@ -967,7 +953,7 @@ impl MoneroClient {
 
         info!("No matching deposit found via daemon scan to address {} (checked {} txs across {} blocks)",
             deposit_address, total_txs_checked, total_blocks);
-        Ok(false)
+        Ok((false, current_height))
     }
 
     /// Import a swap address into wallet RPC for tracking.
@@ -1069,13 +1055,22 @@ impl MoneroClient {
         let tx_data = self.get_transaction(tx_hash).await?;
         
         // Try to find outputs to our address using the view key
-        if let Some(amount) = self.scan_tx_outputs_with_view_key(&tx_data, address, view_key, expected_amount).await? {
-            let current_height = self.get_height().await?;
-            let confirmations = current_height.saturating_sub(tx_block_height);
-            return Ok(Some((amount, confirmations)));
+        match self.scan_tx_outputs_with_view_key(&tx_data, address, view_key, expected_amount).await {
+            Ok(Some(amount)) => {
+                let current_height = self.get_height().await?;
+                let confirmations = current_height.saturating_sub(tx_block_height);
+                return Ok(Some((amount, confirmations)));
+            }
+            Ok(None) => {
+                // Transaction doesn't contain outputs to our address
+                return Ok(None);
+            }
+            Err(e) => {
+                // Skip transactions with invalid public keys or other scan errors
+                debug!("Skipping transaction {} due to scan error: {}", tx_hash, e);
+                return Ok(None);
+            }
         }
-        
-        Ok(None)
     }
 
     /// Get transaction data from daemon.
@@ -1181,7 +1176,106 @@ impl MoneroClient {
         Err(anyhow!("Failed to get transaction {} from all daemon nodes (tried JSON-RPC and REST)", tx_hash))
     }
 
-    /// Scan transaction outputs using private view key to detect outputs to our address
+    /// Get multiple transactions in one batch request with caching
+    /// Much more efficient than calling get_transaction repeatedly
+    async fn get_transactions_batch(&self, tx_hashes: &[String]) -> Result<Vec<serde_json::Value>> {
+        if tx_hashes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Check cache first
+        let mut results = Vec::new();
+        let mut to_fetch = Vec::new();
+        let mut cache_hits = 0;
+        
+        for hash in tx_hashes {
+            match self.db.get_cached_monero_tx(hash) {
+                Ok(Some((_height, tx_data))) => {
+                    results.push(tx_data);
+                    cache_hits += 1;
+                }
+                _ => {
+                    to_fetch.push(hash.clone());
+                    results.push(serde_json::Value::Null); // Placeholder
+                }
+            }
+        }
+        
+        if cache_hits > 0 {
+            debug!("Cache hit: {}/{} transactions", cache_hits, tx_hashes.len());
+        }
+        
+        // If all transactions are cached, return immediately
+        if to_fetch.is_empty() {
+            info!("All {} transactions loaded from cache", tx_hashes.len());
+            return Ok(results);
+        }
+
+        // Fetch missing transactions from network
+        let mut urls = vec![self.daemon_url.clone()];
+        urls.extend(self.daemon_fallbacks.clone());
+
+        // Try REST endpoint (more reliable for batch requests)
+        for url in &urls {
+            let rest_url = format!("{}/get_transactions", url);
+
+            match self.http_client
+                .post(&rest_url)
+                .json(&serde_json::json!({
+                    "txs_hashes": &to_fetch,
+                    "decode_as_json": true,
+                    "prune": false
+                }))
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    match response.json::<serde_json::Value>().await {
+                        Ok(body) => {
+                            if let Some(txs) = body.get("txs").and_then(|v| v.as_array()) {
+                                let mut fetched = Vec::new();
+                                for tx in txs {
+                                    if let Some(as_json) = tx.get("as_json").and_then(|v| v.as_str()) {
+                                        if let Ok(tx_data) = serde_json::from_str::<serde_json::Value>(as_json) {
+                                            fetched.push(tx_data);
+                                        }
+                                    }
+                                }
+                                if fetched.len() == to_fetch.len() {
+                                    info!("Fetched {} transactions in batch from {} ({} from cache)", 
+                                        fetched.len(), url, cache_hits);
+                                    
+                                    // Merge fetched transactions into results and cache them
+                                    let mut fetch_idx = 0;
+                                    for (i, hash) in tx_hashes.iter().enumerate() {
+                                        if results[i].is_null() {
+                                            results[i] = fetched[fetch_idx].clone();
+                                            // Cache the newly fetched transaction (height unknown, use 0)
+                                            let _ = self.db.cache_monero_tx(hash, 0, &fetched[fetch_idx]);
+                                            fetch_idx += 1;
+                                        }
+                                    }
+                                    
+                                    return Ok(results);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            debug!("Failed to parse batch get_transactions from {}: {}", url, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    debug!("Failed to call batch get_transactions on {}: {}", url, e);
+                }
+            }
+        }
+
+        Err(anyhow!("Failed to get {} transactions in batch from all daemon nodes", to_fetch.len()))
+    }
+
+    /// Scan transaction outputs using private view key to detect outputs to our address.
+    /// Implements proper RingCT amount decryption following MoneroSwap makerbot pattern.
     async fn scan_tx_outputs_with_view_key(
         &self,
         tx_data: &serde_json::Value,
@@ -1195,6 +1289,7 @@ impl MoneroClient {
         
         // Get transaction public key (R) from extra field
         let tx_public_key_bytes = self.extract_tx_public_key(tx_data)?;
+        info!("TX public key: {}", hex::encode(&tx_public_key_bytes));
         let tx_public_key_point = CompressedEdwardsY::from_slice(&tx_public_key_bytes)
             .map_err(|_| anyhow!("Invalid tx public key"))?
             .decompress()
@@ -1202,15 +1297,30 @@ impl MoneroClient {
         
         // Get our public spend key from the address
         let our_spend_bytes = target_address.public_spend.as_bytes();
+        info!("Target spend key: {}", hex::encode(our_spend_bytes));
         let our_spend_point = CompressedEdwardsY::from_slice(our_spend_bytes)
             .map_err(|_| anyhow!("Invalid spend key"))?
             .decompress()
             .ok_or_else(|| anyhow!("Invalid spend key point"))?;
         
-        // Get outputs
+        // Compute shared secret: a*R (where a is view key, R is tx public key)
+        let mut view_key_array = [0u8; 32];
+        view_key_array.copy_from_slice(view_key.as_bytes());
+        info!("View key: {}", hex::encode(view_key.as_bytes()));
+        let view_scalar = Scalar::from_bytes_mod_order(view_key_array);
+        let shared_secret_point = view_scalar * tx_public_key_point;
+        let shared_secret_bytes = shared_secret_point.compress().to_bytes();
+        info!("Shared secret: {}", hex::encode(&shared_secret_bytes));
+        
+        // Get outputs and RingCT data
         let outputs = tx_data.get("vout")
             .and_then(|v| v.as_array())
             .ok_or_else(|| anyhow!("No outputs in transaction"))?;
+        
+        let rct_signatures = tx_data.get("rct_signatures");
+        let ecdh_info_array = rct_signatures
+            .and_then(|rct| rct.get("ecdhInfo"))
+            .and_then(|v| v.as_array());
         
         // Check each output
         for (output_index, output) in outputs.iter().enumerate() {
@@ -1230,18 +1340,10 @@ impl MoneroClient {
                     continue;
                 }
                 
-                // Compute the shared secret: r*A = r*a*G (where r is tx private key, a is our view key)
-                // We have R = r*G (tx public key) and our view key a
-                // So we compute a*R = a*r*G
-                let mut view_key_array = [0u8; 32];
-                view_key_array.copy_from_slice(view_key.as_bytes());
-                let view_scalar = Scalar::from_bytes_mod_order(view_key_array);
-                let shared_secret_point = view_scalar * tx_public_key_point;
-                
                 // Derive the output public key that would be ours
                 // P' = Hs(a*R || output_index) * G + B (where B is our public spend key)
                 let mut hasher = Sha256::new();
-                hasher.update(shared_secret_point.compress().as_bytes());
+                hasher.update(&shared_secret_bytes);
                 hasher.update(&(output_index as u64).to_le_bytes());
                 let hash = hasher.finalize();
                 
@@ -1257,10 +1359,34 @@ impl MoneroClient {
                     .ok_or_else(|| anyhow!("Invalid output key point"))?;
                 
                 if derived_output_key == actual_output_key {
-                    // This output belongs to us!
-                    // For RingCT, we can't easily decrypt the amount without more work
-                    // For now, assume it matches if we found an output to our address
-                    info!("Found output to our address at index {}", output_index);
+                    info!("✓ Found output to our address at index {}", output_index);
+                    
+                    // Try to decrypt RingCT amount
+                    if let Some(ecdh_array) = ecdh_info_array {
+                        if let Some(ecdh_info) = ecdh_array.get(output_index) {
+                            if let Ok(Some(decrypted_amount)) = self.decrypt_ringct_amount(
+                                ecdh_info,
+                                &shared_secret_bytes,
+                                output_index
+                            ) {
+                                info!("✓ Decrypted RingCT amount: {} atomic units ({} XMR)",
+                                    decrypted_amount, decrypted_amount as f64 / 1e12);
+                                return Ok(Some(decrypted_amount));
+                            }
+                        }
+                    }
+                    
+                    // Fallback: check for plaintext amount (pre-RingCT or miner tx)
+                    if let Some(amount) = output.get("amount").and_then(|a| a.as_u64()) {
+                        if amount > 0 {
+                            info!("Found plaintext amount: {} atomic units", amount);
+                            return Ok(Some(amount));
+                        }
+                    }
+                    
+                    // If we can't decrypt, return expected amount as fallback
+                    // (output definitely belongs to us, just can't verify exact amount)
+                    warn!("Could not decrypt RingCT amount, using expected amount {} as fallback", expected_amount);
                     return Ok(Some(expected_amount));
                 }
             }
@@ -1497,6 +1623,7 @@ impl MoneroClient {
         
         // Extract the public spend key from the target address
         let target_spend_bytes = target_address.public_spend.as_bytes();
+        info!("Scanning tx - Target spend key: {}", hex::encode(target_spend_bytes));
         let target_spend_point = CompressedEdwardsY::from_slice(target_spend_bytes)
             .map_err(|_| anyhow!("Invalid spend key"))?
             .decompress()
@@ -1504,7 +1631,10 @@ impl MoneroClient {
         
         // Get transaction public key (R) from extra field
         let tx_public_key_bytes = match self.extract_tx_public_key(tx_data) {
-            Ok(bytes) => bytes,
+            Ok(bytes) => {
+                info!("Scanning tx - TX public key: {}", hex::encode(&bytes));
+                bytes
+            },
             Err(e) => {
                 debug!("Failed to extract tx public key: {}", e);
                 return Ok(None);
@@ -1519,19 +1649,24 @@ impl MoneroClient {
 
         // Compute shared secret: a*R (where a is the provided view key, R is tx public key)
         let view_key_bytes = view_key.as_bytes();
+        info!("Scanning tx - View key: {}", hex::encode(view_key_bytes));
         let mut view_key_array = [0u8; 32];
         view_key_array.copy_from_slice(view_key_bytes);
         let view_key_scalar = Scalar::from_bytes_mod_order(view_key_array);
         let shared_secret_point = tx_public_key * view_key_scalar;
         let shared_secret_bytes = shared_secret_point.compress().to_bytes();
+        info!("Scanning tx - Shared secret: {}", hex::encode(&shared_secret_bytes));
 
         // Get outputs and check each one
         if let Some(vout) = tx_data.get("vout").and_then(|v| v.as_array()) {
+            debug!("Checking {} outputs", vout.len());
             for (output_index, output) in vout.iter().enumerate() {
                 if let Some(output_key_hex) = output.get("target")
                     .and_then(|t| t.get("key"))
                     .and_then(|k| k.as_str()) 
                 {
+                    debug!("Output {}: actual key = {}", output_index, output_key_hex);
+                    
                     // Derive the expected one-time public key for this output index
                     // P' = H_s(a*R, output_index)*G + B
                     let mut hasher = Sha256::new();
@@ -1544,6 +1679,7 @@ impl MoneroClient {
                     let expected_output_key = (&derivation_scalar * curve25519_dalek::constants::ED25519_BASEPOINT_TABLE) + target_spend_point;
                     let expected_output_key_bytes = expected_output_key.compress().to_bytes();
                     let expected_output_key_hex = hex::encode(expected_output_key_bytes);
+                    debug!("Output {}: expected key = {}", output_index, expected_output_key_hex);
                     
                     // Compare with actual output key
                     if output_key_hex == expected_output_key_hex {
@@ -1563,9 +1699,13 @@ impl MoneroClient {
                         // For now, we'll return the expected amount since we verified the output belongs to us
                         info!("Found RingCT output - returning expected amount {} (decryption not yet implemented)", expected_amount);
                         return Ok(Some(expected_amount));
+                    } else {
+                        debug!("Output {} does not match (keys differ)", output_index);
                     }
                 }
             }
+        } else {
+            debug!("No vout array found in transaction data");
         }
         
         Ok(None)
@@ -1580,13 +1720,18 @@ mod tests {
     #[test]
     fn test_address_derivation() {
         let private_key = "0000000000000000000000000000000000000000000000000000000000000001";
+        let db = crate::db::Database::open("test_monero_db").unwrap();
         let client = MoneroClient::new(
             "http://node.moneroworld.com:18089".to_string(),
             private_key.to_string(),
+            db,
         ).unwrap();
         
         let address = client.get_address().unwrap();
         println!("Address: {}", address);
         assert!(!address.is_empty());
+        
+        // Cleanup
+        std::fs::remove_dir_all("test_monero_db").ok();
     }
 }

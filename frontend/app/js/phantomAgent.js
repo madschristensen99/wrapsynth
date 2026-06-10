@@ -68,7 +68,7 @@ class PhantomAgent {
         this.commitment = this.keySet.commitment;
         
         console.log('Commitment generated:', this.commitment);
-        console.log('Public spend key:', '0x' + this.keySet.publicSpendKey.toString(16));
+        console.log('Public spend key:', toHex(this.keySet.publicSpendKey));
 
         // Initialize Monero wallet interface
         await this.initializeMoneroWallet();
@@ -213,7 +213,7 @@ class PhantomAgent {
             throw new Error('Agent not initialized');
         }
 
-        const userPublicKeyHex = '0x' + this.keySet.publicSpendKey.toString(16).padStart(64, '0');
+        const userPublicKeyHex = toHex(this.keySet.publicSpendKey);
 
         console.log('Deriving shared Monero address:');
         console.log('  LP Public Spend Key:', lpPublicSpendKeyHex.slice(0, 10) + '...' + lpPublicSpendKeyHex.slice(-8));

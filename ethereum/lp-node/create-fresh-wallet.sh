@@ -3,9 +3,9 @@
 
 source .env
 
-WALLET_FILE="lp-wallet"
+WALLET_FILE="lp-wallet-fresh"
 WALLET_PASSWORD="lp-password-change-me"
-RESTORE_HEIGHT=3242000  # Approximately June 9, 2026
+RESTORE_HEIGHT=3693400  # Current height - only scan last ~30 blocks
 DAEMON="https://xmr-node.cakewallet.com:18081"
 
 echo "Creating fresh wallet with restore height: $RESTORE_HEIGHT"

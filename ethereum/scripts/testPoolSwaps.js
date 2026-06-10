@@ -114,6 +114,9 @@ async function main() {
         await approve1.wait();
         console.log('  Approved SwapHelper');
 
+        // Capture balance before swap
+        const sdaiBefore1 = await sdai.balanceOf(wallet.address);
+
         // sDAI is token0, wsXMR is token1, so wsXMR -> sDAI is zeroForOne = false
         const swap1 = await swapHelper.swap(
             poolAddr,
@@ -131,7 +134,7 @@ async function main() {
         console.log('  Swap TX:', swap1.hash);
 
         const sdaiAfter1 = await sdai.balanceOf(wallet.address);
-        const sdaiReceived = sdaiAfter1.sub(sdaiBalanceAfterLP);
+        const sdaiReceived = sdaiAfter1.sub(sdaiBefore1);
         console.log('  sDAI received:', ethers.utils.formatUnits(sdaiReceived, sdaiDecimals));
         console.log('');
     } else {
@@ -153,6 +156,9 @@ async function main() {
         await approve2.wait();
         console.log('  Approved SwapHelper');
 
+        // Capture balance before swap
+        const wsxmrBefore2 = await wsxmr.balanceOf(wallet.address);
+
         // sDAI is token0, wsXMR is token1, so sDAI -> wsXMR is zeroForOne = true
         const swap2 = await swapHelper.swap(
             poolAddr,
@@ -170,7 +176,8 @@ async function main() {
         console.log('  Swap TX:', swap2.hash);
 
         const wsxmrAfter2 = await wsxmr.balanceOf(wallet.address);
-        console.log('  Final wsXMR:', ethers.utils.formatUnits(wsxmrAfter2, wsxmrDecimals));
+        const wsxmrReceived = wsxmrAfter2.sub(wsxmrBefore2);
+        console.log('  wsXMR received:', ethers.utils.formatUnits(wsxmrReceived, wsxmrDecimals));
         console.log('');
     } else {
         console.log('Skip swap 2: not enough sDAI');

@@ -130,7 +130,9 @@ contract E2EComprehensiveTest is Test {
         bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
         
         vm.prank(lp);
-        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash);
+        bytes32 lpPublicSpendKey = bytes32(uint256(0x1111111111111111111111111111111111111111111111111111111111111111));
+        bytes32 lpPublicViewKey = bytes32(uint256(0x2222222222222222222222222222222222222222222222222222222222222222));
+        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash, lpPublicSpendKey, lpPublicViewKey);
         
         vm.prank(user);
         BurnFacet(address(hub)).confirmMoneroLock(burnId);
@@ -296,7 +298,9 @@ contract E2EComprehensiveTest is Test {
         bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
         
         vm.prank(lp);
-        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash);
+        bytes32 lpPublicSpendKey = bytes32(uint256(0x1111111111111111111111111111111111111111111111111111111111111111));
+        bytes32 lpPublicViewKey = bytes32(uint256(0x2222222222222222222222222222222222222222222222222222222222222222));
+        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash, lpPublicSpendKey, lpPublicViewKey);
         console.log("  LP proposed hash");
         
         // Jump past BURN_COMMIT_TIMEOUT (48 hours)
@@ -324,7 +328,9 @@ contract E2EComprehensiveTest is Test {
         bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
         
         vm.prank(lp);
-        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash);
+        bytes32 lpPublicSpendKey = bytes32(uint256(0x1111111111111111111111111111111111111111111111111111111111111111));
+        bytes32 lpPublicViewKey = bytes32(uint256(0x2222222222222222222222222222222222222222222222222222222222222222));
+        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash, lpPublicSpendKey, lpPublicViewKey);
         
         vm.prank(user);
         BurnFacet(address(hub)).confirmMoneroLock(burnId);
@@ -354,7 +360,9 @@ contract E2EComprehensiveTest is Test {
         bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
         
         vm.prank(lp);
-        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash);
+        bytes32 lpPublicSpendKey = bytes32(uint256(0x1111111111111111111111111111111111111111111111111111111111111111));
+        bytes32 lpPublicViewKey = bytes32(uint256(0x2222222222222222222222222222222222222222222222222222222222222222));
+        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash, lpPublicSpendKey, lpPublicViewKey);
         
         vm.prank(user);
         BurnFacet(address(hub)).confirmMoneroLock(burnId);
@@ -450,8 +458,10 @@ contract E2EComprehensiveTest is Test {
         bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
         
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
+        bytes32 lpPublicSpendKey = bytes32(uint256(0x1111111111111111111111111111111111111111111111111111111111111111));
+        bytes32 lpPublicViewKey = bytes32(uint256(0x2222222222222222222222222222222222222222222222222222222222222222));
         vm.startPrank(lp);
-        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash);
+        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash, lpPublicSpendKey, lpPublicViewKey);
         MintFacet(address(hub)).provideLPKey(mintId, lpPublicKey, lpPublicKey);
         MintFacet(address(hub)).setMintReady{value: 0.001 ether}(mintId);
         vm.stopPrank();

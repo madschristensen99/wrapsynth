@@ -39,7 +39,7 @@ interface IBurnOperations is IErrors {
         bytes32 claimCommitment
     );
     
-    event HashProposed(bytes32 indexed requestId, bytes32 secretHash);
+    event HashProposed(bytes32 indexed requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey);
     event BurnCommitted(bytes32 indexed requestId, uint256 deadline);
     event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 rewardPaid);
     event BurnRewardShortfall(bytes32 indexed requestId, uint256 expected, uint256 actual);
@@ -87,7 +87,9 @@ interface IBurnOperations is IErrors {
     /// @notice LP proposes secret hash after locking XMR (Step 2)
     /// @param requestId The burn request ID
     /// @param secretHash Hash of LP's secret
-    function proposeHash(bytes32 requestId, bytes32 secretHash) external;
+    /// @param lpPublicSpendKey LP's Ed25519 public spend key (x-coordinate)
+    /// @param lpPublicViewKey LP's Ed25519 public view key (x-coordinate)
+    function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external;
     
     /// @notice User confirms Monero lock is valid (Step 3)
     /// @param requestId The burn request ID

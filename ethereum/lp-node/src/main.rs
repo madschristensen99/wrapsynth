@@ -149,6 +149,7 @@ async fn main() -> Result<()> {
             let temp_monero = monero::MoneroClient::new(
                 config.monero_config.daemon_url.clone(),
                 config.monero_private_key.clone(),
+                db.clone(),
             )
             .context("Failed to initialize Monero client")?;
 
@@ -180,6 +181,7 @@ async fn main() -> Result<()> {
                     config.monero_config.daemon_url.clone(),
                     config.monero_private_key.clone(),
                     effective_rpc_url,
+                    db.clone(),
                 )
                 .context("Failed to initialize Monero client with wallet RPC")?
             );
@@ -236,6 +238,7 @@ async fn main() -> Result<()> {
             let temp_monero = monero::MoneroClient::new(
                 config.monero_config.daemon_url.clone(),
                 config.monero_private_key.clone(),
+                db.clone(),
             )
             .context("Failed to initialize Monero client")?;
 
@@ -268,6 +271,7 @@ async fn main() -> Result<()> {
                     config.monero_config.daemon_url.clone(),
                     config.monero_private_key.clone(),
                     effective_rpc_url,
+                    db.clone(),
                 )
                 .context("Failed to initialize Monero client with wallet RPC")?
             );

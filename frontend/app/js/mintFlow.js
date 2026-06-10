@@ -157,6 +157,10 @@ export class MintFlow {
 
         console.log('Initializing Phantom Agent...');
 
+        // Reset singleton to prevent state pollution from previous mints
+        const { resetPhantomAgent } = await import('./phantomAgent.js');
+        resetPhantomAgent();
+        
         this.agent = getPhantomAgent();
         const agentData = await this.agent.initialize('MINT', this.xmrAmount.toString());
 
@@ -215,7 +219,7 @@ export class MintFlow {
         const userAddress = getUserAddress();
         const xmrAmountAtomic = BigInt(Math.floor(this.xmrAmount * Math.pow(10, DECIMALS.XMR)));
         const commitment = this.agent.getCommitment();
-        const userPublicKey = '0x' + this.agent.keySet.publicSpendKey.toString(16).padStart(64, '0');
+        const userPublicKey = toHex(this.agent.keySet.publicSpendKey);
 
         console.log('Initiating mint with params:', {
             lpVault: this.lpVault,
@@ -381,44 +385,79 @@ export class MintFlow {
     }
 
     async waitForLPReady() {
-        // First, wait for user to confirm they sent the XMR
-        console.log('Waiting for user to confirm XMR sent...');
-        
-        // Setup the confirm button
-        this.setupConfirmSentButton();
-        
-        // Wait for user to click "I've Sent the XMR" button
-        await new Promise((resolve) => {
-            this.userConfirmResolve = resolve;
-        });
-        
-        console.log('User confirmed XMR sent. Now waiting for LP to verify...');
-        
-        // Update UI to show LP is processing
-        updateSwapState({ 
-            requestId: this.requestId, 
-            state: 'lp-verifying',
-            message: 'LP is updating oracle prices and verifying your XMR deposit...' 
-        });
-        
-        // Now start LP verification process
-        // The state will change to 'lp-ready' when MintReady event is received
-
-        // Start deadline countdown timer
-        await startDeadlineTimer(this);
-        
-        // Start periodic status checking (now just a placeholder)
-        startStatusPolling(this);
-
-        // Check if MintReady was already called (in case we're resuming)
+        // Check on-chain status first so resume paths can skip unnecessary waits
         const { readHub } = await import('./viemClient.js');
-        const mintRequest = await readHub('getMintRequest', [this.requestId]);
-        
-        if (mintRequest.status === 3) { // MintStatus.READY = 3
+        let mintRequest;
+        try {
+            mintRequest = await readHub('getMintRequest', [this.requestId]);
+        } catch (e) {
+            console.warn('Could not query mint request status:', e.message);
+        }
+
+        const isAlreadyReady = mintRequest && Number(mintRequest.status) === 3;
+        const isExpired = mintRequest && Number(mintRequest.status) === 5;
+
+        if (isExpired) {
+            console.log('Mint expired on-chain');
+            this.state = 'expired';
+            updateSwapState({ requestId: this.requestId, state: 'expired', message: 'Mint expired. Cancel to refund your deposit.' });
+            return;
+        }
+
+        // Only wait for user confirmation if not already in lp-verifying (i.e. not resuming mid-flow)
+        if (!isAlreadyReady && this.state !== 'lp-verifying') {
+            console.log('Waiting for user to confirm XMR sent...');
+            this.setupConfirmSentButton();
+            await new Promise((resolve) => {
+                this.userConfirmResolve = resolve;
+            });
+        }
+
+        console.log('User confirmed XMR sent. Now waiting for LP to verify...');
+
+        updateSwapState({
+            requestId: this.requestId,
+            state: 'lp-verifying',
+            message: 'LP is updating oracle prices and verifying your XMR deposit...'
+        });
+        showLPVerificationStatus();
+
+        // If already ready, skip event watching and go straight to claim
+        if (isAlreadyReady) {
             console.log('Mint is already ready (status check)');
             this.state = 'lp-ready';
             updateSwapState({ requestId: this.requestId, state: this.state });
+            console.log('LP confirmed XMR received. Waiting for user to claim wsXMR...');
+            await this.setupClaimButton();
+            return new Promise((resolve) => {
+                this.userClaimResolve = resolve;
+            });
+        }
+
+        // Start deadline countdown timer
+        await startDeadlineTimer(this);
+        startStatusPolling(this);
+
+        // First, check if MintReady event was already emitted in the past
+        const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
+        const currentBlock = await getBlockNumber();
+        const fromBlock = currentBlock - 1000n; // Check last ~1000 blocks
+        
+        console.log(`Checking for past MintReady events from block ${fromBlock} to ${currentBlock}...`);
+        const pastEvents = await getPastEvents(
+            CONTRACTS.hub,
+            ABIS.hub,
+            'MintReady',
+            fromBlock,
+            'latest',
+            { requestId: this.requestId }
+        );
+
+        if (pastEvents && pastEvents.length > 0) {
+            console.log('Found existing MintReady event - verifying on-chain status...');
         } else {
+            console.log('No past MintReady event found, setting up watcher for new events...');
+            
             // Watch for on-chain MintReady event
             await new Promise((resolve, reject) => {
                 const unwatch = watchContractEvent(
@@ -428,8 +467,6 @@ export class MintFlow {
                     { requestId: this.requestId },
                     (log) => {
                         console.log('MintReady event received');
-                        this.state = 'lp-ready';
-                        updateSwapState({ requestId: this.requestId, state: this.state });
                         unwatch();
                         resolve();
                     }
@@ -445,10 +482,66 @@ export class MintFlow {
             });
         }
 
+        // Verify current on-chain status before proceeding
+        // MintReady event may have been emitted but state change not yet committed
+        // Poll until status is actually READY (3) on-chain
+        console.log('Waiting for on-chain status to become READY...');
+        let currentMintRequest;
+        let pollAttempts = 0;
+        const maxPollAttempts = 60; // 5 minutes max (5 seconds * 60)
+        
+        while (pollAttempts < maxPollAttempts) {
+            try {
+                currentMintRequest = await readHub('getMintRequest', [this.requestId]);
+                const status = Number(currentMintRequest.status);
+                // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
+                
+                if (status === 5) {
+                    console.log('Mint was cancelled by LP after MintReady event');
+                    this.state = 'expired';
+                    updateSwapState({ requestId: this.requestId, state: this.state });
+                    const { showError } = await import('./ui.js');
+                    showError('Mint Cancelled', 'The LP cancelled this mint. If you had a griefing deposit, you can withdraw it via Pending Returns.');
+                    throw new Error('Mint cancelled by LP');
+                }
+                
+                if (status === 4) {
+                    console.log('Mint was already completed');
+                    this.complete();
+                    throw new Error('Mint already completed');
+                }
+                
+                if (status === 3) {
+                    console.log('On-chain status verified: READY');
+                    this.state = 'lp-ready';
+                    updateSwapState({ requestId: this.requestId, state: this.state });
+                    break;
+                }
+                
+                // Status is still PENDING (1) or KEY_PROVIDED (2) - wait and retry
+                console.log(`Status is ${status}, waiting for READY (3)... (attempt ${pollAttempts + 1}/${maxPollAttempts})`);
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                pollAttempts++;
+                
+            } catch (error) {
+                if (error.message.includes('cancelled by LP') || 
+                    error.message.includes('already completed')) {
+                    throw error;
+                }
+                console.warn('Error checking status, retrying...', error.message);
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                pollAttempts++;
+            }
+        }
+        
+        if (pollAttempts >= maxPollAttempts) {
+            throw new Error('Timeout waiting for mint status to become READY on-chain. The LP may be experiencing issues.');
+        }
+
         // LP has confirmed - now wait for user to claim wsXMR
         console.log('LP confirmed XMR received. Waiting for user to claim wsXMR...');
         await this.setupClaimButton();
-        
+
         return new Promise((resolve) => {
             this.userClaimResolve = resolve;
         });
@@ -470,12 +563,99 @@ export class MintFlow {
 
         console.log('Finalizing mint...');
 
+        try {
+            await this._doFinalize();
+        } catch (error) {
+            // If an error occurred but state is still 'finalize', revert to 'lp-ready'
+            // so the user can retry (unless error handler already set it to expired/completed)
+            if (this.state === 'finalize') {
+                this.state = 'lp-ready';
+                updateSwapState({ requestId: this.requestId, state: this.state });
+                this.setupClaimButton();
+            }
+            throw error;
+        }
+    }
+
+    async _doFinalize() {
+        // Verify status one more time before attempting finalize
+        const { readHub } = await import('./viemClient.js');
+        try {
+            const mintReq = await readHub('getMintRequest', [this.requestId]);
+            const status = Number(mintReq.status);
+            
+            if (status === 5) {
+                const { showError } = await import('./ui.js');
+                showError('Mint Cancelled', 'This mint was cancelled by the LP. If you had a griefing deposit, you can withdraw it via Pending Returns.');
+                throw new Error('Mint was cancelled');
+            }
+            
+            if (status === 4) {
+                console.log('Mint already completed');
+                this.complete();
+                return;
+            }
+            
+            if (status !== 3) {
+                const { showError } = await import('./ui.js');
+                showError('Invalid Status', `Cannot finalize mint - current status is ${status}. Expected status 3 (READY).`);
+                throw new Error(`Invalid mint status: ${status}`);
+            }
+        } catch (error) {
+            if (error.message.includes('cancelled') || error.message.includes('Invalid mint status')) {
+                throw error;
+            }
+            // If we can't verify status (RPC error, etc.), don't blindly proceed
+            console.error('Could not verify status before finalize:', error.message);
+            throw new Error('Could not verify mint status before finalizing. Please check your connection and try again.');
+        }
+
         const secret = this.agent.getSecret();
 
         let receipt;
         try {
             receipt = await writeHub('finalizeMint', [this.requestId, secret], 0n, 1000000n);
         } catch (error) {
+            const isInvalidStatus = error.message && error.message.includes('InvalidStatus');
+            if (isInvalidStatus) {
+                // Query actual on-chain status to give precise guidance and update UI
+                try {
+                    const mintReq = await readHub('getMintRequest', [this.requestId]);
+                    const status = Number(mintReq.status);
+                    if (status === 4) {
+                        console.log('Mint already completed on-chain');
+                        this.complete();
+                        return;
+                    }
+                    if (status === 5) {
+                        this.state = 'expired';
+                        updateSwapState({ requestId: this.requestId, state: 'expired', message: 'Mint was cancelled on-chain.' });
+                        const { showError } = await import('./ui.js');
+                        showError('Mint Cancelled', 'This mint was cancelled. If you had a griefing deposit, you can withdraw it via Pending Returns.');
+                        throw new Error('Mint was cancelled');
+                    }
+                    if (status === 3) {
+                        // Still READY — something else caused InvalidStatus (race condition?)
+                        throw new Error('Mint is still READY but transaction simulation failed. Please try again.');
+                    }
+                    this.state = 'expired';
+                    updateSwapState({ requestId: this.requestId, state: 'expired', message: `Mint status is ${status} (not READY). Cannot finalize.` });
+                } catch (checkErr) {
+                    if (checkErr.message.includes('already completed') ||
+                        checkErr.message.includes('Mint was cancelled') ||
+                        checkErr.message.includes('still READY')) {
+                        throw checkErr;
+                    }
+                    console.warn('Could not query status after InvalidStatus:', checkErr.message);
+                }
+                const { showError } = await import('./ui.js');
+                showError(
+                    'Mint Cancelled or Expired', 
+                    'This mint is no longer in READY status. The LP may have cancelled it. If you had a griefing deposit, you can withdraw it via Pending Returns.'
+                );
+                throw new Error('Mint status changed - cannot finalize');
+            }
+            
             const isStalePrice = error.message && (
                 error.message.includes('StalePrice') ||
                 error.message.includes('0x19abf40e')
@@ -576,6 +756,50 @@ export class MintFlow {
         this.state = savedState.state;
         if (savedState.timeout) {
             this.timeout = BigInt(savedState.timeout);
+        }
+
+        // ─── Validate on-chain status before resuming ─────────────────────────
+        try {
+            const mintReq = await readHub('getMintRequest', [this.requestId]);
+            const status = Number(mintReq.status);
+            // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
+            if (status === 5) {
+                console.log('Mint was cancelled on-chain; aborting resume');
+                const { removeActiveSwap, saveToHistory } = await import('./storage.js');
+                const { showError, resetMintUI } = await import('./ui.js');
+                saveToHistory({ ...savedState, status: 'Cancelled', completedAt: Date.now() });
+                removeActiveSwap(this.requestId);
+                showError('Mint Cancelled', 'This mint was cancelled on-chain. If you had a griefing deposit, you can withdraw it via Pending Returns.');
+                resetMintUI();
+                throw new Error('Mint cancelled on-chain');
+            }
+            if (status === 4) {
+                console.log('Mint was already completed on-chain; clearing from active swaps');
+                const { removeActiveSwap, saveToHistory } = await import('./storage.js');
+                const { showSuccess, resetMintUI } = await import('./ui.js');
+                saveToHistory({ ...savedState, status: 'Completed', completedAt: Date.now() });
+                removeActiveSwap(this.requestId);
+                showSuccess('Mint Completed', 'This mint was already finalized on-chain.');
+                resetMintUI();
+                throw new Error('Mint already completed on-chain');
+            }
+            if (status === 0) {
+                console.log('Mint is invalid on-chain; clearing from active swaps');
+                const { removeActiveSwap } = await import('./storage.js');
+                const { resetMintUI } = await import('./ui.js');
+                removeActiveSwap(this.requestId);
+                resetMintUI();
+                throw new Error('Mint is invalid on-chain');
+            }
+            // For statuses 1-3, proceed with resume
+        } catch (error) {
+            // Re-throw our own errors; ignore RPC failures and continue
+            if (error.message.includes('cancelled on-chain') ||
+                error.message.includes('already completed on-chain') ||
+                error.message.includes('invalid on-chain')) {
+                throw error;
+            }
+            console.warn('Could not verify on-chain mint status before resume; continuing anyway:', error.message);
         }
 
         this.agent = getPhantomAgent();

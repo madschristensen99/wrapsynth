@@ -555,20 +555,26 @@ contract AuditRegressionTest is Test {
         assertGt(vault.lockedCollateral, 0, "lockedCollateral must be > 0 after burn request");
 
         // Set a tiny maxMintBps (1 = 0.01%) so almost any mint exceeds the cap.
-        // With $10k total collateral, old buggy code would allow:
-        //   maxMintAllowed = ($10k * 100/150) * 0.01% = $0.667 = ~0.0017 wsXMR
-        // With lockedCollateral > 0, new fixed code uses available collateral:
-        //   maxMintAllowed < $0.667 (strictly less because available < total)
-        // Minting 1 wsXMR ($390) massively exceeds either limit.
+        // CRITICAL: The maxMintBps check must:
+        //   1. Convert sDAI shares to DAI assets via convertToAssets()
+        //   2. Subtract lockedCollateral from total shares before conversion
+        // 
+        // With 10k sDAI deposited (~10.45k DAI after conversion at ~1.045 rate):
+        //   Old buggy code (used raw shares): (10000 shares * price) / 1e18 = WRONG
+        //   Fixed code: convertToAssets(availableShares) * price / 1e18 = CORRECT
+        //
+        // With lockedCollateral > 0, available < total, so capacity is reduced.
+        // maxMintAllowed = (availableDAI * collPrice * 100/150) * 0.01%
         vm.prank(lp);
         VaultFacet(address(hub)).setMaxMintBps(1);
 
-        // xmrAmount = 2e9 -> wsxmrAmount = 2e9 / 1e4 = 2e5 = 0.002 wsXMR = ~$0.78
-        // With $10k total collateral at 150% CR and maxMintBps=1 (0.01%):
-        //   maxMintAllowed = ($10k * 100/150) * 0.01% = $0.667
-        // With lockedCollateral > 0, available < total, so maxMintAllowed < $0.667.
-        // $0.78 > $0.667  =>  must revert with InvalidValue.
-        uint256 xmrAmount = 2_000_000_000;
+        // With maxMintBps=1 (0.01%) and ~10k available collateral:
+        //   maxMintAllowed ≈ (10450 DAI * $1 * 100/150) * 0.01% ≈ $0.697
+        // At XMR price ~$390: maxMintAllowed ≈ 0.00179 wsXMR
+        // 
+        // Mint 1 full wsXMR (100000000000 XMR atomic units = 10000000 wsXMR atomic = 0.1 wsXMR)
+        // This is ~57x the cap, so must revert with InvalidValue.
+        uint256 xmrAmount = 100_000_000_000; // 0.1 wsXMR
         (uint256 px3, uint256 py3) = Ed25519.scalarMultBase(uint256(0x3333));
         bytes32 commitment3 = keccak256(abi.encodePacked(px3, py3));
 

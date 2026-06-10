@@ -115,6 +115,32 @@ class MoneroRpcClient {
     }
 
     /**
+     * Verify a transaction exists on the blockchain and get its confirmation count
+     */
+    async verifyTransaction(txHash) {
+        const tx = await this.getTransaction(txHash);
+        if (!tx) {
+            return { found: false, error: 'Transaction not found on blockchain' };
+        }
+
+        const blockHeight = tx.block_height;
+        if (tx.in_pool || !blockHeight) {
+            return { found: true, txHash, confirmations: 0, inPool: true };
+        }
+
+        const currentHeight = await this.getHeight();
+        const confirmations = Math.max(0, currentHeight - blockHeight + 1);
+
+        return {
+            found: true,
+            txHash,
+            blockHeight,
+            confirmations,
+            inPool: false
+        };
+    }
+
+    /**
      * Create a PTLC (Point Time Locked Contract) transaction
      * This requires custom Monero transaction building
      */
