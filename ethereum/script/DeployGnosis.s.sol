@@ -11,6 +11,7 @@ import "../contracts/facets/LiquidationFacet.sol";
 import "../contracts/facets/YieldFacet.sol";
 import "../contracts/wsXMR.sol";
 import "../contracts/router/wsXMRLiquidityRouter.sol";
+import "../contracts/test/SwapHelper.sol";
 import "../contracts/interfaces/external/IUniswapV3Factory.sol";
 import "../contracts/GnosisAddresses.sol";
 import {TickMath} from "../contracts/libraries/TickMath.sol";
@@ -149,6 +150,13 @@ contract DeployGnosis is Script {
         console.log("Router registered with hub");
         console.log("");
 
+        console.log("============================================================");
+        console.log("STEP 9: Deploying SwapHelper");
+        console.log("============================================================");
+        SwapHelper swapHelper = new SwapHelper();
+        console.log("SwapHelper deployed to:", address(swapHelper));
+        console.log("");
+
         vm.stopBroadcast();
 
         console.log("============================================================");
@@ -161,6 +169,7 @@ contract DeployGnosis is Script {
         console.log("  wsXMR:            ", address(wsxmr));
         console.log("  wsXmrHub:         ", address(hub));
         console.log("  LiquidityRouter:  ", address(router));
+        console.log("  SwapHelper:       ", address(swapHelper));
         console.log("");
         console.log("Facets:");
         console.log("  OracleFacet:      ", address(oracleFacet));

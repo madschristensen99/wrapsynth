@@ -247,6 +247,7 @@ contract E2EFullCycleTest is Test {
         // Create Ed25519 commitment
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(testSecret));
         bytes32 commitment = keccak256(abi.encodePacked(px, py));
+        bytes32 userPublicKey = bytes32(Ed25519.compressPoint(px, py));
         
         // User initiates mint
         vm.prank(user);
@@ -255,7 +256,7 @@ contract E2EFullCycleTest is Test {
             user,
             xmrAmount,
             commitment,
-            bytes32(px));
+            userPublicKey);
         console.log("[OK] Mint initiated");
         console.log("  Request ID:", vm.toString(mintRequestId));
         

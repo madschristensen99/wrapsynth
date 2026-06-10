@@ -250,7 +250,7 @@ export class MintFlow {
         console.log('Mint initiated, tx:', receipt.transactionHash);
 
         const mintInitiatedEvent = receipt.logs.find(log => 
-            log.topics[0] === keccak256(toHex('MintInitiated(bytes32,address,address,address,uint256,uint256,uint256,bytes32,uint256)'))
+            log.topics[0] === keccak256(toHex('MintInitiated(bytes32,address,address,address,uint256,uint256,uint256,bytes32,bytes32,uint256)'))
         );
 
         if (mintInitiatedEvent) {

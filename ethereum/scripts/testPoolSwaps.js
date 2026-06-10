@@ -5,7 +5,7 @@
 
 require('dotenv').config();
 const { ethers } = require('ethers');
-const { HUB_ADDRESS, SDAI_ADDRESS, WSXMR_ADDRESS, POOL_ADDRESS, SWAP_ROUTER, UNI_V3_FACTORY } = require('./deploymentConfig');
+const { HUB_ADDRESS, SDAI_ADDRESS, WSXMR_ADDRESS, POOL_ADDRESS, SWAP_HELPER, UNI_V3_FACTORY } = require('./deploymentConfig');
 
 const POOL_FEE = 3000;
 
@@ -41,10 +41,10 @@ async function main() {
         'function decimals() external view returns (uint8)',
         'function symbol() external view returns (string)'
     ];
-    const routerAbi = [
-        'function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) external payable returns (uint256 amountOut)'
+    const swapHelperAbi = [
+        'function swap(address pool, address recipient, bool zeroForOne, int256 amountSpecified, uint160 sqrtPriceLimitX96) external returns (int256 amount0, int256 amount1)'
     ];
-    const swapRouter = new ethers.Contract(SWAP_ROUTER, routerAbi, wallet);
+    const swapHelper = new ethers.Contract(SWAP_HELPER, swapHelperAbi, wallet);
 
     const factory = new ethers.Contract(UNI_V3_FACTORY, factoryAbi, provider);
     const poolAddr = await factory.getPool(SDAI_ADDRESS, WSXMR_ADDRESS, POOL_FEE);
@@ -106,31 +106,27 @@ async function main() {
         console.log('Swap 1: wsXMR -> sDAI');
         console.log('  Amount in:', ethers.utils.formatUnits(wsxmrSwapAmount, wsxmrDecimals), wsxmrSymbol);
 
-        // Approve SwapRouter to spend tokens
-        const approve1 = await wsxmr.approve(SWAP_ROUTER, wsxmrSwapAmount, {
+        // Approve SwapHelper to spend tokens
+        const approve1 = await wsxmr.approve(SWAP_HELPER, wsxmrSwapAmount, {
             maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
             maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
         });
         await approve1.wait();
-        console.log('  Approved SwapRouter');
+        console.log('  Approved SwapHelper');
 
-        const deadline = Math.floor(Date.now() / 1000) + 600;
-        const swapParams1 = {
-            tokenIn: WSXMR_ADDRESS,
-            tokenOut: SDAI_ADDRESS,
-            fee: POOL_FEE,
-            recipient: wallet.address,
-            deadline: deadline,
-            amountIn: wsxmrSwapAmount,
-            amountOutMinimum: 0,
-            sqrtPriceLimitX96: 0
-        };
-
-        const swap1 = await swapRouter.exactInputSingle(swapParams1, {
-            gasLimit: 800000,
-            maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
-            maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
-        });
+        // wsXMR is token0, sDAI is token1, so zeroForOne = true
+        const swap1 = await swapHelper.swap(
+            poolAddr,
+            wallet.address,
+            true, // zeroForOne (wsXMR -> sDAI)
+            wsxmrSwapAmount,
+            0, // sqrtPriceLimitX96 (no limit)
+            {
+                gasLimit: 800000,
+                maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+                maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+            }
+        );
         const receipt1 = await swap1.wait();
         console.log('  Swap TX:', swap1.hash);
 
@@ -149,31 +145,27 @@ async function main() {
         console.log('Swap 2: sDAI -> wsXMR');
         console.log('  Amount in:', ethers.utils.formatUnits(sdaiSwapAmount, sdaiDecimals), sdaiSymbol);
 
-        // Approve SwapRouter
-        const approve2 = await sdai.approve(SWAP_ROUTER, sdaiSwapAmount, {
+        // Approve SwapHelper
+        const approve2 = await sdai.approve(SWAP_HELPER, sdaiSwapAmount, {
             maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
             maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
         });
         await approve2.wait();
-        console.log('  Approved SwapRouter');
+        console.log('  Approved SwapHelper');
 
-        const deadline = Math.floor(Date.now() / 1000) + 600;
-        const swapParams2 = {
-            tokenIn: SDAI_ADDRESS,
-            tokenOut: WSXMR_ADDRESS,
-            fee: POOL_FEE,
-            recipient: wallet.address,
-            deadline: deadline,
-            amountIn: sdaiSwapAmount,
-            amountOutMinimum: 0,
-            sqrtPriceLimitX96: 0
-        };
-
-        const swap2 = await swapRouter.exactInputSingle(swapParams2, {
-            gasLimit: 800000,
-            maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
-            maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
-        });
+        // sDAI is token1, wsXMR is token0, so zeroForOne = false
+        const swap2 = await swapHelper.swap(
+            poolAddr,
+            wallet.address,
+            false, // zeroForOne (sDAI -> wsXMR)
+            sdaiSwapAmount,
+            0, // sqrtPriceLimitX96 (no limit)
+            {
+                gasLimit: 800000,
+                maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+                maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+            }
+        );
         const receipt2 = await swap2.wait();
         console.log('  Swap TX:', swap2.hash);
 

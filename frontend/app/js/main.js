@@ -64,41 +64,81 @@ let currentMintFlow = null;
 let currentBurnFlow = null;
 let cachedVaults = [];
 
+// Price cache with TTL to avoid API rate limits
+const priceCache = {
+    value: null,
+    timestamp: 0,
+    ttlMs: 5 * 60 * 1000 // 5 minutes
+};
+
 /**
- * Fetch XMR price from CoinGecko free API
+ * Fetch XMR price with caching and fallback sources.
+ * Tries CoinGecko first, then CoinCap (better CORS support).
  */
-async function fetchXmrPrice() {
-    try {
-        console.log('Fetching XMR price from CoinGecko...');
-        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd');
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        console.log('CoinGecko response:', data);
-        
-        if (data.monero && data.monero.usd) {
-            const price = data.monero.usd;
-            const priceElement = document.getElementById('xmr-price-stat');
-            if (priceElement) {
-                priceElement.textContent = `$${price.toFixed(2)}`;
-                console.log('[SUCCESS] XMR price updated:', price);
-            } else {
-                console.error('Price element not found!');
-            }
-            return price;
-        } else {
-            console.error('Invalid data structure from CoinGecko:', data);
-        }
-    } catch (error) {
-        console.error('Could not fetch XMR price from CoinGecko:', error);
+async function fetchXmrPrice(forceRefresh = false) {
+    const now = Date.now();
+    if (!forceRefresh && priceCache.value && (now - priceCache.timestamp) < priceCache.ttlMs) {
+        return priceCache.value;
+    }
+
+    const updateUI = (price) => {
         const priceElement = document.getElementById('xmr-price-stat');
         if (priceElement) {
-            priceElement.textContent = '$--';
+            priceElement.textContent = price != null ? `$${price.toFixed(2)}` : '$--';
         }
+    };
+
+    // Source 1: CoinGecko (may fail with CORS/429 on localhost)
+    try {
+        const response = await fetch(
+            'https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd',
+            { signal: AbortSignal.timeout(5000) }
+        );
+        if (response.ok) {
+            const data = await response.json();
+            if (data.monero?.usd) {
+                const price = data.monero.usd;
+                priceCache.value = price;
+                priceCache.timestamp = now;
+                updateUI(price);
+                console.log('[PRICE] CoinGecko:', price);
+                return price;
+            }
+        }
+    } catch (e) {
+        console.warn('[PRICE] CoinGecko failed:', e.message);
     }
+
+    // Source 2: CoinCap (CORS-friendly fallback)
+    try {
+        const response = await fetch(
+            'https://api.coincap.io/v2/assets/monero',
+            { signal: AbortSignal.timeout(5000) }
+        );
+        if (response.ok) {
+            const data = await response.json();
+            if (data.data?.priceUsd) {
+                const price = parseFloat(data.data.priceUsd);
+                priceCache.value = price;
+                priceCache.timestamp = now;
+                updateUI(price);
+                console.log('[PRICE] CoinCap:', price);
+                return price;
+            }
+        }
+    } catch (e) {
+        console.warn('[PRICE] CoinCap failed:', e.message);
+    }
+
+    // If we have a stale cached value, return it rather than null
+    if (priceCache.value) {
+        console.warn('[PRICE] Using stale cached price:', priceCache.value);
+        updateUI(priceCache.value);
+        return priceCache.value;
+    }
+
+    updateUI(null);
+    console.error('[PRICE] All price sources failed');
     return null;
 }
 
@@ -117,7 +157,7 @@ async function fetch24hVolume() {
         const fromBlock = currentBlock - blocksPerDay;
         
         const hubAbi = parseAbi([
-            'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, uint256 timeout)',
+            'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout)',
             'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment)'
         ]);
         
@@ -209,22 +249,26 @@ async function init() {
     // Check for active swap
     checkForActiveSwap();
     
-    // Fetch XMR price and 24h volume
+    // Fetch XMR price (cached, falls back to CoinCap if CoinGecko blocked)
     fetchXmrPrice();
     fetch24hVolume();
-    
+
     // Load activity feed and protocol stats
     loadRecentActivity();
     startActivityFeedWatcher();
     updateProtocolStats();
-    
-    // Update stats every 60 seconds
+
+    // Update volume / activity / on-chain stats every 60 seconds
     setInterval(() => {
-        fetchXmrPrice();
         fetch24hVolume();
         loadRecentActivity();
         updateProtocolStats();
     }, 60000);
+
+    // Refresh XMR price every 5 minutes (CoinGecko free-tier friendly)
+    setInterval(() => {
+        fetchXmrPrice(true);
+    }, 5 * 60 * 1000);
     
     // Listen for account/chain changes
     onAccountsChanged(handleAccountChange);

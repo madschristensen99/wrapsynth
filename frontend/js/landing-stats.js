@@ -22,7 +22,7 @@ const HUB_ABI = parseAbi([
     'function getVaultDebt(address lpAddress) external view returns (uint256)',
     'function getXmrPrice() external view returns (uint256)',
     'function getCollateralPrice() external view returns (uint256)',
-    'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, uint256 timeout)',
+    'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout)',
     'event MintFinalized(bytes32 indexed requestId, bytes32 secret)',
     'event MintCancelled(bytes32 indexed requestId)',
     'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral)',

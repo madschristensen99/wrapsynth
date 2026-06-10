@@ -36,7 +36,8 @@ async function main() {
 
     const ed25519HelperAbi = [
         'function computeCommitment(bytes32 secret) external view returns (bytes32)',
-        'function scalarMultBase(uint256 scalar) external view returns (uint256 x, uint256 y)'
+        'function scalarMultBase(uint256 scalar) external view returns (uint256 x, uint256 y)',
+        'function compressPublicKey(uint256 px, uint256 py) external pure returns (uint256)'
     ];
 
     const hub = new ethers.Contract(HUB_ADDRESS, hubAbi, wallet);
@@ -67,7 +68,8 @@ async function main() {
     const griefingDeposit = ethers.utils.parseEther('0.001');
 
     const [userPubX, userPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(secret));
-    const userPublicKey = ethers.utils.hexZeroPad(userPubX.toHexString(), 32);
+    const compressed = await ed25519Helper.compressPublicKey(userPubX, userPubY);
+    const userPublicKey = ethers.utils.hexZeroPad(compressed.toHexString(), 32);
 
     const mintTx = await hub.initiateMint(
         wallet.address,

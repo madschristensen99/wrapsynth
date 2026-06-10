@@ -97,15 +97,9 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (slippageBps >= BPS_DENOMINATOR) revert SlippageExceeded();
 
-        // M3: Use oracle price for center tick, not manipulable slot0()
+        // Always center position at current pool price
         (uint160 sqrtPriceX96, int24 currentTick, , , , , ) = IUniswapV3Pool(pool).slot0();
-        int24 centerTick;
-        if (centerXmrPrice > 0) {
-            uint160 oracleSqrtPriceX96 = _priceToSqrtPriceX96(centerXmrPrice, 1e18);
-            centerTick = TickMath.getTickAtSqrtRatio(oracleSqrtPriceX96);
-        } else {
-            centerTick = currentTick;
-        }
+        int24 centerTick = currentTick;
 
         int24 halfWidth = int24(int256(uint256(rangeBps) / 2));
         

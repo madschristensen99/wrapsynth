@@ -12,4 +12,8 @@ contract Ed25519Helper {
     function scalarMultBase(uint256 scalar) external view returns (uint256, uint256) {
         return Ed25519.scalarMultBase(scalar);
     }
+
+    function compressPublicKey(uint256 px, uint256 py) external pure returns (uint256) {
+        return Ed25519.compressPoint(px, py);
+    }
 }

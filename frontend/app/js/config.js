@@ -128,7 +128,9 @@ export const RAW_ABIS = {
                 { name: 'liquidationNonce', type: 'uint256' },
                 { name: 'mintNonce', type: 'uint256' },
                 { name: 'minBurnAmount', type: 'uint256' },
-                { name: 'active', type: 'bool' }
+                { name: 'active', type: 'bool' },
+                { name: 'deployedSDAIShares', type: 'uint256' },
+                { name: 'maxCoLPRangeBps', type: 'uint16' }
             ],
             name: '',
             type: 'tuple'
@@ -149,6 +151,7 @@ export const RAW_ABIS = {
                 { name: 'wsxmrAmount', type: 'uint256' },
                 { name: 'feeAmount', type: 'uint256' },
                 { name: 'claimCommitment', type: 'bytes32' },
+                { name: 'userPublicKey', type: 'bytes32' },
                 { name: 'timeout', type: 'uint256' },
                 { name: 'griefingDeposit', type: 'uint256' },
                 { name: 'lpBond', type: 'uint256' },
@@ -297,7 +300,7 @@ export const ABIS = {
         'function getCollateralPriceWithAge(uint256 maxAge) external view returns (uint256)',
 
         // Events
-        'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, uint256 timeout)',
+        'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout)',
         'event LPKeyProvided(bytes32 indexed requestId, bytes32 lpPublicKey)',
         'event MintReady(bytes32 indexed requestId)',
         'event MintFinalized(bytes32 indexed requestId, bytes32 secret)',
