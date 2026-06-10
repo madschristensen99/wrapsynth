@@ -18,7 +18,7 @@ async function main() {
     console.log('Wallet:', wallet.address);
 
     const hubAbi = [
-        'function provideLPKey(bytes32 requestId, bytes32 lpPublicKey) external',
+        'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
         'function setMintReady(bytes32 requestId) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
         'function updateOraclePrices(bytes[] calldata updateData) external payable',
@@ -52,7 +52,7 @@ async function main() {
     const griefingDeposit = ethers.utils.parseEther('0.001');
 
     console.log('Replacing stuck provideLPKey tx with higher gas...');
-    const bumpTx = await hub.provideLPKey(requestId, lpPublicKey, {
+    const bumpTx = await hub.provideLPKey(requestId, lpPublicKey, lpPublicKey, {
         nonce: 3593,
         maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
         maxFeePerGas: ethers.utils.parseUnits('20', 'gwei'),

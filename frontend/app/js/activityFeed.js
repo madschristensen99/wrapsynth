@@ -30,9 +30,9 @@ export async function loadRecentActivity() {
         const publicClient = getPublicClient();
         const currentBlock = await publicClient.getBlockNumber();
 
-        // Look back ~2.75 days (~48000 blocks at 5s/block on Gnosis)
-        // Must stay under 50,000 block RPC limit
-        const lookbackBlocks = 48000n;
+        // Look back ~13.9 hours (~10000 blocks at 5s/block on Gnosis)
+        // Must stay under RPC provider limits (typically 10k-50k blocks)
+        const lookbackBlocks = 10000n;
         let fromBlock = currentBlock > lookbackBlocks ? currentBlock - lookbackBlocks : 0n;
 
         console.log('Fetching activity from block', fromBlock.toString(), 'to', currentBlock.toString());

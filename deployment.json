@@ -1,21 +1,22 @@
 {
   "network": "Gnosis Chain Mainnet",
   "chainId": 100,
-  "deploymentDate": "2026-06-09",
+  "deploymentDate": "2026-06-10",
   "rpcUrl": "https://rpc.gnosischain.com",
   "wsUrl": "wss://rpc.gnosischain.com/wss",
   "explorer": "https://gnosisscan.io",
   "contracts": {
-    "wsXMR": "0x3eF9179D3B68563A4a7D76eaA54b8b4cc64fB28C",
-    "wsXmrHub": "0xaF04319B462850Fa645EaDE5C816b4dC894d9575",
-    "liquidityRouter": "0x09E7AF5840dAe62995ADa4D338899c34765997c6",
+    "wsXMR": "0xFcA09499102342F8d8A7Ae0745568F97344228BB",
+    "wsXmrHub": "0xc0B772BD1b4260DF2e49CCc4161C9FF2E101ed0d",
+    "liquidityRouter": "0x60a0390411a6568b134968c46cd86ea58a20aa8b",
+    "swapHelper": "0xaD39771cc753aB1abcA059559Dd1541651BABB25",
     "facets": {
-      "RedStoneOracleFacet": "0xa4f6EAd0674568176eAd871057e473A0695F8046",
-      "VaultFacet": "0x7A9343dd277ace6a5c968AcBa0F901F649949fD3",
-      "MintFacet": "0x4EE36ae55d0d1467161f1f7DC5Fb4Fe3536CC40C",
-      "BurnFacet": "0xE47E63F8F222dEdACD9B7C6c73babb877A3df249",
-      "LiquidationFacet": "0x255460445d17b9bdFbCdA9ab7C526F6aE9a9e172",
-      "YieldFacet": "0xEC4000a6C1f576fE8E704386F197e23A0d8a3004"
+      "RedStoneOracleFacet": "0x6f83c4d7732d1b618ce9b4a01513210da8b0f746",
+      "VaultFacet": "0xd663697d5c5eadbfab8534f1f9e812b82c1438f7",
+      "MintFacet": "0x06E3f7167C1a19705F4fa537854c3D0C427caEAf",
+      "BurnFacet": "0x3c8893B0152e36bfCa9194B07c222a5809d12D52",
+      "LiquidationFacet": "0x7310eeE641436dc1d3615d552b27bBf7F0630eb3",
+      "YieldFacet": "0xdfe41868aa9b74a7c6caab1973e18b6e6f402fd2"
     }
   },
   "externalContracts": {
@@ -23,7 +24,7 @@
     "wxDAI": "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d",
     "UniswapV3Factory": "0xe32F7dD7e3f098D518ff19A22d5f028e076489B1",
     "UniswapV3PositionManager": "0xAE8fbE656a77519a7490054274910129c9244FA3",
-    "SwapHelper": "0x3a323d3FCEE9cf235D433cC016de46Ab8424484A",
+    "SwapHelper": "0xaD39771cc753aB1abcA059559Dd1541651BABB25",
     "Ed25519Helper": "0xaECa36374039EAb9e267B5daa48bAb9Ab0e50F00",
     "PythOracle": "0x2880aB155794e7179c9eE2e38200202908C17B43"
   },

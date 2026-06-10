@@ -338,11 +338,14 @@ impl EventListener {
             swap_keys.deposit_address
         );
 
-        // Submit LP's public key on-chain so user can compute deposit address
+        // Submit LP's public keys on-chain so user can compute deposit address
         let request_id_bytes: [u8; 32] = event.requestId.into();
         let lp_public_spend_bytes = swap_keys.lp_public_spend.as_bytes();
-        let mut lp_public_key_array = [0u8; 32];
-        lp_public_key_array.copy_from_slice(lp_public_spend_bytes);
+        let lp_public_view_bytes = swap_keys.lp_public_view.as_bytes();
+        let mut lp_public_spend_array = [0u8; 32];
+        let mut lp_public_view_array = [0u8; 32];
+        lp_public_spend_array.copy_from_slice(lp_public_spend_bytes);
+        lp_public_view_array.copy_from_slice(lp_public_view_bytes);
         
         // Check if LP key was already provided or if mint has moved past PENDING status
         // (to avoid revert on historical event replay)
@@ -358,7 +361,8 @@ impl EventListener {
             for attempt in 1..=3 {
                 match self.evm.provide_lp_key(
                     request_id_bytes.into(),
-                    lp_public_key_array.into()
+                    lp_public_spend_array.into(),
+                    lp_public_view_array.into()
                 ).await {
                     Ok(tx_hash) => {
                         info!("LP key submitted on-chain: {:?}", tx_hash);
@@ -424,6 +428,12 @@ impl EventListener {
             },
             lp_public_spend: {
                 let bytes = swap_keys.lp_public_spend.as_bytes();
+                let mut array = [0u8; 32];
+                array.copy_from_slice(bytes);
+                Some(array)
+            },
+            lp_public_view: {
+                let bytes = swap_keys.lp_public_view.as_bytes();
                 let mut array = [0u8; 32];
                 array.copy_from_slice(bytes);
                 Some(array)

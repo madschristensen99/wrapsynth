@@ -75,6 +75,7 @@ pub struct MintTask {
     pub lp_private_spend: Option<[u8; 32]>,
     pub lp_private_view: Option<[u8; 32]>,
     pub lp_public_spend: Option<[u8; 32]>,
+    pub lp_public_view: Option<[u8; 32]>,
     pub deposit_address: Option<String>,
 }
 

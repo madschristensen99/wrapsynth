@@ -298,7 +298,7 @@ contract PoolSwapTest is Test, IUniswapV3SwapCallback {
         // LP provides key and sets ready
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(mintRequestId, lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(mintRequestId, lpPublicKey, lpPublicKey);
 
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady{value: 0.001 ether}(mintRequestId);

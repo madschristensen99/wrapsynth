@@ -593,8 +593,8 @@ impl SwapEngine {
             // Provide LP key if not already on-chain
             if !lp_key_set {
                 info!("Providing LP key before setMintReady...");
-                if let Some(lp_public_spend_bytes) = mint.lp_public_spend {
-                    match self.evm.provide_lp_key(request_id, lp_public_spend_bytes.into()).await {
+                if let (Some(lp_public_spend_bytes), Some(lp_public_view_bytes)) = (mint.lp_public_spend, mint.lp_public_view) {
+                    match self.evm.provide_lp_key(request_id, lp_public_spend_bytes.into(), lp_public_view_bytes.into()).await {
                         Ok(tx_hash) => {
                             info!("LP key provided on-chain: {:?}", tx_hash);
                         }
@@ -604,8 +604,8 @@ impl SwapEngine {
                         }
                     }
                 } else {
-                    warn!("LP public key not found in mint task, cannot proceed to setMintReady");
-                    return Err(anyhow!("LP public key missing for mint {}", hex::encode(mint.request_id)));
+                    warn!("LP public keys not found in mint task, cannot proceed to setMintReady");
+                    return Err(anyhow!("LP public keys missing for mint {}", hex::encode(mint.request_id)));
                 }
             } else {
                 info!("LP key already provided on-chain, skipping provideLPKey");

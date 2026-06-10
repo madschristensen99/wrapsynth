@@ -263,7 +263,7 @@ contract E2EFullCycleTest is Test {
         // LP provides their Ed25519 public key for atomic swap
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef)); // Mock LP public key
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(mintRequestId, lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(mintRequestId, lpPublicKey, lpPublicKey);
         console.log("[OK] LP provided public key");
         console.log("  LP Public Key:", vm.toString(lpPublicKey));
         

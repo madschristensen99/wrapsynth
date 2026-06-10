@@ -202,12 +202,13 @@ class PhantomAgent {
     }
 
     /**
-     * Derive shared Monero address from LP's public key
+     * Derive shared Monero address from LP's public keys
      * Uses Ed25519 point addition to combine keys and derives a real Monero address
-     * @param {string} lpPublicKeyHex - LP's Ed25519 public key (0x-prefixed hex)
+     * @param {string} lpPublicSpendKeyHex - LP's Ed25519 public spend key (0x-prefixed hex)
+     * @param {string} lpPublicViewKeyHex - LP's Ed25519 public view key (0x-prefixed hex)
      * @returns {Promise<string>} Shared Monero address
      */
-    async deriveSharedMoneroAddress(lpPublicKeyHex) {
+    async deriveSharedMoneroAddress(lpPublicSpendKeyHex, lpPublicViewKeyHex) {
         if (!this.keySet) {
             throw new Error('Agent not initialized');
         }
@@ -215,10 +216,11 @@ class PhantomAgent {
         const userPublicKeyHex = '0x' + this.keySet.publicSpendKey.toString(16).padStart(64, '0');
 
         console.log('Deriving shared Monero address:');
-        console.log('  LP Public Key:', lpPublicKeyHex.slice(0, 10) + '...' + lpPublicKeyHex.slice(-8));
+        console.log('  LP Public Spend Key:', lpPublicSpendKeyHex.slice(0, 10) + '...' + lpPublicSpendKeyHex.slice(-8));
+        console.log('  LP Public View Key:', lpPublicViewKeyHex.slice(0, 10) + '...' + lpPublicViewKeyHex.slice(-8));
         console.log('  User Public Key:', userPublicKeyHex.slice(0, 10) + '...' + userPublicKeyHex.slice(-8));
 
-        const address = await computeDepositAddress(userPublicKeyHex, lpPublicKeyHex);
+        const address = await computeDepositAddress(userPublicKeyHex, lpPublicSpendKeyHex, lpPublicViewKeyHex);
         console.log('  Derived deposit address:', address);
         return address;
     }

@@ -140,7 +140,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         // LP provides public key
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(userMints[0], lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(userMints[0], lpPublicKey, lpPublicKey);
 
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady{value: 0.001 ether}(userMints[0]);
@@ -323,7 +323,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         
         bytes32 lpPublicKey2 = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(user2Mints[0], lpPublicKey2);
+        MintFacet(address(hub)).provideLPKey(user2Mints[0], lpPublicKey2, lpPublicKey2);
         
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady{value: 0.001 ether}(user2Mints[0]);
@@ -494,7 +494,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
 
         bytes32 lpPublicKey3 = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey3);
+        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey3, lpPublicKey3);
 
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady{value: 0.001 ether}(requestId);
