@@ -108,7 +108,7 @@ contract E2EComprehensiveTest is Test {
         
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey);
         
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady{value: 0.001 ether}(requestId);
@@ -186,7 +186,7 @@ contract E2EComprehensiveTest is Test {
         
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey);
         
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady{value: 0.001 ether}(requestId);
@@ -216,7 +216,7 @@ contract E2EComprehensiveTest is Test {
         
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey);
         
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady{value: 0.001 ether}(requestId);
@@ -400,8 +400,8 @@ contract E2EComprehensiveTest is Test {
         bytes32 lpPublicKey1 = bytes32(uint256(0xdeadbeef));
         bytes32 lpPublicKey2 = bytes32(uint256(0xdeadbeef));
         vm.startPrank(lp);
-        MintFacet(address(hub)).provideLPKey(requestId1, lpPublicKey1);
-        MintFacet(address(hub)).provideLPKey(requestId2, lpPublicKey2);
+        MintFacet(address(hub)).provideLPKey(requestId1, lpPublicKey1, lpPublicKey1);
+        MintFacet(address(hub)).provideLPKey(requestId2, lpPublicKey2, lpPublicKey2);
         MintFacet(address(hub)).setMintReady{value: 0.001 ether}(requestId1);
         MintFacet(address(hub)).setMintReady{value: 0.001 ether}(requestId2);
         vm.stopPrank();
@@ -452,7 +452,7 @@ contract E2EComprehensiveTest is Test {
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.startPrank(lp);
         BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash);
-        MintFacet(address(hub)).provideLPKey(mintId, lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(mintId, lpPublicKey, lpPublicKey);
         MintFacet(address(hub)).setMintReady{value: 0.001 ether}(mintId);
         vm.stopPrank();
         
@@ -484,7 +484,7 @@ contract E2EComprehensiveTest is Test {
         
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey);
         
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady{value: 0.001 ether}(requestId);

@@ -59,7 +59,7 @@ async function main() {
         'function withdrawReturns(address token) external',
         'function withdrawCollateral(uint256 amount) external',
         'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment, bytes32 userPublicKey) external payable returns (bytes32)',
-        'function provideLPKey(bytes32 requestId, bytes32 lpPublicKey) external',
+        'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
         'function setMintReady(bytes32 requestId) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
         'function requestBurn(uint256 wsxmrAmount, address lpVault, address burnRecipient, bytes32 claimCommitment) external returns (bytes32)',
@@ -325,7 +325,7 @@ async function main() {
     console.log('LP Public Key (x, y):', lpPubX.toString(), lpPubY.toString());
     console.log('LP Public Key (hash):', lpPublicKey);
     
-    const provideTx = await hub.provideLPKey(requestId, lpPublicKey);
+    const provideTx = await hub.provideLPKey(requestId, lpPublicKey, lpPublicKey);
     await provideTx.wait();
     console.log('✅ LP provided public key');
     console.log('');

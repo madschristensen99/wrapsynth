@@ -22,8 +22,8 @@ const MINT_INITIATED_EVENT = {
     type: 'event'
 };
 
-const DEPLOYMENT_BLOCK = 46400000n;
-const MAX_BLOCK_RANGE = 49999n; // Ankr / OnFinality limit is 50,000
+const DEPLOYMENT_BLOCK = 46580000n; // Approximate deployment block on Gnosis
+const MAX_BLOCK_RANGE = 10000n; // Conservative limit to avoid RPC errors
 
 export async function updateProtocolStats() {
     try {

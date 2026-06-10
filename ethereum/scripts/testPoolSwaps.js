@@ -114,11 +114,11 @@ async function main() {
         await approve1.wait();
         console.log('  Approved SwapHelper');
 
-        // wsXMR is token0, sDAI is token1, so zeroForOne = true
+        // sDAI is token0, wsXMR is token1, so wsXMR -> sDAI is zeroForOne = false
         const swap1 = await swapHelper.swap(
             poolAddr,
             wallet.address,
-            true, // zeroForOne (wsXMR -> sDAI)
+            false, // zeroForOne (wsXMR -> sDAI, token1 -> token0)
             wsxmrSwapAmount,
             0, // sqrtPriceLimitX96 (no limit)
             {
@@ -153,11 +153,11 @@ async function main() {
         await approve2.wait();
         console.log('  Approved SwapHelper');
 
-        // sDAI is token1, wsXMR is token0, so zeroForOne = false
+        // sDAI is token0, wsXMR is token1, so sDAI -> wsXMR is zeroForOne = true
         const swap2 = await swapHelper.swap(
             poolAddr,
             wallet.address,
-            false, // zeroForOne (sDAI -> wsXMR)
+            true, // zeroForOne (sDAI -> wsXMR, token0 -> token1)
             sdaiSwapAmount,
             0, // sqrtPriceLimitX96 (no limit)
             {

@@ -1,21 +1,22 @@
 {
   "network": "Gnosis Chain Mainnet",
   "chainId": 100,
-  "deploymentDate": "2026-06-09",
+  "deploymentDate": "2026-06-10",
   "rpcUrl": "https://rpc.gnosischain.com",
   "wsUrl": "wss://rpc.gnosischain.com/wss",
   "explorer": "https://gnosisscan.io",
   "contracts": {
-    "wsXMR": "0xf1AfA7DFF4F5feFba2c3C3D0e0e4BADeE2681225",
-    "wsXmrHub": "0xc75a388ce5d04a3831733937e8CaEc6e23bC24c4",
-    "liquidityRouter": "0x0D1CF3C6F0F71b99AB02049a46fbeBF7c3BFFf97",
+    "wsXMR": "0xFcA09499102342F8d8A7Ae0745568F97344228BB",
+    "wsXmrHub": "0xc0B772BD1b4260DF2e49CCc4161C9FF2E101ed0d",
+    "liquidityRouter": "0x60a0390411a6568b134968c46cd86ea58a20aa8b",
+    "swapHelper": "0xaD39771cc753aB1abcA059559Dd1541651BABB25",
     "facets": {
-      "RedStoneOracleFacet": "0xCbE66353a44ffe0ab97Fc211a49a9c6efC0b2707",
-      "VaultFacet": "0x80dF75a0999619E51aEA40E9484c7Aea7Cf19F5C",
-      "MintFacet": "0x52c5C8E817dF71788DD6bDe69C748F5868f2250a",
-      "BurnFacet": "0x2CA8CFFC50320A2c13A9e02807Db291Cfb654604",
-      "LiquidationFacet": "0xc9c9C664A5757bF6bb7A4fb2EC885Ff83541e596",
-      "YieldFacet": "0x035B50d75458C309B750bb7b4a2778b761E142C3"
+      "RedStoneOracleFacet": "0x6f83c4d7732d1b618ce9b4a01513210da8b0f746",
+      "VaultFacet": "0xd663697d5c5eadbfab8534f1f9e812b82c1438f7",
+      "MintFacet": "0x06E3f7167C1a19705F4fa537854c3D0C427caEAf",
+      "BurnFacet": "0x3c8893B0152e36bfCa9194B07c222a5809d12D52",
+      "LiquidationFacet": "0x7310eeE641436dc1d3615d552b27bBf7F0630eb3",
+      "YieldFacet": "0xdfe41868aa9b74a7c6caab1973e18b6e6f402fd2"
     }
   },
   "externalContracts": {
@@ -23,12 +24,12 @@
     "wxDAI": "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d",
     "UniswapV3Factory": "0xe32F7dD7e3f098D518ff19A22d5f028e076489B1",
     "UniswapV3PositionManager": "0xAE8fbE656a77519a7490054274910129c9244FA3",
-    "SwapHelper": "0x0000000000000000000000000000000000000000",
-    "Ed25519Helper": "0x7EBdE733CE8Bac20984f919e4d2E66e9eE86f2a3",
+    "SwapHelper": "0xaD39771cc753aB1abcA059559Dd1541651BABB25",
+    "Ed25519Helper": "0xaECa36374039EAb9e267B5daa48bAb9Ab0e50F00",
     "PythOracle": "0x2880aB155794e7179c9eE2e38200202908C17B43"
   },
   "pool": {
-    "uniswapV3Pool": "0xDF8E9163944013782181D4f2e60f34e79971dE64",
+    "uniswapV3Pool": "0xEd080D8061dDD5f3721A1A303613288aD97D94d1",
     "feeTier": 3000
   },
   "urls": {
@@ -45,16 +46,6 @@
   },
   "verification": {
     "status": "verified",
-    "verifiedContracts": [
-      "wsXMR",
-      "wsXmrHub",
-      "liquidityRouter",
-      "RedStoneOracleFacet",
-      "VaultFacet",
-      "MintFacet",
-      "BurnFacet",
-      "LiquidationFacet",
-      "YieldFacet"
-    ]
+    "verifiedContracts": []
   }
 }

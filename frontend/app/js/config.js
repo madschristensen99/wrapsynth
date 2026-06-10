@@ -301,7 +301,7 @@ export const ABIS = {
 
         // Events
         'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout)',
-        'event LPKeyProvided(bytes32 indexed requestId, bytes32 lpPublicKey)',
+        'event LPKeyProvided(bytes32 indexed requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey)',
         'event MintReady(bytes32 indexed requestId)',
         'event MintFinalized(bytes32 indexed requestId, bytes32 secret)',
         'event MintCancelled(bytes32 indexed requestId)',

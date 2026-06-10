@@ -177,7 +177,8 @@ sol! {
         // Functions
         function createVault() external;
         function depositCollateral(uint256 _amount) external;
-        function provideLPKey(bytes32 _requestId, bytes32 _lpPublicKey) external;
+        function provideLPKey(bytes32 _requestId, bytes32 _lpPublicSpendKey, bytes32 _lpPublicViewKey) external;
+        function lpPublicViewKeys(bytes32 requestId) external view returns (bytes32);
         function withdrawCollateral(uint256 _amount) external;
         function proposeHash(bytes32 requestId, bytes32 secretHash) external;
         function finalizeBurn(bytes32 requestId, bytes32 secret) external;
@@ -644,9 +645,9 @@ impl EvmClient {
         Ok(request._0.status)
     }
 
-    /// Provide LP's public key for Farcaster atomic swap
-    pub async fn provide_lp_key(&self, request_id: FixedBytes<32>, lp_public_key: FixedBytes<32>) -> Result<FixedBytes<32>> {
-        info!("Providing LP key for request {}", hex::encode(request_id));
+    /// Provide LP's public keys (spend and view) for Farcaster atomic swap
+    pub async fn provide_lp_key(&self, request_id: FixedBytes<32>, lp_public_spend_key: FixedBytes<32>, lp_public_view_key: FixedBytes<32>) -> Result<FixedBytes<32>> {
+        info!("Providing LP keys for request {}", hex::encode(request_id));
 
         let http_url: reqwest::Url = self.rpc_url.parse()
             .context("Invalid HTTP RPC URL")?;
@@ -662,7 +663,7 @@ impl EvmClient {
 
             let contract = VaultManager::new(self.vault_manager, &http_provider);
 
-            let call = contract.provideLPKey(request_id, lp_public_key)
+            let call = contract.provideLPKey(request_id, lp_public_spend_key, lp_public_view_key)
                 .from(self.lp_vault_address);
 
             let pending_tx = match tokio::time::timeout(

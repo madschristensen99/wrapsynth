@@ -113,32 +113,21 @@ function base58Encode(data) {
 /**
  * Compute Monero deposit address from user and LP public keys
  * @param {string} userCommitment - User's public key P_a (hex string with 0x prefix)
- * @param {string} lpPublicKey - LP's public key P_b (hex string with 0x prefix)
- * @param {string} lpPrivateViewKey - LP's private view key (hex string, for combined view key)
+ * @param {string} lpPublicSpendKey - LP's public spend key P_b (hex string with 0x prefix)
+ * @param {string} lpPublicViewKey - LP's public view key V_b (hex string with 0x prefix)
  * @returns {Promise<string>} - Monero deposit address
  */
-export async function computeDepositAddress(userCommitment, lpPublicKey, lpPrivateViewKey = null) {
+export async function computeDepositAddress(userCommitment, lpPublicSpendKey, lpPublicViewKey) {
     // Remove 0x prefix and convert to Uint8Array
     const userBytes = hexToBytes(userCommitment);
-    const lpBytes = hexToBytes(lpPublicKey);
+    const lpSpendBytes = hexToBytes(lpPublicSpendKey);
+    const lpViewBytes = hexToBytes(lpPublicViewKey);
     
     // Add the public spend keys: P_combined = P_a + P_b
-    const combinedSpendKey = await addEd25519Points(userBytes, lpBytes);
+    const combinedSpendKey = await addEd25519Points(userBytes, lpSpendBytes);
     
-    // For the view key, we need the combined public view key
-    // In the simplified version, we can use LP's view key
-    // In full Farcaster, both parties would exchange view keys too
-    let combinedViewKey;
-    
-    if (lpPrivateViewKey) {
-        // Derive public view key from private view key
-        const ed = await import('https://esm.sh/@noble/ed25519@2.0.0');
-        const privKeyBytes = hexToBytes(lpPrivateViewKey);
-        combinedViewKey = ed.ExtendedPoint.BASE.multiply(BigInt('0x' + bytesToHex(privKeyBytes))).toRawBytes();
-    } else {
-        // Fallback: use LP's public spend key as view key (not cryptographically correct but works for demo)
-        combinedViewKey = lpBytes;
-    }
+    // Use LP's public view key directly
+    const combinedViewKey = lpViewBytes;
     
     // Derive Monero address
     const address = deriveMoneroAddress(combinedSpendKey, combinedViewKey, true);

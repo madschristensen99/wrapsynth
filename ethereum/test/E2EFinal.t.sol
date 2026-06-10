@@ -109,7 +109,7 @@ contract E2EFinalTest is Test {
         // LP provides their Ed25519 public key for atomic swap
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey);
         console.log("[3] LP provided public key\n");
         
         // LP sets ready (after user locks XMR on Monero)

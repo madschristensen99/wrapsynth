@@ -311,11 +311,11 @@ export class MintFlow {
             return;
         }
         
-        console.log('LP public key received:', lpPublicKey);
+        console.log('LP public keys received:', lpPublicKey);
         
-        // Derive shared Monero deposit address locally using LP's public key
+        // Derive shared Monero deposit address locally using LP's public keys
         console.log('Deriving shared Monero deposit address...');
-        this.depositAddress = await this.agent.deriveSharedMoneroAddress(lpPublicKey);
+        this.depositAddress = await this.agent.deriveSharedMoneroAddress(lpPublicKey.spendKey, lpPublicKey.viewKey);
         console.log('Monero Deposit Address:', this.depositAddress);
         console.log('Send exactly', this.xmrAmount, 'XMR to this address');
         
@@ -323,7 +323,8 @@ export class MintFlow {
             requestId: this.requestId,
             state: 'deposit',
             depositAddress: this.depositAddress,
-            lpPublicKey: lpPublicKey
+            lpPublicSpendKey: lpPublicKey.spendKey,
+            lpPublicViewKey: lpPublicKey.viewKey
         });
 
         this.state = 'deposit';
@@ -357,10 +358,12 @@ export class MintFlow {
                     }
                 }
                 
-                const lpPublicKey = await readHub('lpPublicKeys', [this.requestId]);
+                const lpPublicSpendKey = await readHub('lpPublicKeys', [this.requestId]);
+                const lpPublicViewKey = await readHub('lpPublicViewKeys', [this.requestId]);
                 
-                if (lpPublicKey && lpPublicKey !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
-                    return lpPublicKey;
+                if (lpPublicSpendKey && lpPublicSpendKey !== '0x0000000000000000000000000000000000000000000000000000000000000000' &&
+                    lpPublicViewKey && lpPublicViewKey !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
+                    return { spendKey: lpPublicSpendKey, viewKey: lpPublicViewKey };
                 }
                 
                 if (attempt % 6 === 0) { // Log every 30 seconds
@@ -644,13 +647,19 @@ export class MintFlow {
                     // Valid Monero address from saved state
                     this.depositAddress = savedState.depositAddress;
                     console.log('Restored Monero Deposit Address:', this.depositAddress);
+                } else if (savedState.lpPublicSpendKey && savedState.lpPublicViewKey) {
+                    // Derive from saved LP public keys locally
+                    console.log('Deriving deposit address from saved LP public keys...');
+                    this.depositAddress = await this.agent.deriveSharedMoneroAddress(savedState.lpPublicSpendKey, savedState.lpPublicViewKey);
+                    console.log('Derived Monero Deposit Address:', this.depositAddress);
                 } else if (savedState.lpPublicKey) {
-                    // Derive from saved LP public key locally
-                    console.log('Deriving deposit address from saved LP public key...');
-                    this.depositAddress = await this.agent.deriveSharedMoneroAddress(savedState.lpPublicKey);
+                    // Legacy: old format with single key - fetch view key from contract
+                    console.log('Legacy format detected, fetching view key from contract...');
+                    const lpPublicViewKey = await readHub('lpPublicViewKeys', [this.requestId]);
+                    this.depositAddress = await this.agent.deriveSharedMoneroAddress(savedState.lpPublicKey, lpPublicViewKey);
                     console.log('Derived Monero Deposit Address:', this.depositAddress);
                 } else {
-                    throw new Error('No deposit address or LP public key found in saved swap state.');
+                    throw new Error('No deposit address or LP public keys found in saved swap state.');
                 }
                 
                 console.log('Send exactly', this.xmrAmount, 'XMR to this address');
@@ -663,7 +672,8 @@ export class MintFlow {
                     requestId: this.requestId,
                     state: 'deposit',
                     depositAddress: this.depositAddress,
-                    lpPublicKey: savedState.lpPublicKey
+                    lpPublicSpendKey: savedState.lpPublicSpendKey,
+                    lpPublicViewKey: savedState.lpPublicViewKey
                 });
                 
                 // Force UI update by importing and calling showMintDepositInfo

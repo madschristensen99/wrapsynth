@@ -153,8 +153,9 @@ async function fetch24hVolume() {
         
         const publicClient = getPublicClient();
         const currentBlock = await publicClient.getBlockNumber();
-        const blocksPerDay = 17280n; // ~5 second blocks on Gnosis
-        const fromBlock = currentBlock - blocksPerDay;
+        // Use 10k blocks (~13.9 hours) to stay under RPC limits
+        const lookbackBlocks = 10000n;
+        const fromBlock = currentBlock - lookbackBlocks;
         
         const hubAbi = parseAbi([
             'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout)',

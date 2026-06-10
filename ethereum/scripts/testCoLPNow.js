@@ -62,7 +62,7 @@ async function main() {
         'function getPendingReturns(address user, address token) external view returns (uint256)',
         'function withdrawReturns(address token) external',
         'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment, bytes32 userPublicKey) external payable returns (bytes32)',
-        'function provideLPKey(bytes32 requestId, bytes32 lpPublicKey) external',
+        'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
         'function setMintReady(bytes32 requestId) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
         'function updateOraclePrices(bytes[] calldata updateData) external payable',
@@ -183,7 +183,7 @@ async function main() {
         const lpPublicKey = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['uint256', 'uint256'], [lpPubX, lpPubY]));
         console.log('  LP Public Key:', lpPublicKey);
         
-        const provideTx = await hub.provideLPKey(requestId, lpPublicKey, { gasLimit: 200000 });
+        const provideTx = await hub.provideLPKey(requestId, lpPublicKey, lpPublicKey, { gasLimit: 200000 });
         await provideTx.wait();
         console.log('  LP key provided:', provideTx.hash);
 
