@@ -457,6 +457,47 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         console.log("PASS: withdrawal with positions works");
     }
 
+    // ========== TEST: Withdraw with out-of-range positions (regression test) ==========
+    
+    function test_WithdrawCollateralWithOutOfRangePositions() public {
+        uint256 wsxmrBalance = wsxmr.balanceOf(user);
+        uint256 wsxmrToDeposit = wsxmrBalance / 2;
+
+        // Open CoLP position at current price
+        vm.prank(user);
+        VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+
+        wsXmrStorage.Vault memory vaultBefore = _getVault(lp);
+        uint256 deployedShares = vaultBefore.deployedSDAIShares;
+        uint256 idleShares = vaultBefore.collateralShares;
+        
+        console.log("Before price move:");
+        console.log("  Idle shares:", idleShares);
+        console.log("  Deployed shares:", deployedShares);
+
+        // Move price far out of range so position has 0 DAI (all wsXMR)
+        SimpleOracleFacet(address(hub)).updatePrices(150_00000000, 1_00000000); // $150 XMR (price crashed)
+        
+        // Now position should have 0 DAI, all wsXMR
+        // The bug: contract "loses" the deployedSDAIShares in CR calculation
+        
+        // Calculate how much should be withdrawable
+        // Total collateral = idle + deployed = should allow withdrawal while maintaining 150% CR
+        uint256 totalShares = idleShares + deployedShares;
+        uint256 lockedShares = vaultBefore.lockedCollateral;
+        uint256 availableShares = totalShares - lockedShares;
+        
+        // Try to withdraw a significant portion (should work with fix, fail without)
+        uint256 withdrawAmount = availableShares / 2;
+        
+        console.log("Attempting to withdraw:", withdrawAmount);
+        
+        vm.prank(lp);
+        VaultFacet(address(hub)).withdrawCollateral(withdrawAmount);
+
+        console.log("PASS: withdrawal works even when positions are out of range");
+    }
+
     // ========== TEST 11: Multiple positions ==========
 
     function test_MultiplePositions() public {
@@ -759,5 +800,95 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         assertEq(wsxmrAfter, wsxmrBefore, "No fees without trading");
 
         console.log("PASS: collectCoLPFees after swaps (no trades = no fees)");
+    }
+
+    // ========== TEST: Large mint with CoLP deposit ==========
+    
+    function test_LargeMintWithCoLPDeposit() public {
+        // Create a new user for large mint
+        address largeUser = makeAddr("largeUser");
+        vm.deal(largeUser, 100 ether);
+
+        // Mint a larger amount: 1 XMR = 1 * 1e11 atomic units = 100_000_000_000
+        uint256 largeAmount = 100_000_000_000;
+        
+        bytes32 largeSecret = bytes32(uint256(0xcafebabe));
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(largeSecret));
+        bytes32 commitment = keccak256(abi.encodePacked(px, py));
+
+        // Initiate large mint
+        vm.prank(largeUser);
+        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
+            lp, 
+            largeUser, 
+            largeAmount, 
+            commitment, 
+            bytes32(uint256(0xdeadbeef))
+        );
+
+        bytes32[] memory largeMints = _getUserMintRequests(largeUser);
+        assertEq(largeMints.length, 1, "should have 1 mint request");
+
+        // LP provides public key
+        bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
+        vm.prank(lp);
+        MintFacet(address(hub)).provideLPKey(largeMints[0], lpPublicKey, lpPublicKey);
+
+        // LP sets mint ready
+        vm.prank(lp);
+        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(largeMints[0]);
+
+        // User finalizes mint
+        vm.prank(largeUser);
+        MintFacet(address(hub)).finalizeMint(largeMints[0], largeSecret);
+
+        // Check user received wsXMR
+        uint256 wsxmrBalance = wsxmr.balanceOf(largeUser);
+        assertGt(wsxmrBalance, 0, "user should have received wsXMR");
+        assertLe(wsxmrBalance, largeAmount, "should not exceed requested amount");
+        
+        console.log("Large mint completed - wsXMR balance:", wsxmrBalance);
+
+        // Now deposit the minted wsXMR into CoLP
+        vm.startPrank(largeUser);
+        wsxmr.approve(address(hub), type(uint256).max);
+        
+        // Deposit all minted wsXMR into CoLP
+        uint256 wsxmrToDeposit = wsxmrBalance;
+        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(
+            lp, 
+            wsxmrToDeposit, 
+            block.timestamp + 1 hours
+        );
+        vm.stopPrank();
+
+        assertTrue(tokenId > 0, "should return valid tokenId");
+
+        // Check LP vault accounting
+        wsXmrStorage.Vault memory vault = _getVault(lp);
+        assertTrue(vault.deployedSDAIShares > 0, "deployedSDAIShares should be > 0");
+
+        // Check position metadata
+        wsXmrStorage.PositionMetadata memory meta = _getPositionMetadata(tokenId);
+        assertEq(meta.vaultOwner, lp, "vaultOwner should be lp");
+        assertEq(meta.user, largeUser, "user should be largeUser");
+        assertGt(meta.wsxmrOriginal, 0, "wsxmrOriginal should be > 0");
+        assertGt(meta.sDAISharesOriginal, 0, "sDAISharesOriginal should be > 0");
+
+        console.log("Large CoLP deposit completed:");
+        console.log("  tokenId:", tokenId);
+        console.log("  wsxmrOriginal:", meta.wsxmrOriginal);
+        console.log("  sDAISharesOriginal:", meta.sDAISharesOriginal);
+        console.log("  deployedSDAIShares:", vault.deployedSDAIShares);
+
+        // Verify user's wsXMR balance is now 0 (all deposited)
+        uint256 remainingBalance = wsxmr.balanceOf(largeUser);
+        assertEq(remainingBalance, 0, "user should have deposited all wsXMR");
+
+        // Verify CoLP capacity was consumed
+        uint256 capacity = _getCoLPCapacity(lp);
+        console.log("  Remaining CoLP capacity:", capacity);
+
+        console.log("PASS: Large mint with CoLP deposit - 1 XMR minted and deposited");
     }
 }

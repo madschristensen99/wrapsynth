@@ -79,16 +79,6 @@ export class LPClient {
         return this.request(endpoint);
     }
 
-    async confirmBurn({ requestId, moneroTxid }) {
-        const endpoint = LP_SERVER_CONFIG.endpoints.confirmBurn.replace(':id', requestId);
-        return this.request(endpoint, {
-            method: 'POST',
-            body: JSON.stringify({
-                monero_txid: moneroTxid
-            })
-        });
-    }
-
     isAvailable() {
         return this.baseUrl !== 'http://localhost:3001' || this.baseUrl.includes('localhost');
     }

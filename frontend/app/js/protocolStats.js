@@ -16,6 +16,7 @@ const MINT_INITIATED_EVENT = {
         { indexed: false, internalType: 'uint256', name: 'wsxmrAmount', type: 'uint256' },
         { indexed: false, internalType: 'uint256', name: 'feeAmount', type: 'uint256' },
         { indexed: false, internalType: 'bytes32', name: 'claimCommitment', type: 'bytes32' },
+        { indexed: false, internalType: 'bytes32', name: 'userPublicKey', type: 'bytes32' },
         { indexed: false, internalType: 'uint256', name: 'timeout', type: 'uint256' }
     ],
     name: 'MintInitiated',

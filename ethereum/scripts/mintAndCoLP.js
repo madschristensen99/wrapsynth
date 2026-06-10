@@ -1,4 +1,13 @@
 #!/usr/bin/env node
+/**
+ * Mint and CoLP Test Script
+ * 
+ * This script tests the mint and CoLP flow with a small amount:
+ * 1. Mints a small amount of wsXMR (0.001 XMR)
+ * 2. Deposits half of it into a CoLP position
+ * 3. Tests vault collateral withdrawal after CoLP deployment
+ * 4. Tests depositing collateral back into the vault
+ */
 require('dotenv').config();
 const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
@@ -66,7 +75,7 @@ async function main() {
     const secretHex = ethers.utils.hexlify(secret);
     console.log('  Secret (save this!):', secretHex);
     const commitment = await ed25519Helper.computeCommitment(secret);
-    const xmrAmount = ethers.BigNumber.from('100000000'); // produces 10000 wsXMR (0.0001) - smaller amount
+    const xmrAmount = ethers.BigNumber.from('100000000'); // 0.001 XMR - small test amount
     const griefingDeposit = ethers.utils.parseEther('0.001');
 
     const [userPubX, userPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(secret));
@@ -135,9 +144,9 @@ async function main() {
     const wsxmrBalance = await wsxmr.balanceOf(wallet.address);
     console.log('  wsXMR balance after mint:', ethers.utils.formatUnits(wsxmrBalance, 8));
 
-    // Step 3: Co-LP half
+    // Step 3: Co-LP half of minted wsXMR
     const wsxmrToDeposit = wsxmrBalance.div(2);
-    console.log('Co-LPing', ethers.utils.formatUnits(wsxmrToDeposit, 8), 'wsXMR...');
+    console.log('Co-LPing half:', ethers.utils.formatUnits(wsxmrToDeposit, 8), 'wsXMR...');
 
     if (wsxmrToDeposit.eq(0)) {
         console.error('ERROR: wsxmrToDeposit is 0');
@@ -177,7 +186,7 @@ async function main() {
     console.log('  View on Gnosisscan: https://gnosisscan.io/tx/' + coLPTx.hash);
 
     const finalBalance = await wsxmr.balanceOf(wallet.address);
-    console.log('  Final wsXMR balance:', ethers.utils.formatUnits(finalBalance, 8));
+    console.log('  Final wsXMR balance (should be ~half):', ethers.utils.formatUnits(finalBalance, 8));
 
     // Step 4: Small vault withdrawal test after Co-LP
     console.log('');

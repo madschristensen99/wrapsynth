@@ -191,19 +191,10 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
             
             uint256 ratio;
             if (vault.deployedSDAIShares > 0) {
-                uint256 xmrPrice = _getXmrPriceFromStorage();
-                uint256 collateralPrice = _getCollateralPriceFromStorage();
-                (uint256 positionDAI, uint256 positionWsxmr) = 
-                    _getVaultPositionTotalsAtOracle(msg.sender, xmrPrice);
-                ratio = CollateralLogic.calculateVaultCRWithDeployment(
-                    availableForDebt,
-                    positionDAI,
-                    positionWsxmr,
-                    totalObligations,
-                    GnosisAddresses.SDAI,
-                    collateralPrice,
-                    xmrPrice
-                );
+                // Add back deployed shares to available collateral for CR calculation
+                // The deployed sDAI is still vault collateral even if position is out of range
+                uint256 totalAvailableShares = availableForDebt + vault.deployedSDAIShares;
+                ratio = _calculateCollateralRatio(totalAvailableShares, totalObligations);
             } else {
                 ratio = _calculateCollateralRatio(availableForDebt, totalObligations);
             }

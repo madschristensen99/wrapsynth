@@ -6,17 +6,17 @@
   "wsUrl": "wss://rpc.gnosischain.com/wss",
   "explorer": "https://gnosisscan.io",
   "contracts": {
-    "wsXMR": "0xFcA09499102342F8d8A7Ae0745568F97344228BB",
-    "wsXmrHub": "0xc0B772BD1b4260DF2e49CCc4161C9FF2E101ed0d",
-    "liquidityRouter": "0x60a0390411a6568b134968c46cd86ea58a20aa8b",
-    "swapHelper": "0xaD39771cc753aB1abcA059559Dd1541651BABB25",
+    "wsXMR": "0xc7b46bdc1e71921f996ed38cbd11361a3fc3a80b",
+    "wsXmrHub": "0xf10e2da17c775be578501778bb6aee44d272b4bb",
+    "liquidityRouter": "0xebf4556c014136b4df05d60b05b7e4179810f10b",
+    "swapHelper": "0x0d7dbfc7b7de445af38bd38b694ec54ba7580825",
     "facets": {
-      "RedStoneOracleFacet": "0x6f83c4d7732d1b618ce9b4a01513210da8b0f746",
-      "VaultFacet": "0xd663697d5c5eadbfab8534f1f9e812b82c1438f7",
-      "MintFacet": "0x06E3f7167C1a19705F4fa537854c3D0C427caEAf",
-      "BurnFacet": "0x3c8893B0152e36bfCa9194B07c222a5809d12D52",
-      "LiquidationFacet": "0x7310eeE641436dc1d3615d552b27bBf7F0630eb3",
-      "YieldFacet": "0xdfe41868aa9b74a7c6caab1973e18b6e6f402fd2"
+      "RedStoneOracleFacet": "0xf5778bdff00b2f2ece4c0b6aa48cbbe797bbf84f",
+      "VaultFacet": "0x3d02b09fe4cefb8de83baf218fbefb5e497bbbc2",
+      "MintFacet": "0xd4660bb53cd1468d085c9a799ea7d63da2412629",
+      "BurnFacet": "0x848ce721ae0c5b8e4170c96a96a4a0682fa3bebc",
+      "LiquidationFacet": "0xd89adaa6764aa020a2c13f279ce241f374a7f2a4",
+      "YieldFacet": "0xa4b52f35b172630929640caef7de8e4aa82dcf87"
     }
   },
   "externalContracts": {
@@ -24,12 +24,12 @@
     "wxDAI": "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d",
     "UniswapV3Factory": "0xe32F7dD7e3f098D518ff19A22d5f028e076489B1",
     "UniswapV3PositionManager": "0xAE8fbE656a77519a7490054274910129c9244FA3",
-    "SwapHelper": "0xaD39771cc753aB1abcA059559Dd1541651BABB25",
+    "SwapHelper": "0x0d7dbfc7b7de445af38bd38b694ec54ba7580825",
     "Ed25519Helper": "0xaECa36374039EAb9e267B5daa48bAb9Ab0e50F00",
     "PythOracle": "0x2880aB155794e7179c9eE2e38200202908C17B43"
   },
   "pool": {
-    "uniswapV3Pool": "0xEd080D8061dDD5f3721A1A303613288aD97D94d1",
+    "uniswapV3Pool": "0x97efb1a521Dd3dc86C03FBe2Ba5f2606fFB7A04a",
     "feeTier": 3000
   },
   "urls": {

@@ -77,6 +77,14 @@ pub struct MintTask {
     pub lp_public_spend: Option<[u8; 32]>,
     pub lp_public_view: Option<[u8; 32]>,
     pub deposit_address: Option<String>,
+    /// Monero scanning state - highest block we've checked for this mint
+    pub last_scanned_height: Option<u64>,
+    /// Monero deposit transaction hash (once found)
+    pub monero_deposit_txid: Option<String>,
+    /// Block height where deposit was found
+    pub monero_deposit_height: Option<u64>,
+    /// Verified deposit amount in atomic units
+    pub monero_deposit_amount: Option<u64>,
 }
 
 /// Burn task tracking
@@ -243,6 +251,88 @@ impl Database {
             .collect())
     }
 
+    // ========== MONERO TRANSACTION CACHE ==========
+
+    /// Cache a Monero transaction to avoid re-fetching from network
+    pub fn cache_monero_tx(&self, tx_hash: &str, block_height: u64, tx_data: &serde_json::Value) -> Result<()> {
+        let key = Self::monero_tx_key(tx_hash);
+        
+        #[derive(Serialize)]
+        struct CachedTx {
+            height: u64,
+            data: serde_json::Value,
+            cached_at: u64,
+        }
+        
+        let cached = CachedTx {
+            height: block_height,
+            data: tx_data.clone(),
+            cached_at: current_timestamp(),
+        };
+        
+        let value = bincode::serialize(&cached).context("Failed to serialize cached tx")?;
+        self.db.insert(key, value).context("Failed to cache tx")?;
+        Ok(())
+    }
+
+    /// Get a cached Monero transaction
+    pub fn get_cached_monero_tx(&self, tx_hash: &str) -> Result<Option<(u64, serde_json::Value)>> {
+        let key = Self::monero_tx_key(tx_hash);
+        
+        match self.db.get(key).context("Failed to get cached tx")? {
+            Some(bytes) => {
+                #[derive(Deserialize)]
+                struct CachedTx {
+                    height: u64,
+                    data: serde_json::Value,
+                    cached_at: u64,
+                }
+                
+                let cached: CachedTx = bincode::deserialize(&bytes)
+                    .context("Failed to deserialize cached tx")?;
+                Ok(Some((cached.height, cached.data)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Prune old cached transactions below a certain height
+    pub fn prune_monero_tx_cache(&self, min_height: u64) -> Result<usize> {
+        let prefix = b"xmr_tx:";
+        let mut pruned = 0;
+
+        let mut to_delete = Vec::new();
+        for result in self.db.scan_prefix(prefix) {
+            let (key, value) = result.context("Failed to scan cached txs")?;
+            
+            #[derive(Deserialize)]
+            struct CachedTx {
+                height: u64,
+                #[allow(dead_code)]
+                data: serde_json::Value,
+                #[allow(dead_code)]
+                cached_at: u64,
+            }
+            
+            if let Ok(cached) = bincode::deserialize::<CachedTx>(&value) {
+                if cached.height < min_height {
+                    to_delete.push(key.to_vec());
+                }
+            }
+        }
+
+        for key in to_delete {
+            self.db.remove(key).context("Failed to delete cached tx")?;
+            pruned += 1;
+        }
+
+        if pruned > 0 {
+            self.db.flush().context("Failed to flush database")?;
+        }
+
+        Ok(pruned)
+    }
+
     // ========== KEY GENERATION ==========
 
     fn mint_key(request_id: &[u8; 32]) -> Vec<u8> {
@@ -260,6 +350,12 @@ impl Database {
     fn quote_key(quote_id: &[u8; 32]) -> Vec<u8> {
         let mut key = b"quote:".to_vec();
         key.extend_from_slice(quote_id);
+        key
+    }
+
+    fn monero_tx_key(tx_hash: &str) -> Vec<u8> {
+        let mut key = b"xmr_tx:".to_vec();
+        key.extend_from_slice(tx_hash.as_bytes());
         key
     }
 
@@ -383,6 +479,15 @@ mod tests {
             updated_at: 1234567890,
             revealed_secret: None,
             monero_claim_txid: None,
+            lp_private_spend: Some([5u8; 32]),
+            lp_private_view: Some([6u8; 32]),
+            lp_public_spend: Some([7u8; 32]),
+            lp_public_view: Some([8u8; 32]),
+            deposit_address: Some("test_address".to_string()),
+            last_scanned_height: None,
+            monero_deposit_txid: None,
+            monero_deposit_height: None,
+            monero_deposit_amount: None,
         };
 
         db.insert_mint_task(&task).unwrap();
@@ -414,6 +519,7 @@ mod tests {
             secret_hash: None,
             monero_lock_txid: None,
             commit_tx_hash: None,
+            claim_commitment: Some([9u8; 32]),
         };
 
         db.insert_burn_task(&task).unwrap();

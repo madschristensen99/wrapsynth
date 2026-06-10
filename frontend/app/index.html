@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>WrapSynth | Atomic Liquidity for Monero</title>
     <meta name="description" content="Mint and burn wsXMR. Bridge your Monero to Gnosis Chain with trustless atomic swaps backed by >200% collateral.">
     <meta property="og:title" content="WrapSynth | Atomic Liquidity for Monero">
@@ -181,6 +184,9 @@
                         </span>
                     </button>
                 
+                <!-- Previous mint switcher (shown when user started a new mint while another was active) -->
+                <div id="previous-mint-banner" class="previous-mint-banner hidden" style="margin: 0.75rem 0; padding: 0.6rem 0.8rem; background: rgba(255,140,66,0.08); border: 1px solid rgba(255,140,66,0.2); border-radius: 8px; font-size: 0.85rem; color: var(--text-secondary-light);"></div>
+
                 <!-- Persistent deadline banner (visible across all steps) -->
                 <div id="mint-deadline-warning" class="alert alert-error hidden" style="margin-bottom: 1rem;">
                     <strong>⚠️ MINT EXPIRED</strong>
@@ -227,10 +233,10 @@
                                     <button class="btn-copy" data-copy="mint-xmr-address"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg></button>
                                 </div>
                                 <p class="amount-required">Send exactly: <strong id="mint-exact-amount"></strong> XMR</p>
-                                <div id="mint-deposit-status">
-                                    <button id="confirm-sent-xmr" class="btn btn-primary" style="margin-top: 16px;">I've Sent the XMR</button>
-                                    <p class="step-status hidden" id="waiting-lp-verification"><svg class="spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:6px;color:var(--accent-orange);"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Waiting for LP to verify your transaction...</p>
-                                </div>
+                            </div>
+                            <div id="mint-deposit-status">
+                                <button id="confirm-sent-xmr" class="btn btn-primary" style="margin-top: 16px;">I've Sent the XMR</button>
+                                <p class="step-status hidden" id="waiting-lp-verification"><svg class="spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:6px;color:var(--accent-orange);"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Waiting for LP to verify your transaction...</p>
                             </div>
                         </div>
                     </div>
@@ -274,7 +280,7 @@
                         <button type="button" class="percentage-btn" data-percentage="100">MAX</button>
                         <span id="burn-percentage-feedback" style="font-size: 0.75rem; color: #fb923c; margin-left: 0.5rem; opacity: 0; transition: opacity 0.3s;"></span>
                     </div>
-                    <span class="helper-text">Your balance: <span id="burn-user-balance">0</span> wsXMR</span>
+                    <span class="helper-text">Your balance: <span id="burn-user-balance">0</span> wsXMR &nbsp;|&nbsp; Minimum: 0.0001 wsXMR</span>
                 </div>
                 <div class="form-group">
                     <label>Your Monero Address (CakeWallet, etc.)</label>
@@ -317,14 +323,66 @@
                             <h3>LP Proposes Hash</h3>
                             <span class="step-status">Waiting for LP to lock XMR...</span>
                         </div>
-                        <div class="step-body"></div>
+                        <div class="step-body">
+                            <div id="burn-address-panel" class="hidden" style="margin-top:0.75rem;padding:0.75rem;background:var(--bg-input);border:1px solid var(--border-color);border-radius:12px;">
+                                <p class="step-explanation" style="margin-bottom:0.75rem;">LP has locked XMR! Check your Monero wallet:</p>
+                                <div class="verification-row">
+                                    <span class="verification-label">Monero Address:</span>
+                                    <code id="burn-monero-address" class="verification-value" style="font-size:0.75rem;word-break:break-all;"></code>
+                                </div>
+                                <div class="verification-row" style="margin-top:0.5rem;">
+                                    <span class="verification-label">View Key:</span>
+                                    <code id="burn-view-key" class="verification-value" style="font-size:0.75rem;word-break:break-all;"></code>
+                                </div>
+                                <p class="step-explanation" style="margin-top:0.75rem;color:var(--text-muted);font-size:0.85rem;">
+                                    Import this view key into your Monero wallet to see the incoming XMR transaction.
+                                </p>
+                            </div>
+                        </div>
                     </div>
                     <div class="progress-step" data-step="confirm-lock">
                         <div class="step-row">
                             <h3>Confirm Monero Lock</h3>
                             <span class="step-status">Waiting for confirmation...</span>
                         </div>
-                        <div class="step-body"></div>
+                        <div class="step-body">
+                            <p class="step-explanation">The LP has sent XMR to your Monero address. We're scanning the blockchain to verify the transaction.</p>
+                            <div id="burn-verification-panel">
+                                <div id="burn-verification-loading">
+                                    <svg class="spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:6px;color:var(--accent-orange);"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                                    <span>Scanning Monero blockchain for your transaction...</span>
+                                </div>
+                                <div id="burn-verification-details" class="hidden">
+                                    <div class="verification-row">
+                                        <span class="verification-label">Your address:</span>
+                                        <code id="burn-verify-address" class="verification-value"></code>
+                                    </div>
+                                    <div class="verification-row">
+                                        <span class="verification-label">Transaction hash:</span>
+                                        <code id="burn-verify-tx-hash" class="verification-value"></code>
+                                        <a id="burn-verify-tx-link" target="_blank" rel="noopener" style="margin-left:0.5rem;font-size:0.8rem;color:var(--primary);">View ↗</a>
+                                    </div>
+                                    <div class="verification-row">
+                                        <span class="verification-label">Confirmations:</span>
+                                        <span id="burn-verify-confirmations" class="verification-value"></span>
+                                    </div>
+                                    <div class="verification-row">
+                                        <span class="verification-label">Expected amount:</span>
+                                        <span id="burn-verify-amount" class="verification-value"></span>
+                                    </div>
+                                    <p class="step-explanation" style="margin-top:0.75rem;color:var(--text-muted);font-size:0.85rem;">
+                                        Please verify in your Monero wallet that you received the expected amount before confirming.
+                                    </p>
+                                    <button id="burn-confirm-receipt" class="btn btn-primary" style="margin-top:0.75rem;">I Have Received the XMR</button>
+                                </div>
+                                <div id="burn-verification-manual" class="hidden">
+                                    <p class="step-explanation" style="color:var(--text-muted);font-size:0.85rem;">
+                                        Automatic verification is not available. Please check your Monero wallet manually.
+                                    </p>
+                                    <button id="burn-confirm-receipt-manual" class="btn btn-primary" style="margin-top:0.75rem;">I Have Received the XMR</button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <div class="progress-step" data-step="lp-finalize">
                         <div class="step-row">
@@ -783,6 +841,6 @@ cargo build --release</code>
         if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status);
         window.DEPLOYMENT = await res.json();
     </script>
-    <script type="module" src="./js/main.js"></script>
+    <script type="module" src="./js/main.js?v=1736543652"></script>
 </body>
 </html>

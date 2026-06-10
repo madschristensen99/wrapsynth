@@ -277,6 +277,35 @@ impl WalletRpcManager {
         None
     }
 
+    /// Get current blockchain height from daemon
+    async fn get_daemon_height(daemon_url: &str) -> Result<u64> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .context("Failed to build HTTP client")?;
+
+        let rpc_url = format!("{}/json_rpc", daemon_url);
+        let response = client
+            .post(&rpc_url)
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "0",
+                "method": "get_block_count"
+            }))
+            .send()
+            .await
+            .context("Failed to get daemon height")?;
+
+        let body: serde_json::Value = response.json().await?;
+        let height = body
+            .get("result")
+            .and_then(|r| r.get("count"))
+            .and_then(|c| c.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("Invalid daemon height response"))?;
+
+        Ok(height)
+    }
+
     /// Spawn monero-wallet-rpc, wait for health, create/open wallet.
     /// If open_wallet fails due to SSL/daemon config mismatch, kills the process,
     /// deletes wallet files, and retries once with a fresh process.
@@ -293,6 +322,26 @@ impl WalletRpcManager {
     ) -> Result<(Child, String)> {
         let port = Self::find_free_port(28382)?;
         let rpc_url = format!("http://127.0.0.1:{}/json_rpc", port);
+
+        // Get current blockchain height for restore_height
+        let daemon_url = if ssl_arg == "enabled" {
+            format!("https://{}", daemon_addr)
+        } else {
+            format!("http://{}", daemon_addr)
+        };
+        
+        let restore_height = match Self::get_daemon_height(&daemon_url).await {
+            Ok(height) => {
+                // Use current height minus 10 blocks for speed (deposits are always very recent)
+                let safe_height = height.saturating_sub(10);
+                info!("Using restore_height: {} (current: {})", safe_height, height);
+                safe_height
+            }
+            Err(e) => {
+                warn!("Failed to get daemon height ({}), using default restore_height: 3690000", e);
+                3690000
+            }
+        };
 
         for attempt in 1..=2 {
             // Kill any existing monero-wallet-rpc processes using the same wallet-dir
@@ -375,7 +424,8 @@ impl WalletRpcManager {
                         "spendkey": spend_key_hex,
                         "viewkey": view_key_hex,
                         "password": wallet_password,
-                        "language": "English"
+                        "language": "English",
+                        "restore_height": restore_height
                     }),
                 ).await {
                     Ok(_) => info!("Wallet created successfully"),

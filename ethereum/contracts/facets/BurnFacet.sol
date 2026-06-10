@@ -125,8 +125,10 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
      *      provides all information clients need to verify the Monero lock before confirmMoneroLock
      * @param requestId The burn request ID
      * @param secretHash keccak256(secret·G) where secret unlocks the Monero output
+     * @param lpPublicSpendKey LP's Ed25519 public spend key (x-coordinate)
+     * @param lpPublicViewKey LP's Ed25519 public view key (x-coordinate)
      */
-    function proposeHash(bytes32 requestId, bytes32 secretHash) external {
+    function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
         
@@ -137,11 +139,18 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         Vault storage vault = _vaults[request.lpVault];
         if (msg.sender != vault.lpAddress) revert Unauthorized();
         if (secretHash == bytes32(0)) revert InvalidSecret();
+        if (lpPublicSpendKey == bytes32(0)) revert InvalidCommitment();
+        if (lpPublicViewKey == bytes32(0)) revert InvalidCommitment();
+        if (burnLpPublicKeys[requestId] != bytes32(0)) revert InvalidStatus(); // Already provided
+        
         request.secretHash = secretHash;
         request.status = BurnStatus.PROPOSED;
         request.deadline = block.number + BURN_COMMIT_TIMEOUT_BLOCKS;
         
-        emit HashProposed(requestId, secretHash);
+        burnLpPublicKeys[requestId] = lpPublicSpendKey;
+        burnLpPublicViewKeys[requestId] = lpPublicViewKey;
+        
+        emit HashProposed(requestId, secretHash, lpPublicSpendKey, lpPublicViewKey);
         
         _reentrancyStatus = _NOT_ENTERED;
     }

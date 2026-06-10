@@ -2122,6 +2122,11 @@ body.app-page .container {
     opacity: 1;
 }
 
+.step-body.force-open {
+    max-height: 3000px;
+    opacity: 1;
+}
+
 .step-explanation {
     font-size: 0.85rem;
     color: var(--text-secondary-light);
@@ -2198,6 +2203,54 @@ body.app-page .container {
 .amount-required strong {
     color: var(--primary);
     font-family: var(--font-mono);
+}
+
+/* Burn Verification Panel */
+#burn-verification-panel {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+}
+
+#burn-verification-loading {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-muted-light);
+    padding: 0.5rem 0;
+}
+
+.verification-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.85rem;
+}
+
+.verification-row:last-child {
+    border-bottom: none;
+}
+
+.verification-label {
+    color: var(--text-muted-light);
+    font-weight: 500;
+    min-width: 120px;
+    flex-shrink: 0;
+}
+
+.verification-value {
+    color: var(--text-primary-light);
+    font-family: var(--font-mono);
+    word-break: break-all;
+}
+
+#burn-verify-tx-hash {
+    font-size: 0.8rem;
 }
 
 .action-buttons {

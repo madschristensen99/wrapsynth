@@ -328,6 +328,17 @@ impl EventListener {
             event.wsxmrAmount
         );
 
+        // Check if mint task already exists first (don't process invalid historical events)
+        let request_id_bytes: [u8; 32] = event.requestId.into();
+        if let Some(existing) = self.db.get_mint_task(&request_id_bytes)? {
+            info!(
+                "Mint task {} already exists in DB with status {:?}, skipping historical event replay",
+                hex::encode(request_id_bytes),
+                existing.status
+            );
+            return Ok(());
+        }
+
         // Generate atomic swap keys for Farcaster protocol
         let claim_commitment: [u8; 32] = event.claimCommitment.into();
         let user_public_key: [u8; 32] = event.userPublicKey.into();
@@ -339,7 +350,6 @@ impl EventListener {
         );
 
         // Submit LP's public keys on-chain so user can compute deposit address
-        let request_id_bytes: [u8; 32] = event.requestId.into();
         let lp_public_spend_bytes = swap_keys.lp_public_spend.as_bytes();
         let lp_public_view_bytes = swap_keys.lp_public_view.as_bytes();
         let mut lp_public_spend_array = [0u8; 32];
@@ -389,17 +399,9 @@ impl EventListener {
             }
         }
 
-        // Check if mint task already exists (don't overwrite existing state)
-        let request_id_bytes: [u8; 32] = event.requestId.into();
-        if let Some(existing) = self.db.get_mint_task(&request_id_bytes)? {
-            info!(
-                "Mint task {} already exists in DB with status {:?}, skipping historical event replay",
-                hex::encode(request_id_bytes),
-                existing.status
-            );
-            return Ok(());
-        }
-
+        // Initialize last_scanned_height to current Monero height to avoid re-scanning old blocks
+        let current_monero_height = self.monero.get_height().await.ok();
+        
         // Create a mint task with swap keys
         let task = MintTask {
             request_id: event.requestId.into(),
@@ -439,6 +441,10 @@ impl EventListener {
                 Some(array)
             },
             deposit_address: Some(swap_keys.deposit_address.to_string()),
+            last_scanned_height: current_monero_height.map(|h| h.saturating_sub(100)),
+            monero_deposit_txid: None,
+            monero_deposit_height: None,
+            monero_deposit_amount: None,
         };
 
         self.db.insert_mint_task(&task)?;

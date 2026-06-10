@@ -83,13 +83,18 @@ export function generateKeysFromSeed(seedPhrase) {
     const publicViewKey = Point.BASE.multiply(privateViewKey, true);
     const publicMessageKey = Point.BASE.multiply(privateMessageKey, true);
     
+    // Get compressed Ed25519 points (32 bytes each) as Uint8Array
+    const publicSpendKeyBytes = publicSpendKey.toRawBytes();
+    const publicViewKeyBytes = publicViewKey.toRawBytes();
+    const publicMessageKeyBytes = publicMessageKey.toRawBytes();
+    
     return {
         privateSpendKey,
-        publicSpendKey: bytesToBigInt(publicSpendKey.toRawBytes()),
+        publicSpendKey: publicSpendKeyBytes,  // Keep as Uint8Array for proper Ed25519 encoding
         privateViewKey,
-        publicViewKey: bytesToBigInt(publicViewKey.toRawBytes()),
+        publicViewKey: publicViewKeyBytes,    // Keep as Uint8Array for proper Ed25519 encoding
         privateMessageKey,
-        publicMessageKey: bytesToBigInt(publicMessageKey.toRawBytes())
+        publicMessageKey: publicMessageKeyBytes  // Keep as Uint8Array for proper Ed25519 encoding
     };
 }
 
@@ -136,8 +141,8 @@ export function generateCommitment(secret) {
 export function generateMoneroAddress(publicSpendKey, publicViewKey) {
     // TODO: Implement full Monero address generation
     // For now, return a placeholder
-    const spendHex = publicSpendKey.toString(16).padStart(64, '0');
-    const viewHex = publicViewKey.toString(16).padStart(64, '0');
+    const spendHex = toHex(publicSpendKey).slice(2); // Remove 0x prefix
+    const viewHex = toHex(publicViewKey).slice(2); // Remove 0x prefix;
     
     // This is NOT a real Monero address - just a placeholder
     return `XMR_${spendHex.slice(0, 8)}...${viewHex.slice(0, 8)}`;

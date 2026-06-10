@@ -10,6 +10,7 @@ const HUB_EVENTS_ABI = parseAbi([
     'event MintFinalized(bytes32 indexed requestId, bytes32 secret)',
     'event MintCancelled(bytes32 indexed requestId)',
     'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment)',
+    'event HashProposed(bytes32 indexed requestId, bytes32 secretHash)',
     'event BurnCommitted(bytes32 indexed requestId, uint256 deadline)',
     'event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 reward)',
     'event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 totalSeized)',
@@ -45,6 +46,7 @@ export async function loadRecentActivity() {
             mintFinalized,
             mintCancelled,
             burnRequested,
+            hashProposed,
             burnCommitted,
             burnFinalized,
             burnSlashed,
@@ -60,6 +62,7 @@ export async function loadRecentActivity() {
             publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'MintFinalized', fromBlock, toBlock: 'latest' }),
             publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'MintCancelled', fromBlock, toBlock: 'latest' }),
             publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'BurnRequested', fromBlock, toBlock: 'latest' }),
+            publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'HashProposed', fromBlock, toBlock: 'latest' }),
             publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'BurnCommitted', fromBlock, toBlock: 'latest' }),
             publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'BurnFinalized', fromBlock, toBlock: 'latest' }),
             publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'BurnSlashed', fromBlock, toBlock: 'latest' }),
@@ -73,7 +76,7 @@ export async function loadRecentActivity() {
         ]);
 
         const totalEvents = mintInitiated.length + mintFinalized.length + mintCancelled.length +
-            burnRequested.length + burnCommitted.length + burnFinalized.length + burnSlashed.length + burnCancelled.length +
+            burnRequested.length + hashProposed.length + burnCommitted.length + burnFinalized.length + burnSlashed.length + burnCancelled.length +
             vaultCreated.length + collateralDeposited.length + collateralWithdrawn.length +
             coLPDeployed.length + coLPUnwound.length + coLPRebalanced.length;
         console.log('Found', totalEvents, 'total events');
@@ -84,6 +87,7 @@ export async function loadRecentActivity() {
             ...mintFinalized.map(e => ({ ...e, type: 'mintFinalized' })),
             ...mintCancelled.map(e => ({ ...e, type: 'mintCancelled' })),
             ...burnRequested.map(e => ({ ...e, type: 'burnRequested' })),
+            ...hashProposed.map(e => ({ ...e, type: 'hashProposed' })),
             ...burnCommitted.map(e => ({ ...e, type: 'burnCommitted' })),
             ...burnFinalized.map(e => ({ ...e, type: 'burnFinalized' })),
             ...burnSlashed.map(e => ({ ...e, type: 'burnSlashed' })),
@@ -151,6 +155,7 @@ const EVENT_ICONS = {
     mintFinalized: { svg: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`, color: '#10b981' },
     mintCancelled: { svg: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`, color: '#ef4444' },
     burnRequested: { svg: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>`, color: '#f97316' },
+    hashProposed: { svg: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`, color: '#06b6d4' },
     burnCommitted: { svg: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`, color: '#3b82f6' },
     burnFinalized: { svg: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`, color: '#10b981' },
     burnSlashed: { svg: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`, color: '#dc2626' },
@@ -204,6 +209,12 @@ function renderActivityItem(event, currentBlock) {
             const wsxmrAmount = args.wsxmrAmount ? (Number(args.wsxmrAmount) / 1e8).toFixed(4) : '?';
             title = 'Burn Requested';
             detail = `${wsxmrAmount} wsXMR by ${shortUser}`;
+            break;
+        }
+        case 'hashProposed': {
+            const reqId = args.requestId ? `${args.requestId.slice(0, 6)}...${args.requestId.slice(-4)}` : 'Unknown';
+            title = 'LP Committed to Burn';
+            detail = `Request ${reqId}`;
             break;
         }
         case 'burnCommitted': {
@@ -343,6 +354,36 @@ function handleNewActivityLogs(logs, publicClient) {
 
                 while (activityFeed.children.length > 30) {
                     activityFeed.removeChild(activityFeed.lastChild);
+                }
+            }
+
+            // ─── Clean up active swaps when terminal events arrive ──────────────
+            const terminalMint = type === 'mintCancelled' || type === 'mintFinalized';
+            const terminalBurn = type === 'burnCancelled' || type === 'burnFinalized' || type === 'burnSlashed';
+            if (terminalMint || terminalBurn) {
+                const requestId = log.args?.requestId;
+                if (requestId) {
+                    import('./storage.js').then(({ getActiveSwapByRequestId, removeActiveSwap, saveToHistory }) => {
+                        const existing = getActiveSwapByRequestId(requestId);
+                        if (existing) {
+                            let status;
+                            if (type === 'mintCancelled' || type === 'burnCancelled') status = 'Cancelled';
+                            else if (type === 'burnSlashed') status = 'Slashed';
+                            else status = 'Completed';
+                            saveToHistory({ ...existing, status, completedAt: Date.now() });
+                            removeActiveSwap(requestId);
+                            console.log(`[Activity Feed] ${existing.type} ${requestId.slice(0,14)} ${status.toLowerCase()}; removed from active swaps`);
+                            // Refresh resume banner if visible
+                            const banner = document.getElementById('resume-banner');
+                            if (banner) {
+                                const item = banner.querySelector(`.resume-swap-item[data-request-id="${requestId}"]`);
+                                if (item) item.remove();
+                                if (!banner.querySelector('.resume-swap-item')) {
+                                    banner.classList.add('hidden');
+                                }
+                            }
+                        }
+                    }).catch(err => console.warn('Activity feed cleanup error:', err));
                 }
             }
         }

@@ -12,7 +12,8 @@
     "deploy:gnosis": "forge script script/DeployGnosis.s.sol:DeployGnosis --rpc-url $GNOSIS_RPC_URL --broadcast --verify",
     "deploy:gnosis:dry": "forge script script/DeployGnosis.s.sol:DeployGnosis --rpc-url $GNOSIS_RPC_URL",
     "test:e2e": "forge script script/E2ETest.s.sol:E2ETest --fork-url $GNOSIS_RPC_URL -vvv",
-    "test:e2e:broadcast": "forge script script/E2ETest.s.sol:E2ETest --rpc-url $GNOSIS_RPC_URL --broadcast"
+    "test:e2e:broadcast": "forge script script/E2ETest.s.sol:E2ETest --rpc-url $GNOSIS_RPC_URL --broadcast",
+    "deploy:test:all": "node scripts/deployAndTestAll.js"
   },
   "keywords": [
     "monero",

@@ -9,6 +9,17 @@ const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 const { HUB_ADDRESS, WSXMR_ADDRESS, WXDAI_ADDRESS, ED25519_HELPER } = require('./deploymentConfig');
 
+// Helper to create fresh RedStone wrapped contract
+function wrapWithRedStone(contract) {
+    const authorizedSigners = getSignersForDataServiceId("redstone-primary-prod");
+    return WrapperBuilder.wrap(contract).usingDataService({
+        dataServiceId: "redstone-primary-prod",
+        uniqueSignersCount: 3,
+        dataPackagesIds: ["XMR", "DAI"],
+        authorizedSigners
+    });
+}
+
 // Retry helper for RedStone calls with exponential backoff
 async function retryRedStone(fn, maxRetries = 3) {
     let lastError;
@@ -63,7 +74,7 @@ async function main() {
         'function setMintReady(bytes32 requestId) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
         'function requestBurn(uint256 wsxmrAmount, address lpVault, address burnRecipient, bytes32 claimCommitment) external returns (bytes32)',
-        'function proposeHash(bytes32 requestId, bytes32 secretHash) external',
+        'function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
         'function confirmMoneroLock(bytes32 requestId) external',
         'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
         'function updateOraclePrices(bytes[] calldata updateData) external payable'
@@ -93,15 +104,6 @@ async function main() {
     const wsxmr = new ethers.Contract(WSXMR_ADDRESS, wsxmrAbi, wallet);
     const wxdai = new ethers.Contract(WXDAI_ADDRESS, wxdaiAbi, wallet);
     const ed25519Helper = new ethers.Contract(ED25519_HELPER, ed25519HelperAbi, provider);
-    
-    // Wrap with RedStone
-    const authorizedSigners = getSignersForDataServiceId("redstone-primary-prod");
-    const wrappedHub = WrapperBuilder.wrap(hub).usingDataService({
-        dataServiceId: "redstone-primary-prod",
-        uniqueSignersCount: 3,
-        dataPackagesIds: ["XMR", "DAI"],
-        authorizedSigners
-    });
     
     // Check if vault exists, create if needed
     const hasVault = await hub.hasActiveVault(wallet.address);
@@ -187,7 +189,7 @@ async function main() {
         // Update prices before burn
         console.log('📊 Update Prices');
         console.log('================');
-        const updateTx = await retryRedStone(() => wrappedHub.updateOraclePrices([]));
+        const updateTx = await retryRedStone(() => wrapWithRedStone(hub).updateOraclePrices([]));
         console.log('TX:', updateTx.hash);
         await updateTx.wait();
         console.log('✅ Prices updated\n');
@@ -215,10 +217,18 @@ async function main() {
         const burnSecret = ethers.utils.randomBytes(32);
         const secretHash = await ed25519Helper.computeCommitment(burnSecret);
         
+        // Generate LP Ed25519 keys for burn
+        const burnLpSecret = ethers.utils.randomBytes(32);
+        const [burnLpPubX, burnLpPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(burnLpSecret));
+        const burnLpSpendKey = ethers.utils.hexZeroPad(ethers.BigNumber.from(burnLpPubX).toHexString(), 32);
+        const burnLpViewKey = ethers.utils.hexZeroPad(ethers.BigNumber.from(burnLpPubY).toHexString(), 32);
+        
         console.log('Burn Secret:', ethers.utils.hexlify(burnSecret));
         console.log('Secret Hash:', secretHash);
+        console.log('LP Spend Key:', burnLpSpendKey);
+        console.log('LP View Key:', burnLpViewKey);
         
-        const proposeHashTx = await hub.proposeHash(burnRequestId, secretHash);
+        const proposeHashTx = await hub.proposeHash(burnRequestId, secretHash, burnLpSpendKey, burnLpViewKey);
         await proposeHashTx.wait();
         console.log('✅ LP proposed secret hash\n');
         
@@ -250,7 +260,7 @@ async function main() {
     
     console.log('📊 Step 1: Update Prices');
     console.log('========================');
-    const updateTx = await retryRedStone(() => wrappedHub.updateOraclePrices([]));
+    const updateTx = await retryRedStone(() => wrapWithRedStone(hub).updateOraclePrices([]));
     console.log('TX:', updateTx.hash);
     await updateTx.wait();
     console.log('✅ Prices updated');
@@ -309,7 +319,7 @@ async function main() {
     
     console.log('📊 Step 3: Update Prices Again (before setMintReady)');
     console.log('=====================================================');
-    const updateTx2 = await retryRedStone(() => wrappedHub.updateOraclePrices([]));
+    const updateTx2 = await retryRedStone(() => wrapWithRedStone(hub).updateOraclePrices([]));
     await updateTx2.wait();
     console.log('✅ Prices refreshed');
     console.log('');
@@ -406,10 +416,18 @@ async function main() {
     const burnSecret = ethers.utils.randomBytes(32);
     const secretHash = await ed25519Helper.computeCommitment(burnSecret);
     
+    // Generate LP Ed25519 keys for burn
+    const burnLpSecret = ethers.utils.randomBytes(32);
+    const [burnLpPubX, burnLpPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(burnLpSecret));
+    const burnLpSpendKey = ethers.utils.hexZeroPad(ethers.BigNumber.from(burnLpPubX).toHexString(), 32);
+    const burnLpViewKey = ethers.utils.hexZeroPad(ethers.BigNumber.from(burnLpPubY).toHexString(), 32);
+    
     console.log('Burn Secret:', ethers.utils.hexlify(burnSecret));
     console.log('Secret Hash:', secretHash);
+    console.log('LP Spend Key:', burnLpSpendKey);
+    console.log('LP View Key:', burnLpViewKey);
     
-    const proposeHashTx = await hub.proposeHash(burnRequestId, secretHash);
+    const proposeHashTx = await hub.proposeHash(burnRequestId, secretHash, burnLpSpendKey, burnLpViewKey);
     await proposeHashTx.wait();
     console.log('✅ LP proposed secret hash');
     console.log('');
