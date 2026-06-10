@@ -98,10 +98,11 @@ contract E2EFinalTest is Test {
         // Create commitment from Ed25519 public key
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(testSecret));
         bytes32 testCommitment = keccak256(abi.encodePacked(px, py));
+        bytes32 userPublicKey = bytes32(Ed25519.compressPoint(px, py));
         
         vm.prank(user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user, xmrAmount, testCommitment, bytes32(px));
+            lp, user, xmrAmount, testCommitment, userPublicKey);
         console.log("[2] User initiated mint");
         console.log("    Request ID:", vm.toString(requestId), "\n");
         

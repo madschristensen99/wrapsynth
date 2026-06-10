@@ -320,6 +320,18 @@ contract PoolSwapTest is Test, IUniswapV3SwapCallback {
         console.log("Co-LP created, tokenId:", tokenId);
         console.log("Pool liquidity after Co-LP:", IUniswapV3Pool(poolAddr).liquidity());
 
+        // CRITICAL: Verify position is in-range (catches inverted price formula bug)
+        (, , , , , int24 tickLower, int24 tickUpper, uint128 liquidity, , , , ) =
+            INonfungiblePositionManager(GnosisAddresses.UNI_V3_POSITION_MANAGER).positions(tokenId);
+        (, int24 currentTick, , , , , ) = IUniswapV3Pool(poolAddr).slot0();
+        
+        assertTrue(tickLower < currentTick, "Position tickLower must be below current tick");
+        assertTrue(currentTick < tickUpper, "Position tickUpper must be above current tick");
+        assertGt(liquidity, 0, "Position must have liquidity");
+        console.log("Position tickLower:", uint256(int256(tickLower)));
+        console.log("Position tickUpper:", uint256(int256(tickUpper)));
+        console.log("Current tick:", uint256(int256(currentTick)));
+
         // 4. Trade against the Co-LP position on both sides
         uint160 minSqrt = 4295128739 + 1;
         uint160 maxSqrt = 1461446703485210103287273052203988822378723970342 - 1;

@@ -131,6 +131,11 @@ impl ArbitrageBot {
 
     /// Main arbitrage check-and-execute cycle
     async fn check_and_arbitrage(&self) -> Result<()> {
+        if self.swap_helper == Address::ZERO {
+            warn!("SwapHelper address is not configured (zero address). Skipping arbitrage.");
+            return Ok(());
+        }
+
         let pool_address = *self.pool_address.read().await;
 
         // 1. Fetch pool state

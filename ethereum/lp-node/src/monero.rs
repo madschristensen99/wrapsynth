@@ -117,47 +117,14 @@ impl MoneroClient {
             .build()
             .context("Failed to create wallet HTTP client")?;
 
-        // Fallback Monero daemon nodes — comprehensive public node list
+        // Fallback Monero daemon nodes — limited, deduped subset.
+        // Only 5 fallbacks are tried to avoid log spam and rate-limiting.
         let daemon_fallbacks = vec![
             "https://xmr-node.cakewallet.com:18081".to_string(),
             "https://node.sethforprivacy.com".to_string(),
-            "https://node.sethforprivacy.com:443".to_string(),
             "https://connect.xmr-node.org".to_string(),
-            "https://connect.xmr-node.org:443".to_string(),
             "https://rpc.monerosafe.com".to_string(),
-            "https://node.monerosafe.com".to_string(),
             "https://node.mon3ro.com".to_string(),
-            "https://xmr.hexide.com".to_string(),
-            "https://monero.econanon.com:443".to_string(),
-            "https://monerorpc.scentle5s.net".to_string(),
-            "https://node.xmr.surf".to_string(),
-            "https://xmr.visnova.pl".to_string(),
-            "https://dewitte.fiatfaucet.com".to_string(),
-            "https://chad.fiatfaucet.com".to_string(),
-            "https://kowalski.fiatfaucet.com".to_string(),
-            "https://xmr.unshakled.net:443".to_string(),
-            "https://xmr.unshakled.net".to_string(),
-            "https://xmr.cryptostorm.is".to_string(),
-            "https://xmr.ci.vet:443".to_string(),
-            "https://monero.openinternet.io".to_string(),
-            "https://xmr.okade.pro:443".to_string(),
-            "https://xmr4.doggett.tech:18089".to_string(),
-            "https://xmr.hostingwire.net".to_string(),
-            "https://xmr.0xrpc.io".to_string(),
-            "https://xmr.surveillance.monster".to_string(),
-            "https://xmr3.doggett.tech:18089".to_string(),
-            "https://kuk.fan".to_string(),
-            "https://monero.definitelynotafed.com:443".to_string(),
-            "https://monero.definitelynotafed.com".to_string(),
-            "https://xmr5.doggett.tech:18089".to_string(),
-            "https://xmr.letmego.me".to_string(),
-            "https://xmr.letmego.me:443".to_string(),
-            "https://monero-rpc.cheems.de.box.skhron.com.ua:18089".to_string(),
-            "https://xmrnode.thecorn.net".to_string(),
-            "https://xmr1.doggett.tech:18089".to_string(),
-            "https://xmr.thinhhv.com:443".to_string(),
-            "https://xmr2.doggett.tech:18089".to_string(),
-            "https://xmr.jayjonkman.nl:18089".to_string(),
         ];
 
         Ok(Self {
@@ -799,7 +766,7 @@ impl MoneroClient {
             swap_keys.lp_private_view
         };
 
-        // --- Path A: wallet RPC (fastest when available) ---
+        // --- Path A: wallet RPC (fastest and only reliable path with public nodes) ---
         if self.wallet_rpc_url.is_some() {
             match self.verify_mint_lock_via_wallet_rpc(
                 expected_amount,
@@ -807,10 +774,7 @@ impl MoneroClient {
                 &swap_view_key,
                 min_confirmations,
             ).await {
-                Ok(true) => return Ok(true),
-                Ok(false) => {
-                    info!("Wallet RPC found no deposit; falling back to daemon scan...");
-                }
+                Ok(found) => return Ok(found),
                 Err(e) => {
                     let err_str = e.to_string();
                     if err_str.contains("Failed to call wallet RPC")
@@ -820,17 +784,19 @@ impl MoneroClient {
                     {
                         warn!("Wallet RPC unreachable ({}). Falling back to daemon scan...", e);
                     } else if err_str.contains("syncing") || err_str.contains("sync") {
-                        warn!("Wallet RPC still syncing. Falling back to daemon scan...");
+                        warn!("Wallet RPC still syncing. Falling back to daemon scan... {}", e);
                     } else {
                         warn!("Wallet RPC error ({}). Falling back to daemon scan...", e);
                     }
                 }
             }
         } else {
-            info!("Wallet RPC not configured - verifying via daemon scan");
+            warn!("Wallet RPC not configured - falling back to daemon scan (get_transactions is restricted on public nodes, this may fail)");
         }
 
         // --- Path B: daemon fallback ---
+        // NOTE: get_transactions is restricted on most public nodes.
+        // This path only works with an unrestricted daemon or your own node.
         self.verify_mint_lock_via_daemon(
             expected_amount,
             &deposit_address,
@@ -1140,8 +1106,8 @@ impl MoneroClient {
                 Ok(response) => {
                     match response.json::<serde_json::Value>().await {
                         Ok(body) => {
-                            if body.get("error").is_some() {
-                                warn!("get_transactions JSON-RPC error from {}", url);
+                            if let Some(error) = body.get("error") {
+                                debug!("get_transactions JSON-RPC error from {}: {}", url, error);
                                 continue;
                             }
                             let result = body.get("result").unwrap_or(&body);
@@ -1156,12 +1122,12 @@ impl MoneroClient {
                             }
                         }
                         Err(e) => {
-                            warn!("Failed to parse get_transactions JSON-RPC from {}: {}", url, e);
+                            debug!("Failed to parse get_transactions JSON-RPC from {}: {}", url, e);
                         }
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to call get_transactions JSON-RPC on {}: {}", url, e);
+                    debug!("Failed to call get_transactions JSON-RPC on {}: {}", url, e);
                 }
             }
         }
@@ -1199,10 +1165,10 @@ impl MoneroClient {
                                     }
                                 }
                             }
-                            warn!("REST get_transactions from {} missing expected fields", url);
+                            debug!("REST get_transactions from {} missing expected fields", url);
                         }
                         Err(e) => {
-                            warn!("Failed to parse REST get_transactions from {}: {}", url, e);
+                            debug!("Failed to parse REST get_transactions from {}: {}", url, e);
                         }
                     }
                 }

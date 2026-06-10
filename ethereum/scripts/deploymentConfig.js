@@ -16,7 +16,7 @@ module.exports = {
     UNI_V3_FACTORY: deployment.externalContracts.UniswapV3Factory,
     UNI_V3_POSITION_MANAGER: deployment.externalContracts.UniswapV3PositionManager,
     SWAP_HELPER: deployment.externalContracts.SwapHelper,
-    SWAP_ROUTER: '0xE592427A0AEce92De3Edee1F18E0157C05861564', // Uniswap V3 SwapRouter (canonical)
+    SWAP_ROUTER: '0xc6D25285D5C5b62b7ca26D6092751A145D50e9Be', // Uniswap V3 SwapRouter on Gnosis Chain
 
     // Facets
     ORACLE_FACET: deployment.contracts.facets.RedStoneOracleFacet,

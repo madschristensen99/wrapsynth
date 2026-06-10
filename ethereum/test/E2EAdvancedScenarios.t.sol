@@ -110,10 +110,11 @@ contract E2EAdvancedScenariosTest is Test {
         bytes32 testSecret = bytes32(uint256(uint160(user)));
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(testSecret));
         bytes32 commitment = keccak256(abi.encodePacked(px, py));
+        bytes32 userPublicKey = bytes32(Ed25519.compressPoint(px, py));
         
         vm.prank(user);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
-            lp, user, xmrAmount, commitment, bytes32(px));
+            lp, user, xmrAmount, commitment, userPublicKey);
         
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
