@@ -46,13 +46,18 @@ contract SwapHelper {
         int256 amount1Delta,
         bytes calldata
     ) external {
+        // Pull from payer (who approved this contract) to this contract,
+        // then forward to the pool. We cannot transferFrom(payer, pool)
+        // because the pool does not have an allowance from payer.
         if (amount0Delta > 0) {
             address token0 = IUniswapV3Pool(msg.sender).token0();
-            IERC20(token0).transferFrom(payer, msg.sender, uint256(amount0Delta));
+            IERC20(token0).transferFrom(payer, address(this), uint256(amount0Delta));
+            IERC20(token0).transfer(msg.sender, uint256(amount0Delta));
         }
         if (amount1Delta > 0) {
             address token1 = IUniswapV3Pool(msg.sender).token1();
-            IERC20(token1).transferFrom(payer, msg.sender, uint256(amount1Delta));
+            IERC20(token1).transferFrom(payer, address(this), uint256(amount1Delta));
+            IERC20(token1).transfer(msg.sender, uint256(amount1Delta));
         }
     }
 }

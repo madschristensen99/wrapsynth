@@ -132,7 +132,7 @@ async function main() {
 
     // Ensure sufficient collateral (always top up to avoid InsufficientCollateral)
     const vault = await hub.getVault(wallet.address);
-    const collateralAmount = ethers.utils.parseEther('1.0');
+    const collateralAmount = ethers.utils.parseEther('0.5');
     const wxdaiBalance = await wxdai.balanceOf(wallet.address);
     if (wxdaiBalance.lt(collateralAmount)) {
         const toWrap = collateralAmount.sub(wxdaiBalance);

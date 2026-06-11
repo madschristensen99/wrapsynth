@@ -168,6 +168,14 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         emit LiquidityRouterSet(router);
     }
     
+    /// @notice Replace the liquidity router address (allows upgrades)
+    /// @dev Only callable by deployer; emits same event as setLiquidityRouter
+    function replaceLiquidityRouter(address router) external onlyDeployer {
+        if (router == address(0)) revert ZeroAddress();
+        liquidityRouter = router;
+        emit LiquidityRouterSet(router);
+    }
+    
     // ========== FACET OPERATIONS ==========
     
     /// @inheritdoc IwsXmrHub

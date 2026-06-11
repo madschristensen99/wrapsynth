@@ -70,18 +70,11 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         uint256 netDebtReduction = wsxmrBought > globalPendingBurnDebt ? wsxmrBought - globalPendingBurnDebt : 0;
         
         if (netDebtReduction > 0 && globalTotalDebt > 0) {
-            uint256 reductionRatio = (netDebtReduction * 1e18) / globalTotalDebt;
-            uint256 newIndex = (globalDebtIndex * (1e18 - reductionRatio)) / 1e18;
-            
-            // M1: Migrate debt index if it drops below threshold
-            // TODO: This is expensive (~30M gas for 10k _vaults). Consider:
-            // - Separate keeper function with cursor
-            // - Or accept the floor at 1e6 as documented technical debt
-            if (newIndex < 1e12) {
-                _migrateDebtIndex();
-            } else {
-                globalDebtIndex = newIndex > 1e6 ? newIndex : 1e6;
-            }
+            // B1: Always rescale individual vault debts when reducing the debt index.
+            // Proportional index reduction without rescaling vault normalized debts
+            // causes precision loss (small debts round to zero) and breaks the invariant
+            // that actualDebt = normalizedDebt * index / 1e18.
+            _migrateDebtIndex();
         }
         
         emit BuyAndBurnExecuted(sDAIToSpend, wsxmrBought, keeperReward, globalDebtIndex);

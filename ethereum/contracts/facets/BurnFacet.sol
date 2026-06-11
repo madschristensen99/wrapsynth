@@ -203,12 +203,19 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         Vault storage vault = _vaults[request.lpVault];
         
         uint256 safeReward = request.rewardCollateral;
+        uint256 totalLock = request.lockedCollateral + request.rewardCollateral;
         
         // Total collateral model: release the reservation, AND remove the paid-out reward
         // from vault equity (it leaves the vault to the holder).
-        vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
+        // Defensive: never underflow — if state is inconsistent, cap to available.
+        if (vault.lockedCollateral < totalLock) revert InsufficientCollateral();
+        vault.lockedCollateral -= totalLock;
+        
+        if (vault.collateralShares < safeReward) revert InsufficientCollateral();
         vault.collateralShares -= safeReward;
-        globalPendingBurnDebt -= request.wsxmrAmount;
+        
+        if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
+        else globalPendingBurnDebt -= request.wsxmrAmount;
         
         if (safeReward > 0) {
             pendingReturns[request.user][GnosisAddresses.SDAI] += safeReward;
@@ -242,12 +249,18 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
             ? parShares
             : request.lockedCollateral;
         uint256 userPayout = userBase + request.rewardCollateral;
+        uint256 totalLock = request.lockedCollateral + request.rewardCollateral;
 
         // Total collateral model: release the reservation, AND remove the paid-out amount
         // (par + reward) from vault equity.
-        vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
+        if (vault.lockedCollateral < totalLock) revert InsufficientCollateral();
+        vault.lockedCollateral -= totalLock;
+        
+        if (vault.collateralShares < userPayout) revert InsufficientCollateral();
         vault.collateralShares -= userPayout;
-        globalPendingBurnDebt -= request.wsxmrAmount;
+        
+        if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
+        else globalPendingBurnDebt -= request.wsxmrAmount;
 
         pendingReturns[request.user][GnosisAddresses.SDAI] += userPayout;
         globalPendingSDAI += userPayout;
@@ -271,12 +284,15 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         Vault storage vault = _vaults[request.lpVault];
         
         if (request.vaultLiquidationNonce == vault.liquidationNonce) {
-            vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
+            uint256 totalLock = request.lockedCollateral + request.rewardCollateral;
+            if (vault.lockedCollateral < totalLock) revert InsufficientCollateral();
+            vault.lockedCollateral -= totalLock;
             vault.normalizedDebt += request.normalizedDebtAmount;
             globalTotalDebt += request.wsxmrAmount;
         }
         
-        globalPendingBurnDebt -= request.wsxmrAmount;
+        if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
+        else globalPendingBurnDebt -= request.wsxmrAmount;
         
         // Restore wsXMR to holder
         IwsXmrHub(address(this)).mintTokens(request.user, request.wsxmrAmount);
@@ -306,10 +322,14 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         uint256 userBase = parShares < request.lockedCollateral
             ? parShares
             : request.lockedCollateral;
+        uint256 totalLock = request.lockedCollateral + request.rewardCollateral;
 
-        vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
+        if (vault.lockedCollateral < totalLock) revert InsufficientCollateral();
+        vault.lockedCollateral -= totalLock;
+        if (vault.collateralShares < userBase) revert InsufficientCollateral();
         vault.collateralShares -= userBase;
-        globalPendingBurnDebt -= request.wsxmrAmount;
+        if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
+        else globalPendingBurnDebt -= request.wsxmrAmount;
         
         // Pay par value to holder (no reward for force-settle)
         pendingReturns[request.user][GnosisAddresses.SDAI] += userBase;
@@ -333,12 +353,15 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         Vault storage vault = _vaults[request.lpVault];
         
         if (request.vaultLiquidationNonce == vault.liquidationNonce) {
-            vault.lockedCollateral -= (request.lockedCollateral + request.rewardCollateral);
+            uint256 totalLock = request.lockedCollateral + request.rewardCollateral;
+            if (vault.lockedCollateral < totalLock) revert InsufficientCollateral();
+            vault.lockedCollateral -= totalLock;
             vault.normalizedDebt += request.normalizedDebtAmount;
             globalTotalDebt += request.wsxmrAmount;
         }
         
-        globalPendingBurnDebt -= request.wsxmrAmount;
+        if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
+        else globalPendingBurnDebt -= request.wsxmrAmount;
         
         // Restore wsXMR to holder
         IwsXmrHub(address(this)).mintTokens(request.user, request.wsxmrAmount);

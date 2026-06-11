@@ -256,26 +256,15 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
             INonfungiblePositionManager(positionManager).positions(tokenId);
 
         if (liq > 0) {
-            // M3 residual: Use oracle price for slippage bounds, not manipulable slot0
-            uint160 oracleSqrtPriceX96 = _priceToSqrtPriceX96(oracleXmrPrice, 1e18);
-            (uint256 expectedDai, uint256 expectedWsxmr) = _getAmountsAtSqrtPrice(tokenId, oracleSqrtPriceX96);
-
-            (uint256 min0, uint256 min1) = sDAIIsToken0
-                ? (
-                    expectedDai > 0 ? (expectedDai * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR : 0,
-                    expectedWsxmr > 0 ? (expectedWsxmr * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR : 0
-                  )
-                : (
-                    expectedWsxmr > 0 ? (expectedWsxmr * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR : 0,
-                    expectedDai > 0 ? (expectedDai * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR : 0
-                  );
-
+            // D1: For a full drain of our own liquidity, Uniswap's internal slippage check
+            // on decreaseLiquidity is not needed — no MEV can steal liquidity we own.
+            // We verify the final collected amounts against oracle price AFTER collect().
             INonfungiblePositionManager.DecreaseLiquidityParams memory decParams =
                 INonfungiblePositionManager.DecreaseLiquidityParams({
                     tokenId: tokenId,
                     liquidity: liq,
-                    amount0Min: min0,
-                    amount1Min: min1,
+                    amount0Min: 0,
+                    amount1Min: 0,
                     deadline: block.timestamp
                 });
             INonfungiblePositionManager(positionManager).decreaseLiquidity(decParams);
@@ -295,6 +284,20 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         (daiOut, wsxmrOut) = sDAIIsToken0
             ? (amount0, amount1)
             : (amount1, amount0);
+
+        // D2: Post-collect oracle sanity check — verify returned amounts are within
+        // slippage tolerance of what the oracle price predicts.
+        {
+            uint160 oracleSqrtPriceX96 = _priceToSqrtPriceX96(oracleXmrPrice, 1e18);
+            (uint256 expectedDai, uint256 expectedWsxmr) = _getAmountsAtSqrtPrice(tokenId, oracleSqrtPriceX96);
+
+            if (expectedDai > 0 && daiOut < (expectedDai * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR) {
+                revert SlippageExceeded();
+            }
+            if (expectedWsxmr > 0 && wsxmrOut < (expectedWsxmr * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR) {
+                revert SlippageExceeded();
+            }
+        }
 
         INonfungiblePositionManager(positionManager).burn(tokenId);
     }
