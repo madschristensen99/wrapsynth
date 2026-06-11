@@ -27,9 +27,9 @@ export const NETWORKS = {
 
 // Contract addresses - source of truth: ../../deployment.json
 export const CONTRACTS = {
-    hub: DC.wsXmrHub || '0xc75a388ce5d04a3831733937e8CaEc6e23bC24c4',
-    wsxmrToken: DC.wsXMR || '0xf1AfA7DFF4F5feFba2c3C3D0e0e4BADeE2681225',
-    liquidityRouter: DC.liquidityRouter || '0x0D1CF3C6F0F71b99AB02049a46fbeBF7c3BFFf97',
+    hub: DC.wsXmrHub || '0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50',
+    wsxmrToken: DC.wsXMR || '0x30Aeb2A142744430fFD7D698D5C7C41769CE1279',
+    liquidityRouter: DC.liquidityRouter || '0x6893f38e1DeEdCa95ce8995B01550921cEe353a1',
     sDAI: DE.sDAI || '0xaf204776c7245bF4147c2612BF6e5972Ee483701',
     uniswapV3Pool: DP.uniswapV3Pool || '0xDF8E9163944013782181D4f2e60f34e79971dE64',
     // Default LP vault to use for mints (the active LP running the LP node)
