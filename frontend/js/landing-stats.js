@@ -11,8 +11,8 @@ const RPC_URLS = [
 ];
 
 const CONFIG = {
-    HUB_ADDRESS: D.contracts?.wsXmrHub || '0xc75a388ce5d04a3831733937e8CaEc6e23bC24c4',
-    WSXMR_ADDRESS: D.contracts?.wsXMR || '0xf1AfA7DFF4F5feFba2c3C3D0e0e4BADeE2681225'
+    HUB_ADDRESS: D.contracts?.wsXmrHub || '0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50',
+    WSXMR_ADDRESS: D.contracts?.wsXMR || '0x30Aeb2A142744430fFD7D698D5C7C41769CE1279'
 };
 
 const HUB_ABI = parseAbi([

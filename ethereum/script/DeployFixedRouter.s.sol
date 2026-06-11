@@ -6,8 +6,8 @@ import {wsXMRLiquidityRouter} from "../contracts/router/wsXMRLiquidityRouter.sol
 import {GnosisAddresses} from "../contracts/GnosisAddresses.sol";
 
 contract DeployFixedRouter is Script {
-    address constant HUB = 0xd32e2ece901094550b81AB5051A72256761514D6;
-    address constant WSXMR = 0x8890F651190C838651623DE077474a98e37803aB;
+    address constant HUB = 0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50;
+    address constant WSXMR = 0x30Aeb2A142744430fFD7D698D5C7C41769CE1279;
     address constant DEPLOYER = 0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB;
 
     function run() external {

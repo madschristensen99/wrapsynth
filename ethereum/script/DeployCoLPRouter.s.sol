@@ -12,8 +12,8 @@ import {GnosisAddresses} from "../contracts/GnosisAddresses.sol";
  * @notice Deploys Co-LP liquidity router, creates Uniswap V3 pool, initializes it, and registers router on hub
  */
 contract DeployCoLPRouter is Script {
-    address constant HUB = 0xc75a388ce5d04a3831733937e8CaEc6e23bC24c4;
-    address constant WSXMR = 0xf1AfA7DFF4F5feFba2c3C3D0e0e4BADeE2681225;
+    address constant HUB = 0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50;
+    address constant WSXMR = 0x30Aeb2A142744430fFD7D698D5C7C41769CE1279;
     address constant DEPLOYER = 0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB;
 
     uint256 constant XMR_PRICE = 390 * 1e18;

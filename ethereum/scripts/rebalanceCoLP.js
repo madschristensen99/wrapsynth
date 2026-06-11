@@ -8,7 +8,7 @@ const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 
-const HUB_ADDRESS = '0xd32e2ece901094550b81ab5051a72256761514d6';
+const HUB_ADDRESS = '0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50';
 const TOKEN_ID = 5477;
 
 async function main() {
@@ -83,7 +83,7 @@ async function main() {
     console.log('');
 
     // Check pending returns (keeper fee or leftover)
-    const WSXMR_ADDRESS = '0x8890f651190c838651623de077474a98e37803ab';
+    const WSXMR_ADDRESS = '0x30Aeb2A142744430fFD7D698D5C7C41769CE1279';
     const pendingWsxmr = await hub.getPendingReturns(wallet.address, WSXMR_ADDRESS);
     if (pendingWsxmr.gt(0)) {
         console.log('Withdrawing pending wsXMR returns...');
