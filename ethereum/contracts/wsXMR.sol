@@ -26,6 +26,12 @@ contract wsXMR is ERC20, ERC20Permit, IwsXMR {
         hub = _hub;
     }
 
+    function replaceHub(address _hub) external {
+        require(msg.sender == _deployer, "Only deployer");
+        require(_hub != address(0), "Zero address");
+        hub = _hub;
+    }
+
     function mint(address _to, uint256 _amount) external {
         if (msg.sender != hub) revert OnlyHub();
         _mint(_to, _amount);

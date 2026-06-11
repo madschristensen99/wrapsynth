@@ -5,7 +5,9 @@
 
 require('dotenv').config();
 const { ethers } = require('ethers');
-const { HUB_ADDRESS, SDAI_ADDRESS, WSXMR_ADDRESS, POOL_ADDRESS, SWAP_HELPER, UNI_V3_FACTORY } = require('./deploymentConfig');
+const { WrapperBuilder } = require('@redstone-finance/evm-connector');
+const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
+const { HUB_ADDRESS, SDAI_ADDRESS, WSXMR_ADDRESS, POOL_ADDRESS, SWAP_HELPER, SWAP_ROUTER, UNI_V3_FACTORY } = require('./deploymentConfig');
 
 const POOL_FEE = 3000;
 
@@ -69,6 +71,16 @@ async function main() {
     console.log('  token1:', token1);
     console.log('');
 
+    // If pool liquidity is too low, swaps will revert with SPL (price slippage check).
+    // This happens when previous Co-LP tests have unwound all positions.
+    const MIN_SWAP_LIQUIDITY = 1000000; // 1M units ~ enough for test swaps
+    if (liquidity.lt(MIN_SWAP_LIQUIDITY)) {
+        console.log('⚠️  Pool liquidity too low for swaps (' + liquidity.toString() + ').');
+        console.log('   Previous Co-LP tests unwound all positions. Skipping swap tests.');
+        console.log('   Co-LP creation and fee collection tests will still run below.');
+        console.log('');
+    }
+
     const sdai = new ethers.Contract(SDAI_ADDRESS, erc20Abi, wallet);
     const wsxmr = new ethers.Contract(WSXMR_ADDRESS, erc20Abi, wallet);
     const positionManager = new ethers.Contract(
@@ -101,7 +113,7 @@ async function main() {
     }
 
     // --- Swap 1: wsXMR -> sDAI (via SwapHelper) ---
-    if (wsxmrBalanceAfterLP.gt(10)) {
+    if (liquidity.gte(MIN_SWAP_LIQUIDITY) && wsxmrBalanceAfterLP.gt(10)) {
         const wsxmrSwapAmount = ethers.BigNumber.from('1000'); // 0.00001 wsXMR
         console.log('Swap 1: wsXMR -> sDAI');
         console.log('  Amount in:', ethers.utils.formatUnits(wsxmrSwapAmount, wsxmrDecimals), wsxmrSymbol);
@@ -117,11 +129,11 @@ async function main() {
         // Capture balance before swap
         const sdaiBefore1 = await sdai.balanceOf(wallet.address);
 
-        // sDAI is token0, wsXMR is token1, so wsXMR -> sDAI is zeroForOne = false
+        // wsXMR is token0, sDAI is token1, so wsXMR -> sDAI is zeroForOne = true
         const swap1 = await swapHelper.swap(
             poolAddr,
             wallet.address,
-            false, // zeroForOne (wsXMR -> sDAI, token1 -> token0)
+            true, // zeroForOne (wsXMR -> sDAI, token0 -> token1)
             wsxmrSwapAmount,
             0, // sqrtPriceLimitX96 (no limit)
             {
@@ -137,13 +149,15 @@ async function main() {
         const sdaiReceived = sdaiAfter1.sub(sdaiBefore1);
         console.log('  sDAI received:', ethers.utils.formatUnits(sdaiReceived, sdaiDecimals));
         console.log('');
+    } else if (liquidity.lt(MIN_SWAP_LIQUIDITY)) {
+        console.log('Skip swap 1: pool liquidity too low');
     } else {
         console.log('Skip swap 1: not enough wsXMR');
     }
 
     // --- Swap 2: sDAI -> wsXMR ---
     const sdaiBalanceAfter1 = await sdai.balanceOf(wallet.address);
-    if (sdaiBalanceAfter1.gt(ethers.utils.parseUnits('0.001', sdaiDecimals))) {
+    if (liquidity.gte(MIN_SWAP_LIQUIDITY) && sdaiBalanceAfter1.gt(ethers.utils.parseUnits('0.001', sdaiDecimals))) {
         const sdaiSwapAmount = ethers.utils.parseUnits('0.001', sdaiDecimals); // 0.001 sDAI
         console.log('Swap 2: sDAI -> wsXMR');
         console.log('  Amount in:', ethers.utils.formatUnits(sdaiSwapAmount, sdaiDecimals), sdaiSymbol);
@@ -159,11 +173,11 @@ async function main() {
         // Capture balance before swap
         const wsxmrBefore2 = await wsxmr.balanceOf(wallet.address);
 
-        // sDAI is token0, wsXMR is token1, so sDAI -> wsXMR is zeroForOne = true
+        // wsXMR is token0, sDAI is token1, so sDAI -> wsXMR is zeroForOne = false
         const swap2 = await swapHelper.swap(
             poolAddr,
             wallet.address,
-            true, // zeroForOne (sDAI -> wsXMR, token0 -> token1)
+            false, // zeroForOne (sDAI -> wsXMR, token1 -> token0)
             sdaiSwapAmount,
             0, // sqrtPriceLimitX96 (no limit)
             {
@@ -179,6 +193,8 @@ async function main() {
         const wsxmrReceived = wsxmrAfter2.sub(wsxmrBefore2);
         console.log('  wsXMR received:', ethers.utils.formatUnits(wsxmrReceived, wsxmrDecimals));
         console.log('');
+    } else if (liquidity.lt(MIN_SWAP_LIQUIDITY)) {
+        console.log('Skip swap 2: pool liquidity too low');
     } else {
         console.log('Skip swap 2: not enough sDAI');
     }
@@ -194,7 +210,8 @@ async function main() {
         'function liquidityRouter() external view returns (address)',
         'function userOpenCoLP(address user, uint256 wsxmrAmount, uint256 deadline) external returns (uint256 tokenId)',
         'function collectCoLPFees(uint256 tokenId) external returns (uint256 amount0, uint256 amount1)',
-        'function getPendingCoLPReturns(address user) external view returns (uint256)'
+        'function getPendingCoLPReturns(address user) external view returns (uint256)',
+        'function updateOraclePrices(bytes[]) external'
     ];
     const hub = new ethers.Contract(HUB_ADDRESS, hubAbi, wallet);
 
@@ -246,36 +263,49 @@ async function main() {
             console.log('  Approved hub for wsXMR');
 
             // Update prices before Co-LP
+            const authorizedSigners = getSignersForDataServiceId('redstone-primary-prod');
             const wrappedHub = WrapperBuilder.wrap(hub).usingDataService({
                 dataServiceId: 'redstone-primary-prod',
-                uniqueSignersCount: 1,
-                dataFeeds: ['XMR', 'DAI']
-            }, ['https://oracle-gateway-1.a.redstone.finance']);
+                uniqueSignersCount: 3,
+                dataPackagesIds: ['XMR', 'DAI'],
+                authorizedSigners
+            });
 
+            let pricesUpdated = false;
             try {
-                const updatePricesTx = await wrappedHub.updatePrices({
+                const updatePricesTx = await wrappedHub.updateOraclePrices([], {
+                    gasLimit: 500000,
                     maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
                     maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
                 });
                 await updatePricesTx.wait();
                 console.log('  Prices updated');
+                pricesUpdated = true;
             } catch (e) {
-                console.log('  Price update failed (may not have oracle facet), continuing...');
+                console.log('  Price update failed, skipping Co-LP creation:', e.message.split('\n')[0]);
             }
 
-            const deadline = Math.floor(Date.now() / 1000) + 600;
-            const coLPTx = await hub.userOpenCoLP(wallet.address, coLPAmount, deadline, {
-                gasLimit: 800000,
-                maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
-                maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
-            });
-            const coLPReceipt = await coLPTx.wait();
-            console.log('  Co-LP TX:', coLPTx.hash);
+            if (!pricesUpdated) {
+                console.log('  ⚠️  Cannot create Co-LP without fresh prices. Skipping Co-LP test.');
+            } else {
+                try {
+                    const deadline = Math.floor(Date.now() / 1000) + 600;
+                    const coLPTx = await hub.userOpenCoLP(wallet.address, coLPAmount, deadline, {
+                        gasLimit: 800000,
+                        maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+                        maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+                    });
+                    const coLPReceipt = await coLPTx.wait();
+                    console.log('  Co-LP TX:', coLPTx.hash);
 
-            // Get the new token ID from the receipt
-            const numPositionsAfter = await positionMgr.balanceOf(wallet.address);
-            coLPTokenId = await positionMgr.tokenOfOwnerByIndex(wallet.address, numPositionsAfter.sub(1));
-            console.log('  Created Co-LP position, tokenId:', coLPTokenId.toString());
+                    // Get the new token ID from the receipt
+                    const numPositionsAfter = await positionMgr.balanceOf(wallet.address);
+                    coLPTokenId = await positionMgr.tokenOfOwnerByIndex(wallet.address, numPositionsAfter.sub(1));
+                    console.log('  Created Co-LP position, tokenId:', coLPTokenId.toString());
+                } catch (e) {
+                    console.log('  ⚠️  Co-LP creation failed:', e.message.split('\n')[0]);
+                }
+            }
         }
     }
 

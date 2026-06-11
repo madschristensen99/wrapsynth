@@ -153,8 +153,14 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         uint256 collateralToSeizeDai = (collateralValueUsd * SDAI_DECIMALS) / collateralPrice;
         uint256 collateralToSeize = _daiToShares(collateralToSeizeDai);
         
-        if (collateralToSeize > vault.collateralShares) {
-            collateralToSeize = vault.collateralShares;
+        // L1: Never seize locked collateral. After burn settlements and position unwinds,
+        // lockedCollateral should still be reserved for any remaining committed burns.
+        uint256 availableCollateral = vault.collateralShares > vault.lockedCollateral
+            ? vault.collateralShares - vault.lockedCollateral
+            : 0;
+        
+        if (collateralToSeize > availableCollateral) {
+            collateralToSeize = availableCollateral;
             uint256 actualDaiAmount = _sharesToDai(collateralToSeize);
             uint256 actualCollateralValueUsd = (actualDaiAmount * collateralPrice) / SDAI_DECIMALS;
             debtToClear = (actualCollateralValueUsd * RATIO_PRECISION * WSXMR_DECIMALS) / (LIQUIDATION_BONUS * xmrPrice);
@@ -305,11 +311,13 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         lpPrincipalShares[msg.sender] += absorbedCollateral;
         lpPrincipalShares[oldVault] = 0;
         
-        // Zero out old vault
+        // Zero out old vault — must clear ALL state to prevent phantom locked collateral
         oldV.normalizedDebt = 0;
         oldV.collateralShares = 0;
+        oldV.lockedCollateral = 0;
         oldV.liquidationNonce++;
         oldV.mintNonce++;
+        lpPrincipalDeposits[oldVault] = 0;
         
         // Verify new vault is healthy after takeover
         uint256 newDebt = _denormalizeDebt(newV.normalizedDebt);
