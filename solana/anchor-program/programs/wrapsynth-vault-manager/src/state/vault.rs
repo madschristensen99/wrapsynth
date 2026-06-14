@@ -30,6 +30,9 @@ pub struct Vault {
     pub principal_deposits: u64,
     /// Original deposit shares (for yield tracking)
     pub principal_shares: u64,
+    /// Principal value in SOL terms (lamports, 9 decimals) for JitoSOL yield detection
+    /// Tracks the SOL-equivalent value at deposit time via stake pool exchange rate
+    pub principal_sol_value: u64,
     /// Number of currently active (non-terminal) burn requests
     pub active_burn_count: u32,
     pub active: bool,

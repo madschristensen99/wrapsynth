@@ -1,55 +1,70 @@
-/// Yield synchronization logic — port of _syncVaultYield and YieldLogic.sol.
+/// Yield synchronization logic for JitoSOL (value-accruing LST).
 ///
-/// On Solana there is no sDAI `convertToAssets()`. The caller must pass the
-/// current exchange rate (collateral_value_per_share: how many USD-equivalent
-/// units one collateral share is worth, in 18-decimal precision) alongside the
-/// principal that was deposited. This rate is read from the lending protocol's
-/// pool state account by the instruction handler before calling sync_vault_yield.
+/// JitoSOL accrues value via a rising exchange rate (total_lamports / pool_token_supply),
+/// not via increasing share count. We track principal in SOL-value terms at deposit,
+/// then harvest yield when (shares × current_rate) > principal_sol_value.
+///
+/// This preserves the 155% post-harvest buffer logic from the EVM YieldLogic.sol.
 
 use crate::constants::*;
 use crate::utils::math::*;
 
-pub const YIELD_DUST_THRESHOLD: u64 = 100;
+pub const YIELD_DUST_THRESHOLD_SOL: u64 = 100_000_000; // 0.1 SOL in lamports
 /// Buffer ratio for yield extraction: must maintain 155% after harvest
 pub const YIELD_BUFFER_RATIO: u64 = 155;
 
-/// Calculates how many collateral shares can be extracted as yield.
+/// Calculates how many JitoSOL shares can be extracted as yield.
 ///
-/// Parameters (all denominated consistently):
-///   collateral_amount      – vault's liquid collateral shares
-///   locked_collateral      – shares locked in pending burns
-///   principal_shares       – original deposit shares (basis for yield detection)
+/// Parameters:
+///   collateral_amount      – vault's liquid JitoSOL shares (9 decimals)
+///   locked_collateral      – JitoSOL shares locked in pending burns
+///   principal_sol_value    – original deposit SOL value (lamports, 9 decimals)
+///   jitosol_exchange_rate  – current JitoSOL→SOL rate (18-decimal: SOL per share)
 ///   actual_debt            – current actual debt (wsXMR, 8 decimals)
 ///   pending_debt           – reserved debt capacity (wsXMR, 8 decimals)
 ///   xmr_price              – XMR/USD 18-decimal
-///   collateral_price       – collateral/USD 18-decimal
+///   collateral_price       – JitoSOL/USD 18-decimal (market price for solvency)
 ///
-/// Returns the number of shares that can safely be moved to yield_war_chest.
+/// Returns the number of JitoSOL shares that can safely be moved to yield_war_chest.
 pub fn calculate_extractable_yield(
     collateral_amount: u64,
     locked_collateral: u64,
-    principal_shares: u64,
+    principal_sol_value: u64,
+    jitosol_exchange_rate: u64,
     actual_debt: u64,
     pending_debt: u64,
     xmr_price: u64,
     collateral_price: u64,
 ) -> u64 {
-    if collateral_amount == 0 || principal_shares == 0 {
+    if collateral_amount == 0 || principal_sol_value == 0 {
         return 0;
     }
 
-    // Yield is detected when current shares > original principal shares.
-    // This mirrors the sDAI `convertToAssets` comparison in YieldLogic.sol:
-    //   totalDaiValue = collateralAmount * rate / 1e18
-    //   if totalDaiValue <= principalDeposits → no yield
-    // Here we work directly in shares: collateral_amount vs principal_shares.
-    if collateral_amount <= principal_shares {
+    // Current SOL value = collateral_amount * jitosol_exchange_rate / 1e18
+    // (collateral_amount is in 9-decimal JitoSOL shares, rate is 18-decimal)
+    let current_sol_value = ((collateral_amount as u128)
+        .saturating_mul(jitosol_exchange_rate as u128)
+        / PRICE_PRECISION as u128) as u64;
+
+    // Yield exists when current SOL value > principal SOL value
+    if current_sol_value <= principal_sol_value {
         return 0;
     }
 
-    let mut yield_shares = collateral_amount - principal_shares;
+    // Yield in SOL terms
+    let yield_sol_value = current_sol_value - principal_sol_value;
 
-    if yield_shares < YIELD_DUST_THRESHOLD || yield_shares > collateral_amount {
+    // Dust check on SOL value (not share count)
+    if yield_sol_value < YIELD_DUST_THRESHOLD_SOL {
+        return 0;
+    }
+
+    // Convert yield back to JitoSOL shares: yield_shares = yield_sol_value * 1e18 / rate
+    let mut yield_shares = ((yield_sol_value as u128)
+        .saturating_mul(PRICE_PRECISION as u128)
+        / jitosol_exchange_rate as u128) as u64;
+
+    if yield_shares == 0 || yield_shares > collateral_amount {
         return 0;
     }
 
