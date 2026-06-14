@@ -42,15 +42,29 @@ pub const MIN_DEBT_INDEX: u64 = 10_000_000_000; // 1e10
 pub const PRICE_MAX_AGE: u64 = 120;          // 2 minutes
 pub const LIQUIDITY_PRICE_MAX_AGE: u64 = 30; // 30 seconds
 
-// Pyth feed IDs (same as EVM contract)
+// Pyth feed IDs
 pub const XMR_USD_FEED_ID: [u8; 32] = [
     0x46, 0xb8, 0xcc, 0x93, 0x47, 0xf0, 0x43, 0x91,
     0x76, 0x4a, 0x03, 0x61, 0xe0, 0xb1, 0x7c, 0x3b,
     0xa3, 0x94, 0xb0, 0x01, 0xe7, 0xc3, 0x04, 0xf7,
     0x65, 0x0f, 0x63, 0x76, 0xe3, 0x7c, 0x32, 0x1d,
 ];
-// Collateral feed ID is set at runtime via GlobalState.pyth_collateral_feed
-// (allows different collateral assets without redeployment)
+
+// JitoSOL/USD Pyth feed ID (verified from Hermes API 2026-06-14)
+pub const JITOSOL_USD_FEED_ID: [u8; 32] = [
+    0x67, 0xbe, 0x9f, 0x51, 0x9b, 0x95, 0xcf, 0x24,
+    0x33, 0x88, 0x01, 0x05, 0x1f, 0x9a, 0x80, 0x8e,
+    0xff, 0x0a, 0x57, 0x8c, 0xcb, 0x38, 0x8d, 0xb7,
+    0x3b, 0x7f, 0x6f, 0xe1, 0xde, 0x01, 0x9f, 0xfb,
+];
+
+// JitoSOL mainnet addresses (verified from jito.network docs 2026-06-14)
+// Stake Pool account: Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb
+pub const JITOSOL_STAKE_POOL: &str = "Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb";
+// JitoSOL mint: J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn
+pub const JITOSOL_MINT: &str = "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn";
+// SPL Stake Pool program: SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy
+pub const SPL_STAKE_POOL_PROGRAM: &str = "SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy";
 
 // PDA seeds
 pub const GLOBAL_STATE_SEED: &[u8] = b"global_state";

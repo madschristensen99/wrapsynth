@@ -140,6 +140,7 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
+        &ctx.accounts.jitosol_stake_pool,
     )?;
 
     let global = &ctx.accounts.global_state;
@@ -306,6 +307,8 @@ pub struct ResolveBurnForLiquidation<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
+    /// CHECK: JitoSOL stake pool account for reading exchange rate
+    pub jitosol_stake_pool: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -352,6 +355,8 @@ pub struct ExecuteLiquidation<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
+    /// CHECK: JitoSOL stake pool account for reading exchange rate
+    pub jitosol_stake_pool: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,

@@ -26,6 +26,8 @@ pub struct GlobalState {
     pub global_lp_principal: u64,
     /// Total original deposit shares across all LPs
     pub global_lp_principal_shares: u64,
+    /// Total principal value in SOL terms (lamports) for JitoSOL yield tracking
+    pub global_lp_principal_sol_value: u64,
     /// Pending collateral withdrawals queued in PendingReturns accounts
     pub global_pending_collateral: u64,
     /// Pending SOL/lamport withdrawals queued in PendingReturns accounts
@@ -47,10 +49,10 @@ pub struct GlobalState {
 impl GlobalState {
     /// Account discriminator + all fields.
     /// Pubkeys: 6 * 32 = 192
-    /// u64s: 9 * 8 = 72
+    /// u64s: 10 * 8 = 80 (added global_lp_principal_sol_value)
     /// i64: 8
     /// u32: 4
     /// u8: 1
-    /// Total data: 277 + 8 discriminator = 285 → pad to 300
-    pub const LEN: usize = 8 + 192 + 72 + 8 + 4 + 1 + 15; // = 300
+    /// Total data: 285 + 8 discriminator = 293 → pad to 300
+    pub const LEN: usize = 8 + 192 + 80 + 8 + 4 + 1 + 7; // = 300
 }

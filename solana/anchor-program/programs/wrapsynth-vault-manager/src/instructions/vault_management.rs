@@ -6,8 +6,8 @@ use crate::constants::*;
 use crate::errors::WrapSynthError;
 use crate::state::{GlobalState, Vault};
 use crate::utils::{
-    get_collateral_price, get_xmr_price, calculate_extractable_yield,
-    check_collateral_ratio, collateral_to_usd,
+    get_collateral_price, get_xmr_price, get_jitosol_exchange_rate,
+    calculate_extractable_yield, check_collateral_ratio, collateral_to_usd,
 };
 
 // ─── create_vault ────────────────────────────────────────────────────────────
@@ -30,6 +30,7 @@ pub fn create_vault(ctx: Context<CreateVault>) -> Result<()> {
     vault.min_burn_amount = 0;
     vault.principal_deposits = 0;
     vault.principal_shares = 0;
+    vault.principal_sol_value = 0;
     vault.active_burn_count = 0;
     vault.active = true;
     vault.bump = ctx.bumps.vault;
@@ -60,7 +61,14 @@ pub fn deposit_collateral_shares(ctx: Context<DepositCollateral>, amount: u64) -
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
+        &ctx.accounts.jitosol_stake_pool,
     )?;
+
+    // Read current JitoSOL exchange rate to track principal in SOL terms
+    let exchange_rate = get_jitosol_exchange_rate(&ctx.accounts.jitosol_stake_pool)?;
+    let sol_value_deposited = ((amount as u128)
+        .saturating_mul(exchange_rate as u128)
+        / PRICE_PRECISION as u128) as u64;
 
     // Transfer collateral shares from LP to vault ATA
     let cpi_ctx = CpiContext::new(
@@ -86,6 +94,10 @@ pub fn deposit_collateral_shares(ctx: Context<DepositCollateral>, amount: u64) -
         .principal_deposits
         .checked_add(amount)
         .ok_or(WrapSynthError::MathOverflow)?;
+    vault.principal_sol_value = vault
+        .principal_sol_value
+        .checked_add(sol_value_deposited)
+        .ok_or(WrapSynthError::MathOverflow)?;
 
     let global = &mut ctx.accounts.global_state;
     global.global_lp_principal_shares = global
@@ -95,6 +107,10 @@ pub fn deposit_collateral_shares(ctx: Context<DepositCollateral>, amount: u64) -
     global.global_lp_principal = global
         .global_lp_principal
         .checked_add(amount)
+        .ok_or(WrapSynthError::MathOverflow)?;
+    global.global_lp_principal_sol_value = global
+        .global_lp_principal_sol_value
+        .checked_add(sol_value_deposited)
         .ok_or(WrapSynthError::MathOverflow)?;
 
     msg!("Deposited {} collateral shares into vault {}", amount, ctx.accounts.lp.key());
@@ -115,6 +131,7 @@ pub fn withdraw_collateral(ctx: Context<WithdrawCollateral>, amount: u64) -> Res
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
+        &ctx.accounts.jitosol_stake_pool,
     )?;
 
     let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
@@ -163,13 +180,17 @@ pub fn withdraw_collateral(ctx: Context<WithdrawCollateral>, amount: u64) -> Res
             / 1_000_000_000_000_000_000u128) as u64;
         let shares_to_deduct = ((vault.principal_shares as u128 * proportion)
             / 1_000_000_000_000_000_000u128) as u64;
+        let sol_value_to_deduct = ((vault.principal_sol_value as u128 * proportion)
+            / 1_000_000_000_000_000_000u128) as u64;
 
         vault.principal_deposits = vault.principal_deposits.saturating_sub(principal_to_deduct);
         vault.principal_shares = vault.principal_shares.saturating_sub(shares_to_deduct);
+        vault.principal_sol_value = vault.principal_sol_value.saturating_sub(sol_value_to_deduct);
 
         let global_mut = &mut ctx.accounts.global_state;
         global_mut.global_lp_principal = global_mut.global_lp_principal.saturating_sub(principal_to_deduct);
         global_mut.global_lp_principal_shares = global_mut.global_lp_principal_shares.saturating_sub(shares_to_deduct);
+        global_mut.global_lp_principal_sol_value = global_mut.global_lp_principal_sol_value.saturating_sub(sol_value_to_deduct);
     }
 
     vault.collateral_amount = new_collateral;
@@ -251,21 +272,23 @@ pub fn sync_vault_yield(
     global: &mut GlobalState,
     pyth_xmr: &AccountInfo,
     pyth_collateral: &AccountInfo,
+    jitosol_stake_pool: &AccountInfo,
 ) -> Result<()> {
     if vault.collateral_amount == 0 {
         return Ok(());
     }
 
     let xmr_price = get_xmr_price(pyth_xmr, PRICE_MAX_AGE)?;
-    let col_feed = global.pyth_collateral_feed.to_bytes();
-    let col_price = get_collateral_price(pyth_collateral, PRICE_MAX_AGE, &col_feed)?;
+    let col_price = get_collateral_price(pyth_collateral, PRICE_MAX_AGE, &JITOSOL_USD_FEED_ID)?;
+    let exchange_rate = get_jitosol_exchange_rate(jitosol_stake_pool)?;
 
     let actual_debt = crate::utils::math::get_actual_debt(vault.normalized_debt, global.global_debt_index);
 
     let yield_shares = calculate_extractable_yield(
         vault.collateral_amount,
         vault.locked_collateral,
-        vault.principal_shares,
+        vault.principal_sol_value,
+        exchange_rate,
         actual_debt,
         vault.pending_debt,
         xmr_price,
@@ -345,6 +368,8 @@ pub struct DepositCollateral<'info> {
 
     pub pyth_xmr: AccountInfo<'info>,
     pub pyth_collateral: AccountInfo<'info>,
+    /// JitoSOL stake pool account for reading exchange rate
+    pub jitosol_stake_pool: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -422,6 +447,8 @@ pub struct WithdrawCollateral<'info> {
 
     pub pyth_xmr: AccountInfo<'info>,
     pub pyth_collateral: AccountInfo<'info>,
+    /// JitoSOL stake pool account for reading exchange rate
+    pub jitosol_stake_pool: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
