@@ -36,6 +36,7 @@ pub fn initiate_mint(
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
+        &ctx.accounts.jitosol_stake_pool,
     )?;
 
     let global = &ctx.accounts.global_state;
@@ -169,6 +170,7 @@ pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
+        &ctx.accounts.jitosol_stake_pool,
     )?;
 
     let vault = &ctx.accounts.vault;
@@ -235,6 +237,7 @@ pub fn finalize_mint(ctx: Context<FinalizeMint>, secret: [u8; 32]) -> Result<()>
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
+        &ctx.accounts.jitosol_stake_pool,
     )?;
 
     let vault = &mut ctx.accounts.vault;
@@ -419,6 +422,8 @@ pub struct InitiateMint<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
+    /// CHECK: JitoSOL stake pool account for reading exchange rate
+    pub jitosol_stake_pool: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
 }
@@ -453,6 +458,8 @@ pub struct SetMintReady<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
+    /// CHECK: JitoSOL stake pool account for reading exchange rate
+    pub jitosol_stake_pool: AccountInfo<'info>,
 }
 
 #[derive(Accounts)]
@@ -502,6 +509,8 @@ pub struct FinalizeMint<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
+    /// CHECK: JitoSOL stake pool account for reading exchange rate
+    pub jitosol_stake_pool: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,

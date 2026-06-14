@@ -121,3 +121,52 @@ pub fn get_collateral_price(
     validate_price(&parsed, max_age_secs, feed_id)?;
     normalize_pyth_price(parsed.price, parsed.exponent)
 }
+
+/// Read JitoSOL→SOL exchange rate from the SPL stake pool account.
+///
+/// Returns the exchange rate as: (total_lamports * 1e18) / pool_token_supply
+/// This gives SOL per JitoSOL share in 18-decimal precision.
+///
+/// SPL StakePool account layout (Borsh-serialized):
+///   - account_type: u8 (enum, 2 = StakePool)
+///   - manager: [u8; 32]
+///   - staker: [u8; 32]
+///   - stake_deposit_authority: [u8; 32]
+///   - stake_withdraw_bump_seed: u8
+///   - validator_list: [u8; 32]
+///   - reserve_stake: [u8; 32]
+///   - pool_mint: [u8; 32]
+///   - manager_fee_account: [u8; 32]
+///   - token_program_id: [u8; 32]
+///   - total_lamports: u64 (offset 329)
+///   - pool_token_supply: u64 (offset 337)
+pub fn get_jitosol_exchange_rate(stake_pool_account: &AccountInfo) -> Result<u64> {
+    let data = stake_pool_account.try_borrow_data()?;
+    require!(data.len() >= 345, WrapSynthError::StalePrice);
+    
+    // Verify account_type == 2 (StakePool enum variant)
+    require!(data[0] == 2, WrapSynthError::StalePrice);
+    
+    // Read total_lamports at offset 329
+    let total_lamports = u64::from_le_bytes(
+        data[329..337].try_into().map_err(|_| WrapSynthError::StalePrice)?
+    );
+    
+    // Read pool_token_supply at offset 337
+    let pool_token_supply = u64::from_le_bytes(
+        data[337..345].try_into().map_err(|_| WrapSynthError::StalePrice)?
+    );
+    
+    require!(pool_token_supply > 0, WrapSynthError::PriceNormalizedToZero);
+    
+    // Exchange rate = (total_lamports * 1e18) / pool_token_supply
+    // Both total_lamports and pool_token_supply are in lamports (9 decimals)
+    let rate = (total_lamports as u128)
+        .checked_mul(PRICE_PRECISION as u128)
+        .ok_or(WrapSynthError::MathOverflow)?
+        .checked_div(pool_token_supply as u128)
+        .ok_or(WrapSynthError::MathOverflow)?;
+    
+    require!(rate > 0 && rate <= u64::MAX as u128, WrapSynthError::PriceNormalizedToZero);
+    Ok(rate as u64)
+}

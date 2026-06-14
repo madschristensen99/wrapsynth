@@ -35,6 +35,7 @@ pub fn handler(
     global.yield_war_chest = 0;
     global.global_lp_principal = 0;
     global.global_lp_principal_shares = 0;
+    global.global_lp_principal_sol_value = 0;
     global.global_pending_collateral = 0;
     global.global_pending_sol = 0;
     global.global_bad_debt = 0;

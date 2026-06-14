@@ -52,6 +52,7 @@ fn _request_burn(ctx: Context<RequestBurn>, wsxmr_amount: u64, request_id: [u8; 
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
+        &ctx.accounts.jitosol_stake_pool,
     )?;
 
     let global = &ctx.accounts.global_state;
@@ -224,6 +225,7 @@ pub fn finalize_burn(ctx: Context<FinalizeBurn>, secret: [u8; 32]) -> Result<()>
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
+        &ctx.accounts.jitosol_stake_pool,
     )?;
 
     let vault = &mut ctx.accounts.vault;
@@ -332,6 +334,7 @@ pub fn claim_slashed_collateral(ctx: Context<ClaimSlashedCollateral>) -> Result<
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
+        &ctx.accounts.jitosol_stake_pool,
     )?;
 
     let vault = &mut ctx.accounts.vault;
@@ -398,6 +401,7 @@ pub fn cancel_burn(ctx: Context<CancelBurn>) -> Result<()> {
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
+        &ctx.accounts.jitosol_stake_pool,
     )?;
 
     let global = &ctx.accounts.global_state;
@@ -549,6 +553,8 @@ pub struct RequestBurn<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
+    /// CHECK: JitoSOL stake pool account for reading exchange rate
+    pub jitosol_stake_pool: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -623,6 +629,8 @@ pub struct FinalizeBurn<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
+    /// CHECK: JitoSOL stake pool account for reading exchange rate
+    pub jitosol_stake_pool: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
 }
@@ -670,6 +678,8 @@ pub struct ClaimSlashedCollateral<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
+    /// CHECK: JitoSOL stake pool account for reading exchange rate
+    pub jitosol_stake_pool: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
 }
@@ -717,6 +727,8 @@ pub struct CancelBurn<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
+    /// CHECK: JitoSOL stake pool account for reading exchange rate
+    pub jitosol_stake_pool: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
