@@ -19,10 +19,9 @@ pub mod wrapsynth_vault_manager {
     pub fn initialize(
         ctx: Context<Initialize>,
         pyth_xmr_feed: Pubkey,
-        pyth_collateral_feed: Pubkey,
         collateral_mint: Pubkey,
     ) -> Result<()> {
-        initialize::handler(ctx, pyth_xmr_feed, pyth_collateral_feed, collateral_mint)
+        initialize::handler(ctx, pyth_xmr_feed, collateral_mint)
     }
 
     pub fn set_liquidity_router(

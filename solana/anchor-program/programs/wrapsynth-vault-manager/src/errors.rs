@@ -82,4 +82,6 @@ pub enum WrapSynthError {
     PriceNormalizedToZero,
     #[msg("XMR amount too small (minimum 1e4 atomic units)")]
     XmrAmountTooSmall,
+    #[msg("Collateral depegged: minting paused")]
+    CollateralDepegged,
 }

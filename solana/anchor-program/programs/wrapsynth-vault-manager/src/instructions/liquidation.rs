@@ -31,7 +31,7 @@ pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> 
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &global.pyth_collateral_feed.to_bytes(),
+        &JITOSOL_USD_FEED_ID,
     )?;
     let col_usd = collateral_to_usd(vault.collateral_amount, col_price);
     let debt_usd = (actual_debt as u128 * xmr_price as u128 / WSXMR_DECIMALS as u128) as u64;
@@ -148,7 +148,7 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &global.pyth_collateral_feed.to_bytes(),
+        &JITOSOL_USD_FEED_ID,
     )?;
 
     let actual_debt = get_actual_debt(vault.normalized_debt, global.global_debt_index);
