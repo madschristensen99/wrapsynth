@@ -127,35 +127,18 @@ pub fn get_collateral_price(
 /// Returns the exchange rate as: (total_lamports * 1e18) / pool_token_supply
 /// This gives SOL per JitoSOL share in 18-decimal precision.
 ///
-/// SPL StakePool account layout (Borsh-serialized):
-///   - account_type: u8 (enum, 2 = StakePool)
-///   - manager: [u8; 32]
-///   - staker: [u8; 32]
-///   - stake_deposit_authority: [u8; 32]
-///   - stake_withdraw_bump_seed: u8
-///   - validator_list: [u8; 32]
-///   - reserve_stake: [u8; 32]
-///   - pool_mint: [u8; 32]
-///   - manager_fee_account: [u8; 32]
-///   - token_program_id: [u8; 32]
-///   - total_lamports: u64 (offset 329)
-///   - pool_token_supply: u64 (offset 337)
+/// Uses spl-stake-pool crate for safe deserialization to avoid layout fragility.
 pub fn get_jitosol_exchange_rate(stake_pool_account: &AccountInfo) -> Result<u64> {
+    use spl_stake_pool::state::StakePool;
+    
     let data = stake_pool_account.try_borrow_data()?;
-    require!(data.len() >= 345, WrapSynthError::StalePrice);
     
-    // Verify account_type == 2 (StakePool enum variant)
-    require!(data[0] == 2, WrapSynthError::StalePrice);
+    // Deserialize using spl-stake-pool's official struct
+    let stake_pool = StakePool::try_from_slice(&data)
+        .map_err(|_| WrapSynthError::StalePrice)?;
     
-    // Read total_lamports at offset 329
-    let total_lamports = u64::from_le_bytes(
-        data[329..337].try_into().map_err(|_| WrapSynthError::StalePrice)?
-    );
-    
-    // Read pool_token_supply at offset 337
-    let pool_token_supply = u64::from_le_bytes(
-        data[337..345].try_into().map_err(|_| WrapSynthError::StalePrice)?
-    );
+    let total_lamports = stake_pool.total_lamports;
+    let pool_token_supply = stake_pool.pool_token_supply;
     
     require!(pool_token_supply > 0, WrapSynthError::PriceNormalizedToZero);
     

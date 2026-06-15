@@ -10,8 +10,14 @@ use crate::constants::*;
 use crate::utils::math::*;
 
 pub const YIELD_DUST_THRESHOLD_SOL: u64 = 100_000_000; // 0.1 SOL in lamports
-/// Buffer ratio for yield extraction: must maintain 155% after harvest
-pub const YIELD_BUFFER_RATIO: u64 = 155;
+/// Buffer ratio for yield extraction: must stay above COLLATERAL_RATIO to prevent
+/// yield harvesting from manufacturing undercollateralized vaults.
+/// Set to CR + 5% headroom. MUST be updated whenever COLLATERAL_RATIO changes.
+pub const YIELD_BUFFER_RATIO: u64 = COLLATERAL_RATIO + 5;
+
+// Compile-time assertion: YIELD_BUFFER_RATIO must exceed COLLATERAL_RATIO
+const _: () = assert!(YIELD_BUFFER_RATIO > COLLATERAL_RATIO, 
+    "YIELD_BUFFER_RATIO must be > COLLATERAL_RATIO to prevent yield extraction from creating undercollateralized vaults");
 
 /// Calculates how many JitoSOL shares can be extracted as yield.
 ///
