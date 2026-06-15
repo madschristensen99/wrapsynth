@@ -6,7 +6,7 @@ use crate::constants::*;
 use crate::errors::WrapSynthError;
 use crate::state::{GlobalState, Vault, MintRequest, MintStatus};
 use crate::utils::{
-    get_xmr_price, get_collateral_price, mul_verify,
+    get_xmr_price, get_collateral_price, get_jitosol_exchange_rate, check_depeg_guard, mul_verify,
     math::{get_actual_debt, normalize_debt, collateral_to_usd, check_collateral_ratio},
 };
 use crate::instructions::vault_management::sync_vault_yield;
@@ -66,7 +66,7 @@ pub fn initiate_mint(
         let col_price = get_collateral_price(
             &ctx.accounts.pyth_collateral,
             PRICE_MAX_AGE,
-            &global.pyth_collateral_feed.to_bytes(),
+            &JITOSOL_USD_FEED_ID,
         )?;
         msg!("DEBUG: Collateral price = {}", col_price);
         let col_val_usd = collateral_to_usd(vault.collateral_amount, col_price);
@@ -93,7 +93,7 @@ pub fn initiate_mint(
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &global.pyth_collateral_feed.to_bytes(),
+        &JITOSOL_USD_FEED_ID,
     )?;
 
     require!(
@@ -106,6 +106,15 @@ pub fn initiate_mint(
         ),
         WrapSynthError::InsufficientCollateral
     );
+
+    // Depeg guard: prevent new mints if JitoSOL market price diverges below fair value
+    let jitosol_exchange_rate = get_jitosol_exchange_rate(&ctx.accounts.jitosol_stake_pool)?;
+    let sol_usd_price = get_collateral_price(
+        &ctx.accounts.pyth_sol,
+        PRICE_MAX_AGE,
+        &SOL_USD_FEED_ID,
+    )?;
+    check_depeg_guard(col_price, jitosol_exchange_rate, sol_usd_price)?;
 
     // Increment nonce. Client pre-computed request_id = keccak(initiator, vault, amount, commitment, nonce+1).
     ctx.accounts.global_state.request_nonce = ctx.accounts.global_state.request_nonce
@@ -185,7 +194,7 @@ pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &global.pyth_collateral_feed.to_bytes(),
+        &JITOSOL_USD_FEED_ID,
     )?;
     require!(
         check_collateral_ratio(available, col_price, projected, xmr_price, COLLATERAL_RATIO),
@@ -420,8 +429,10 @@ pub struct InitiateMint<'info> {
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth collateral price feed — validated by oracle.rs
+    /// CHECK: Pyth collateral price feed (JitoSOL/USD) — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
+    /// CHECK: Pyth SOL/USD price feed for depeg guard — validated by oracle.rs
+    pub pyth_sol: AccountInfo<'info>,
     /// CHECK: JitoSOL stake pool account for reading exchange rate
     pub jitosol_stake_pool: AccountInfo<'info>,
 

@@ -60,7 +60,7 @@ fn _request_burn(ctx: Context<RequestBurn>, wsxmr_amount: u64, request_id: [u8; 
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &global.pyth_collateral_feed.to_bytes(),
+        &JITOSOL_USD_FEED_ID,
     )?;
 
     let actual_debt = get_actual_debt(vault.normalized_debt, global.global_debt_index);
@@ -236,7 +236,7 @@ pub fn finalize_burn(ctx: Context<FinalizeBurn>, secret: [u8; 32]) -> Result<()>
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &global.pyth_collateral_feed.to_bytes(),
+        &JITOSOL_USD_FEED_ID,
     )?;
 
     let mut safe_reward = request.reward_collateral;
@@ -409,7 +409,7 @@ pub fn cancel_burn(ctx: Context<CancelBurn>) -> Result<()> {
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &global.pyth_collateral_feed.to_bytes(),
+        &JITOSOL_USD_FEED_ID,
     )?;
 
     let total_unlock = request.locked_collateral + request.reward_collateral;

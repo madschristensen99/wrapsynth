@@ -3,7 +3,39 @@
 /// We avoid depending on pyth-solana-receiver-sdk as an anchor Account type to sidestep
 /// anchor version conflicts. Instead we pass `&AccountInfo` and deserialize manually.
 ///
-/// Pyth PriceUpdateV2 on-chain layout (after 8-byte discriminator):
+/// # DUAL-SOURCE ORACLE DESIGN: SOURCE-OF-TRUTH RULES
+///
+/// This module implements a two-source oracle design for JitoSOL collateral:
+///
+/// 1. **Market Price (Pyth JitoSOL/USD)** — THE SOLVENCY SOURCE OF TRUTH
+///    - Used for: mint collateralization checks, burn health checks, liquidation thresholds,
+///      yield buffer min-collateral USD calculations
+///    - Function: `get_collateral_price(&pyth_account, max_age, &JITOSOL_USD_FEED_ID)`
+///    - Why: Reflects real market conditions including depegs. This is the price at which
+///      the protocol can actually liquidate positions or realize collateral value.
+///
+/// 2. **Stake Pool Rate (JitoSOL→SOL exchange rate)** — YIELD ACCOUNTING ONLY
+///    - Used for: yield principal/current-value accounting (tracking staking rewards)
+///    - Function: `get_jitosol_exchange_rate(&stake_pool_account)`
+///    - Why: Monotonically increasing (staking rewards accrue), but CANNOT reflect depegs.
+///      Using this for solvency would blind the protocol to tail risk scenarios where
+///      JitoSOL trades below its redemption value (liquidity crisis, smart contract risk, etc).
+///
+/// **CRITICAL**: Never use the stake pool rate for any solvency/health calculation. The
+/// stake pool rate is purely for measuring yield (current_value - principal). All debt
+/// safety checks MUST use the market price to protect against depeg scenarios.
+///
+/// # DEPEG GUARD
+///
+/// The dual-source design enables a depeg detection mechanism:
+/// - Fair value = stake_pool_rate × SOL/USD (theoretical redemption value)
+/// - Market price = JitoSOL/USD Pyth feed (actual trading price)
+/// - If market < fair_value × (1 - DEPEG_TOLERANCE_BPS/10000), JitoSOL is depegging
+/// - Action: Pause new mints (no new debt against depegging asset), allow liquidations/burns
+///
+/// # PYTH PRICEUPDATE V2 ON-CHAIN LAYOUT
+///
+/// Layout after 8-byte discriminator [0xc8, 0x8c, 0x29, 0x47, 0x6e, 0x23, 0x15, 0x1c]:
 ///   write_authority: [u8; 32]         = bytes 8..40
 ///   verification_level: u8 + padding  = bytes 40..42 (enum variant)
 ///   price_message: PriceFeedMessage
@@ -16,6 +48,9 @@
 ///     ema_price:  i64                 = bytes 110..118
 ///     ema_conf:   u64                 = bytes 118..126
 ///   posted_slot: u64                  = bytes 126..134
+///
+/// This layout is pinned to pyth-solana-receiver-sdk v0.2.x. If the SDK version changes,
+/// verify the discriminator and layout against live mainnet feeds via Hermes API.
 
 use anchor_lang::prelude::*;
 
@@ -33,10 +68,21 @@ pub struct PythPrice {
 }
 
 /// Parse a PriceUpdateV2 AccountInfo into a PythPrice struct.
+///
+/// Validates the account discriminator to ensure we're reading the correct account type.
+/// The discriminator [0xc8, 0x8c, 0x29, 0x47, 0x6e, 0x23, 0x15, 0x1c] is the first 8 bytes
+/// of sha256("account:PriceUpdateV2") from pyth-solana-receiver-sdk.
 pub fn parse_pyth_price(account: &AccountInfo) -> Result<PythPrice> {
     let data = account.try_borrow_data()?;
     // Minimum length: 8 disc + 32 + 2 + 32 + 8 + 8 + 4 + 8 + 8 + 8 + 8 + 8 = 134
     require!(data.len() >= 134, WrapSynthError::StalePrice);
+
+    // Verify PriceUpdateV2 discriminator (first 8 bytes)
+    const PRICE_UPDATE_V2_DISCRIMINATOR: [u8; 8] = [0xc8, 0x8c, 0x29, 0x47, 0x6e, 0x23, 0x15, 0x1c];
+    require!(
+        data[0..8] == PRICE_UPDATE_V2_DISCRIMINATOR,
+        WrapSynthError::StalePrice
+    );
 
     // Skip 8-byte discriminator
     // Skip 32-byte write_authority
@@ -101,6 +147,15 @@ pub fn get_xmr_price(price_account: &AccountInfo, max_age_secs: u64) -> Result<u
 }
 
 /// Fetch XMR EMA price, normalized to 18 decimals.
+///
+/// **EMA DIVERGENCE NOTE**: This function reads Pyth's published EMA price directly from
+/// the price feed message, NOT a locally-maintained EMA accumulator. This differs from the
+/// EVM VaultManager's `xmrEmaPrice` which maintains a 10-period EMA with alpha=182/1000.
+///
+/// Pyth's EMA uses their own smoothing window (typically confidence-weighted), so the
+/// buy-and-burn trigger condition (spot <= ema * 99/100) keys off Pyth's EMA semantics,
+/// not the EVM's 10-period moving average. This behavioral difference is acceptable for
+/// Solana deployment but should be reviewed if cross-chain EMA consistency is required.
 pub fn get_xmr_ema_price(price_account: &AccountInfo, max_age_secs: u64) -> Result<u64> {
     let parsed = parse_pyth_price(price_account)?;
     // Freshness validated via spot price publish_time (same message)
@@ -152,4 +207,56 @@ pub fn get_jitosol_exchange_rate(stake_pool_account: &AccountInfo) -> Result<u64
     
     require!(rate > 0 && rate <= u64::MAX as u128, WrapSynthError::PriceNormalizedToZero);
     Ok(rate as u64)
+}
+
+/// Check for JitoSOL depeg condition.
+///
+/// Compares the market JitoSOL/USD price against the theoretical fair value computed from
+/// the stake pool exchange rate and SOL/USD price. If the market price diverges below the
+/// fair value by more than DEPEG_TOLERANCE_BPS, returns Err to signal a depeg.
+///
+/// **Depeg Logic**:
+/// - Fair value = (jitosol_exchange_rate × sol_usd_price) / 1e18
+/// - Threshold = fair_value × (10000 - DEPEG_TOLERANCE_BPS) / 10000
+/// - If market_price < threshold, JitoSOL is depegging
+///
+/// **Action on depeg**: Caller should pause new mints (no new debt against depegging asset)
+/// while still allowing liquidations and burns at the market price.
+///
+/// # Arguments
+/// * `jitosol_market_price` - JitoSOL/USD from Pyth (18 decimals)
+/// * `jitosol_exchange_rate` - JitoSOL→SOL from stake pool (18 decimals, SOL per JitoSOL)
+/// * `sol_usd_price` - SOL/USD from Pyth (18 decimals)
+pub fn check_depeg_guard(
+    jitosol_market_price: u64,
+    jitosol_exchange_rate: u64,
+    sol_usd_price: u64,
+) -> Result<()> {
+    // Fair value = exchange_rate × sol_price / 1e18
+    let fair_value = (jitosol_exchange_rate as u128)
+        .checked_mul(sol_usd_price as u128)
+        .ok_or(WrapSynthError::MathOverflow)?
+        .checked_div(PRICE_PRECISION as u128)
+        .ok_or(WrapSynthError::MathOverflow)?;
+    
+    require!(fair_value <= u64::MAX as u128, WrapSynthError::MathOverflow);
+    let fair_value = fair_value as u64;
+    
+    // Threshold = fair_value × (10000 - tolerance_bps) / 10000
+    let threshold = (fair_value as u128)
+        .checked_mul((BPS_DENOMINATOR - DEPEG_TOLERANCE_BPS) as u128)
+        .ok_or(WrapSynthError::MathOverflow)?
+        .checked_div(BPS_DENOMINATOR as u128)
+        .ok_or(WrapSynthError::MathOverflow)?;
+    
+    require!(threshold <= u64::MAX as u128, WrapSynthError::MathOverflow);
+    let threshold = threshold as u64;
+    
+    // If market price < threshold, depeg detected
+    require!(
+        jitosol_market_price >= threshold,
+        WrapSynthError::CollateralDepegged
+    );
+    
+    Ok(())
 }

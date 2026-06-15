@@ -12,8 +12,6 @@ pub struct GlobalState {
     pub liquidity_router: Pubkey,
     /// Pyth XMR/USD price feed account
     pub pyth_xmr_feed: Pubkey,
-    /// Pyth collateral/USD price feed account
-    pub pyth_collateral_feed: Pubkey,
 
     /// Total wsXMR debt across all vaults (8 decimals)
     pub global_total_debt: u64,
@@ -48,11 +46,11 @@ pub struct GlobalState {
 
 impl GlobalState {
     /// Account discriminator + all fields.
-    /// Pubkeys: 6 * 32 = 192
+    /// Pubkeys: 5 * 32 = 160 (removed pyth_collateral_feed)
     /// u64s: 10 * 8 = 80 (added global_lp_principal_sol_value)
     /// i64: 8
     /// u32: 4
     /// u8: 1
-    /// Total data: 285 + 8 discriminator = 293 → pad to 300
-    pub const LEN: usize = 8 + 192 + 80 + 8 + 4 + 1 + 7; // = 300
+    /// Total data: 253 + 8 discriminator = 261 → pad to 268
+    pub const LEN: usize = 8 + 160 + 80 + 8 + 4 + 1 + 7; // = 268
 }

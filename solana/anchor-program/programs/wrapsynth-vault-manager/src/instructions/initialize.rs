@@ -16,11 +16,9 @@ use crate::state::GlobalState;
 pub fn handler(
     ctx: Context<Initialize>,
     pyth_xmr_feed: Pubkey,
-    pyth_collateral_feed: Pubkey,
     collateral_mint: Pubkey,
 ) -> Result<()> {
     require!(pyth_xmr_feed != Pubkey::default(), WrapSynthError::ZeroAddress);
-    require!(pyth_collateral_feed != Pubkey::default(), WrapSynthError::ZeroAddress);
     require!(collateral_mint != Pubkey::default(), WrapSynthError::ZeroAddress);
 
     let global = &mut ctx.accounts.global_state;
@@ -29,7 +27,6 @@ pub fn handler(
     global.collateral_mint = collateral_mint;
     global.liquidity_router = Pubkey::default();
     global.pyth_xmr_feed = pyth_xmr_feed;
-    global.pyth_collateral_feed = pyth_collateral_feed;
     global.global_total_debt = 0;
     global.global_debt_index = INITIAL_DEBT_INDEX;
     global.yield_war_chest = 0;
