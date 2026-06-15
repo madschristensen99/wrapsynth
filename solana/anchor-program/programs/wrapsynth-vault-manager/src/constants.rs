@@ -58,6 +58,17 @@ pub const JITOSOL_USD_FEED_ID: [u8; 32] = [
     0x3b, 0x7f, 0x6f, 0xe1, 0xde, 0x01, 0x9f, 0xfb,
 ];
 
+// SOL/USD Pyth feed ID (verified from Hermes API 2026-06-14)
+pub const SOL_USD_FEED_ID: [u8; 32] = [
+    0xef, 0x0d, 0x8b, 0x6f, 0xda, 0x2c, 0xce, 0xd6,
+    0x91, 0x3b, 0xdc, 0xb2, 0x8c, 0x05, 0x54, 0xf6,
+    0x59, 0xe5, 0x5e, 0x8f, 0x88, 0x09, 0xf8, 0x85,
+    0x2b, 0x24, 0xe7, 0xdc, 0xfb, 0x75, 0xad, 0x54,
+];
+
+// Depeg guard tolerance: pause minting if market JitoSOL/USD < fair value * (100 - tolerance) / 100
+pub const DEPEG_TOLERANCE_BPS: u64 = 300; // 3%
+
 // JitoSOL mainnet addresses (verified from jito.network docs 2026-06-14)
 // Stake Pool account: Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb
 pub const JITOSOL_STAKE_POOL: &str = "Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb";

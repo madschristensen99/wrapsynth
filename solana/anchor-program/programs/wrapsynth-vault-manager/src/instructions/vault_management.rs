@@ -138,7 +138,7 @@ pub fn withdraw_collateral(ctx: Context<WithdrawCollateral>, amount: u64) -> Res
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &ctx.accounts.global_state.pyth_collateral_feed.to_bytes(),
+        &JITOSOL_USD_FEED_ID,
     )?;
 
     // Cannot withdraw locked collateral
