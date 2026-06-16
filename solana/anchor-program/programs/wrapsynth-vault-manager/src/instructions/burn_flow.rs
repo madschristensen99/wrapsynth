@@ -417,7 +417,7 @@ pub fn cancel_burn(ctx: Context<CancelBurn>) -> Result<()> {
     let restored_actual = get_actual_debt(restored_normalized, global.global_debt_index);
     let restored_collateral = vault.collateral_amount + total_unlock;
 
-    // Health check at 150% after restoration
+    // Health check at COLLATERAL_RATIO after restoration
     let unhealthy = if restored_actual > 0 {
         let new_locked = vault.locked_collateral.saturating_sub(total_unlock);
         let available = restored_collateral.saturating_sub(new_locked);
