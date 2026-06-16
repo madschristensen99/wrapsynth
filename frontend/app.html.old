@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WrapSynth — App</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0a0b; --panel:#141417; --panel-2:#17171b; --input:#1c1c21;
+    --fg:#ededee; --muted:#85858c; --faint:#5a5a61;
+    --xmr:#ff6a1a; --teal:#2fe6c4;
+    --green:#37d99a; --amber:#f5b945; --red:#f4736b;
+    --line:rgba(255,255,255,.085); --line-2:rgba(255,255,255,.05);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font-family:'Inter',system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;min-height:100vh}
+  .mono{font-family:'JetBrains Mono',monospace}
+
+  /* ambient background — dim + slow, not flashy */
+  #gl{position:fixed;inset:0;width:100%;height:100%;z-index:0;opacity:.55}
+  .scrim{position:fixed;inset:0;z-index:1;pointer-events:none;
+    background:radial-gradient(110% 70% at 50% -10%,transparent 50%,rgba(10,10,11,.7) 100%)}
+  .shell{position:relative;z-index:2}
+
+  /* NAV */
+  nav{display:flex;align-items:center;justify-content:space-between;height:66px;
+    padding:0 22px;border-bottom:1px solid var(--line-2);backdrop-filter:blur(8px);
+    background:rgba(10,10,11,.5)}
+  .brand{display:flex;align-items:center;gap:10px;font-family:'Space Grotesk';font-weight:700;
+    letter-spacing:-.02em;font-size:18px}
+  .mark{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,var(--xmr),var(--teal))}
+  .nav-right{display:flex;align-items:center;gap:12px}
+  .pill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);
+    border-radius:9px;padding:8px 12px;font-size:13px;color:var(--muted);background:rgba(255,255,255,.02)}
+  .pill .gdot{width:7px;height:7px;border-radius:50%;background:var(--green)}
+  .price b{color:var(--fg);font-weight:600}
+  .connect{font-family:'Space Grotesk';font-weight:600;font-size:14px;cursor:pointer;
+    border:none;border-radius:10px;padding:10px 16px;background:var(--fg);color:#0a0a0b;
+    transition:background .15s, transform .12s}
+  .connect:hover{background:#fff}.connect:active{transform:translateY(1px)}
+  .connect.on{background:rgba(255,255,255,.05);color:var(--fg);border:1px solid var(--line)}
+  @media(max-width:680px){.price{display:none}}
+
+  /* APP CARD */
+  .stage{display:flex;justify-content:center;padding:44px 18px 30px}
+  .card{width:100%;max-width:486px;background:var(--panel);border:1px solid var(--line);
+    border-radius:20px;padding:8px;box-shadow:0 24px 60px -20px rgba(0,0,0,.6)}
+  .tabs{display:flex;gap:2px;background:var(--panel-2);border-radius:13px;padding:4px;margin:4px 4px 12px}
+  .tab{flex:1;font-family:'Space Grotesk';font-weight:600;font-size:14px;color:var(--muted);
+    background:transparent;border:none;cursor:pointer;padding:10px;border-radius:10px;transition:.15s}
+  .tab.active{background:var(--bg);color:var(--fg);box-shadow:0 1px 0 rgba(255,255,255,.04) inset}
+  .tab:hover:not(.active){color:var(--fg)}
+
+  .body{padding:8px 12px 14px}
+  .label-row{display:flex;justify-content:space-between;font-size:12.5px;color:var(--muted);margin-bottom:7px}
+  .label-row .bal{cursor:pointer}.label-row .bal:hover{color:var(--fg)}
+
+  .field{background:var(--input);border:1px solid var(--line-2);border-radius:14px;padding:15px 16px;
+    display:flex;align-items:center;gap:12px;transition:border-color .15s}
+  .field:focus-within{border-color:rgba(255,106,26,.45)}
+  .field input{flex:1;background:none;border:none;outline:none;color:var(--fg);
+    font-family:'JetBrains Mono';font-size:24px;font-weight:500;min-width:0}
+  .field input::placeholder{color:var(--faint)}
+  .asset{display:flex;align-items:center;gap:8px;background:var(--panel-2);border:1px solid var(--line);
+    border-radius:999px;padding:6px 12px 6px 7px;font-family:'Space Grotesk';font-weight:600;font-size:14px;white-space:nowrap}
+  .coin{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;color:#0a0a0b}
+  .coin.x{background:var(--xmr)}.coin.w{background:var(--teal)}
+
+  .swap-mid{display:flex;justify-content:center;margin:-6px 0;position:relative;z-index:1}
+  .swap-ic{width:34px;height:34px;border-radius:10px;background:var(--panel);border:1px solid var(--line);
+    display:grid;place-items:center;color:var(--muted);font-size:15px}
+
+  .meta{margin:14px 4px 0;border:1px solid var(--line-2);border-radius:12px;padding:12px 14px;
+    display:flex;flex-direction:column;gap:9px;font-size:13px}
+  .meta .r{display:flex;justify-content:space-between;color:var(--muted)}
+  .meta .r b{color:var(--fg);font-weight:500;font-family:'JetBrains Mono'}
+  .meta .r .pos{color:var(--teal)}
+
+  .cta{width:100%;margin-top:14px;font-family:'Space Grotesk';font-weight:600;font-size:16px;
+    cursor:pointer;border:none;border-radius:14px;padding:16px;background:var(--xmr);color:#160a02;
+    transition:background .15s, transform .12s, opacity .15s}
+  .cta:hover{background:#ff7a30}.cta:active{transform:translateY(1px)}
+  .cta.ghost{background:rgba(255,255,255,.05);color:var(--fg);border:1px solid var(--line)}
+  .cta.ghost:hover{background:rgba(255,255,255,.09)}
+  .cta:disabled{opacity:.45;cursor:not-allowed;transform:none}
+
+  /* STEPPER */
+  .stepper{margin:16px 4px 0;display:none}
+  .stepper.show{display:block}
+  .steps{display:flex;gap:6px;margin-bottom:14px}
+  .step{flex:1;display:flex;flex-direction:column;gap:7px}
+  .step .bar{height:3px;border-radius:2px;background:var(--line)}
+  .step.done .bar{background:var(--teal)}.step.cur .bar{background:var(--xmr)}
+  .step .t{font-size:11px;color:var(--faint);font-family:'JetBrains Mono';line-height:1.3}
+  .step.done .t,.step.cur .t{color:var(--muted)}
+  .step.cur .t{color:var(--fg)}
+  .step-note{font-size:12.5px;color:var(--muted);background:var(--input);border:1px solid var(--line-2);
+    border-radius:11px;padding:11px 13px;line-height:1.5;display:flex;gap:9px;align-items:flex-start}
+  .step-note .k{color:var(--xmr);font-family:'JetBrains Mono';margin-top:1px}
+  .reset{background:none;border:none;color:var(--muted);font-size:12.5px;cursor:pointer;
+    margin-top:10px;text-decoration:underline;text-underline-offset:3px}
+  .reset:hover{color:var(--fg)}
+
+  .addr-field{margin-top:10px}
+  .addr-field input{width:100%;background:var(--input);border:1px solid var(--line-2);border-radius:14px;
+    padding:14px 16px;color:var(--fg);font-family:'JetBrains Mono';font-size:13px;outline:none}
+  .addr-field input:focus{border-color:rgba(47,230,196,.4)}
+  .addr-field input::placeholder{color:var(--faint)}
+
+  /* VAULTS */
+  .vaults{padding:6px 4px}
+  .vault-head{display:flex;justify-content:space-between;align-items:center;margin:0 8px 12px}
+  .vault-head h3{font-family:'Space Grotesk';font-size:15px;font-weight:600}
+  .mini{font-family:'Space Grotesk';font-weight:600;font-size:13px;cursor:pointer;border:1px solid var(--line);
+    background:rgba(255,255,255,.03);color:var(--fg);border-radius:10px;padding:8px 13px}
+  .mini:hover{background:rgba(255,255,255,.07)}
+  .vault-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;padding:0 4px}
+  @media(max-width:520px){.vault-grid{grid-template-columns:repeat(2,1fr)}}
+  .vc{background:var(--input);border:1px solid var(--line-2);border-radius:16px;padding:15px 8px 13px;
+    display:flex;flex-direction:column;align-items:center;gap:11px;cursor:pointer;
+    transition:border-color .15s, transform .15s}
+  .vc:hover{border-color:var(--line);transform:translateY(-2px)}
+  .ring{position:relative;width:100px;height:100px}
+  .ring .arc{transition:stroke-dashoffset .9s cubic-bezier(.2,.7,.2,1)}
+  .ring .center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px}
+  .ring .cr{font-family:'JetBrains Mono';font-weight:600;font-size:20px;line-height:1}
+  .ring .hl{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  .vc .vid{font-family:'JetBrains Mono';font-size:11px;color:var(--muted)}
+  .vc .vrow{width:100%;display:flex;flex-direction:column;gap:3px;font-family:'JetBrains Mono';font-size:10.5px;color:var(--faint)}
+  .vc .vrow .l{display:flex;justify-content:space-between}
+  .vc .vrow b{color:var(--fg);font-weight:500}
+
+  /* footer strip */
+  .strip{max-width:486px;margin:0 auto;padding:0 18px 40px;display:flex;flex-direction:column;gap:10px}
+  .global{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
+    border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .g{background:var(--bg);padding:14px;text-align:center}
+  .g .n{font-family:'JetBrains Mono';font-weight:600;font-size:16px}
+  .g .k{font-size:11px;color:var(--muted);margin-top:3px}
+  .addrs{font-family:'JetBrains Mono';font-size:11px;color:var(--faint);line-height:1.8;
+    border:1px solid var(--line-2);border-radius:12px;padding:12px 14px}
+  .addrs a{color:var(--muted);text-decoration:none}.addrs a:hover{color:var(--teal)}
+  .addrs .lab{color:var(--muted)}
+
+  @media(prefers-reduced-motion:reduce){.gdot{animation:none}}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div class="scrim"></div>
+
+<div class="shell">
+  <nav>
+    <div class="brand"><span class="mark"></span>WrapSynth</div>
+    <div class="nav-right">
+      <span class="pill"><span class="gdot"></span>Gnosis</span>
+      <span class="pill price">XMR <b id="xmrPx">$312.40</b></span>
+      <button class="connect" id="connectBtn">Connect wallet</button>
+    </div>
+  </nav>
+
+  <div class="stage">
+    <div class="card">
+      <div class="tabs">
+        <button class="tab active" data-tab="mint">Mint</button>
+        <button class="tab" data-tab="burn">Burn</button>
+        <button class="tab" data-tab="vaults">Vaults</button>
+      </div>
+
+      <!-- MINT -->
+      <div class="body panel" data-panel="mint">
+        <div class="label-row"><span>You send</span><span class="bal" data-fill="mint">Balance: 24.81 XMR</span></div>
+        <div class="field">
+          <input id="mintIn" inputmode="decimal" placeholder="0.0" />
+          <span class="asset"><span class="coin x">ɱ</span>XMR</span>
+        </div>
+        <div class="swap-mid"><div class="swap-ic">↓</div></div>
+        <div class="label-row"><span>You receive</span><span>1 XMR = 0.997 wsXMR</span></div>
+        <div class="field">
+          <input id="mintOut" placeholder="0.0" readonly />
+          <span class="asset"><span class="coin w">w</span>wsXMR</span>
+        </div>
+
+        <div class="meta">
+          <div class="r"><span>Protocol fee (0.3%)</span><b id="mintFee">—</b></div>
+          <div class="r"><span>Backing collateral</span><b>sDAI · 150%</b></div>
+          <div class="r"><span>Oracle</span><b>Pyth · XMR/USD</b></div>
+        </div>
+
+        <button class="cta" id="mintCta" disabled>Enter an amount</button>
+
+        <div class="stepper" id="mintSteps">
+          <div class="steps">
+            <div class="step" data-s="0"><div class="bar"></div><div class="t">Initiate<br>+ griefing deposit</div></div>
+            <div class="step" data-s="1"><div class="bar"></div><div class="t">Send XMR<br>to LP address</div></div>
+            <div class="step" data-s="2"><div class="bar"></div><div class="t">LP confirms<br>receipt</div></div>
+            <div class="step" data-s="3"><div class="bar"></div><div class="t">Finalize<br>reveal secret</div></div>
+          </div>
+          <div class="step-note"><span class="k" id="mintK">01</span><span id="mintNote"></span></div>
+          <button class="reset" id="mintReset">↺ Cancel &amp; reset</button>
+        </div>
+      </div>
+
+      <!-- BURN -->
+      <div class="body panel" data-panel="burn" style="display:none">
+        <div class="label-row"><span>You burn</span><span class="bal" data-fill="burn">Balance: 8.40 wsXMR</span></div>
+        <div class="field">
+          <input id="burnIn" inputmode="decimal" placeholder="0.0" />
+          <span class="asset"><span class="coin w">w</span>wsXMR</span>
+        </div>
+        <div class="swap-mid"><div class="swap-ic">↓</div></div>
+        <div class="label-row"><span>You receive</span><span>1 wsXMR = 0.997 XMR</span></div>
+        <div class="field">
+          <input id="burnOut" placeholder="0.0" readonly />
+          <span class="asset"><span class="coin x">ɱ</span>XMR</span>
+        </div>
+        <div class="addr-field">
+          <input id="burnAddr" placeholder="Your Monero address (4... / 8...)" />
+        </div>
+
+        <div class="meta">
+          <div class="r"><span>Redemption fee (0.3%)</span><b id="burnFee">—</b></div>
+          <div class="r"><span>LP timeout window</span><b>24h · slash protected</b></div>
+          <div class="r"><span>Commitment</span><b>secp256k1 · HTLC</b></div>
+        </div>
+
+        <button class="cta" id="burnCta" disabled>Enter an amount</button>
+
+        <div class="stepper" id="burnSteps">
+          <div class="steps">
+            <div class="step" data-s="0"><div class="bar"></div><div class="t">Request burn<br>reserve + deadline</div></div>
+            <div class="step" data-s="1"><div class="bar"></div><div class="t">LP sends<br>XMR to you</div></div>
+            <div class="step" data-s="2"><div class="bar"></div><div class="t">Commit burn<br>escrow collateral</div></div>
+            <div class="step" data-s="3"><div class="bar"></div><div class="t">LP finalizes<br>reveal secret</div></div>
+          </div>
+          <div class="step-note"><span class="k" id="burnK">01</span><span id="burnNote"></span></div>
+          <button class="reset" id="burnReset">↺ Cancel &amp; reset</button>
+        </div>
+      </div>
+
+      <!-- VAULTS -->
+      <div class="body panel vaults" data-panel="vaults" style="display:none">
+        <div class="vault-head"><h3>LP vaults</h3><button class="mini" id="newVault">+ Create vault</button></div>
+        <div id="vaultList"></div>
+        <button class="cta ghost" id="provide" style="margin:8px 4px 2px;width:calc(100% - 8px)">Provide liquidity</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="strip">
+    <div class="global">
+      <div class="g"><div class="n">$1.24M</div><div class="k">sDAI locked</div></div>
+      <div class="g"><div class="n">842.6</div><div class="k">wsXMR supply</div></div>
+      <div class="g"><div class="n">168%</div><div class="k">global ratio</div></div>
+    </div>
+    <div class="addrs">
+      <span class="lab">wsXMR</span> &nbsp;<a href="https://gnosisscan.io/address/0x4206580496249266945A5aED42E41b6CE9cd8DAD" target="_blank">0x4206…8DAD</a><br>
+      <span class="lab">VaultManager</span> &nbsp;<a href="https://gnosisscan.io/address/0xB00fed5E2F06187369f5bbF2fcFF065FA188D1a5" target="_blank">0xB00f…D1a5</a><br>
+      <span class="lab">Router</span> &nbsp;<a href="https://gnosisscan.io/address/0x7Ed870F86ae9c7ecE955185792FFF1Ac57dc743a" target="_blank">0x7Ed8…743a</a>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ---------- ambient threads bg (dim, slow) ---------- */
+(function(){
+  const cv=document.getElementById('gl'), gl=cv.getContext('webgl',{alpha:true,antialias:false});
+  if(!gl){return;}
+  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const vs=`attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}`;
+  const fs=`precision highp float;uniform vec2 u_res;uniform float u_time;uniform float u_m;
+    float h(float n){return fract(sin(n)*43758.5453);}
+    void main(){vec2 uv=gl_FragCoord.xy/u_res.xy;float t=u_time*u_m;float glow=0.;
+      const int N=11;
+      for(int i=0;i<N;i++){float fi=float(i);float s=fi*1.37;float yb=(fi+0.5)/float(N);
+        float a=0.03+0.04*h(s);float f=1.3+2.2*h(s+1.);float sp=0.08+0.2*h(s+2.);float ph=s*6.28;
+        float y=yb+a*sin(uv.x*f*3.14+t*sp+ph);float d=abs(uv.y-y);
+        glow+=(0.0014/(d+0.0011))*(0.4+0.5*h(s+3.));}
+      vec3 o=vec3(1.,0.42,0.1);vec3 te=vec3(0.18,0.9,0.77);
+      vec3 c=mix(o,te,smoothstep(0.1,0.9,uv.x))*glow*0.34;
+      gl_FragColor=vec4(c,1.0);}`;
+  function sh(t,src){const s=gl.createShader(t);gl.shaderSource(s,src);gl.compileShader(s);return s;}
+  const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,vs));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,fs));
+  gl.linkProgram(pr);gl.useProgram(pr);
+  const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+  const l=gl.getAttribLocation(pr,'p');gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,2,gl.FLOAT,false,0,0);
+  const uR=gl.getUniformLocation(pr,'u_res'),uT=gl.getUniformLocation(pr,'u_time'),uM=gl.getUniformLocation(pr,'u_m');
+  gl.uniform1f(uM,reduce?0:1);
+  function rz(){const dpr=Math.min(devicePixelRatio||1,1.5);cv.width=innerWidth*dpr;cv.height=innerHeight*dpr;
+    gl.viewport(0,0,cv.width,cv.height);gl.uniform2f(uR,cv.width,cv.height);}
+  addEventListener('resize',rz);rz();
+  const t0=performance.now();
+  (function f(){gl.uniform1f(uT,(performance.now()-t0)/1000);gl.drawArrays(gl.TRIANGLES,0,3);
+    if(!reduce)requestAnimationFrame(f);})();
+})();
+
+/* ---------- app state ---------- */
+const S={connected:false, tab:'mint', mintStep:-1, burnStep:-1};
+const FEE=0.003;
+const $=id=>document.getElementById(id);
+
+/* connect */
+const cBtn=$('connectBtn');
+cBtn.onclick=()=>{
+  S.connected=!S.connected;
+  if(S.connected){cBtn.textContent='0x9f2e…41ad';cBtn.classList.add('on');}
+  else{cBtn.textContent='Connect wallet';cBtn.classList.remove('on');}
+  refreshCtas();
+};
+
+/* tabs */
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+  S.tab=t.dataset.tab;
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x===t));
+  document.querySelectorAll('.panel').forEach(p=>p.style.display=(p.dataset.panel===S.tab)?'':'none');
+});
+
+/* balance autofill */
+document.querySelectorAll('[data-fill]').forEach(el=>el.onclick=()=>{
+  const v=el.textContent.match(/[\d.]+/)[0];
+  if(el.dataset.fill==='mint'){$('mintIn').value=v;onMintIn();}
+  else{$('burnIn').value=v;onBurnIn();}
+});
+
+/* ---- MINT quote ---- */
+function onMintIn(){
+  const v=parseFloat($('mintIn').value)||0;
+  const out=v*(1-FEE);
+  $('mintOut').value = v? out.toFixed(4): '';
+  $('mintFee').textContent = v? (v*FEE).toFixed(4)+' XMR' : '—';
+  refreshCtas();
+}
+$('mintIn').addEventListener('input',onMintIn);
+
+/* ---- BURN quote ---- */
+function onBurnIn(){
+  const v=parseFloat($('burnIn').value)||0;
+  const out=v*(1-FEE);
+  $('burnOut').value = v? out.toFixed(4): '';
+  $('burnFee').textContent = v? (v*FEE).toFixed(4)+' wsXMR' : '—';
+  refreshCtas();
+}
+$('burnIn').addEventListener('input',onBurnIn);
+$('burnAddr').addEventListener('input',refreshCtas);
+
+/* cta states */
+function refreshCtas(){
+  // mint
+  const mv=parseFloat($('mintIn').value)||0, mC=$('mintCta');
+  if(S.mintStep>=0){/* in flow, handled by stepper */}
+  else if(!S.connected){mC.disabled=false;mC.textContent='Connect wallet';}
+  else if(mv<=0){mC.disabled=true;mC.textContent='Enter an amount';}
+  else{mC.disabled=false;mC.textContent='Initiate mint';}
+  // burn
+  const bv=parseFloat($('burnIn').value)||0, addr=$('burnAddr').value.trim(), bC=$('burnCta');
+  if(S.burnStep>=0){}
+  else if(!S.connected){bC.disabled=false;bC.textContent='Connect wallet';}
+  else if(bv<=0){bC.disabled=true;bC.textContent='Enter an amount';}
+  else if(addr.length<8){bC.disabled=true;bC.textContent='Enter your Monero address';}
+  else{bC.disabled=false;bC.textContent='Request burn';}
+}
+
+/* ---- stepper engine ---- */
+const MINT_FLOW=[
+  {cta:'Mark XMR as sent', note:'Mint initiated on-chain. Send the exact XMR amount to the LP\u2019s one-time Monero address, then mark it sent. Your griefing deposit is held in escrow.'},
+  {cta:'Waiting for LP\u2026', note:'XMR broadcast. The LP node is watching for confirmations on Monero before it marks your request READY.', auto:true},
+  {cta:'Finalize mint', note:'LP confirmed receipt. Reveal your secret \u2014 it\u2019s verified against your commitment via secp256k1, then wsXMR is minted to your wallet.'},
+  {cta:'Done \u2713 wsXMR minted', note:'Secret verified. wsXMR minted and griefing deposit refunded. The position is fully collateralized by the LP\u2019s sDAI vault.', done:true}
+];
+const BURN_FLOW=[
+  {cta:'LP sending XMR\u2026', note:'Burn requested. Your wsXMR and the LP\u2019s sDAI collateral are reserved with a 24h deadline. The LP is sending XMR to your address.', auto:true},
+  {cta:'Commit burn', note:'XMR received in your Monero wallet. Commit the burn \u2014 your wsXMR is burned and the collateral moves to escrow.'},
+  {cta:'Waiting for LP reveal\u2026', note:'Collateral escrowed. The LP reveals its secret to unlock it. If the LP misses the 24h window, you can slash and seize the collateral.', auto:true},
+  {cta:'Done \u2713 collateral released', note:'Secret verified against the hash. Collateral released back to the LP. Your redemption is complete.', done:true}
+];
+
+function runStep(kind){
+  const isMint=kind==='mint';
+  const stepKey=isMint?'mintStep':'burnStep';
+  const flow=isMint?MINT_FLOW:BURN_FLOW;
+  const stepsEl=$(isMint?'mintSteps':'burnSteps');
+  const cta=$(isMint?'mintCta':'burnCta');
+  const kEl=$(isMint?'mintK':'burnK'), noteEl=$(isMint?'mintNote':'burnNote');
+
+  // start
+  if(S[stepKey]<0){
+    if(!S.connected){cBtn.click();return;}
+    S[stepKey]=0; stepsEl.classList.add('show');
+  } else {
+    S[stepKey]++;
+  }
+  const i=S[stepKey];
+  // paint step bars (0..3 stages map to 4 dots)
+  stepsEl.querySelectorAll('.step').forEach((st,idx)=>{
+    st.classList.toggle('done', idx<i);
+    st.classList.toggle('cur', idx===i);
+  });
+  kEl.textContent=String(i+1).padStart(2,'0');
+  const fdef=flow[Math.min(i,flow.length-1)];
+  noteEl.textContent=fdef.note;
+  cta.textContent=fdef.cta;
+  cta.disabled=false;
+
+  if(fdef.done){ cta.disabled=true; return; }
+  if(fdef.auto){
+    cta.disabled=true;
+    setTimeout(()=>{ if(S[stepKey]===i) runStep(kind); }, 1500);
+  }
+}
+
+$('mintCta').onclick=()=>{
+  if(S.mintStep<0 && (!S.connected)){cBtn.click();return;}
+  if(S.mintStep<0 && (parseFloat($('mintIn').value)||0)<=0)return;
+  runStep('mint');
+};
+$('burnCta').onclick=()=>{
+  if(S.burnStep<0 && (!S.connected)){cBtn.click();return;}
+  if(S.burnStep<0 && (parseFloat($('burnIn').value)||0)<=0)return;
+  runStep('burn');
+};
+$('mintReset').onclick=()=>{S.mintStep=-1;$('mintSteps').classList.remove('show');refreshCtas();};
+$('burnReset').onclick=()=>{S.burnStep=-1;$('burnSteps').classList.remove('show');refreshCtas();};
+
+/* ---- vaults ---- */
+const VAULTS=[
+  {id:'0x9f2e…41ad', cr:182, coll:'412.0k', debt:'226.4'},
+  {id:'0x3a71…0c8e', cr:141, coll:'88.5k',  debt:'62.7'},
+  {id:'0xc0ff…ee21', cr:118, coll:'31.2k',  debt:'26.4'}
+];
+function crColor(cr){return cr>=150?'var(--green)':cr>=120?'var(--amber)':'var(--red)';}
+function crLabel(cr){return cr>=150?'healthy':cr>=120?'watch':'liquidatable';}
+const R=44, CIRC=2*Math.PI*R;
+function frac(cr){return Math.max(0,Math.min(1,(cr-100)/150));}   // 100%..250% maps around the ring
+function tick(cr){const a=frac(cr)*2*Math.PI; return {x:(52+R*Math.cos(a)).toFixed(1), y:(52+R*Math.sin(a)).toFixed(1)};}
+const liq=tick(120);
+$('vaultList').innerHTML='<div class="vault-grid">'+VAULTS.map(v=>{
+  const c=crColor(v.cr), off=(CIRC*(1-frac(v.cr))).toFixed(1);
+  return `<div class="vc">
+    <div class="ring">
+      <svg width="100" height="100" viewBox="0 0 104 104">
+        <g transform="rotate(-90 52 52)">
+          <circle cx="52" cy="52" r="${R}" fill="none" stroke="rgba(255,255,255,.07)" stroke-width="8"/>
+          <circle class="arc" cx="52" cy="52" r="${R}" fill="none" stroke="${c}" stroke-width="8"
+            stroke-linecap="round" stroke-dasharray="${CIRC.toFixed(1)}" stroke-dashoffset="${off}"/>
+          <circle cx="${liq.x}" cy="${liq.y}" r="2.6" fill="var(--red)"><title>Liquidation line · 120%</title></circle>
+        </g>
+      </svg>
+      <div class="center"><span class="cr" style="color:${c}">${v.cr}%</span><span class="hl">${crLabel(v.cr)}</span></div>
+    </div>
+    <div class="vid">${v.id}</div>
+    <div class="vrow">
+      <span class="l"><span>collateral</span><b>${v.coll} sDAI</b></span>
+      <span class="l"><span>debt</span><b>${v.debt} wsXMR</b></span>
+    </div>
+  </div>`;
+}).join('')+'</div>';
+$('newVault').onclick=$('provide').onclick=()=>{
+  if(!S.connected){cBtn.click();return;}
+  $('provide').textContent='Vault creation — connect contract to continue';
+  setTimeout(()=>$('provide').textContent='Provide liquidity',2200);
+};
+
+refreshCtas();
+</script>
+</body>
+</html>

@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>WrapSynth — Atomic Liquidity for Monero</title>
+<meta name="description" content="Mint and burn wsXMR. Bridge your Monero to Gnosis Chain with trustless atomic swaps backed by >200% collateral.">
+<meta property="og:title" content="WrapSynth | Atomic Liquidity for Monero">
+<meta property="og:description" content="Mint and burn wsXMR. Bridge your Monero to Gnosis Chain with trustless atomic swaps backed by >200% collateral.">
+<meta property="og:image" content="https://wrapsynth.com/frontend/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:url" content="https://wrapsynth.com/app">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="WrapSynth | Atomic Liquidity for Monero">
+<meta name="twitter:description" content="Mint and burn wsXMR. Bridge your Monero to Gnosis Chain with trustless atomic swaps backed by >200% collateral.">
+<meta name="twitter:image" content="https://wrapsynth.com/frontend/og-image.png">
+<link rel="icon" type="image/x-icon" href="./favicon_monero/favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="./favicon_monero/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="./favicon_monero/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="./favicon_monero/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<script type="importmap">
+{
+  "imports": {
+    "@noble/hashes/sha512": "https://esm.sh/@noble/hashes@1.3.3/sha512",
+    "@noble/hashes/sha256": "https://esm.sh/@noble/hashes@1.3.3/sha256",
+    "@noble/hashes/utils": "https://esm.sh/@noble/hashes@1.3.3/utils",
+    "@noble/hashes/hmac": "https://esm.sh/@noble/hashes@1.3.3/hmac",
+    "@noble/hashes/pbkdf2": "https://esm.sh/@noble/hashes@1.3.3/pbkdf2",
+    "@noble/hashes/ripemd160": "https://esm.sh/@noble/hashes@1.3.3/ripemd160",
+    "@noble/hashes/_assert": "https://esm.sh/@noble/hashes@1.3.3/_assert",
+    "@noble/curves/secp256k1": "https://esm.sh/@noble/curves@1.2.0/secp256k1",
+    "@scure/base": "https://esm.sh/@scure/base@1.1.5",
+    "@scure/base@~1.1.0": "https://esm.sh/@scure/base@1.1.5",
+    "@scure/base@~1.1.2": "https://esm.sh/@scure/base@1.1.5"
+  }
+}
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations().then(regs => {
+        regs.forEach(r => r.unregister());
+    });
+}
+</script>
+<link rel="stylesheet" href="app-styles.css">
+</head>
+<body class="app-page">
+<!-- Animated Background -->
+<canvas id="gl"></canvas>
+<div class="scrim"></div>
+
+<script>
+/* ambient threads bg (dim, slow) */
+(function(){
+  const cv=document.getElementById('gl'), gl=cv.getContext('webgl',{alpha:true,antialias:false});
+  if(!gl){return;}
+  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const vs=`attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}`;
+  const fs=`precision highp float;uniform vec2 u_res;uniform float u_time;uniform float u_m;
+    float h(float n){return fract(sin(n)*43758.5453);}
+    void main(){vec2 uv=gl_FragCoord.xy/u_res.xy;float t=u_time*u_m;float glow=0.;
+      const int N=11;
+      for(int i=0;i<N;i++){float fi=float(i);float s=fi*1.37;float yb=(fi+0.5)/float(N);
+        float a=0.03+0.04*h(s);float f=1.3+2.2*h(s+1.);float sp=0.08+0.2*h(s+2.);float ph=s*6.28;
+        float y=yb+a*sin(uv.x*f*3.14+t*sp+ph);float d=abs(uv.y-y);
+        glow+=(0.0014/(d+0.0011))*(0.4+0.5*h(s+3.));}
+      vec3 o=vec3(1.,0.42,0.1);vec3 te=vec3(0.18,0.9,0.77);
+      vec3 c=mix(o,te,smoothstep(0.1,0.9,uv.x))*glow*0.34;
+      gl_FragColor=vec4(c,1.0);}`;
+  function sh(t,src){const s=gl.createShader(t);gl.shaderSource(s,src);gl.compileShader(s);return s;}
+  const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,vs));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,fs));
+  gl.linkProgram(pr);gl.useProgram(pr);
+  const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+  const l=gl.getAttribLocation(pr,'p');gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,2,gl.FLOAT,false,0,0);
+  const uR=gl.getUniformLocation(pr,'u_res'),uT=gl.getUniformLocation(pr,'u_time'),uM=gl.getUniformLocation(pr,'u_m');
+  gl.uniform1f(uM,reduce?0:1);
+  function rz(){const dpr=Math.min(devicePixelRatio||1,1.5);cv.width=innerWidth*dpr;cv.height=innerHeight*dpr;
+    gl.viewport(0,0,cv.width,cv.height);gl.uniform2f(uR,cv.width,cv.height);}
+  addEventListener('resize',rz);rz();
+  const t0=performance.now();
+  (function f(){gl.uniform1f(uT,(performance.now()-t0)/1000);gl.drawArrays(gl.TRIANGLES,0,3);
+    if(!reduce)requestAnimationFrame(f);})();
+})();
+</script>
+
+<div class="shell">
+  <nav>
+    <a href="index.html" class="brand" style="text-decoration:none"><img src="./wrapsynth-symbol.png" alt="WrapSynth" style="width:22px;height:22px;border-radius:6px">WrapSynth</a>
+    <div class="nav-right">
+      <span class="pill"><img src="https://gnosisscan.io/assets/generic/html/favicon-light.ico" alt="Gnosis" style="width:14px;height:14px;margin-right:4px">Gnosis</span>
+      <span class="pill price">XMR <b id="xmrPx">$--</b></span>
+      <button class="connect" id="connect-wallet">Connect wallet</button>
+      <div id="connected-info" class="wallet-connected hidden">
+        <div class="wallet-avatar"></div>
+        <div class="wallet-details">
+          <span id="user-address" class="wallet-address"></span>
+          <span id="user-balance" class="wallet-balance"></span>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Resume Active Swap Banner -->
+  <div id="resume-banner" class="banner banner-warning hidden">
+    <div id="resume-banner-header" style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+      <span id="resume-banner-title">Active operations detected!</span>
+    </div>
+    <div id="resume-swap-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+  </div>
+
+  <div class="stage">
+    <div class="card">
+      <div class="tabs">
+        <button class="tab" id="tab-mint" data-tab="mint">Mint</button>
+        <button class="tab" id="tab-burn" data-tab="burn">Burn</button>
+        <button class="tab" id="tab-co-lp" data-tab="co-lp">Co-LP</button>
+        <button class="tab" id="tab-lp" data-tab="lp">Vaults</button>
+      </div>
+
+      <!-- MINT PANEL -->
+      <div class="body panel" id="mint-panel" data-panel="mint">
+        <div class="label-row"><span>You send</span><span class="bal" data-fill="mint">Balance: -- XMR</span></div>
+        <div class="field">
+          <input id="mint-amount" inputmode="decimal" placeholder="0.0" />
+          <span class="asset"><img src="./monero-symbol-1280.png" alt="XMR" style="width:20px;height:20px;margin-right:6px">XMR</span>
+        </div>
+        <div class="swap-mid"><div class="swap-ic">↓</div></div>
+        <div class="label-row"><span>You receive</span><span id="mint-rate">1 XMR = 0.997 wsXMR</span></div>
+        <div class="field">
+          <input id="mint-receive" placeholder="0.0" readonly />
+          <span class="asset"><img src="./wrapsynth-symbol.png" alt="wsXMR" style="width:20px;height:20px;margin-right:6px">wsXMR</span>
+        </div>
+
+        <div class="meta">
+          <div class="r"><span>LP Vault</span>
+            <select id="mint-vault-select" style="background:var(--input);border:1px solid var(--line);border-radius:6px;padding:4px 8px;color:var(--fg);font-family:'JetBrains Mono';font-size:12px">
+              <option value="">Loading vaults...</option>
+            </select>
+          </div>
+          <div class="r" id="mint-vault-info" style="display:none"><span>Vault capacity</span><b id="mint-capacity">—</b></div>
+          <div class="r"><span>Protocol fee (0.3%)</span><b id="mint-fee">—</b></div>
+          <div class="r"><span>Backing collateral</span><b>sDAI · 150%</b></div>
+        </div>
+
+        <button class="cta" id="start-mint" disabled>Enter an amount</button>
+
+        <div id="mint-progress" class="stepper">
+          <div class="steps">
+            <div class="step" data-s="0"><div class="bar"></div><div class="t">Initiate<br>+ griefing deposit</div></div>
+            <div class="step" data-s="1"><div class="bar"></div><div class="t">Send XMR<br>to LP address</div></div>
+            <div class="step" data-s="2"><div class="bar"></div><div class="t">LP confirms<br>receipt</div></div>
+            <div class="step" data-s="3"><div class="bar"></div><div class="t">Finalize<br>reveal secret</div></div>
+          </div>
+          <div class="step-note" id="mint-step-note"><span class="k" id="mint-step-num">01</span><span id="mint-step-text"></span></div>
+          <div id="mint-deposit-info"></div>
+          <div id="mint-qr-code"></div>
+          <div id="mint-xmr-address"></div>
+          <div id="mint-exact-amount"></div>
+          <div id="confirm-sent-xmr"></div>
+          <div id="waiting-lp-verification"></div>
+          <div id="mint-actions"></div>
+          <button class="reset" id="cancel-mint">↺ Cancel &amp; reset</button>
+        </div>
+      </div>
+
+      <!-- BURN PANEL -->
+      <div class="body panel hidden" id="burn-panel" data-panel="burn">
+        <div class="label-row"><span>You burn</span><span class="bal" id="burn-user-balance">Balance: -- wsXMR</span></div>
+        <div class="field">
+          <input id="burn-amount" inputmode="decimal" placeholder="0.0" />
+          <span class="asset"><img src="./wrapsynth-symbol.png" alt="wsXMR" style="width:20px;height:20px;margin-right:6px">wsXMR</span>
+        </div>
+        <div class="swap-mid"><div class="swap-ic">↓</div></div>
+        <div class="label-row"><span>You receive</span><span id="burn-rate">1 wsXMR = 0.997 XMR</span></div>
+        <div class="field">
+          <input id="burn-receive" placeholder="0.0" readonly />
+          <span class="asset"><img src="./monero-symbol-1280.png" alt="XMR" style="width:20px;height:20px;margin-right:6px">XMR</span>
+        </div>
+        <div class="addr-field">
+          <input id="burn-xmr-destination" placeholder="Your Monero address (4... / 8...)" />
+        </div>
+
+        <div class="meta">
+          <div class="r"><span>LP Vault</span>
+            <select id="burn-vault-select" style="background:var(--input);border:1px solid var(--line);border-radius:6px;padding:4px 8px;color:var(--fg);font-family:'JetBrains Mono';font-size:12px">
+              <option value="">Loading vaults...</option>
+            </select>
+          </div>
+          <div class="r" id="burn-vault-info" style="display:none"><span>Vault capacity</span><b id="burn-capacity">—</b></div>
+          <div class="r"><span>Redemption fee (0.3%)</span><b id="burn-fee">—</b></div>
+          <div class="r"><span>LP timeout window</span><b>24h · slash protected</b></div>
+        </div>
+
+        <button class="cta" id="start-burn" disabled>Enter an amount</button>
+
+        <div id="burn-progress" class="stepper">
+          <div class="steps">
+            <div class="step" data-s="0"><div class="bar"></div><div class="t">Request burn<br>reserve + deadline</div></div>
+            <div class="step" data-s="1"><div class="bar"></div><div class="t">LP sends<br>XMR to you</div></div>
+            <div class="step" data-s="2"><div class="bar"></div><div class="t">Commit burn<br>escrow collateral</div></div>
+            <div class="step" data-s="3"><div class="bar"></div><div class="t">LP finalizes<br>reveal secret</div></div>
+          </div>
+          <div class="step-note" id="burn-step-note"><span class="k" id="burn-step-num">01</span><span id="burn-step-text"></span></div>
+          <button class="reset" id="cancel-burn">↺ Cancel &amp; reset</button>
+        </div>
+      </div>
+
+      <!-- CO-LP PANEL -->
+      <div class="body panel hidden" id="co-lp-panel" data-panel="co-lp">
+        <div style="padding:0 4px">
+          <h3 style="font-family:'Space Grotesk';font-size:15px;font-weight:600;margin-bottom:12px">Your Co-LP Positions</h3>
+          <div id="co-lp-positions-list" style="margin-bottom:20px">
+            <div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">Connect wallet to see positions</div>
+          </div>
+          
+          <h3 style="font-family:'Space Grotesk';font-size:15px;font-weight:600;margin:20px 0 12px">Open New Position</h3>
+          <div class="label-row"><span>Your wsXMR Balance</span><span id="co-lp-user-balance">--</span></div>
+          
+          <div class="meta" style="margin-top:12px">
+            <div class="r">
+              <span>Select Vault</span>
+              <select id="co-lp-vault-select" style="background:var(--input);border:1px solid var(--line);border-radius:6px;padding:4px 8px;color:var(--fg);font-family:'JetBrains Mono';font-size:12px">
+                <option value="">Loading vaults...</option>
+              </select>
+            </div>
+            <div class="r" id="co-lp-capacity" style="display:none"><span>Available capacity</span><b>--</b></div>
+          </div>
+          
+          <div class="addr-field">
+            <input id="co-lp-amount" type="number" step="0.0001" placeholder="wsXMR amount to provide" />
+          </div>
+          
+          <button class="cta" id="co-lp-open" disabled>Open Co-LP Position</button>
+          
+          <div id="co-lp-lp-settings" class="hidden" style="margin-top:20px;padding-top:20px;border-top:1px solid var(--line-2)">
+            <h3 style="font-family:'Space Grotesk';font-size:14px;font-weight:600;margin-bottom:12px">LP Settings</h3>
+            <div class="label-row"><span>Max Co-LP Range (bps)</span></div>
+            <div class="addr-field">
+              <input id="co-lp-max-range" type="number" placeholder="e.g. 500" />
+            </div>
+            <button class="cta ghost" id="co-lp-set-range">Update Range</button>
+          </div>
+          
+          <div style="margin-top:20px">
+            <h3 style="font-family:'Space Grotesk';font-size:14px;font-weight:600;margin-bottom:8px">Manage Position</h3>
+            <div class="addr-field">
+              <input id="co-lp-token-id" type="number" placeholder="NFT Token ID" />
+            </div>
+            <div style="display:flex;gap:8px;margin-top:8px">
+              <button class="cta ghost" id="co-lp-rebalance" style="flex:1">Rebalance</button>
+              <button class="cta ghost" id="co-lp-unwind" style="flex:1">Close Position</button>
+            </div>
+            <button class="cta ghost" id="co-lp-refresh-positions" style="margin-top:8px;width:100%">↻ Refresh Positions</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- LP PANEL / VAULTS -->
+      <div class="body panel vaults hidden" id="lp-panel" data-panel="lp">
+        <div class="vault-head">
+          <h3>LP Vaults</h3>
+          <button class="mini" id="new-vault">+ Create Vault</button>
+        </div>
+        <div id="vaults-list" class="vault-grid">
+          <!-- Vaults will be populated here by JavaScript -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="strip">
+    <div class="global">
+      <div class="g"><div class="n" id="tvl-stat">$--</div><div class="k">TVL</div></div>
+      <div class="g"><div class="n" id="vaults-stat">--</div><div class="k">Active Vaults</div></div>
+      <div class="g"><div class="n" id="volume-stat">$--</div><div class="k">24h Volume</div></div>
+    </div>
+    <div class="addrs">
+      <span class="lab">wsXMR</span> &nbsp;<a href="https://gnosisscan.io/address/0x30Aeb2A142744430fFD7D698D5C7C41769CE1279" target="_blank">0x30Ae…1279</a><br>
+      <span class="lab">wsXmrHub</span> &nbsp;<a href="https://gnosisscan.io/address/0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50" target="_blank">0x1fb8…bD50</a><br>
+      <span class="lab">Router</span> &nbsp;<a href="https://gnosisscan.io/address/0x6893f38e1DeEdCa95ce8995B01550921cEe353a1" target="_blank">0x6893…53a1</a>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Overlay -->
+<div id="modal-overlay" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modal-title"></h3>
+      <button class="modal-close">&times;</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-footer">
+      <button id="modal-close-btn" class="btn btn-primary">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Previous Mint Banner (for resuming) -->
+<div id="previous-mint-banner" class="banner banner-info hidden"></div>
+
+<!-- Load deployment.json before any app modules -->
+<script type="module">
+  const res = await fetch('./deployment.json');
+  if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status);
+  window.DEPLOYMENT = await res.json();
+</script>
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>
