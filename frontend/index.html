@@ -1,1147 +1,542 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WrapSynth | Trustless Wrapped Monero via Atomic Liquidity</title>
-    <meta name="description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on Gnosis Chain.">
-    <meta property="og:title" content="WrapSynth | Trustless Wrapped Monero via Atomic Liquidity">
-    <meta property="og:description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on Gnosis Chain.">
-    <meta property="og:image" content="https://wrapsynth.com/frontend/og-image.png">
-    <meta property="og:image:width" content="1200">
-    <meta property="og:image:height" content="630">
-    <meta property="og:url" content="https://wrapsynth.com">
-    <meta property="og:type" content="website">
-    <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="WrapSynth | Trustless Wrapped Monero via Atomic Liquidity">
-    <meta name="twitter:description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on Gnosis Chain.">
-    <meta name="twitter:image" content="https://wrapsynth.com/frontend/og-image.png">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg-primary: #fafafa;
-            --bg-secondary: #ffffff;
-            --bg-terminal: #1e1e2e;
-            --bg-card: #ffffff;
-            
-            --accent-orange: #ff6b00;
-            --accent-orange-light: #fff4eb;
-            --accent-orange-glow: rgba(255, 107, 0, 0.15);
-            --accent-green: #10b981;
-            --accent-green-light: #ecfdf5;
-            --accent-blue: #3b82f6;
-            --accent-purple: #8b5cf6;
-            
-            --text-primary: #1a1a2e;
-            --text-secondary: #64748b;
-            --text-muted: #94a3b8;
-            
-            --terminal-green: #4ade80;
-            --terminal-text: #e2e8f0;
-            --border-light: #e2e8f0;
-            
-            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
-            --container-max: 1200px;
-            
-            --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
-            --shadow-md: 0 4px 20px rgba(0,0,0,0.06);
-            --shadow-lg: 0 12px 40px rgba(0,0,0,0.08);
-            --shadow-orange: 0 8px 30px rgba(255, 107, 0, 0.2);
-        }
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WrapSynth — Trustless Wrapped Monero via Atomic Liquidity</title>
+<meta name="description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on Gnosis Chain.">
+<meta property="og:title" content="WrapSynth | Trustless Wrapped Monero via Atomic Liquidity">
+<meta property="og:description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on Gnosis Chain.">
+<meta property="og:image" content="https://wrapsynth.com/frontend/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:url" content="https://wrapsynth.com">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="WrapSynth | Trustless Wrapped Monero via Atomic Liquidity">
+<meta name="twitter:description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on Gnosis Chain.">
+<meta name="twitter:image" content="https://wrapsynth.com/frontend/og-image.png">
+<link rel="icon" type="image/x-icon" href="./favicon_monero/favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="./favicon_monero/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="./favicon_monero/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="./favicon_monero/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0a0b; --panel:#141417; --panel-2:#17171b; --input:#1c1c21;
+    --fg:#ededee; --muted:#85858c; --faint:#5a5a61;
+    --xmr:#ff6a1a; --teal:#2fe6c4; --green:#37d99a; --amber:#f5b945;
+    --line:rgba(255,255,255,.085); --line-2:rgba(255,255,255,.05);
+    --max:1080px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--fg);font-family:'Inter',system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;line-height:1.5;overflow-x:hidden}
+  .mono{font-family:'JetBrains Mono',monospace}
+  a{color:inherit}
+  .wrap{max-width:var(--max);margin:0 auto;padding:0 28px}
+  section{position:relative;z-index:2}
 
-        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-        html { 
-            scroll-behavior: smooth;
-            scroll-padding-top: 80px;
-        }
-        body {
-            font-family: var(--font-sans);
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            line-height: 1.6;
-            overflow-x: hidden;
-            padding-top: 80px;
-        }
+  /* NAV */
+  .nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(10px);
+    background:rgba(10,10,11,.6);border-bottom:1px solid var(--line-2)}
+  .nav-in{max-width:var(--max);margin:0 auto;padding:0 28px;height:66px;
+    display:flex;align-items:center;justify-content:space-between}
+  .brand{display:flex;align-items:center;gap:10px;font-family:'Space Grotesk';font-weight:700;
+    letter-spacing:-.02em;font-size:18px;text-decoration:none;color:var(--fg)}
+  .brand .mk{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,var(--xmr),var(--teal))}
+  .nav-links{display:flex;align-items:center;gap:28px}
+  .nav-links a{font-size:14px;color:var(--muted);text-decoration:none;transition:color .15s}
+  .nav-links a:hover{color:var(--fg)}
+  .nav-cta{font-family:'Space Grotesk';font-weight:600;font-size:14px;text-decoration:none;
+    background:var(--xmr);color:#160a02;border-radius:10px;padding:9px 15px;
+    transition:background .15s, box-shadow .15s;box-shadow:0 0 20px rgba(255,106,26,.25)}
+  .nav-cta:hover{background:#ff7a30;box-shadow:0 0 30px rgba(255,106,26,.4);color:#160a02}
+  @media(max-width:760px){.nav-links a:not(.nav-cta){display:none}}
 
-        .container { max-width: var(--container-max); margin: 0 auto; padding: 0 1.5rem; }
+  /* HERO */
+  .hero{position:relative;overflow:hidden;border-bottom:1px solid var(--line-2)}
+  #gl{position:absolute;inset:0;width:100%;height:100%;z-index:0;opacity:.85}
+  .hero-scrim{position:absolute;inset:0;z-index:1;pointer-events:none;
+    background:radial-gradient(100% 70% at 50% 0%,transparent 45%,rgba(10,10,11,.7) 100%),
+               linear-gradient(180deg,transparent 60%,var(--bg) 100%)}
+  .hero-in{position:relative;z-index:2;max-width:var(--max);margin:0 auto;padding:96px 28px 76px}
+  .eyebrow{display:inline-flex;align-items:center;gap:9px;font-family:'JetBrains Mono';font-size:12px;
+    color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:7px 14px;
+    background:rgba(255,255,255,.02);text-transform:uppercase;letter-spacing:.05em}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--green)}
+  h1{font-family:'Space Grotesk';font-weight:600;letter-spacing:-.035em;line-height:1.04;
+    font-size:clamp(38px,6.4vw,68px);margin:24px 0 0;max-width:14ch}
+  h1 .o{color:var(--xmr)}h1 .t{color:var(--teal)}
+  .lede{margin-top:22px;font-size:clamp(16px,2vw,18.5px);color:var(--muted);max-width:60ch;line-height:1.6}
+  .lede b{color:var(--fg);font-weight:500}
+  .hero-ctas{display:flex;gap:13px;margin-top:34px;flex-wrap:wrap}
+  .btn{font-family:'Space Grotesk';font-weight:600;font-size:15px;text-decoration:none;
+    display:inline-flex;align-items:center;gap:8px;padding:13px 22px;border-radius:12px;
+    transition:background .15s, transform .12s, border-color .15s}
+  .btn:active{transform:translateY(1px)}
+  .btn-primary{background:var(--xmr);color:#160a02}
+  .btn-primary:hover{background:#ff7a30}
+  .btn-ghost{border:1px solid var(--line);color:var(--fg);background:rgba(255,255,255,.02)}
+  .btn-ghost:hover{background:rgba(255,255,255,.06)}
+  .hero-stats{display:flex;gap:40px;margin-top:54px;flex-wrap:wrap}
+  .hs .n{font-family:'JetBrains Mono';font-weight:600;font-size:clamp(20px,2.6vw,26px);letter-spacing:-.02em}
+  .hs .k{font-size:12.5px;color:var(--muted);margin-top:4px}
+  .hs .n .o{color:var(--xmr)}
 
-        /* === Navigation === */
-        .navbar {
-            position: fixed;
-            top: 0; left: 0; right: 0;
-            z-index: 1000;
-            padding: 1rem 0;
-            background: rgba(255, 255, 255, 0.9);
-            backdrop-filter: blur(20px);
-            border-bottom: 1px solid var(--border-light);
-        }
-        .navbar .container { display: flex; justify-content: space-between; align-items: center; }
-        .nav-brand { 
-            font-family: var(--font-mono);
-            font-size: 1rem; 
-            font-weight: 700;
-            color: var(--accent-orange);
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-        .nav-links { display: flex; align-items: center; gap: 2rem; }
-        .nav-links a { 
-            color: var(--text-secondary); 
-            text-decoration: none; 
-            font-size: 0.9rem; 
-            font-weight: 500;
-            transition: color 0.2s ease; 
-        }
-        .nav-links a:hover { color: var(--text-primary); }
-        .btn-contract { 
-            padding: 0.6rem 1.2rem; 
-            border: 2px solid var(--accent-orange); 
-            border-radius: 8px;
-            color: var(--accent-orange) !important; 
-            font-weight: 600;
-            transition: all 0.2s ease; 
-        }
-        .btn-contract:hover { 
-            background: var(--accent-orange); 
-            color: #fff !important; 
-        }
+  /* reveal (hero only) */
+  .rv{opacity:0;transform:translateY(14px);animation:rise .75s cubic-bezier(.2,.7,.2,1) forwards}
+  .r1{animation-delay:.04s}.r2{animation-delay:.14s}.r3{animation-delay:.24s}.r4{animation-delay:.34s}.r5{animation-delay:.46s}
+  @keyframes rise{to{opacity:1;transform:none}}
 
-        /* === Hero Section === */
-        .hero {
-            min-height: calc(100vh - 80px);
-            padding-top: 60px;
-            padding-bottom: 100px;
-            display: flex;
-            align-items: flex-start;
-            background: linear-gradient(180deg, #fff 0%, var(--bg-primary) 100%);
-            position: relative;
-            position: relative;
-            overflow: hidden;
-        }
-        .hero::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            right: -20%;
-            width: 800px;
-            height: 800px;
-            background: radial-gradient(circle, var(--accent-orange-light) 0%, transparent 70%);
-            pointer-events: none;
-            animation: pulse-glow 4s ease-in-out infinite;
-        }
-        .hero::after {
-            content: '';
-            position: absolute;
-            bottom: -30%;
-            left: -10%;
-            width: 600px;
-            height: 600px;
-            background: radial-gradient(circle, rgba(14, 165, 233, 0.1) 0%, transparent 70%);
-            pointer-events: none;
-            animation: pulse-glow 4s ease-in-out infinite 2s;
-        }
-        @keyframes pulse-glow {
-            0%, 100% { opacity: 0.6; transform: scale(1); }
-            50% { opacity: 1; transform: scale(1.05); }
-        }
-        .hero-grid {
-            display: grid;
-            grid-template-columns: 1fr 420px;
-            gap: 60px;
-            align-items: center;
-            position: relative;
-            z-index: 1;
-            margin-top: 40px;
-        }
+  /* SECTION HEADERS */
+  .eyebrow-sm{font-family:'JetBrains Mono';font-size:12px;color:var(--xmr);text-transform:uppercase;
+    letter-spacing:.12em}
+  .sec-h{font-family:'Space Grotesk';font-weight:600;letter-spacing:-.025em;
+    font-size:clamp(26px,3.4vw,36px);margin:12px 0 0}
+  .sec-sub{color:var(--muted);margin-top:12px;max-width:54ch;font-size:15.5px}
+  .sec-pad{padding:84px 0}
+  .sec-line{border-bottom:1px solid var(--line-2)}
 
-        /* === Hero Content === */
-        .hero-content h1 {
-            font-size: 3.5rem;
-            font-weight: 800;
-            line-height: 1.15;
-            color: var(--text-primary);
-            margin-bottom: 1.5rem;
-            letter-spacing: -0.03em;
-            animation: slide-up 0.8s ease-out, hero-pulse 6s ease-in-out infinite;
-        }
-        @keyframes hero-pulse {
-            0%, 100% { 
-                transform: translateY(0) scale(1); 
-            }
-            50% { 
-                transform: translateY(-4px) scale(1.02); 
-            }
-        }
-        .hero-content h1 span {
-            background: linear-gradient(135deg, var(--accent-orange) 0%, #ff8533 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            animation: gradient-shift 3s ease infinite;
-            position: relative;
-            display: inline-block;
-        }
-        .hero-content h1 span::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, 
-                transparent 0%, 
-                rgba(255, 255, 255, 0.8) 50%, 
-                transparent 100%);
-            animation: light-sweep 8s ease-in-out infinite;
-            pointer-events: none;
-        }
-        @keyframes light-sweep {
-            0%, 100% { left: -100%; opacity: 0; }
-            10% { opacity: 1; }
-            20% { left: 100%; opacity: 0; }
-            100% { left: 100%; opacity: 0; }
-        }
-        @keyframes slide-up {
-            from { opacity: 0; transform: translateY(30px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes gradient-shift {
-            0%, 100% { filter: hue-rotate(0deg); }
-            50% { filter: hue-rotate(10deg); }
-        }
-        .hero-content p {
-            font-size: 1.15rem;
-            color: var(--text-secondary);
-            margin-bottom: 2rem;
-            line-height: 1.7;
-        }
-        .hero-buttons {
-            display: flex;
-            gap: 1rem;
-            margin-bottom: 3rem;
-        }
-        .btn-primary {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 1.1rem 2rem;
-            background: linear-gradient(135deg, var(--accent-orange) 0%, #ff8533 100%);
-            color: #fff;
-            text-decoration: none;
-            font-weight: 700;
-            font-size: 1rem;
-            border-radius: 12px;
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
-            box-shadow: var(--shadow-md);
-        }
-        .btn-primary::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
-            transition: left 0.5s ease;
-        }
-        .btn-primary:hover::before {
-            left: 100%;
-        }
-        .btn-primary:hover {
-            transform: translateY(-3px) scale(1.02);
-            box-shadow: var(--shadow-orange);
-        }
-        .btn-secondary {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 1rem 1.75rem;
-            background: var(--bg-secondary);
-            color: var(--text-primary);
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 0.95rem;
-            border-radius: 10px;
-            border: 1px solid var(--border-light);
-            transition: all 0.25s ease;
-        }
-        .btn-secondary:hover {
-            border-color: var(--text-muted);
-            box-shadow: var(--shadow-md);
-        }
+  /* FEATURES */
+  .feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:44px}
+  @media(max-width:820px){.feat-grid{grid-template-columns:1fr}}
+  .feat{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:24px 22px;
+    transition:border-color .15s, transform .15s}
+  .feat:hover{border-color:rgba(255,255,255,.16);transform:translateY(-3px)}
+  .feat .ic{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;
+    background:rgba(255,106,26,.1);border:1px solid rgba(255,106,26,.2);margin-bottom:16px}
+  .feat .ic svg{width:20px;height:20px;stroke:var(--xmr);fill:none;stroke-width:1.7;
+    stroke-linecap:round;stroke-linejoin:round}
+  .feat.tl .ic{background:rgba(47,230,196,.1);border-color:rgba(47,230,196,.22)}
+  .feat.tl .ic svg{stroke:var(--teal)}
+  .feat h3{font-family:'Space Grotesk';font-weight:600;font-size:17px;letter-spacing:-.01em}
+  .feat p{color:var(--muted);font-size:14px;margin-top:9px;line-height:1.55}
 
-        /* === Stats Row === */
-        .hero-stats {
-            display: flex;
-            gap: 3rem;
-        }
-        .hero-stat {
-            display: flex;
-            flex-direction: column;
-        }
-        .hero-stat-value {
-            font-size: 1.75rem;
-            font-weight: 700;
-            color: var(--text-primary);
-            font-family: var(--font-mono);
-        }
-        .hero-stat-value.highlight {
-            color: var(--accent-orange);
-        }
-        .hero-stat-label {
-            font-size: 0.85rem;
-            color: var(--text-muted);
-            margin-top: 2px;
-        }
+  /* STEPS */
+  .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:44px}
+  @media(max-width:820px){.steps{grid-template-columns:1fr}}
+  .stp{position:relative;padding-top:18px}
+  .stp .num{font-family:'JetBrains Mono';font-weight:600;font-size:13px;color:#0a0a0b;
+    width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
+    background:var(--xmr);margin-bottom:16px}
+  .stp h3{font-family:'Space Grotesk';font-weight:600;font-size:16.5px;letter-spacing:-.01em}
+  .stp p{color:var(--muted);font-size:13.5px;margin-top:9px;line-height:1.55}
+  .stp::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:var(--line)}
 
-        /* === TVL Card === */
-        .tvl-card {
-            background: var(--bg-secondary);
-            border: 1px solid var(--border-light);
-            border-radius: 20px;
-            padding: 32px;
-            box-shadow: var(--shadow-lg);
-            position: relative;
-            overflow: hidden;
-            animation: slide-up 0.8s ease-out 0.2s both;
-        }
-        .tvl-card::before {
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0;
-            height: 4px;
-            background: linear-gradient(90deg, var(--accent-orange), #0ea5e9, var(--accent-green));
-            background-size: 200% 100%;
-            animation: gradient-flow 3s ease infinite;
-        }
-        @keyframes gradient-flow {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-        }
-        .tvl-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 24px;
-        }
-        .tvl-title {
-            font-size: 0.8rem;
-            font-weight: 600;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-        .tvl-status {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 0.75rem;
-            color: var(--accent-green);
-            font-weight: 600;
-        }
-        .pulse-dot {
-            width: 8px;
-            height: 8px;
-            background: var(--accent-green);
-            border-radius: 50%;
-            animation: pulse 2s ease-in-out infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.6; transform: scale(1.1); }
-        }
-        .tvl-amount {
-            display: flex;
-            align-items: baseline;
-            gap: 12px;
-            margin-bottom: 8px;
-        }
-        .tvl-number {
-            font-size: 3rem;
-            font-weight: 700;
-            color: var(--text-primary);
-            font-family: var(--font-mono);
-            letter-spacing: -0.03em;
-        }
-        .tvl-currency {
-            font-size: 1.25rem;
-            font-weight: 600;
-            color: var(--text-secondary);
-        }
-        .tvl-usd {
-            font-size: 1rem;
-            color: var(--text-muted);
-            margin-bottom: 24px;
-        }
-        .tvl-stats-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            padding: 20px 0;
-            border-top: 1px solid var(--border-light);
-            border-bottom: 1px solid var(--border-light);
-            margin-bottom: 24px;
-        }
-        .tvl-stat-item .stat-label {
-            font-size: 0.7rem;
-            font-weight: 600;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            margin-bottom: 4px;
-        }
-        .tvl-stat-item .stat-value {
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: var(--text-primary);
-            font-family: var(--font-mono);
-        }
-        .tvl-stat-item .stat-value.positive {
-            color: var(--accent-green);
-        }
-        .tvl-chart {
-            display: flex;
-            align-items: flex-end;
-            gap: 8px;
-            height: 50px;
-            margin-bottom: 24px;
-        }
-        .chart-bar {
-            flex: 1;
-            background: linear-gradient(to top, var(--accent-orange-light), var(--accent-orange));
-            border-radius: 4px 4px 0 0;
-            min-height: 6px;
-            transition: all 0.3s ease;
-        }
-        .chart-bar:hover {
-            filter: brightness(1.1);
-        }
-        .tvl-cta {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            width: 100%;
-            padding: 16px;
-            background: var(--text-primary);
-            color: #fff;
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 0.9rem;
-            border-radius: 12px;
-            transition: all 0.25s ease;
-        }
-        .tvl-cta:hover {
-            background: var(--accent-orange);
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-orange);
-        }
+  /* LIVE STATS */
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;margin-top:44px;
+    background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+  @media(max-width:820px){.metrics{grid-template-columns:repeat(2,1fr)}}
+  .met{background:var(--bg);padding:28px 24px}
+  .met .n{font-family:'JetBrains Mono';font-weight:600;font-size:clamp(22px,3vw,30px);letter-spacing:-.02em}
+  .met .n.tl{color:var(--teal)}
+  .met .k{font-size:13px;color:var(--fg);margin-top:8px;font-weight:500}
+  .met .s{font-size:12px;color:var(--muted);margin-top:2px}
 
-        /* === Features Section === */
-        .features {
-            padding: 100px 0;
-            background: var(--bg-secondary);
-        }
-        .section-header {
-            text-align: center;
-            margin-bottom: 60px;
-        }
-        .section-label {
-            display: inline-block;
-            padding: 6px 14px;
-            background: var(--accent-orange-light);
-            color: var(--accent-orange);
-            font-size: 0.8rem;
-            font-weight: 600;
-            border-radius: 20px;
-            margin-bottom: 16px;
-        }
-        .section-title {
-            font-size: 2.25rem;
-            font-weight: 700;
-            color: var(--text-primary);
-            margin-bottom: 16px;
-            letter-spacing: -0.02em;
-        }
-        .section-subtitle {
-            font-size: 1.1rem;
-            color: var(--text-secondary);
-            max-width: 600px;
-            margin: 0 auto;
-        }
-        .features-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 24px;
-        }
-        .feature-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-light);
-            border-radius: 16px;
-            padding: 32px;
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
-        }
-        .feature-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255, 107, 0, 0.05), transparent);
-            transition: left 0.5s ease;
-        }
-        .feature-card:hover::before {
-            left: 100%;
-        }
-        .feature-card:hover {
-            transform: translateY(-8px);
-            box-shadow: var(--shadow-lg);
-            border-color: var(--accent-orange);
-        }
-        .feature-icon {
-            width: 48px;
-            height: 48px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: var(--accent-orange-light);
-            font-size: 2.5rem;
-            margin-bottom: 16px;
-            display: inline-block;
-            transition: transform 0.3s ease;
-        }
-        .feature-card:hover .feature-icon {
-            transform: scale(1.1) rotate(5deg);
-        }
-        .feature-card h3 {
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: var(--text-primary);
-            margin-bottom: 10px;
-        }
-        .feature-card p {
-            font-size: 0.9rem;
-            color: var(--text-secondary);
-            line-height: 1.7;
-        }
+  /* CONTRACTS */
+  .ctr-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:44px}
+  @media(max-width:760px){.ctr-grid{grid-template-columns:1fr}}
+  .ctr{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px}
+  .ctr .lab{font-family:'Space Grotesk';font-weight:600;font-size:14.5px;display:flex;align-items:center;gap:8px}
+  .ctr .badge{font-family:'JetBrains Mono';font-size:10px;color:var(--teal);border:1px solid rgba(47,230,196,.25);
+    border-radius:5px;padding:2px 6px;background:rgba(47,230,196,.07)}
+  .ctr .addr{font-family:'JetBrains Mono';font-size:12.5px;color:var(--muted);margin-top:12px;
+    word-break:break-all;line-height:1.6}
+  .ctr .acts{display:flex;gap:14px;margin-top:14px;font-size:12.5px;font-family:'JetBrains Mono'}
+  .ctr .acts button,.ctr .acts a{background:none;border:none;color:var(--muted);cursor:pointer;
+    text-decoration:none;padding:0;transition:color .15s}
+  .ctr .acts button:hover,.ctr .acts a:hover{color:var(--teal)}
 
-        /* === How It Works === */
-        .how-it-works {
-            padding: 100px 0;
-            background: var(--bg-primary);
-        }
-        .steps {
-            max-width: 700px;
-            margin: 0 auto;
-        }
-        .step {
-            display: flex;
-            gap: 24px;
-            align-items: flex-start;
-            animation: slide-up 0.6s ease-out both;
-        }
-        .step:nth-child(1) { animation-delay: 0.1s; }
-        .step:nth-child(2) { animation-delay: 0.2s; }
-        .step:nth-child(3) { animation-delay: 0.3s; }
-        .step:nth-child(4) { animation-delay: 0.4s; }
-        .step:last-child { border-bottom: none; }
-        .step-number {
-            flex-shrink: 0;
-            width: 48px;
-            height: 48px;
-            background: linear-gradient(135deg, var(--accent-orange), #ff8533);
-            color: #fff;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 700;
-            font-size: 1.25rem;
-            box-shadow: 0 4px 12px rgba(255, 107, 0, 0.3);
-            animation: pulse-number 2s ease-in-out infinite;
-        }
-        @keyframes pulse-number {
-            0%, 100% { box-shadow: 0 4px 12px rgba(255, 107, 0, 0.3); }
-            50% { box-shadow: 0 4px 20px rgba(255, 107, 0, 0.5); }
-        }
-        .step-content h3 {
-            font-size: 1.05rem;
-            font-weight: 600;
-            color: var(--text-primary);
-            margin-bottom: 8px;
-        }
-        .step-content p {
-            font-size: 0.9rem;
-            color: var(--text-secondary);
-            line-height: 1.7;
-            font-family: var(--font-mono);
-        }
-        .learn-more {
-            text-align: center;
-            margin-top: 48px;
-        }
-        .btn-learn {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 14px 28px;
-            background: transparent;
-            border: 2px solid var(--accent-blue);
-            color: var(--accent-blue);
-            text-decoration: none;
-            font-weight: 600;
-            border-radius: 10px;
-            transition: all 0.25s ease;
-        }
-        .btn-learn:hover {
-            background: var(--accent-blue);
-            color: #fff;
-        }
+  /* FINAL CTA */
+  .final{text-align:center;padding:92px 0}
+  .final .chk{font-family:'JetBrains Mono';font-size:12px;color:var(--green);margin-bottom:16px}
+  .final h2{font-family:'Space Grotesk';font-weight:600;letter-spacing:-.025em;font-size:clamp(28px,4vw,40px)}
+  .final p{color:var(--muted);margin-top:12px;font-size:16px}
+  .final .hero-ctas{justify-content:center}
 
-        /* === Stats Section === */
-        .stats-section {
-            padding: 100px 0;
-            background: var(--bg-secondary);
-        }
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 24px;
-        }
-        .stat-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-light);
-            border-radius: 16px;
-            padding: 32px;
-            text-align: center;
-            transition: all 0.3s ease;
-            animation: slide-up 0.6s ease-out both;
-        }
-        .stat-card:nth-child(1) { animation-delay: 0.1s; }
-        .stat-card:nth-child(2) { animation-delay: 0.2s; }
-        .stat-card:nth-child(3) { animation-delay: 0.3s; }
-        .stat-card:hover {
-            transform: translateY(-4px);
-            border-color: var(--accent-orange);
-            box-shadow: var(--shadow-md);
-        }
-        .stat-card-value {
-            font-size: 2.25rem;
-            font-weight: 700;
-            color: var(--accent-orange);
-            margin-bottom: 8px;
-            font-family: var(--font-mono);
-        }
-        .stat-card-label {
-            font-size: 0.85rem;
-            font-weight: 500;
-            color: var(--text-secondary);
-            margin-bottom: 4px;
-        }
-        .stat-card-detail {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-        }
+  /* FOOTER */
+  footer{border-top:1px solid var(--line-2);padding:48px 0 56px}
+  .foot-grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:30px}
+  @media(max-width:680px){.foot-grid{grid-template-columns:1fr}}
+  .foot-grid h4{font-family:'Space Grotesk';font-weight:600;font-size:14px;margin-bottom:6px}
+  .foot-grid p,.foot-grid a{color:var(--muted);font-size:13.5px;text-decoration:none;display:block;margin-top:8px;line-height:1.5}
+  .foot-grid a:hover{color:var(--fg)}
+  .foot-bot{margin-top:40px;padding-top:22px;border-top:1px solid var(--line-2);
+    display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;
+    font-family:'JetBrains Mono';font-size:11.5px;color:var(--faint)}
+  .disc{color:var(--amber);opacity:.85}
 
-        /* === Deployment Section === */
-        .deployment {
-            padding: 100px 0;
-            background: var(--bg-primary);
-        }
-        .deployment-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 24px;
-            margin-bottom: 32px;
-        }
-        .deployment-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-light);
-            border-radius: 16px;
-            padding: 32px;
-            text-align: center;
-            transition: all 0.3s ease;
-            animation: slide-up 0.6s ease-out both;
-        }
-        .deployment-card:nth-child(1) { animation-delay: 0.1s; }
-        .deployment-card:nth-child(2) { animation-delay: 0.2s; }
-        .deployment-card:hover {
-            transform: translateY(-4px);
-            border-color: var(--accent-orange);
-            box-shadow: var(--shadow-md);
-        }
-        .deployment-card h3 {
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: var(--text-primary);
-            margin-bottom: 16px;
-        }
-        .contract-address {
-            font-family: var(--font-mono);
-            font-size: 0.75rem;
-            color: var(--accent-blue);
-            word-break: break-all;
-            margin-bottom: 20px;
-            padding: 12px;
-            background: rgba(59, 130, 246, 0.05);
-            border-radius: 8px;
-            border: 1px solid rgba(59, 130, 246, 0.15);
-        }
-        .btn-view {
-            display: inline-block;
-            padding: 12px 24px;
-            background: transparent;
-            border: 2px solid var(--accent-orange);
-            color: var(--accent-orange);
-            text-decoration: none;
-            font-size: 0.85rem;
-            font-weight: 600;
-            border-radius: 8px;
-            transition: all 0.25s ease;
-        }
-        .btn-view:hover {
-            background: var(--accent-orange);
-            color: #fff;
-        }
-        .network-badge {
-            text-align: center;
-        }
-        .badge {
-            display: inline-block;
-            padding: 10px 24px;
-            background: var(--accent-green-light);
-            border: 1px solid var(--accent-green);
-            color: var(--accent-green);
-            font-size: 0.8rem;
-            font-weight: 600;
-            border-radius: 100px;
-        }
-
-        /* === CTA Section === */
-        .cta {
-            padding: 100px 0;
-            background: linear-gradient(135deg, var(--text-primary) 0%, #2d2d44 100%);
-            text-align: center;
-        }
-        .cta h2 {
-            font-size: 2.5rem;
-            font-weight: 700;
-            color: #fff;
-            margin-bottom: 16px;
-        }
-        .cta p {
-            font-size: 1.1rem;
-            color: rgba(255,255,255,0.7);
-            margin-bottom: 40px;
-        }
-        .cta-buttons {
-            display: flex;
-            gap: 16px;
-            justify-content: center;
-        }
-        .cta .btn-primary {
-            background: var(--accent-orange);
-        }
-        .cta .btn-secondary {
-            background: transparent;
-            border: 2px solid rgba(255,255,255,0.3);
-            color: #fff;
-        }
-        .cta .btn-secondary:hover {
-            border-color: #fff;
-            background: rgba(255,255,255,0.1);
-        }
-
-        /* === Footer === */
-        .footer {
-            padding: 60px 0 32px;
-            background: var(--bg-secondary);
-            border-top: 1px solid var(--border-light);
-        }
-        .footer-content {
-            display: grid;
-            grid-template-columns: 2fr 1fr 1fr;
-            gap: 48px;
-            margin-bottom: 48px;
-        }
-        .footer-section h4 {
-            font-size: 0.95rem;
-            font-weight: 600;
-            color: var(--text-primary);
-            margin-bottom: 16px;
-        }
-        .footer-section p {
-            font-size: 0.9rem;
-            color: var(--text-secondary);
-            line-height: 1.7;
-        }
-        .footer-section ul { list-style: none; }
-        .footer-section ul li { margin-bottom: 10px; }
-        .footer-section ul a {
-            color: var(--text-secondary);
-            text-decoration: none;
-            font-size: 0.9rem;
-            transition: color 0.2s ease;
-        }
-        .footer-section ul a:hover { color: var(--accent-orange); }
-        .footer-bottom {
-            text-align: center;
-            padding-top: 32px;
-            border-top: 1px solid var(--border-light);
-        }
-        .footer-bottom p {
-            font-size: 0.85rem;
-            color: var(--text-muted);
-            margin-bottom: 6px;
-        }
-        .footer-bottom p:first-child {
-            color: var(--accent-orange);
-            font-weight: 500;
-        }
-
-        /* === Responsive === */
-        @media (max-width: 1024px) {
-            .hero-grid {
-                grid-template-columns: 1fr;
-                gap: 48px;
-                max-width: 560px;
-                margin: 0 auto;
-            }
-            .hero-content { text-align: center; }
-            .hero-buttons { justify-content: center; }
-            .hero-stats { justify-content: center; }
-            .hero-content h1 { font-size: 2.5rem; }
-        }
-        @media (max-width: 900px) {
-            .features-grid { grid-template-columns: repeat(2, 1fr); }
-            .stats-grid { grid-template-columns: repeat(2, 1fr); }
-        }
-        @media (max-width: 768px) {
-            .navbar .container { flex-direction: column; gap: 16px; }
-            .nav-links { gap: 16px; flex-wrap: wrap; justify-content: center; }
-            .hero { padding: 120px 0 80px; }
-            .features-grid, .stats-grid { grid-template-columns: 1fr; }
-            .deployment-grid { grid-template-columns: 1fr; }
-            .footer-content { grid-template-columns: 1fr; gap: 32px; }
-            .step { flex-direction: column; align-items: center; text-align: center; gap: 16px; }
-            .cta-buttons { flex-direction: column; align-items: center; }
-            .cta h2 { font-size: 2rem; }
-            .hero-stats { flex-direction: column; gap: 1.5rem; align-items: center; }
-        }
-        @media (max-width: 480px) {
-            .hero-content h1 { font-size: 2rem; }
-            .hero-buttons { flex-direction: column; }
-            .tvl-number { font-size: 2.25rem; }
-        }
-
-        ::selection { background: var(--accent-orange); color: #fff; }
-    </style>
-    <script type="importmap">
-    {
-      "imports": {
-        "@noble/hashes/sha512": "https://esm.sh/@noble/hashes@1.3.3/sha512",
-        "@noble/hashes/sha256": "https://esm.sh/@noble/hashes@1.3.3/sha256",
-        "@noble/hashes/utils": "https://esm.sh/@noble/hashes@1.3.3/utils",
-        "@noble/hashes/hmac": "https://esm.sh/@noble/hashes@1.3.3/hmac",
-        "@noble/hashes/pbkdf2": "https://esm.sh/@noble/hashes@1.3.3/pbkdf2",
-        "@noble/hashes/ripemd160": "https://esm.sh/@noble/hashes@1.3.3/ripemd160",
-        "@noble/hashes/_assert": "https://esm.sh/@noble/hashes@1.3.3/_assert",
-        "@noble/curves/secp256k1": "https://esm.sh/@noble/curves@1.2.0/secp256k1",
-        "@scure/base": "https://esm.sh/@scure/base@1.1.5",
-        "@scure/base@~1.1.0": "https://esm.sh/@scure/base@1.1.5",
-        "@scure/base@~1.1.2": "https://esm.sh/@scure/base@1.1.5"
-      }
-    }
-    </script>
-    <script>
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(regs => {
-            regs.forEach(r => r.unregister());
-        });
-    }
-    </script>
+  @media(prefers-reduced-motion:reduce){.rv{animation:none;opacity:1;transform:none}}
+</style>
 </head>
 <body>
-    <nav class="navbar">
-        <div class="container">
-            <a href="/" class="nav-brand" style="text-decoration: none;">wrapsynth</a>
-            <div class="nav-links">
-                <a href="#features">Features</a>
-                <a href="#how-it-works">How It Works</a>
-                <a href="#stats">Stats</a>
-                <a href="https://github.com/madschristensen99/wrapsynth" target="_blank">GitHub</a>
-                <a href="https://gnosisscan.io/address/0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50" target="_blank" class="btn-contract" id="hero-contract-link">View Contract ↗</a>
-            </div>
-        </div>
+
+<header class="nav">
+  <div class="nav-in">
+    <a class="brand" href="#"><img src="./wrapsynth-symbol.png" alt="WrapSynth" style="width:22px;height:22px;border-radius:6px">WrapSynth</a>
+    <nav class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#stats">Stats</a>
+      <a href="https://github.com/madschristensen99/wrapsynth" target="_blank">GitHub</a>
+      <a class="nav-cta" href="app.html" style="color:#160a02 !important">Launch app →</a>
     </nav>
+  </div>
+</header>
 
-    <section class="hero">
-        <div class="container">
-            <div class="hero-grid">
-                <div class="hero-content">
-                    <h1>Bring Monero to DeFi with <span>Atomic Liquidity</span></h1>
-                    <p>Trustless, permisionlessly decentralized wrapped Monero. Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns.</p>
-                    <div class="hero-buttons">
-                        <a href="app/index.html" class="btn-primary">
-                            <span style="position: relative; z-index: 1;">Launch App →</span>
-                        </a>
-                        <a href="#how-it-works" class="btn-secondary">
-                            Learn More
-                        </a>
-                    </div>
-                    <div class="hero-stats">
-                        <div class="hero-stat">
-                            <div class="hero-stat-value">>200%</div>
-                            <div class="hero-stat-label">Collateral Ratio</div>
-                        </div>
-                        <div class="hero-stat">
-                            <div class="hero-stat-value">12h</div>
-                            <div class="hero-stat-label">Swap Timeout</div>
-                        </div>
-                        <div class="hero-stat">
-                            <div class="hero-stat-value highlight" id="total-txs-hero">0</div>
-                            <div class="hero-stat-label">Total Txs</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="tvl-card">
-                    <div class="tvl-header">
-                        <div class="tvl-title">Total Value Locked</div>
-                        <div class="tvl-status">
-                            <span class="pulse-dot"></span>
-                            Live
-                        </div>
-                    </div>
-                    <div class="tvl-amount">
-                        <div class="tvl-number">0.00</div>
-                        <div class="tvl-currency">XMR</div>
-                    </div>
-                    <div class="tvl-usd">≈ $0.00 USD</div>
-
-                    <div class="tvl-stats-row">
-                        <div class="tvl-stat-item">
-                            <div class="stat-label">24h Change</div>
-                            <div class="stat-value" id="tvl-24h-change">--</div>
-                        </div>
-                        <div class="tvl-stat-item">
-                            <div class="stat-label">Total Txs</div>
-                            <div class="stat-value" id="total-txs">0</div>
-                        </div>
-                    </div>
-
-                    <div class="tvl-chart">
-                        <div class="chart-bar" style="height: 20%"></div>
-                        <div class="chart-bar" style="height: 35%"></div>
-                        <div class="chart-bar" style="height: 50%"></div>
-                        <div class="chart-bar" style="height: 75%"></div>
-                        <div class="chart-bar" style="height: 100%"></div>
-                    </div>
-
-                    <a href="https://gnosisscan.io/address/0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50" target="_blank" class="tvl-cta" id="tvl-contract-link">
-                        View Contract →
-                    </a>
-                </div>
-            </div>
+<section class="hero">
+  <canvas id="gl"></canvas>
+  <div class="hero-scrim"></div>
+  <div class="hero-in">
+    <span class="eyebrow rv r1"><span class="dot"></span>Live on Gnosis mainnet</span>
+    <h1 class="rv r2">Bring <span class="o">Monero</span> to <span class="t">DeFi</span> with atomic liquidity.</h1>
+    <p class="lede rv r3">Trustless, permissionless wrapped Monero. Exchange XMR for <b>wsXMR</b>
+      backed by over-200% collateral through <b>atomic mints and burns</b> — no custodian, no bridge multisig to trust.</p>
+    <div class="hero-ctas rv r4">
+      <a class="btn btn-primary" href="app.html">Launch app →</a>
+      <a class="btn btn-ghost" href="#how">How it works</a>
+    </div>
+    <div class="hero-stats rv r5">
+      <div class="hs"><div class="n"><span class="o">&gt;200%</span></div><div class="k">Overcollateralized</div></div>
+      <div class="hs"><div class="n">24h max</div><div class="k">Atomic swap timeout</div></div>
+      <div class="hs">
+        <div class="n" style="display:flex;align-items:center;gap:8px;font-size:18px">
+          <a href="https://pythfeeds.com/coins/monero" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center">
+            <img src="https://pyth.network/token.svg" alt="Pyth" style="width:24px;height:24px">
+          </a>
+          <a href="https://app.redstone.finance/pull-feeds/XMR" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center">
+            <img src="./RedStone.png" alt="RedStone" style="width:24px;height:24px">
+          </a>
         </div>
-    </section>
+        <div class="k">Real-time price feeds</div>
+      </div>
+    </div>
+  </div>
+</section>
 
-    <section id="features" class="features">
-        <div class="container">
-            <div class="section-header">
-                <span class="section-label">Features</span>
-                <h2 class="section-title">Why WrapSynth?</h2>
-                <p class="section-subtitle">Built for trust minimization, designed for everyone. Atomic liquidity and overcollateralization make ferrying Monero to DeFi possible.</p>
-            </div>
-            <div class="features-grid">
-                <div class="feature-card">
-                    <div class="feature-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
-                    <h3>Instant Swaps</h3>
-                    <p>Exchange XMR for wsXMR through atomic mints and burns with cryptographic commitments</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
-                    <h3>Overcollateralized</h3>
-                    <p>Every wsXMR backed by 150% collateral in LP vaults with real-time price feeds</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
-                    <h3>Liquidation Protected</h3>
-                    <p>120% liquidation threshold with 10% bonus ensures system solvency at all times</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
-                    <h3>Battle Tested</h3>
-                    <p>Successfully verified real Monero mainnet transactions on Gnosis Chain mainnet</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" x2="22" y1="12" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
-                    <h3>EVM Compatible</h3>
-                    <p>Deploy on any EVM chain - currently live on Gnosis Chain with multi-chain expansion planned</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/></svg></div>
-                    <h3>Fully Transparent</h3>
-                    <p>All proofs and transactions verifiable on-chain with full audit trail</p>
-                </div>
-            </div>
+<!-- FEATURES -->
+<section id="features" class="sec-line">
+  <div class="wrap sec-pad">
+    <span class="eyebrow-sm">Features</span>
+    <h2 class="sec-h">Why WrapSynth?</h2>
+    <p class="sec-sub">Built for trust minimization, designed for everyone. Atomic liquidity and overcollateralization make ferrying Monero to DeFi possible.</p>
+    <div class="feat-grid">
+      <div class="feat">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg></div>
+        <h3>Instant swaps</h3>
+        <p>Exchange XMR for wsXMR through atomic mints and burns secured by cryptographic secret commitments.</p>
+      </div>
+      <div class="feat tl">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg></div>
+        <h3>Overcollateralized</h3>
+        <p>Every wsXMR is backed by 150% collateral in LP vaults, valued against real-time price feeds.</p>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg></div>
+        <h3>Liquidation protected</h3>
+        <p>A 120% liquidation threshold with a 10% liquidator bonus keeps the system solvent at all times.</p>
+      </div>
+      <div class="feat tl">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div>
+        <h3>Battle tested</h3>
+        <p>Already verified real Monero mainnet transactions settling on Gnosis Chain mainnet.</p>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
+        <h3>EVM compatible</h3>
+        <p>Live on Gnosis Chain today, with multi-chain expansion to other EVM networks planned.</p>
+      </div>
+      <div class="feat tl">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></div>
+        <h3>Fully transparent</h3>
+        <p>Every proof and transaction is verifiable on-chain, with a complete audit trail.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section id="how" class="sec-line">
+  <div class="wrap sec-pad">
+    <span class="eyebrow-sm">Process</span>
+    <h2 class="sec-h">How it works</h2>
+    <p class="sec-sub">Four steps to ferry your Monero to DeFi — trustless on both sides of the swap.</p>
+    <div class="steps">
+      <div class="stp"><div class="num">1</div><h3>Initiate swap</h3>
+        <p>You create a mint request with a secret commitment and send XMR to the LP's Monero address.</p></div>
+      <div class="stp"><div class="num">2</div><h3>LP confirms receipt</h3>
+        <p>The LP verifies the XMR off-chain and marks the mint request READY on-chain.</p></div>
+      <div class="stp"><div class="num">3</div><h3>Reveal secret</h3>
+        <p>You reveal your secret to claim wsXMR — verified on-chain with Ed25519 operations (Monero-compatible).</p></div>
+      <div class="stp"><div class="num">4</div><h3>Receive wsXMR</h3>
+        <p>The contract mints wsXMR to your wallet, backed by the LP's collateral in their vault.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- LIVE STATS -->
+<section id="stats" class="sec-line">
+  <div class="wrap sec-pad">
+    <span class="eyebrow-sm">Metrics</span>
+    <h2 class="sec-h">Live statistics</h2>
+    <p class="sec-sub">Protocol state on Gnosis Chain mainnet.</p>
+    <div class="metrics">
+      <div class="met"><div class="n tl" id="stat-supply">--</div><div class="k">wsXMR supply</div><div class="s">Circulating</div></div>
+      <div class="met"><div class="n" id="stat-tvl">--</div><div class="k">Total value locked</div><div class="s">sDAI collateral</div></div>
+      <div class="met"><div class="n" id="stat-collateral-ratio">--</div><div class="k">Collateral ratio</div><div class="s">Overcollateralized</div></div>
+      <div class="met"><div class="n" id="stat-active-vaults">--</div><div class="k">Active vaults</div><div class="s">Liquidity providers</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- CONTRACTS -->
+<section class="sec-line">
+  <div class="wrap sec-pad">
+    <span class="eyebrow-sm">Contracts</span>
+    <h2 class="sec-h">Deployed on Gnosis</h2>
+    <p class="sec-sub">Verified on Gnosisscan · Chain ID 100.</p>
+    <div class="ctr-grid">
+      <div class="ctr">
+        <div class="lab">wsXmrHub <span class="badge">DIAMOND · EIP-2535</span></div>
+        <div class="addr" data-addr="0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9">0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9</div>
+        <div class="acts">
+          <button onclick="copyAddr(this)">Copy address</button>
+          <a href="https://gnosisscan.io/address/0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9" target="_blank">View on Gnosisscan ↗</a>
         </div>
-    </section>
-
-    <section id="how-it-works" class="how-it-works">
-        <div class="container">
-            <div class="section-header">
-                <span class="section-label">Process</span>
-                <h2 class="section-title">How It Works</h2>
-                <p class="section-subtitle">Four simple steps to ferry your Monero to DeFi</p>
-            </div>
-            <div class="steps">
-                <div class="step">
-                    <div class="step-number">1</div>
-                    <div class="step-content">
-                        <h3>Initiate Swap</h3>
-                        <p>User creates mint request with secret commitment and sends XMR to LP's Monero address</p>
-                    </div>
-                </div>
-                <div class="step">
-                    <div class="step-number">2</div>
-                    <div class="step-content">
-                        <h3>LP Confirms Receipt</h3>
-                        <p>LP verifies XMR receipt off-chain and marks mint request as READY on-chain</p>
-                    </div>
-                </div>
-                <div class="step">
-                    <div class="step-number">3</div>
-                    <div class="step-content">
-                        <h3>Reveal Secret</h3>
-                        <p>User reveals secret to claim wsXMR - verified on-chain using Ed25519 operations (Monero-compatible)</p>
-                    </div>
-                </div>
-                <div class="step">
-                    <div class="step-number">4</div>
-                    <div class="step-content">
-                        <h3>Receive wsXMR</h3>
-                        <p>Smart contract mints wsXMR to user, backed by LP's collateral in vault</p>
-                    </div>
-                </div>
-            </div>
-            <div class="learn-more">
-                <a href="https://github.com/madschristensen99/wrapsynth/blob/main/SYNTHWRAP.md" target="_blank" class="btn-learn">Read Technical Details →</a>
-            </div>
+      </div>
+      <div class="ctr">
+        <div class="lab">wsXMR token <span class="badge">ERC-20 · 8 dec</span></div>
+        <div class="addr" data-addr="0x31c76171773138215E518C0224b82AC9BE9897b8">0x31c76171773138215E518C0224b82AC9BE9897b8</div>
+        <div class="acts">
+          <button onclick="copyAddr(this)">Copy address</button>
+          <a href="https://gnosisscan.io/address/0x31c76171773138215E518C0224b82AC9BE9897b8" target="_blank">View on Gnosisscan ↗</a>
         </div>
-    </section>
+      </div>
+    </div>
+  </div>
+</section>
 
-    <section id="stats" class="stats-section">
-        <div class="container">
-            <div class="section-header">
-                <span class="section-label">Metrics</span>
-                <h2 class="section-title">Live Statistics</h2>
-            </div>
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-card-value" id="total-supply-stat">0 wsXMR</div>
-                    <div class="stat-card-label">Total Supply</div>
-                    <div class="stat-card-detail">Circulating wsXMR</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-card-value" id="tvl-usd-stat">$0</div>
-                    <div class="stat-card-label">Total Value Locked</div>
-                    <div class="stat-card-detail">In Collateral (sDAI)</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-card-value" id="collateral-ratio-stat">0%</div>
-                    <div class="stat-card-label">Collateral Ratio</div>
-                    <div class="stat-card-detail">Overcollateralized</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-card-value" id="active-vaults-stat">0</div>
-                    <div class="stat-card-label">Active Vaults</div>
-                    <div class="stat-card-detail">Liquidity Providers</div>
-                </div>
-            </div>
-        </div>
-    </section>
+<!-- FINAL CTA -->
+<section class="sec-line">
+  <div class="wrap final">
+    <div class="chk">✓ Gnosis Chain mainnet</div>
+    <h2>Ready to swap?</h2>
+    <p>Join the future of cross-chain privacy, backed by overcollateralized vaults.</p>
+    <div class="hero-ctas">
+      <a class="btn btn-primary" href="app.html">Launch app →</a>
+      <a class="btn btn-ghost" href="https://github.com/madschristensen99/wrapsynth" target="_blank">Read the docs</a>
+    </div>
+  </div>
+</section>
 
-    <section class="deployment">
-        <div class="container">
-            <div class="section-header">
-                <span class="section-label">Contracts</span>
-                <h2 class="section-title">Deployed Contracts</h2>
-            </div>
-            <div class="deployment-grid">
-                <div class="deployment-card">
-                    <h3>wsXmrHub (Diamond)</h3>
-                    <p class="contract-address">0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50</p>
-                    <a href="https://gnosisscan.io/address/0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50" target="_blank" class="btn-view" id="vault-manager-link">View on Gnosisscan</a>
-                </div>
-                <div class="deployment-card">
-                    <h3>wsXMR Token</h3>
-                    <p class="contract-address">0x30Aeb2A142744430fFD7D698D5C7C41769CE1279</p>
-                    <a href="https://gnosisscan.io/address/0x30Aeb2A142744430fFD7D698D5C7C41769CE1279" target="_blank" class="btn-view" id="wsxmr-token-link">View on Gnosisscan</a>
-                </div>
-            </div>
-            <div class="network-badge">
-                <span class="badge" id="network-badge">✓ Gnosis Chain Mainnet</span>
-            </div>
-        </div>
-    </section>
+<!-- FOOTER -->
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <h4>WrapSynth</h4>
+        <p>Trustless wrapped Monero via atomic swaps. Bringing Monero's anonymity set to DeFi, and DeFi liquidity to Monero.</p>
+      </div>
+      <div>
+        <h4>Resources</h4>
+        <a href="https://github.com/madschristensen99/wrapsynth" target="_blank">GitHub</a>
+        <a href="https://github.com/madschristensen99/wrapsynth" target="_blank">Protocol spec</a>
+        <a href="app.html">Launch app</a>
+      </div>
+      <div>
+        <h4>Contract</h4>
+        <a href="https://gnosisscan.io/address/0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9" target="_blank">wsXmrHub (Diamond)</a>
+        <a href="https://gnosisscan.io/address/0x31c76171773138215E518C0224b82AC9BE9897b8" target="_blank">wsXMR token</a>
+      </div>
+    </div>
+    <div class="foot-bot">
+      <span class="disc">Experimental software · Not audited · Mainnet deployment</span>
+      <span>v1.0.0 · MIT License</span>
+    </div>
+  </div>
+</footer>
 
-    <section class="cta">
-        <div class="container">
-            <h2>Ready to Swap?</h2>
-            <p>Join the future of cross-chain privacy with overcollateralized vaults</p>
-            <div class="cta-buttons">
-                <a href="app/index.html" class="btn-primary"><span style="position: relative; z-index: 1;">Launch App →</span></a>
-                <a href="https://github.com/madschristensen99/wrapsynth/blob/main/SYNTHWRAP.md" target="_blank" class="btn-secondary">Read Documentation</a>
-            </div>
-        </div>
-    </section>
+<script>
+/* ambient threads — hero only, dim + slow */
+(function(){
+  const cv=document.getElementById('gl'), gl=cv.getContext('webgl',{alpha:true,antialias:false});
+  if(!gl)return;
+  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const vs=`attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}`;
+  const fs=`precision highp float;uniform vec2 u_res;uniform float u_time;uniform float u_m;
+    float h(float n){return fract(sin(n)*43758.5453);}
+    void main(){vec2 uv=gl_FragCoord.xy/u_res.xy;float t=u_time*u_m;float glow=0.;
+      const int N=13;
+      for(int i=0;i<N;i++){float fi=float(i);float s=fi*1.37;float yb=(fi+0.5)/float(N);
+        float a=0.04+0.05*h(s);float f=1.4+2.4*h(s+1.);float sp=0.1+0.22*h(s+2.);float ph=s*6.28;
+        float y=yb+a*sin(uv.x*f*3.14+t*sp+ph);float d=abs(uv.y-y);
+        glow+=(0.0018/(d+0.001))*(0.4+0.5*h(s+3.));}
+      vec3 o=vec3(1.,0.42,0.1);vec3 te=vec3(0.18,0.9,0.77);
+      vec3 c=mix(o,te,smoothstep(0.08,0.92,uv.x))*glow*0.4;
+      gl_FragColor=vec4(c,1.0);}`;
+  function sh(t,src){const s=gl.createShader(t);gl.shaderSource(s,src);gl.compileShader(s);return s;}
+  const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,vs));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,fs));
+  gl.linkProgram(pr);gl.useProgram(pr);
+  const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+  const l=gl.getAttribLocation(pr,'p');gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,2,gl.FLOAT,false,0,0);
+  const uR=gl.getUniformLocation(pr,'u_res'),uT=gl.getUniformLocation(pr,'u_time'),uM=gl.getUniformLocation(pr,'u_m');
+  gl.uniform1f(uM,reduce?0:1);
+  function rz(){const dpr=Math.min(devicePixelRatio||1,1.5);const r=cv.getBoundingClientRect();
+    cv.width=r.width*dpr;cv.height=r.height*dpr;gl.viewport(0,0,cv.width,cv.height);gl.uniform2f(uR,cv.width,cv.height);}
+  addEventListener('resize',rz);rz();
+  const t0=performance.now();
+  (function f(){gl.uniform1f(uT,(performance.now()-t0)/1000);gl.drawArrays(gl.TRIANGLES,0,3);
+    if(!reduce)requestAnimationFrame(f);})();
+})();
 
-    <footer class="footer">
-        <div class="container">
-            <div class="footer-content">
-                <div class="footer-section">
-                    <h4>WrapSynth</h4>
-                    <p>Trustless Wrapped Monero via Atomic Swaps. Bringing Monero liquidity to DeFi.</p>
-                </div>
-                <div class="footer-section">
-                    <h4>Resources</h4>
-                    <ul>
-                        <li><a href="https://github.com/madschristensen99/zeroxmr" target="_blank">GitHub</a></li>
-                        <li><a href="https://github.com/madschristensen99/wrapsynth/blob/main/SYNTHWRAP.md" target="_blank">Protocol Spec</a></li>
-                    </ul>
-                </div>
-                <div class="footer-section">
-                    <h4>Contract</h4>
-                    <ul>
-                        <li><a href="https://gnosisscan.io/address/0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50" target="_blank" id="footer-contract-link">Gnosis Chain</a></li>
-                    </ul>
-                </div>
-            </div>
-            <div class="footer-bottom">
-                <p><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle; margin-right: 4px;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> Experimental Software - Not Audited - Mainnet Deployment</p>
-                <p>Version 1.0.0 | MIT License | Built with ♥ for privacy</p>
-            </div>
-        </div>
-    </footer>
+/* copy contract address */
+function copyAddr(btn){
+  const a=btn.closest('.ctr').querySelector('.addr').dataset.addr;
+  navigator.clipboard.writeText(a).then(()=>{
+    const old=btn.textContent;btn.textContent='Copied ✓';btn.style.color='var(--teal)';
+    setTimeout(()=>{btn.textContent=old;btn.style.color='';},1400);
+  }).catch(()=>{});
+}
 
-    <!-- Load canonical deployment.json before any app modules -->
-    <script type="module">
-        const res = await fetch('/deployment.json');
-        if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status);
-        window.DEPLOYMENT = await res.json();
-    </script>
-    <!-- Landing page stats are loaded by js/landing-stats.js -->
-    <script type="module" src="js/landing-stats.js"></script>
+/* fetch live protocol stats */
+(async function fetchProtocolStats(){
+  try {
+    const {createPublicClient,http,formatUnits,parseAbi}=await import('https://esm.sh/viem@2.21.54');
+    const {gnosis}=await import('https://esm.sh/viem@2.21.54/chains');
+    
+    const client=createPublicClient({chain:gnosis,transport:http('https://rpc.gnosischain.com')});
+    const hub='0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50';
+    const wsXMR='0x30Aeb2A142744430fFD7D698D5C7C41769CE1279';
+    const sDAI='0xaf204776c7245bF4147c2612BF6e5972Ee483701';
+    
+    // Fetch wsXMR total supply
+    const supply=await client.readContract({
+      address:wsXMR,
+      abi:parseAbi(['function totalSupply() external view returns (uint256)']),
+      functionName:'totalSupply'
+    });
+    const supplyValue=parseFloat(formatUnits(supply,8));
+    document.getElementById('stat-supply').textContent=supplyValue<0.01?supplyValue.toFixed(8):supplyValue.toFixed(1);
+    console.log('[Stats] wsXMR supply:',supplyValue);
+    
+    // Fetch vault count
+    const vaultCount=await client.readContract({
+      address:hub,
+      abi:parseAbi(['function getVaultCount() external view returns (uint256)']),
+      functionName:'getVaultCount'
+    });
+    document.getElementById('stat-active-vaults').textContent=vaultCount.toString();
+    
+    // Calculate TVL by summing all vault collateral
+    let totalCollateral=0n;
+    let totalDebt=0n;
+    for(let i=0;i<Number(vaultCount);i++){
+      const vaultAddr=await client.readContract({
+        address:hub,
+        abi:parseAbi(['function getVaultAtIndex(uint256) external view returns (address)']),
+        functionName:'getVaultAtIndex',
+        args:[BigInt(i)]
+      });
+      
+      const vault=await client.readContract({
+        address:hub,
+        abi:[{
+          name:'getVault',
+          type:'function',
+          stateMutability:'view',
+          inputs:[{name:'lpAddress',type:'address'}],
+          outputs:[{
+            type:'tuple',
+            components:[
+              {name:'lpAddress',type:'address'},
+              {name:'collateralShares',type:'uint256'},
+              {name:'lockedCollateral',type:'uint256'},
+              {name:'normalizedDebt',type:'uint256'},
+              {name:'pendingDebt',type:'uint256'},
+              {name:'maxMintBps',type:'uint16'},
+              {name:'mintGriefingDeposit',type:'uint256'},
+              {name:'mintReadyBond',type:'uint256'},
+              {name:'mintFeeBps',type:'uint16'},
+              {name:'burnRewardBps',type:'uint16'},
+              {name:'liquidationNonce',type:'uint256'},
+              {name:'mintNonce',type:'uint256'},
+              {name:'minBurnAmount',type:'uint256'},
+              {name:'active',type:'bool'},
+              {name:'deployedSDAIShares',type:'uint256'},
+              {name:'maxCoLPRangeBps',type:'uint16'}
+            ]
+          }]
+        }],
+        functionName:'getVault',
+        args:[vaultAddr]
+      });
+      
+      // Get actual debt (denormalized)
+      const vaultDebt=await client.readContract({
+        address:hub,
+        abi:parseAbi(['function getVaultDebt(address) external view returns (uint256)']),
+        functionName:'getVaultDebt',
+        args:[vaultAddr]
+      });
+      
+      console.log(`[Stats] Vault ${i} (${vaultAddr}):`,vault.collateralShares.toString(),'shares, debt:',vaultDebt.toString());
+      totalCollateral+=vault.collateralShares;
+      totalDebt+=vaultDebt;
+    }
+    console.log('[Stats] Total collateral shares:',totalCollateral.toString());
+    console.log('[Stats] Total debt:',totalDebt.toString());
+    
+    // Convert sDAI shares to assets
+    const totalAssets=await client.readContract({
+      address:sDAI,
+      abi:parseAbi(['function convertToAssets(uint256 shares) external view returns (uint256)']),
+      functionName:'convertToAssets',
+      args:[totalCollateral]
+    });
+    
+    const tvlUSD=parseFloat(formatUnits(totalAssets,18));
+    console.log('[Stats] TVL (USD):',tvlUSD);
+    document.getElementById('stat-tvl').textContent=tvlUSD>=1e6?`$${(tvlUSD/1e6).toFixed(2)}M`:tvlUSD>=1e3?`$${(tvlUSD/1e3).toFixed(1)}K`:`$${tvlUSD.toFixed(2)}`;
+    
+    // Fetch XMR price from oracle or fallback to CoinGecko
+    let xmrPrice=200; // default fallback
+    try{
+      const xmrPriceRaw=await client.readContract({
+        address:hub,
+        abi:parseAbi(['function getXmrPrice() external view returns (uint256)']),
+        functionName:'getXmrPrice'
+      });
+      xmrPrice=parseFloat(formatUnits(xmrPriceRaw,18));
+    }catch(e){
+      // Oracle prices are stale, fetch from CoinGecko
+      try{
+        const res=await fetch('https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd');
+        const data=await res.json();
+        if(data.monero?.usd)xmrPrice=data.monero.usd;
+      }catch(e2){
+        console.warn('Failed to fetch XMR price from both oracle and CoinGecko, using fallback $200');
+      }
+    }
+    
+    // Calculate collateral ratio using actual debt
+    const totalDebtValue=parseFloat(formatUnits(totalDebt,8));
+    const debtValueUSD=totalDebtValue*xmrPrice;
+    const collateralRatio=debtValueUSD>0?(tvlUSD/debtValueUSD)*100:0;
+    console.log('[Stats] XMR price:',xmrPrice);
+    console.log('[Stats] Total debt (wsXMR):',totalDebtValue);
+    console.log('[Stats] Debt value (USD):',debtValueUSD);
+    console.log('[Stats] Collateral ratio:',collateralRatio+'%');
+    document.getElementById('stat-collateral-ratio').textContent=collateralRatio>9999?'>9,999%':`${Math.round(collateralRatio)}%`;
+    
+  } catch(err){
+    console.warn('Failed to fetch protocol stats:',err);
+  }
+})();
+</script>
 </body>
 </html>

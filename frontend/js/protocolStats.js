@@ -110,7 +110,9 @@ async function fetchVaultAggregates() {
             const vault = await readHub('getVault', [lpAddress]);
             if (vault.active) {
                 totalCollateral += BigInt(vault.collateralShares.toString());
-                totalDebt += BigInt(vault.normalizedDebt.toString());
+                // Use actual denormalized debt
+                const vaultDebt = await readHub('getVaultDebt', [lpAddress]);
+                totalDebt += BigInt(vaultDebt.toString());
                 totalMintFeeBps += Number(vault.mintFeeBps);
                 totalBurnRewardBps += Number(vault.burnRewardBps);
                 activeCount++;

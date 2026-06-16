@@ -222,11 +222,9 @@ export function showResumeBanner(swaps, onResume, onResolve) {
         const container = document.createElement('div');
         container.className = 'resume-swap-item';
         container.dataset.requestId = swap.requestId || '';
-        container.style.cssText = 'display: flex; flex-direction: column; gap: 0.25rem;';
 
         const row = document.createElement('div');
         row.className = 'resume-swap-row';
-        row.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.5rem 0.75rem; background: rgba(255,255,255,0.5); border-radius: 8px;';
 
         const typeLabel = swap.type === 'mint' ? 'Mint' : 'Burn';
         const amount = swap.type === 'mint'
@@ -236,10 +234,10 @@ export function showResumeBanner(swaps, onResume, onResolve) {
         const vaultShort = swap.lpVault ? `${swap.lpVault.slice(0, 6)}...${swap.lpVault.slice(-4)}` : '';
 
         row.innerHTML = `
-            <span style="font-size: 0.85rem;">
-                <strong>${typeLabel}</strong> ${amount}
-                <span style="color: var(--text-muted);">(${stateLabel})</span>
-                ${vaultShort ? `<span style="color: var(--text-muted); font-size: 0.75rem;"> ${vaultShort}</span>` : ''}
+            <span>
+                <strong>${typeLabel}</strong> <span class="swap-amount">${amount}</span>
+                <span class="swap-state">(${stateLabel})</span>
+                ${vaultShort ? `<span class="swap-vault"> ${vaultShort}</span>` : ''}
             </span>
         `;
 
@@ -253,16 +251,15 @@ export function showResumeBanner(swaps, onResume, onResolve) {
         const showResume = canResume || isClaimableMint;
 
         const btn = document.createElement('button');
-        btn.className = 'btn btn-small';
+        btn.className = 'btn-small';
         if (isClaimableMint) {
             btn.textContent = 'Claim wsXMR';
-            btn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.8rem; background: var(--success-color); color: white; border: 1px solid var(--success-color);';
+            btn.classList.add('success');
         } else if (showResume) {
             btn.textContent = 'Resume';
-            btn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.8rem;';
         } else {
             btn.textContent = 'Resolve';
-            btn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.8rem; background: transparent; color: var(--text-secondary); border: 1px solid var(--border-color);';
+            btn.classList.add('secondary');
         }
         btn.addEventListener('click', () => {
             if (showResume) {
@@ -320,7 +317,6 @@ export function showResumeError(requestId, message) {
 
     const errDiv = document.createElement('div');
     errDiv.className = 'resume-error';
-    errDiv.style.cssText = 'font-size: 0.8rem; color: var(--error-color); padding: 0.25rem 0.75rem; background: rgba(255,0,0,0.05); border-radius: 6px;';
     errDiv.textContent = message;
     item.appendChild(errDiv);
 }
@@ -343,7 +339,6 @@ export function showResumeSuccess(requestId, message) {
 
     const succDiv = document.createElement('div');
     succDiv.className = 'resume-success';
-    succDiv.style.cssText = 'font-size: 0.8rem; color: var(--success-color); padding: 0.25rem 0.75rem; background: rgba(0,255,0,0.05); border-radius: 6px;';
     succDiv.textContent = message;
     item.appendChild(succDiv);
 }
@@ -384,6 +379,7 @@ export function saveActiveTab(tab) {
  * Switch to mint tab
  */
 export function showMintTab() {
+    console.log('[UI] Switching to Mint tab');
     elements.tabMint.classList.add('active');
     elements.tabBurn.classList.remove('active');
     elements.tabCoLP.classList.remove('active');
@@ -441,73 +437,75 @@ export function populateVaults(vaults) {
         coLpVaultSelect.innerHTML = mintOptions;
     }
     
-    // Also populate the Active LP Vaults display
+    // Also populate the Active LP Vaults display with circular progress rings
     const vaultsList = document.getElementById('vaults-list');
     if (vaultsList) {
         if (vaults.length === 0) {
-            vaultsList.innerHTML = '<div class="no-data">No active LP vaults found</div>';
+            vaultsList.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">No active LP vaults found</div>';
         } else {
+            // Circular ring chart helper
+            const R = 44, CIRC = 2 * Math.PI * R;
+            const crColor = (cr) => cr >= 150 ? 'var(--green)' : cr >= 120 ? 'var(--amber)' : 'var(--red)';
+            const crLabel = (cr) => cr >= 150 ? 'healthy' : cr >= 120 ? 'watch' : 'liquidatable';
+            const frac = (cr) => Math.max(0, Math.min(1, (cr - 100) / 150));
+            const tick = (cr) => { const a = frac(cr) * 2 * Math.PI; return { x: (52 + R * Math.cos(a)).toFixed(1), y: (52 + R * Math.sin(a)).toFixed(1) }; };
+            const liq = tick(120);
+            
             const vaultsHtml = vaults.map(v => {
                 const shortAddr = `${v.address.slice(0, 6)}...${v.address.slice(-4)}`;
-                const collateralAmount = v.collateral ? formatBalance(v.collateral, 18) : '0';
-                const usedRaw = v.usedCollateral !== undefined ? v.usedCollateral : 0;
-                const pendingRaw = v.pendingCollateral !== undefined ? v.pendingCollateral : 0;
-                const bufferRaw = v.bufferCollateral !== undefined ? v.bufferCollateral : 0;
-                const freeRaw = v.freeCollateral !== undefined ? v.freeCollateral : (v.collateral ? Number(v.collateral) / 1e18 : 0);
-                const usedAmount = fmtCapacity(usedRaw);
-                const pendingAmount = fmtCapacity(pendingRaw);
-                const bufferAmount = fmtCapacity(bufferRaw);
-                const freeAmount = fmtCapacity(freeRaw);
-                const totalCap = usedRaw + pendingRaw + bufferRaw + freeRaw;
-                const usedPct = totalCap > 0 ? (usedRaw / totalCap) * 100 : 0;
-                const pendingPct = totalCap > 0 ? (pendingRaw / totalCap) * 100 : 0;
-                const bufferPct = totalCap > 0 ? (bufferRaw / totalCap) * 100 : 0;
-                const freePct = totalCap > 0 ? (freeRaw / totalCap) * 100 : 0;
-                const pieSvg = totalCap > 0 ? makePieChart(usedPct, pendingPct, bufferPct, freePct) : '';
-                console.log('Vault chart:', { usedRaw, pendingRaw, bufferRaw, freeRaw, usedPct, pendingPct, bufferPct, freePct, pieSvg: pieSvg.slice(0, 80) });
-
-                return `
-                <div class="vault-item">
-                    <div class="vault-header">
-                        <strong>LP Vault ${shortAddr}</strong>
-                        <span class="vault-collateral">${collateralAmount} sDAI</span>
-                        <a href="https://gnosisscan.io/address/${v.address}" target="_blank" rel="noopener" class="vault-scan-inline" title="View on GnosisScan">${getIconSVG('externalLink')}</a>
+                // Use pre-converted collateralAmount if available
+                const collateral = v.collateralAmount || (v.collateral ? Number(v.collateral) / 1e18 : 0);
+                // Use actual debt if available, otherwise fall back to normalized debt
+                const debt = v.actualDebt ? Number(v.actualDebt) / 1e8 : (v.debt ? Number(v.debt) / 1e8 : 0);
+                
+                // Calculate ratio in USD terms (sDAI ≈ $1, wsXMR needs XMR price)
+                // Use stored xmrPrice and collPrice from vault data if available
+                const xmrPrice = v.xmrPrice || 200; // fallback
+                const collPrice = v.collPrice || 1.0; // sDAI ≈ $1
+                const collateralUSD = collateral * collPrice;
+                const debtUSD = debt * xmrPrice;
+                const cr = debtUSD > 0 ? Math.round((collateralUSD / debtUSD) * 100) : 200;
+                const crDisplay = cr > 9999 ? '>9,999%' : `${cr}%`;
+                
+                // Calculate collateral breakdown percentages
+                const usedColl = v.usedCollateral || 0;
+                const pendingColl = v.pendingCollateral || 0;
+                const bufferColl = v.bufferCollateral || 0;
+                const coLpColl = v.deployedSDAIShares ? Number(v.deployedSDAIShares) / 1e18 : 0;
+                const totalColl = collateral;
+                const freeColl = Math.max(0, totalColl - usedColl - pendingColl - bufferColl - coLpColl);
+                
+                const usedPct = totalColl > 0 ? (usedColl / totalColl) * 100 : 0;
+                const pendingPct = totalColl > 0 ? (pendingColl / totalColl) * 100 : 0;
+                const bufferPct = totalColl > 0 ? (bufferColl / totalColl) * 100 : 0;
+                const coLpPct = totalColl > 0 ? (coLpColl / totalColl) * 100 : 0;
+                const freePct = totalColl > 0 ? (freeColl / totalColl) * 100 : 0;
+                
+                const pieChart = makePieChart(usedPct, pendingPct, bufferPct, coLpPct, freePct);
+                
+                const crColor = cr >= 200 ? 'var(--green)' : cr >= 150 ? 'var(--amber)' : 'var(--red)';
+                
+                return `<div class="vc" onclick="window.location.href='lp-vault.html?address=${v.address}'">
+                    <div class="vid">${shortAddr}</div>
+                    <div class="ring" style="display:flex;justify-content:center;margin:8px 0">
+                      ${pieChart}
                     </div>
-                    ${v.collateral ? `<div class="vault-chart-row">
-                        ${pieSvg}
-                        <div class="vault-legend">
-                            <div class="legend-row">
-                                <span class="legend-dot used-dot"></span>
-                                <div class="legend-text">
-                                    <span class="legend-label">Backing debt:</span>
-                                    <span class="legend-value">${usedAmount} sDAI</span>
-                                </div>
-                            </div>
-                            ${pendingRaw > 0 ? `<div class="legend-row">
-                                <span class="legend-dot pending-dot"></span>
-                                <div class="legend-text">
-                                    <span class="legend-label">Pending debt:</span>
-                                    <span class="legend-value">${pendingAmount} sDAI</span>
-                                </div>
-                            </div>` : ''}
-                            <div class="legend-row">
-                                <span class="legend-dot buffer-dot"></span>
-                                <div class="legend-text">
-                                    <span class="legend-label">Safety buffer:</span>
-                                    <span class="legend-value">${bufferAmount} sDAI</span>
-                                </div>
-                            </div>
-                            <div class="legend-row">
-                                <span class="legend-dot free-dot"></span>
-                                <div class="legend-text">
-                                    <span class="legend-label">Free capacity:</span>
-                                    <span class="legend-value">${freeAmount} sDAI</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>` : ''}
-                </div>
-            `;
+                    <div style="text-align:center;margin-bottom:16px">
+                      <div style="font-size:28px;font-weight:700;margin-bottom:4px;font-family:'JetBrains Mono';color:${crColor};text-shadow:0 0 20px ${crColor}40">${crDisplay}</div>
+                      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">collateral ratio</div>
+                    </div>
+                    <div class="vrow" style="border-top:1px solid var(--line-2);padding-top:12px">
+                      <span class="l"><span style="opacity:.6">collateral</span><b style="color:var(--fg)">${collateral.toFixed(4)} sDAI</b></span>
+                      <span class="l"><span style="opacity:.6">debt</span><b style="color:var(--fg)">${debt.toFixed(4)} wsXMR</b></span>
+                    </div>
+                    <div class="vrow" style="font-size:12px;gap:10px;margin-top:14px;display:grid;grid-template-columns:1fr 1fr;row-gap:10px">
+                      <span style="display:flex;align-items:center;gap:7px"><span style="color:#ff4444;font-size:14px;text-shadow:0 0 6px #ff444460">●</span> reserved <b style="margin-left:auto;color:var(--fg)">${usedColl.toFixed(2)}</b></span>
+                      <span style="display:flex;align-items:center;gap:7px"><span style="color:#8b5cf6;font-size:14px;text-shadow:0 0 6px #8b5cf660">●</span> pending <b style="margin-left:auto;color:var(--fg)">${pendingColl.toFixed(2)}</b></span>
+                      <span style="display:flex;align-items:center;gap:7px"><span style="color:#facc15;font-size:14px;text-shadow:0 0 6px #facc1560">●</span> safety <b style="margin-left:auto;color:var(--fg)">${bufferColl.toFixed(2)}</b></span>
+                      <span style="display:flex;align-items:center;gap:7px"><span style="color:#3b82f6;font-size:14px;text-shadow:0 0 8px #3b82f680">●</span> co-lp <b style="margin-left:auto;color:var(--fg)">${coLpColl.toFixed(2)}</b></span>
+                      <span style="display:flex;align-items:center;gap:7px;grid-column:1/-1"><span style="color:#2fe6c4;font-size:14px;text-shadow:0 0 6px #2fe6c460">●</span> free <b style="margin-left:auto;color:var(--fg)">${freeColl.toFixed(2)}</b></span>
+                    </div>
+                  </div>`;
             }).join('');
             vaultsList.innerHTML = vaultsHtml;
         }
@@ -780,6 +778,7 @@ export function hideModal() {
  * Show success modal
  */
 export function showCoLPTab() {
+    console.log('[UI] Switching to Co-LP tab');
     elements.tabCoLP.classList.add('active');
     elements.tabMint.classList.remove('active');
     elements.tabBurn.classList.remove('active');
@@ -1100,49 +1099,66 @@ function fmtCapacity(val) {
 
 /**
  * Generate inline SVG donut chart for vault capacity
- * Slices: used (orange), pending (purple), buffer (yellow), free (green)
+ * Slices: reserved (orange), pending (purple), safety buffer (yellow), co-lp (blue), free (green)
  */
-function makePieChart(usedPct, pendingPct, bufferPct, freePct) {
-    const size = 64;
+function makePieChart(usedPct, pendingPct, bufferPct, coLpPct, freePct) {
+    const size = 100;
     const cx = size / 2;
     const cy = size / 2;
-    const r = 26;
-    const strokeW = 10;
+    const r = 40;
+    const strokeW = 12;
     const circ = +(2 * Math.PI * r).toFixed(2);
-    const minVis = 3;
 
     let usedLen = +(usedPct / 100 * circ).toFixed(2);
     let pendingLen = +(pendingPct / 100 * circ).toFixed(2);
     let bufferLen = +(bufferPct / 100 * circ).toFixed(2);
+    let coLpLen = +(coLpPct / 100 * circ).toFixed(2);
     let freeLen = +(freePct / 100 * circ).toFixed(2);
 
     // Clamp
     usedLen = Math.min(usedLen, circ);
     pendingLen = Math.min(pendingLen, circ);
     bufferLen = Math.min(bufferLen, circ);
+    coLpLen = Math.min(coLpLen, circ);
     freeLen = Math.min(freeLen, circ);
 
     // Guard against NaN / Infinity
     if (!Number.isFinite(usedLen)) usedLen = 0;
     if (!Number.isFinite(pendingLen)) pendingLen = 0;
     if (!Number.isFinite(bufferLen)) bufferLen = 0;
+    if (!Number.isFinite(coLpLen)) coLpLen = 0;
     if (!Number.isFinite(freeLen)) freeLen = circ;
 
     // Build SVG — stacked circles with dash offsets
     const usedDash = `${usedLen} ${circ}`;
     const pendingDash = `${pendingLen} ${circ}`;
     const bufferDash = `${bufferLen} ${circ}`;
+    const coLpDash = `${coLpLen} ${circ}`;
     const freeDash = `${freeLen} ${circ}`;
     const pendingOff = -usedLen;
     const bufferOff = -(usedLen + pendingLen);
-    const freeOff = -(usedLen + pendingLen + bufferLen);
+    const coLpOff = -(usedLen + pendingLen + bufferLen);
+    const freeOff = -(usedLen + pendingLen + bufferLen + coLpLen);
 
-    return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" class="vault-pie">
-        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#f97316" stroke-width="${strokeW}" stroke-dasharray="${usedDash}" transform="rotate(-90 ${cx} ${cy})"/>
-        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#a855f7" stroke-width="${strokeW}" stroke-dasharray="${pendingDash}" stroke-dashoffset="${pendingOff}" transform="rotate(-90 ${cx} ${cy})"/>
-        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#eab308" stroke-width="${strokeW}" stroke-dasharray="${bufferDash}" stroke-dashoffset="${bufferOff}" transform="rotate(-90 ${cx} ${cy})"/>
-        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#10b981" stroke-width="${strokeW}" stroke-dasharray="${freeDash}" stroke-dashoffset="${freeOff}" transform="rotate(-90 ${cx} ${cy})"/>
-        <circle cx="${cx}" cy="${cy}" r="${r - strokeW / 2}" fill="var(--bg-card-light)"/>
+    return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+        <defs>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="1.5" result="coloredBlur"/>
+            <feMerge>
+              <feMergeNode in="coloredBlur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+        </defs>
+        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(255,255,255,0.03)" stroke-width="${strokeW}"/>
+        <g transform="rotate(-90 ${cx} ${cy})" filter="url(#glow)">
+          <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#ff4444" stroke-width="${strokeW}" stroke-dasharray="${usedDash}" stroke-linecap="round" opacity="0.85"/>
+          <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#8b5cf6" stroke-width="${strokeW}" stroke-dasharray="${pendingDash}" stroke-dashoffset="${pendingOff}" stroke-linecap="round" opacity="0.85"/>
+          <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#facc15" stroke-width="${strokeW}" stroke-dasharray="${bufferDash}" stroke-dashoffset="${bufferOff}" stroke-linecap="round" opacity="0.85"/>
+          <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#3b82f6" stroke-width="${strokeW}" stroke-dasharray="${coLpDash}" stroke-dashoffset="${coLpOff}" stroke-linecap="round" opacity="0.9"/>
+          <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#2fe6c4" stroke-width="${strokeW}" stroke-dasharray="${freeDash}" stroke-dashoffset="${freeOff}" stroke-linecap="round" opacity="0.9"/>
+        </g>
+        <circle cx="${cx}" cy="${cy}" r="${r - strokeW / 2}" fill="var(--input)"/>
     </svg>`;
 }
 

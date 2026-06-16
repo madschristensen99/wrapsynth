@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LP Vault Details — WrapSynth</title>
+<link rel="icon" type="image/x-icon" href="./favicon_monero/favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="./favicon_monero/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="./favicon_monero/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="./favicon_monero/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app-styles.css">
+<style>
+.lp-header{
+  background:linear-gradient(135deg,rgba(47,230,196,.08),rgba(47,230,196,.02));
+  border:1px solid rgba(47,230,196,.2);
+  border-radius:20px;
+  padding:32px;
+  margin-bottom:24px;
+}
+.lp-title{
+  font-family:'Space Grotesk';
+  font-size:24px;
+  font-weight:700;
+  margin-bottom:8px;
+  color:var(--teal);
+}
+.lp-address{
+  font-family:'JetBrains Mono';
+  font-size:13px;
+  color:var(--muted);
+  margin-bottom:24px;
+}
+.stat-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+  gap:16px;
+  margin-bottom:32px;
+}
+.stat-card{
+  background:linear-gradient(135deg,rgba(255,255,255,.02),rgba(255,255,255,.005));
+  border:1px solid var(--line-2);
+  border-radius:16px;
+  padding:20px;
+  transition:all .3s ease;
+}
+.stat-card:hover{
+  border-color:rgba(47,230,196,.3);
+  transform:translateY(-2px);
+}
+.stat-label{
+  font-size:11px;
+  color:var(--muted);
+  text-transform:uppercase;
+  letter-spacing:.1em;
+  margin-bottom:8px;
+}
+.stat-value{
+  font-family:'JetBrains Mono';
+  font-size:24px;
+  font-weight:700;
+  color:var(--fg);
+}
+.stat-sub{
+  font-size:12px;
+  color:var(--faint);
+  margin-top:4px;
+}
+.section-title{
+  font-family:'Space Grotesk';
+  font-size:18px;
+  font-weight:600;
+  margin-bottom:16px;
+  color:var(--fg);
+}
+.activity-list{
+  background:var(--input);
+  border:1px solid var(--line-2);
+  border-radius:16px;
+  padding:20px;
+}
+.activity-item{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:12px 0;
+  border-bottom:1px solid var(--line-2);
+  font-family:'JetBrains Mono';
+  font-size:12px;
+}
+.activity-item:last-child{border-bottom:none}
+.back-btn{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:10px 16px;
+  background:rgba(255,255,255,.03);
+  border:1px solid var(--line);
+  border-radius:10px;
+  color:var(--fg);
+  text-decoration:none;
+  font-family:'Space Grotesk';
+  font-size:14px;
+  font-weight:600;
+  transition:all .2s ease;
+  margin-bottom:24px;
+  cursor:pointer;
+}
+.back-btn:hover{
+  background:rgba(255,255,255,.07);
+  border-color:var(--teal);
+}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div class="shell">
+  <nav>
+    <a href="index.html" class="brand" style="text-decoration:none"><img src="./wrapsynth-symbol.png" alt="WrapSynth" style="width:22px;height:22px;border-radius:6px">WrapSynth</a>
+    <div class="nav-right">
+      <span class="pill"><img src="https://gnosisscan.io/assets/generic/html/favicon-light.ico" alt="Gnosis" style="width:14px;height:14px;margin-right:4px">Gnosis</span>
+      <a href="app.html" style="padding:8px 16px;background:linear-gradient(135deg,var(--teal),#22b894);color:#000;font-weight:600;border-radius:10px;text-decoration:none;font-size:14px;transition:all .2s ease;display:inline-block" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 12px rgba(47,230,196,.3)'" onmouseout="this.style.transform='';this.style.boxShadow=''">Back to App</a>
+    </div>
+  </nav>
+
+  <div class="content" style="max-width:1200px;margin:0 auto;padding:40px 20px">
+    <a onclick="history.back()" class="back-btn">← Back to Vaults</a>
+    
+    <div class="lp-header">
+      <div class="lp-title" id="lp-name">Loading...</div>
+      <div class="lp-address" id="lp-address">0x...</div>
+      <div class="stat-grid" style="margin-bottom:0">
+        <div>
+          <div class="stat-label">Health Ratio</div>
+          <div class="stat-value" id="health-ratio">--</div>
+        </div>
+        <div>
+          <div class="stat-label">Total Collateral</div>
+          <div class="stat-value" id="total-collateral">--</div>
+          <div class="stat-sub">sDAI</div>
+        </div>
+        <div>
+          <div class="stat-label">Total Debt</div>
+          <div class="stat-value" id="total-debt">--</div>
+          <div class="stat-sub">wsXMR</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">Performance Metrics</div>
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-label">Total Revenue Earned</div>
+        <div class="stat-value" id="total-revenue">$--</div>
+        <div class="stat-sub">Lifetime fees collected</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Avg Redemption Time</div>
+        <div class="stat-value" id="avg-redemption">--</div>
+        <div class="stat-sub">Hours to complete</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Success Rate</div>
+        <div class="stat-value" id="success-rate">--</div>
+        <div class="stat-sub">Completed / Total</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Current Mint Fee</div>
+        <div class="stat-value" id="mint-fee">--</div>
+        <div class="stat-sub">Basis points</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Current Burn Reward</div>
+        <div class="stat-value" id="burn-reward">--</div>
+        <div class="stat-sub">Basis points</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total Mints Processed</div>
+        <div class="stat-value" id="total-mints">--</div>
+        <div class="stat-sub">All time</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total Burns Processed</div>
+        <div class="stat-value" id="total-burns">--</div>
+        <div class="stat-sub">All time</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Avg Fee Charged</div>
+        <div class="stat-value" id="avg-fee">--</div>
+        <div class="stat-sub">Historical average</div>
+      </div>
+    </div>
+
+    <div class="section-title">Recent Activity</div>
+    <div class="activity-list" id="recent-activity">
+      <div style="text-align:center;padding:40px;color:var(--muted)">Loading activity...</div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { createPublicClient, http, formatUnits, parseAbi } from 'https://esm.sh/viem@2.21.54';
+import { gnosis } from 'https://esm.sh/viem@2.21.54/chains';
+
+const params = new URLSearchParams(window.location.search);
+const vaultAddress = params.get('address');
+
+if (!vaultAddress) {
+  document.getElementById('lp-name').textContent = 'No vault specified';
+} else {
+  loadVaultDetails(vaultAddress);
+}
+
+async function loadVaultDetails(address) {
+  const client = createPublicClient({
+    chain: gnosis,
+    transport: http('https://rpc.gnosischain.com')
+  });
+
+  const hub = '0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50';
+  const shortAddr = `${address.slice(0, 6)}...${address.slice(-4)}`;
+  
+  document.getElementById('lp-name').textContent = `LP Vault ${shortAddr}`;
+  document.getElementById('lp-address').textContent = address;
+
+  try {
+    // Fetch vault data
+    const vault = await client.readContract({
+      address: hub,
+      abi: [{
+        name: 'getVault',
+        type: 'function',
+        stateMutability: 'view',
+        inputs: [{name: 'lpAddress', type: 'address'}],
+        outputs: [{
+          type: 'tuple',
+          components: [
+            {name: 'lpAddress', type: 'address'},
+            {name: 'collateralShares', type: 'uint256'},
+            {name: 'lockedCollateral', type: 'uint256'},
+            {name: 'normalizedDebt', type: 'uint256'},
+            {name: 'pendingDebt', type: 'uint256'},
+            {name: 'maxMintBps', type: 'uint16'},
+            {name: 'mintGriefingDeposit', type: 'uint256'},
+            {name: 'mintReadyBond', type: 'uint256'},
+            {name: 'mintFeeBps', type: 'uint16'},
+            {name: 'burnRewardBps', type: 'uint16'},
+            {name: 'liquidationNonce', type: 'uint256'},
+            {name: 'mintNonce', type: 'uint256'},
+            {name: 'minBurnAmount', type: 'uint256'},
+            {name: 'active', type: 'bool'},
+            {name: 'deployedSDAIShares', type: 'uint256'},
+            {name: 'maxCoLPRangeBps', type: 'uint16'}
+          ]
+        }]
+      }],
+      functionName: 'getVault',
+      args: [address]
+    });
+
+    const debt = await client.readContract({
+      address: hub,
+      abi: parseAbi(['function getVaultDebt(address) external view returns (uint256)']),
+      functionName: 'getVaultDebt',
+      args: [address]
+    });
+
+    // Calculate health manually (collateral / debt ratio in USD terms)
+    const sDAI = '0xaf204776c7245bF4147c2612BF6e5972Ee483701';
+    const totalAssets = await client.readContract({
+      address: sDAI,
+      abi: parseAbi(['function convertToAssets(uint256 shares) external view returns (uint256)']),
+      functionName: 'convertToAssets',
+      args: [vault.collateralShares]
+    });
+    
+    const collateral = Number(formatUnits(totalAssets, 18));
+    const debtAmount = Number(formatUnits(debt, 8));
+    
+    // Fetch XMR price from CoinGecko
+    let xmrPrice = 200;
+    try {
+      const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd');
+      const data = await res.json();
+      if (data.monero?.usd) xmrPrice = data.monero.usd;
+    } catch (e) {
+      console.warn('Failed to fetch XMR price');
+    }
+    
+    const collateralUSD = collateral * 1.0; // sDAI ≈ $1
+    const debtUSD = debtAmount * xmrPrice;
+    const healthPct = debtUSD > 0 ? (collateralUSD / debtUSD) * 100 : 200;
+
+    document.getElementById('health-ratio').textContent = healthPct > 9999 ? '>9,999%' : `${healthPct.toFixed(0)}%`;
+    document.getElementById('total-collateral').textContent = collateral.toFixed(4);
+    document.getElementById('total-debt').textContent = debtAmount.toFixed(4);
+
+    // Display fee settings
+    document.getElementById('mint-fee').textContent = `${Number(vault.mintFeeBps) / 100}%`;
+    document.getElementById('burn-reward').textContent = `${Number(vault.burnRewardBps) / 100}%`;
+
+    // Placeholder for historical data (would need event indexing)
+    document.getElementById('total-revenue').textContent = '$--';
+    document.getElementById('avg-redemption').textContent = '--';
+    document.getElementById('success-rate').textContent = '--';
+    document.getElementById('total-mints').textContent = '--';
+    document.getElementById('total-burns').textContent = '--';
+    document.getElementById('avg-fee').textContent = '--';
+
+    document.getElementById('recent-activity').innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">Historical activity data requires event indexing</div>';
+
+  } catch (error) {
+    console.error('Error loading vault details:', error);
+    document.getElementById('lp-name').textContent = 'Error loading vault';
+  }
+}
+</script>
+
+</body>
+</html>

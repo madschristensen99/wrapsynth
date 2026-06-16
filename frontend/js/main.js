@@ -88,7 +88,7 @@ async function fetchXmrPrice(forceRefresh = false) {
     }
 
     const updateUI = (price) => {
-        const priceElement = document.getElementById('xmr-price-stat');
+        const priceElement = document.getElementById('xmrPx');
         if (priceElement) {
             priceElement.textContent = price != null ? `$${price.toFixed(2)}` : '$--';
         }
@@ -233,6 +233,32 @@ async function init() {
     // Initialize UI
     initUI();
     
+    // Restore previously active tab IMMEDIATELY to prevent flash
+    const savedTab = localStorage.getItem('wrapsynth-active-tab');
+    console.log('[INIT] Restoring saved tab:', savedTab);
+    if (savedTab === 'burn') {
+        showBurnTab();
+    } else if (savedTab === 'co-lp') {
+        showCoLPTab();
+    } else if (savedTab === 'lp') {
+        // Switch UI immediately without async operations
+        const elements = getElements();
+        elements.mintPanel.classList.add('hidden');
+        elements.burnPanel.classList.add('hidden');
+        elements.coLPPanel.classList.add('hidden');
+        elements.lpPanel.classList.remove('hidden');
+        elements.tabMint.classList.remove('active');
+        elements.tabBurn.classList.remove('active');
+        elements.tabCoLP.classList.remove('active');
+        elements.tabLp.classList.add('active');
+    } else {
+        // Default to mint tab
+        showMintTab();
+    }
+    
+    // Mark that JavaScript has loaded and tab is restored
+    document.body.classList.add('js-loaded');
+    
     // Display swap history
     displaySwapHistory();
     setupCopyButtons();
@@ -289,14 +315,11 @@ async function init() {
     onAccountsChanged(handleAccountChange);
     onChainChanged(handleChainChange);
 
-    // Restore previously active tab
-    const savedTab = localStorage.getItem('wrapsynth-active-tab');
-    if (savedTab === 'burn') {
-        await showBurnTab();
-    } else if (savedTab === 'co-lp') {
+    // Load async tab-specific data if needed
+    if (savedTab === 'co-lp') {
         await handleCoLPTab();
     } else if (savedTab === 'lp') {
-        await handleLpTab();
+        // LP tab data already loaded by loadVaults()
     }
 
     console.log('[SUCCESS] Phantom Agent ready');
@@ -1195,7 +1218,7 @@ async function handleCoLPSetRange() {
 }
 
 /**
- * Handle LP tab click - check if user is an LP and show appropriate view
+ * Handle LP tab click - show all vaults
  */
 async function handleLpTab() {
     const elements = getElements();
@@ -1213,37 +1236,8 @@ async function handleLpTab() {
     elements.tabLp.classList.add('active');
     saveActiveTab('lp');
 
-    // Check if user is connected
-    const userAddress = getUserAddress();
-    if (!userAddress) {
-        // Show education view if not connected
-        document.getElementById('lp-stats-view').classList.add('hidden');
-        document.getElementById('lp-education-view').classList.remove('hidden');
-        return;
-    }
-    
-    // Check if user has a vault
-    try {
-        const lpPanel = getLPPanel();
-        const isLP = await lpPanel.init();
-        
-        if (isLP) {
-            // User is an LP - show stats view
-            const vaultData = await lpPanel.loadVaultData();
-            await loadLpStats(userAddress, vaultData);
-            document.getElementById('lp-education-view').classList.add('hidden');
-            document.getElementById('lp-stats-view').classList.remove('hidden');
-        } else {
-            // User is not an LP - show education view
-            document.getElementById('lp-stats-view').classList.add('hidden');
-            document.getElementById('lp-education-view').classList.remove('hidden');
-        }
-    } catch (error) {
-        console.error('Error checking LP status:', error);
-        // Show education view on error
-        document.getElementById('lp-stats-view').classList.add('hidden');
-        document.getElementById('lp-education-view').classList.remove('hidden');
-    }
+    // Vaults are already loaded and displayed by populateVaults()
+    // No need for additional logic - just show the panel
 }
 
 /**
@@ -1804,18 +1798,37 @@ async function loadVaults() {
                         maxMintCapacityXmr = Math.min(maxMintCapacityXmr, maxMintBpsCapacity);
                     }
 
+                    // Convert total collateral shares to sDAI
+                    let totalCollateralDAI = Number(collShares) / 1e18;
+                    try {
+                        const totalAssetsWei = await publicClient.readContract({
+                            address: sDAIAddress,
+                            abi: sDAIAbi,
+                            functionName: 'convertToAssets',
+                            args: [collShares]
+                        });
+                        totalCollateralDAI = Number(totalAssetsWei) / 1e18;
+                    } catch (e) {
+                        console.warn('convertToAssets for total collateral failed:', e.message);
+                    }
+
                     const vault = {
                         address: vaultAddress,
                         name: `LP Vault ${vaultAddress.slice(0, 6)}...${vaultAddress.slice(-4)}`,
                         collateral: vaultData.collateralShares,
+                        collateralAmount: totalCollateralDAI, // Converted to sDAI
                         lockedCollateral: vaultData.lockedCollateral,
                         debt: vaultData.normalizedDebt,
+                        actualDebt: actualDebt,
                         pendingDebt: vaultData.pendingDebt,
+                        deployedSDAIShares: vaultData.deployedSDAIShares,
                         usedCollateral,
                         pendingCollateral,
                         bufferCollateral,
                         freeCollateral,
                         maxMintCapacityXmr,
+                        xmrPrice,
+                        collPrice,
                     };
                     console.log('Adding active vault:', vault);
                     activeVaults.push(vault);
