@@ -1,11 +1,28 @@
 /// Protocol constants — direct port from VaultManager.sol
 
 // Collateral ratios (percentage, precision 100)
-pub const COLLATERAL_RATIO: u64 = 150;
-pub const LIQUIDATION_RATIO: u64 = 120;
-pub const LIQUIDATION_BONUS: u64 = 110;
+// Tuned for volatile LST collateral (JitoSOL) where BOTH collateral and debt legs move.
+// With sDAI only the XMR leg moved; with JitoSOL both JitoSOL/USD and XMR/USD are volatile.
+// The offsetting factor is SOL↔XMR positive correlation dampening JitoSOL/XMR ratio volatility.
+// 180/150 is a defensible midpoint pending backtest of worst adverse JitoSOL/XMR move.
+pub const COLLATERAL_RATIO: u64 = 180;      // mint floor (was 150)
+pub const LIQUIDATION_RATIO: u64 = 150;     // liquidate below this (was 120)
+pub const LIQUIDATION_BONUS: u64 = 112;     // liquidator incentive (was 110)
 pub const RATIO_PRECISION: u64 = 100;
-pub const BURN_LOCK_RATIO: u64 = 130;
+pub const BURN_LOCK_RATIO: u64 = 160;       // reserve for in-flight burns (was 130)
+pub const YIELD_BUFFER_RATIO: u64 = 190;    // CR + 10 headroom after yield extraction
+
+// Compile-time invariant checks — these must hold or the program fails to compile.
+// Ordering: LIQUIDATION_RATIO < COLLATERAL_RATIO < YIELD_BUFFER_RATIO
+// Burn lock must sit above liquidation so locked collateral survives drops through handshake window.
+const _: () = assert!(LIQUIDATION_RATIO < COLLATERAL_RATIO,
+    "LIQUIDATION_RATIO must be < COLLATERAL_RATIO");
+const _: () = assert!(COLLATERAL_RATIO < YIELD_BUFFER_RATIO,
+    "COLLATERAL_RATIO must be < YIELD_BUFFER_RATIO");
+const _: () = assert!(LIQUIDATION_RATIO < BURN_LOCK_RATIO,
+    "LIQUIDATION_RATIO must be < BURN_LOCK_RATIO");
+const _: () = assert!(BURN_LOCK_RATIO <= COLLATERAL_RATIO + 10,
+    "BURN_LOCK_RATIO must not exceed COLLATERAL_RATIO + 10");
 
 // Precision constants
 pub const PRICE_PRECISION: u64 = 1_000_000_000_000_000_000; // 1e18

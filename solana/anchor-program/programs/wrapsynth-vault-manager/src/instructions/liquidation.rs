@@ -43,6 +43,12 @@ pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> 
         request.lp_vault == ctx.accounts.vault.key(),
         WrapSynthError::InvalidBurnRequest
     );
+    // Idempotency / invalidation guard: a prior liquidation increments liquidation_nonce,
+    // so burns created before that liquidation must not be re-resolved.
+    require!(
+        request.vault_liquidation_nonce == vault.liquidation_nonce,
+        WrapSynthError::BurnInvalidatedByLiquidation
+    );
 
     let total_locked = request.locked_collateral + request.reward_collateral;
 
@@ -154,7 +160,9 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
     let actual_debt = get_actual_debt(vault.normalized_debt, global.global_debt_index);
     require!(actual_debt > 0, WrapSynthError::InsufficientDebt);
 
-    // Verify vault is liquidatable (unlocked collateral vs actual debt)
+    // Verify vault is liquidatable (unlocked collateral vs actual debt).
+    // Uses market JitoSOL/USD price (Task 2) so depegs are already marked down.
+    // Depeg-pause only blocks minting; liquidations remain permissionless.
     let col_usd = collateral_to_usd(vault.collateral_amount, col_price);
     let debt_usd = (actual_debt as u128 * xmr_price as u128 / WSXMR_DECIMALS as u128) as u64;
     let ratio = calculate_collateral_ratio(col_usd, debt_usd);
@@ -162,7 +170,7 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
 
     let mut debt_to_clear = debt_to_clear.min(actual_debt);
 
-    // Calculate collateral to seize at LIQUIDATION_BONUS (110%)
+    // Calculate collateral to seize at LIQUIDATION_BONUS (112%)
     let col_val_usd = collateral_value_for_debt(debt_to_clear, xmr_price, LIQUIDATION_BONUS);
     let mut collateral_amount = usd_to_collateral(col_val_usd, col_price);
 
@@ -191,17 +199,18 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
         global_mut.global_lp_principal_shares = global_mut.global_lp_principal_shares.saturating_sub(shares_reduction);
     }
 
-    vault.collateral_amount -= collateral_amount;
+    vault.collateral_amount = vault.collateral_amount.saturating_sub(collateral_amount);
 
     // Clear normalized debt
     let normalized_clear = normalize_debt(debt_to_clear, ctx.accounts.global_state.global_debt_index);
     let normalized_clear = normalized_clear.min(vault.normalized_debt);
-    vault.normalized_debt -= normalized_clear;
+    vault.normalized_debt = vault.normalized_debt.saturating_sub(normalized_clear);
 
     let global = &mut ctx.accounts.global_state;
     global.global_total_debt = global.global_total_debt.saturating_sub(debt_to_clear);
 
-    // Track bad debt if vault is insolvent
+    // Track bad debt if vault is fully drained and zero it cleanly.
+    // Also remove the remaining from global_total_debt so active and unbacked debt don't overlap.
     if vault.collateral_amount == 0 && vault.normalized_debt > 0 {
         let remaining = get_actual_debt(vault.normalized_debt, global.global_debt_index);
         if remaining > 0 {
@@ -209,7 +218,9 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
                 .global_bad_debt
                 .checked_add(remaining)
                 .ok_or(WrapSynthError::MathOverflow)?;
+            global.global_total_debt = global.global_total_debt.saturating_sub(remaining);
         }
+        vault.normalized_debt = 0;
     }
 
     // Increment nonces to atomically invalidate all pending mints/burns
