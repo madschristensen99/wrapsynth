@@ -197,3 +197,8 @@ pub mod wrapsynth_vault_manager {
         reconciliation::reconcile_global_debt(ctx)
     }
 }
+
+#[cfg(test)]
+pub mod tests {
+    pub mod cascade;
+}

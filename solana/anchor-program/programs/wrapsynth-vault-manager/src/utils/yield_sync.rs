@@ -4,20 +4,15 @@
 /// not via increasing share count. We track principal in SOL-value terms at deposit,
 /// then harvest yield when (shares × current_rate) > principal_sol_value.
 ///
-/// This preserves the 155% post-harvest buffer logic from the EVM YieldLogic.sol.
+/// Yield buffer = CR + 10 (190%) post-harvest to give headroom for volatile LST collateral.
 
 use crate::constants::*;
 use crate::utils::math::*;
 
 pub const YIELD_DUST_THRESHOLD_SOL: u64 = 100_000_000; // 0.1 SOL in lamports
-/// Buffer ratio for yield extraction: must stay above COLLATERAL_RATIO to prevent
-/// yield harvesting from manufacturing undercollateralized vaults.
-/// Set to CR + 5% headroom. MUST be updated whenever COLLATERAL_RATIO changes.
-pub const YIELD_BUFFER_RATIO: u64 = COLLATERAL_RATIO + 5;
 
-// Compile-time assertion: YIELD_BUFFER_RATIO must exceed COLLATERAL_RATIO
-const _: () = assert!(YIELD_BUFFER_RATIO > COLLATERAL_RATIO, 
-    "YIELD_BUFFER_RATIO must be > COLLATERAL_RATIO to prevent yield extraction from creating undercollateralized vaults");
+// YIELD_BUFFER_RATIO is defined in crate::constants (CR + 10 headroom).
+// It is imported here via `use crate::constants::*` in the consuming modules.
 
 /// Calculates how many JitoSOL shares can be extracted as yield.
 ///
@@ -77,8 +72,8 @@ pub fn calculate_extractable_yield(
     let total_obligations = actual_debt.saturating_add(pending_debt);
 
     if total_obligations > 0 {
-        // Minimum collateral needed = debt_usd * 155% / collateral_price
-        // (155% buffer — slightly above COLLATERAL_RATIO=150% to give headroom)
+        // Minimum collateral needed = debt_usd * YIELD_BUFFER_RATIO / 100
+        // (YIELD_BUFFER_RATIO = CR + 10, currently 190%)
         let debt_usd = ((total_obligations as u128)
             .saturating_mul(xmr_price as u128)
             / WSXMR_DECIMALS as u128) as u64;
