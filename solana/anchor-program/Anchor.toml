@@ -18,6 +18,7 @@ wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/vault_manager.ts"
+test-oracle = "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/oracle_dual_source.test.ts"
 
 [test]
 startup_wait = 15000
@@ -33,3 +34,21 @@ filename = "tests/fixtures/pyth_xmr_account.json"
 [[test.validator.account]]
 address = "7D8MNQMdCEDrVebrMPmnMQ5Z54WqceWsu89FDEqrWL73"
 filename = "tests/fixtures/pyth_col_account.json"
+
+# Mock PriceUpdateV2 accounts for oracle dual-source tests
+[[test.validator.account]]
+address = "5WQs7ZbQjbDLfEbPeUFKLq3oLh1KkKbvaLKJ2RUUqDXa"
+filename = "tests/fixtures/pyth_xmr_account_v2.json"
+
+[[test.validator.account]]
+address = "7yyaeuJ1GGtVBLT2z2xub5ZWYKaNhF28mj1RdV4VDFVk"
+filename = "tests/fixtures/pyth_jitosol_account.json"
+
+[[test.validator.account]]
+address = "H6ARHf6YXhGYeQfUzQNGk6rDNnLBQKrenN712K4AQJEG"
+filename = "tests/fixtures/pyth_sol_account.json"
+
+# Mock JitoSOL stake pool account for exchange rate
+[[test.validator.account]]
+address = "Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb"
+filename = "tests/fixtures/jitosol_stake_pool.json"
