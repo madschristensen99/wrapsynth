@@ -1,0 +1,21 @@
+{
+  "name": "wrapsynth-lp-server",
+  "version": "1.0.0",
+  "description": "JS LP node for WrapSynth — auto-processes mints and burns",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "process-burn": "node processPastBurns.js"
+  },
+  "dependencies": {
+    "@noble/ed25519": "^2.1.0",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.0",
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,6 +1,6 @@
 // Main Application Entry Point
 // Phantom Agent - Deterministic Ephemeral Browser Wallet for XMR ⇄ wsXMR Swaps
-console.log('🔄 WrapSynth Frontend v2.0 - CAPACITY FIX LOADED');
+console.log('🔄 WrapSynth Frontend v2.1 - DYNAMIC FEE & RECEIVE FIX');
 
 import { 
     initializeClients, 
@@ -270,7 +270,6 @@ async function init() {
     } catch (error) {
         console.error('Error initializing clients:', error);
         showError('Initialization Error', error.message);
-        return;
     }
     
     // Setup event handlers
@@ -347,11 +346,15 @@ function setupEventHandlers() {
     elements.startMint.addEventListener('click', handleStartMint);
     elements.cancelMint.addEventListener('click', handleCancelMint);
     elements.mintVaultSelect.addEventListener('change', () => handleVaultSelect(true));
-    elements.mintAmount.addEventListener('input', updateMintCapacityDisplay);
-    
+    elements.mintAmount.addEventListener('input', () => {
+        updateMintCapacityDisplay();
+        updateMintReceiveAmount();
+    });
+
     // Burn flow
     elements.startBurn.addEventListener('click', handleStartBurn);
     elements.burnVaultSelect.addEventListener('change', () => handleVaultSelect(false));
+    elements.burnAmount.addEventListener('input', updateBurnReceiveAmount);
     
     // Co-LP handlers
     const coLpVaultSelect = document.getElementById('co-lp-vault-select');
@@ -1829,6 +1832,8 @@ async function loadVaults() {
                         maxMintCapacityXmr,
                         xmrPrice,
                         collPrice,
+                        mintFeeBps: Number(vaultData.mintFeeBps || 0),
+                        burnRewardBps: Number(vaultData.burnRewardBps || 0),
                     };
                     console.log('Adding active vault:', vault);
                     activeVaults.push(vault);
@@ -1875,6 +1880,16 @@ async function loadVaults() {
         cachedVaults = activeVaults;
         populateVaults(activeVaults);
         updateMintCapacityDisplay();
+
+        // Update fee/rate display from cached vault data for initially selected vault
+        if (activeVaults.length > 0) {
+            const firstVault = activeVaults[0];
+            updateSwapRateDisplay(true, firstVault.mintFeeBps, firstVault.burnRewardBps);
+            updateSwapRateDisplay(false, firstVault.mintFeeBps, firstVault.burnRewardBps);
+            // If user already typed an amount before vaults loaded, update receive box now
+            updateMintReceiveAmount();
+            updateBurnReceiveAmount();
+        }
         
     } catch (error) {
         console.error('Error loading vaults:', error);
@@ -1895,6 +1910,7 @@ function updateMintCapacityDisplay() {
 
     if (!vaultAddress) {
         capacityEl.classList.add('hidden');
+        if (elements.startMint) elements.startMint.disabled = true;
         return;
     }
 
@@ -1906,15 +1922,28 @@ function updateMintCapacityDisplay() {
 
     const maxCap = vault.maxMintCapacityXmr;
     const maxCapFormatted = maxCap < 0.0001 ? maxCap.toExponential(2) : maxCap.toFixed(4).replace(/\.?0+$/, '');
+    const pctUsed = maxCap > 0 ? ((amount / maxCap) * 100) : 0;
 
     let html = `Max capacity: <strong>${maxCapFormatted} XMR</strong>`;
 
     if (!isNaN(amount) && amount > 0) {
         if (amount > maxCap) {
-            html += ` <span style="color: var(--error-color);">(exceeds capacity)</span>`;
+            html += ` <span style="color: var(--red);">(exceeds capacity — ${pctUsed.toFixed(1)}%)</span>`;
+            if (elements.startMint) {
+                elements.startMint.disabled = true;
+                elements.startMint.textContent = 'Exceeds LP capacity';
+            }
         } else {
-            const pct = maxCap > 0 ? ((amount / maxCap) * 100).toFixed(1) : '0';
-            html += ` <span style="color: var(--text-muted);">(${pct}% of LP's capacity)</span>`;
+            html += ` <span style="color: var(--muted);">(${pctUsed.toFixed(1)}% of LP's capacity)</span>`;
+            if (elements.startMint) {
+                elements.startMint.disabled = false;
+                elements.startMint.textContent = 'Start Mint';
+            }
+        }
+    } else {
+        if (elements.startMint) {
+            elements.startMint.disabled = true;
+            elements.startMint.textContent = 'Enter an amount';
         }
     }
 
@@ -1923,20 +1952,103 @@ function updateMintCapacityDisplay() {
 }
 
 /**
+ * Update fee label and rate text based on vault fees
+ */
+function updateSwapRateDisplay(isMint, mintFeeBps, burnRewardBps) {
+    const feePct = (isMint ? mintFeeBps : burnRewardBps) / 100;
+    const rate = 1 - (feePct / 100);
+    const rateFormatted = rate.toFixed(3);
+    const feeLabel = isMint ? 'Protocol fee' : 'Redemption fee';
+    console.log(`[RateDisplay] isMint=${isMint} feeBps=${isMint ? mintFeeBps : burnRewardBps} feePct=${feePct}% rate=${rateFormatted}`);
+
+    if (isMint) {
+        const rateEl = document.getElementById('mint-rate');
+        const feeLabelEl = document.getElementById('mint-fee-label');
+        const feeEl = document.getElementById('mint-fee');
+        console.log(`[RateDisplay] mint elements: rateEl=${!!rateEl} feeLabelEl=${!!feeLabelEl} feeEl=${!!feeEl}`);
+        if (rateEl) rateEl.textContent = `1 XMR = ${rateFormatted} wsXMR`;
+        if (feeLabelEl) feeLabelEl.textContent = `${feeLabel} (${feePct}%)`;
+        if (feeEl) feeEl.textContent = feePct > 0 ? `${feePct}%` : '—';
+    } else {
+        const rateEl = document.getElementById('burn-rate');
+        const feeLabelEl = document.getElementById('burn-fee-label');
+        const feeEl = document.getElementById('burn-fee');
+        console.log(`[RateDisplay] burn elements: rateEl=${!!rateEl} feeLabelEl=${!!feeLabelEl} feeEl=${!!feeEl}`);
+        if (rateEl) rateEl.textContent = `1 wsXMR = ${rateFormatted} XMR`;
+        if (feeLabelEl) feeLabelEl.textContent = `${feeLabel} (${feePct}%)`;
+        if (feeEl) feeEl.textContent = feePct > 0 ? `${feePct}%` : '—';
+    }
+}
+
+/**
+ * Calculate and display mint receive amount based on input and vault fee
+ */
+function updateMintReceiveAmount() {
+    try {
+        const amountStr = document.getElementById('mint-amount')?.value || '';
+        const vaultSelect = document.getElementById('mint-vault-select');
+        const receiveEl = document.getElementById('mint-receive');
+        if (!receiveEl) return;
+
+        const amount = parseFloat(amountStr);
+        if (isNaN(amount) || amount <= 0) {
+            receiveEl.value = '';
+            return;
+        }
+
+        const vaultAddress = vaultSelect?.value;
+        const vault = vaultAddress ? cachedVaults.find(v => v.address.toLowerCase() === vaultAddress.toLowerCase()) : null;
+        const feeBps = vault ? (vault.mintFeeBps || 0) : 0;
+        const feePct = feeBps / 100;
+        const receiveAmount = amount * (1 - feePct / 100);
+        receiveEl.value = receiveAmount.toFixed(6);
+    } catch (err) {
+        console.error('[Receive] Mint receive update failed:', err);
+    }
+}
+
+/**
+ * Calculate and display burn receive amount based on input and vault fee
+ */
+function updateBurnReceiveAmount() {
+    try {
+        const amountStr = document.getElementById('burn-amount')?.value || '';
+        const vaultSelect = document.getElementById('burn-vault-select');
+        const receiveEl = document.getElementById('burn-receive');
+        if (!receiveEl) return;
+
+        const amount = parseFloat(amountStr);
+        if (isNaN(amount) || amount <= 0) {
+            receiveEl.value = '';
+            return;
+        }
+
+        const vaultAddress = vaultSelect?.value;
+        const vault = vaultAddress ? cachedVaults.find(v => v.address.toLowerCase() === vaultAddress.toLowerCase()) : null;
+        const feeBps = vault ? (vault.burnRewardBps || 0) : 0;
+        const feePct = feeBps / 100;
+        const receiveAmount = amount * (1 - feePct / 100);
+        receiveEl.value = receiveAmount.toFixed(6);
+    } catch (err) {
+        console.error('[Receive] Burn receive update failed:', err);
+    }
+}
+
+/**
  * Handle vault selection
  */
 async function handleVaultSelect(isMint) {
     const elements = getElements();
-    const vaultAddress = isMint ? 
-        elements.mintVaultSelect.value : 
+    const vaultAddress = isMint ?
+        elements.mintVaultSelect.value :
         elements.burnVaultSelect.value;
-    
+
     if (!vaultAddress) return;
-    
+
     try {
         // Fetch vault info
         const vaultData = await readHub('getVault', [vaultAddress]);
-        
+
         const vaultInfo = {
             totalXmrLocked: vaultData[0],
             totalCollateral: vaultData[1],
@@ -1946,13 +2058,21 @@ async function handleVaultSelect(isMint) {
             isActive: vaultData[5],
             lpVault: vaultAddress
         };
-        
+
         showVaultInfo(vaultInfo, isMint);
+
+        // Update fee labels, rate text, and receive amount
+        const mintFeeBps = Number(vaultData.mintFeeBps || vaultData[8] || 0);
+        const burnRewardBps = Number(vaultData.burnRewardBps || vaultData[9] || 0);
+        updateSwapRateDisplay(isMint, mintFeeBps, burnRewardBps);
 
         if (isMint) {
             updateMintCapacityDisplay();
+            updateMintReceiveAmount();
+        } else {
+            updateBurnReceiveAmount();
         }
-        
+
     } catch (error) {
         console.warn('Could not fetch vault info (contracts may not be deployed):', error.message);
         // Don't show error modal for this, just log it
@@ -1972,10 +2092,18 @@ async function handleStartMint() {
     }
     
     const amount = parseFloat(elements.mintAmount.value);
-    
+    const vaultAddress = elements.mintVaultSelect.value;
+
     // Validate inputs
     if (!amount || amount <= 0) {
         showError('Invalid Input', 'Please enter a valid amount');
+        return;
+    }
+
+    // Validate against LP capacity
+    const vault = cachedVaults.find(v => v.address.toLowerCase() === vaultAddress.toLowerCase());
+    if (vault && vault.maxMintCapacityXmr !== undefined && amount > vault.maxMintCapacityXmr) {
+        showError('Capacity Exceeded', `This LP can only mint up to ${vault.maxMintCapacityXmr.toFixed(6)} XMR. You entered ${amount.toFixed(6)} XMR.`);
         return;
     }
     
