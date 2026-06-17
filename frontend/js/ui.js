@@ -126,6 +126,7 @@ export function initUI() {
     elements.burnVaultSelect = document.getElementById('burn-vault-select');
     elements.burnVaultInfo = document.getElementById('burn-vault-info');
     elements.burnUserBalance = document.getElementById('burn-user-balance');
+    console.log('[initUI] burnUserBalance element:', elements.burnUserBalance ? 'found' : 'NOT FOUND');
     elements.startBurn = document.getElementById('start-burn');
     elements.burnProgress = document.getElementById('burn-progress');
     
@@ -159,7 +160,7 @@ export function showWalletConnected(address, balance) {
     elements.connectWallet.classList.add('hidden');
     elements.connectedInfo.classList.remove('hidden');
     elements.userAddress.textContent = formatAddress(address);
-    elements.userBalance.textContent = `${formatBalance(balance, DECIMALS.wsXMR)} wsXMR`;
+    updateBalance(balance);
     // Enable action buttons
     elements.startMint.disabled = false;
     elements.startBurn.disabled = false;
@@ -195,8 +196,17 @@ export function showWalletDisconnected() {
  * Update user balance display
  */
 export function updateBalance(balance) {
-    elements.userBalance.textContent = `${formatBalance(balance, DECIMALS.wsXMR)} wsXMR`;
-    elements.burnUserBalance.textContent = formatBalance(balance, DECIMALS.wsXMR);
+    const balText = formatBalance(balance, DECIMALS.wsXMR);
+    elements.userBalance.textContent = `${balText} wsXMR`;
+    if (elements.burnUserBalance) {
+        elements.burnUserBalance.textContent = balText;
+    }
+    // Fallback: query DOM directly in case the cached element ref is stale
+    const burnBal = document.getElementById('burn-user-balance');
+    if (burnBal) {
+        burnBal.textContent = balText;
+    }
+    console.log('[updateBalance] set to:', balText);
 }
 
 /**
@@ -483,7 +493,7 @@ export function populateVaults(vaults) {
                 
                 const pieChart = makePieChart(usedPct, pendingPct, bufferPct, coLpPct, freePct);
                 
-                const crColor = cr >= 200 ? 'var(--green)' : cr >= 150 ? 'var(--amber)' : 'var(--red)';
+                const crColor = cr >= 200 ? 'var(--teal)' : cr >= 150 ? 'var(--amber)' : 'var(--red)';
                 
                 return `<div class="vc" onclick="window.location.href='lp-vault.html?address=${v.address}'">
                     <div class="vid">${shortAddr}</div>

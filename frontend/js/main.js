@@ -1834,6 +1834,8 @@ async function loadVaults() {
                         collPrice,
                         mintFeeBps: Number(vaultData.mintFeeBps || 0),
                         burnRewardBps: Number(vaultData.burnRewardBps || 0),
+                        mintTimeoutBlocks: Number(vaultData.mintTimeoutBlocks || 0),
+                        burnTimeoutBlocks: Number(vaultData.burnTimeoutBlocks || 0),
                     };
                     console.log('Adding active vault:', vault);
                     activeVaults.push(vault);
@@ -1956,12 +1958,12 @@ function updateMintCapacityDisplay() {
  */
 function updateSwapRateDisplay(isMint, mintFeeBps, burnRewardBps) {
     const feePct = (isMint ? mintFeeBps : burnRewardBps) / 100;
-    const rate = 1 - (feePct / 100);
-    const rateFormatted = rate.toFixed(3);
-    const feeLabel = isMint ? 'Protocol fee' : 'Redemption fee';
-    console.log(`[RateDisplay] isMint=${isMint} feeBps=${isMint ? mintFeeBps : burnRewardBps} feePct=${feePct}% rate=${rateFormatted}`);
+    const feeLabel = isMint ? 'LP mint fee' : 'Burn reward';
+    console.log(`[RateDisplay] isMint=${isMint} feeBps=${isMint ? mintFeeBps : burnRewardBps} feePct=${feePct}%`);
 
     if (isMint) {
+        const rate = 1 - (feePct / 100);
+        const rateFormatted = rate.toFixed(3);
         const rateEl = document.getElementById('mint-rate');
         const feeLabelEl = document.getElementById('mint-fee-label');
         const feeEl = document.getElementById('mint-fee');
@@ -1974,7 +1976,7 @@ function updateSwapRateDisplay(isMint, mintFeeBps, burnRewardBps) {
         const feeLabelEl = document.getElementById('burn-fee-label');
         const feeEl = document.getElementById('burn-fee');
         console.log(`[RateDisplay] burn elements: rateEl=${!!rateEl} feeLabelEl=${!!feeLabelEl} feeEl=${!!feeEl}`);
-        if (rateEl) rateEl.textContent = `1 wsXMR = ${rateFormatted} XMR`;
+        if (rateEl) rateEl.textContent = '1 wsXMR = 1 XMR';
         if (feeLabelEl) feeLabelEl.textContent = `${feeLabel} (${feePct}%)`;
         if (feeEl) feeEl.textContent = feePct > 0 ? `${feePct}%` : '—';
     }
@@ -2013,7 +2015,6 @@ function updateMintReceiveAmount() {
 function updateBurnReceiveAmount() {
     try {
         const amountStr = document.getElementById('burn-amount')?.value || '';
-        const vaultSelect = document.getElementById('burn-vault-select');
         const receiveEl = document.getElementById('burn-receive');
         if (!receiveEl) return;
 
@@ -2023,14 +2024,65 @@ function updateBurnReceiveAmount() {
             return;
         }
 
-        const vaultAddress = vaultSelect?.value;
-        const vault = vaultAddress ? cachedVaults.find(v => v.address.toLowerCase() === vaultAddress.toLowerCase()) : null;
-        const feeBps = vault ? (vault.burnRewardBps || 0) : 0;
-        const feePct = feeBps / 100;
-        const receiveAmount = amount * (1 - feePct / 100);
-        receiveEl.value = receiveAmount.toFixed(6);
+        // Burn is 1:1 — user receives the same XMR amount they burn
+        receiveEl.value = amount.toFixed(6);
+
+        // Also update the sDAI reward display
+        updateBurnRewardDisplay();
     } catch (err) {
         console.error('[Receive] Burn receive update failed:', err);
+    }
+}
+
+/**
+ * Calculate and display burn reward in sDAI using on-chain calculateBurnCollateral
+ */
+async function updateBurnRewardDisplay() {
+    try {
+        const amountStr = document.getElementById('burn-amount')?.value || '';
+        const vaultSelect = document.getElementById('burn-vault-select');
+        const rewardEl = document.getElementById('burn-reward-sdai');
+        if (!rewardEl) return;
+
+        const amount = parseFloat(amountStr);
+        if (isNaN(amount) || amount <= 0) {
+            rewardEl.textContent = '—';
+            return;
+        }
+
+        const vaultAddress = vaultSelect?.value;
+        if (!vaultAddress) {
+            rewardEl.textContent = '—';
+            return;
+        }
+
+        const wsxmrAmount = BigInt(Math.round(amount * 1e8));
+        const { getPublicClient } = await import('./viemClient.js');
+        const publicClient = getPublicClient();
+
+        // Call calculateBurnCollateral to get exact on-chain rewardLock (sDAI shares)
+        const result = await publicClient.readContract({
+            address: CONTRACTS.hub,
+            abi: ['function calculateBurnCollateral(address lpVault, uint256 wsxmrAmount) external view returns (uint256 baseLock, uint256 rewardLock)'],
+            functionName: 'calculateBurnCollateral',
+            args: [vaultAddress, wsxmrAmount]
+        });
+
+        // Convert sDAI shares to DAI assets for display
+        const sDAIAbi = ['function convertToAssets(uint256 shares) external view returns (uint256)'];
+        const assetsWei = await publicClient.readContract({
+            address: CONTRACTS.sDAI,
+            abi: sDAIAbi,
+            functionName: 'convertToAssets',
+            args: [result[1]] // rewardLock
+        });
+
+        const rewardDai = Number(assetsWei) / 1e18;
+        rewardEl.textContent = rewardDai > 0 ? `${rewardDai.toFixed(4)} sDAI` : '—';
+    } catch (err) {
+        console.warn('[Reward] Burn reward display failed:', err.message);
+        const rewardEl = document.getElementById('burn-reward-sdai');
+        if (rewardEl) rewardEl.textContent = '—';
     }
 }
 
@@ -2066,11 +2118,28 @@ async function handleVaultSelect(isMint) {
         const burnRewardBps = Number(vaultData.burnRewardBps || vaultData[9] || 0);
         updateSwapRateDisplay(isMint, mintFeeBps, burnRewardBps);
 
+        // Update LP timeout window display (Gnosis ≈ 5s block time)
+        const burnTimeoutBlocks = Number(vaultData.burnTimeoutBlocks || vaultData[17] || 0);
+        const mintTimeoutBlocks = Number(vaultData.mintTimeoutBlocks || vaultData[16] || 0);
+        const timeoutBlocks = isMint ? mintTimeoutBlocks : burnTimeoutBlocks;
+        if (timeoutBlocks > 0) {
+            const timeoutHours = (timeoutBlocks * 5) / 3600;
+            const timeoutEl = document.getElementById(isMint ? 'mint-timeout' : 'burn-timeout');
+            if (timeoutEl) {
+                if (timeoutHours >= 1) {
+                    timeoutEl.textContent = `${timeoutHours.toFixed(1)}h · slash protected`;
+                } else {
+                    timeoutEl.textContent = `${Math.round(timeoutHours * 60)}m · slash protected`;
+                }
+            }
+        }
+
         if (isMint) {
             updateMintCapacityDisplay();
             updateMintReceiveAmount();
         } else {
             updateBurnReceiveAmount();
+            updateBurnRewardDisplay();
         }
 
     } catch (error) {

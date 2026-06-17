@@ -235,4 +235,11 @@ nav{display:flex;align-items:center;justify-content:space-between;height:66px;
 /* Prevent flash of wrong tab on page load */
 body:not(.js-loaded) .panel{display:none!important}
 
+/* Percentage buttons */
+.pct-row{display:flex;gap:6px;margin:-4px 0 8px;align-items:center}
+.percentage-btn{font-family:'Space Grotesk';font-weight:600;font-size:11px;padding:4px 10px;background:rgba(255,106,26,.08);border:1px solid rgba(255,106,26,.25);border-radius:6px;color:var(--xmr);cursor:pointer;transition:all .15s}
+.percentage-btn:hover{background:rgba(255,106,26,.18);border-color:rgba(255,106,26,.45)}
+.percentage-btn:active{background:rgba(255,106,26,.28)}
+#burn-percentage-feedback{font-size:11px;color:var(--teal);margin-left:auto;opacity:0;transition:opacity .2s;font-family:'Space Grotesk';font-weight:600}
+
 @media(prefers-reduced-motion:reduce){.gdot{animation:none}}
