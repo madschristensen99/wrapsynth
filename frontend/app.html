@@ -135,7 +135,7 @@ if ('serviceWorker' in navigator) {
           <span class="asset"><img src="./monero-symbol-1280.png" alt="XMR" style="width:20px;height:20px;margin-right:6px">XMR</span>
         </div>
         <div class="swap-mid"><div class="swap-ic">↓</div></div>
-        <div class="label-row"><span>You receive</span><span id="mint-rate">1 XMR = 0.997 wsXMR</span></div>
+        <div class="label-row"><span>You receive</span><span id="mint-rate">Select a vault</span></div>
         <div class="field">
           <input id="mint-receive" placeholder="0.0" readonly />
           <span class="asset"><img src="./wrapsynth-symbol.png" alt="wsXMR" style="width:20px;height:20px;margin-right:6px">wsXMR</span>
@@ -148,9 +148,11 @@ if ('serviceWorker' in navigator) {
             </select>
           </div>
           <div class="r" id="mint-vault-info" style="display:none"><span>Vault capacity</span><b id="mint-capacity">—</b></div>
-          <div class="r"><span>Protocol fee (0.3%)</span><b id="mint-fee">—</b></div>
+          <div class="r"><span id="mint-fee-label">Protocol fee</span><b id="mint-fee">—</b></div>
           <div class="r"><span>Backing collateral</span><b>sDAI · 150%</b></div>
         </div>
+
+        <div id="mint-capacity-info" class="hidden" style="margin-top:8px;font-size:12.5px;color:var(--muted);text-align:center"></div>
 
         <button class="cta" id="start-mint" disabled>Enter an amount</button>
 
@@ -181,7 +183,7 @@ if ('serviceWorker' in navigator) {
           <span class="asset"><img src="./wrapsynth-symbol.png" alt="wsXMR" style="width:20px;height:20px;margin-right:6px">wsXMR</span>
         </div>
         <div class="swap-mid"><div class="swap-ic">↓</div></div>
-        <div class="label-row"><span>You receive</span><span id="burn-rate">1 wsXMR = 0.997 XMR</span></div>
+        <div class="label-row"><span>You receive</span><span id="burn-rate">Select a vault</span></div>
         <div class="field">
           <input id="burn-receive" placeholder="0.0" readonly />
           <span class="asset"><img src="./monero-symbol-1280.png" alt="XMR" style="width:20px;height:20px;margin-right:6px">XMR</span>
@@ -197,7 +199,7 @@ if ('serviceWorker' in navigator) {
             </select>
           </div>
           <div class="r" id="burn-vault-info" style="display:none"><span>Vault capacity</span><b id="burn-capacity">—</b></div>
-          <div class="r"><span>Redemption fee (0.3%)</span><b id="burn-fee">—</b></div>
+          <div class="r"><span id="burn-fee-label">Redemption fee</span><b id="burn-fee">—</b></div>
           <div class="r"><span>LP timeout window</span><b>24h · slash protected</b></div>
         </div>
 
@@ -315,6 +317,6 @@ if ('serviceWorker' in navigator) {
   if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status);
   window.DEPLOYMENT = await res.json();
 </script>
-<script type="module" src="./js/main.js"></script>
+<script type="module" src="./js/main.js?v=2.1"></script>
 </body>
 </html>

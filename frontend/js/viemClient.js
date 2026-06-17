@@ -45,16 +45,13 @@ export async function initializeClients() {
         transport: getTransport()
     });
 
-    // Check if MetaMask is available
-    if (typeof window.ethereum === 'undefined') {
-        throw new Error('MetaMask is not installed');
+    // Create wallet client using MetaMask if available
+    if (typeof window.ethereum !== 'undefined') {
+        walletClient = createWalletClient({
+            chain: gnosis,
+            transport: custom(window.ethereum)
+        });
     }
-
-    // Create wallet client using MetaMask
-    walletClient = createWalletClient({
-        chain: gnosis,
-        transport: custom(window.ethereum)
-    });
 
     return { publicClient, walletClient };
 }
