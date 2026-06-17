@@ -128,7 +128,7 @@ export class BurnFlow {
                     for (let i = 0; i < 20; i++) {
                         await new Promise(r => setTimeout(r, 3000));
                         try {
-                            await readHub('getXmrPrice', []);
+                            await readHub('lastXmrPrice', []);
                             fresh = true;
                             break;
                         } catch (pollError) {

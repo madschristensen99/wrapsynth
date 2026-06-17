@@ -233,7 +233,7 @@ export const ABIS = {
         'function getVaultHealth(address lpAddress) external view returns (uint256 ratio)',
         'function getVaultDebt(address lpAddress) external view returns (uint256)',
         'function getVaultCount() external view returns (uint256)',
-        'function getVaultAtIndex(uint256 index) external view returns (address)',
+        'function vaultList(uint256 index) external view returns (address)',
         'function getPendingReturns(address user, address token) external view returns (uint256)',
         'function hasActiveVault(address lpAddress) external view returns (bool)',
 
@@ -297,10 +297,10 @@ export const ABIS = {
 
         // Oracle (RedStoneOracleFacet — user can update prices with RedStone data)
         'function updateOraclePrices(bytes[] calldata) external payable',
-        'function getXmrPrice() external view returns (uint256)',
-        'function getCollateralPrice() external view returns (uint256)',
-        'function getXmrPriceWithAge(uint256 maxAge) external view returns (uint256)',
-        'function getCollateralPriceWithAge(uint256 maxAge) external view returns (uint256)',
+        'function lastXmrPrice() external view returns (int192)',
+        'function lastCollateralPrice() external view returns (int192)',
+        'function globalDebtIndex() external view returns (uint256)',
+        'function xmrEmaPrice() external view returns (uint256)',
 
         // Events
         'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout)',

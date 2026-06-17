@@ -28,8 +28,8 @@ export class Dashboard {
     async loadGlobalStats() {
         try {
             const totalSupply = await readWsxmr('totalSupply', []);
-            const xmrPrice = await readHub('getXmrPrice', []);
-            const collateralPrice = await readHub('getCollateralPrice', []);
+            const xmrPrice = await readHub('lastXmrPrice', []);
+            const collateralPrice = await readHub('lastCollateralPrice', []);
             const vaultCount = await readHub('getVaultCount', []);
 
             this.globalStats = {
@@ -53,7 +53,7 @@ export class Dashboard {
             const vaults = [];
 
             for (let i = 0; i < Number(vaultCount); i++) {
-                const lpAddress = await readHub('getVaultAtIndex', [BigInt(i)]);
+                const lpAddress = await readHub('vaultList', [BigInt(i)]);
                 const vault = await readHub('getVault', [lpAddress]);
                 const health = await readHub('getVaultHealth', [lpAddress]);
                 const debt = await readHub('getVaultDebt', [lpAddress]);
@@ -129,8 +129,8 @@ export class Dashboard {
 
     async refreshPrices() {
         try {
-            const xmrPrice = await readHub('getXmrPrice', []);
-            const collateralPrice = await readHub('getCollateralPrice', []);
+            const xmrPrice = await readHub('lastXmrPrice', []);
+            const collateralPrice = await readHub('lastCollateralPrice', []);
 
             if (this.globalStats) {
                 this.globalStats.xmrPrice = formatUnits(xmrPrice, DECIMALS.USD);

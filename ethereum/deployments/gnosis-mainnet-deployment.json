@@ -1,22 +1,22 @@
 {
   "network": "Gnosis Chain Mainnet",
   "chainId": 100,
-  "deploymentDate": "2026-06-10",
-  "note": "v9: Fresh deployment with RedStone oracle integration, all contracts verified",
+  "deploymentDate": "2026-06-17",
+  "note": "v10: Fresh deployment with RedStone oracle integration",
   "deployer": "0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB",
   "contracts": {
-    "wsXMR": "0xc7b46bdc1e71921f996ed38cbd11361a3fc3a80b",
-    "wsXmrHub": "0xf10e2da17c775be578501778bb6aee44d272b4bb",
-    "liquidityRouter": "0xebf4556c014136b4df05d60b05b7e4179810f10b",
-    "swapHelper": "0x0d7dbfc7b7de445af38bd38b694ec54ba7580825",
-    "uniswapV3Pool": "0x97efb1a521Dd3dc86C03FBe2Ba5f2606fFB7A04a",
+    "wsXMR": "0x1fab9db7aeb79a71278b1348acdf55ef55292010",
+    "wsXmrHub": "0xbf24788234512bb0aa10451f6efa88ca0e31d88e",
+    "liquidityRouter": "0x69ab32e9df71333fc3e6c526ef8cb9ea4cfa9a63",
+    "swapHelper": "0x4e18904a3be0703790ebb08b3385af0bc1ed5e07",
+    "uniswapV3Pool": "0x52063599d6f53e437f4dd07382b0183748057870",
     "facets": {
-      "RedStoneOracleFacet": "0xf5778bdff00b2f2ece4c0b6aa48cbbe797bbf84f",
-      "VaultFacet": "0x3d02b09fe4cefb8de83baf218fbefb5e497bbbc2",
-      "MintFacet": "0xd4660bb53cd1468d085c9a799ea7d63da2412629",
-      "BurnFacet": "0x848ce721ae0c5b8e4170c96a96a4a0682fa3bebc",
-      "LiquidationFacet": "0xd89adaa6764aa020a2c13f279ce241f374a7f2a4",
-      "YieldFacet": "0xa4b52f35b172630929640caef7de8e4aa82dcf87"
+      "RedStoneOracleFacet": "0xa533cb055527ff3f8cfc3f3f2902fd0d208c20a2",
+      "VaultFacet": "0xcf8d4a0f5cf7abe725ccc2f765fc1c21798a0b99",
+      "MintFacet": "0x8b96fce0f6a8d1bc67829310d9513f9968b51041",
+      "BurnFacet": "0x0fff27bf5645a9948a02aac65a170782baa45c78",
+      "LiquidationFacet": "0x7c3f2773a5a280604689a621b8bbaf2d92f77d96",
+      "YieldFacet": "0x2c73826c36895f7fff9839fe58d3ab164a206721"
     }
   },
   "externalContracts": {
@@ -25,7 +25,7 @@
     "UniswapV3PositionManager": "0xAE8fbE656a77519a7490054274910129c9244FA3"
   },
   "verification": {
-    "status": "All contracts verified on Gnosisscan",
+    "status": "All contracts submitted for verification on Gnosisscan",
     "explorer": "https://gnosisscan.io"
   },
   "nextSteps": [
