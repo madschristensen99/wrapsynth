@@ -50,7 +50,7 @@ if ('serviceWorker' in navigator) {
     });
 }
 </script>
-<link rel="stylesheet" href="app-styles.css">
+<link rel="stylesheet" href="app-styles.css?v=2.2">
 </head>
 <body class="app-page">
 <!-- Animated Background -->
@@ -148,7 +148,8 @@ if ('serviceWorker' in navigator) {
             </select>
           </div>
           <div class="r" id="mint-vault-info" style="display:none"><span>Vault capacity</span><b id="mint-capacity">—</b></div>
-          <div class="r"><span id="mint-fee-label">Protocol fee</span><b id="mint-fee">—</b></div>
+          <div class="r"><span id="mint-fee-label">LP mint fee</span><b id="mint-fee">—</b></div>
+          <div class="r"><span>LP timeout window</span><b id="mint-timeout">—</b></div>
           <div class="r"><span>Backing collateral</span><b>sDAI · 150%</b></div>
         </div>
 
@@ -182,6 +183,12 @@ if ('serviceWorker' in navigator) {
           <input id="burn-amount" inputmode="decimal" placeholder="0.0" />
           <span class="asset"><img src="./wrapsynth-symbol.png" alt="wsXMR" style="width:20px;height:20px;margin-right:6px">wsXMR</span>
         </div>
+        <div class="pct-row">
+          <button class="percentage-btn" data-percentage="25">25%</button>
+          <button class="percentage-btn" data-percentage="50">50%</button>
+          <button class="percentage-btn" data-percentage="100">MAX</button>
+          <span id="burn-percentage-feedback"></span>
+        </div>
         <div class="swap-mid"><div class="swap-ic">↓</div></div>
         <div class="label-row"><span>You receive</span><span id="burn-rate">Select a vault</span></div>
         <div class="field">
@@ -199,8 +206,9 @@ if ('serviceWorker' in navigator) {
             </select>
           </div>
           <div class="r" id="burn-vault-info" style="display:none"><span>Vault capacity</span><b id="burn-capacity">—</b></div>
-          <div class="r"><span id="burn-fee-label">Redemption fee</span><b id="burn-fee">—</b></div>
-          <div class="r"><span>LP timeout window</span><b>24h · slash protected</b></div>
+          <div class="r"><span id="burn-fee-label">Burn reward</span><b id="burn-fee">—</b></div>
+          <div class="r"><span>Burn reward (sDAI)</span><b id="burn-reward-sdai">—</b></div>
+          <div class="r"><span>LP timeout window</span><b id="burn-timeout">—</b></div>
         </div>
 
         <button class="cta" id="start-burn" disabled>Enter an amount</button>
@@ -317,6 +325,6 @@ if ('serviceWorker' in navigator) {
   if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status);
   window.DEPLOYMENT = await res.json();
 </script>
-<script type="module" src="./js/main.js?v=2.1"></script>
+<script type="module" src="./js/main.js?v=2.2"></script>
 </body>
 </html>
