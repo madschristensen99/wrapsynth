@@ -3,6 +3,7 @@
 
 import crypto from 'crypto';
 import * as ethers from 'ethers';
+import { computeSecretHash } from './commitment.js';
 import * as moneroWallet from './moneroWallet.js';
 import * as moneroCrypto from './moneroCrypto.js';
 
@@ -40,37 +41,6 @@ function normalizeHex32(val) {
   let h = val.toString().replace(/^0x/, '');
   if (h.length !== 64) return null;
   return '0x' + h;
-}
-
-/**
- * Compute secretHash from a secret scalar.
- * Matches WrapSynth on-chain verifier exactly:
- *   secretHash = keccak256(compress(secret · G))
- * where:
- *   - secret is read as a 32-byte little-endian scalar (like dalek's from_bytes_mod_order)
- *   - G is the Ed25519 basepoint
- *   - compress yields a 32-byte CompressedEdwardsY (little-endian)
- *   - keccak256 hashes those 32 bytes directly (NOT the EVM 64-byte affine pair)
- */
-async function computeSecretHash(secretBytes) {
-  const ed = await import('@noble/ed25519');
-  const cryptoModule = await import('crypto');
-
-  // Set up SHA-512 sync for @noble/ed25519
-  if (!ed.etc.sha512Sync) {
-    ed.etc.sha512Sync = (...m) => cryptoModule.default.createHash('sha512').update(Buffer.concat(m)).digest();
-  }
-
-  // Read secret as little-endian to match dalek's Scalar::from_bytes_mod_order
-  const secretBigInt = BigInt('0x' + Buffer.from(secretBytes).reverse().toString('hex'));
-  const ED25519_L = 2n ** 252n + 27742317777372353535851937790883648493n;
-  const secretReduced = secretBigInt % ED25519_L;
-
-  const publicKeyPoint = ed.ExtendedPoint.BASE.multiply(secretReduced);
-  const publicKeyBytes = publicKeyPoint.toRawBytes(); // 32-byte compressed point
-
-  const secretHash = ethers.utils.keccak256(publicKeyBytes); // hash the 32 bytes directly
-  return { secretHash };
 }
 
 /**

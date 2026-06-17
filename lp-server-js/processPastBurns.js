@@ -3,7 +3,7 @@ import * as ethers from 'ethers';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import crypto from 'crypto';
+import { computeSecretHash } from './commitment.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,32 +43,6 @@ const lpPublicViewKey = process.env.BURN_LP_PUBLIC_VIEW_KEY;
 if (!lpPublicSpendKey || !lpPublicViewKey) {
   console.error('Error: BURN_LP_PUBLIC_SPEND_KEY and BURN_LP_PUBLIC_VIEW_KEY env vars are required');
   process.exit(1);
-}
-
-/**
- * Compute secretHash from a secret scalar.
- * Matches WrapSynth on-chain verifier exactly:
- *   secretHash = keccak256(compress(secret · G))
- * where secret is read as a 32-byte little-endian scalar.
- */
-async function computeSecretHash(secretBytes) {
-  const ed = await import('@noble/ed25519');
-
-  // Set up SHA-512 sync for @noble/ed25519
-  if (!ed.etc.sha512Sync) {
-    ed.etc.sha512Sync = (...m) => crypto.createHash('sha512').update(Buffer.concat(m)).digest();
-  }
-
-  // Read secret as little-endian to match dalek's Scalar::from_bytes_mod_order
-  const secretBigInt = BigInt('0x' + Buffer.from(secretBytes).reverse().toString('hex'));
-  const ED25519_L = 2n ** 252n + 27742317777372353535851937790883648493n;
-  const secretReduced = secretBigInt % ED25519_L;
-
-  const publicKeyPoint = ed.ExtendedPoint.BASE.multiply(secretReduced);
-  const publicKeyBytes = publicKeyPoint.toRawBytes(); // 32-byte compressed point
-
-  const secretHash = ethers.utils.keccak256(publicKeyBytes); // hash the 32 bytes directly
-  return { secretHash, secret: '0x' + Buffer.from(secretBytes).toString('hex') };
 }
 
 (async () => {
