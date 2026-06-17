@@ -12,7 +12,7 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',system-ui,sans-ser
 .mono{font-family:'JetBrains Mono',monospace}
 
 /* ambient background */
-#gl{position:fixed;inset:0;width:100%;height:100%;z-index:0;opacity:.55}
+#gl{position:fixed;inset:0;width:100%;height:100%;z-index:0;opacity:.55;pointer-events:none;touch-action:none}
 .scrim{position:fixed;inset:0;z-index:1;pointer-events:none;
   background:radial-gradient(110% 70% at 50% -10%,transparent 50%,rgba(10,10,11,.7) 100%)}
 .shell{position:relative;z-index:2}
@@ -46,7 +46,7 @@ nav{display:flex;align-items:center;justify-content:space-between;height:66px;
 .wallet-balance{font-size:11px;color:var(--muted)}
 
 /* Banner */
-.banner{padding:14px 20px;margin:16px 20px;border-radius:12px;border:1px solid var(--line)}
+.banner{padding:14px 20px;margin:16px auto;border-radius:12px;border:1px solid var(--line);max-width:486px}
 .banner-warning{background:rgba(245,185,69,.08);border-color:rgba(245,185,69,.25);color:var(--amber)}
 .banner.hidden{display:none}
 
