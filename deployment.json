@@ -1,22 +1,22 @@
 {
   "network": "Gnosis Chain Mainnet",
   "chainId": 100,
-  "deploymentDate": "2026-06-11T19:20:00Z",
+  "deploymentDate": "2026-06-17T16:44:00Z",
   "rpcUrl": "https://rpc.gnosischain.com",
   "wsUrl": "wss://rpc.gnosischain.com/wss",
   "explorer": "https://gnosisscan.io",
   "contracts": {
-    "wsXMR": "0x30Aeb2A142744430fFD7D698D5C7C41769CE1279",
-    "wsXmrHub": "0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50",
-    "liquidityRouter": "0x6893f38e1DeEdCa95ce8995B01550921cEe353a1",
-    "swapHelper": "0xc9217D35b60Af1816bC7376804240D7DFEF569B2",
+    "wsXMR": "0x1fab9db7aeb79a71278b1348acdf55ef55292010",
+    "wsXmrHub": "0xbf24788234512bb0aa10451f6efa88ca0e31d88e",
+    "liquidityRouter": "0x69ab32e9df71333fc3e6c526ef8cb9ea4cfa9a63",
+    "swapHelper": "0x4e18904a3be0703790ebb08b3385af0bc1ed5e07",
     "facets": {
-      "RedStoneOracleFacet": "0xa04bB8E8670c95Ae3017b959dcC7FAdA73A003dc",
-      "VaultFacet": "0x81Ef0aF3Eb50Df7241eaC44364dD64A0B754E6cB",
-      "MintFacet": "0x4e53Ad9223CcBd8953b53223fEB2161338B34D7C",
-      "BurnFacet": "0x4F072A55CE4c3d3B5F247C67beF037d4Cc525dD7",
-      "LiquidationFacet": "0x6FA84E83694002aBfA6fc198F430A14f96FdaA54",
-      "YieldFacet": "0xA676e2dC47F6B2639F54094190783bcbA8080947"
+      "RedStoneOracleFacet": "0xa533cb055527ff3f8cfc3f3f2902fd0d208c20a2",
+      "VaultFacet": "0xcf8d4a0f5cf7abe725ccc2f765fc1c21798a0b99",
+      "MintFacet": "0x8b96fce0f6a8d1bc67829310d9513f9968b51041",
+      "BurnFacet": "0x0fff27bf5645a9948a02aac65a170782baa45c78",
+      "LiquidationFacet": "0x7c3f2773a5a280604689a621b8bbaf2d92f77d96",
+      "YieldFacet": "0x2c73826c36895f7fff9839fe58d3ab164a206721"
     }
   },
   "externalContracts": {
@@ -24,12 +24,12 @@
     "wxDAI": "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d",
     "UniswapV3Factory": "0xe32F7dD7e3f098D518ff19A22d5f028e076489B1",
     "UniswapV3PositionManager": "0xAE8fbE656a77519a7490054274910129c9244FA3",
-    "SwapHelper": "0xc9217D35b60Af1816bC7376804240D7DFEF569B2",
+    "SwapHelper": "0x4e18904a3be0703790ebb08b3385af0bc1ed5e07",
     "Ed25519Helper": "0xaECa36374039EAb9e267B5daa48bAb9Ab0e50F00",
     "PythOracle": "0x2880aB155794e7179c9eE2e38200202908C17B43"
   },
   "pool": {
-    "uniswapV3Pool": "0x3b3f640b137ed13c79d2d51c54329816a6fbd85d",
+    "uniswapV3Pool": "0x52063599d6f53e437f4dd07382b0183748057870",
     "feeTier": 3000
   },
   "urls": {
@@ -45,7 +45,7 @@
     "targetCollateralRatio": 180
   },
   "verification": {
-    "status": "verified",
+    "status": "pending",
     "verifiedContracts": []
   }
 }

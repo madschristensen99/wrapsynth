@@ -2,7 +2,7 @@
 
 **A trustless cross-chain ferry for Monero. wsXMR is live on Gnosis Chain, backed by overcollateralized LP vaults and Ed25519 atomic swap commitments.**
 
-🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/sDAI Pool on Gnosis](https://gnosisscan.io/address/0x3b3f640b137ed13c79d2d51c54329816a6fbd85d)**
+🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/sDAI Pool on Gnosis](https://gnosisscan.io/address/0x52063599d6f53e437f4dd07382b0183748057870)**
 
 WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Users swap XMR for wsXMR through atomic-swap mechanics enforced on-chain: LPs post sDAI collateral, mint/burn settlement is gated by Ed25519 secret reveals verified on-chain, and timeout-based slashing protects both sides. No custodian, no federation, no trusted intermediary — every swap settles peer-to-peer between a user and an LP vault.
 
@@ -21,22 +21,22 @@ WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Us
 
 | Contract | Address |
 |---|---|
-| wsXMR Token | [`0x30Aeb2A142744430fFD7D698D5C7C41769CE1279`](https://gnosisscan.io/address/0x30Aeb2A142744430fFD7D698D5C7C41769CE1279) |
-| wsXmrHub | [`0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50`](https://gnosisscan.io/address/0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50) |
-| Liquidity Router | [`0x6893f38e1DeEdCa95ce8995B01550921cEe353a1`](https://gnosisscan.io/address/0x6893f38e1DeEdCa95ce8995B01550921cEe353a1) |
-| wsXMR/sDAI UniV3 Pool | [`0x3b3f640b137ed13c79d2d51c54329816a6fbd85d`](https://gnosisscan.io/address/0x3b3f640b137ed13c79d2d51c54329816a6fbd85d) |
+| wsXMR Token | [`0x1fab9db7aeb79a71278b1348acdf55ef55292010`](https://gnosisscan.io/address/0x1fab9db7aeb79a71278b1348acdf55ef55292010) |
+| wsXmrHub | [`0xbf24788234512bb0aa10451f6efa88ca0e31d88e`](https://gnosisscan.io/address/0xbf24788234512bb0aa10451f6efa88ca0e31d88e) |
+| Liquidity Router | [`0x69ab32e9df71333fc3e6c526ef8cb9ea4cfa9a63`](https://gnosisscan.io/address/0x69ab32e9df71333fc3e6c526ef8cb9ea4cfa9a63) |
+| wsXMR/sDAI UniV3 Pool | [`0x52063599d6f53e437f4dd07382b0183748057870`](https://gnosisscan.io/address/0x52063599d6f53e437f4dd07382b0183748057870) |
 
 <details>
 <summary>Facet addresses</summary>
 
 | Facet | Address |
 |---|---|
-| RedStoneOracleFacet | [`0xa04bB8E8670c95Ae3017b959dcC7FAdA73A003dc`](https://gnosisscan.io/address/0xa04bB8E8670c95Ae3017b959dcC7FAdA73A003dc) |
-| VaultFacet | [`0x81Ef0aF3Eb50Df7241eaC44364dD64A0B754E6cB`](https://gnosisscan.io/address/0x81Ef0aF3Eb50Df7241eaC44364dD64A0B754E6cB) |
-| MintFacet | [`0x4e53Ad9223CcBd8953b53223fEB2161338B34D7C`](https://gnosisscan.io/address/0x4e53Ad9223CcBd8953b53223fEB2161338B34D7C) |
-| BurnFacet | [`0x4F072A55CE4c3d3B5F247C67beF037d4Cc525dD7`](https://gnosisscan.io/address/0x4F072A55CE4c3d3B5F247C67beF037d4Cc525dD7) |
-| LiquidationFacet | [`0x6FA84E83694002aBfA6fc198F430A14f96FdaA54`](https://gnosisscan.io/address/0x6FA84E83694002aBfA6fc198F430A14f96FdaA54) |
-| YieldFacet | [`0xA676e2dC47F6B2639F54094190783bcbA8080947`](https://gnosisscan.io/address/0xA676e2dC47F6B2639F54094190783bcbA8080947) |
+| RedStoneOracleFacet | [`0xa533cb055527ff3f8cfc3f3f2902fd0d208c20a2`](https://gnosisscan.io/address/0xa533cb055527ff3f8cfc3f3f2902fd0d208c20a2) |
+| VaultFacet | [`0xcf8d4a0f5cf7abe725ccc2f765fc1c21798a0b99`](https://gnosisscan.io/address/0xcf8d4a0f5cf7abe725ccc2f765fc1c21798a0b99) |
+| MintFacet | [`0x8b96fce0f6a8d1bc67829310d9513f9968b51041`](https://gnosisscan.io/address/0x8b96fce0f6a8d1bc67829310d9513f9968b51041) |
+| BurnFacet | [`0x0fff27bf5645a9948a02aac65a170782baa45c78`](https://gnosisscan.io/address/0x0fff27bf5645a9948a02aac65a170782baa45c78) |
+| LiquidationFacet | [`0x7c3f2773a5a280604689a621b8bbaf2d92f77d96`](https://gnosisscan.io/address/0x7c3f2773a5a280604689a621b8bbaf2d92f77d96) |
+| YieldFacet | [`0x2c73826c36895f7fff9839fe58d3ab164a206721`](https://gnosisscan.io/address/0x2c73826c36895f7fff9839fe58d3ab164a206721) |
 
 Full deployment manifest (external contracts, pool config, LP defaults): [`deployment.json`](./deployment.json)
 </details>
