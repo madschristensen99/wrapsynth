@@ -188,7 +188,7 @@ export class MintFlow {
         
         try {
             // Try to get price with 2 minute staleness tolerance
-            await readHub('getXmrPrice', []);
+            await readHub('lastXmrPrice', []);
             console.log('Oracle prices are fresh');
         } catch (error) {
             // Prices are stale - try to update them

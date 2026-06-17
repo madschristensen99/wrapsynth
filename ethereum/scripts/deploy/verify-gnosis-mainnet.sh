@@ -11,15 +11,16 @@ HUB="0xbf24788234512bb0aa10451f6efa88ca0e31d88e"
 ROUTER="0x69ab32e9df71333fc3e6c526ef8cb9ea4cfa9a63"
 ORACLE="0xa533cb055527ff3f8cfc3f3f2902fd0d208c20a2"
 VAULT="0xcf8d4a0f5cf7abe725ccc2f765fc1c21798a0b99"
-MINT="0x52c5C8E817dF71788DD6bDe69C748F5868f2250a"
-BURN="0x2CA8CFFC50320A2c13A9e02807Db291Cfb654604"
-LIQ="0xc9c9C664A5757bF6bb7A4fb2EC885Ff83541e596"
-YIELD="0x035B50d75458C309B750bb7b4a2778b761E142C3"
+MINT="0x8b96fce0f6a8d1bc67829310d9513f9968b51041"
+BURN="0x0fff27bf5645a9948a02aac65a170782baa45c78"
+LIQ="0x7c3f2773a5a280604689a621b8bbaf2d92f77d96"
+YIELD="0x2c73826c36895f7fff9839fe58d3ab164a206721"
+SWAP_HELPER="0x4e18904a3be0703790ebb08b3385af0bc1ed5e07"
 
 # ABI-encoded constructor args for (address,address) - wsXMR + zero verifier
-FACET_ARGS="0x000000000000000000000000f1afa7dff4f5fefba2c3c3d0e0e4badee26812250000000000000000000000000000000000000000000000000000000000000000"
+FACET_ARGS="0x0000000000000000000000001fab9db7aeb79a71278b1348acdf55ef552920100000000000000000000000000000000000000000000000000000000000000000"
 # ABI-encoded constructor args for (address,address,address,address,address) - router
-ROUTER_ARGS="0x000000000000000000000000c75a388ce5d04a3831733937e8caec6e23bc24c4000000000000000000000000ae8fbe656a77519a7490054274910129c9244fa3000000000000000000000000af204776c7245bf4147c2612bf6e5972ee483701000000000000000000000000f1afa7dff4f5fefba2c3c3d0e0e4badee2681225000000000000000000000000df8e9163944013782181d4f2e60f34e79971de64"
+ROUTER_ARGS="000000000000000000000000bf24788234512bb0aa10451f6efa88ca0e31d88e000000000000000000000000ae8fbe656a77519a7490054274910129c9244fa3000000000000000000000000af204776c7245bf4147c2612bf6e5972ee4837010000000000000000000000001fab9db7aeb79a71278b1348acdf55ef55292010000000000000000000000052063599d6f53e437f4dd07382b0183748057870"
 
 echo ""
 echo "1. Verifying wsXMR..."
@@ -31,7 +32,7 @@ forge verify-contract $HUB contracts/core/wsXmrHub.sol:wsXmrHub --constructor-ar
 
 echo ""
 echo "3. Verifying RedStoneOracleFacet..."
-forge verify-contract $ORACLE contracts/facets/RedStoneOracleFacet.sol:RedStoneOracleFacet --constructor-args $FACET_ARGS --chain gnosis --verifier etherscan --skip-is-verified-check || echo "OracleFacet done"
+forge verify-contract $ORACLE contracts/redstone/RedStoneOracleFacet.sol:RedStoneOracleFacet --constructor-args $FACET_ARGS --chain gnosis --verifier etherscan --skip-is-verified-check || echo "OracleFacet done"
 
 echo ""
 echo "4. Verifying VaultFacet..."
@@ -56,6 +57,10 @@ forge verify-contract $YIELD contracts/facets/YieldFacet.sol:YieldFacet --constr
 echo ""
 echo "9. Verifying wsXMRLiquidityRouter..."
 forge verify-contract $ROUTER contracts/router/wsXMRLiquidityRouter.sol:wsXMRLiquidityRouter --constructor-args $ROUTER_ARGS --chain gnosis --verifier etherscan --skip-is-verified-check || echo "Router done"
+
+echo ""
+echo "10. Verifying SwapHelper..."
+forge verify-contract $SWAP_HELPER contracts/test/SwapHelper.sol:SwapHelper --chain gnosis --verifier etherscan --skip-is-verified-check || echo "SwapHelper done"
 
 echo ""
 echo "================================"

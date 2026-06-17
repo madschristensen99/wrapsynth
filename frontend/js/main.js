@@ -1694,8 +1694,8 @@ async function loadVaults() {
         let globalDebtIndex = 1e18; // fallback (no scaling)
         try {
             // Try to get fresh prices first
-            const xmrPriceWei = await readHub('getXmrPrice');
-            const collPriceWei = await readHub('getCollateralPrice');
+            const xmrPriceWei = await readHub('lastXmrPrice');
+            const collPriceWei = await readHub('lastCollateralPrice');
             globalDebtIndex = await readHub('globalDebtIndex');
             xmrPrice = Number(xmrPriceWei) / 1e18;
             collPrice = Number(collPriceWei) / 1e18;

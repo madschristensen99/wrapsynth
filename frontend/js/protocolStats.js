@@ -72,7 +72,7 @@ async function fetchVaultAggregates() {
         const vaultCount = await readHub('getVaultCount');
         for (let i = 0n; i < vaultCount; i++) {
             try {
-                const addr = await readHub('getVaultAtIndex', [i]);
+                const addr = await readHub('vaultList', [i]);
                 if (addr) vaultAddresses.push(addr);
             } catch (e) {
                 break;
@@ -90,8 +90,8 @@ async function fetchVaultAggregates() {
     let xmrPrice = 150;
     let collateralPrice = 1.0;
     try {
-        const xmrPriceWei = await readHub('getXmrPrice');
-        const collPriceWei = await readHub('getCollateralPrice');
+        const xmrPriceWei = await readHub('lastXmrPrice');
+        const collPriceWei = await readHub('lastCollateralPrice');
         xmrPrice = Number(xmrPriceWei) / 1e18;
         collateralPrice = Number(collPriceWei) / 1e18;
     } catch (e) {
