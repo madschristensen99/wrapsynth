@@ -232,7 +232,13 @@ async function init() {
     
     // Initialize UI
     initUI();
-    
+
+    // Set Gecko Terminal pool link from config
+    const geckoLink = document.getElementById('gecko-terminal-link');
+    if (geckoLink && CONTRACTS.uniswapV3Pool) {
+        geckoLink.href = `https://www.geckoterminal.com/xdai/pools/${CONTRACTS.uniswapV3Pool}`;
+    }
+
     // Restore previously active tab IMMEDIATELY to prevent flash
     const savedTab = localStorage.getItem('wrapsynth-active-tab');
     console.log('[INIT] Restoring saved tab:', savedTab);

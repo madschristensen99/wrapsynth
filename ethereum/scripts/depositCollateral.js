@@ -2,7 +2,7 @@
 require('dotenv').config();
 const { ethers } = require('ethers');
 
-const HUB = '0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50';
+const HUB = '0xbf24788234512bb0aa10451f6efa88ca0e31d88e';
 const XDAI = '0xe91D153E0b41518A2Ce8Dd3D7944fA863463a97d';
 
 async function main() {
