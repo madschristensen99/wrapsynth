@@ -129,7 +129,9 @@ export const RAW_ABIS = {
                 { name: 'minBurnAmount', type: 'uint256' },
                 { name: 'active', type: 'bool' },
                 { name: 'deployedSDAIShares', type: 'uint256' },
-                { name: 'maxCoLPRangeBps', type: 'uint16' }
+                { name: 'maxCoLPRangeBps', type: 'uint16' },
+                { name: 'mintTimeoutBlocks', type: 'uint256' },
+                { name: 'burnTimeoutBlocks', type: 'uint256' }
             ],
             name: '',
             type: 'tuple'
@@ -205,6 +207,7 @@ export const ABIS = {
         'function getVaultPendingMints(address lpVault) external view returns (bytes32[])',
         'function calculateWsxmrAmount(uint256 xmrAmount) external pure returns (uint256)',
         'function calculateMintFee(address lpVault, uint256 wsxmrAmount) external view returns (uint256)',
+        'function calculateBurnCollateral(address lpVault, uint256 wsxmrAmount) external view returns (uint256 baseLock, uint256 rewardLock)',
 
         // Burn flow — 4-step: requestBurn → proposeHash → confirmMoneroLock → finalizeBurn
         'function requestBurn(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment) external returns (bytes32 requestId)',
