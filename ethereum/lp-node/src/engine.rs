@@ -5,8 +5,12 @@ use crate::monero::MoneroClient;
 use crate::oracle::OracleClient;
 use alloy::primitives::FixedBytes;
 use anyhow::{anyhow, Context, Result};
-use k256::elliptic_curve::sec1::ToEncodedPoint;
-use k256::SecretKey;
+use curve25519_dalek::{
+    constants::ED25519_BASEPOINT_POINT,
+    scalar::Scalar,
+    edwards::EdwardsPoint,
+};
+use sha3::{Digest, Keccak256};
 use rand::rngs::OsRng;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -185,22 +189,18 @@ impl SwapEngine {
             }
         }
 
-        // Generate a secure random secret
-        let secret_key = SecretKey::random(&mut OsRng);
-        let secret_bytes = secret_key.to_bytes();
+        // Generate a secure random Ed25519 secret and its commitment.
+        // This must match the Solana verifier's scheme exactly:
+        //   commitment = keccak256(compress(secret · G))
         let mut secret = [0u8; 32];
-        secret.copy_from_slice(&secret_bytes);
+        OsRng.fill_bytes(&mut secret);
 
-        // Compute the secp256k1 point (secret * G)
-        let public_key = secret_key.public_key();
-        let point = public_key.to_projective();
-        
-        // Encode the point as the secret hash
-        let encoded = point.to_encoded_point(false);
-        let point_bytes = encoded.as_bytes();
-        let mut secret_hash = [0u8; 32];
-        // Take the first 32 bytes of the uncompressed point (skip the 0x04 prefix)
-        secret_hash.copy_from_slice(&point_bytes[1..33]);
+        let scalar = Scalar::from_bytes_mod_order(secret);
+        let point: EdwardsPoint = ED25519_BASEPOINT_POINT * scalar;
+        let compressed = point.compress();
+        let mut hasher = Keccak256::new();
+        hasher.update(compressed.as_bytes());
+        let secret_hash: [u8; 32] = hasher.finalize().into();
 
         // CRITICAL: Persist the secret to the database BEFORE sending any transactions
         burn.secret = Some(secret);
@@ -1029,4 +1029,40 @@ fn current_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Same test vector as `wrapsynth-vault-manager::utils::ed25519_verify`.
+    /// If this test diverges from the on-chain test, the two sides cannot
+    /// verify each other's commitments.
+    #[test]
+    fn test_vector_matches_on_chain() {
+        let secret: [u8; 32] = [
+            0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef,
+            0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef,
+            0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef,
+            0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef,
+        ];
+        let expected: [u8; 32] = [
+            0xda, 0x3d, 0xb2, 0xd5, 0xb6, 0x1d, 0x1c, 0xa3,
+            0xb1, 0x1f, 0x21, 0xe7, 0x47, 0xb2, 0xe5, 0xc6,
+            0x3b, 0x27, 0x66, 0x04, 0xa7, 0xe3, 0xe1, 0xcf,
+            0x98, 0x7b, 0x70, 0x41, 0x18, 0x64, 0xc8, 0x78,
+        ];
+
+        let scalar = Scalar::from_bytes_mod_order(secret);
+        let point: EdwardsPoint = ED25519_BASEPOINT_POINT * scalar;
+        let compressed = point.compress();
+        let mut hasher = Keccak256::new();
+        hasher.update(compressed.as_bytes());
+        let commitment: [u8; 32] = hasher.finalize().into();
+
+        assert_eq!(
+            commitment, expected,
+            "LP-node commitment does not match on-chain test vector — scheme has drifted"
+        );
+    }
 }
