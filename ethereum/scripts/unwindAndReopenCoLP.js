@@ -8,8 +8,8 @@ const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
 
-const HUB_ADDRESS = '0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50';
-const WSXMR_ADDRESS = '0x30Aeb2A142744430fFD7D698D5C7C41769CE1279';
+const HUB_ADDRESS = '0xbf24788234512bb0aa10451f6efa88ca0e31d88e';
+const WSXMR_ADDRESS = '0x1fab9db7aeb79a71278b1348acdf55ef55292010';
 const TOKEN_ID_TO_UNWIND = 5476;
 
 async function main() {

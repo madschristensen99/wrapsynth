@@ -2,7 +2,7 @@
 require('dotenv').config();
 const { ethers } = require('ethers');
 
-const HUB_ADDRESS = '0x1fb8E7593B01bCdAE13e5b63e529f0e30a3ebD50';
+const HUB_ADDRESS = '0xbf24788234512bb0aa10451f6efa88ca0e31d88e';
 
 async function main() {
     const provider = new ethers.providers.JsonRpcProvider('https://rpc.gnosischain.com');
