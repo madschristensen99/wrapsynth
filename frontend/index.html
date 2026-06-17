@@ -452,8 +452,8 @@ function copyAddr(btn){
     for(let i=0;i<Number(vaultCount);i++){
       const vaultAddr=await client.readContract({
         address:hub,
-        abi:parseAbi(['function getVaultAtIndex(uint256) external view returns (address)']),
-        functionName:'getVaultAtIndex',
+        abi:parseAbi(['function vaultList(uint256) external view returns (address)']),
+        functionName:'vaultList',
         args:[BigInt(i)]
       });
       
@@ -482,7 +482,9 @@ function copyAddr(btn){
               {name:'minBurnAmount',type:'uint256'},
               {name:'active',type:'bool'},
               {name:'deployedSDAIShares',type:'uint256'},
-              {name:'maxCoLPRangeBps',type:'uint16'}
+              {name:'maxCoLPRangeBps',type:'uint16'},
+              {name:'mintTimeoutBlocks',type:'uint256'},
+              {name:'burnTimeoutBlocks',type:'uint256'}
             ]
           }]
         }],
@@ -522,8 +524,8 @@ function copyAddr(btn){
     try{
       const xmrPriceRaw=await client.readContract({
         address:hub,
-        abi:parseAbi(['function getXmrPrice() external view returns (uint256)']),
-        functionName:'getXmrPrice'
+        abi:parseAbi(['function lastXmrPrice() external view returns (int192)']),
+        functionName:'lastXmrPrice'
       });
       xmrPrice=parseFloat(formatUnits(xmrPriceRaw,18));
     }catch(e){
