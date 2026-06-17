@@ -42,6 +42,7 @@ thiserror = "1.0"
 # Cryptography
 rand = "0.8"
 sha2 = "0.10"
+sha3 = "0.10"
 k256 = { version = "0.13", features = ["ecdsa"] }
 curve25519-dalek = "4.1"
 

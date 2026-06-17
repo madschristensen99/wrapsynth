@@ -214,10 +214,17 @@ pub fn finalize_mint(ctx: Context<FinalizeMint>, secret: [u8; 32]) -> Result<()>
     require!(request.status == MintStatus::Ready, WrapSynthError::InvalidStatus);
 
     // Ed25519 verification: compute_commitment(secret) == claim_commitment
+    // curve25519-dalek scalar mult + keccak256 ≈ 15–25 kCU on SBF.
+    // The test suite sets ComputeBudget::set_compute_unit_limit(150_000)
+    // to leave headroom for sync_vault_yield + mint_to CPI.
+    #[cfg(target_os = "solana")]
+    anchor_lang::solana_program::log::sol_log_compute_units();
     require!(
         mul_verify(&secret, &request.claim_commitment),
         WrapSynthError::InvalidSecret
     );
+    #[cfg(target_os = "solana")]
+    anchor_lang::solana_program::log::sol_log_compute_units();
 
     // Liquidation nonce invalidation check
     if request.vault_mint_nonce != ctx.accounts.vault.mint_nonce {
