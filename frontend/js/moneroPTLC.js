@@ -167,36 +167,33 @@ class MoneroPTLCBuilder {
     }
 
     /**
-     * Verify that secret satisfies the PTLC commitment
-     * Check: keccak256(abi.encodePacked(px, py)) = commitment where (px, py) = G * secret on Ed25519
+     * Verify that secret satisfies the PTLC commitment.
+     * Matches WrapSynth on-chain verifier exactly:
+     *   commitment = keccak256(compress(secret · G))
+     * where secret is read as a 32-byte little-endian scalar (RFC 8032).
      */
     verifySecret(secret, commitment) {
         try {
-            // Convert secret to BigInt
-            const secretBigInt = BigInt(secret);
-            
-            // Ed25519 group order
+            // Parse secret hex string back to bytes, then read little-endian
+            // to match dalek's Scalar::from_bytes_mod_order
+            const secretBytes = hexToBytes(secret);
+            let secretBigInt = 0n;
+            for (let i = 0; i < secretBytes.length; i++) {
+                secretBigInt |= BigInt(secretBytes[i]) << BigInt(i * 8);
+            }
+
             const ED25519_L = 2n**252n + 27742317777372353535851937790883648493n;
-            
-            // Reduce secret modulo group order
             const secretReduced = secretBigInt % ED25519_L;
-            
+
             // Generate Ed25519 public key: P = secret * G
             const publicKeyPoint = Point.BASE.multiply(secretReduced);
-            
-            // Get raw bytes of the public key point
+
+            // Get 32-byte compressed point (Canonical Monero / dalek format)
             const publicKeyBytes = publicKeyPoint.toRawBytes();
-            
-            // Convert to hex
-            const publicKeyHex = toHex(publicKeyBytes);
-            
-            // Extract x and y coordinates (32 bytes each)
-            const px = publicKeyHex.slice(0, 66);
-            const py = '0x' + publicKeyHex.slice(66);
-            
-            // Compute commitment as keccak256(abi.encodePacked(px, py))
-            const computedCommitment = keccak256(px + py.slice(2));
-            
+
+            // Hash the 32 bytes directly — NOT the EVM 64-byte affine pair
+            const computedCommitment = keccak256(toHex(publicKeyBytes));
+
             // Compare commitments
             return computedCommitment.toLowerCase() === commitment.toLowerCase();
         } catch (error) {
@@ -338,16 +335,24 @@ class MoneroPTLCBuilder {
      */
     createSecretProof(secret, commitment) {
         // Create zero-knowledge proof: "I know s such that keccak256(G*s) = commitment"
-        // This is a Schnorr signature-like proof on Ed25519
+        // This is a Schnorr signature-like proof on Ed25519.
+        // secret is read little-endian to match dalek/Monero native encoding.
 
-        const secretBigInt = BigInt(secret);
         const ED25519_L = 2n**252n + 27742317777372353535851937790883648493n;
-        
+
+        // Read secret as little-endian (RFC 8032 / Monero / dalek convention)
+        const secretBytes = hexToBytes(secret);
+        let secretScalar = 0n;
+        for (let i = 0; i < 32; i++) {
+            secretScalar |= BigInt(secretBytes[i]) << BigInt(i * 8);
+        }
+        const sNum = secretScalar % ED25519_L;
+
         // Generate random nonce
         const r = BigInt('0x' + Array.from(crypto.getRandomValues(new Uint8Array(32)))
             .map(b => b.toString(16).padStart(2, '0')).join(''));
         const rReduced = r % ED25519_L;
-        
+
         // R = G*r on Ed25519
         const R = Point.BASE.multiply(rReduced);
         const RBytes = R.toRawBytes();
@@ -356,7 +361,6 @@ class MoneroPTLCBuilder {
         const message = 'PTLC_CLAIM';
         const e = keccak256(toHex(RBytes) + commitment.slice(2) + toHex(message).slice(2));
         const eNum = BigInt(e);
-        const sNum = secretBigInt % ED25519_L;
 
         // Response: s = r + e*secret (mod L)
         const response = (rReduced + eNum * sNum) % ED25519_L;
