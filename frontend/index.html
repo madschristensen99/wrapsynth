@@ -228,7 +228,7 @@
       <div class="feat">
         <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
         <h3>Put your XMR to work</h3>
-        <p>Monero has no DeFi. wsXMR does. Earn yield, post collateral, or provide liquidity while keeping full exposure to the asset you actually want to hold.</p>
+        <p>Monero has no native DeFi capabilities. wsXMR does. Earn yield, post collateral, or provide liquidity while keeping full exposure to the asset you actually want to hold.</p>
       </div>
       <div class="feat tl">
         <div class="ic"><svg viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg></div>
@@ -265,6 +265,8 @@
     <span class="eyebrow-sm">Process</span>
     <h2 class="sec-h">How it works</h2>
     <p class="sec-sub">Four steps to ferry your Monero to DeFi — trustless on both sides of the swap.</p>
+
+    <h3 style="font-family:'Space Grotesk';font-weight:600;font-size:18px;margin:36px 0 0;color:var(--teal)">Mint wsXMR</h3>
     <div class="steps">
       <div class="stp"><div class="num">1</div><h3>Initiate swap</h3>
         <p>You create a mint request with a secret commitment and send XMR to the LP's Monero address.</p></div>
@@ -274,6 +276,18 @@
         <p>You reveal your secret to claim wsXMR — verified on-chain with Ed25519 operations (Monero-compatible).</p></div>
       <div class="stp"><div class="num">4</div><h3>Receive wsXMR</h3>
         <p>The contract mints wsXMR to your wallet, backed by real XMR and guaranteed by the LP's collateral in their vault.</p></div>
+    </div>
+
+    <h3 style="font-family:'Space Grotesk';font-weight:600;font-size:18px;margin:48px 0 0;color:var(--xmr)">Burn wsXMR</h3>
+    <div class="steps">
+      <div class="stp"><div class="num">1</div><h3>Initiate burn</h3>
+        <p>You create a burn request with a secret commitment and send wsXMR to the contract.</p></div>
+      <div class="stp"><div class="num">2</div><h3>LP locks XMR</h3>
+        <p>The LP locks your XMR on Monero with a secret hash and proposes the lock on-chain.</p></div>
+      <div class="stp"><div class="num">3</div><h3>Confirm receipt</h3>
+        <p>You verify the Monero transaction and confirm the lock on-chain, binding both parties.</p></div>
+      <div class="stp"><div class="num">4</div><h3>Receive XMR</h3>
+        <p>The LP reveals the secret to finalize the burn. Your XMR unlocks and their collateral is released.</p></div>
     </div>
   </div>
 </section>
