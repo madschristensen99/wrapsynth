@@ -26,6 +26,7 @@ import {
   SYSVAR_RENT_PUBKEY,
   Transaction,
   LAMPORTS_PER_SOL,
+  ComputeBudgetProgram,
 } from "@solana/web3.js";
 import * as fs from "fs";
 import * as path from "path";
@@ -41,6 +42,7 @@ import {
 import { assert } from "chai";
 import * as crypto from "crypto";
 import { keccak_256 } from "@noble/hashes/sha3";
+import { Point } from "@noble/ed25519";
 
 // ─── IDL import (generated after anchor build) ───────────────────────────────
 import { WrapsynthVaultManager, IDL } from "../types/wrapsynth_vault_manager";
@@ -188,17 +190,28 @@ function bigintToLeBytes(value: bigint, length: number): Uint8Array {
   return arr;
 }
 
-// ─── Helper: Ed25519 commitment (simplified, using sha256(secret)) ───────────
-// In the real protocol, commitment = keccak256(Px || Py) where P = secret * G.
-// For testing we bypass oracle.rs's verify by making the secret a known value
-// and pre-loading the matching commitment into the MintRequest.
-// We call finalize_mint in a way that passes the check (secret produces known commitment).
-// For test purposes we use sha256(secret) as commitment since we own the program and
-// can also just test the account state transition rather than the crypto.
+// ─── Helper: Ed25519 commitment (curve25519-dalek scheme) ───────────────────
+// Matches the on-chain verifier exactly:
+//   commitment = keccak256(compress(secret · G))
+// where compress yields a 32-byte little-endian CompressedEdwardsY.
+// This is the same canonical format Monero uses for public keys.
+const ED25519_L = 2n**252n + 27742317777372353535851937790883648493n;
+
+function computeCommitment(secret: Buffer): Buffer {
+  // Interpret bytes as little-endian scalar (matching Rust Scalar::from_bytes_mod_order)
+  let scalar = 0n;
+  for (let i = 0; i < 32; i++) {
+    scalar |= BigInt(secret[i]) << BigInt(i * 8);
+  }
+  const reduced = scalar % ED25519_L;
+  const publicKeyPoint = Point.BASE.multiply(reduced);
+  const compressed = Buffer.from(publicKeyPoint.toRawBytes());
+  return Buffer.from(keccak_256(compressed));
+}
+
 function makeSecretAndCommitment(): { secret: Buffer; commitment: Buffer } {
   const secret = crypto.randomBytes(32);
-  // sha256 of secret as placeholder for Ed25519 commitment
-  const commitment = crypto.createHash("sha256").update(secret).digest();
+  const commitment = computeCommitment(secret);
   return { secret, commitment };
 }
 
@@ -707,6 +720,9 @@ describe("WrapSynth VaultManager — Full Integration", () => {
             tokenProgram:     TOKEN_2022_PROGRAM_ID,
             systemProgram:    SystemProgram.programId,
           } as any)
+          .preInstructions([
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 150_000 }),
+          ])
           .signers([user])
           .rpc();
 
@@ -741,7 +757,7 @@ describe("WrapSynth VaultManager — Full Integration", () => {
 
     // LP's secret for the burn handshake
     const lpBurnSecret = crypto.randomBytes(32);
-    const lpSecretHash = crypto.createHash("sha256").update(lpBurnSecret).digest();
+    const lpSecretHash = computeCommitment(lpBurnSecret);
 
     it("5.1 user requests a burn", async () => {
       const gs = await (program.account as any).globalState.fetch(globalState);
@@ -881,6 +897,9 @@ describe("WrapSynth VaultManager — Full Integration", () => {
             pythCollateral:     pythColKeypair.publicKey,
             systemProgram:      SystemProgram.programId,
           } as any)
+          .preInstructions([
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 150_000 }),
+          ])
           .signers([lp])
           .rpc();
 
@@ -1084,7 +1103,7 @@ describe("WrapSynth VaultManager — Full Integration", () => {
     let slashBurnId: Buffer;
     let slashBurnPda: PublicKey;
     const fakeLpSecret = crypto.randomBytes(32);
-    const fakeLpHash   = crypto.createHash("sha256").update(fakeLpSecret).digest();
+    const fakeLpHash   = computeCommitment(fakeLpSecret);
 
     it("creates and commits a burn request (reaching Committed)", async () => {
       const gs = await (program.account as any).globalState.fetch(globalState);

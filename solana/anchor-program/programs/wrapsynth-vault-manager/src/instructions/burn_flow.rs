@@ -215,10 +215,17 @@ pub fn finalize_burn(ctx: Context<FinalizeBurn>, secret: [u8; 32]) -> Result<()>
     require!(clock.unix_timestamp < request.deadline, WrapSynthError::DeadlineExpired);
 
     // Ed25519 secret verification: compute_commitment(secret) == secret_hash
+    // curve25519-dalek scalar mult + keccak256 ≈ 15–25 kCU on SBF.
+    // The test suite sets ComputeBudget::set_compute_unit_limit(150_000)
+    // to leave headroom for sync_vault_yield + debt accounting.
+    #[cfg(target_os = "solana")]
+    anchor_lang::solana_program::log::sol_log_compute_units();
     require!(
         mul_verify(&secret, &request.secret_hash),
         WrapSynthError::InvalidSecret
     );
+    #[cfg(target_os = "solana")]
+    anchor_lang::solana_program::log::sol_log_compute_units();
 
     sync_vault_yield(
         &mut ctx.accounts.vault,
