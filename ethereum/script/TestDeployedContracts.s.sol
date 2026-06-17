@@ -3,7 +3,7 @@ pragma solidity ^0.8.19;
 
 import "forge-std/Script.sol";
 import "../contracts/core/wsXmrHub.sol";
-import "../contracts/facets/RedStoneOracleFacet.sol";
+import "../contracts/redstone/RedStoneOracleFacet.sol";
 import "../contracts/wsXMR.sol";
 
 contract TestDeployedContracts is Script {
