@@ -45,6 +45,12 @@ if (!lpPublicSpendKey || !lpPublicViewKey) {
   process.exit(1);
 }
 
+/**
+ * Compute secretHash from a secret scalar.
+ * Matches WrapSynth on-chain verifier exactly:
+ *   secretHash = keccak256(compress(secret · G))
+ * where secret is read as a 32-byte little-endian scalar.
+ */
 async function computeSecretHash(secretBytes) {
   const ed = await import('@noble/ed25519');
 
@@ -53,26 +59,16 @@ async function computeSecretHash(secretBytes) {
     ed.etc.sha512Sync = (...m) => crypto.createHash('sha512').update(Buffer.concat(m)).digest();
   }
 
-  const secretBigInt = BigInt('0x' + Buffer.from(secretBytes).toString('hex'));
+  // Read secret as little-endian to match dalek's Scalar::from_bytes_mod_order
+  const secretBigInt = BigInt('0x' + Buffer.from(secretBytes).reverse().toString('hex'));
   const ED25519_L = 2n ** 252n + 27742317777372353535851937790883648493n;
   const secretReduced = secretBigInt % ED25519_L;
-  const reducedBytes = Buffer.alloc(32);
-  let tmp = secretReduced;
-  for (let i = 0; i < 32; i++) {
-    reducedBytes[31 - i] = Number(tmp & 0xffn);
-    tmp = tmp >> 8n;
-  }
 
   const publicKeyPoint = ed.ExtendedPoint.BASE.multiply(secretReduced);
-  const publicKeyBytes = publicKeyPoint.toRawBytes();
-  const publicKeyHex = '0x' + Buffer.from(publicKeyBytes).toString('hex');
+  const publicKeyBytes = publicKeyPoint.toRawBytes(); // 32-byte compressed point
 
-  const px = publicKeyHex.slice(0, 66);
-  const py = '0x' + publicKeyHex.slice(66);
-
-  const encoded = ethers.solidityPacked(['bytes32', 'bytes32'], [px, py]);
-  const hash = ethers.keccak256(encoded);
-  return { secretHash: hash, secret: '0x' + Buffer.from(secretBytes).toString('hex') };
+  const secretHash = ethers.utils.keccak256(publicKeyBytes); // hash the 32 bytes directly
+  return { secretHash, secret: '0x' + Buffer.from(secretBytes).toString('hex') };
 }
 
 (async () => {

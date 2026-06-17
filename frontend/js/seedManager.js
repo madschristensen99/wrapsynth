@@ -99,11 +99,17 @@ export function generateKeysFromSeed(seedPhrase) {
 }
 
 /**
- * Generate commitment from secret for contract verification
- * Matches Solidity Ed25519Helper.computeCommitment:
- *   keccak256(abi.encodePacked(px, py))
- * 
- * @param {bigint} secret - Private key (spend key)
+ * Generate commitment from secret for WrapSynth verification.
+ * Matches the Solana on-chain verifier exactly:
+ *   commitment = keccak256(compress(secret · G))
+ * where compress yields a 32-byte little-endian CompressedEdwardsY.
+ *
+ * NOTE: This is the canonical Monero/dalek format. It does NOT match the EVM
+ * Ed25519Helper.computeCommitment (keccak256(abi.encodePacked(px, py)) over
+ * the 64-byte big-endian affine pair). All off-chain generators that verify
+ * on Solana must use this 32-byte compressed scheme.
+ *
+ * @param {bigint} secret - Private key (spend key) as a scalar
  * @returns {string} Commitment hash (bytes32)
  */
 export function generateCommitment(secret) {
@@ -113,18 +119,11 @@ export function generateCommitment(secret) {
     // Generate Ed25519 public key: P = secret * G
     const publicKeyPoint = Point.BASE.multiply(secretReduced);
 
-    // Extract affine coordinates to match Solidity's abi.encodePacked(px, py)
-    const affine = publicKeyPoint.toAffine();
-    const px = affine.x;
-    const py = affine.y;
+    // Canonical Monero / dalek format: 32-byte compressed point
+    const publicKeyBytes = publicKeyPoint.toRawBytes();
 
-    // Encode as abi.encodePacked(uint256, uint256): 32-byte big-endian each
-    const pxHex = px.toString(16).padStart(64, '0');
-    const pyHex = py.toString(16).padStart(64, '0');
-    const packedHex = '0x' + pxHex + pyHex;
-
-    // keccak256 hash - matches Solidity exactly
-    const commitment = keccak256(packedHex);
+    // Hash the 32 bytes directly — NOT the EVM 64-byte affine pair
+    const commitment = keccak256(toHex(publicKeyBytes));
 
     return commitment;
 }
