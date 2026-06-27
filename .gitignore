@@ -296,3 +296,7 @@ datasets/
 # Transaction data with sensitive keys
 transaction_data.json
 
+
+# Monero wallet data directory
+lp-server-js/monero-wallets/
+

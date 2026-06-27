@@ -5,6 +5,7 @@ console.log('🔄 WrapSynth Frontend v2.1 - DYNAMIC FEE & RECEIVE FIX');
 import { 
     initializeClients, 
     connectWallet, 
+    ensureConnected,
     getUserAddress,
     getWsXmrBalance,
     readHub,
@@ -36,7 +37,7 @@ import {
     completeBurnStep,
     showSuccess,
     showMintComplete,
-    launchConfetti,
+    showBurnComplete,
     showError,
     showResumeError,
     showResumeSuccess,
@@ -50,9 +51,10 @@ import {
     setStartMintButtonText,
     showPreviousMintBanner,
     hidePreviousMintBanner
-} from './ui.js';
+} from './ui.js?v=2.3';
 
 import { MintFlow } from './mintFlow.js';
+import { stopTimers } from './mintFlowTimers.js';
 import { BurnFlow } from './burnFlow.js';
 import { getLPPanel } from './lpPanel.js';
 import { getPoolFlow } from './poolFlow.js';
@@ -232,6 +234,10 @@ async function init() {
     
     // Initialize UI
     initUI();
+    
+    // Hide progress panels by default (will show when user starts a swap)
+    resetMintUI();
+    resetBurnUI();
 
     // Set Gecko Terminal pool link from config
     const geckoLink = document.getElementById('gecko-terminal-link');
@@ -277,11 +283,29 @@ async function init() {
         console.error('Error initializing clients:', error);
         showError('Initialization Error', error.message);
     }
-    
-    // Setup event handlers
+
+    // Setup event handlers first (before wallet interactions) so we catch
+    // any accountsChanged events fired by the wallet during auto-connect.
     setupEventHandlers();
+
+    // Listen for account/chain changes early
+    onAccountsChanged(handleAccountChange);
+    onChainChanged(handleChainChange);
+
+    // Try to auto-connect wallet if previously authorized
+    let autoConnected = false;
+    try {
+        const autoAddress = await ensureConnected();
+        if (autoAddress) {
+            console.log('[INIT] Auto-connected wallet:', autoAddress);
+            await handleAccountChange(autoAddress);
+            autoConnected = true;
+        }
+    } catch (e) {
+        console.warn('[INIT] Auto-connect failed:', e.message);
+    }
     
-    // Load vaults (don't require wallet connection)
+    // Load vaults (public reads via HTTP fallback work even without wallet)
     await loadVaults();
     
     // Check for active swap
@@ -315,10 +339,6 @@ async function init() {
     setInterval(() => {
         fetchXmrPrice(true);
     }, 5 * 60 * 1000);
-    
-    // Listen for account/chain changes
-    onAccountsChanged(handleAccountChange);
-    onChainChanged(handleChainChange);
 
     // Load async tab-specific data if needed
     if (savedTab === 'co-lp') {
@@ -470,7 +490,8 @@ async function handleUpdatePrices() {
         }, 2000);
         
         console.log('✅ Oracle prices updated successfully');
-        showSuccess('Prices Updated', 'Oracle prices have been updated with latest RedStone data.');
+        const { showSuccessNotification } = await import('./ui.js');
+        showSuccessNotification('Prices Updated', '<p>Oracle prices have been updated with latest RedStone data.</p>');
         
     } catch (error) {
         console.error('Failed to update prices:', error);
@@ -480,7 +501,8 @@ async function handleUpdatePrices() {
             btn.disabled = false;
         }, 2000);
         
-        showError('Update Failed', `Could not update oracle prices: ${error.message}`);
+        const { showErrorNotification } = await import('./ui.js');
+        showErrorNotification('Update Failed', `<p>Could not update oracle prices: ${error.message}</p>`);
     }
 }
 
@@ -614,6 +636,7 @@ async function handleAccountChange(newAddress) {
             console.log('Silently reconnected:', reconnected);
             return handleAccountChange(reconnected);
         }
+        localStorage.removeItem('wrapsynth-wallet-connected');
         showWalletDisconnected();
         setWithdrawReturnsVisible(false);
     }
@@ -792,12 +815,19 @@ async function checkForActiveSwapOnChain(userAddress) {
                     xmrAmount,
                     wsxmrAmount: mintReq.wsxmrAmount.toString(),
                     griefingDeposit: mintReq.griefingDeposit.toString(),
+                    // Recover publicSpendKey from on-chain userPublicKey so resume works
+                    // even if localStorage lost it (e.g. cleared browser data)
+                    publicSpendKey: mintReq.userPublicKey,
                     lastUpdated: Date.now()
                 };
-                // Preserve local-only fields (e.g. publicSpendKey, dismissed) from existing entry
+                // Preserve local-only fields (e.g. depositAddress, lpPublicSpendKey, dismissed) from existing entry
                 const existing = getActiveSwapByRequestId(requestId);
                 if (existing) {
                     swap = { ...existing, ...swap };
+                    // Don't overwrite a valid existing publicSpendKey with chain data if they differ
+                    if (existing.publicSpendKey && existing.publicSpendKey !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
+                        swap.publicSpendKey = existing.publicSpendKey;
+                    }
                     if (existing.dismissed) {
                         console.log('[CHAIN CHECK] Preserving dismissed flag for', requestId.slice(0, 14));
                     }
@@ -1416,6 +1446,12 @@ async function handleResumeSwap(specificSwap) {
             console.log('Seed found in storage, preparing to resume...');
 
             // Switch tabs and let mintFlow.resume() handle seed loading
+            // Stop old flow's timers and event watchers before switching
+            if (currentMintFlow) {
+                stopTimers(currentMintFlow);
+                currentMintFlow.cleanup();
+            }
+            resetMintUI();
             currentMintFlow = new MintFlow();
             setStartMintButtonText('Start New Mint');
             showMintTab();
@@ -1577,7 +1613,7 @@ async function handleResolveSwap(swap) {
 
     try {
         // PENDING mint: cancel on-chain to recover griefing deposit
-        if (swap.type === 'mint' && (swap.state === 'awaiting-lp-key' || swap.state === 'evm-init' || swap.state === 'initiated')) {
+        if (swap.type === 'mint' && (swap.state === 'awaiting-lp-key' || swap.state === 'evm-init' || swap.state === 'initiated' || swap.state === 'deposit' || swap.state === 'lp-verifying')) {
             console.log('Resolving stale mint on-chain:', swap.requestId);
             const { readHub, writeHub } = await import('./viemClient.js');
             const mintReq = await readHub('getMintRequest', [swap.requestId]);
@@ -1587,6 +1623,19 @@ async function handleResolveSwap(swap) {
                 await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
                 showResumeSuccess(swap.requestId, 'Mint was already cancelled. Your griefing deposit has been claimed.');
             } else if (status === 1 || status === 2 || status === 3) {
+                // Check timeout before calling cancelMint to avoid TimeoutNotReached revert
+                const { getPublicClient } = await import('./viemClient.js');
+                const publicClient = getPublicClient();
+                const currentBlock = await publicClient.getBlockNumber();
+                const timeout = mintReq.timeout;
+                if (currentBlock < timeout) {
+                    const blocksRemaining = Number(timeout - currentBlock);
+                    const estSeconds = blocksRemaining * 5;
+                    const mins = Math.floor(estSeconds / 60);
+                    const secs = estSeconds % 60;
+                    showResumeError(swap.requestId, `Mint timeout has not been reached. Please wait ~${mins}m ${secs}s more (${blocksRemaining} blocks) before you can cancel.`);
+                    return;
+                }
                 const receipt = await writeHub('cancelMint', [swap.requestId]);
                 console.log('cancelMint tx:', receipt.transactionHash);
                 showResumeSuccess(swap.requestId, 'Mint cancelled. Your griefing deposit has been refunded.');
@@ -1694,8 +1743,8 @@ async function loadVaults() {
         let globalDebtIndex = 1e18; // fallback (no scaling)
         try {
             // Try to get fresh prices first
-            const xmrPriceWei = await readHub('lastXmrPrice');
-            const collPriceWei = await readHub('lastCollateralPrice');
+            const xmrPriceWei = await readHub('getXmrPrice');
+            const collPriceWei = await readHub('getCollateralPrice');
             globalDebtIndex = await readHub('globalDebtIndex');
             xmrPrice = Number(xmrPriceWei) / 1e18;
             collPrice = Number(collPriceWei) / 1e18;
@@ -2187,23 +2236,32 @@ async function handleStartMint() {
     if (currentMintFlow && currentMintFlow.state !== 'completed' && currentMintFlow.state !== 'idle') {
         previousMintRequestId = currentMintFlow.requestId;
     }
-    
+
+    // Stop old flow's timers and event watchers before starting a new one
+    if (currentMintFlow) {
+        stopTimers(currentMintFlow);
+        currentMintFlow.cleanup();
+    }
+
     try {
         disableInputs(true);
-        
+
         // Clear any old progress tracker interval
         if (mintProgressInterval) {
             clearInterval(mintProgressInterval);
             mintProgressInterval = null;
         }
-        
+
+        // Fully reset UI to clear any stale content from previous mint
+        resetMintUI();
+
         // Create new mint flow
         currentMintFlow = new MintFlow();
         setStartMintButtonText('Start New Mint');
-        
+
         // Hide any stale previous-mint banner from earlier
         hidePreviousMintBanner();
-        
+
         // Setup progress tracking
         trackMintProgress(currentMintFlow);
         
@@ -2221,9 +2279,8 @@ async function handleStartMint() {
             }
         }
 
-        // Success - confetti explosion instead of modal
+        // Success - celebration animation + banner
         showMintComplete(amount);
-        launchConfetti();
 
         // Update balance
         const address = getUserAddress();
@@ -2292,7 +2349,14 @@ function trackMintProgress(flow) {
                 completeMintStep('deposit');
                 updateMintProgress('lp-confirm', 'Waiting for Monero confirmations (~15–30 min)...');
                 // Show deposit info first so the "See TX Details" button can toggle it
-                const depositAddrVerifying = flow.depositAddress || (flow.agent ? flow.agent.getMoneroAddress() : null);
+                let depositAddrVerifying = flow.depositAddress;
+                if (!depositAddrVerifying && flow.agent) {
+                    try {
+                        depositAddrVerifying = flow.agent.getMoneroAddress();
+                    } catch (e) {
+                        console.warn('Agent not fully initialized yet, will show deposit address when ready');
+                    }
+                }
                 if (depositAddrVerifying) {
                     showMintDepositInfo(depositAddrVerifying, flow.xmrAmount);
                 }
@@ -2373,6 +2437,7 @@ async function handleCancelMint() {
     if (!confirmed) return;
     
     try {
+        stopTimers(currentMintFlow);
         await currentMintFlow.cancel();
         resetMintUI();
         showSuccess('Mint Cancelled', 'Mint cancelled and XMR refunded');
@@ -2434,8 +2499,8 @@ async function handleStartBurn() {
         // Start the flow
         await currentBurnFlow.start(vaultAddress, amount, destination);
         
-        // Success - just log it
-        console.log(`Burn complete: ${amount} wsXMR`);
+        // Success - fire animation + banner
+        showBurnComplete(amount);
         
         // Update balance
         const address = getUserAddress();

@@ -60,8 +60,19 @@ async function deriveAddress(spendKeyHex, viewKeyHex) {
   const spendPriv = Buffer.from(spendKeyHex, 'hex');
   const viewPriv = Buffer.from(viewKeyHex, 'hex');
 
-  const publicSpend = await ed.getPublicKey(spendPriv);
-  const publicView = await ed.getPublicKey(viewPriv);
+  // Monero uses direct scalar multiplication (scalar * G), NOT ed.getPublicKey()
+  // which uses SHA512-based Ed25519 key derivation.
+  const ED25519_L = 2n ** 252n + 27742317777372353535851937790883648493n;
+  const G = ed.ExtendedPoint.BASE;
+
+  function scalarToPubKey(scalarBytes) {
+    const le = Buffer.from(scalarBytes).reverse();
+    const s = BigInt('0x' + le.toString('hex')) % ED25519_L;
+    return Buffer.from(G.multiply(s).toRawBytes());
+  }
+
+  const publicSpend = scalarToPubKey(spendPriv);
+  const publicView = scalarToPubKey(viewPriv);
 
   // Simple base58 encode for Monero address (network byte 0x12 for mainnet)
   const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -246,7 +257,6 @@ MONERO_WALLET_RPC_URL=${rpcUrl}
 
 # ─── MONERO WALLET KEYS (BACK THESE UP!) ────────────────────────────────────
 # These keys control the LP's Monero funds. Keep them secure.
-MONERO_ADDRESS=${address}
 MONERO_SPEND_KEY=${keys.spendKey}
 MONERO_VIEW_KEY=${keys.viewKey}
 `;

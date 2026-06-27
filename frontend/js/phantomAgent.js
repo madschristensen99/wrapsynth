@@ -349,6 +349,17 @@ class PhantomAgent {
     }
 
     /**
+     * Get the user's private view key as hex string
+     * Used for burn flow to show view key alongside shared Monero address
+     */
+    getPrivateViewKeyHex() {
+        if (!this.keySet) {
+            throw new Error('Agent not initialized');
+        }
+        return '0x' + this.keySet.privateViewKey.toString(16).padStart(64, '0');
+    }
+
+    /**
      * Reset the agent
      */
     reset() {
