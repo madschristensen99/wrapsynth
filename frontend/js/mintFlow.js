@@ -6,7 +6,7 @@ import { getPhantomAgent } from './phantomAgent.js';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
 import { keccak256, toHex, parseEther } from 'https://esm.sh/viem@2.7.0';
 import { startDeadlineTimer, startStatusPolling, stopTimers } from './mintFlowTimers.js';
-import { showLPVerificationStatus, updateMintProgress } from './ui.js';
+import { showLPVerificationStatus, updateMintProgress, showSuccess, showConfirmModal, showSuccessNotification } from './ui.js?v=2.3';
 
 export class MintFlow {
     constructor() {
@@ -38,7 +38,7 @@ export class MintFlow {
 
         await this.getQuote();
         await this.initializeAgent();
-        await this.checkOracleFreshness();
+        await this.ensureFreshPrices();
         await this.initiateOnEVM();
         await this.notifyLP();
         if (this.state === 'expired') return;
@@ -69,10 +69,19 @@ export class MintFlow {
 
     async cancelMint() {
         try {
-            const confirmed = confirm('Are you sure you want to cancel this mint? This action cannot be undone.');
+            const confirmed = await showConfirmModal(
+                'Cancel Mint',
+                '<p>Are you sure you want to cancel this mint? This action cannot be undone.</p>'
+            );
             if (!confirmed) return;
 
             console.log('Cancelling mint:', this.requestId);
+            
+            // Check if timeout has been reached before calling the contract
+            if (this.requestId) {
+                const timeoutReached = await this._checkTimeoutReached();
+                if (!timeoutReached) return;
+            }
             
             // Call cancelMint on the contract
             const { getWalletClient, getPublicClient } = await import('./viemClient.js');
@@ -109,11 +118,15 @@ export class MintFlow {
             
             // Clear from active storage
             removeActiveSwap(this.requestId);
-            
+
+            // Stop timers and clean up event watchers
+            stopTimers(this);
+            this.cleanup();
+
             // Show success
             const { showSuccess, resetMintUI } = await import('./ui.js');
             showSuccess('Mint Cancelled', 'The mint has been cancelled. You can now start a new mint.');
-            
+
             // Reset UI
             resetMintUI();
             
@@ -124,7 +137,56 @@ export class MintFlow {
         } catch (error) {
             console.error('Error cancelling mint:', error);
             const { showError } = await import('./ui.js');
+            
+            // Handle TimeoutNotReached gracefully
+            if (error.message && error.message.includes('TimeoutNotReached')) {
+                const blocksRemaining = await this._getBlocksRemaining();
+                const timeMsg = blocksRemaining !== null
+                    ? ` You need to wait ~${Math.ceil(blocksRemaining * 5 / 60)} more minutes (${blocksRemaining} blocks) before you can cancel.`
+                    : ' The mint timeout period has not been reached yet.';
+                showError('Cannot Cancel Yet', 'The mint timeout has not been reached.' + timeMsg);
+                return;
+            }
+            
             showError('Cancel Failed', error.message || 'Failed to cancel mint');
+        }
+    }
+
+    /**
+     * Check if the mint timeout block has been reached.
+     * Returns true if timeout reached (or unknown), false if not yet reached.
+     * Shows a user-friendly error if timeout hasn't been reached.
+     */
+    async _checkTimeoutReached() {
+        const blocksRemaining = await this._getBlocksRemaining();
+        if (blocksRemaining !== null && blocksRemaining > 0) {
+            const minutes = Math.ceil(blocksRemaining * 5 / 60);
+            const { showError } = await import('./ui.js');
+            showError(
+                'Cannot Cancel Yet',
+                `The mint timeout has not been reached. You must wait ~${minutes} more minutes (${blocksRemaining} blocks) before cancelling.`
+            );
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Returns the number of blocks remaining until timeout, or null if unknown.
+     */
+    async _getBlocksRemaining() {
+        try {
+            if (!this.timeout) {
+                const mintReq = await readHub('getMintRequest', [this.requestId]);
+                this.timeout = mintReq.timeout;
+            }
+            const { getPublicClient } = await import('./viemClient.js');
+            const publicClient = getPublicClient();
+            const currentBlock = await publicClient.getBlockNumber();
+            return Number(this.timeout) - Number(currentBlock);
+        } catch (e) {
+            console.warn('Could not check timeout:', e.message);
+            return null;
         }
     }
 
@@ -183,24 +245,50 @@ export class MintFlow {
         });
     }
 
-    async checkOracleFreshness() {
+    /**
+     * Ensure oracle prices are fresh before minting.
+     * If stale, fetches RedStone prices, sends the update tx inline,
+     * and proceeds automatically — no modals needed.
+     */
+    async ensureFreshPrices() {
         console.log('Checking oracle freshness...');
-        
+
         try {
-            // Try to get price with 2 minute staleness tolerance
-            await readHub('lastXmrPrice', []);
-            console.log('Oracle prices are fresh');
+            // getXmrPrice enforces the 2-minute staleness check on-chain
+            const xmrPrice = await readHub('getXmrPrice', []);
+            const collateralPrice = await readHub('getCollateralPrice', []);
+            console.log('Oracle prices are fresh — XMR:', xmrPrice.toString(), 'DAI:', collateralPrice.toString());
+            return;
         } catch (error) {
-            // Prices are stale - try to update them
-            console.warn('Oracle prices are stale, attempting update...');
-            try {
-                updateMintProgress('evm-init', 'Updating XMR price onchain...');
-                await this.updatePrices();
-            } catch (updateError) {
-                console.warn('Could not update prices from UI:', updateError.message);
-                console.log('Continuing anyway - LP node should handle price updates');
-                // Don't throw - the LP node will update prices
-            }
+            // StalePrice() or any other revert means we need to update
+            console.warn('Oracle prices are stale, fetching fresh RedStone prices...');
+        }
+
+        const { fetchRedStonePrices, buildRedStonePayload, sendPriceUpdate } =
+            await import('./redstoneWrapper.js?v=' + Date.now());
+
+        const xmrDisplay = (p) => p ? `$${p.toFixed(2)}` : 'latest';
+
+        updateMintProgress('evm-init', 'Fetching latest XMR price from RedStone...');
+        const redStonePrices = await fetchRedStonePrices();
+        console.log('RedStone prices fetched:', redStonePrices);
+
+        updateMintProgress('evm-init', `Updating oracle prices (XMR: ${xmrDisplay(redStonePrices.xmrPrice)})...`);
+        const payload = await buildRedStonePayload();
+
+        try {
+            const receipt = await sendPriceUpdate(payload);
+            console.log('Price update confirmed:', receipt.transactionHash);
+
+            showSuccessNotification(
+                'Oracle Prices Updated',
+                `<p>XMR price updated to ${xmrDisplay(redStonePrices.xmrPrice)}. Continuing with mint...</p>`
+            );
+        } catch (txError) {
+            console.error('Price update transaction failed:', txError);
+            throw new Error(
+                'Failed to update oracle prices: ' + (txError.message || txError)
+            );
         }
     }
 
@@ -269,6 +357,7 @@ export class MintFlow {
             // Save complete swap state to localStorage
             const { addOrUpdateActiveSwap } = await import('./storage.js');
             const publicSpendKey = toHex(this.agent.keySet.publicSpendKey);
+            const claimSecret = this.agent.secret;
             addOrUpdateActiveSwap({
                 type: 'mint',
                 requestId: this.requestId,
@@ -280,6 +369,7 @@ export class MintFlow {
                 txHash: receipt.transactionHash,
                 timeout: this.timeout.toString(),
                 publicSpendKey: publicSpendKey,
+                claimSecret: claimSecret,
                 timestamp: Date.now(),
                 lastUpdated: Date.now()
             });
@@ -300,6 +390,7 @@ export class MintFlow {
     async notifyLP() {
         console.log('Waiting for LP to provide public key...');
         updateSwapState({ requestId: this.requestId, state: 'awaiting-lp-key', message: 'Waiting for LP to provide public key...' });
+        updateMintProgress('awaiting-lp-key', 'Waiting for LP to post transaction destination address...');
         
         // Start deadline timer immediately so user sees countdown from the start
         await startDeadlineTimer(this);
@@ -722,6 +813,13 @@ export class MintFlow {
                     await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
                     console.log('Mint already cancelled; claimed refund via withdrawReturns');
                 } else if (status === 1 || status === 2 || status === 3) {
+                    // Check timeout before calling cancelMint to avoid TimeoutNotReached revert
+                    const blocksRemaining = await this._getBlocksRemaining();
+                    if (blocksRemaining !== null && blocksRemaining > 0) {
+                        const minutes = Math.ceil(blocksRemaining * 5 / 60);
+                        console.warn(`Cannot cancel yet: timeout not reached (${blocksRemaining} blocks, ~${minutes} min remaining)`);
+                        return;
+                    }
                     await writeHub('cancelMint', [this.requestId]);
                     console.log('Mint request canceled on EVM');
                 } else {
@@ -733,6 +831,7 @@ export class MintFlow {
         }
 
         clearActiveSwap();
+        stopTimers(this);
         this.cleanup();
     }
 
@@ -832,7 +931,7 @@ export class MintFlow {
                 // Restart from the beginning (need to get quote first)
                 console.log('Restarting mint flow from', this.state, 'state...');
                 await this.getQuote();
-                await this.checkOracleFreshness();
+                await this.ensureFreshPrices();
                 await this.initiateOnEVM();
                 await this.notifyLP();
                 await this.waitForLPReady();
@@ -849,7 +948,7 @@ export class MintFlow {
                     await this.notifyLP();
                 } else {
                     await this.getQuote();
-                    await this.checkOracleFreshness();
+                    await this.ensureFreshPrices();
                     await this.initiateOnEVM();
                     await this.notifyLP();
                 }
@@ -910,6 +1009,63 @@ export class MintFlow {
             case 'lp-verifying':
                 // LP is verifying the XMR deposit, wait for them to call setMintReady
                 console.log('Resuming from lp-verifying state...');
+                console.log('Current state:', {
+                    depositAddress: this.depositAddress,
+                    lpPublicSpendKey: this.lpPublicSpendKey?.slice(0, 20) + '...',
+                    lpPublicViewKey: this.lpPublicViewKey?.slice(0, 20) + '...',
+                    hasAgent: !!this.agent
+                });
+                
+                // If LP keys are missing, fetch them from contract
+                if (!this.lpPublicSpendKey || !this.lpPublicViewKey) {
+                    console.log('LP keys missing, fetching from contract...');
+                    try {
+                        const lpPublicSpendKey = await readHub('lpPublicKeys', [this.requestId]);
+                        const lpPublicViewKey = await readHub('lpPublicViewKeys', [this.requestId]);
+                        
+                        if (lpPublicSpendKey && lpPublicViewKey) {
+                            this.lpPublicSpendKey = lpPublicSpendKey;
+                            this.lpPublicViewKey = lpPublicViewKey;
+                            console.log('LP keys fetched from contract:', {
+                                spendKey: lpPublicSpendKey.slice(0, 20) + '...',
+                                viewKey: lpPublicViewKey.slice(0, 20) + '...'
+                            });
+                        } else {
+                            console.error('LP keys not found on contract!');
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch LP keys from contract:', e);
+                    }
+                }
+                
+                // If deposit address is missing, re-derive it from LP keys
+                if (!this.depositAddress && this.lpPublicSpendKey && this.lpPublicViewKey) {
+                    console.log('Deposit address missing, re-deriving from LP keys...');
+                    try {
+                        this.depositAddress = await this.agent.deriveSharedMoneroAddress(
+                            this.lpPublicSpendKey,
+                            this.lpPublicViewKey
+                        );
+                        console.log('Deposit address re-derived:', this.depositAddress);
+                        
+                        // Update storage with the deposit address and LP keys
+                        const { updateSwapState } = await import('./storage.js');
+                        updateSwapState({
+                            requestId: this.requestId,
+                            depositAddress: this.depositAddress,
+                            lpPublicSpendKey: this.lpPublicSpendKey,
+                            lpPublicViewKey: this.lpPublicViewKey
+                        });
+                        
+                        // Force UI update to show deposit info
+                        const { showMintDepositInfo } = await import('./ui.js');
+                        showMintDepositInfo(this.depositAddress, this.xmrAmount);
+                        console.log('Deposit info UI updated with address');
+                    } catch (e) {
+                        console.error('Failed to re-derive deposit address:', e);
+                    }
+                }
+                
                 await this.waitForLPReady();
                 await this.finalize();
                 break;

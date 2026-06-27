@@ -1,17 +1,21 @@
 // Deadline timer and status polling for MintFlow
 
 export async function startDeadlineTimer(mintFlow) {
+    console.log('[Timer] Starting deadline timer for', mintFlow.requestId);
+    
     // If we don't have the on-chain timeout yet, query it now
     if (!mintFlow.timeout) {
         try {
             const { readHub } = await import('./viemClient.js');
             const mintReq = await readHub('getMintRequest', [mintFlow.requestId]);
             mintFlow.timeout = mintReq.timeout;
-            console.log('Timer: queried on-chain timeout (block):', mintFlow.timeout.toString());
+            console.log('[Timer] Queried on-chain timeout (block):', mintFlow.timeout.toString());
         } catch (e) {
-            console.warn('Timer: could not query on-chain timeout, aborting timer:', e.message);
+            console.warn('[Timer] Could not query on-chain timeout, aborting timer:', e.message);
             return;
         }
+    } else {
+        console.log('[Timer] Using existing timeout (block):', mintFlow.timeout.toString());
     }
 
     const timerElement = document.getElementById('mint-time-remaining');
@@ -19,7 +23,17 @@ export async function startDeadlineTimer(mintFlow) {
     const timerContainer = document.getElementById('mint-deadline-timer');
     const depositInfo = document.getElementById('mint-deposit-info');
     
-    if (!timerElement) return;
+    console.log('[Timer] Elements found:', {
+        timerElement: !!timerElement,
+        warningElement: !!warningElement,
+        timerContainer: !!timerContainer,
+        depositInfo: !!depositInfo
+    });
+    
+    if (!timerElement) {
+        console.error('[Timer] mint-time-remaining element not found!');
+        return;
+    }
 
     // Prevent duplicate timers
     if (mintFlow.deadlineInterval) {
@@ -32,6 +46,7 @@ export async function startDeadlineTimer(mintFlow) {
     // Show timer
     timerContainer?.classList.remove('hidden');
     warningElement?.classList.add('hidden');
+    console.log('[Timer] Timer container shown, classes:', timerContainer?.className);
 
     let running = true;
 
@@ -43,6 +58,7 @@ export async function startDeadlineTimer(mintFlow) {
             const currentBlock = await publicClient.getBlockNumber();
             
             const blocksRemaining = Number(mintFlow.timeout) - Number(currentBlock);
+            console.log('[Timer] Blocks remaining:', blocksRemaining, 'Current:', currentBlock.toString(), 'Timeout:', mintFlow.timeout.toString());
             
             if (blocksRemaining <= 0) {
                 // EXPIRED!
@@ -113,7 +129,11 @@ export async function startDeadlineTimer(mintFlow) {
                             console.error('Cancel/claim refund failed:', err);
                             refundBtn.disabled = false;
                             refundBtn.textContent = 'Cancel Mint & Refund Deposit';
-                            timerElement.innerHTML += `<br><span style="font-size:0.75rem;color:var(--error-color);">${err.message}</span>`;
+                            if (err.message && err.message.includes('TimeoutNotReached')) {
+                                timerElement.innerHTML += `<br><span style="font-size:0.75rem;color:var(--error-color);">The timeout block has not been reached on-chain yet. Please wait a moment and try again.</span>`;
+                            } else {
+                                timerElement.innerHTML += `<br><span style="font-size:0.75rem;color:var(--error-color);">${err.message}</span>`;
+                            }
                         }
                     };
                     timerContainer.appendChild(refundBtn);

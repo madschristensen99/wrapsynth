@@ -65,6 +65,9 @@ const HUB_ABI = [
   'function claimSlashedCollateral(bytes32 requestId) external',
   'function resolveDeclinedProposal(bytes32 requestId) external',
   'function getBurnRequest(bytes32 requestId) external view returns (tuple(address user, address lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 feeAmount, uint256 collateralLocked, uint256 rewardCollateral, bytes32 claimCommitment, bytes32 secretHash, uint256 timeout, uint256 commitDeadline, uint256 state))',
+  'function getMintRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout, uint256 griefingDeposit, uint256 lpBond, uint256 normalizedDebtAmount, uint256 vaultMintNonce, uint8 status))',
+  'function lpPublicKeys(bytes32 requestId) external view returns (bytes32)',
+  'function lpPublicViewKeys(bytes32 requestId) external view returns (bytes32)',
 ];
 
 // ─── Ethers Setup ───────────────────────────────────────────────────────────
@@ -91,12 +94,27 @@ async function generateEd25519Keys() {
   }
   
   const spendPriv = ed.utils.randomPrivateKey();
-  const viewPriv = ed.utils.randomPrivateKey();
-  const spendPub = await ed.getPublicKey(spendPriv);
-  const viewPub = await ed.getPublicKey(viewPriv);
+  // Use LP's wallet view key so we can scan deposit addresses with a view-only wallet
+  const viewPriv = Buffer.from(process.env.MONERO_VIEW_KEY, 'hex');
+
+  // Monero uses direct scalar multiplication (scalar * G), NOT ed.getPublicKey()
+  // which uses SHA512-based Ed25519 key derivation.
+  const ED25519_L = 2n ** 252n + 27742317777372353535851937790883648493n;
+  const G = ed.ExtendedPoint.BASE;
+
+  function scalarToPubKey(scalarBytes) {
+    // Monero stores scalars as little-endian
+    const le = Buffer.from(scalarBytes).reverse();
+    const s = BigInt('0x' + le.toString('hex')) % ED25519_L;
+    const pub = G.multiply(s);
+    return Buffer.from(pub.toRawBytes());
+  }
+
+  const spendPub = scalarToPubKey(spendPriv);
+  const viewPub = scalarToPubKey(viewPriv);
   return {
-    lpPublicSpendKey: '0x' + Buffer.from(spendPub).toString('hex'),
-    lpPublicViewKey: '0x' + Buffer.from(viewPub).toString('hex'),
+    lpPublicSpendKey: '0x' + spendPub.toString('hex'),
+    lpPublicViewKey: '0x' + viewPub.toString('hex'),
   };
 }
 
@@ -104,14 +122,44 @@ async function generateEd25519Keys() {
 async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
   console.log(`[Mint] Processing ${reqIdHex}`);
 
-  // 1. Provide LP key on-chain
-  console.log(`[Chain] Calling provideLPKey(${reqIdHex})...`);
-  const tx1 = await hub.provideLPKey(reqIdHex, lpPublicSpendKey, lpPublicViewKey);
-  console.log(`[Chain] provideLPKey tx: ${tx1.hash}`);
-  const receipt1 = await tx1.wait();
-  console.log(`[Chain] provideLPKey confirmed in block ${receipt1.blockNumber}`);
-
   const mint = pendingMints.get(reqIdHex) || {};
+
+  // 0. Check on-chain status to handle restarts gracefully
+  let onChainStatus = -1;
+  try {
+    const mintReq = await hub.getMintRequest(reqIdHex);
+    onChainStatus = Number(mintReq.status);
+    console.log(`[Chain] Mint ${reqIdHex} on-chain status: ${onChainStatus} (1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED)`);
+
+    if (onChainStatus === 4 || onChainStatus === 5) {
+      console.log(`[Mint] Mint already ${onChainStatus === 4 ? 'completed' : 'cancelled'}, skipping`);
+      pendingMints.delete(reqIdHex);
+      return;
+    }
+
+    // If keys already provided on-chain, use the existing keys instead of calling provideLPKey again
+    if (onChainStatus >= 2) {
+      const existingSpendKey = await hub.lpPublicKeys(reqIdHex);
+      const existingViewKey = await hub.lpPublicViewKeys(reqIdHex);
+      if (existingSpendKey !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
+        console.log(`[Chain] LP keys already provided on-chain, skipping provideLPKey`);
+        lpPublicSpendKey = existingSpendKey;
+        lpPublicViewKey = existingViewKey;
+      }
+    }
+  } catch (err) {
+    console.warn(`[Chain] Could not query mint status, proceeding anyway:`, err.message);
+  }
+
+  // 1. Provide LP key on-chain (skip if already provided)
+  if (onChainStatus < 2) {
+    console.log(`[Chain] Calling provideLPKey(${reqIdHex})...`);
+    const tx1 = await hub.provideLPKey(reqIdHex, lpPublicSpendKey, lpPublicViewKey);
+    console.log(`[Chain] provideLPKey tx: ${tx1.hash}`);
+    const receipt1 = await tx1.wait();
+    console.log(`[Chain] provideLPKey confirmed in block ${receipt1.blockNumber}`);
+  }
+
   mint.keyPostedAt = Date.now();
   mint.lpPublicSpendKey = lpPublicSpendKey;
   mint.lpPublicViewKey = lpPublicViewKey;
@@ -132,9 +180,20 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
   // 3. Wait for the Monero deposit to arrive
   const expectedAmount = BigInt(mint.xmrAmount || '0');
   if (expectedAmount > 0n && moneroWallet.isWalletConfigured()) {
+    // Fetch current height before pollForDeposit closes the main wallet
+    let scanHeight = 0;
+    try {
+      const height = await moneroWallet.getDaemonHeight();
+      scanHeight = Math.max(0, height - 100);
+      console.log(`[Mint] Current Monero height: ${height}, scanning from ${scanHeight}`);
+    } catch (err) {
+      console.warn(`[Mint] Could not get daemon height, scanning from 0:`, err.message);
+    }
     console.log(`[Mint] Scanning for XMR deposit of ${expectedAmount} atomic units...`);
     try {
       const depositTx = await moneroWallet.pollForDeposit(expectedAmount, {
+        depositAddress: mint.depositAddress,
+        restoreHeight: scanHeight,
         toleranceBps: 200,   // 2% tolerance for fees / rounding
         intervalMs: 15000,   // 15s
         maxWaitMs: 600000,   // 10 min
@@ -152,7 +211,41 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
     console.warn(`         To enable real scanning, set MONERO_WALLET_RPC_URL in .env`);
   }
 
-  // 4. Fetch required bond from vault config and call setMintReady
+  // 4. Update oracle prices before setMintReady (contract requires fresh price for collateral check)
+  try {
+    const { WrapperBuilder } = await import('@redstone-finance/evm-connector');
+    const { getSignersForDataServiceId } = await import('@redstone-finance/oracles-smartweave-contracts');
+    const authorizedSigners = getSignersForDataServiceId('redstone-primary-prod');
+    const wrappedHub = WrapperBuilder.wrap(hub).usingDataService({
+      dataServiceId: 'redstone-primary-prod',
+      uniqueSignersCount: 3,
+      dataPackagesIds: ['XMR', 'DAI'],
+      authorizedSigners,
+    });
+    console.log(`[Chain] Updating oracle prices before setMintReady...`);
+    let lastErr;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const updateTx = await wrappedHub.updateOraclePrices([]);
+        await updateTx.wait();
+        console.log(`[Chain] Oracle prices updated (tx: ${updateTx.hash})`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < 2) {
+          const delay = 2000 * Math.pow(2, attempt);
+          console.log(`[Chain] RedStone retry in ${delay/1000}s... (${attempt + 2}/3)`);
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
+    }
+    if (lastErr) throw lastErr;
+  } catch (priceErr) {
+    console.warn(`[Chain] Oracle price update failed: ${priceErr.message}`);
+    console.warn(`[Chain] Proceeding with setMintReady anyway (may revert with StalePrice)...`);
+  }
+
+  // 5. Fetch required bond from vault config and call setMintReady
   const vault = await hub.getVault(wallet.address);
   const requiredBond = vault.mintReadyBond;
   console.log(`[Chain] Vault mintReadyBond: ${ethers.formatEther(requiredBond)} ETH`);
@@ -199,14 +292,18 @@ async function startEventListener() {
         const { requestId, initiator, recipient, lpVault, xmrAmount, wsxmrAmount, feeAmount, claimCommitment, userPublicKey, timeout } = event.args;
         const reqIdHex = ethers.hexlify(requestId);
         if (lpVault.toLowerCase() !== wallet.address.toLowerCase()) {
-          console.log(`[Event] MintInitiated ${reqIdHex} — not our vault, ignoring`);
           continue;
         }
+
+        // Skip if already processing or already processed
+        const existing = pendingMints.get(reqIdHex);
+        if (existing && (existing.processing || existing.keyPostedAt)) {
+          continue;
+        }
+
         console.log(`[Event] MintInitiated ${reqIdHex}`);
         console.log(`  Initiator: ${initiator}`);
-        console.log(`  Recipient: ${recipient}`);
         console.log(`  xmrAmount: ${xmrAmount.toString()}`);
-        console.log(`  Timeout block: ${timeout.toString()}`);
         pendingMints.set(reqIdHex, {
           requestId: reqIdHex,
           initiator,
@@ -216,21 +313,24 @@ async function startEventListener() {
           userPublicKey: ethers.hexlify(userPublicKey),
           claimCommitment: ethers.hexlify(claimCommitment),
           initiatedAt: Date.now(),
+          processing: true,
         });
 
         // Auto-process: generate keys, provideLPKey, wait, setMintReady
-        try {
-          const keys = await generateEd25519Keys();
-          console.log(`[Mint] Generated Ed25519 keys for ${reqIdHex}`);
-          console.log(`  lpPublicSpendKey: ${keys.lpPublicSpendKey}`);
-          console.log(`  lpPublicViewKey: ${keys.lpPublicViewKey}`);
-          await processMint(reqIdHex, keys.lpPublicSpendKey, keys.lpPublicViewKey);
-        } catch (err) {
-          console.error(`[Mint] Auto-process failed for ${reqIdHex}:`, err.message || err);
-          const mint = pendingMints.get(reqIdHex) || {};
-          mint.autoProcessError = err.message || String(err);
-          pendingMints.set(reqIdHex, mint);
-        }
+        // Run async so we don't block the event loop
+        (async () => {
+          try {
+            const keys = await generateEd25519Keys();
+            console.log(`[Mint] Generated Ed25519 keys for ${reqIdHex}`);
+            await processMint(reqIdHex, keys.lpPublicSpendKey, keys.lpPublicViewKey);
+          } catch (err) {
+            console.error(`[Mint] Auto-process failed for ${reqIdHex}:`, err.message || err);
+            const mint = pendingMints.get(reqIdHex) || {};
+            mint.autoProcessError = err.message || String(err);
+            mint.processing = false;
+            pendingMints.set(reqIdHex, mint);
+          }
+        })();
       }
 
       lastCheckedBlock = currentBlock;
@@ -282,6 +382,60 @@ app.post('/mint/key', async (req, res) => {
 app.get('/mints', (_req, res) => {
   const list = Array.from(pendingMints.values());
   res.json({ mints: list, count: list.length });
+});
+
+// Manually trigger deposit scan for a mint (useful when LP keys were already provided)
+app.post('/mint/scan', async (req, res) => {
+  const { requestId } = req.body;
+  if (!requestId) {
+    return res.status(400).json({ error: 'requestId required' });
+  }
+  const reqIdHex = ethers.hexlify(requestId);
+
+  try {
+    // Get on-chain status and LP keys
+    const mintReq = await hub.getMintRequest(reqIdHex);
+    const status = Number(mintReq.status);
+    if (status === 4 || status === 5) {
+      return res.json({ success: false, message: `Mint already ${status === 4 ? 'completed' : 'cancelled'}` });
+    }
+
+    const lpSpendKey = await hub.lpPublicKeys(reqIdHex);
+    const lpViewKey = await hub.lpPublicViewKeys(reqIdHex);
+    if (lpSpendKey === '0x0000000000000000000000000000000000000000000000000000000000000000') {
+      return res.status(400).json({ error: 'LP keys not yet provided for this mint' });
+    }
+
+    // Store in pendingMints if not already there
+    const mint = pendingMints.get(reqIdHex) || {
+      requestId: reqIdHex,
+      initiator: mintReq.initiator,
+      recipient: mintReq.recipient,
+      xmrAmount: mintReq.xmrAmount.toString(),
+      userPublicKey: ethers.hexlify(mintReq.userPublicKey),
+      timeoutBlock: Number(mintReq.timeout),
+    };
+    mint.lpPublicSpendKey = lpSpendKey;
+    mint.lpPublicViewKey = lpViewKey;
+    mint.keyPostedAt = mint.keyPostedAt || Date.now();
+    pendingMints.set(reqIdHex, mint);
+
+    res.json({
+      success: true,
+      requestId: reqIdHex,
+      message: 'Deposit scan started. Will call setMintReady when deposit is found.',
+      depositAddress: mint.depositAddress || 'computing...',
+      xmrAmount: mint.xmrAmount,
+    });
+
+    // Run processMint async (it will skip provideLPKey since status >= 2)
+    processMint(reqIdHex, lpSpendKey, lpViewKey).catch(err => {
+      console.error(`[Mint] Manual scan failed for ${reqIdHex}:`, err.message);
+    });
+  } catch (err) {
+    console.error(`[Error] /mint/scan failed for ${reqIdHex}:`, err.message);
+    res.status(500).json({ error: err.message, requestId: reqIdHex });
+  }
 });
 
 // ─── Chainlink Data Streams Report Proxy ────────────────────────────────────

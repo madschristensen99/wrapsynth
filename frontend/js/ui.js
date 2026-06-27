@@ -3,6 +3,7 @@
 
 import { DECIMALS } from './config.js';
 import { getIconSVG } from './icons.js';
+import { launchMintCelebration, launchBurnAnimation } from './animations.js';
 
 /**
  * UI Element References
@@ -64,6 +65,9 @@ const elements = {
     modalTitle: null,
     modalBody: null,
     modalCloseBtn: null,
+    modalCancelBtn: null,
+    modalConfirmBtn: null,
+    modalXBtn: null,
     
     // Withdraw returns
     withdrawReturnsBtn: null,
@@ -135,6 +139,9 @@ export function initUI() {
     elements.modalTitle = document.getElementById('modal-title');
     elements.modalBody = document.getElementById('modal-body');
     elements.modalCloseBtn = document.getElementById('modal-close-btn');
+    elements.modalCancelBtn = document.getElementById('modal-cancel-btn');
+    elements.modalConfirmBtn = document.getElementById('modal-confirm-btn');
+    elements.modalXBtn = document.getElementById('modal-x-btn');
     
     // Withdraw returns
     elements.withdrawReturnsBtn = document.getElementById('withdraw-returns-btn');
@@ -143,8 +150,7 @@ export function initUI() {
     elements.previousMintBanner = document.getElementById('previous-mint-banner');
     
     // Setup modal close handlers
-    const modalClose = document.querySelector('.modal-close');
-    modalClose.addEventListener('click', hideModal);
+    elements.modalXBtn.addEventListener('click', hideModal);
     elements.modalCloseBtn.addEventListener('click', hideModal);
     elements.modalOverlay.addEventListener('click', (e) => {
         if (e.target === elements.modalOverlay) {
@@ -251,10 +257,17 @@ export function showResumeBanner(swaps, onResume, onResolve) {
             </span>
         `;
 
+        // Show deposit address for mints that are waiting for XMR or LP verification
+        const showDepositAddr = swap.type === 'mint'
+            && (swap.state === 'deposit' || swap.state === 'lp-verifying')
+            && swap.depositAddress;
+
         // Burns are always resumable; mints need the stored publicSpendKey to regenerate the secret
-        const canResume = swap.type === 'burn'
-            ? true
-            : (swap.publicSpendKey != null && swap.publicSpendKey !== '');
+        // Exclude zero-value keys (0x000...0) that come from uninitialized on-chain fields
+        const hasValidKey = swap.publicSpendKey != null
+            && swap.publicSpendKey !== ''
+            && swap.publicSpendKey !== '0x0000000000000000000000000000000000000000000000000000000000000000';
+        const canResume = swap.type === 'burn' ? true : hasValidKey;
         // A mint is only truly claimable if the LP has verified it AND we still have the secret.
         // Without the secret we cannot generate the view key to verify the LP's proof.
         const isClaimableMint = swap.type === 'mint' && (swap.state === 'lp-ready' || swap.state === 'finalize') && canResume;
@@ -281,6 +294,17 @@ export function showResumeBanner(swaps, onResume, onResolve) {
         row.appendChild(btn);
 
         container.appendChild(row);
+
+        // Show deposit address for mints waiting for XMR or LP verification
+        if (showDepositAddr) {
+            const addrShort = swap.depositAddress.slice(0, 12) + '...' + swap.depositAddress.slice(-8);
+            const depositRow = document.createElement('div');
+            depositRow.className = 'resume-swap-deposit';
+            depositRow.style.cssText = 'font-size:0.8rem;color:var(--text-muted);margin-top:4px;margin-left:8px;word-break:break-all;';
+            depositRow.innerHTML = `Send XMR to: <span style="font-family:monospace;color:var(--text);">${addrShort}</span> <button class="btn-small" style="padding:2px 6px;font-size:0.7rem;margin-left:4px;" onclick="navigator.clipboard.writeText('${swap.depositAddress}');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',2000)">Copy</button>`;
+            container.appendChild(depositRow);
+        }
+
         elements.resumeSwapList.appendChild(container);
     }
 
@@ -541,19 +565,54 @@ export function showVaultInfo(vaultData, isMint = true) {
     infoElement.classList.remove('hidden');
 }
 
+const MINT_STEP_MAP = {
+    'init': 0,
+    'evm-init': 0,
+    'awaiting-lp-key': 1,
+    'deposit': 1,
+    'lp-confirm': 2,
+    'finalize': 3
+};
+
+const MINT_STEP_NOTE = {
+    'init': { num: '01', text: 'Initiating mint on-chain...' },
+    'evm-init': { num: '01', text: 'Paying griefing deposit on-chain...' },
+    'awaiting-lp-key': { num: '02', text: 'Waiting for LP to post transaction destination address...' },
+    'deposit': { num: '02', text: 'Send XMR to the LP address shown below.' },
+    'lp-confirm': { num: '03', text: 'LP is verifying your XMR deposit on the Monero blockchain...' },
+    'finalize': { num: '04', text: 'Finalizing mint — revealing secret to claim wsXMR...' }
+};
+
+const BURN_STEP_MAP = {
+    'init': 0,
+    'evm-request': 0,
+    'lp-propose': 1,
+    'confirm-lock': 2,
+    'lp-finalize': 3
+};
+
 /**
  * Update mint progress
  */
 export function updateMintProgress(step, status = null) {
-    const steps = elements.mintProgress.querySelectorAll('.progress-step');
+    const stepIndex = MINT_STEP_MAP[step];
+    if (stepIndex === undefined) return;
 
-    steps.forEach(stepEl => {
-        const stepName = stepEl.getAttribute('data-step');
+    // Update step-note label
+    const note = MINT_STEP_NOTE[step];
+    if (note) {
+        const numEl = document.getElementById('mint-step-num');
+        const textEl = document.getElementById('mint-step-text');
+        if (numEl) numEl.textContent = note.num;
+        if (textEl) textEl.textContent = status || note.text;
+    }
 
-        if (stepName === step) {
-            stepEl.classList.add('active');
-            stepEl.classList.remove('completed');
-            // Ensure body is measured for smooth animation
+    const steps = elements.mintProgress.querySelectorAll('.step');
+
+    steps.forEach((stepEl, idx) => {
+        if (idx === stepIndex) {
+            stepEl.classList.add('cur');
+            stepEl.classList.remove('done');
             const body = stepEl.querySelector('.step-body');
             if (body) {
                 body.style.willChange = 'grid-template-rows';
@@ -572,22 +631,24 @@ export function updateMintProgress(step, status = null) {
                 }
             }
         } else {
-            stepEl.classList.remove('active');
+            stepEl.classList.remove('cur');
         }
     });
 
     elements.mintProgress.classList.remove('hidden');
+    elements.mintProgress.style.display = 'block';
 }
 
 /**
  * Mark mint step as completed
  */
 export function completeMintStep(step) {
-    const stepEl = elements.mintProgress.querySelector(`[data-step="${step}"]`);
+    const stepIndex = MINT_STEP_MAP[step];
+    if (stepIndex === undefined) return;
+    const stepEl = elements.mintProgress.querySelectorAll('.step')[stepIndex];
     if (stepEl) {
-        stepEl.classList.add('completed');
-        stepEl.classList.remove('active');
-        // Collapse status to a compact done message
+        stepEl.classList.add('done');
+        stepEl.classList.remove('cur');
         const statusEl = stepEl.querySelector('.step-status');
         if (statusEl && !statusEl.dataset.originalText) {
             statusEl.dataset.originalText = statusEl.textContent;
@@ -601,17 +662,72 @@ export function completeMintStep(step) {
 /**
  * Show mint deposit info
  */
-export function showMintDepositInfo(address, amount) {
+export async function showMintDepositInfo(address, amount) {
+    // Ensure mint progress is visible - force display
+    if (elements.mintProgress) {
+        elements.mintProgress.classList.remove('hidden');
+        elements.mintProgress.style.display = 'block';
+    }
+    
     // If address is still placeholder, show loading message
     if (address === 'LP_WILL_PROVIDE_ADDRESS') {
-        elements.mintXmrAddress.textContent = 'Fetching deposit address from LP node...';
+        if (elements.mintXmrAddress) {
+            elements.mintXmrAddress.textContent = 'Fetching deposit address from LP node...';
+        }
     } else {
-        elements.mintXmrAddress.textContent = address;
+        if (elements.mintXmrAddress) {
+            elements.mintXmrAddress.innerHTML = `
+                <span id="mint-xmr-address-text">${address}</span>
+                <button id="copy-mint-address">
+                    ${getIconSVG('clipboard')}
+                    <span id="copy-mint-label">Copy address</span>
+                </button>
+            `;
+            const copyBtn = document.getElementById('copy-mint-address');
+            if (copyBtn) {
+                copyBtn.addEventListener('click', () => {
+                    navigator.clipboard.writeText(address).then(() => {
+                        copyBtn.innerHTML = `${getIconSVG('check')}<span>Copied!</span>`;
+                        setTimeout(() => {
+                            copyBtn.innerHTML = `${getIconSVG('clipboard')}<span id="copy-mint-label">Copy address</span>`;
+                        }, 2000);
+                    });
+                });
+            }
+        }
     }
-    elements.mintExactAmount.textContent = amount.toFixed(8);
     
-    // Generate QR code
-    generateQRCode(elements.mintQrCode, `monero:${address}?tx_amount=${amount}`);
+    if (elements.mintExactAmount) {
+        elements.mintExactAmount.textContent = amount.toFixed(8);
+    }
+    
+    // Show QR code, address, and amount elements
+    if (elements.mintQrCode) {
+        elements.mintQrCode.style.display = 'block';
+        // Force layout reflow so canvas has dimensions before drawing
+        elements.mintQrCode.offsetHeight;
+        try {
+            await generateQRCode(elements.mintQrCode, `monero:${address}?tx_amount=${amount}`);
+        } catch (e) {
+            console.error('QR code generation failed:', e);
+            // Draw fallback text
+            const ctx = elements.mintQrCode.getContext('2d');
+            elements.mintQrCode.width = 200;
+            elements.mintQrCode.height = 200;
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, 200, 200);
+            ctx.fillStyle = '#000000';
+            ctx.font = '11px monospace';
+            ctx.fillText('QR Error', 70, 95);
+            ctx.fillText('Use address below', 50, 115);
+        }
+    }
+    if (elements.mintXmrAddress) {
+        elements.mintXmrAddress.style.display = 'block';
+    }
+    if (elements.mintExactAmount) {
+        elements.mintExactAmount.style.display = 'block';
+    }
     
     // Show button, hide verification status initially
     if (elements.confirmSentXmr) {
@@ -621,8 +737,13 @@ export function showMintDepositInfo(address, amount) {
         elements.waitingLpVerification.classList.add('hidden');
     }
 
-    elements.mintDepositInfo.classList.remove('hidden');
-    elements.mintActions.classList.remove('hidden');
+    if (elements.mintDepositInfo) {
+        elements.mintDepositInfo.classList.remove('hidden');
+        elements.mintDepositInfo.style.display = 'block';
+    }
+    if (elements.mintActions) {
+        elements.mintActions.classList.remove('hidden');
+    }
 }
 
 /**
@@ -633,13 +754,13 @@ export function showLPVerificationStatus() {
         elements.confirmSentXmr.classList.add('hidden');
     }
     
-    // Hide deposit info by default - user can click "See TX Details" to view it
+    // Show deposit info by default so user can see the address they sent to
     if (elements.mintDepositInfo) {
-        elements.mintDepositInfo.classList.add('hidden');
+        elements.mintDepositInfo.classList.remove('hidden');
     }
     
     // Keep deposit step body expanded so the verification status and toggle button are visible
-    const depositStep = elements.mintProgress?.querySelector('[data-step="deposit"]');
+    const depositStep = elements.mintProgress?.querySelectorAll('.step')[1];
     if (depositStep) {
         const body = depositStep.querySelector('.step-body');
         if (body) body.classList.add('force-open');
@@ -717,14 +838,15 @@ export function showClaimWsXmrButton(onClaim) {
  * Update burn progress
  */
 export function updateBurnProgress(step, status = null) {
-    const steps = elements.burnProgress.querySelectorAll('.progress-step');
+    const stepIndex = BURN_STEP_MAP[step];
+    if (stepIndex === undefined) return;
 
-    steps.forEach(stepEl => {
-        const stepName = stepEl.getAttribute('data-step');
+    const steps = elements.burnProgress.querySelectorAll('.step');
 
-        if (stepName === step) {
-            stepEl.classList.add('active');
-            stepEl.classList.remove('completed');
+    steps.forEach((stepEl, idx) => {
+        if (idx === stepIndex) {
+            stepEl.classList.add('cur');
+            stepEl.classList.remove('done');
             const body = stepEl.querySelector('.step-body');
             if (body) {
                 body.style.willChange = 'grid-template-rows';
@@ -743,21 +865,24 @@ export function updateBurnProgress(step, status = null) {
                 }
             }
         } else {
-            stepEl.classList.remove('active');
+            stepEl.classList.remove('cur');
         }
     });
 
     elements.burnProgress.classList.remove('hidden');
+    elements.burnProgress.style.display = 'block';
 }
 
 /**
  * Mark burn step as completed
  */
 export function completeBurnStep(step) {
-    const stepEl = elements.burnProgress.querySelector(`[data-step="${step}"]`);
+    const stepIndex = BURN_STEP_MAP[step];
+    if (stepIndex === undefined) return;
+    const stepEl = elements.burnProgress.querySelectorAll('.step')[stepIndex];
     if (stepEl) {
-        stepEl.classList.add('completed');
-        stepEl.classList.remove('active');
+        stepEl.classList.add('done');
+        stepEl.classList.remove('cur');
         const statusEl = stepEl.querySelector('.step-status');
         if (statusEl && !statusEl.dataset.originalText) {
             statusEl.dataset.originalText = statusEl.textContent;
@@ -769,12 +894,65 @@ export function completeBurnStep(step) {
 }
 
 /**
- * Show modal
+ * Show a simple info modal (one Close button).
  */
 export function showModal(title, body, isError = false) {
+    // Reset to simple mode: only Close button visible
+    if (elements.modalCloseBtn) elements.modalCloseBtn.classList.remove('hidden');
+    if (elements.modalCancelBtn) elements.modalCancelBtn.classList.add('hidden');
+    if (elements.modalConfirmBtn) elements.modalConfirmBtn.classList.add('hidden');
+    if (elements.modalXBtn) elements.modalXBtn.classList.remove('hidden');
+
     elements.modalTitle.textContent = title;
     elements.modalBody.innerHTML = body;
     elements.modalOverlay.classList.remove('hidden');
+}
+
+/**
+ * Show a confirm modal with Confirm / Cancel buttons.
+ * Returns a Promise that resolves to true (confirmed) or false (cancelled).
+ */
+export function showConfirmModal(title, body) {
+    return new Promise((resolve) => {
+        // Hide Close button, show Confirm/Cancel
+        if (elements.modalCloseBtn) elements.modalCloseBtn.classList.add('hidden');
+        if (elements.modalCancelBtn) elements.modalCancelBtn.classList.remove('hidden');
+        if (elements.modalConfirmBtn) elements.modalConfirmBtn.classList.remove('hidden');
+        if (elements.modalXBtn) elements.modalXBtn.classList.remove('hidden');
+
+        elements.modalTitle.textContent = title;
+        elements.modalBody.innerHTML = body;
+        elements.modalOverlay.classList.remove('hidden');
+
+        // One-time handlers
+        const onConfirm = () => {
+            cleanup();
+            resolve(true);
+        };
+        const onCancel = () => {
+            cleanup();
+            resolve(false);
+        };
+        const onOverlay = (e) => {
+            if (e.target === elements.modalOverlay) {
+                cleanup();
+                resolve(false);
+            }
+        };
+
+        const cleanup = () => {
+            hideModal();
+            elements.modalConfirmBtn.removeEventListener('click', onConfirm);
+            elements.modalCancelBtn.removeEventListener('click', onCancel);
+            elements.modalXBtn.removeEventListener('click', onCancel);
+            elements.modalOverlay.removeEventListener('click', onOverlay);
+        };
+
+        elements.modalConfirmBtn.addEventListener('click', onConfirm);
+        elements.modalCancelBtn.addEventListener('click', onCancel);
+        elements.modalXBtn.addEventListener('click', onCancel);
+        elements.modalOverlay.addEventListener('click', onOverlay);
+    });
 }
 
 /**
@@ -840,7 +1018,45 @@ export function showMintComplete(amount) {
         }
     }, 1000);
 
-    launchConfetti();
+    launchMintCelebration();
+}
+
+/**
+ * Show burn complete inline banner + fire animation (no modal)
+ */
+export function showBurnComplete(amount) {
+    const burnPanel = document.getElementById('burn-panel');
+    if (!burnPanel) return;
+
+    const existing = burnPanel.querySelector('.burn-complete-banner');
+    if (existing) existing.remove();
+
+    const banner = document.createElement('div');
+    banner.className = 'burn-complete-banner';
+    banner.innerHTML = `
+        <div class="burn-complete-inner">
+            <h3>Burn Complete</h3>
+            <p>Successfully burned ${amount} wsXMR!</p>
+        </div>
+        <span class="burn-complete-timer">0s ago</span>
+    `;
+    burnPanel.insertBefore(banner, burnPanel.firstChild);
+
+    const timerEl = banner.querySelector('.burn-complete-timer');
+    let seconds = 0;
+    const timerId = setInterval(() => {
+        seconds++;
+        if (seconds >= 60) {
+            clearInterval(timerId);
+            banner.remove();
+            return;
+        }
+        if (timerEl) {
+            timerEl.textContent = seconds + 's ago';
+        }
+    }, 1000);
+
+    launchBurnAnimation();
 }
 
 /**
@@ -926,6 +1142,80 @@ export function showBurnAddressPanel(data) {
  */
 export function showError(title, message) {
     showModal(title, `<p style="color: var(--error-color);">${message}</p>`, true);
+}
+
+/**
+ * Show slide-in notification
+ * @param {string} title - Notification title
+ * @param {string} message - Notification message (can include HTML)
+ * @param {string} type - Notification type: 'info', 'success', 'error', 'warning'
+ * @param {number} duration - Auto-dismiss duration in ms (0 = no auto-dismiss)
+ */
+export function showNotification(title, message, type = 'info', duration = 5000) {
+    const container = document.getElementById('notification-container');
+    if (!container) return;
+
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    
+    const notificationId = `notif-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    notification.id = notificationId;
+    
+    notification.innerHTML = `
+        <div class="notification-header">
+            <div class="notification-title">${title}</div>
+            <button class="notification-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="notification-body">${message}</div>
+    `;
+    
+    container.appendChild(notification);
+    
+    const closeBtn = notification.querySelector('.notification-close');
+    const dismiss = () => {
+        notification.classList.add('slide-out');
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.parentNode.removeChild(notification);
+            }
+        }, 250);
+    };
+    
+    closeBtn.addEventListener('click', dismiss);
+    
+    if (duration > 0) {
+        setTimeout(dismiss, duration);
+    }
+    
+    return notificationId;
+}
+
+/**
+ * Show success notification
+ */
+export function showSuccessNotification(title, message, duration = 5000) {
+    return showNotification(title, message, 'success', duration);
+}
+
+/**
+ * Show error notification
+ */
+export function showErrorNotification(title, message, duration = 7000) {
+    return showNotification(title, message, 'error', duration);
+}
+
+/**
+ * Show warning notification
+ */
+export function showWarningNotification(title, message, duration = 6000) {
+    return showNotification(title, message, 'warning', duration);
+}
+
+/**
+ * Show info notification
+ */
+export function showInfoNotification(title, message, duration = 5000) {
+    return showNotification(title, message, 'info', duration);
 }
 
 /**
@@ -1033,21 +1323,77 @@ export function enableInputs(isMint = true) {
 }
 
 /**
- * Reset mint UI
+ * Reset mint UI — fully clear all mint-related DOM elements
  */
 export function resetMintUI() {
-    elements.mintProgress.classList.add('hidden');
-    elements.mintDepositInfo.classList.add('hidden');
-    elements.mintActions.classList.add('hidden');
+    elements.mintProgress?.classList.add('hidden');
+    elements.mintDepositInfo?.classList.add('hidden');
+    elements.mintActions?.classList.add('hidden');
     elements.previousMintBanner?.classList.add('hidden');
     enableInputs(true);
+
+    // Remove claim button
     const claimBtn = elements.mintActions?.querySelector('.claim-wsxmr-btn');
     if (claimBtn) claimBtn.remove();
+
+    // Remove toggle-deposit-details button
+    const toggleBtn = document.getElementById('toggle-deposit-details');
+    if (toggleBtn) toggleBtn.remove();
+
+    // Remove any refund buttons from timer container
+    document.querySelectorAll('.btn-refund').forEach(b => b.remove());
+
+    // Reset deadline timer container
+    const timerContainer = document.getElementById('mint-deadline-timer');
+    if (timerContainer) {
+        timerContainer.classList.add('hidden');
+        timerContainer.classList.remove('alert-error', 'alert-warning');
+    }
+    const timerEl = document.getElementById('mint-time-remaining');
+    if (timerEl) timerEl.innerHTML = '';
+    const warningEl = document.getElementById('mint-deadline-warning');
+    if (warningEl) { warningEl.classList.add('hidden'); warningEl.innerHTML = ''; }
+
+    // Clear verification status
+    if (elements.waitingLpVerification) {
+        elements.waitingLpVerification.classList.add('hidden');
+        elements.waitingLpVerification.innerHTML = '';
+    }
+
+    // Clear deposit info content
+    if (elements.mintDepositInfo) elements.mintDepositInfo.innerHTML = '';
+    if (elements.mintXmrAddress) { elements.mintXmrAddress.innerHTML = ''; elements.mintXmrAddress.style.display = ''; }
+    if (elements.mintExactAmount) { elements.mintExactAmount.textContent = ''; elements.mintExactAmount.style.display = ''; }
+
+    // Clear QR code canvas
+    if (elements.mintQrCode) {
+        const ctx = elements.mintQrCode.getContext('2d');
+        ctx.clearRect(0, 0, elements.mintQrCode.width, elements.mintQrCode.height);
+        elements.mintQrCode.style.display = '';
+    }
+
+    // Hide confirm-sent button
+    if (elements.confirmSentXmr) elements.confirmSentXmr.classList.add('hidden');
+
+    // Reset all step states (remove done/cur classes)
+    elements.mintProgress?.querySelectorAll('.step').forEach(s => {
+        s.classList.remove('done', 'cur');
+        const statusEl = s.querySelector('.step-status');
+        if (statusEl) { statusEl.textContent = ''; delete statusEl.dataset.originalText; }
+    });
+
+    // Reset step note
+    const stepNumEl = document.getElementById('mint-step-num');
+    if (stepNumEl) stepNumEl.textContent = '01';
+    const stepTextEl = document.getElementById('mint-step-text');
+    if (stepTextEl) stepTextEl.textContent = '';
+
+    // Clean up any forced-open step bodies
+    elements.mintProgress?.querySelectorAll('.step-body.force-open').forEach(b => b.classList.remove('force-open'));
+
     if (elements.cancelMint) elements.cancelMint.classList.remove('hidden');
     const btnText = elements.startMint?.querySelector('.btn-text');
     if (btnText) btnText.textContent = 'Start Mint';
-    // Clean up any forced-open step bodies
-    elements.mintProgress?.querySelectorAll('.step-body.force-open').forEach(b => b.classList.remove('force-open'));
 }
 
 /**
