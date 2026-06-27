@@ -3,6 +3,7 @@
 
 import { createHash } from 'crypto';
 import * as ed from '@noble/ed25519';
+import * as ethers from 'ethers';
 
 // Set up SHA-512 sync for @noble/ed25519
 if (!ed.etc.sha512Sync) {
@@ -41,7 +42,7 @@ function base58Encode(data) {
 }
 
 function keccak256(data) {
-  return createHash('keccak256').update(data).digest();
+  return Buffer.from(ethers.keccak256(data).slice(2), 'hex');
 }
 
 function hexToBytes(hex) {

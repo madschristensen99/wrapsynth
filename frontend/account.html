@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>WrapSynth — Account</title>
+<link rel="icon" type="image/x-icon" href="./favicon_monero/favicon.ico">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app-styles.css?v=2.2">
+<style>
+  .account-page{max-width:680px;margin:0 auto;padding:44px 18px 60px}
+  .account-back{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);text-decoration:none;margin-bottom:20px;transition:color .15s}
+  .account-back:hover{color:var(--fg)}
+  .account-card{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:28px 24px;margin-bottom:24px}
+  .account-header{display:flex;align-items:center;gap:16px;margin-bottom:24px}
+  .account-avatar{width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,var(--xmr),var(--teal));flex-shrink:0}
+  .account-title{font-family:'Space Grotesk';font-weight:600;font-size:20px}
+  .account-address{font-family:'JetBrains Mono';font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px;margin-top:4px}
+  .account-address button{background:none;border:none;color:var(--teal);cursor:pointer;font-size:12px;padding:0}
+  .account-address button:hover{color:var(--fg)}
+  .account-balances{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .account-balance{background:var(--bg);padding:18px 16px;text-align:center}
+  .account-balance .n{font-family:'JetBrains Mono';font-weight:600;font-size:clamp(18px,3vw,24px)}
+  .account-balance .k{font-size:12px;color:var(--muted);margin-top:4px}
+  .account-balance .n .teal{color:var(--teal)}
+
+  .history-tabs{display:flex;gap:2px;background:var(--panel-2);border-radius:13px;padding:4px;margin-bottom:16px}
+  .history-tab{flex:1;font-family:'Space Grotesk';font-weight:600;font-size:13px;color:var(--muted);background:transparent;border:none;cursor:pointer;padding:10px;border-radius:10px;transition:.15s}
+  .history-tab.active{background:var(--bg);color:var(--fg);box-shadow:0 1px 0 rgba(255,255,255,.04) inset}
+  .history-tab:hover:not(.active){color:var(--fg)}
+
+  .history-list{display:flex;flex-direction:column;gap:10px}
+  .history-empty{text-align:center;padding:40px 20px;color:var(--muted);font-size:14px}
+  .history-row{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;transition:border-color .15s,background .15s}
+  .history-row:hover{border-color:rgba(255,255,255,.14);background:rgba(255,255,255,.02)}
+  .history-row-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+  .history-type{display:flex;align-items:center;gap:8px;font-family:'Space Grotesk';font-weight:600;font-size:14px}
+  .history-type svg{width:18px;height:18px;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;fill:none}
+  .history-status{font-size:11.5px;padding:4px 10px;border-radius:20px;font-weight:600;letter-spacing:.02em}
+  .status-completed{background:rgba(55,217,154,.1);color:var(--green)}
+  .status-pending{background:rgba(245,185,69,.1);color:var(--amber)}
+  .status-cancelled{background:rgba(244,115,107,.1);color:var(--red)}
+  .status-initiated{background:rgba(47,230,196,.1);color:var(--teal)}
+  .status-committed{background:rgba(47,230,196,.1);color:var(--teal)}
+  .status-proposed{background:rgba(245,185,69,.1);color:var(--amber)}
+  .status-slashed{background:rgba(244,115,107,.1);color:var(--red)}
+  .status-unknown{background:rgba(255,255,255,.06);color:var(--muted)}
+  .history-details{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+  .history-detail{display:flex;flex-direction:column;gap:3px}
+  .history-detail .lbl{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.04em;font-weight:600}
+  .history-detail .val{font-size:13px;color:var(--fg);font-family:'JetBrains Mono';word-break:break-all}
+  .history-detail .val a{color:var(--teal);text-decoration:none}
+  .history-detail .val a:hover{color:var(--fg)}
+
+  @media(max-width:520px){
+    .account-header{flex-direction:column;align-items:flex-start}
+    .account-balances{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body class="app-page">
+<canvas id="gl"></canvas>
+<div class="scrim"></div>
+
+<script>
+(function(){
+  const cv=document.getElementById('gl'), gl=cv.getContext('webgl',{alpha:true,antialias:false});
+  if(!gl){return;}
+  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const vs=`attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}`;
+  const fs=`precision highp float;uniform vec2 u_res;uniform float u_time;uniform float u_m;
+    float h(float n){return fract(sin(n)*43758.5453);}
+    void main(){vec2 uv=gl_FragCoord.xy/u_res.xy;float t=u_time*u_m;float glow=0.;
+      const int N=11;
+      for(int i=0;i<N;i++){float fi=float(i);float s=fi*1.37;float yb=(fi+0.5)/float(N);
+        float a=0.03+0.04*h(s);float f=1.3+2.2*h(s+1.);float sp=0.08+0.2*h(s+2.);float ph=s*6.28;
+        float y=yb+a*sin(uv.x*f*3.14+t*sp+ph);float d=abs(uv.y-y);
+        glow+=(0.0014/(d+0.0011))*(0.4+0.5*h(s+3.));}
+      vec3 o=vec3(1.,0.42,0.1);vec3 te=vec3(0.18,0.9,0.77);
+      vec3 c=mix(o,te,smoothstep(0.1,0.9,uv.x))*glow*0.34;
+      gl_FragColor=vec4(c,1.0);}`;
+  function sh(t,src){const s=gl.createShader(t);gl.shaderSource(s,src);gl.compileShader(s);return s;}
+  const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,vs));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,fs));
+  gl.linkProgram(pr);gl.useProgram(pr);
+  const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+  const l=gl.getAttribLocation(pr,'p');gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,2,gl.FLOAT,false,0,0);
+  const uR=gl.getUniformLocation(pr,'u_res'),uT=gl.getUniformLocation(pr,'u_time'),uM=gl.getUniformLocation(pr,'u_m');
+  gl.uniform1f(uM,reduce?0:1);
+  function rz(){const dpr=Math.min(devicePixelRatio||1,1.5);cv.width=innerWidth*dpr;cv.height=innerHeight*dpr;
+    gl.viewport(0,0,cv.width,cv.height);gl.uniform2f(uR,cv.width,cv.height);}
+  addEventListener('resize',rz);rz();
+  const t0=performance.now();
+  (function f(){gl.uniform1f(uT,(performance.now()-t0)/1000);gl.drawArrays(gl.TRIANGLES,0,3);
+    if(!reduce)requestAnimationFrame(f);})();
+})();
+</script>
+
+<div class="shell">
+  <nav>
+    <a href="index.html" class="brand" style="text-decoration:none"><img src="./wrapsynth-symbol.png" alt="WrapSynth" style="width:22px;height:22px;border-radius:6px">WrapSynth</a>
+    <div class="nav-right">
+      <a href="app.html" class="pill" style="text-decoration:none;color:var(--muted)">← Back to app</a>
+    </div>
+  </nav>
+
+  <div class="account-page">
+    <a href="app.html" class="account-back">← Back to app</a>
+
+    <div id="connect-prompt" class="account-card" style="text-align:center">
+      <h2 class="account-title" style="margin-bottom:12px">Connect your wallet</h2>
+      <p style="color:var(--muted);font-size:14px;margin-bottom:20px">Connect to view your account and transaction history.</p>
+      <button class="connect" id="connect-wallet">Connect wallet</button>
+    </div>
+
+    <div id="account-content" class="hidden">
+      <div class="account-card">
+        <div class="account-header">
+          <div class="account-avatar"></div>
+          <div>
+            <div class="account-title">Your Account</div>
+            <div class="account-address">
+              <span id="acct-address"></span>
+              <button id="copy-address" title="Copy address">Copy</button>
+            </div>
+          </div>
+        </div>
+        <div class="account-balances">
+          <div class="account-balance">
+            <div class="n" id="acct-wsxmr">--</div>
+            <div class="k">wsXMR Balance</div>
+          </div>
+          <div class="account-balance">
+            <div class="n" id="acct-xdai">--</div>
+            <div class="k">xDAI Balance</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="account-card">
+        <h3 style="font-family:'Space Grotesk';font-weight:600;font-size:16px;margin-bottom:16px">History</h3>
+        <div class="history-tabs">
+          <button class="history-tab active" data-filter="all">All</button>
+          <button class="history-tab" data-filter="mint">Mints</button>
+          <button class="history-tab" data-filter="burn">Burns</button>
+          <button class="history-tab" data-filter="transfer">Transfers</button>
+        </div>
+        <div id="history-list" class="history-list">
+          <div class="history-empty">Loading history...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  const res = await fetch('./deployment.json');
+  if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status);
+  window.DEPLOYMENT = await res.json();
+</script>
+<script type="module" src="./js/account.js?v=1.0"></script>
+</body>
+</html>

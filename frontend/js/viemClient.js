@@ -25,17 +25,17 @@ let userAddress = null;
  * Initialize viem clients
  */
 function getTransport() {
-    // If MetaMask is available, use it for reads — bypasses CORS and rate limits entirely
+    const httpTransports = NETWORKS.gnosis.rpcUrls.map(url => http(url));
+    // If MetaMask is available, use it for reads — bypasses CORS and rate limits entirely,
+    // but fallback to HTTP RPCs if the wallet transport fails (e.g. wallet locked)
     if (typeof window !== 'undefined' && window.ethereum) {
-        try {
-            return custom(window.ethereum);
-        } catch (e) {
-            console.warn('[viemClient] MetaMask transport unavailable, falling back to HTTP');
-        }
+        return fallback([
+            custom(window.ethereum),
+            ...httpTransports
+        ], { rank: false });
     }
     // Fallback to HTTP RPCs for users without a wallet
-    const transports = NETWORKS.gnosis.rpcUrls.map(url => http(url));
-    return fallback(transports, { rank: false });
+    return fallback(httpTransports, { rank: false });
 }
 
 export async function initializeClients() {
@@ -77,6 +77,9 @@ export async function connectWallet() {
 
     // Ensure we're on the correct network
     await switchToGnosisChain();
+
+    // Mark that the user has explicitly connected so we can auto-reconnect next visit
+    localStorage.setItem('wrapsynth-wallet-connected', 'true');
 
     return address;
 }
@@ -123,6 +126,12 @@ export function getUserAddress() {
 export async function ensureConnected() {
     if (userAddress) return userAddress;
     if (!walletClient || !window.ethereum) return null;
+
+    // Only try silent reconnect if user has previously connected via the app.
+    // This avoids unwanted wallet prompts for first-time visitors.
+    const hasConnectedBefore = localStorage.getItem('wrapsynth-wallet-connected') === 'true';
+    if (!hasConnectedBefore) return null;
+
     try {
         const accounts = await window.ethereum.request({ method: 'eth_accounts' });
         if (accounts && accounts.length > 0) {

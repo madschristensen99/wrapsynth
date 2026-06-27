@@ -297,6 +297,8 @@ export const ABIS = {
 
         // Oracle (RedStoneOracleFacet — user can update prices with RedStone data)
         'function updateOraclePrices(bytes[] calldata) external payable',
+        'function getXmrPrice() external view returns (uint256)',
+        'function getCollateralPrice() external view returns (uint256)',
         'function lastXmrPrice() external view returns (int192)',
         'function lastCollateralPrice() external view returns (int192)',
         'function globalDebtIndex() external view returns (uint256)',

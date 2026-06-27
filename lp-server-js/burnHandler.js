@@ -142,9 +142,19 @@ async function processPropose(reqIdHex, customKeys = {}) {
       ed.etc.sha512Sync = (...m) => createHash('sha512').update(Buffer.concat(m)).digest();
     }
     const spendPriv = ed.utils.randomPrivateKey();
-    const viewPriv = ed.utils.randomPrivateKey();
-    lpPublicSpendKey = '0x' + Buffer.from(await ed.getPublicKey(spendPriv)).toString('hex');
-    lpPublicViewKey = '0x' + Buffer.from(await ed.getPublicKey(viewPriv)).toString('hex');
+    // Use LP's wallet view key so the shared address is scannable by the LP
+    const viewPriv = Buffer.from(process.env.MONERO_VIEW_KEY, 'hex');
+
+    // Monero uses direct scalar multiplication (scalar * G), NOT ed.getPublicKey()
+    const ED25519_L = 2n ** 252n + 27742317777372353535851937790883648493n;
+    const G = ed.ExtendedPoint.BASE;
+    function scalarToPubKey(scalarBytes) {
+      const le = Buffer.from(scalarBytes).reverse();
+      const s = BigInt('0x' + le.toString('hex')) % ED25519_L;
+      return Buffer.from(G.multiply(s).toRawBytes());
+    }
+    lpPublicSpendKey = '0x' + scalarToPubKey(spendPriv).toString('hex');
+    lpPublicViewKey = '0x' + scalarToPubKey(viewPriv).toString('hex');
   }
 
   burn.lpPublicSpendKey = lpPublicSpendKey;

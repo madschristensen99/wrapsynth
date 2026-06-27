@@ -90,8 +90,8 @@ async function fetchVaultAggregates() {
     let xmrPrice = 150;
     let collateralPrice = 1.0;
     try {
-        const xmrPriceWei = await readHub('lastXmrPrice');
-        const collPriceWei = await readHub('lastCollateralPrice');
+        const xmrPriceWei = await readHub('getXmrPrice');
+        const collPriceWei = await readHub('getCollateralPrice');
         xmrPrice = Number(xmrPriceWei) / 1e18;
         collateralPrice = Number(collPriceWei) / 1e18;
     } catch (e) {

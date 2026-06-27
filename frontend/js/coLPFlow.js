@@ -157,8 +157,8 @@ export class CoLPFlow {
 
             // 2. Oracle prices (best-effort: view reads through diamond fallback often revert)
             try {
-                const xmrPrice = await readHub('lastXmrPrice');
-                const collPrice = await readHub('lastCollateralPrice');
+                const xmrPrice = await readHub('getXmrPrice');
+                const collPrice = await readHub('getCollateralPrice');
                 data.xmrPrice = xmrPrice.toString();
                 data.collPrice = collPrice.toString();
                 if (xmrPrice === 0n) warnings.push('XMR oracle price is 0 (likely stale)');

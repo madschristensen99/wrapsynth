@@ -4,7 +4,7 @@ import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG } from './config.js';
 import { readHub, writeHub, writeHubUnsafe, readWsxmr, writeWsxmr, watchContractEvent, getUserAddress } from './viemClient.js';
 import { getPhantomAgent } from './phantomAgent.js';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
-import { updateBurnProgress, showBurnVerificationLoading, showBurnVerificationDetails, showBurnVerificationManual, showBurnAddressPanel } from './ui.js';
+import { updateBurnProgress, showBurnVerificationLoading, showBurnVerificationDetails, showBurnVerificationManual, showBurnAddressPanel } from './ui.js?v=2.3';
 import { getMoneroRpc } from './moneroRpc.js';
 import { keccak256, toHex } from 'https://esm.sh/viem@2.7.0';
 
@@ -128,7 +128,7 @@ export class BurnFlow {
                     for (let i = 0; i < 20; i++) {
                         await new Promise(r => setTimeout(r, 3000));
                         try {
-                            await readHub('lastXmrPrice', []);
+                            await readHub('getXmrPrice', []);
                             fresh = true;
                             break;
                         } catch (pollError) {
@@ -373,92 +373,12 @@ export class BurnFlow {
                 amount: this.wsxmrAmount
             });
 
-            // Light scan: try to find the secretHash in recent Monero tx extra data
-            // This works because the LP embeds the secret hash in the Monero PTLC transaction
-            const scanForSecretHash = async () => {
-                if (!this.secretHash || moneroHeight === null) return;
-
-                try {
-                    const targetHex = this.secretHash.toLowerCase().replace(/^0x/, '');
-                    const startHeight = Math.max(0, moneroHeight - 20);
-
-                    for (let h = moneroHeight; h >= startHeight; h--) {
-                        try {
-                            const block = await moneroRpc.daemonRpc('get_block', { height: h });
-                            const txHashes = block.tx_hashes || [];
-                            if (!txHashes.length) continue;
-
-                            // Batch fetch transactions in this block
-                            const txRes = await fetch(moneroRpc.rpcUrl + '/get_transactions', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ txs_hashes: txHashes, decode_as_json: true })
-                            });
-                            const txData = await txRes.json();
-                            if (txData.status !== 'OK') continue;
-
-                            for (const tx of (txData.txs || [])) {
-                                let txJson = tx;
-                                if (tx.as_json) {
-                                    try { txJson = JSON.parse(tx.as_json); } catch (e) {}
-                                }
-                                const extra = txJson.extra;
-                                if (!extra) continue;
-                                // extra can be hex string or array
-                                const extraHex = typeof extra === 'string'
-                                    ? extra.replace(/^0x/, '')
-                                    : Array.isArray(extra)
-                                        ? extra.map(b => b.toString(16).padStart(2, '0')).join('')
-                                        : '';
-
-                                if (extraHex.includes(targetHex)) {
-                                    console.log(`Found secretHash in Monero tx at height ${h}:`, txHashes[0]);
-                                    clearInterval(scanInterval);
-                                    scanInterval = null;
-
-                                    const txHash = txHashes[0];
-                                    const currentHeight = await moneroRpc.getHeight();
-                                    const confirmations = Math.max(0, currentHeight - h + 1);
-
-                                    showBurnVerificationDetails({
-                                        destination: this.destination || '',
-                                        txHash,
-                                        confirmations,
-                                        amount: this.wsxmrAmount
-                                    });
-                                    updateBurnProgress('confirm-lock', `Transaction found (${confirmations} confirmation${confirmations !== 1 ? 's' : ''})`);
-                                    return;
-                                }
-                            }
-                        } catch (blockErr) {
-                            // Skip failed blocks
-                        }
-                    }
-                } catch (err) {
-                    console.warn('Monero scan error:', err);
-                }
-            };
-
-            // Run one scan immediately, then every 10s for a minute
-            scanForSecretHash();
-            scanInterval = setInterval(scanForSecretHash, 10000);
-
-            // After 60s stop scanning and just show the manual confirm
-            timeoutId = setTimeout(() => {
-                if (scanInterval) {
-                    clearInterval(scanInterval);
-                    scanInterval = null;
-                }
-                const loading = document.getElementById('burn-verification-loading');
-                const details = document.getElementById('burn-verification-details');
-                if (loading && !loading.classList.contains('hidden')) {
-                    console.log('Monero scan complete — no tx found with embedded secretHash');
-                    showBurnVerificationManual();
-                    updateBurnProgress('confirm-lock', 'Waiting for you to confirm receipt...');
-                } else if (details && !details.classList.contains('hidden')) {
-                    // Tx was found, keep showing details
-                }
-            }, 60000);
+            // The LP sends XMR to the shared address but does not embed the secret hash
+            // in the Monero tx extra. The user should verify via their own Monero wallet
+            // or block explorer, then manually confirm receipt.
+            console.log('Monero verification: user must manually confirm receipt of XMR');
+            showBurnVerificationManual();
+            updateBurnProgress('confirm-lock', 'Confirm receipt of XMR to proceed...');
         });
     }
 

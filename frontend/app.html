@@ -100,13 +100,13 @@ if ('serviceWorker' in navigator) {
       <a id="gecko-terminal-link" class="pill" href="#" target="_blank" rel="noopener noreferrer" style="text-decoration:none"><img src="https://www.geckoterminal.com/favicon.ico" alt="Pool" style="width:14px;height:14px;margin-right:4px">Trade</a>
       <span class="pill price">XMR <b id="xmrPx">$--</b></span>
       <button class="connect" id="connect-wallet">Connect wallet</button>
-      <div id="connected-info" class="wallet-connected hidden">
+      <a href="account.html" id="connected-info" class="wallet-connected hidden" style="text-decoration:none">
         <div class="wallet-avatar"></div>
         <div class="wallet-details">
           <span id="user-address" class="wallet-address"></span>
           <span id="user-balance" class="wallet-balance"></span>
         </div>
-      </div>
+      </a>
     </div>
   </nav>
 
@@ -166,8 +166,12 @@ if ('serviceWorker' in navigator) {
             <div class="step" data-s="3"><div class="bar"></div><div class="t">Finalize<br>reveal secret</div></div>
           </div>
           <div class="step-note" id="mint-step-note"><span class="k" id="mint-step-num">01</span><span id="mint-step-text"></span></div>
+          <div id="mint-deadline-timer" class="hidden" style="margin:12px 0;padding:12px;background:var(--warning-bg);border:1px solid var(--warning-border);border-radius:8px;font-size:13px">
+            <div id="mint-time-remaining"></div>
+          </div>
+          <div id="mint-deadline-warning" class="hidden"></div>
           <div id="mint-deposit-info"></div>
-          <div id="mint-qr-code"></div>
+          <canvas id="mint-qr-code"></canvas>
           <div id="mint-xmr-address"></div>
           <div id="mint-exact-amount"></div>
           <div id="confirm-sent-xmr"></div>
@@ -303,15 +307,20 @@ if ('serviceWorker' in navigator) {
   </div>
 </div>
 
+<!-- Notification Container -->
+<div id="notification-container" class="notification-container"></div>
+
 <!-- Modal Overlay -->
 <div id="modal-overlay" class="modal-overlay hidden">
   <div class="modal">
     <div class="modal-header">
       <h3 id="modal-title"></h3>
-      <button class="modal-close">&times;</button>
+      <button class="modal-close" id="modal-x-btn">&times;</button>
     </div>
     <div class="modal-body" id="modal-body"></div>
-    <div class="modal-footer">
+    <div class="modal-footer" id="modal-footer">
+      <button id="modal-cancel-btn" class="btn btn-secondary hidden">Cancel</button>
+      <button id="modal-confirm-btn" class="btn btn-primary hidden">Confirm</button>
       <button id="modal-close-btn" class="btn btn-primary">Close</button>
     </div>
   </div>
@@ -326,6 +335,6 @@ if ('serviceWorker' in navigator) {
   if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status);
   window.DEPLOYMENT = await res.json();
 </script>
-<script type="module" src="./js/main.js?v=2.2"></script>
+<script type="module" src="./js/main.js?v=2.3"></script>
 </body>
 </html>
