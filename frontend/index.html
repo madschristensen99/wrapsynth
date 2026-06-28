@@ -53,10 +53,12 @@
   .nav-links{display:flex;align-items:center;gap:28px}
   .nav-links a{font-size:14px;color:var(--muted);text-decoration:none;transition:color .15s}
   .nav-links a:hover{color:var(--fg)}
-  .nav-cta{font-family:'Plus Jakarta Sans';font-weight:600;font-size:14px;text-decoration:none;
-    background:var(--navy);color:#fff;border-radius:10px;padding:9px 15px;
-    transition:background .15s, box-shadow .15s;box-shadow:0 0 20px rgba(30,58,110,.3)}
-  .nav-cta:hover{background:#2a4a8a;box-shadow:0 0 30px rgba(30,58,110,.45);color:#fff}
+  .nav-links a.nav-cta{font-family:'Plus Jakarta Sans';font-weight:600;font-size:15px;text-decoration:none;
+    display:inline-flex;align-items:center;gap:8px;
+    background:var(--navy);color:#fff;border-radius:12px;padding:13px 22px;
+    transition:background .15s, transform .12s, box-shadow .15s}
+  .nav-links a.nav-cta:hover{background:#2a4a8a;box-shadow:0 0 32px rgba(30,58,110,.4),0 0 12px rgba(30,58,110,.25);color:#fff}
+  .nav-links a.nav-cta:active{transform:translateY(1px)}
   @media(max-width:760px){.nav-links a:not(.nav-cta){display:none}}
 
   /* HERO */
@@ -263,7 +265,7 @@
       <a href="#how">How it works</a>
       <a href="#stats">Stats</a>
       <a href="https://github.com/madschristensen99/wrapsynth" target="_blank">GitHub</a>
-      <a class="nav-cta" href="app.html" style="color:#160a02 !important">Launch app →</a>
+      <a class="nav-cta" href="app.html">Launch app →</a>
     </nav>
   </div>
 </header>
@@ -310,7 +312,7 @@
         <button class="tl-node delisting" data-tl="1"><div class="tl-dot"></div><div class="tl-lbl">2013</div><div class="tl-sub">Mt. Gox</div></button>
         <button class="tl-node milestone" data-tl="2"><div class="tl-dot"></div><div class="tl-lbl">2014</div><div class="tl-sub">Monero born</div></button>
         <button class="tl-node delisting" data-tl="3"><div class="tl-dot"></div><div class="tl-lbl">2017</div><div class="tl-sub">Block size war</div></button>
-        <button class="tl-node milestone" data-tl="4"><div class="tl-dot"></div><div class="tl-lbl">'19–'22</div><div class="tl-sub">Monero hardens</div></button>
+        <button class="tl-node milestone" data-tl="4"><div class="tl-dot"></div><div class="tl-lbl">'16–'22</div><div class="tl-sub">Monero hardens</div></button>
         <button class="tl-node delisting" data-tl="5"><div class="tl-dot"></div><div class="tl-lbl">'21–'22</div><div class="tl-sub">First delistings</div></button>
         <button class="tl-node delisting" data-tl="6"><div class="tl-dot"></div><div class="tl-lbl">2024</div><div class="tl-sub">Major delistings</div></button>
         <button class="tl-node delisting" data-tl="7"><div class="tl-dot"></div><div class="tl-lbl">2025</div><div class="tl-sub">73 exchanges</div></button>
@@ -339,13 +341,13 @@
           <div class="tl-body">Bitcoin grinds to a halt. 1MB cap, <b>$50 fees</b>, transactions stuck for days. The community fractures into BTC and BCH. Years of toxic debate over a parameter that should have been uncontroversial. Meanwhile Monero has <b>dynamic block sizes</b> — the median scales automatically with usage. No cap to fight over. No civil war.</div>
         </div></div>
         <div class="tl-panel milestone" id="tlp-4"><div class="tl-panel-card">
-          <div class="tl-year">2019 — 2022</div>
+          <div class="tl-year">2016 — 2022</div>
           <div class="tl-title">Monero hardens</div>
           <div class="tl-body">While exchanges prepared to delist it, Monero was getting stronger.</div>
           <div class="tl-features">
-            <div class="tl-feat"><div class="fh">RandomX</div><div class="fb">ASIC-resistant mining. A CPU competes with a data center. No hardware monopoly.</div></div>
+            <div class="tl-feat"><div class="fh">RingCT</div><div class="fb">Transaction amounts hidden cryptographically. No one can see how much is being sent — not the sender, not the recipient, not the network.</div></div>
+            <div class="tl-feat"><div class="fh">RandomX + P2Pool</div><div class="fb">ASIC-resistant mining so a CPU competes with a data center. Trustless decentralized mining pool so no operator can withhold payouts or censor miners.</div></div>
             <div class="tl-feat"><div class="fh">Dandelion++</div><div class="fb">Transaction propagation that hides your IP from the network. Even your ISP can't easily link you to your transactions.</div></div>
-            <div class="tl-feat"><div class="fh">Stealth Addresses</div><div class="fb">Every transaction generates a unique one-time address. No one can tell how many times you've received funds.</div></div>
             <div class="tl-feat"><div class="fh">Tail Emission</div><div class="fb">June 2022, block 2,641,623: reward locks at 0.6 XMR forever. Miners always have a reason to secure the network. No supply cliff.</div></div>
           </div>
         </div></div>
