@@ -1,169 +1,215 @@
 #!/usr/bin/env node
 /**
- * Comprehensive Deployment and Testing Script
- * 
- * This script performs the complete deployment and testing workflow:
- * 1. Deploy contracts to Gnosis mainnet
- * 2. Run testFullCycleNow.js (full mint/burn cycle)
- * 3. Run mintAndCoLP.js (large mint with CoLP deposit)
- * 4. Run testPoolSwaps.js (pool trading tests)
- * 
- * Usage: node scripts/deployAndTestAll.js
+ * Single deploy + test entry point.
+ *
+ * 1. forge script DeployGnosis.s.sol --broadcast
+ * 2. Parse console output for contract addresses
+ * 3. Write deployment.json (root + frontend copy)
+ * 4. Run testFullCycleNow.js, testCoLPNow.js, testPoolSwaps.js
+ *
+ * Usage: npm run deploy
  */
 
+require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 require('dotenv').config();
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-// ANSI color codes for pretty output
-const colors = {
-    reset: '\x1b[0m',
-    bright: '\x1b[1m',
-    green: '\x1b[32m',
-    red: '\x1b[31m',
-    yellow: '\x1b[33m',
-    blue: '\x1b[34m',
-    cyan: '\x1b[36m'
+const c = {
+    reset: '\x1b[0m', bright: '\x1b[1m', green: '\x1b[32m',
+    red: '\x1b[31m', yellow: '\x1b[33m', cyan: '\x1b[36m',
 };
-
-function log(message, color = 'reset') {
-    console.log(`${colors[color]}${message}${colors.reset}`);
+const log = (m, color = 'reset') => console.log(`${c[color] || ''}${m}${c.reset}`);
+function section(t) {
+    const l = '='.repeat(70);
+    log(`\n${l}`, 'cyan'); log(`  ${t}`, 'bright'); log(`${l}\n`, 'cyan');
 }
 
-function logSection(title) {
-    const line = '='.repeat(80);
-    log(`\n${line}`, 'cyan');
-    log(`  ${title}`, 'bright');
-    log(`${line}\n`, 'cyan');
-}
-
-function runCommand(command, args, cwd = process.cwd()) {
+// ── Run a command, capture stdout ─────────────────────────────────────────────
+function runCmd(cmd, args, opts = {}) {
     return new Promise((resolve, reject) => {
-        log(`Running: ${command} ${args.join(' ')}`, 'blue');
-        
-        const proc = spawn(command, args, {
-            cwd,
-            stdio: 'inherit',
-            shell: true
-        });
-
-        proc.on('close', (code) => {
-            if (code === 0) {
-                log(`✓ Command completed successfully\n`, 'green');
-                resolve();
-            } else {
-                log(`✗ Command failed with exit code ${code}\n`, 'red');
-                reject(new Error(`Command failed: ${command} ${args.join(' ')}`));
-            }
-        });
-
-        proc.on('error', (err) => {
-            log(`✗ Error running command: ${err.message}\n`, 'red');
-            reject(err);
-        });
+        const proc = spawn(cmd, args, { stdio: ['inherit', 'pipe', 'inherit'], shell: true, ...opts });
+        let stdout = '';
+        proc.stdout.on('data', (d) => { process.stdout.write(d); stdout += d.toString(); });
+        proc.on('close', (code) => code === 0 ? resolve(stdout) : reject(new Error(`${cmd} exited ${code}`)));
+        proc.on('error', reject);
     });
 }
 
-async function checkEnvironment() {
-    logSection('Checking Environment');
-    
-    const required = ['PRIVATE_KEY', 'GNOSIS_RPC_URL'];
-    const missing = required.filter(key => !process.env[key]);
-    
-    if (missing.length > 0) {
-        log(`Missing required environment variables: ${missing.join(', ')}`, 'red');
-        throw new Error('Environment check failed');
-    }
-    
-    log('✓ All required environment variables present', 'green');
+function runInherit(cmd, args, opts = {}) {
+    return new Promise((resolve, reject) => {
+        const proc = spawn(cmd, args, { stdio: 'inherit', shell: true, ...opts });
+        proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`)));
+        proc.on('error', reject);
+    });
 }
 
-async function deployContracts() {
-    logSection('Step 1: Deploying Fresh Contracts to Gnosis Mainnet');
-    
-    // Clear any cached nonces first
-    log('Clearing cached nonces...', 'yellow');
-    await runCommand('node', ['scripts/clearAllNonces.js']);
-    
-    // Deploy fresh contracts using Forge
-    log('Starting fresh deployment...', 'cyan');
-    await runCommand('forge', [
-        'script',
-        'script/DeployGnosis.s.sol:DeployGnosis',
-        '--rpc-url',
-        process.env.GNOSIS_RPC_URL,
-        '--broadcast',
-        '--slow',
-        '--with-gas-price',
-        '2000000000'  // 2 gwei
-    ]);
-    log('✓ Fresh deployment completed', 'green');
+// ── Parse forge output for addresses ──────────────────────────────────────────
+function parseAddresses(output) {
+    const grab = (label) => {
+        const re = new RegExp(`${label}:?\\s*(0x[0-9a-fA-F]{40})`);
+        const m = output.match(re);
+        return m ? m[1] : null;
+    };
+    const grabIndented = (label) => {
+        const re = new RegExp(`${label}\\s+(0x[0-9a-fA-F]{40})`);
+        const m = output.match(re);
+        return m ? m[1] : null;
+    };
+
+    const addr = {
+        wsXMR: grab('wsXMR deployed to'),
+        wsXmrHub: grab('wsXmrHub deployed to'),
+        liquidityRouter: grab('Router deployed to'),
+        swapHelper: grab('SwapHelper deployed to'),
+        RedStoneOracleFacet: grab('RedStoneOracleFacet deployed to'),
+        VaultFacet: grab('VaultFacet deployed to'),
+        MintFacet: grab('MintFacet deployed to'),
+        BurnFacet: grab('BurnFacet deployed to'),
+        LiquidationFacet: grab('LiquidationFacet deployed to'),
+        YieldFacet: grab('YieldFacet deployed to'),
+        pool: grabIndented('Uniswap V3 Pool'),
+    };
+
+    // Also try the summary section
+    if (!addr.wsXMR) addr.wsXMR = grabIndented('wsXMR:');
+    if (!addr.wsXmrHub) addr.wsXmrHub = grabIndented('wsXmrHub:');
+    if (!addr.liquidityRouter) addr.liquidityRouter = grabIndented('LiquidityRouter:');
+    if (!addr.swapHelper) addr.swapHelper = grabIndented('SwapHelper:');
+    if (!addr.RedStoneOracleFacet) addr.RedStoneOracleFacet = grabIndented('OracleFacet:');
+    if (!addr.VaultFacet) addr.VaultFacet = grabIndented('VaultFacet:');
+    if (!addr.MintFacet) addr.MintFacet = grabIndented('MintFacet:');
+    if (!addr.BurnFacet) addr.BurnFacet = grabIndented('BurnFacet:');
+    if (!addr.LiquidationFacet) addr.LiquidationFacet = grabIndented('LiquidationFacet:');
+    if (!addr.YieldFacet) addr.YieldFacet = grabIndented('YieldFacet:');
+    if (!addr.pool) addr.pool = grabIndented('Uniswap V3 Pool:');
+
+    return addr;
 }
 
-async function runFullCycleTest() {
-    logSection('Step 2: Running Full Cycle Test (Mint + Burn)');
-    await runCommand('node', ['scripts/testFullCycleNow.js']);
-    log('✓ Full cycle test completed', 'green');
+// ── Write deployment.json ─────────────────────────────────────────────────────
+function writeDeployment(addr) {
+    const deployerWallet = new (require('ethers').Wallet)(process.env.PRIVATE_KEY);
+
+    const deployment = {
+        network: 'Gnosis Chain Mainnet',
+        chainId: 100,
+        deploymentDate: new Date().toISOString(),
+        rpcUrl: 'https://rpc.gnosischain.com',
+        wsUrl: 'wss://rpc.gnosischain.com/wss',
+        explorer: 'https://gnosisscan.io',
+        contracts: {
+            wsXMR: addr.wsXMR,
+            wsXmrHub: addr.wsXmrHub,
+            liquidityRouter: addr.liquidityRouter,
+            swapHelper: addr.swapHelper,
+            facets: {
+                RedStoneOracleFacet: addr.RedStoneOracleFacet,
+                VaultFacet: addr.VaultFacet,
+                MintFacet: addr.MintFacet,
+                BurnFacet: addr.BurnFacet,
+                LiquidationFacet: addr.LiquidationFacet,
+                YieldFacet: addr.YieldFacet,
+            },
+        },
+        externalContracts: {
+            sDAI: '0xaf204776c7245bF4147c2612BF6e5972Ee483701',
+            wxDAI: '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d',
+            UniswapV3Factory: '0xe32F7dD7e3f098D518ff19A22d5f028e076489B1',
+            UniswapV3PositionManager: '0xAE8fbE656a77519a7490054274910129c9244FA3',
+            SwapHelper: addr.swapHelper,
+            Ed25519Helper: '0xaECa36374039EAb9e267B5daa48bAb9Ab0e50F00',
+        },
+        pool: {
+            uniswapV3Pool: addr.pool,
+            feeTier: 3000,
+        },
+        urls: {
+            moneroDaemon: 'https://xmr-node.cakewallet.com:18081',
+            moneroNetwork: 'mainnet',
+        },
+        lpConfig: {
+            defaultLpVault: deployerWallet.address,
+            apiPort: 3001,
+            minCollateralRatio: 150,
+            liquidationThreshold: 120,
+            targetCollateralRatio: 180,
+        },
+        verification: { status: 'pending', verifiedContracts: [] },
+    };
+
+    const rootPath = path.join(__dirname, '..', '..', 'deployment.json');
+    const frontendPath = path.join(__dirname, '..', '..', 'frontend', 'deployment.json');
+    const json = JSON.stringify(deployment, null, 2) + '\n';
+    fs.writeFileSync(rootPath, json);
+    fs.writeFileSync(frontendPath, json);
+    log(`✓ deployment.json written (root + frontend)`, 'green');
+    log(`  wsXMR:         ${addr.wsXMR}`, 'green');
+    log(`  wsXmrHub:      ${addr.wsXmrHub}`, 'green');
+    log(`  Router:        ${addr.liquidityRouter}`, 'green');
+    log(`  Pool:          ${addr.pool}`, 'green');
 }
 
-async function runMintAndCoLP() {
-    logSection('Step 3: Running Large Mint + CoLP Deposit Test');
-    await runCommand('node', ['scripts/mintAndCoLP.js']);
-    log('✓ Mint and CoLP test completed', 'green');
-}
-
-async function runPoolSwapsTest() {
-    logSection('Step 4: Running Pool Swaps Test');
-    await runCommand('node', ['scripts/testPoolSwaps.js']);
-    log('✓ Pool swaps test completed', 'green');
-}
-
+// ── Main ──────────────────────────────────────────────────────────────────────
 async function main() {
-    const startTime = Date.now();
-    
-    log('\n' + '█'.repeat(80), 'bright');
-    log('  GNOSIS MAINNET DEPLOYMENT & INTEGRATION TEST SUITE', 'bright');
-    log('█'.repeat(80) + '\n', 'bright');
-    
+    const t0 = Date.now();
+
+    log('\n' + '█'.repeat(70), 'bright');
+    log('  WRAPSYNTH — DEPLOY + TEST (single script)', 'bright');
+    log('█'.repeat(70) + '\n', 'bright');
+
+    // Env check
+    const required = ['PRIVATE_KEY', 'GNOSIS_RPC_URL'];
+    const missing = required.filter(k => !process.env[k]);
+    if (missing.length) { log(`Missing env vars: ${missing.join(', ')}`, 'red'); process.exit(1); }
+    log('✓ Environment OK', 'green');
+
     try {
-        // Step 0: Environment check
-        await checkEnvironment();
-        
-        // Skip deployment - contracts already deployed
-        log('\n✓ Using already deployed contracts from deployment.json', 'cyan');
-        
-        // Step 1: Run full cycle test
-        await runFullCycleTest();
-        
-        // Step 2: Run mint and CoLP test
-        await runMintAndCoLP();
-        
-        // Step 3: Run pool swaps test
-        await runPoolSwapsTest();
-        
-        // Success summary
-        const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-        logSection('ALL TESTS COMPLETED SUCCESSFULLY');
-        log(`Total execution time: ${duration}s`, 'green');
-        log('\n✓ Deployment and all integration tests passed!', 'green');
-        log('✓ System is ready for production use\n', 'green');
-        
+        // ── Step 1: Deploy ────────────────────────────────────────────────────
+        section('STEP 1: Deploy contracts to Gnosis');
+        const forgeOutput = await runCmd('forge', [
+            'script', 'script/DeployGnosis.s.sol:DeployGnosis',
+            '--rpc-url', process.env.GNOSIS_RPC_URL,
+            '--broadcast', '--slow',
+        ]);
+
+        // ── Step 2: Parse + write deployment.json ─────────────────────────────
+        section('STEP 2: Update deployment.json');
+        const addr = parseAddresses(forgeOutput);
+        const missingAddr = Object.entries(addr).filter(([, v]) => !v).map(([k]) => k);
+        if (missingAddr.length) {
+            log(`⚠️  Could not parse: ${missingAddr.join(', ')}`, 'yellow');
+            log('  You may need to manually update deployment.json', 'yellow');
+        }
+        writeDeployment(addr);
+
+        // ── Step 3: testFullCycleNow ──────────────────────────────────────────
+        section('STEP 3: testFullCycleNow (mint + burn)');
+        await runInherit('node', ['scripts/testFullCycleNow.js']);
+
+        // ── Step 4: testCoLPNow ───────────────────────────────────────────────
+        section('STEP 4: testCoLPNow (co-LP position)');
+        await runInherit('node', ['scripts/testCoLPNow.js']);
+
+        // ── Step 5: testPoolSwaps ─────────────────────────────────────────────
+        section('STEP 5: testPoolSwaps (pool trading)');
+        await runInherit('node', ['scripts/testPoolSwaps.js']);
+
+        // ── Done ──────────────────────────────────────────────────────────────
+        const dur = ((Date.now() - t0) / 1000).toFixed(1);
+        section('ALL DONE');
+        log(`✓ Deploy + tests completed in ${dur}s`, 'green');
+        log('✓ Frontend and lp-server will pick up new addresses from deployment.json\n', 'green');
         process.exit(0);
-        
-    } catch (error) {
-        const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-        logSection('TEST SUITE FAILED');
-        log(`Error: ${error.message}`, 'red');
-        log(`Execution time before failure: ${duration}s\n`, 'yellow');
+    } catch (err) {
+        const dur = ((Date.now() - t0) / 1000).toFixed(1);
+        section('FAILED');
+        log(`Error: ${err.message}`, 'red');
+        log(`After ${dur}s\n`, 'yellow');
         process.exit(1);
     }
 }
 
-// Handle Ctrl+C gracefully
-process.on('SIGINT', () => {
-    log('\n\nTest suite interrupted by user', 'yellow');
-    process.exit(130);
-});
-
+process.on('SIGINT', () => { log('\nInterrupted', 'yellow'); process.exit(130); });
 main();
