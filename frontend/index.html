@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>WrapSynth — Trustless Wrapped Monero via Atomic Liquidity</title>
+<title>Wrapsynth — Trustless Wrapped Monero via Atomic Liquidity</title>
 <meta name="description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on Gnosis Chain.">
-<meta property="og:title" content="WrapSynth | Trustless Wrapped Monero via Atomic Liquidity">
+<meta property="og:title" content="Wrapsynth | Trustless Wrapped Monero via Atomic Liquidity">
 <meta property="og:description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on Gnosis Chain.">
 <meta property="og:image" content="https://wrapsynth.com/frontend/og-image.png">
 <meta property="og:image:width" content="1200">
@@ -13,7 +13,7 @@
 <meta property="og:url" content="https://wrapsynth.com">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="WrapSynth | Trustless Wrapped Monero via Atomic Liquidity">
+<meta name="twitter:title" content="Wrapsynth | Trustless Wrapped Monero via Atomic Liquidity">
 <meta name="twitter:description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on Gnosis Chain.">
 <meta name="twitter:image" content="https://wrapsynth.com/frontend/og-image.png">
 <link rel="icon" type="image/x-icon" href="./favicon_monero/favicon.ico">
@@ -22,12 +22,12 @@
 <link rel="apple-touch-icon" sizes="180x180" href="./favicon_monero/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#0c0c14; --panel:#161621; --panel-2:#1c1c2a; --input:#242436;
+    --bg:#111418; --panel:#181c22; --panel-2:#1f242c; --input:#252b34;
     --fg:#ffffff; --muted:#a8a8c0; --faint:#686880;
-    --xmr:#ff7a3d; --teal:#3efce0; --green:#4af0aa; --amber:#ffd95e; --red:#ff8580;
+    --xmr:#f4754c; --teal:#4ad6c8; --navy:#1e3a6e; --green:#4af0aa; --amber:#ffd95e; --red:#ff8580;
     --line:rgba(255,255,255,.12); --line-2:rgba(255,255,255,.07);
     --max:1080px;
   }
@@ -42,46 +42,46 @@
 
   /* NAV */
   .nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(12px);
-    background:rgba(22,22,33,.65);border-bottom:1px solid var(--line-2);
-    box-shadow:0 1px 20px rgba(255,122,61,.1)}
+    background:rgba(24,28,34,.65);border-bottom:1px solid var(--line-2);
+    box-shadow:0 1px 20px rgba(30,58,110,.12)}
   .nav-in{max-width:var(--max);margin:0 auto;padding:0 28px;height:66px;
     display:flex;align-items:center;justify-content:space-between}
-  .brand{display:flex;align-items:center;gap:10px;font-family:'Space Grotesk';font-weight:700;
+  .brand{display:flex;align-items:center;gap:10px;font-family:'Plus Jakarta Sans';font-weight:700;
     letter-spacing:-.02em;font-size:18px;text-decoration:none;color:var(--fg)}
   .brand .mk{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,var(--xmr),var(--teal))}
-  .brand:hover{text-shadow:0 0 30px rgba(62,252,224,.4)}
+  .brand:hover{opacity:.85}
   .nav-links{display:flex;align-items:center;gap:28px}
   .nav-links a{font-size:14px;color:var(--muted);text-decoration:none;transition:color .15s}
   .nav-links a:hover{color:var(--fg)}
-  .nav-cta{font-family:'Space Grotesk';font-weight:600;font-size:14px;text-decoration:none;
-    background:var(--xmr);color:#160a02;border-radius:10px;padding:9px 15px;
-    transition:background .15s, box-shadow .15s;box-shadow:0 0 20px rgba(255,122,61,.25)}
-  .nav-cta:hover{background:#ff9060;box-shadow:0 0 30px rgba(255,122,61,.4);color:#160a02}
+  .nav-cta{font-family:'Plus Jakarta Sans';font-weight:600;font-size:14px;text-decoration:none;
+    background:var(--navy);color:#fff;border-radius:10px;padding:9px 15px;
+    transition:background .15s, box-shadow .15s;box-shadow:0 0 20px rgba(30,58,110,.3)}
+  .nav-cta:hover{background:#2a4a8a;box-shadow:0 0 30px rgba(30,58,110,.45);color:#fff}
   @media(max-width:760px){.nav-links a:not(.nav-cta){display:none}}
 
   /* HERO */
   .hero{position:relative;overflow:hidden;border-bottom:1px solid var(--line-2)}
   #gl{position:absolute;inset:0;width:100%;height:100%;z-index:0;opacity:.85}
   .hero-scrim{position:absolute;inset:0;z-index:1;pointer-events:none;
-    background:radial-gradient(110% 70% at 50% -10%,transparent 40%,rgba(12,12,20,.6) 100%),
+    background:radial-gradient(110% 70% at 50% -10%,transparent 40%,rgba(17,20,24,.6) 100%),
                linear-gradient(180deg,transparent 60%,var(--bg) 100%)}
   .hero-in{position:relative;z-index:2;max-width:var(--max);margin:0 auto;padding:96px 28px 76px}
   .eyebrow{display:inline-flex;align-items:center;gap:9px;font-family:'JetBrains Mono';font-size:12px;
     color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:7px 14px;
     background:rgba(255,255,255,.02);text-transform:uppercase;letter-spacing:.05em}
   .dot{width:7px;height:7px;border-radius:50%;background:var(--green)}
-  h1{font-family:'Space Grotesk';font-weight:600;letter-spacing:-.035em;line-height:1.04;
+  h1{font-family:'Plus Jakarta Sans';font-weight:600;letter-spacing:-.035em;line-height:1.04;
     font-size:clamp(38px,6.4vw,68px);margin:24px 0 0;max-width:14ch}
   h1 .o{color:var(--xmr)}h1 .t{color:var(--teal)}
   .lede{margin-top:22px;font-size:clamp(16px,2vw,18.5px);color:var(--muted);max-width:60ch;line-height:1.6}
   .lede b{color:var(--fg);font-weight:500}
   .hero-ctas{display:flex;gap:13px;margin-top:34px;flex-wrap:wrap}
-  .btn{font-family:'Space Grotesk';font-weight:600;font-size:15px;text-decoration:none;
+  .btn{font-family:'Plus Jakarta Sans';font-weight:600;font-size:15px;text-decoration:none;
     display:inline-flex;align-items:center;gap:8px;padding:13px 22px;border-radius:12px;
     transition:background .15s, transform .12s, border-color .15s}
   .btn:active{transform:translateY(1px)}
-  .btn-primary{background:var(--xmr);color:#160a02}
-  .btn-primary:hover{background:#ff9060;box-shadow:0 0 32px rgba(255,122,61,.35),0 0 12px rgba(255,122,61,.2)}
+  .btn-primary{background:var(--navy);color:#fff}
+  .btn-primary:hover{background:#2a4a8a;box-shadow:0 0 32px rgba(30,58,110,.4),0 0 12px rgba(30,58,110,.25)}
   .btn-ghost{border:1px solid var(--line);color:var(--fg);background:rgba(255,255,255,.06)}
   .btn-ghost:hover{background:rgba(255,255,255,.1);box-shadow:0 0 20px rgba(255,255,255,.08)}
   .hero-stats{display:flex;gap:40px;margin-top:54px;flex-wrap:wrap}
@@ -97,7 +97,7 @@
   /* SECTION HEADERS */
   .eyebrow-sm{font-family:'JetBrains Mono';font-size:12px;color:var(--xmr);text-transform:uppercase;
     letter-spacing:.12em}
-  .sec-h{font-family:'Space Grotesk';font-weight:600;letter-spacing:-.025em;
+  .sec-h{font-family:'Plus Jakarta Sans';font-weight:600;letter-spacing:-.025em;
     font-size:clamp(26px,3.4vw,36px);margin:12px 0 0}
   .sec-sub{color:var(--muted);margin-top:12px;max-width:54ch;font-size:15.5px}
   .sec-pad{padding:84px 0}
@@ -109,26 +109,26 @@
   .feat{background:linear-gradient(135deg,rgba(255,255,255,.02),rgba(255,255,255,.005));
     border:1px solid var(--line-2);border-radius:16px;padding:24px 22px;
     transition:all .3s cubic-bezier(.4,0,.2,1);backdrop-filter:blur(8px)}
-  .feat:hover{border-color:rgba(62,252,224,.4);transform:translateY(-4px);
-    box-shadow:0 8px 48px rgba(62,252,224,.15),0 0 0 1px rgba(62,252,224,.15),0 0 80px rgba(62,252,224,.06)}
+  .feat:hover{border-color:rgba(74,214,200,.4);transform:translateY(-4px);
+    box-shadow:0 8px 48px rgba(74,214,200,.15),0 0 0 1px rgba(74,214,200,.15),0 0 80px rgba(74,214,200,.06)}
   .feat .ic{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;
-    background:rgba(255,122,61,.1);border:1px solid rgba(255,122,61,.25);margin-bottom:16px;
-    box-shadow:0 0 16px rgba(255,122,61,.08)}
-  .feat .ic svg{width:20px;height:20px;stroke:var(--xmr);fill:none;stroke-width:1.7;
+    background:rgba(30,58,110,.15);border:1px solid rgba(30,58,110,.35);margin-bottom:16px;
+    box-shadow:0 0 16px rgba(30,58,110,.1)}
+  .feat .ic svg{width:20px;height:20px;stroke:#6ba3e0;fill:none;stroke-width:1.7;
     stroke-linecap:round;stroke-linejoin:round}
-  .feat.tl .ic{background:rgba(62,252,224,.1);border-color:rgba(62,252,224,.25);box-shadow:0 0 16px rgba(62,252,224,.08)}
+  .feat.tl .ic{background:rgba(74,214,200,.1);border-color:rgba(74,214,200,.25);box-shadow:0 0 16px rgba(74,214,200,.08)}
   .feat.tl .ic svg{stroke:var(--teal)}
-  .feat h3{font-family:'Space Grotesk';font-weight:600;font-size:17px;letter-spacing:-.01em}
+  .feat h3{font-family:'Plus Jakarta Sans';font-weight:600;font-size:17px;letter-spacing:-.01em}
   .feat p{color:var(--muted);font-size:14px;margin-top:9px;line-height:1.55}
 
   /* STEPS */
   .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:44px}
   @media(max-width:820px){.steps{grid-template-columns:1fr}}
   .stp{position:relative;padding-top:18px}
-  .stp .num{font-family:'JetBrains Mono';font-weight:600;font-size:13px;color:#0c0c14;
+  .stp .num{font-family:'JetBrains Mono';font-weight:600;font-size:13px;color:#fff;
     width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
-    background:var(--xmr);margin-bottom:16px;box-shadow:0 0 16px rgba(255,122,61,.25)}
-  .stp h3{font-family:'Space Grotesk';font-weight:600;font-size:16.5px;letter-spacing:-.01em}
+    background:var(--navy);margin-bottom:16px;box-shadow:0 0 16px rgba(30,58,110,.25)}
+  .stp h3{font-family:'Plus Jakarta Sans';font-weight:600;font-size:16.5px;letter-spacing:-.01em}
   .stp p{color:var(--muted);font-size:13.5px;margin-top:9px;line-height:1.55}
   .stp::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:var(--line)}
 
@@ -137,7 +137,7 @@
     background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden}
   @media(max-width:820px){.metrics{grid-template-columns:repeat(2,1fr)}}
   .met{background:var(--bg);padding:28px 24px;transition:background .2s,box-shadow .2s}
-  .met:hover{background:var(--panel-2);box-shadow:inset 0 0 24px rgba(62,252,224,.06)}
+  .met:hover{background:var(--panel-2);box-shadow:inset 0 0 24px rgba(74,214,200,.06)}
   .met .n{font-family:'JetBrains Mono';font-weight:600;font-size:clamp(22px,3vw,30px);letter-spacing:-.02em}
   .met .n.tl{color:var(--teal)}
   .met .k{font-size:13px;color:var(--fg);margin-top:8px;font-weight:500}
@@ -149,21 +149,21 @@
   .ctr{background:linear-gradient(135deg,rgba(255,255,255,.02),rgba(255,255,255,.005));
     border:1px solid var(--line-2);border-radius:14px;padding:20px 22px;
     transition:border-color .2s,box-shadow .2s}
-  .ctr:hover{border-color:rgba(62,252,224,.3);box-shadow:0 0 32px rgba(62,252,224,.08)}
-  .ctr .lab{font-family:'Space Grotesk';font-weight:600;font-size:14.5px;display:flex;align-items:center;gap:8px}
-  .ctr .badge{font-family:'JetBrains Mono';font-size:10px;color:var(--teal);border:1px solid rgba(62,252,224,.3);
-    border-radius:5px;padding:2px 6px;background:rgba(62,252,224,.1);box-shadow:0 0 12px rgba(62,252,224,.08)}
+  .ctr:hover{border-color:rgba(74,214,200,.3);box-shadow:0 0 32px rgba(74,214,200,.08)}
+  .ctr .lab{font-family:'Plus Jakarta Sans';font-weight:600;font-size:14.5px;display:flex;align-items:center;gap:8px}
+  .ctr .badge{font-family:'JetBrains Mono';font-size:10px;color:var(--teal);border:1px solid rgba(74,214,200,.3);
+    border-radius:5px;padding:2px 6px;background:rgba(74,214,200,.1);box-shadow:0 0 12px rgba(74,214,200,.08)}
   .ctr .addr{font-family:'JetBrains Mono';font-size:12.5px;color:var(--muted);margin-top:12px;
     word-break:break-all;line-height:1.6}
   .ctr .acts{display:flex;gap:14px;margin-top:14px;font-size:12.5px;font-family:'JetBrains Mono'}
   .ctr .acts button,.ctr .acts a{background:none;border:none;color:var(--muted);cursor:pointer;
     text-decoration:none;padding:0;transition:color .15s}
-  .ctr .acts button:hover,.ctr .acts a:hover{color:var(--teal);text-shadow:0 0 12px rgba(62,252,224,.4)}
+  .ctr .acts button:hover,.ctr .acts a:hover{color:var(--teal)}
 
   /* FINAL CTA */
   .final{text-align:center;padding:92px 0}
   .final .chk{font-family:'JetBrains Mono';font-size:12px;color:var(--green);margin-bottom:16px}
-  .final h2{font-family:'Space Grotesk';font-weight:600;letter-spacing:-.025em;font-size:clamp(28px,4vw,40px)}
+  .final h2{font-family:'Plus Jakarta Sans';font-weight:600;letter-spacing:-.025em;font-size:clamp(28px,4vw,40px)}
   .final p{color:var(--muted);margin-top:12px;font-size:16px}
   .final .hero-ctas{justify-content:center}
 
@@ -171,7 +171,7 @@
   footer{border-top:1px solid var(--line-2);padding:48px 0 56px}
   .foot-grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:30px}
   @media(max-width:680px){.foot-grid{grid-template-columns:1fr}}
-  .foot-grid h4{font-family:'Space Grotesk';font-weight:600;font-size:14px;margin-bottom:6px}
+  .foot-grid h4{font-family:'Plus Jakarta Sans';font-weight:600;font-size:14px;margin-bottom:6px}
   .foot-grid p,.foot-grid a{color:var(--muted);font-size:13.5px;text-decoration:none;display:block;margin-top:8px;line-height:1.5}
   .foot-grid a:hover{color:var(--fg)}
   .foot-bot{margin-top:40px;padding-top:22px;border-top:1px solid var(--line-2);
@@ -181,20 +181,84 @@
 
   @media(prefers-reduced-motion:reduce){.rv{animation:none;opacity:1;transform:none}}
 
-  ::selection{background:rgba(62,252,224,.3);color:var(--fg)}
-  ::-moz-selection{background:rgba(62,252,224,.3);color:var(--fg)}
+  ::selection{background:rgba(74,214,200,.3);color:var(--fg)}
+  ::-moz-selection{background:rgba(74,214,200,.3);color:var(--fg)}
   ::-webkit-scrollbar{width:8px}
   ::-webkit-scrollbar-track{background:var(--bg)}
   ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:4px}
   ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.18)}
+
+  /* TIMELINE — horizontal collapsed */
+  .tl-h{margin-top:44px}
+  .tl-rail{position:relative;display:flex;align-items:flex-start;justify-content:space-between;
+    gap:0;padding:8px 10px 0;overflow-x:auto;scrollbar-width:thin;
+    scrollbar-color:var(--line) transparent}
+  .tl-rail::-webkit-scrollbar{height:4px}
+  .tl-rail::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px}
+  .tl-rail::before{content:"";position:absolute;top:15px;left:10px;right:10px;height:2px;
+    background:linear-gradient(90deg,var(--xmr),var(--line) 15%,var(--line) 85%,var(--teal));
+    border-radius:1px;z-index:0}
+  .tl-node{flex:0 0 auto;min-width:64px;display:flex;flex-direction:column;align-items:center;
+    gap:6px;background:none;border:none;cursor:pointer;padding:0;position:relative;z-index:1}
+  .tl-dot{width:14px;height:14px;border-radius:50%;background:var(--bg);
+    border:2px solid var(--muted);transition:all .25s}
+  .tl-node.milestone .tl-dot{border-color:var(--xmr);background:var(--xmr)}
+  .tl-node.delisting .tl-dot{border-color:var(--red)}
+  .tl-node.resolution .tl-dot{border-color:var(--teal);background:var(--teal);width:18px;height:18px}
+  .tl-node:hover .tl-dot{transform:scale(1.3);box-shadow:0 0 0 4px rgba(255,255,255,.06)}
+  .tl-node.active .tl-dot{transform:scale(1.35);box-shadow:0 0 0 4px rgba(74,214,200,.15)}
+  .tl-node.milestone.active .tl-dot{box-shadow:0 0 0 4px rgba(255,122,61,.18)}
+  .tl-node.delisting.active .tl-dot{box-shadow:0 0 0 4px rgba(255,133,128,.18)}
+  .tl-node.resolution.active .tl-dot{box-shadow:0 0 0 5px rgba(74,214,200,.2)}
+  .tl-lbl{font-family:'Plus Jakarta Sans';font-weight:600;font-size:12px;color:var(--muted);
+    text-align:center;line-height:1.2;transition:color .2s;white-space:nowrap}
+  .tl-node.milestone .tl-lbl{color:var(--xmr)}
+  .tl-node.delisting .tl-lbl{color:var(--red)}
+  .tl-node.resolution .tl-lbl{color:var(--teal)}
+  .tl-node:hover .tl-lbl{color:var(--fg)}
+  .tl-node.active .tl-lbl{color:var(--fg)}
+  .tl-sub{font-size:10px;color:var(--faint);text-align:center;line-height:1.2;white-space:nowrap;
+    max-width:80px;overflow:hidden;text-overflow:ellipsis}
+  @media(max-width:900px){
+    .tl-rail{justify-content:flex-start;gap:4px;padding-bottom:8px}
+    .tl-rail::before{left:0;right:0}
+  }
+  .tl-panels{margin-top:24px;position:relative}
+  .tl-panel{display:none;animation:tlFade .3s ease}
+  .tl-panel.active{display:block}
+  @keyframes tlFade{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+  .tl-panel-card{max-width:620px;margin:0 auto;padding:24px 28px;border-radius:16px;
+    background:linear-gradient(135deg,rgba(255,255,255,.03),rgba(255,255,255,.01));
+    border:1px solid var(--line-2)}
+  .tl-panel.milestone .tl-panel-card{border-color:rgba(255,122,61,.25)}
+  .tl-panel.delisting .tl-panel-card{border-color:rgba(255,133,128,.25)}
+  .tl-panel.resolution .tl-panel-card{border-color:rgba(74,214,200,.3);
+    background:linear-gradient(135deg,rgba(74,214,200,.06),rgba(255,122,61,.04))}
+  .tl-year{font-family:'Plus Jakarta Sans';font-weight:700;font-size:14px;color:var(--xmr);
+    margin-bottom:6px}
+  .tl-panel.delisting .tl-year{color:var(--red)}
+  .tl-panel.resolution .tl-year{color:var(--teal)}
+  .tl-title{font-family:'Plus Jakarta Sans';font-weight:600;font-size:18px;letter-spacing:-.01em;
+    line-height:1.3;margin-bottom:10px}
+  .tl-body{font-size:15px;color:var(--muted);line-height:1.65}
+  .tl-body b{color:var(--fg);font-weight:600}
+  .tl-features{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px;
+    padding-top:16px;border-top:1px solid var(--line-2)}
+  @media(max-width:520px){.tl-features{grid-template-columns:1fr}}
+  .tl-feat{padding:12px 14px;background:rgba(255,255,255,.02);border:1px solid var(--line-2);
+    border-radius:12px}
+  .tl-feat .fh{font-family:'Plus Jakarta Sans';font-weight:700;font-size:14px;color:var(--teal);
+    margin-bottom:4px}
+  .tl-feat .fb{font-size:13px;color:var(--muted);line-height:1.5}
 </style>
 </head>
 <body>
 
 <header class="nav">
   <div class="nav-in">
-    <a class="brand" href="#"><img src="./wrapsynth-symbol.png" alt="WrapSynth" style="width:22px;height:22px;border-radius:6px">WrapSynth</a>
+    <a class="brand" href="#"><img src="./wrapsynth-symbol.png" alt="Wrapsynth" style="width:22px;height:22px;border-radius:6px">Wrapsynth</a>
     <nav class="nav-links">
+      <a href="#story">History</a>
       <a href="#features">Features</a>
       <a href="#how">How it works</a>
       <a href="#stats">Stats</a>
@@ -234,12 +298,93 @@
   </div>
 </section>
 
+<!-- TIMELINE: THE HISTORY -->
+<section id="story" class="sec-line">
+  <div class="wrap sec-pad">
+    <span class="eyebrow-sm">The History</span>
+    <h2 class="sec-h">How Wrapsynth came to be</h2>
+    <p class="sec-sub">Click a point to explore.</p>
+    <div class="tl-h">
+      <div class="tl-rail">
+        <button class="tl-node milestone" data-tl="0"><div class="tl-dot"></div><div class="tl-lbl">2009</div><div class="tl-sub">Bitcoin</div></button>
+        <button class="tl-node delisting" data-tl="1"><div class="tl-dot"></div><div class="tl-lbl">2013</div><div class="tl-sub">Mt. Gox</div></button>
+        <button class="tl-node milestone" data-tl="2"><div class="tl-dot"></div><div class="tl-lbl">2014</div><div class="tl-sub">Monero born</div></button>
+        <button class="tl-node delisting" data-tl="3"><div class="tl-dot"></div><div class="tl-lbl">2017</div><div class="tl-sub">Block size war</div></button>
+        <button class="tl-node milestone" data-tl="4"><div class="tl-dot"></div><div class="tl-lbl">'19–'22</div><div class="tl-sub">Monero hardens</div></button>
+        <button class="tl-node delisting" data-tl="5"><div class="tl-dot"></div><div class="tl-lbl">'21–'22</div><div class="tl-sub">First delistings</div></button>
+        <button class="tl-node delisting" data-tl="6"><div class="tl-dot"></div><div class="tl-lbl">2024</div><div class="tl-sub">Major delistings</div></button>
+        <button class="tl-node delisting" data-tl="7"><div class="tl-dot"></div><div class="tl-lbl">2025</div><div class="tl-sub">73 exchanges</div></button>
+        <button class="tl-node milestone" data-tl="8"><div class="tl-dot"></div><div class="tl-lbl">'25–'26</div><div class="tl-sub">Survives</div></button>
+        <button class="tl-node resolution" data-tl="9"><div class="tl-dot"></div><div class="tl-lbl">Today</div><div class="tl-sub">Wrapsynth</div></button>
+      </div>
+      <div class="tl-panels">
+        <div class="tl-panel milestone" id="tlp-0"><div class="tl-panel-card">
+          <div class="tl-year">2009</div>
+          <div class="tl-title">Bitcoin launches</div>
+          <div class="tl-body">Genesis block: <b>"Chancellor on brink of second bailout for banks."</b> Trustless electronic cash — no intermediaries, no gatekeepers. The original promise.</div>
+        </div></div>
+        <div class="tl-panel delisting" id="tlp-1"><div class="tl-panel-card">
+          <div class="tl-year">2013</div>
+          <div class="tl-title">Mt. Gox handles 70% of Bitcoin trading</div>
+          <div class="tl-body">The promise of self-sovereign money, funneled through a single point of failure. <b>850,000 BTC</b> would be lost when it collapsed in February 2014. The lesson was already clear: centralization is the weakness.</div>
+        </div></div>
+        <div class="tl-panel milestone" id="tlp-2"><div class="tl-panel-card">
+          <div class="tl-year">April 2014</div>
+          <div class="tl-title">Monero is born</div>
+          <div class="tl-body">From the CryptoNote whitepaper. <b>Private by default</b> — every transaction hides sender, recipient, and amount. No rich list. No traceable history. The spiritual successor to Bitcoin's original promise.</div>
+        </div></div>
+        <div class="tl-panel delisting" id="tlp-3"><div class="tl-panel-card">
+          <div class="tl-year">2017</div>
+          <div class="tl-title">The Bitcoin Block Size War</div>
+          <div class="tl-body">Bitcoin grinds to a halt. 1MB cap, <b>$50 fees</b>, transactions stuck for days. The community fractures into BTC and BCH. Years of toxic debate over a parameter that should have been uncontroversial. Meanwhile Monero has <b>dynamic block sizes</b> — the median scales automatically with usage. No cap to fight over. No civil war.</div>
+        </div></div>
+        <div class="tl-panel milestone" id="tlp-4"><div class="tl-panel-card">
+          <div class="tl-year">2019 — 2022</div>
+          <div class="tl-title">Monero hardens</div>
+          <div class="tl-body">While exchanges prepared to delist it, Monero was getting stronger.</div>
+          <div class="tl-features">
+            <div class="tl-feat"><div class="fh">RandomX</div><div class="fb">ASIC-resistant mining. A CPU competes with a data center. No hardware monopoly.</div></div>
+            <div class="tl-feat"><div class="fh">Dandelion++</div><div class="fb">Transaction propagation that hides your IP from the network. Even your ISP can't easily link you to your transactions.</div></div>
+            <div class="tl-feat"><div class="fh">Stealth Addresses</div><div class="fb">Every transaction generates a unique one-time address. No one can tell how many times you've received funds.</div></div>
+            <div class="tl-feat"><div class="fh">Tail Emission</div><div class="fb">June 2022, block 2,641,623: reward locks at 0.6 XMR forever. Miners always have a reason to secure the network. No supply cliff.</div></div>
+          </div>
+        </div></div>
+        <div class="tl-panel delisting" id="tlp-5"><div class="tl-panel-card">
+          <div class="tl-year">2021 — 2022</div>
+          <div class="tl-title">First delistings</div>
+          <div class="tl-body"><b>Bittrex</b> delists Monero in January 2021, citing <b>"evolving regulatory standards"</b> — no specific law. <b>Huobi</b> follows in September 2022, removing 7 privacy coins at once. Neither exchange names a regulation. The chill begins.</div>
+        </div></div>
+        <div class="tl-panel delisting" id="tlp-6"><div class="tl-panel-card">
+          <div class="tl-year">2024</div>
+          <div class="tl-title">The major delistings</div>
+          <div class="tl-body"><b>OKX</b> removes all privacy tokens in January. <b>Binance</b> delists Monero in February — XMR drops <b>30%</b>, then Binance <b>force-converts</b> remaining balances to USDC without consent. <b>LocalMonero</b>, the only P2P fiat on-ramp, shuts down in May after 7 years. <b>Kraken</b> delists for all of Europe in October: <b>"We concluded we have no choice."</b></div>
+        </div></div>
+        <div class="tl-panel delisting" id="tlp-7"><div class="tl-panel-card">
+          <div class="tl-year">2025</div>
+          <div class="tl-title">73 exchanges drop privacy coins</div>
+          <div class="tl-body">The delisting wave becomes the new baseline — a <b>43% increase</b> over 2023. Canadian regulators force <b>Kraken Canada</b> to delist XMR and shut down <b>TradeOgre</b> entirely.</div>
+        </div></div>
+        <div class="tl-panel milestone" id="tlp-8"><div class="tl-panel-card">
+          <div class="tl-year">2025 — 2026</div>
+          <div class="tl-title">Monero survives</div>
+          <div class="tl-body">On-chain transaction volumes <b>increase</b>, stabilizing above 2020–2021 levels. XMR near <b>$797</b>. Liquidity doesn't disappear — it reroutes. Atomic swaps, DEXs, and wrapped instruments become the new infrastructure.</div>
+        </div></div>
+        <div class="tl-panel resolution" id="tlp-9"><div class="tl-panel-card">
+          <div class="tl-year">Today</div>
+          <div class="tl-title">No exchange can delist what doesn't need an exchange</div>
+          <div class="tl-body">Wrapsynth brings Monero to DeFi through <b>trustless atomic swaps</b> — no custodian, no multisig, no centralized listing to revoke. Monero's access to DeFi is now <b>permanent</b>.</div>
+        </div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- FEATURES -->
 <section id="features" class="sec-line">
   <div class="wrap sec-pad">
     <span class="eyebrow-sm">Features</span>
-    <h2 class="sec-h">Why WrapSynth?</h2>
-    <p class="sec-sub">Monero is the best money in crypto and the most isolated. No lending, no liquidity, no composability — just an asset you have to sell to ever use. WrapSynth ends that, without asking you to trust a bridge operator with your coins.</p>
+    <h2 class="sec-h">Why Wrapsynth?</h2>
+    <p class="sec-sub">Monero is the best money in crypto and the most isolated. No lending, no liquidity, no composability — just an asset you have to sell to ever use. Wrapsynth ends that, without asking you to trust a bridge operator with your coins.</p>
     <div class="feat-grid">
       <div class="feat">
         <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
@@ -249,7 +394,7 @@
       <div class="feat tl">
         <div class="ic"><svg viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg></div>
         <h3>Outlast the delistings</h3>
-        <p>As exchanges drop Monero jurisdiction by jurisdiction, holders lose their on-ramps. WrapSynth is a path into EVM liquidity that doesn't depend on any CEX choosing to list you.</p>
+        <p>As exchanges drop Monero jurisdiction by jurisdiction, holders lose their on-ramps. Wrapsynth is a path into EVM liquidity that doesn't depend on any CEX choosing to list you.</p>
       </div>
       <div class="feat">
         <div class="ic"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></div>
@@ -282,7 +427,7 @@
     <h2 class="sec-h">How it works</h2>
     <p class="sec-sub">Four steps to ferry your Monero to DeFi — trustless on both sides of the swap.</p>
 
-    <h3 style="font-family:'Space Grotesk';font-weight:600;font-size:18px;margin:36px 0 0;color:var(--teal)">Mint wsXMR</h3>
+    <h3 style="font-family:'Plus Jakarta Sans';font-weight:600;font-size:18px;margin:36px 0 0;color:var(--teal)">Mint wsXMR</h3>
     <div class="steps">
       <div class="stp"><div class="num">1</div><h3>Initiate swap</h3>
         <p>You create a mint request with a secret commitment and send XMR to the LP's Monero address.</p></div>
@@ -294,7 +439,7 @@
         <p>The contract mints wsXMR to your wallet, backed by real XMR and guaranteed by the LP's collateral in their vault.</p></div>
     </div>
 
-    <h3 style="font-family:'Space Grotesk';font-weight:600;font-size:18px;margin:48px 0 0;color:var(--xmr)">Burn wsXMR</h3>
+    <h3 style="font-family:'Plus Jakarta Sans';font-weight:600;font-size:18px;margin:48px 0 0;color:var(--xmr)">Burn wsXMR</h3>
     <div class="steps">
       <div class="stp"><div class="num">1</div><h3>Initiate burn</h3>
         <p>You create a burn request with a secret commitment and send wsXMR to the contract.</p></div>
@@ -368,7 +513,7 @@
   <div class="wrap">
     <div class="foot-grid">
       <div>
-        <h4>WrapSynth</h4>
+        <h4>Wrapsynth</h4>
         <p>Trustless wrapped Monero via atomic exchanges. Bringing Monero's anonymity set to DeFi, and DeFi liquidity to Monero.</p>
       </div>
       <div>
@@ -405,7 +550,7 @@
         float a=0.03+0.04*h(s);float f=1.3+2.2*h(s+1.);float sp=0.08+0.2*h(s+2.);float ph=s*6.28;
         float y=yb+a*sin(uv.x*f*3.14+t*sp+ph);float d=abs(uv.y-y);
         glow+=(0.0014/(d+0.0011))*(0.4+0.5*h(s+3.));}
-      vec3 o=vec3(1.,0.42,0.1);vec3 te=vec3(0.18,0.9,0.77);
+      vec3 o=vec3(0.15,0.2,0.3);vec3 te=vec3(0.4,0.45,0.55);
       vec3 c=mix(o,te,smoothstep(0.1,0.9,uv.x))*glow*0.34;
       gl_FragColor=vec4(c,1.0);}`;
   function sh(t,src){const s=gl.createShader(t);gl.shaderSource(s,src);gl.compileShader(s);return s;}
@@ -568,6 +713,30 @@ function copyAddr(btn){
   } catch(err){
     console.warn('Failed to fetch protocol stats:',err);
   }
+})();
+
+/* Timeline: click node to expand panel */
+(function(){
+  var nodes=document.querySelectorAll('.tl-node');
+  var panels=document.querySelectorAll('.tl-panel');
+  if(!nodes.length)return;
+  function activate(i){
+    nodes.forEach(function(n,j){n.classList.toggle('active',j===i)});
+    panels.forEach(function(p,j){p.classList.toggle('active',j===i)});
+  }
+  nodes.forEach(function(n,i){
+    n.addEventListener('click',function(){
+      if(n.classList.contains('active')){
+        n.classList.remove('active');
+        panels[i].classList.remove('active');
+      }else{
+        activate(i);
+      }
+    });
+  });
+  /* open first node by default */
+  nodes[0].classList.add('active');
+  panels[0].classList.add('active');
 })();
 </script>
 </body>

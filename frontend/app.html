@@ -6,9 +6,9 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>WrapSynth — Atomic Liquidity for Monero</title>
+<title>Wrapsynth — Atomic Liquidity for Monero</title>
 <meta name="description" content="Mint and burn wsXMR. Bridge your Monero to Gnosis Chain with trustless atomic swaps backed by >200% collateral.">
-<meta property="og:title" content="WrapSynth | Atomic Liquidity for Monero">
+<meta property="og:title" content="Wrapsynth | Atomic Liquidity for Monero">
 <meta property="og:description" content="Mint and burn wsXMR. Bridge your Monero to Gnosis Chain with trustless atomic swaps backed by >200% collateral.">
 <meta property="og:image" content="https://wrapsynth.com/frontend/og-image.png">
 <meta property="og:image:width" content="1200">
@@ -16,7 +16,7 @@
 <meta property="og:url" content="https://wrapsynth.com/app">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="WrapSynth | Atomic Liquidity for Monero">
+<meta name="twitter:title" content="Wrapsynth | Atomic Liquidity for Monero">
 <meta name="twitter:description" content="Mint and burn wsXMR. Bridge your Monero to Gnosis Chain with trustless atomic swaps backed by >200% collateral.">
 <meta name="twitter:image" content="https://wrapsynth.com/frontend/og-image.png">
 <link rel="icon" type="image/x-icon" href="./favicon_monero/favicon.ico">
@@ -25,7 +25,7 @@
 <link rel="apple-touch-icon" sizes="180x180" href="./favicon_monero/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
 <script type="importmap">
 {
   "imports": {
@@ -72,7 +72,7 @@ if ('serviceWorker' in navigator) {
         float a=0.03+0.04*h(s);float f=1.3+2.2*h(s+1.);float sp=0.08+0.2*h(s+2.);float ph=s*6.28;
         float y=yb+a*sin(uv.x*f*3.14+t*sp+ph);float d=abs(uv.y-y);
         glow+=(0.0014/(d+0.0011))*(0.4+0.5*h(s+3.));}
-      vec3 o=vec3(1.,0.42,0.1);vec3 te=vec3(0.18,0.9,0.77);
+      vec3 o=vec3(0.15,0.2,0.3);vec3 te=vec3(0.4,0.45,0.55);
       vec3 c=mix(o,te,smoothstep(0.1,0.9,uv.x))*glow*0.34;
       gl_FragColor=vec4(c,1.0);}`;
   function sh(t,src){const s=gl.createShader(t);gl.shaderSource(s,src);gl.compileShader(s);return s;}
@@ -94,7 +94,7 @@ if ('serviceWorker' in navigator) {
 
 <div class="shell">
   <nav>
-    <a href="index.html" class="brand" style="text-decoration:none"><img src="./wrapsynth-symbol.png" alt="WrapSynth" style="width:22px;height:22px;border-radius:6px">WrapSynth</a>
+    <a href="index.html" class="brand" style="text-decoration:none"><img src="./wrapsynth-symbol.png" alt="Wrapsynth" style="width:22px;height:22px;border-radius:6px">Wrapsynth</a>
     <div class="nav-right">
       <span class="pill"><img src="https://gnosisscan.io/assets/generic/html/favicon-light.ico" alt="Gnosis" style="width:14px;height:14px;margin-right:4px">Gnosis</span>
       <a id="gecko-terminal-link" class="pill" href="#" target="_blank" rel="noopener noreferrer" style="text-decoration:none"><img src="https://www.geckoterminal.com/favicon.ico" alt="Pool" style="width:14px;height:14px;margin-right:4px">Trade</a>
@@ -233,12 +233,12 @@ if ('serviceWorker' in navigator) {
       <!-- CO-LP PANEL -->
       <div class="body panel hidden" id="co-lp-panel" data-panel="co-lp">
         <div style="padding:0 4px">
-          <h3 style="font-family:'Space Grotesk';font-size:15px;font-weight:600;margin-bottom:12px">Your Co-LP Positions</h3>
+          <h3 style="font-family:'Plus Jakarta Sans';font-size:15px;font-weight:600;margin-bottom:12px">Your Co-LP Positions</h3>
           <div id="co-lp-positions-list" style="margin-bottom:20px">
             <div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">Connect wallet to see positions</div>
           </div>
           
-          <h3 style="font-family:'Space Grotesk';font-size:15px;font-weight:600;margin:20px 0 12px">Open New Position</h3>
+          <h3 style="font-family:'Plus Jakarta Sans';font-size:15px;font-weight:600;margin:20px 0 12px">Open New Position</h3>
           <div class="label-row"><span>Your wsXMR Balance</span><span id="co-lp-user-balance">--</span></div>
           
           <div class="meta" style="margin-top:12px">
@@ -258,7 +258,7 @@ if ('serviceWorker' in navigator) {
           <button class="cta" id="co-lp-open" disabled>Open Co-LP Position</button>
           
           <div id="co-lp-lp-settings" class="hidden" style="margin-top:20px;padding-top:20px;border-top:1px solid var(--line-2)">
-            <h3 style="font-family:'Space Grotesk';font-size:14px;font-weight:600;margin-bottom:12px">LP Settings</h3>
+            <h3 style="font-family:'Plus Jakarta Sans';font-size:14px;font-weight:600;margin-bottom:12px">LP Settings</h3>
             <div class="label-row"><span>Max Co-LP Range (bps)</span></div>
             <div class="addr-field">
               <input id="co-lp-max-range" type="number" placeholder="e.g. 500" />
@@ -267,7 +267,7 @@ if ('serviceWorker' in navigator) {
           </div>
           
           <div style="margin-top:20px">
-            <h3 style="font-family:'Space Grotesk';font-size:14px;font-weight:600;margin-bottom:8px">Manage Position</h3>
+            <h3 style="font-family:'Plus Jakarta Sans';font-size:14px;font-weight:600;margin-bottom:8px">Manage Position</h3>
             <div class="addr-field">
               <input id="co-lp-token-id" type="number" placeholder="NFT Token ID" />
             </div>
