@@ -219,7 +219,7 @@ async function loadVaultDetails(address) {
     transport: http('https://rpc.gnosischain.com')
   });
 
-  const hub = '0xbf24788234512bb0aa10451f6efa88ca0e31d88e';
+  const hub = '0x2147f47829014B0b32531124d45A30352e721F75';
   const shortAddr = `${address.slice(0, 6)}...${address.slice(-4)}`;
   
   document.getElementById('lp-name').textContent = `LP Vault ${shortAddr}`;
