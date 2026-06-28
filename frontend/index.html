@@ -25,9 +25,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#111418; --panel:#181c22; --panel-2:#1f242c; --input:#252b34;
+    --bg:#0c0c14; --panel:#161621; --panel-2:#1c1c2a; --input:#242436;
     --fg:#ffffff; --muted:#a8a8c0; --faint:#686880;
-    --xmr:#f4754c; --teal:#4ad6c8; --navy:#1e3a6e; --green:#4af0aa; --amber:#ffd95e; --red:#ff8580;
+    --xmr:#ff7a3d; --teal:#3efce0; --green:#4af0aa; --amber:#ffd95e; --red:#ff8580;
     --line:rgba(255,255,255,.12); --line-2:rgba(255,255,255,.07);
     --max:1080px;
   }
@@ -42,30 +42,28 @@
 
   /* NAV */
   .nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(12px);
-    background:rgba(24,28,34,.65);border-bottom:1px solid var(--line-2);
-    box-shadow:0 1px 20px rgba(30,58,110,.12)}
+    background:rgba(22,22,33,.65);border-bottom:1px solid var(--line-2);
+    box-shadow:0 1px 20px rgba(255,122,61,.1)}
   .nav-in{max-width:var(--max);margin:0 auto;padding:0 28px;height:66px;
     display:flex;align-items:center;justify-content:space-between}
   .brand{display:flex;align-items:center;gap:10px;font-family:'Plus Jakarta Sans';font-weight:700;
     letter-spacing:-.02em;font-size:18px;text-decoration:none;color:var(--fg)}
   .brand .mk{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,var(--xmr),var(--teal))}
-  .brand:hover{opacity:.85}
+  .brand:hover{text-shadow:0 0 30px rgba(62,252,224,.4)}
   .nav-links{display:flex;align-items:center;gap:28px}
   .nav-links a{font-size:14px;color:var(--muted);text-decoration:none;transition:color .15s}
   .nav-links a:hover{color:var(--fg)}
-  .nav-links a.nav-cta{font-family:'Plus Jakarta Sans';font-weight:600;font-size:15px;text-decoration:none;
-    display:inline-flex;align-items:center;gap:8px;
-    background:var(--navy);color:#fff;border-radius:12px;padding:13px 22px;
-    transition:background .15s, transform .12s, box-shadow .15s}
-  .nav-links a.nav-cta:hover{background:#2a4a8a;box-shadow:0 0 32px rgba(30,58,110,.4),0 0 12px rgba(30,58,110,.25);color:#fff}
-  .nav-links a.nav-cta:active{transform:translateY(1px)}
+  .nav-cta{font-family:'Plus Jakarta Sans';font-weight:600;font-size:14px;text-decoration:none;
+    background:var(--xmr);color:#160a02;border-radius:10px;padding:9px 15px;
+    transition:background .15s, box-shadow .15s;box-shadow:0 0 20px rgba(255,122,61,.25)}
+  .nav-cta:hover{background:#ff9060;box-shadow:0 0 30px rgba(255,122,61,.4);color:#160a02}
   @media(max-width:760px){.nav-links a:not(.nav-cta){display:none}}
 
   /* HERO */
   .hero{position:relative;overflow:hidden;border-bottom:1px solid var(--line-2)}
   #gl{position:absolute;inset:0;width:100%;height:100%;z-index:0;opacity:.85}
   .hero-scrim{position:absolute;inset:0;z-index:1;pointer-events:none;
-    background:radial-gradient(110% 70% at 50% -10%,transparent 40%,rgba(17,20,24,.6) 100%),
+    background:radial-gradient(110% 70% at 50% -10%,transparent 40%,rgba(12,12,20,.6) 100%),
                linear-gradient(180deg,transparent 60%,var(--bg) 100%)}
   .hero-in{position:relative;z-index:2;max-width:var(--max);margin:0 auto;padding:96px 28px 76px}
   .eyebrow{display:inline-flex;align-items:center;gap:9px;font-family:'JetBrains Mono';font-size:12px;
@@ -82,8 +80,8 @@
     display:inline-flex;align-items:center;gap:8px;padding:13px 22px;border-radius:12px;
     transition:background .15s, transform .12s, border-color .15s}
   .btn:active{transform:translateY(1px)}
-  .btn-primary{background:var(--navy);color:#fff}
-  .btn-primary:hover{background:#2a4a8a;box-shadow:0 0 32px rgba(30,58,110,.4),0 0 12px rgba(30,58,110,.25)}
+  .btn-primary{background:var(--xmr);color:#160a02}
+  .btn-primary:hover{background:#ff9060;box-shadow:0 0 32px rgba(255,122,61,.35),0 0 12px rgba(255,122,61,.2)}
   .btn-ghost{border:1px solid var(--line);color:var(--fg);background:rgba(255,255,255,.06)}
   .btn-ghost:hover{background:rgba(255,255,255,.1);box-shadow:0 0 20px rgba(255,255,255,.08)}
   .hero-stats{display:flex;gap:40px;margin-top:54px;flex-wrap:wrap}
@@ -111,25 +109,67 @@
   .feat{background:linear-gradient(135deg,rgba(255,255,255,.02),rgba(255,255,255,.005));
     border:1px solid var(--line-2);border-radius:16px;padding:24px 22px;
     transition:all .3s cubic-bezier(.4,0,.2,1);backdrop-filter:blur(8px)}
-  .feat:hover{border-color:rgba(74,214,200,.4);transform:translateY(-4px);
-    box-shadow:0 8px 48px rgba(74,214,200,.15),0 0 0 1px rgba(74,214,200,.15),0 0 80px rgba(74,214,200,.06)}
+  .feat:hover{border-color:rgba(62,252,224,.4);transform:translateY(-4px);
+    box-shadow:0 8px 48px rgba(62,252,224,.15),0 0 0 1px rgba(62,252,224,.15),0 0 80px rgba(62,252,224,.06)}
   .feat .ic{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;
-    background:rgba(30,58,110,.15);border:1px solid rgba(30,58,110,.35);margin-bottom:16px;
-    box-shadow:0 0 16px rgba(30,58,110,.1)}
-  .feat .ic svg{width:20px;height:20px;stroke:#6ba3e0;fill:none;stroke-width:1.7;
+    background:rgba(255,122,61,.1);border:1px solid rgba(255,122,61,.25);margin-bottom:16px;
+    box-shadow:0 0 16px rgba(255,122,61,.08)}
+  .feat .ic svg{width:20px;height:20px;stroke:var(--xmr);fill:none;stroke-width:1.7;
     stroke-linecap:round;stroke-linejoin:round}
-  .feat.tl .ic{background:rgba(74,214,200,.1);border-color:rgba(74,214,200,.25);box-shadow:0 0 16px rgba(74,214,200,.08)}
+  .feat.tl .ic{background:rgba(62,252,224,.1);border-color:rgba(62,252,224,.25);box-shadow:0 0 16px rgba(62,252,224,.08)}
   .feat.tl .ic svg{stroke:var(--teal)}
   .feat h3{font-family:'Plus Jakarta Sans';font-weight:600;font-size:17px;letter-spacing:-.01em}
   .feat p{color:var(--muted);font-size:14px;margin-top:9px;line-height:1.55}
+
+  /* WHO */
+  .who-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:44px}
+  @media(max-width:820px){.who-grid{grid-template-columns:1fr}}
+  .who-card{background:linear-gradient(135deg,rgba(255,255,255,.02),rgba(255,255,255,.005));
+    border:1px solid var(--line-2);border-radius:16px;padding:28px 24px;
+    transition:all .3s cubic-bezier(.4,0,.2,1);backdrop-filter:blur(8px)}
+  .who-card:hover{border-color:rgba(255,122,61,.3);transform:translateY(-4px);
+    box-shadow:0 8px 48px rgba(255,122,61,.1),0 0 0 1px rgba(255,122,61,.1)}
+  .who-card .ic{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;
+    background:rgba(255,122,61,.12);border:1px solid rgba(255,122,61,.25);margin-bottom:14px;
+    box-shadow:0 0 16px rgba(255,122,61,.08)}
+  .who-card .ic svg{width:16px;height:16px;stroke:var(--xmr);fill:none;stroke-width:1.7;
+    stroke-linecap:round;stroke-linejoin:round}
+  .who-card h3{font-family:'Plus Jakarta Sans';font-weight:600;font-size:17px;letter-spacing:-.01em}
+  .who-card p{color:var(--muted);font-size:14px;margin-top:9px;line-height:1.55}
+  .who-builder{margin-top:14px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+    padding:20px 24px;border-radius:16px;border:1px solid var(--line-2);
+    background:linear-gradient(135deg,rgba(30,58,110,.08),rgba(255,255,255,.01))}
+  .who-builder .wb-tag{font-family:'JetBrains Mono';font-size:12px;color:var(--teal);
+    border:1px solid rgba(74,214,200,.3);border-radius:6px;padding:4px 10px;
+    background:rgba(74,214,200,.08)}
+  .who-builder .wb-txt{font-size:14px;color:var(--muted);line-height:1.5}
+  .who-builder .wb-txt b{color:var(--fg);font-weight:500}
+
+  /* SPEC FEATURES */
+  .spec-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:44px}
+  @media(max-width:820px){.spec-grid{grid-template-columns:1fr}}
+  .spec{background:linear-gradient(135deg,rgba(255,255,255,.02),rgba(255,255,255,.005));
+    border:1px solid var(--line-2);border-radius:14px;padding:22px 24px;
+    transition:border-color .2s,box-shadow .2s}
+  .spec:hover{border-color:rgba(74,214,200,.3);box-shadow:0 0 32px rgba(74,214,200,.06)}
+  .spec .sh{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .spec .sh .ic{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;
+    background:rgba(74,214,200,.1);border:1px solid rgba(74,214,200,.2);flex-shrink:0}
+  .spec .sh .ic svg{width:16px;height:16px;stroke:var(--teal);fill:none;stroke-width:1.7;
+    stroke-linecap:round;stroke-linejoin:round}
+  .spec .sh h3{font-family:'Plus Jakarta Sans';font-weight:600;font-size:16px;letter-spacing:-.01em}
+  .spec p{color:var(--muted);font-size:13.5px;line-height:1.55}
+  .spec .tags{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .spec .tag{font-family:'JetBrains Mono';font-size:11px;color:var(--muted);
+    border:1px solid var(--line);border-radius:5px;padding:3px 8px;background:rgba(255,255,255,.03)}
 
   /* STEPS */
   .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:44px}
   @media(max-width:820px){.steps{grid-template-columns:1fr}}
   .stp{position:relative;padding-top:18px}
-  .stp .num{font-family:'JetBrains Mono';font-weight:600;font-size:13px;color:#fff;
+  .stp .num{font-family:'JetBrains Mono';font-weight:600;font-size:13px;color:#0c0c14;
     width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
-    background:var(--navy);margin-bottom:16px;box-shadow:0 0 16px rgba(30,58,110,.25)}
+    background:var(--xmr);margin-bottom:16px;box-shadow:0 0 16px rgba(255,122,61,.25)}
   .stp h3{font-family:'Plus Jakarta Sans';font-weight:600;font-size:16.5px;letter-spacing:-.01em}
   .stp p{color:var(--muted);font-size:13.5px;margin-top:9px;line-height:1.55}
   .stp::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:var(--line)}
@@ -139,7 +179,7 @@
     background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden}
   @media(max-width:820px){.metrics{grid-template-columns:repeat(2,1fr)}}
   .met{background:var(--bg);padding:28px 24px;transition:background .2s,box-shadow .2s}
-  .met:hover{background:var(--panel-2);box-shadow:inset 0 0 24px rgba(74,214,200,.06)}
+  .met:hover{background:var(--panel-2);box-shadow:inset 0 0 24px rgba(62,252,224,.06)}
   .met .n{font-family:'JetBrains Mono';font-weight:600;font-size:clamp(22px,3vw,30px);letter-spacing:-.02em}
   .met .n.tl{color:var(--teal)}
   .met .k{font-size:13px;color:var(--fg);margin-top:8px;font-weight:500}
@@ -151,16 +191,16 @@
   .ctr{background:linear-gradient(135deg,rgba(255,255,255,.02),rgba(255,255,255,.005));
     border:1px solid var(--line-2);border-radius:14px;padding:20px 22px;
     transition:border-color .2s,box-shadow .2s}
-  .ctr:hover{border-color:rgba(74,214,200,.3);box-shadow:0 0 32px rgba(74,214,200,.08)}
+  .ctr:hover{border-color:rgba(62,252,224,.3);box-shadow:0 0 32px rgba(62,252,224,.08)}
   .ctr .lab{font-family:'Plus Jakarta Sans';font-weight:600;font-size:14.5px;display:flex;align-items:center;gap:8px}
-  .ctr .badge{font-family:'JetBrains Mono';font-size:10px;color:var(--teal);border:1px solid rgba(74,214,200,.3);
-    border-radius:5px;padding:2px 6px;background:rgba(74,214,200,.1);box-shadow:0 0 12px rgba(74,214,200,.08)}
+  .ctr .badge{font-family:'JetBrains Mono';font-size:10px;color:var(--teal);border:1px solid rgba(62,252,224,.3);
+    border-radius:5px;padding:2px 6px;background:rgba(62,252,224,.1);box-shadow:0 0 12px rgba(62,252,224,.08)}
   .ctr .addr{font-family:'JetBrains Mono';font-size:12.5px;color:var(--muted);margin-top:12px;
     word-break:break-all;line-height:1.6}
   .ctr .acts{display:flex;gap:14px;margin-top:14px;font-size:12.5px;font-family:'JetBrains Mono'}
   .ctr .acts button,.ctr .acts a{background:none;border:none;color:var(--muted);cursor:pointer;
     text-decoration:none;padding:0;transition:color .15s}
-  .ctr .acts button:hover,.ctr .acts a:hover{color:var(--teal)}
+  .ctr .acts button:hover,.ctr .acts a:hover{color:var(--teal);text-shadow:0 0 12px rgba(62,252,224,.4)}
 
   /* FINAL CTA */
   .final{text-align:center;padding:92px 0}
@@ -183,8 +223,8 @@
 
   @media(prefers-reduced-motion:reduce){.rv{animation:none;opacity:1;transform:none}}
 
-  ::selection{background:rgba(74,214,200,.3);color:var(--fg)}
-  ::-moz-selection{background:rgba(74,214,200,.3);color:var(--fg)}
+  ::selection{background:rgba(62,252,224,.3);color:var(--fg)}
+  ::-moz-selection{background:rgba(62,252,224,.3);color:var(--fg)}
   ::-webkit-scrollbar{width:8px}
   ::-webkit-scrollbar-track{background:var(--bg)}
   ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:4px}
@@ -208,10 +248,10 @@
   .tl-node.delisting .tl-dot{border-color:var(--red)}
   .tl-node.resolution .tl-dot{border-color:var(--teal);background:var(--teal);width:18px;height:18px}
   .tl-node:hover .tl-dot{transform:scale(1.3);box-shadow:0 0 0 4px rgba(255,255,255,.06)}
-  .tl-node.active .tl-dot{transform:scale(1.35);box-shadow:0 0 0 4px rgba(74,214,200,.15)}
+  .tl-node.active .tl-dot{transform:scale(1.35);box-shadow:0 0 0 4px rgba(62,252,224,.15)}
   .tl-node.milestone.active .tl-dot{box-shadow:0 0 0 4px rgba(255,122,61,.18)}
   .tl-node.delisting.active .tl-dot{box-shadow:0 0 0 4px rgba(255,133,128,.18)}
-  .tl-node.resolution.active .tl-dot{box-shadow:0 0 0 5px rgba(74,214,200,.2)}
+  .tl-node.resolution.active .tl-dot{box-shadow:0 0 0 5px rgba(62,252,224,.2)}
   .tl-lbl{font-family:'Plus Jakarta Sans';font-weight:600;font-size:12px;color:var(--muted);
     text-align:center;line-height:1.2;transition:color .2s;white-space:nowrap}
   .tl-node.milestone .tl-lbl{color:var(--xmr)}
@@ -234,8 +274,8 @@
     border:1px solid var(--line-2)}
   .tl-panel.milestone .tl-panel-card{border-color:rgba(255,122,61,.25)}
   .tl-panel.delisting .tl-panel-card{border-color:rgba(255,133,128,.25)}
-  .tl-panel.resolution .tl-panel-card{border-color:rgba(74,214,200,.3);
-    background:linear-gradient(135deg,rgba(74,214,200,.06),rgba(255,122,61,.04))}
+  .tl-panel.resolution .tl-panel-card{border-color:rgba(62,252,224,.3);
+    background:linear-gradient(135deg,rgba(62,252,224,.06),rgba(255,122,61,.04))}
   .tl-year{font-family:'Plus Jakarta Sans';font-weight:700;font-size:14px;color:var(--xmr);
     margin-bottom:6px}
   .tl-panel.delisting .tl-year{color:var(--red)}
@@ -260,10 +300,11 @@
   <div class="nav-in">
     <a class="brand" href="#"><img src="./wrapsynth-symbol.png" alt="Wrapsynth" style="width:22px;height:22px;border-radius:6px">Wrapsynth</a>
     <nav class="nav-links">
-      <a href="#story">History</a>
+      <a href="#who">Audience</a>
       <a href="#features">Features</a>
-      <a href="#how">How it works</a>
-      <a href="#stats">Stats</a>
+      <a href="#when">History</a>
+      <a href="#why">Benefits</a>
+      <a href="#how">Process</a>
       <a href="https://github.com/madschristensen99/wrapsynth" target="_blank">GitHub</a>
       <a class="nav-cta" href="app.html">Launch app →</a>
     </nav>
@@ -300,10 +341,98 @@
   </div>
 </section>
 
-<!-- TIMELINE: THE HISTORY -->
-<section id="story" class="sec-line">
+<!-- WHO -->
+<section id="who" class="sec-line">
   <div class="wrap sec-pad">
-    <span class="eyebrow-sm">The History</span>
+    <span class="eyebrow-sm">Who</span>
+    <h2 class="sec-h">Who is Wrapsynth for?</h2>
+    <p class="sec-sub">Three groups, one protocol. Each gets something they can't get anywhere else.</p>
+    <div class="who-grid">
+      <div class="who-card">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M7 16V4m0 0L3 8m4-4l4 4"/><path d="M17 8v12m0 0l4-4m-4 4l-4-4"/></svg></div>
+        <h3>Swappers</h3>
+        <p>Swap XMR for wsXMR and back — like an instant exchange, but trustless. No custodian, no KYC, no counterparty risk. Atomic swaps settle peer-to-peer, so your funds are never held by a third party.</p>
+      </div>
+      <div class="who-card">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
+        <h3>Liquidity providers</h3>
+        <p>Post sDAI as collateral in a vault, earn mint fees and burn rewards. You never take custody of XMR — the atomic swap protocol handles exchange. Your collateral earns sDAI yield while backing wsXMR.</p>
+      </div>
+      <div class="who-card">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg></div>
+        <h3>Merchants</h3>
+        <p>Accept XMR payments and settle in wsXMR on EVM rails. Programmable, composable, and auditable — without exposing your customers to custodial risk or CEX dependency.</p>
+      </div>
+    </div>
+    <div class="who-builder">
+      <span class="wb-tag">MIT open source licence</span>
+      <span class="wb-tag">No VC</span>
+      <span class="wb-tag">No token grift</span>
+      <div class="wb-txt"><b>Built by a solo developer</b> — no team, no treasury, no governance token to dump. The code is on GitHub, the contracts are verified on Gnosisscan, and the protocol runs on its own.</div>
+    </div>
+  </div>
+</section>
+
+<!-- WHAT: LIVE STATS -->
+<section id="what" class="sec-line">
+  <div class="wrap sec-pad">
+    <span class="eyebrow-sm">What</span>
+    <h2 class="sec-h">What is Wrapsynth?</h2>
+    <p class="sec-sub">A trustless bridge between Monero and EVM DeFi. Atomic swaps, not custodial wrapping. Overcollateralized vaults, not multisig trust. Here's the protocol right now, live on Gnosis Chain mainnet.</p>
+    <div class="metrics">
+      <div class="met"><div class="n tl" id="stat-supply">--</div><div class="k">wsXMR supply</div><div class="s">Circulating</div></div>
+      <div class="met"><div class="n" id="stat-tvl">--</div><div class="k">Total value locked</div><div class="s">sDAI collateral</div></div>
+      <div class="met"><div class="n" id="stat-collateral-ratio">--</div><div class="k">Collateral ratio</div><div class="s">Overcollateralized</div></div>
+      <div class="met"><div class="n" id="stat-active-vaults">--</div><div class="k">Active vaults</div><div class="s">Liquidity providers</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES: PROTOCOL MECHANICS -->
+<section id="features" class="sec-line">
+  <div class="wrap sec-pad">
+    <span class="eyebrow-sm">Features</span>
+    <h2 class="sec-h">Protocol mechanics</h2>
+    <p class="sec-sub">The moving parts that make Wrapsynth work — configurable, on-chain, verifiable.</p>
+    <div class="spec-grid">
+      <div class="spec">
+        <div class="sh"><div class="ic"><svg viewBox="0 0 24 24"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div><h3>Mint fees & burn rewards</h3></div>
+        <p>LPs charge a configurable mint fee in basis points. Burners receive a burn reward, also in bps, incentivizing the burn flow that releases XMR back to users. Both are set per-vault and visible on-chain.</p>
+        <div class="tags"><span class="tag">Configurable bps</span><span class="tag">Per-vault</span><span class="tag">On-chain</span></div>
+      </div>
+      <div class="spec">
+        <div class="sh"><div class="ic"><svg viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/></svg></div><h3>sDAI warchest vault</h3></div>
+        <p>LP collateral is deposited into sDAI, earning Dai Savings Rate yield while backing wsXMR. The vault tracks collateral shares, not raw DAI — so yield accrues automatically without rebalancing.</p>
+        <div class="tags"><span class="tag">sDAI yield</span><span class="tag">Share-based</span><span class="tag">Auto-accruing</span></div>
+      </div>
+      <div class="spec">
+        <div class="sh"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="9" cy="7" r="4"/><circle cx="17" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><path d="M17 21v-2a4 4 0 0 0-3-3.87"/></svg></div><h3>CDP co-LP system</h3></div>
+        <p>Vaults can accept co-liquidity providers who deposit sDAI alongside the primary LP. Co-LPs share in fees proportionally, with a configurable range (maxCoLPRangeBps) capping their share of the vault.</p>
+        <div class="tags"><span class="tag">Co-LP deposits</span><span class="tag">Proportional fees</span><span class="tag">Range-limited</span></div>
+      </div>
+      <div class="spec">
+        <div class="sh"><div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg></div><h3>Overcollateralized CDP</h3></div>
+        <p>Every wsXMR is backed by >200% collateral at mint time. A 120% liquidation threshold and 10% liquidator bonus keep the system solvent. Real-time price feeds from Pyth and RedStone trigger automated liquidation.</p>
+        <div class="tags"><span class="tag">>200% ratio</span><span class="tag">120% threshold</span><span class="tag">10% bonus</span></div>
+      </div>
+      <div class="spec">
+        <div class="sh"><div class="ic"><svg viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div><h3>Atomic swap escrow</h3></div>
+        <p>XMR is held in a 2-of-2 Monero multisig until the swap completes or times out (24h max). No party has unilateral custody. The secret-reveal mechanism ensures atomicity — either both sides settle or neither does.</p>
+        <div class="tags"><span class="tag">2-of-2 multisig</span><span class="tag">24h timeout</span><span class="tag">No custodian</span></div>
+      </div>
+      <div class="spec">
+        <div class="sh"><div class="ic"><svg viewBox="0 0 24 24"><path d="M16 18 22 12 16 6"/><path d="M8 6 2 12 8 18"/></svg></div><h3>On-chain Ed25519 verification</h3></div>
+        <p>Secret commitments are verified on-chain using Ed25519 operations — the same curve Monero uses. The contract checks that the revealed secret matches the commitment before minting or releasing funds. No off-chain oracle needed.</p>
+        <div class="tags"><span class="tag">Ed25519</span><span class="tag">Monero-compatible</span><span class="tag">No oracle</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- WHEN: TIMELINE / HISTORY -->
+<section id="when" class="sec-line">
+  <div class="wrap sec-pad">
+    <span class="eyebrow-sm">When</span>
     <h2 class="sec-h">How Wrapsynth came to be</h2>
     <p class="sec-sub">Click a point to explore.</p>
     <div class="tl-h">
@@ -381,10 +510,37 @@
   </div>
 </section>
 
-<!-- FEATURES -->
-<section id="features" class="sec-line">
+<!-- WHERE: CONTRACTS -->
+<section id="where" class="sec-line">
   <div class="wrap sec-pad">
-    <span class="eyebrow-sm">Features</span>
+    <span class="eyebrow-sm">Where</span>
+    <h2 class="sec-h">Deployed on Gnosis</h2>
+    <p class="sec-sub">Verified on Gnosisscan · Chain ID 100. Gnosis Chain — low fees, Ethereum-aligned, secure.</p>
+    <div class="ctr-grid">
+      <div class="ctr">
+        <div class="lab">wsXmrHub <span class="badge">DIAMOND · EIP-2535</span></div>
+        <div class="addr" data-addr="0x2147f47829014B0b32531124d45A30352e721F75">0x2147f47829014B0b32531124d45A30352e721F75</div>
+        <div class="acts">
+          <button onclick="copyAddr(this)">Copy address</button>
+          <a href="https://gnosisscan.io/address/0x2147f47829014B0b32531124d45A30352e721F75" target="_blank">View on Gnosisscan ↗</a>
+        </div>
+      </div>
+      <div class="ctr">
+        <div class="lab">wsXMR token <span class="badge">ERC-20 · 8 dec</span></div>
+        <div class="addr" data-addr="0xB59AC6A4443ACBc22dCd5F4Fb0db485ADDDd7bB8">0xB59AC6A4443ACBc22dCd5F4Fb0db485ADDDd7bB8</div>
+        <div class="acts">
+          <button onclick="copyAddr(this)">Copy address</button>
+          <a href="https://gnosisscan.io/address/0xB59AC6A4443ACBc22dCd5F4Fb0db485ADDDd7bB8" target="_blank">View on Gnosisscan ↗</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- WHY: VALUE PROPS -->
+<section id="why" class="sec-line">
+  <div class="wrap sec-pad">
+    <span class="eyebrow-sm">Why</span>
     <h2 class="sec-h">Why Wrapsynth?</h2>
     <p class="sec-sub">Monero is the best money in crypto and the most isolated. No lending, no liquidity, no composability — just an asset you have to sell to ever use. Wrapsynth ends that, without asking you to trust a bridge operator with your coins.</p>
     <div class="feat-grid">
@@ -425,7 +581,7 @@
 <!-- HOW IT WORKS -->
 <section id="how" class="sec-line">
   <div class="wrap sec-pad">
-    <span class="eyebrow-sm">Process</span>
+    <span class="eyebrow-sm">How</span>
     <h2 class="sec-h">How it works</h2>
     <p class="sec-sub">Four steps to ferry your Monero to DeFi — trustless on both sides of the swap.</p>
 
@@ -451,48 +607,6 @@
         <p>You verify the Monero transaction and confirm the lock on-chain, binding both parties.</p></div>
       <div class="stp"><div class="num">4</div><h3>Receive XMR</h3>
         <p>The LP reveals the secret to finalize the burn. Your XMR unlocks and their collateral is released.</p></div>
-    </div>
-  </div>
-</section>
-
-<!-- LIVE STATS -->
-<section id="stats" class="sec-line">
-  <div class="wrap sec-pad">
-    <span class="eyebrow-sm">Metrics</span>
-    <h2 class="sec-h">Live statistics</h2>
-    <p class="sec-sub">Protocol state on Gnosis Chain mainnet.</p>
-    <div class="metrics">
-      <div class="met"><div class="n tl" id="stat-supply">--</div><div class="k">wsXMR supply</div><div class="s">Circulating</div></div>
-      <div class="met"><div class="n" id="stat-tvl">--</div><div class="k">Total value locked</div><div class="s">sDAI collateral</div></div>
-      <div class="met"><div class="n" id="stat-collateral-ratio">--</div><div class="k">Collateral ratio</div><div class="s">Overcollateralized</div></div>
-      <div class="met"><div class="n" id="stat-active-vaults">--</div><div class="k">Active vaults</div><div class="s">Liquidity providers</div></div>
-    </div>
-  </div>
-</section>
-
-<!-- CONTRACTS -->
-<section class="sec-line">
-  <div class="wrap sec-pad">
-    <span class="eyebrow-sm">Contracts</span>
-    <h2 class="sec-h">Deployed on Gnosis</h2>
-    <p class="sec-sub">Verified on Gnosisscan · Chain ID 100.</p>
-    <div class="ctr-grid">
-      <div class="ctr">
-        <div class="lab">wsXmrHub <span class="badge">DIAMOND · EIP-2535</span></div>
-        <div class="addr" data-addr="0x2147f47829014B0b32531124d45A30352e721F75">0x2147f47829014B0b32531124d45A30352e721F75</div>
-        <div class="acts">
-          <button onclick="copyAddr(this)">Copy address</button>
-          <a href="https://gnosisscan.io/address/0x2147f47829014B0b32531124d45A30352e721F75" target="_blank">View on Gnosisscan ↗</a>
-        </div>
-      </div>
-      <div class="ctr">
-        <div class="lab">wsXMR token <span class="badge">ERC-20 · 8 dec</span></div>
-        <div class="addr" data-addr="0xB59AC6A4443ACBc22dCd5F4Fb0db485ADDDd7bB8">0xB59AC6A4443ACBc22dCd5F4Fb0db485ADDDd7bB8</div>
-        <div class="acts">
-          <button onclick="copyAddr(this)">Copy address</button>
-          <a href="https://gnosisscan.io/address/0xB59AC6A4443ACBc22dCd5F4Fb0db485ADDDd7bB8" target="_blank">View on Gnosisscan ↗</a>
-        </div>
-      </div>
     </div>
   </div>
 </section>
@@ -552,7 +666,7 @@
         float a=0.03+0.04*h(s);float f=1.3+2.2*h(s+1.);float sp=0.08+0.2*h(s+2.);float ph=s*6.28;
         float y=yb+a*sin(uv.x*f*3.14+t*sp+ph);float d=abs(uv.y-y);
         glow+=(0.0014/(d+0.0011))*(0.4+0.5*h(s+3.));}
-      vec3 o=vec3(0.15,0.2,0.3);vec3 te=vec3(0.4,0.45,0.55);
+      vec3 o=vec3(1.,0.42,0.1);vec3 te=vec3(0.18,0.9,0.77);
       vec3 c=mix(o,te,smoothstep(0.1,0.9,uv.x))*glow*0.34;
       gl_FragColor=vec4(c,1.0);}`;
   function sh(t,src){const s=gl.createShader(t);gl.shaderSource(s,src);gl.compileShader(s);return s;}
