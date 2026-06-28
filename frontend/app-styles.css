@@ -36,7 +36,7 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',system-ui,sans-ser
 nav{display:flex;align-items:center;justify-content:space-between;height:66px;
   padding:0 22px;border-bottom:1px solid var(--line-2);backdrop-filter:blur(12px);
   background:rgba(22,22,33,.65);box-shadow:0 1px 20px rgba(255,122,61,.1)}
-.brand{display:flex;align-items:center;gap:10px;font-family:'Space Grotesk';font-weight:700;
+.brand{display:flex;align-items:center;gap:10px;font-family:'Plus Jakarta Sans';font-weight:700;
   letter-spacing:-.02em;font-size:18px;color:var(--fg);text-decoration:none;text-shadow:0 0 20px rgba(255,255,255,.15)}
 .brand:hover{color:var(--fg);text-shadow:0 0 30px rgba(62,252,224,.4)}
 .mark{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,var(--xmr),var(--teal))}
@@ -47,7 +47,7 @@ nav{display:flex;align-items:center;justify-content:space-between;height:66px;
 .pill:hover{border-color:rgba(255,122,61,.35);box-shadow:0 0 16px rgba(255,122,61,.15);color:var(--fg)}
 .pill .gdot{width:7px;height:7px;border-radius:50%;background:var(--green)}
 .price b{color:var(--fg);font-weight:600}
-.connect{font-family:'Space Grotesk';font-weight:600;font-size:14px;cursor:pointer;
+.connect{font-family:'Plus Jakarta Sans';font-weight:600;font-size:14px;cursor:pointer;
   border:none;border-radius:10px;padding:10px 16px;background:var(--fg);color:#0a0a0b;
   transition:background .15s, transform .12s}
 .connect:hover{background:#fff}.connect:active{transform:translateY(1px)}
@@ -96,7 +96,7 @@ nav{display:flex;align-items:center;justify-content:space-between;height:66px;
 .resume-success{color:var(--green);background:rgba(74,240,170,.08);border:1px solid rgba(74,240,170,.3);box-shadow:0 0 16px rgba(74,240,170,.08)}
 
 /* Banner button styles */
-.btn-small{padding:6px 14px;font-size:0.8rem;font-family:'Space Grotesk';font-weight:600;
+.btn-small{padding:6px 14px;font-size:0.8rem;font-family:'Plus Jakarta Sans';font-weight:600;
   border-radius:8px;cursor:pointer;transition:all .15s;border:1px solid var(--line);
   background:var(--xmr);color:#160a02}
 .btn-small:hover{background:#ff7a30;transform:translateY(-1px)}
@@ -110,7 +110,7 @@ nav{display:flex;align-items:center;justify-content:space-between;height:66px;
 .card{width:100%;max-width:486px;background:var(--panel);border:1px solid var(--line);
   border-radius:20px;padding:8px;box-shadow:0 24px 60px -20px rgba(0,0,0,.5),0 0 50px rgba(62,252,224,.06),0 0 0 1px rgba(255,255,255,.03)}
 .tabs{display:flex;gap:2px;background:var(--panel-2);border-radius:13px;padding:4px;margin:4px 4px 12px}
-.tab{flex:1;font-family:'Space Grotesk';font-weight:600;font-size:14px;color:var(--muted);
+.tab{flex:1;font-family:'Plus Jakarta Sans';font-weight:600;font-size:14px;color:var(--muted);
   background:transparent;border:none;cursor:pointer;padding:10px;border-radius:10px;transition:.15s}
 .tab.active{background:var(--bg);color:var(--fg);box-shadow:0 1px 0 rgba(255,255,255,.06) inset,0 4px 16px rgba(0,0,0,.4),0 0 16px rgba(255,122,61,.12);text-shadow:0 0 16px rgba(255,122,61,.35)}
 .tab:hover:not(.active){color:var(--fg)}
@@ -127,7 +127,7 @@ nav{display:flex;align-items:center;justify-content:space-between;height:66px;
   font-family:'JetBrains Mono';font-size:24px;font-weight:500;min-width:0}
 .field input::placeholder{color:var(--faint)}
 .asset{display:flex;align-items:center;gap:8px;background:var(--panel-2);border:1px solid var(--line);
-  border-radius:999px;padding:6px 12px 6px 7px;font-family:'Space Grotesk';font-weight:600;font-size:14px;white-space:nowrap}
+  border-radius:999px;padding:6px 12px 6px 7px;font-family:'Plus Jakarta Sans';font-weight:600;font-size:14px;white-space:nowrap}
 .coin{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;color:#0a0a0b}
 .coin.x{background:var(--xmr)}.coin.w{background:var(--teal)}
 
@@ -142,7 +142,7 @@ nav{display:flex;align-items:center;justify-content:space-between;height:66px;
 .meta .r b{color:var(--fg);font-weight:500;font-family:'JetBrains Mono'}
 .meta .r .pos{color:var(--teal)}
 
-.cta{width:100%;margin-top:14px;font-family:'Space Grotesk';font-weight:600;font-size:16px;
+.cta{width:100%;margin-top:14px;font-family:'Plus Jakarta Sans';font-weight:600;font-size:16px;
   cursor:pointer;border:none;border-radius:14px;padding:16px;background:var(--xmr);color:#160a02;
   transition:background .15s, transform .12s, opacity .15s}
 .cta:hover{background:#ff9060;box-shadow:0 0 32px rgba(255,122,61,.35),0 0 12px rgba(255,122,61,.2)}.cta:active{transform:translateY(1px)}
@@ -176,8 +176,8 @@ nav{display:flex;align-items:center;justify-content:space-between;height:66px;
 /* VAULTS */
 .vaults{padding:6px 4px}
 .vault-head{display:flex;justify-content:space-between;align-items:center;margin:0 8px 12px}
-.vault-head h3{font-family:'Space Grotesk';font-size:15px;font-weight:600}
-.mini{font-family:'Space Grotesk';font-weight:600;font-size:13px;cursor:pointer;border:1px solid var(--line);
+.vault-head h3{font-family:'Plus Jakarta Sans';font-size:15px;font-weight:600}
+.mini{font-family:'Plus Jakarta Sans';font-weight:600;font-size:13px;cursor:pointer;border:1px solid var(--line);
   background:rgba(255,255,255,.03);color:var(--fg);border-radius:10px;padding:8px 13px}
 .mini:hover{background:rgba(255,255,255,.07)}
 .vault-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;padding:0}
@@ -240,7 +240,7 @@ nav{display:flex;align-items:center;justify-content:space-between;height:66px;
   max-width:500px;width:90%;max-height:80vh;overflow:auto}
 .modal-header{display:flex;justify-content:space-between;align-items:center;
   padding:20px 24px;border-bottom:1px solid var(--line-2)}
-.modal-header h3{font-family:'Space Grotesk';font-size:18px;font-weight:600}
+.modal-header h3{font-family:'Plus Jakarta Sans';font-size:18px;font-weight:600}
 .modal-close{background:none;border:none;color:var(--muted);font-size:24px;
   cursor:pointer;padding:0;width:32px;height:32px;display:grid;place-items:center;
   border-radius:8px;transition:background .15s}
@@ -248,7 +248,7 @@ nav{display:flex;align-items:center;justify-content:space-between;height:66px;
 .modal-body{padding:20px 24px;color:var(--muted);line-height:1.6}
 .modal-footer{padding:16px 24px;border-top:1px solid var(--line-2);
   display:flex;justify-content:flex-end;gap:10px}
-.btn{font-family:'Space Grotesk';font-weight:600;font-size:14px;cursor:pointer;
+.btn{font-family:'Plus Jakarta Sans';font-weight:600;font-size:14px;cursor:pointer;
   border:none;border-radius:10px;padding:10px 18px;transition:background .15s}
 .btn-primary{background:var(--xmr);color:#160a02}
 .btn-primary:hover{background:#ff7a30}
@@ -274,10 +274,10 @@ body:not(.js-loaded) .panel{display:none!important}
 
 /* Percentage buttons */
 .pct-row{display:flex;gap:6px;margin:-4px 0 8px;align-items:center}
-.percentage-btn{font-family:'Space Grotesk';font-weight:600;font-size:11px;padding:4px 10px;background:rgba(255,122,61,.1);border:1px solid rgba(255,122,61,.35);border-radius:6px;color:var(--xmr);cursor:pointer;transition:all .15s}
+.percentage-btn{font-family:'Plus Jakarta Sans';font-weight:600;font-size:11px;padding:4px 10px;background:rgba(255,122,61,.1);border:1px solid rgba(255,122,61,.35);border-radius:6px;color:var(--xmr);cursor:pointer;transition:all .15s}
 .percentage-btn:hover{background:rgba(255,122,61,.2);border-color:rgba(255,122,61,.55);box-shadow:0 0 16px rgba(255,122,61,.15)}
 .percentage-btn:active{background:rgba(255,122,61,.32)}
-#burn-percentage-feedback{font-size:11px;color:var(--teal);margin-left:auto;opacity:0;transition:opacity .2s;font-family:'Space Grotesk';font-weight:600}
+#burn-percentage-feedback{font-size:11px;color:var(--teal);margin-left:auto;opacity:0;transition:opacity .2s;font-family:'Plus Jakarta Sans';font-weight:600}
 
 @media(prefers-reduced-motion:reduce){.gdot{animation:none}}
 
@@ -310,7 +310,7 @@ body:not(.js-loaded) .panel{display:none!important}
 
 .mint-complete-inner h3,
 .burn-complete-inner h3 {
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: 'Plus Jakarta Sans', sans-serif;
   font-weight: 700;
   font-size: 16px;
   letter-spacing: -0.01em;
@@ -401,7 +401,7 @@ body:not(.js-loaded) .panel{display:none!important}
 }
 
 .notification-title {
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: 'Plus Jakarta Sans', sans-serif;
   font-weight: 600;
   font-size: 15px;
   color: var(--fg);
