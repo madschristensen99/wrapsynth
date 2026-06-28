@@ -332,18 +332,18 @@
     <div class="ctr-grid">
       <div class="ctr">
         <div class="lab">wsXmrHub <span class="badge">DIAMOND · EIP-2535</span></div>
-        <div class="addr" data-addr="0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9">0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9</div>
+        <div class="addr" data-addr="0x2147f47829014B0b32531124d45A30352e721F75">0x2147f47829014B0b32531124d45A30352e721F75</div>
         <div class="acts">
           <button onclick="copyAddr(this)">Copy address</button>
-          <a href="https://gnosisscan.io/address/0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9" target="_blank">View on Gnosisscan ↗</a>
+          <a href="https://gnosisscan.io/address/0x2147f47829014B0b32531124d45A30352e721F75" target="_blank">View on Gnosisscan ↗</a>
         </div>
       </div>
       <div class="ctr">
         <div class="lab">wsXMR token <span class="badge">ERC-20 · 8 dec</span></div>
-        <div class="addr" data-addr="0x31c76171773138215E518C0224b82AC9BE9897b8">0x31c76171773138215E518C0224b82AC9BE9897b8</div>
+        <div class="addr" data-addr="0xB59AC6A4443ACBc22dCd5F4Fb0db485ADDDd7bB8">0xB59AC6A4443ACBc22dCd5F4Fb0db485ADDDd7bB8</div>
         <div class="acts">
           <button onclick="copyAddr(this)">Copy address</button>
-          <a href="https://gnosisscan.io/address/0x31c76171773138215E518C0224b82AC9BE9897b8" target="_blank">View on Gnosisscan ↗</a>
+          <a href="https://gnosisscan.io/address/0xB59AC6A4443ACBc22dCd5F4Fb0db485ADDDd7bB8" target="_blank">View on Gnosisscan ↗</a>
         </div>
       </div>
     </div>
@@ -379,8 +379,8 @@
       </div>
       <div>
         <h4>Contract</h4>
-        <a href="https://gnosisscan.io/address/0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9" target="_blank">wsXmrHub (Diamond)</a>
-        <a href="https://gnosisscan.io/address/0x31c76171773138215E518C0224b82AC9BE9897b8" target="_blank">wsXMR token</a>
+        <a href="https://gnosisscan.io/address/0x2147f47829014B0b32531124d45A30352e721F75" target="_blank">wsXmrHub (Diamond)</a>
+        <a href="https://gnosisscan.io/address/0xB59AC6A4443ACBc22dCd5F4Fb0db485ADDDd7bB8" target="_blank">wsXMR token</a>
       </div>
     </div>
     <div class="foot-bot">
@@ -440,8 +440,8 @@ function copyAddr(btn){
     const {gnosis}=await import('https://esm.sh/viem@2.21.54/chains');
     
     const client=createPublicClient({chain:gnosis,transport:http('https://rpc.gnosischain.com')});
-    const hub='0xbf24788234512bb0aa10451f6efa88ca0e31d88e';
-    const wsXMR='0x1fab9db7aeb79a71278b1348acdf55ef55292010';
+    const hub='0x2147f47829014B0b32531124d45A30352e721F75';
+    const wsXMR='0xB59AC6A4443ACBc22dCd5F4Fb0db485ADDDd7bB8';
     const sDAI='0xaf204776c7245bF4147c2612BF6e5972Ee483701';
     
     // Fetch wsXMR total supply

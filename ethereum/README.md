@@ -4,16 +4,19 @@ A decentralized protocol for wrapping Monero (XMR) on Gnosis Chain using a diamo
 
 ## 🚀 Gnosis Mainnet Deployment
 
-**Deployed:** June 2, 2026 (v1.3)
+**Deployed:** June 28, 2026 (v2.0)
 
-- **wsXmrHub (Diamond Proxy):** `0x284B1d429b1038Ef186314b1Fb33f76Eb61497E9`
-- **wsXMR Token:** `0x31c76171773138215E518C0224b82AC9BE9897b8`
-- **OracleFacet:** `0xA0ED496c6e16a6d0799Ad300DeC96494a12bE01A`
-- **VaultFacet:** `0x203Ccc8B35c00752dc8B04f1D77E765a5ca65BbC`
-- **MintFacet:** `0xC4Fa182098DEA7d37725203A636fBC5D5B7FcC43`
-- **BurnFacet:** `0x28f325Da1D4910B788ba27FD68e06c2b830f3B9A`
-- **LiquidationFacet:** `0x21A82BbA3C20d28baE6aEde14311f932F960Fa2F`
-- **YieldFacet:** `0xa62B73677b82780059abB96ef29E1B732607B2Dc`
+- **wsXmrHub (Diamond Proxy):** `0x2147f47829014B0b32531124d45A30352e721F75`
+- **wsXMR Token:** `0xB59AC6A4443ACBc22dCd5F4Fb0db485ADDDd7bB8`
+- **LiquidityRouter:** `0x161d50B1D4bb196C5ECeDA82dd7dD708887F1546`
+- **SwapHelper:** `0x32E52ec15bF409B3a8AC3270b5d9CB1757872825`
+- **Uniswap V3 Pool:** `0xf993E42DE700abE5Aa2027987Ab6874319f00d70`
+- **RedStoneOracleFacet:** `0x83Db30253df3222C04df76043A5a54F9D3453aa4`
+- **VaultFacet:** `0xE64fD58133D0be05e42B292643C6f3355f25d62B`
+- **MintFacet:** `0xBA24b4ae92236D00eA80Bc7CB5990D497770E82c`
+- **BurnFacet:** `0x1Ee6f2aA087D65Ba2A6DB11925D94367012ce259`
+- **LiquidationFacet:** `0xc78b13dd3C0EDE7257972d145eab890560F1F0AE`
+- **YieldFacet:** `0xe1b8E2d96F3C0baD925c9543919601Fe22C33a75`
 - **Network:** Gnosis Chain (ChainID: 100)
 - **Explorer:** https://gnosisscan.io
 

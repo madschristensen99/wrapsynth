@@ -48,6 +48,11 @@ async function main() {
     ];
     const swapHelper = new ethers.Contract(SWAP_HELPER, swapHelperAbi, wallet);
 
+    const swapRouterAbi = [
+        'function exactInputSingle(tuple(address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) external payable returns (uint256 amountOut)'
+    ];
+    const swapRouter = new ethers.Contract(SWAP_ROUTER, swapRouterAbi, wallet);
+
     const factory = new ethers.Contract(UNI_V3_FACTORY, factoryAbi, provider);
     const poolAddr = await factory.getPool(SDAI_ADDRESS, WSXMR_ADDRESS, POOL_FEE);
     console.log('Pool address:', poolAddr);
@@ -129,11 +134,11 @@ async function main() {
         // Capture balance before swap
         const sdaiBefore1 = await sdai.balanceOf(wallet.address);
 
-        // wsXMR is token0, sDAI is token1, so wsXMR -> sDAI is zeroForOne = true
+        // sDAI is token0, wsXMR is token1, so wsXMR -> sDAI is zeroForOne = false
         const swap1 = await swapHelper.swap(
             poolAddr,
             wallet.address,
-            true, // zeroForOne (wsXMR -> sDAI, token0 -> token1)
+            false, // zeroForOne=false (selling token1=wsXMR for token0=sDAI)
             wsxmrSwapAmount,
             0, // sqrtPriceLimitX96 (no limit)
             {
@@ -173,11 +178,11 @@ async function main() {
         // Capture balance before swap
         const wsxmrBefore2 = await wsxmr.balanceOf(wallet.address);
 
-        // wsXMR is token0, sDAI is token1, so sDAI -> wsXMR is zeroForOne = false
+        // sDAI is token0, wsXMR is token1, so sDAI -> wsXMR is zeroForOne = true
         const swap2 = await swapHelper.swap(
             poolAddr,
             wallet.address,
-            false, // zeroForOne (sDAI -> wsXMR, token1 -> token0)
+            true, // zeroForOne=true (selling token0=sDAI for token1=wsXMR)
             sdaiSwapAmount,
             0, // sqrtPriceLimitX96 (no limit)
             {
@@ -291,7 +296,7 @@ async function main() {
                 try {
                     const deadline = Math.floor(Date.now() / 1000) + 600;
                     const coLPTx = await hub.userOpenCoLP(wallet.address, coLPAmount, deadline, {
-                        gasLimit: 800000,
+                        gasLimit: 2000000,
                         maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
                         maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
                     });
@@ -395,7 +400,7 @@ async function main() {
 
         try {
             const collectTx = await hub.collectCoLPFees(coLPTokenId, {
-                gasLimit: 500000,
+                gasLimit: 1000000,
                 maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
                 maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
             });
