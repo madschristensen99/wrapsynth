@@ -547,7 +547,7 @@ contract AuditRegressionTest is Test {
         (uint256 px2, uint256 py2) = Ed25519.scalarMultBase(uint256(0x2222));
         bytes32 burnCommitment = keccak256(abi.encodePacked(px2, py2));
         vm.prank(user);
-        BurnFacet(address(hub)).requestBurn(userBalance / 2, lp, user, burnCommitment);
+        BurnFacet(address(hub)).requestBurn(userBalance / 2, lp, user, burnCommitment, bytes32(uint256(2)), bytes32(uint256(3)));
 
         // Verify lockedCollateral is now > 0
         bytes memory vaultResult = _hubView(abi.encodeWithSelector(VaultFacet.getVault.selector, lp));
@@ -609,7 +609,7 @@ contract AuditRegressionTest is Test {
         (uint256 px2, uint256 py2) = Ed25519.scalarMultBase(uint256(0x2222));
         bytes32 burnCommitment = keccak256(abi.encodePacked(px2, py2));
         vm.prank(user);
-        BurnFacet(address(hub)).requestBurn(userBalance / 2, lp, user, burnCommitment);
+        BurnFacet(address(hub)).requestBurn(userBalance / 2, lp, user, burnCommitment, bytes32(uint256(2)), bytes32(uint256(3)));
 
         // getVaultHealth should return ratio based on available collateral, not total
         bytes memory result = _hubView(abi.encodeWithSelector(VaultFacet.getVaultHealth.selector, lp));

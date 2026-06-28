@@ -269,6 +269,30 @@ class PhantomAgent {
     }
 
     /**
+     * Get the user's public spend key as a 0x-prefixed hex string (bytes32)
+     */
+    getPublicSpendKeyHex() {
+        if (!this.keySet) {
+            throw new Error('Agent not initialized');
+        }
+        return '0x' + Array.from(this.keySet.publicSpendKey)
+            .map(b => b.toString(16).padStart(2, '0'))
+            .join('');
+    }
+
+    /**
+     * Get the user's public view key as a 0x-prefixed hex string (bytes32)
+     */
+    getPublicViewKeyHex() {
+        if (!this.keySet) {
+            throw new Error('Agent not initialized');
+        }
+        return '0x' + Array.from(this.keySet.publicViewKey)
+            .map(b => b.toString(16).padStart(2, '0'))
+            .join('');
+    }
+
+    /**
      * Get the key set
      */
     getKeySet() {

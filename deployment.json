@@ -25,15 +25,13 @@
     "UniswapV3Factory": "0xe32F7dD7e3f098D518ff19A22d5f028e076489B1",
     "UniswapV3PositionManager": "0xAE8fbE656a77519a7490054274910129c9244FA3",
     "SwapHelper": "0x4e18904a3be0703790ebb08b3385af0bc1ed5e07",
-    "Ed25519Helper": "0xaECa36374039EAb9e267B5daa48bAb9Ab0e50F00",
-    "PythOracle": "0x2880aB155794e7179c9eE2e38200202908C17B43"
+    "Ed25519Helper": "0xaECa36374039EAb9e267B5daa48bAb9Ab0e50F00"
   },
   "pool": {
     "uniswapV3Pool": "0x52063599d6f53e437f4dd07382b0183748057870",
     "feeTier": 3000
   },
   "urls": {
-    "pythHermes": "https://hermes.pyth.network",
     "moneroDaemon": "https://xmr-node.cakewallet.com:18081",
     "moneroNetwork": "mainnet"
   },

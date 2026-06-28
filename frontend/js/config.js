@@ -210,8 +210,8 @@ export const ABIS = {
         'function calculateBurnCollateral(address lpVault, uint256 wsxmrAmount) external view returns (uint256 baseLock, uint256 rewardLock)',
 
         // Burn flow — 4-step: requestBurn → proposeHash → confirmMoneroLock → finalizeBurn
-        'function requestBurn(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment) external returns (bytes32 requestId)',
-        'function proposeHash(bytes32 requestId, bytes32 secretHash) external',
+        'function requestBurn(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey) external returns (bytes32 requestId)',
+        'function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
         'function confirmMoneroLock(bytes32 requestId) external',
         'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
         'function claimSlashedCollateral(bytes32 requestId) external',
@@ -310,8 +310,8 @@ export const ABIS = {
         'event MintReady(bytes32 indexed requestId)',
         'event MintFinalized(bytes32 indexed requestId, bytes32 secret)',
         'event MintCancelled(bytes32 indexed requestId)',
-        'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment)',
-        'event HashProposed(bytes32 indexed requestId, bytes32 secretHash)',
+        'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey)',
+        'event HashProposed(bytes32 indexed requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey)',
         'event BurnCommitted(bytes32 indexed requestId, uint256 deadline)',
         'event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 reward)',
         'event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 totalSeized)',

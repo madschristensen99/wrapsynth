@@ -36,7 +36,9 @@ interface IBurnOperations is IErrors {
         uint256 wsxmrAmount,
         uint256 xmrAmount,
         uint256 rewardCollateral,
-        bytes32 claimCommitment
+        bytes32 claimCommitment,
+        bytes32 userPublicKey,
+        bytes32 userViewKey
     );
     
     event HashProposed(bytes32 indexed requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey);
@@ -72,7 +74,9 @@ interface IBurnOperations is IErrors {
         uint256 wsxmrAmount,
         address lpVault,
         address user,
-        bytes32 claimCommitment
+        bytes32 claimCommitment,
+        bytes32 userPublicKey,
+        bytes32 userViewKey
     ) external returns (bytes32 requestId);
     
     /// @notice Request burn from router's internal balance
@@ -81,7 +85,9 @@ interface IBurnOperations is IErrors {
         uint256 wsxmrAmount,
         address lpVault,
         address user,
-        bytes32 claimCommitment
+        bytes32 claimCommitment,
+        bytes32 userPublicKey,
+        bytes32 userViewKey
     ) external returns (bytes32 requestId);
     
     /// @notice LP proposes secret hash after locking XMR (Step 2)

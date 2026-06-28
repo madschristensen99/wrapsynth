@@ -82,7 +82,6 @@ export const DEPLOYMENTS = {
         yieldFacet: DF.YieldFacet || '0x2c73826c36895f7fff9839fe58d3ab164a206721',
         liquidityRouter: DC.liquidityRouter || '0x69ab32e9df71333fc3e6c526ef8cb9ea4cfa9a63',
         sDAI: DE.sDAI || '0xaf204776c7245bF4147c2612BF6e5972Ee483701',
-        pythOracle: DE.PythOracle || '0x2880aB155794e7179c9eE2e38200202908C17B43',
         ed25519Helper: DE.Ed25519Helper || '0xaECa36374039EAb9e267B5daa48bAb9Ab0e50F00',
         initialMoneroBlock: 3607954,
         deployedAt: D.deploymentDate || '2026-06-10T00:00:00.000Z',
@@ -92,7 +91,6 @@ export const DEPLOYMENTS = {
         wrappedMonero: '0xC67Cf54d14078ff2968b4Fcd55331C48CEf69eeF',
         plonkVerifier: '0x...', // Add when deployed
         sDAI: '0xc02fe7317d4eb8753a02c35fe019786854a92001', // Placeholder for testnet
-        pythOracle: '0x2880aB155794e7179c9eE2e38200202908C17B43',
         initialMoneroBlock: 3605079,
         deployedAt: null,
     },

@@ -136,6 +136,26 @@ export async function computeDepositAddress(userCommitment, lpPublicSpendKey, lp
 }
 
 /**
+ * Compute Monero burn address from user and LP public keys
+ * Combined spend key = user_pub_spend + LP_pub_spend
+ * View key = user's public view key (so user can scan with their private view key)
+ * @param {string} userPublicKey - User's Ed25519 public spend key (hex, 0x prefix)
+ * @param {string} userViewKey - User's Ed25519 public view key (hex, 0x prefix)
+ * @param {string} lpPublicSpendKey - LP's Ed25519 public spend key (hex, 0x prefix)
+ * @returns {Promise<string>} - Monero address
+ */
+export async function computeBurnAddress(userPublicKey, userViewKey, lpPublicSpendKey) {
+    const userSpendBytes = hexToBytes(userPublicKey);
+    const userViewBytes = hexToBytes(userViewKey);
+    const lpSpendBytes = hexToBytes(lpPublicSpendKey);
+    
+    const combinedSpendKey = await addEd25519Points(userSpendBytes, lpSpendBytes);
+    const combinedViewKey = userViewBytes;
+    
+    return deriveMoneroAddress(combinedSpendKey, combinedViewKey, true);
+}
+
+/**
  * Convert hex string to Uint8Array
  * @param {string} hex - Hex string (with or without 0x prefix)
  * @returns {Uint8Array}
