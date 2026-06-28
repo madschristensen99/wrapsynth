@@ -223,7 +223,7 @@ contract E2EAdvancedScenariosTest is Test {
         
         // User requests burn
         vm.prank(user1);
-        bytes32 burnRequestId = BurnFacet(address(hub)).requestBurn(mintedAmount, lp1, user1, bytes32(uint256(1)));
+        bytes32 burnRequestId = BurnFacet(address(hub)).requestBurn(mintedAmount, lp1, user1, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
         console.log("[2] User1 requested burn");
         
         // LP proposes hash
@@ -353,7 +353,7 @@ contract E2EAdvancedScenariosTest is Test {
         
         // User burns half
         vm.prank(user1);
-        bytes32 burnRequestId = BurnFacet(address(hub)).requestBurn(mintedAmount / 2, lp1, user1, bytes32(uint256(1)));
+        bytes32 burnRequestId = BurnFacet(address(hub)).requestBurn(mintedAmount / 2, lp1, user1, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
         
         bytes32 burnSecret = bytes32(uint256(0xdeadbeef));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));

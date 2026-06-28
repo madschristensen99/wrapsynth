@@ -89,7 +89,7 @@ contract BurnSolvencyInvariantTest is Test {
 
         // Request burn
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
 
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -135,7 +135,7 @@ contract BurnSolvencyInvariantTest is Test {
         uint256 minted = _mintForUser(user, lp);
 
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
 
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -182,7 +182,7 @@ contract BurnSolvencyInvariantTest is Test {
         uint256 minted = _mintForUser(user, lp);
 
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
 
         wsXmrStorage.Vault memory vaultBefore = _getVault(lp);
         uint256 sharesBefore = vaultBefore.collateralShares;
@@ -217,7 +217,7 @@ contract BurnSolvencyInvariantTest is Test {
         uint256 minted = _mintForUser(user, lp);
 
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
 
         wsXmrStorage.Vault memory vaultBefore = _getVault(lp);
         uint256 sharesBefore = vaultBefore.collateralShares;
@@ -252,7 +252,7 @@ contract BurnSolvencyInvariantTest is Test {
         uint256 minted = _mintForUser(user, lp);
 
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
 
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -296,7 +296,7 @@ contract BurnSolvencyInvariantTest is Test {
         uint256 minted = _mintForUser(user, lp);
 
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
 
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -370,7 +370,7 @@ contract BurnSolvencyInvariantTest is Test {
 
         // Create a burn request and commit it
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted / 2, lp, user, bytes32(uint256(1)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted / 2, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
 
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -424,7 +424,7 @@ contract BurnSolvencyInvariantTest is Test {
         uint256 minted = _mintForUser(user, lp);
 
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
 
         // Roll past the request timeout
         vm.roll(block.number + 34561);
@@ -489,7 +489,7 @@ contract BurnSolvencyInvariantTest is Test {
         uint256 minted = _mintForUser(user, lp);
 
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
 
         wsXmrStorage.BurnRequest memory req = _getBurnRequest(burnId);
 

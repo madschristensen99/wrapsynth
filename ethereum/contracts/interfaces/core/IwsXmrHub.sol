@@ -13,7 +13,6 @@ interface IwsXmrHub {
         address wsxmrToken;
         address liquidityRouter;
         address deployer;
-        address pythOracle;
         uint256 globalTotalDebt;
         uint256 globalDebtIndex;
         uint256 globalBadDebt;

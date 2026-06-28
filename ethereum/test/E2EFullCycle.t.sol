@@ -291,7 +291,7 @@ contract E2EFullCycleTest is Test {
         
         // User requests burn
         vm.prank(user);
-        burnRequestId = BurnFacet(address(hub)).requestBurn(burnAmount, lp, user, bytes32(uint256(1)));
+        burnRequestId = BurnFacet(address(hub)).requestBurn(burnAmount, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
         console.log("[OK] Burn requested");
         
         // LP proposes hash
