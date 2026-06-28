@@ -27,7 +27,7 @@ function secretToScalar(secretHex) {
 }
 
 /**
- * Compute commitment from secret using the WrapSynth on-chain scheme:
+ * Compute commitment from secret using the Wrapsynth on-chain scheme:
  *   commitment = keccak256(compress(secret · G))
  * where compress yields a 32-byte little-endian CompressedEdwardsY.
  */

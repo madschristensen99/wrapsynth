@@ -53,10 +53,10 @@
   .nav-links{display:flex;align-items:center;gap:28px}
   .nav-links a{font-size:14px;color:var(--muted);text-decoration:none;transition:color .15s}
   .nav-links a:hover{color:var(--fg)}
-  .nav-cta{font-family:'Plus Jakarta Sans';font-weight:600;font-size:14px;text-decoration:none;
+  .nav-links a.nav-cta{font-family:'Plus Jakarta Sans';font-weight:600;font-size:14px;text-decoration:none;
     background:var(--xmr);color:#160a02;border-radius:10px;padding:9px 15px;
     transition:background .15s, box-shadow .15s;box-shadow:0 0 20px rgba(255,122,61,.25)}
-  .nav-cta:hover{background:#ff9060;box-shadow:0 0 30px rgba(255,122,61,.4);color:#160a02}
+  .nav-links a.nav-cta:hover{background:#ff9060;box-shadow:0 0 30px rgba(255,122,61,.4);color:#160a02}
   @media(max-width:760px){.nav-links a:not(.nav-cta){display:none}}
 
   /* HERO */
@@ -345,29 +345,30 @@
 <section id="who" class="sec-line">
   <div class="wrap sec-pad">
     <span class="eyebrow-sm">Who</span>
-    <h2 class="sec-h">Who is Wrapsynth for?</h2>
-    <p class="sec-sub">Three groups, one protocol. Each gets something they can't get anywhere else.</p>
+    <h2 class="sec-h">Who uses Wrapsynth?</h2>
+    <p class="sec-sub">Swappers, liquidity providers, and merchants — all trustless, all peer-to-peer.</p>
     <div class="who-grid">
       <div class="who-card">
         <div class="ic"><svg viewBox="0 0 24 24"><path d="M7 16V4m0 0L3 8m4-4l4 4"/><path d="M17 8v12m0 0l4-4m-4 4l-4-4"/></svg></div>
         <h3>Swappers</h3>
-        <p>Swap XMR for wsXMR and back — like an instant exchange, but trustless. No custodian, no KYC, no counterparty risk. Atomic swaps settle peer-to-peer, so your funds are never held by a third party.</p>
+        <p>Swap XMR for wsXMR and back — like an instant exchange, but trustless. No custodian, no KYC, no counterparty risk. Once you hold wsXMR, trade it for any token on any DEX across EVM.</p>
       </div>
       <div class="who-card">
         <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
         <h3>Liquidity providers</h3>
-        <p>Post sDAI as collateral in a vault, earn mint fees and burn rewards. You never take custody of XMR — the atomic swap protocol handles exchange. Your collateral earns sDAI yield while backing wsXMR.</p>
+        <p>Post sDAI as collateral in a vault, earn mint fees and burn rewards. You never take custody of XMR — the atomic swap protocol handles exchange. Your collateral earns LP fees while backing wsXMR.</p>
       </div>
       <div class="who-card">
         <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg></div>
         <h3>Merchants</h3>
-        <p>Accept XMR payments and settle in wsXMR on EVM rails. Programmable, composable, and auditable — without exposing your customers to custodial risk or CEX dependency.</p>
+        <p>Accept XMR payments and settle in wsXMR or stablecoins on EVM rails. Programmable, composable, and auditable — without exposing your customers to custodial risk or CEX dependency.</p>
       </div>
     </div>
     <div class="who-builder">
       <span class="wb-tag">MIT open source licence</span>
       <span class="wb-tag">No VC</span>
       <span class="wb-tag">No token grift</span>
+      <span class="wb-tag">No protocol fees</span>
       <div class="wb-txt"><b>Built by a solo developer</b> — no team, no treasury, no governance token to dump. The code is on GitHub, the contracts are verified on Gnosisscan, and the protocol runs on its own.</div>
     </div>
   </div>
@@ -401,9 +402,9 @@
         <div class="tags"><span class="tag">Configurable bps</span><span class="tag">Per-vault</span><span class="tag">On-chain</span></div>
       </div>
       <div class="spec">
-        <div class="sh"><div class="ic"><svg viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/></svg></div><h3>sDAI warchest vault</h3></div>
-        <p>LP collateral is deposited into sDAI, earning Dai Savings Rate yield while backing wsXMR. The vault tracks collateral shares, not raw DAI — so yield accrues automatically without rebalancing.</p>
-        <div class="tags"><span class="tag">sDAI yield</span><span class="tag">Share-based</span><span class="tag">Auto-accruing</span></div>
+        <div class="sh"><div class="ic"><svg viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/></svg></div><h3>Yield war chest & buy-and-burn</h3></div>
+        <p>Excess sDAI yield from vaults accrues in an on-chain war chest. When XMR dips below its EMA, anyone can trigger a buy-and-burn — the chest redeems sDAI, buys wsXMR on Uniswap V3, and burns it. This reduces outstanding debt and tightens the collateral ratio for all holders.</p>
+        <div class="tags"><span class="tag">sDAI yield</span><span class="tag">Uniswap V3</span><span class="tag">Dip-triggered</span><span class="tag">Keeper reward</span></div>
       </div>
       <div class="spec">
         <div class="sh"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="9" cy="7" r="4"/><circle cx="17" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><path d="M17 21v-2a4 4 0 0 0-3-3.87"/></svg></div><h3>CDP co-LP system</h3></div>
@@ -831,17 +832,38 @@ function copyAddr(btn){
   }
 })();
 
-/* Timeline: click node to expand panel */
+/* Timeline: click node to expand panel + auto-advance every 15s */
 (function(){
   var nodes=document.querySelectorAll('.tl-node');
   var panels=document.querySelectorAll('.tl-panel');
   if(!nodes.length)return;
+  var current=0,userInteracted=false,autoTimer=null,resumeTimer=null;
+  var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+
   function activate(i){
+    current=i;
     nodes.forEach(function(n,j){n.classList.toggle('active',j===i)});
     panels.forEach(function(p,j){p.classList.toggle('active',j===i)});
   }
+  function startAuto(){
+    if(reduce)return;
+    stopAuto();
+    autoTimer=setInterval(function(){
+      if(userInteracted)return;
+      activate((current+1)%nodes.length);
+    },15000);
+  }
+  function stopAuto(){if(autoTimer){clearInterval(autoTimer);autoTimer=null;}}
+  function pauseAuto(){
+    userInteracted=true;
+    stopAuto();
+    if(resumeTimer)clearTimeout(resumeTimer);
+    resumeTimer=setTimeout(function(){userInteracted=false;startAuto();},30000);
+  }
+
   nodes.forEach(function(n,i){
     n.addEventListener('click',function(){
+      pauseAuto();
       if(n.classList.contains('active')){
         n.classList.remove('active');
         panels[i].classList.remove('active');
@@ -850,9 +872,11 @@ function copyAddr(btn){
       }
     });
   });
+
   /* open first node by default */
   nodes[0].classList.add('active');
   panels[0].classList.add('active');
+  startAuto();
 })();
 </script>
 </body>
