@@ -1,4 +1,4 @@
-// Seed Phrase UI Components for WrapSynth
+// Seed Phrase UI Components for Wrapsynth
 
 import { generateSeedPhrase, validateSeedPhrase, createKeySet } from './seedManager.js';
 import { storeSeed, hasStoredSeed, loadSeed } from './seedStorage.js';

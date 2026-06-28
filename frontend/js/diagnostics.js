@@ -2,7 +2,7 @@
 // Run this in the browser console to see what's stored
 
 export function diagnoseMintSecretMismatch() {
-    console.log('=== WrapSynth Mint Secret Mismatch Diagnostics ===\n');
+    console.log('=== Wrapsynth Mint Secret Mismatch Diagnostics ===\n');
     
     // 1. Check active swaps
     const activeSwapsKey = 'wrapsynth_active_swaps_v2';

@@ -168,7 +168,7 @@ class MoneroPTLCBuilder {
 
     /**
      * Verify that secret satisfies the PTLC commitment.
-     * Matches WrapSynth on-chain verifier exactly:
+     * Matches Wrapsynth on-chain verifier exactly:
      *   commitment = keccak256(compress(secret · G))
      * where secret is read as a 32-byte little-endian scalar (RFC 8032).
      */

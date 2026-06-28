@@ -1,4 +1,4 @@
-// Encrypted Seed Storage for WrapSynth
+// Encrypted Seed Storage for Wrapsynth
 // Based on MoneroSwap's two-layer encryption approach
 // 
 // Security Model:
@@ -9,7 +9,7 @@
 import { keccak256, hexToBytes, bytesToHex } from 'https://esm.sh/viem@2.7.0';
 import { getWalletClient, getUserAddress } from './viemClient.js';
 
-const DB_NAME = 'WrapSynth';
+const DB_NAME = 'Wrapsynth';
 const STORE_NAME = 'keys';
 const KEY_ID = 'seed-encryption-key';
 const STORAGE_VERSION = 'v2';
@@ -65,7 +65,7 @@ async function getOrCreateEncryptionKey() {
  */
 function getStorageKey(userAddress, publicSpendKey) {
     // Format: chainId/contractAddress/publicKey/userAddress
-    // For WrapSynth, we use a simplified version since we don't have multiple contracts
+    // For Wrapsynth, we use a simplified version since we don't have multiple contracts
     // Normalize address to lowercase because localStorage is case-sensitive and
     // wallets may return checksummed or lowercase inconsistently.
     return `wrapsynth/${publicSpendKey}/${userAddress.toLowerCase()}`;
@@ -88,7 +88,7 @@ export async function storeSeed(seed, publicSpendKey) {
     
     try {
         // Request signature from user
-        const message = `WrapSynth seed storage: ${storageKey}`;
+        const message = `Wrapsynth seed storage: ${storageKey}`;
         const walletClient = getWalletClient();
         
         console.log('Requesting signature to encrypt seed...');
@@ -236,7 +236,7 @@ export async function loadSeed(publicSpendKey) {
 
     // Try new lowercase message first
     try {
-        const message = `WrapSynth seed storage: ${storageKey}`;
+        const message = `Wrapsynth seed storage: ${storageKey}`;
         const seed = await tryDecryptSeed(stored, message, userAddress);
         console.log('[SUCCESS] Seed decrypted successfully');
         return seed;
@@ -248,7 +248,7 @@ export async function loadSeed(publicSpendKey) {
             console.warn('Decryption with lowercase key failed, trying legacy mixed-case key...');
             try {
                 const legacyStorageKey = `wrapsynth/${publicSpendKey}/${userAddress}`;
-                const legacyMessage = `WrapSynth seed storage: ${legacyStorageKey}`;
+                const legacyMessage = `Wrapsynth seed storage: ${legacyStorageKey}`;
                 const seed = await tryDecryptSeed(stored, legacyMessage, userAddress);
                 console.log('[SUCCESS] Seed decrypted with legacy key');
                 return seed;
