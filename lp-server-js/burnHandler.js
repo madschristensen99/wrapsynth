@@ -58,13 +58,15 @@ async function sendXmr(destination, amountAtomic) {
 // ─── Burn State Machine ─────────────────────────────────────────────────────
 
 class BurnState {
-  constructor(requestId, user, lpVault, wsxmrAmount, xmrAmount, claimCommitment) {
+  constructor(requestId, user, lpVault, wsxmrAmount, xmrAmount, claimCommitment, userPublicKey, userViewKey) {
     this.requestId = requestId;
     this.user = user;
     this.lpVault = lpVault;
     this.wsxmrAmount = wsxmrAmount.toString();
     this.xmrAmount = xmrAmount.toString();
     this.claimCommitment = claimCommitment;
+    this.userPublicKey = userPublicKey;
+    this.userViewKey = userViewKey;
     this.createdAt = Date.now();
     this.state = 'requested'; // requested | proposed | committed | finalized | slashed | cancelled
     this.secret = null;
@@ -85,7 +87,7 @@ class BurnState {
  * Handle a BurnRequested event.
  * Generates secret, optionally sends XMR, calls proposeHash on-chain.
  */
-async function handleBurnRequest(requestId, user, lpVault, wsxmrAmount, xmrAmount, claimCommitment) {
+async function handleBurnRequest(requestId, user, lpVault, wsxmrAmount, xmrAmount, claimCommitment, userPublicKey, userViewKey) {
   const reqIdHex = ethers.hexlify(requestId);
 
   if (lpVault.toLowerCase() !== wallet.address.toLowerCase()) {
@@ -103,7 +105,7 @@ async function handleBurnRequest(requestId, user, lpVault, wsxmrAmount, xmrAmoun
     return;
   }
 
-  const burn = new BurnState(reqIdHex, user, lpVault, wsxmrAmount, xmrAmount, claimCommitment);
+  const burn = new BurnState(reqIdHex, user, lpVault, wsxmrAmount, xmrAmount, claimCommitment, userPublicKey, userViewKey);
   pendingBurns.set(reqIdHex, burn);
 
   if (!AUTO_PROCESS_BURNS) {
@@ -160,20 +162,27 @@ async function processPropose(reqIdHex, customKeys = {}) {
   burn.lpPublicSpendKey = lpPublicSpendKey;
   burn.lpPublicViewKey = lpPublicViewKey;
 
-  // ─── 2. Fetch user's claim commitment from on-chain ──────────────────────
-  let userClaimCommitment;
-  try {
-    const burnReq = await hubContract.getBurnRequest(reqIdHex);
-    userClaimCommitment = ethers.hexlify(burnReq.claimCommitment || burnReq[7]);
-    console.log(`[Burn] User claim commitment: ${userClaimCommitment}`);
-  } catch (err) {
-    throw new Error(`Failed to fetch burn request on-chain: ${err.message}`);
+  // ─── 2. Use user's public keys from the BurnRequested event ───────────────
+  // The user's actual Ed25519 public spend key (not the commitment hash) and
+  // public view key are needed to compute the shared Monero address.
+  // The shared address uses the user's view key so the user can scan for it.
+  if (!burn.userPublicKey || burn.userPublicKey === ethers.ZeroHash) {
+    throw new Error(`User public key not available for ${reqIdHex} — must be passed in BurnRequested event`);
   }
+  if (!burn.userViewKey || burn.userViewKey === ethers.ZeroHash) {
+    throw new Error(`User view key not available for ${reqIdHex} — must be passed in BurnRequested event`);
+  }
+  const userPublicKeyHex = ethers.hexlify(burn.userPublicKey);
+  const userViewKeyHex = ethers.hexlify(burn.userViewKey);
+  console.log(`[Burn] User public spend key: ${userPublicKeyHex}`);
+  console.log(`[Burn] User public view key: ${userViewKeyHex}`);
 
   // ─── 3. Compute shared Monero deposit address ──────────────────────────────
+  // Combined spend key = user_pub_spend + LP_pub_spend (Ed25519 point addition)
+  // View key = user's public view key (so user can scan with their private view key)
   let sharedAddress = null;
   try {
-    sharedAddress = await moneroCrypto.computeDepositAddress(userClaimCommitment, lpPublicSpendKey, lpPublicViewKey);
+    sharedAddress = await moneroCrypto.computeBurnAddress(userPublicKeyHex, userViewKeyHex, lpPublicSpendKey);
     burn.sharedAddress = sharedAddress;
     console.log(`[Burn] Shared Monero address: ${sharedAddress}`);
   } catch (err) {
@@ -366,8 +375,8 @@ function attachEventListeners(hub, _wallet, _provider) {
       // Poll for BurnRequested
       const requested = await safeQuery(hubContract.filters.BurnRequested(), lastCheckedBlock + 1, currentBlock);
       for (const event of requested) {
-        const { requestId, user, lpVault, wsxmrAmount, xmrAmount, rewardCollateral, claimCommitment } = event.args;
-        handleBurnRequest(requestId, user, lpVault, wsxmrAmount, xmrAmount, claimCommitment);
+        const { requestId, user, lpVault, wsxmrAmount, xmrAmount, rewardCollateral, claimCommitment, userPublicKey, userViewKey } = event.args;
+        handleBurnRequest(requestId, user, lpVault, wsxmrAmount, xmrAmount, claimCommitment, userPublicKey, userViewKey);
       }
 
       // Poll for BurnCommitted

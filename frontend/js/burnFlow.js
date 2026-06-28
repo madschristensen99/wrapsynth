@@ -92,9 +92,13 @@ export class BurnFlow {
             console.log('Continuing anyway — transaction will revert if prices are stale');
         }
 
-        // Get the user's Ed25519 commitment (same as mint flow)
+        // Get the user's Ed25519 commitment and public keys for burn
         const claimCommitment = this.agent.getCommitment();
+        const userPublicKey = this.agent.getPublicSpendKeyHex();
+        const userViewKey = this.agent.getPublicViewKeyHex();
         console.log('Using claim commitment for burn:', claimCommitment);
+        console.log('User public spend key:', userPublicKey);
+        console.log('User public view key:', userViewKey);
 
         let receipt;
         const attemptRequestBurn = async () => {
@@ -102,7 +106,9 @@ export class BurnFlow {
                 wsxmrAmountAtomic,
                 this.lpVault,
                 userAddress,
-                claimCommitment
+                claimCommitment,
+                userPublicKey,
+                userViewKey
             ]);
         };
 
@@ -150,7 +156,9 @@ export class BurnFlow {
                     wsxmrAmountAtomic,
                     this.lpVault,
                     userAddress,
-                    claimCommitment
+                    claimCommitment,
+                    userPublicKey,
+                    userViewKey
                 ], 0n, 3000000n);
             } else {
                 throw error;
@@ -160,7 +168,7 @@ export class BurnFlow {
         console.log('Burn requested, tx:', receipt.transactionHash);
 
         const burnRequestedEvent = receipt.logs.find(log => 
-            log.topics[0] === keccak256(toHex('BurnRequested(bytes32,address,address,uint256,uint256,uint256,bytes32)'))
+            log.topics[0] === keccak256(toHex('BurnRequested(bytes32,address,address,uint256,uint256,uint256,bytes32,bytes32,bytes32)'))
         );
 
         if (burnRequestedEvent) {
@@ -206,19 +214,20 @@ export class BurnFlow {
             const lpPublicSpendKey = event.lpPublicSpendKey;
             const lpPublicViewKey = event.lpPublicViewKey;
             
-            // Derive the shared Monero address
-            const { computeDepositAddress } = await import('./moneroCrypto.js');
-            const userCommitment = this.agent.getCommitment();
-            const moneroAddress = await computeDepositAddress(userCommitment, lpPublicSpendKey, lpPublicViewKey);
+            // Derive the shared Monero address using user's actual public keys
+            const { computeBurnAddress } = await import('./moneroCrypto.js');
+            const userPublicKey = this.agent.getPublicSpendKeyHex();
+            const userViewKey = this.agent.getPublicViewKeyHex();
+            const moneroAddress = await computeBurnAddress(userPublicKey, userViewKey, lpPublicSpendKey);
             const viewKey = this.agent.getPrivateViewKeyHex();
             
-            console.log('Derived Monero address:', moneroAddress);
-            console.log('View key:', viewKey);
+            console.log('Derived burn Monero address:', moneroAddress);
+            console.log('User view key for scanning:', viewKey);
             
             updateSwapState({
                 requestId: this.requestId,
                 lpStatus: 'found',
-                lpMessage: 'LP has sent XMR to your address',
+                lpMessage: 'LP has sent XMR to the shared address',
                 secretHash: this.secretHash,
                 moneroAddress,
                 viewKey
@@ -255,19 +264,20 @@ export class BurnFlow {
                     const lpPublicSpendKey = event.lpPublicSpendKey;
                     const lpPublicViewKey = event.lpPublicViewKey;
                     
-                    // Derive the shared Monero address
-                    const { computeDepositAddress } = await import('./moneroCrypto.js');
-                    const userCommitment = this.agent.getCommitment();
-                    const moneroAddress = await computeDepositAddress(userCommitment, lpPublicSpendKey, lpPublicViewKey);
+                    // Derive the shared Monero address using user's actual public keys
+                    const { computeBurnAddress } = await import('./moneroCrypto.js');
+                    const userPublicKey = this.agent.getPublicSpendKeyHex();
+                    const userViewKey = this.agent.getPublicViewKeyHex();
+                    const moneroAddress = await computeBurnAddress(userPublicKey, userViewKey, lpPublicSpendKey);
                     const viewKey = this.agent.getPrivateViewKeyHex();
                     
-                    console.log('Derived Monero address:', moneroAddress);
-                    console.log('View key:', viewKey);
+                    console.log('Derived burn Monero address:', moneroAddress);
+                    console.log('User view key for scanning:', viewKey);
                     
                     updateSwapState({
                         requestId: this.requestId,
                         lpStatus: 'found',
-                        lpMessage: 'LP has sent XMR to your address',
+                        lpMessage: 'LP has sent XMR to the shared address',
                         secretHash: this.secretHash,
                         moneroAddress,
                         viewKey

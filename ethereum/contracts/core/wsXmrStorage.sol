@@ -141,6 +141,8 @@ contract wsXmrStorage {
         uint256 normalizedDebtAmount;
         BurnStatus status;
         bytes32 userClaimCommitment;  // User's Ed25519 public point commitment for deriving Monero receive address
+        bytes32 userPublicKey;          // User's Ed25519 public spend key (compressed point) for shared address derivation
+        bytes32 userViewKey;            // User's Ed25519 public view key (compressed point) so user can scan the shared address
         uint256 xmrPriceAtRequest;      // XMR price locked at request time (18 decimals) for fair settlement
     }
     

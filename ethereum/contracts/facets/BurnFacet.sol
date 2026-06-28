@@ -18,29 +18,29 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         wsXmrStorage(_wsxmrToken, _verifierProxy) 
     {}
     
-    function requestBurn(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment) external returns (bytes32) {
+    function requestBurn(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey) external returns (bytes32) {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
         
         if (msg.sender != user) revert OnlyUserCanInitiate();
-        bytes32 requestId = _requestBurn(wsxmrAmount, lpVault, user, claimCommitment, false);
+        bytes32 requestId = _requestBurn(wsxmrAmount, lpVault, user, claimCommitment, userPublicKey, userViewKey, false);
         
         _reentrancyStatus = _NOT_ENTERED;
         return requestId;
     }
     
-    function requestBurnFromRouter(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment) external returns (bytes32) {
+    function requestBurnFromRouter(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey) external returns (bytes32) {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
         
         if (msg.sender != liquidityRouter) revert OnlyRouter();
-        bytes32 requestId = _requestBurn(wsxmrAmount, lpVault, user, claimCommitment, true);
+        bytes32 requestId = _requestBurn(wsxmrAmount, lpVault, user, claimCommitment, userPublicKey, userViewKey, true);
         
         _reentrancyStatus = _NOT_ENTERED;
         return requestId;
     }
     
-    function _requestBurn(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment, bool fromRouter) internal returns (bytes32) {
+    function _requestBurn(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey, bool fromRouter) internal returns (bytes32) {
         if (claimCommitment == bytes32(0)) revert InvalidCommitment();
         if (wsxmrAmount == 0) revert ZeroAmount();
         if (lpVault == address(0)) revert ZeroAddress();
@@ -110,12 +110,14 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         req.normalizedDebtAmount = normalizedBurnAmount;
         req.status = BurnStatus.REQUESTED;
         req.userClaimCommitment = claimCommitment;
+        req.userPublicKey = userPublicKey;
+        req.userViewKey = userViewKey;
         req.xmrPriceAtRequest = xmrPrice;
         
         userBurnRequests[user].push(requestId);
         vaultBurnRequests[lpVault].push(requestId);
         
-        emit BurnRequested(requestId, user, lpVault, wsxmrAmount, wsxmrAmount * XMR_TO_WSXMR_DIVISOR, rewardCollateral, claimCommitment);
+        emit BurnRequested(requestId, user, lpVault, wsxmrAmount, wsxmrAmount * XMR_TO_WSXMR_DIVISOR, rewardCollateral, claimCommitment, userPublicKey, userViewKey);
         return requestId;
     }
     

@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 /**
  * @title IOracleFacet
  * @notice Interface for price oracle operations
- * @dev Abstracts Pyth oracle interactions
+ * @dev Abstracts RedStone oracle interactions
  */
 interface IOracleFacet {
     // ========== ERRORS ==========
