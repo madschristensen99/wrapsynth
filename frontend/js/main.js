@@ -1943,6 +1943,31 @@ async function loadVaults() {
             const firstVault = activeVaults[0];
             updateSwapRateDisplay(true, firstVault.mintFeeBps, firstVault.burnRewardBps);
             updateSwapRateDisplay(false, firstVault.mintFeeBps, firstVault.burnRewardBps);
+            // Update LP timeout window from on-chain vault data
+            const mintTimeoutBlocks = firstVault.mintTimeoutBlocks || 0;
+            const burnTimeoutBlocks = firstVault.burnTimeoutBlocks || 0;
+            if (mintTimeoutBlocks > 0) {
+                const timeoutHours = (mintTimeoutBlocks * 5) / 3600;
+                const mintTimeoutEl = document.getElementById('mint-timeout');
+                if (mintTimeoutEl) {
+                    if (timeoutHours >= 1) {
+                        mintTimeoutEl.textContent = `${timeoutHours.toFixed(1)}h · slash protected`;
+                    } else {
+                        mintTimeoutEl.textContent = `${Math.round(timeoutHours * 60)}m · slash protected`;
+                    }
+                }
+            }
+            if (burnTimeoutBlocks > 0) {
+                const timeoutHours = (burnTimeoutBlocks * 5) / 3600;
+                const burnTimeoutEl = document.getElementById('burn-timeout');
+                if (burnTimeoutEl) {
+                    if (timeoutHours >= 1) {
+                        burnTimeoutEl.textContent = `${timeoutHours.toFixed(1)}h · slash protected`;
+                    } else {
+                        burnTimeoutEl.textContent = `${Math.round(timeoutHours * 60)}m · slash protected`;
+                    }
+                }
+            }
             // If user already typed an amount before vaults loaded, update receive box now
             updateMintReceiveAmount();
             updateBurnReceiveAmount();
@@ -2059,8 +2084,56 @@ function updateMintReceiveAmount() {
         const feePct = feeBps / 100;
         const receiveAmount = amount * (1 - feePct / 100);
         receiveEl.value = receiveAmount.toFixed(6);
+        updateMintBackingCollateral();
     } catch (err) {
         console.error('[Receive] Mint receive update failed:', err);
+    }
+}
+
+/**
+ * Calculate and display the DAI backing collateral for the current mint amount.
+ * Shows 150% of the XMR value in DAI terms.
+ */
+async function updateMintBackingCollateral() {
+    try {
+        const backingEl = document.getElementById('mint-backing-collateral');
+        if (!backingEl) return;
+
+        const amountStr = document.getElementById('mint-amount')?.value || '';
+        const amount = parseFloat(amountStr);
+        if (isNaN(amount) || amount <= 0) {
+            backingEl.textContent = 'DAI · 150%';
+            return;
+        }
+
+        // Fetch fresh XMR price from oracle, fall back to CoinGecko cache, then vault cache
+        let xmrPrice = 0;
+        try {
+            const { readHub } = await import('./viemClient.js');
+            const xmrPriceWei = await readHub('getXmrPrice');
+            xmrPrice = Number(xmrPriceWei) / 1e18;
+        } catch (e) {
+            // RPC failed (rate-limited etc.) — try CoinGecko price cache, then vault cache
+            xmrPrice = priceCache.value || 0;
+            if (!xmrPrice) {
+                const vaultSelect = document.getElementById('mint-vault-select');
+                const vaultAddress = vaultSelect?.value;
+                const vault = vaultAddress ? cachedVaults.find(v => v.address.toLowerCase() === vaultAddress.toLowerCase()) : null;
+                xmrPrice = vault?.xmrPrice || 0;
+            }
+        }
+
+        if (!xmrPrice || xmrPrice <= 0) {
+            backingEl.textContent = 'DAI · 150%';
+            return;
+        }
+
+        // Backing collateral in DAI = XMR amount * XMR price (USD) * 150%
+        // DAI ≈ $1, so this is the USD value of collateral needed
+        const daiAmount = amount * xmrPrice * 1.5;
+        backingEl.textContent = `${daiAmount.toFixed(2)} DAI · 150%`;
+    } catch (err) {
+        console.warn('[BackingCollateral] Update failed:', err.message);
     }
 }
 
