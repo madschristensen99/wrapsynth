@@ -1,6 +1,6 @@
 // Main Application Entry Point
 // Phantom Agent - Deterministic Ephemeral Browser Wallet for XMR ⇄ wsXMR Swaps
-console.log('🔄 WrapSynth Frontend v2.1 - DYNAMIC FEE & RECEIVE FIX');
+console.log('🔄 Wrapsynth Frontend v2.1 - DYNAMIC FEE & RECEIVE FIX');
 
 import { 
     initializeClients, 

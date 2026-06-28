@@ -1,5 +1,5 @@
 // ============================================
-// WrapSynth Configuration
+// Wrapsynth Configuration
 // ============================================
 // Contract addresses are loaded from the canonical root deployment.json (window.DEPLOYMENT).
 
@@ -139,7 +139,7 @@ export const MONERO_CONFIG = {
 
 // Application configuration
 export const APP_CONFIG = {
-    APP_NAME: 'WrapSynth',
+    APP_NAME: 'Wrapsynth',
     APP_VERSION: '1.0.0',
     WEBSITE_URL: 'https://wrapsynth.com',
     GITHUB_URL: 'https://github.com/madschristensen99/wrapsynth',

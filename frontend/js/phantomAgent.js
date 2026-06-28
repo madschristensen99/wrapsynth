@@ -1,4 +1,4 @@
-// Phantom Agent - Seed-Based Wallet for WrapSynth
+// Phantom Agent - Seed-Based Wallet for Wrapsynth
 // Uses BIP-39 seed phrases with encrypted browser storage
 // EIP-7702 safe: seed phrases are true user-controlled secrets
 

@@ -1,4 +1,4 @@
-// Seed Management for WrapSynth
+// Seed Management for Wrapsynth
 // Generates Ed25519 keys from BIP-39 seed phrases (Monero-compatible)
 
 import { keccak256, toHex, hexToBytes, bytesToBigInt } from 'https://esm.sh/viem@2.7.0';
@@ -99,7 +99,7 @@ export function generateKeysFromSeed(seedPhrase) {
 }
 
 /**
- * Generate commitment from secret for WrapSynth verification.
+ * Generate commitment from secret for Wrapsynth verification.
  * Matches the Solana on-chain verifier exactly:
  *   commitment = keccak256(compress(secret · G))
  * where compress yields a 32-byte little-endian CompressedEdwardsY.
