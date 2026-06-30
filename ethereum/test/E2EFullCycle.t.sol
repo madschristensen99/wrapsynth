@@ -269,7 +269,7 @@ contract E2EFullCycleTest is Test {
         
         // LP sets ready (after user locks XMR on Monero)
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(mintRequestId);
+        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(mintRequestId, bytes32(uint256(0xdeadbeef)));
         console.log("[OK] LP set mint READY");
         
         // User finalizes
