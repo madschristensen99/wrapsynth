@@ -68,6 +68,8 @@ const HUB_ABI = [
   'function getMintRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout, uint256 griefingDeposit, uint256 lpBond, uint256 normalizedDebtAmount, uint256 vaultMintNonce, uint8 status))',
   'function lpPublicKeys(bytes32 requestId) external view returns (bytes32)',
   'function lpPublicViewKeys(bytes32 requestId) external view returns (bytes32)',
+  'function updateOraclePrices(bytes[] calldata updateData) external payable',
+  'function cancelMint(bytes32 requestId) external',
 ];
 
 // ─── Ethers Setup ───────────────────────────────────────────────────────────
@@ -82,6 +84,16 @@ console.log(`RPC: ${RPC_URL}`);
 
 // ─── In-memory tracking ─────────────────────────────────────────────────────
 const pendingMints = new Map(); // requestId -> { initiatedAt, keyPostedAt }
+
+// ─── Mint Processing Mutex ──────────────────────────────────────────────────
+// monero-wallet-rpc can only have one wallet open at a time, so mint processing
+// (which creates/closes view-only deposit wallets) must be serialized.
+let mintProcessingLock = Promise.resolve();
+function serializeMint(fn) {
+  const next = mintProcessingLock.then(fn, fn); // run even if previous rejected
+  mintProcessingLock = next.catch(() => {});    // swallow errors to keep chain alive
+  return next;
+}
 
 // ─── Ed25519 Key Generation ─────────────────────────────────────────────────
 async function generateEd25519Keys() {
@@ -116,6 +128,49 @@ async function generateEd25519Keys() {
     lpPublicSpendKey: '0x' + spendPub.toString('hex'),
     lpPublicViewKey: '0x' + viewPub.toString('hex'),
   };
+}
+
+// ─── Oracle Price Update (manual RedStone payload, bypasses WrapperBuilder) ──
+async function updateOraclePricesManual() {
+  const { DataServiceWrapper } = await import('@redstone-finance/evm-connector');
+  const { getSignersForDataServiceId } = await import('@redstone-finance/oracles-smartweave-contracts');
+  const authorizedSigners = getSignersForDataServiceId('redstone-primary-prod');
+
+  const wrapper = new DataServiceWrapper({
+    dataServiceId: 'redstone-primary-prod',
+    uniqueSignersCount: 3,
+    dataPackagesIds: ['XMR', 'DAI'],
+    authorizedSigners,
+  });
+
+  console.log(`[Chain] Updating oracle prices before setMintReady...`);
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      // Get raw RedStone payload hex (bypasses WrapperBuilder contract wrapping)
+      const redstonePayload = await wrapper.getRedstonePayloadForManualUsage(hub);
+
+      // Build updateOraclePrices([]) calldata and append RedStone payload
+      const baseData = hub.interface.encodeFunctionData('updateOraclePrices', [[]]);
+      const fullData = baseData + redstonePayload.slice(2);
+
+      const updateTx = await wallet.sendTransaction({
+        to: HUB_ADDRESS,
+        data: fullData,
+      });
+      await updateTx.wait();
+      console.log(`[Chain] Oracle prices updated (tx: ${updateTx.hash})`);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < 2) {
+        const delay = 2000 * Math.pow(2, attempt);
+        console.log(`[Chain] RedStone retry in ${delay/1000}s... (${attempt + 2}/3)`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 // ─── Core Mint Processing ───────────────────────────────────────────────────
@@ -213,33 +268,7 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
 
   // 4. Update oracle prices before setMintReady (contract requires fresh price for collateral check)
   try {
-    const { WrapperBuilder } = await import('@redstone-finance/evm-connector');
-    const { getSignersForDataServiceId } = await import('@redstone-finance/oracles-smartweave-contracts');
-    const authorizedSigners = getSignersForDataServiceId('redstone-primary-prod');
-    const wrappedHub = WrapperBuilder.wrap(hub).usingDataService({
-      dataServiceId: 'redstone-primary-prod',
-      uniqueSignersCount: 3,
-      dataPackagesIds: ['XMR', 'DAI'],
-      authorizedSigners,
-    });
-    console.log(`[Chain] Updating oracle prices before setMintReady...`);
-    let lastErr;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const updateTx = await wrappedHub.updateOraclePrices([]);
-        await updateTx.wait();
-        console.log(`[Chain] Oracle prices updated (tx: ${updateTx.hash})`);
-        break;
-      } catch (err) {
-        lastErr = err;
-        if (attempt < 2) {
-          const delay = 2000 * Math.pow(2, attempt);
-          console.log(`[Chain] RedStone retry in ${delay/1000}s... (${attempt + 2}/3)`);
-          await new Promise(r => setTimeout(r, delay));
-        }
-      }
-    }
-    if (lastErr) throw lastErr;
+    await updateOraclePricesManual();
   } catch (priceErr) {
     console.warn(`[Chain] Oracle price update failed: ${priceErr.message}`);
     console.warn(`[Chain] Proceeding with setMintReady anyway (may revert with StalePrice)...`);
@@ -255,6 +284,192 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
   console.log(`[Chain] setMintReady tx: ${tx2.hash}`);
   const receipt2 = await tx2.wait();
   console.log(`[Chain] setMintReady confirmed in block ${receipt2.blockNumber}`);
+}
+
+// ─── Startup Recovery: Find active mints that need setMintReady ─────────────
+async function startupRecoverMints() {
+  console.log('[Recovery] Scanning for active mints needing setMintReady...');
+  const currentBlock = await provider.getBlockNumber();
+  // Scan last 10000 blocks (~3.5 days on Gnosis at 5s blocks)
+  const fromBlock = Math.max(0, currentBlock - 10000);
+
+  let events;
+  try {
+    const filter = hub.filters.MintInitiated();
+    events = await hub.queryFilter(filter, fromBlock, currentBlock);
+  } catch (err) {
+    console.warn('[Recovery] Could not query MintInitiated events:', err.message);
+    return;
+  }
+
+  // Filter to mints for our vault
+  const ourMints = events.filter(
+    e => e.args.lpVault.toLowerCase() === wallet.address.toLowerCase()
+  );
+
+  if (ourMints.length === 0) {
+    console.log('[Recovery] No mints found for this vault in recent blocks');
+    return;
+  }
+
+  console.log(`[Recovery] Found ${ourMints.length} mint(s) for this vault, checking status...`);
+
+  for (const event of ourMints) {
+    const reqIdHex = ethers.hexlify(event.args.requestId);
+
+    try {
+      const mintReq = await hub.getMintRequest(reqIdHex);
+      const status = Number(mintReq.status);
+
+      if (status === 4 || status === 5) {
+        continue; // completed or cancelled
+      }
+
+      if (status === 2) {
+        // KEY_PROVIDED — deposit may have arrived, need to update oracle + setMintReady
+        console.log(`[Recovery] Mint ${reqIdHex} is KEY_PROVIDED, attempting setMintReady...`);
+
+        const lpSpendKey = await hub.lpPublicKeys(reqIdHex);
+        const lpViewKey = await hub.lpPublicViewKeys(reqIdHex);
+
+        pendingMints.set(reqIdHex, {
+          requestId: reqIdHex,
+          initiator: mintReq.initiator,
+          recipient: mintReq.recipient,
+          xmrAmount: mintReq.xmrAmount.toString(),
+          userPublicKey: ethers.hexlify(mintReq.userPublicKey),
+          timeoutBlock: Number(mintReq.timeout),
+          lpPublicSpendKey: lpSpendKey,
+          lpPublicViewKey: lpViewKey,
+          keyPostedAt: Date.now(),
+          processing: true,
+        });
+
+        (async () => {
+          try {
+            await serializeMint(() => processMint(reqIdHex, lpSpendKey, lpViewKey));
+          } catch (err) {
+            console.error(`[Recovery] Failed to process mint ${reqIdHex}:`, err.message || err);
+            const m = pendingMints.get(reqIdHex) || {};
+            m.autoProcessError = err.message || String(err);
+            m.processing = false;
+            pendingMints.set(reqIdHex, m);
+          }
+        })();
+      } else if (status === 1) {
+        // PENDING — LP keys not yet provided
+        console.log(`[Recovery] Mint ${reqIdHex} is PENDING (keys not provided), auto-processing...`);
+
+        pendingMints.set(reqIdHex, {
+          requestId: reqIdHex,
+          initiator: mintReq.initiator,
+          recipient: mintReq.recipient,
+          xmrAmount: mintReq.xmrAmount.toString(),
+          userPublicKey: ethers.hexlify(mintReq.userPublicKey),
+          timeoutBlock: Number(mintReq.timeout),
+          initiatedAt: Date.now(),
+          processing: true,
+        });
+
+        (async () => {
+          try {
+            const keys = await generateEd25519Keys();
+            console.log(`[Recovery] Generated Ed25519 keys for ${reqIdHex}`);
+            await serializeMint(() => processMint(reqIdHex, keys.lpPublicSpendKey, keys.lpPublicViewKey));
+          } catch (err) {
+            console.error(`[Recovery] Failed to process mint ${reqIdHex}:`, err.message || err);
+            const m = pendingMints.get(reqIdHex) || {};
+            m.autoProcessError = err.message || String(err);
+            m.processing = false;
+            pendingMints.set(reqIdHex, m);
+          }
+        })();
+      }
+    } catch (err) {
+      console.warn(`[Recovery] Could not check mint ${reqIdHex}:`, err.message);
+    }
+  }
+}
+
+// ─── Startup Resolution: Cancel stale mints & resolve stale burns ───────────
+async function startupResolveStale() {
+  const currentBlock = await provider.getBlockNumber();
+  const fromBlock = Math.max(0, currentBlock - 10000);
+  console.log('[Resolve] Checking for stale mints and burns...');
+
+  // ── Stale Mints: cancel if timeout passed ──
+  let mintEvents;
+  try {
+    mintEvents = await hub.queryFilter(hub.filters.MintInitiated(), fromBlock, currentBlock);
+  } catch (err) {
+    console.warn('[Resolve] Could not query MintInitiated events:', err.message);
+    mintEvents = [];
+  }
+
+  const ourMints = mintEvents.filter(
+    e => e.args.lpVault.toLowerCase() === wallet.address.toLowerCase()
+  );
+
+  for (const event of ourMints) {
+    const reqIdHex = ethers.hexlify(event.args.requestId);
+    try {
+      const mintReq = await hub.getMintRequest(reqIdHex);
+      const status = Number(mintReq.status);
+      const timeout = Number(mintReq.timeout);
+
+      // Status 1=PENDING, 2=KEY_PROVIDED, 3=READY — cancel if timeout passed
+      if ((status === 1 || status === 2 || status === 3) && currentBlock >= timeout) {
+        console.log(`[Resolve] Mint ${reqIdHex} is stale (status=${status}, timeout=${timeout}, current=${currentBlock}), cancelling...`);
+        try {
+          const tx = await hub.cancelMint(reqIdHex);
+          await tx.wait();
+          console.log(`[Resolve] Mint ${reqIdHex} cancelled (tx: ${tx.hash})`);
+        } catch (err) {
+          console.warn(`[Resolve] Failed to cancel mint ${reqIdHex}:`, err.shortMessage || err.message);
+        }
+      }
+    } catch (err) {
+      console.warn(`[Resolve] Could not check mint ${reqIdHex}:`, err.message);
+    }
+  }
+
+  // ── Stale Burns: resolve declined proposals ──
+  let burnEvents;
+  try {
+    burnEvents = await hub.queryFilter(hub.filters.BurnRequested(), fromBlock, currentBlock);
+  } catch (err) {
+    console.warn('[Resolve] Could not query BurnRequested events:', err.message);
+    burnEvents = [];
+  }
+
+  const ourBurns = burnEvents.filter(
+    e => e.args.lpVault.toLowerCase() === wallet.address.toLowerCase()
+  );
+
+  for (const event of ourBurns) {
+    const reqIdHex = ethers.hexlify(event.args.requestId);
+    try {
+      const burnReq = await hub.getBurnRequest(reqIdHex);
+      const state = Number(burnReq.state);
+      const deadline = Number(burnReq.timeout);
+
+      // State 2=PROPOSED — resolve if deadline passed (LP didn't commit or user didn't confirm)
+      if (state === 2 && currentBlock >= deadline) {
+        console.log(`[Resolve] Burn ${reqIdHex} is stale (PROPOSED, deadline=${deadline}, current=${currentBlock}), resolving...`);
+        try {
+          const tx = await hub.resolveDeclinedProposal(reqIdHex);
+          await tx.wait();
+          console.log(`[Resolve] Burn ${reqIdHex} resolved (tx: ${tx.hash})`);
+        } catch (err) {
+          console.warn(`[Resolve] Failed to resolve burn ${reqIdHex}:`, err.shortMessage || err.message);
+        }
+      }
+    } catch (err) {
+      console.warn(`[Resolve] Could not check burn ${reqIdHex}:`, err.message);
+    }
+  }
+
+  console.log('[Resolve] Stale check complete');
 }
 
 // ─── On-chain Event Listener ────────────────────────────────────────────────
@@ -322,7 +537,7 @@ async function startEventListener() {
           try {
             const keys = await generateEd25519Keys();
             console.log(`[Mint] Generated Ed25519 keys for ${reqIdHex}`);
-            await processMint(reqIdHex, keys.lpPublicSpendKey, keys.lpPublicViewKey);
+            await serializeMint(() => processMint(reqIdHex, keys.lpPublicSpendKey, keys.lpPublicViewKey));
           } catch (err) {
             console.error(`[Mint] Auto-process failed for ${reqIdHex}:`, err.message || err);
             const mint = pendingMints.get(reqIdHex) || {};
@@ -369,7 +584,7 @@ app.post('/mint/key', async (req, res) => {
       message: 'Processing started. provideLPKey then setMintReady will follow.',
     });
 
-    await processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey);
+    await serializeMint(() => processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey));
   } catch (err) {
     console.error(`[Error] Failed processing /mint/key for ${reqIdHex}:`, err.message || err);
     if (!res.headersSent) {
@@ -429,7 +644,7 @@ app.post('/mint/scan', async (req, res) => {
     });
 
     // Run processMint async (it will skip provideLPKey since status >= 2)
-    processMint(reqIdHex, lpSpendKey, lpViewKey).catch(err => {
+    serializeMint(() => processMint(reqIdHex, lpSpendKey, lpViewKey)).catch(err => {
       console.error(`[Mint] Manual scan failed for ${reqIdHex}:`, err.message);
     });
   } catch (err) {
@@ -490,5 +705,13 @@ burnHandler.registerRoutes(app);
 app.listen(PORT, async () => {
   console.log(`HTTP server listening on http://localhost:${PORT}`);
   await startEventListener();
+  // Ensure main wallet is open before recovery tries to create deposit wallets
+  if (moneroWallet.isWalletConfigured()) {
+    console.log('[Startup] Ensuring Monero wallet is open...');
+    await moneroWallet.ensureWalletOpen();
+    console.log('[Startup] Monero wallet ready');
+  }
+  await startupRecoverMints();
+  await startupResolveStale();
   burnHandler.attachEventListeners(hub, wallet, provider);
 });

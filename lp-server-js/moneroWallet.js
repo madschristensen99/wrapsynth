@@ -233,6 +233,7 @@ async function _pollForDeposit(expectedAmountAtomic, opts = {}) {
     console.log('[Monero] Restoring main LP wallet...');
     try {
       await walletRpc('close_wallet', {});
+      walletOpened = false; // Reset so ensureWalletOpen actually reopens
       await ensureWalletOpen();
     } catch (err) {
       console.warn('[Monero] Failed to restore main wallet:', err.message);
@@ -320,18 +321,33 @@ export async function createSubaddress(accountIndex = 0, label = '') {
 // ─── Daemon Height ──────────────────────────────────────────────────────────
 
 /**
- * Query monerod for current block height (uses wallet-rpc relay).
+ * Query monerod for current block height directly (bypasses wallet-rpc which
+ * blocks while a wallet is loading/refreshing).
  */
 export async function getDaemonHeight() {
-  const res = await walletRpc('get_height');
-  return Number(res.height);
+  const daemonUrl = process.env.MONERO_DAEMON_URL || 'https://xmr-node.cakewallet.com:18081';
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch(`${daemonUrl}/json_rpc`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: '0', method: 'get_info', params: {} }),
+      signal: controller.signal,
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(`daemon error: ${JSON.stringify(data.error)}`);
+    return Number(data.result.height);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ─── Wallet Open ────────────────────────────────────────────────────────────
 
 let walletOpened = false;
 
-async function ensureWalletOpen() {
+export async function ensureWalletOpen() {
   if (walletOpened) return;
   const walletName = process.env.MONERO_WALLET_NAME || 'lp-wallet';
   const walletPass = process.env.MONERO_WALLET_PASSWORD || 'lp-wallet-password';
@@ -420,19 +436,25 @@ async function ensureWalletOpen() {
   const address = base58Encode(Buffer.concat([addrData, checksum]));
 
   try {
-    // Delete both files before regenerating
+    // Delete old wallet files before regenerating
     const fs = await import('fs');
     for (const ext of ['', '.keys', '.address.txt']) {
       const p = `${walletDir}/${walletName}${ext}`;
       if (fs.existsSync(p)) fs.unlinkSync(p);
     }
+    // Get current height for a sensible restore_height (avoids scanning from genesis)
+    let restoreHeight = 3607954;
+    try {
+      const daemonHeight = await getDaemonHeight();
+      restoreHeight = Math.max(0, daemonHeight - 1000);
+    } catch {}
     await walletRpc('generate_from_keys', {
       filename: walletName,
       password: walletPass,
       address,
       spendkey: spendKey,
       viewkey: viewKey,
-      restore_height: 3607954,
+      restore_height: restoreHeight,
     });
     walletOpened = true;
     console.log('[Monero] Wallet regenerated from keys:', walletName);
