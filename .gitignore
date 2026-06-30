@@ -300,3 +300,6 @@ transaction_data.json
 # Monero wallet data directory
 lp-server-js/monero-wallets/
 
+# Monero wallet RPC logs
+lp-server-js/monero-wallet-rpc.log*
+

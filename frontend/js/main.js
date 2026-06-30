@@ -51,7 +51,7 @@ import {
     setStartMintButtonText,
     showPreviousMintBanner,
     hidePreviousMintBanner
-} from './ui.js?v=2.3';
+} from './ui.js?v=2.4';
 
 import { MintFlow } from './mintFlow.js';
 import { stopTimers } from './mintFlowTimers.js';
@@ -490,7 +490,7 @@ async function handleUpdatePrices() {
         }, 2000);
         
         console.log('✅ Oracle prices updated successfully');
-        const { showSuccessNotification } = await import('./ui.js');
+        const { showSuccessNotification } = await import('./ui.js?v=2.4');
         showSuccessNotification('Prices Updated', '<p>Oracle prices have been updated with latest RedStone data.</p>');
         
     } catch (error) {
@@ -501,7 +501,7 @@ async function handleUpdatePrices() {
             btn.disabled = false;
         }, 2000);
         
-        const { showErrorNotification } = await import('./ui.js');
+        const { showErrorNotification } = await import('./ui.js?v=2.4');
         showErrorNotification('Update Failed', `<p>Could not update oracle prices: ${error.message}</p>`);
     }
 }

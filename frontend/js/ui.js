@@ -807,8 +807,24 @@ export function showClaimWsXmrButton(onClaim) {
         elements.waitingLpVerification.classList.add('hidden');
     }
     
+    // Ensure mint actions container exists
+    let container = elements.mintActions;
+    if (!container) {
+        // Fallback: find or create the mint panel actions area
+        container = document.getElementById('mint-actions');
+        if (!container) {
+            // Last resort: use the mint panel itself
+            container = document.getElementById('mint-panel') || document.body;
+        }
+        elements.mintActions = container;
+    }
+    
+    // Make sure the container is visible
+    container.classList.remove('hidden');
+    container.style.display = 'block';
+    
     // Create or show claim button
-    let claimButton = elements.mintActions.querySelector('.claim-wsxmr-btn');
+    let claimButton = container.querySelector('.claim-wsxmr-btn');
     if (!claimButton) {
         claimButton = document.createElement('button');
         claimButton.className = 'btn btn-primary claim-wsxmr-btn';
@@ -819,7 +835,7 @@ export function showClaimWsXmrButton(onClaim) {
                 <span class="claim-text">Claim wsXMR</span>
             </span>
         `;
-        elements.mintActions.appendChild(claimButton);
+        container.appendChild(claimButton);
     }
 
     claimButton.classList.remove('hidden');
