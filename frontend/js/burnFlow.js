@@ -4,7 +4,7 @@ import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG } from './config.js';
 import { readHub, writeHub, writeHubUnsafe, readWsxmr, writeWsxmr, watchContractEvent, getUserAddress } from './viemClient.js';
 import { getPhantomAgent } from './phantomAgent.js';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
-import { updateBurnProgress, showBurnVerificationLoading, showBurnVerificationDetails, showBurnVerificationManual, showBurnAddressPanel } from './ui.js?v=2.3';
+import { updateBurnProgress, showBurnVerificationLoading, showBurnVerificationDetails, showBurnVerificationManual, showBurnAddressPanel } from './ui.js?v=2.4';
 import { getMoneroRpc } from './moneroRpc.js';
 import { keccak256, toHex } from 'https://esm.sh/viem@2.7.0';
 
