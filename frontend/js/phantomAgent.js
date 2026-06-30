@@ -4,7 +4,7 @@
 
 import { toHex } from 'https://esm.sh/viem@2.7.0';
 import { getUserAddress } from './viemClient.js';
-import { createKeySet } from './seedManager.js';
+import { createKeySet } from './seedManager.js?v=2.6';
 import { storeSeed, loadSeed, hasStoredSeed } from './seedStorage.js';
 import { showSeedGenerationModal } from './seedUI.js';
 import { computeDepositAddress } from './moneroCrypto.js';
@@ -50,7 +50,7 @@ class PhantomAgent {
         } else if (autoGenerate) {
             // Auto-generate wallet silently (MoneroSwap style)
             console.log('Auto-generating wallet...');
-            const { generateSeedPhrase } = await import('./seedManager.js');
+            const { generateSeedPhrase } = await import('./seedManager.js?v=2.6');
             this.seed = generateSeedPhrase(12);
             this.keySet = createKeySet(this.seed);
             seedData = { seed: this.seed, keySet: this.keySet };

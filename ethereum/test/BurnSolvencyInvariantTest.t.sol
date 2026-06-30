@@ -597,7 +597,7 @@ contract BurnSolvencyInvariantTest is Test {
         MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey);
 
         vm.prank(_lp);
-        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(requestId);
+        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(requestId, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(_user);
         MintFacet(address(hub)).finalizeMint(requestId, secret);

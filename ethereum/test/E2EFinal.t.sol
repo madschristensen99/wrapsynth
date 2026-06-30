@@ -114,7 +114,7 @@ contract E2EFinalTest is Test {
         
         // LP sets ready (after user locks XMR on Monero)
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(requestId);
+        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(requestId, bytes32(uint256(0xdeadbeef)));
         console.log("[4] LP set mint READY\n");
         
         // User finalizes

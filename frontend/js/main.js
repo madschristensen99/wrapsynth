@@ -51,7 +51,7 @@ import {
     setStartMintButtonText,
     showPreviousMintBanner,
     hidePreviousMintBanner
-} from './ui.js?v=2.4';
+} from './ui.js?v=2.6';
 
 import { MintFlow } from './mintFlow.js';
 import { stopTimers } from './mintFlowTimers.js';
@@ -490,7 +490,7 @@ async function handleUpdatePrices() {
         }, 2000);
         
         console.log('✅ Oracle prices updated successfully');
-        const { showSuccessNotification } = await import('./ui.js?v=2.4');
+        const { showSuccessNotification } = await import('./ui.js?v=2.6');
         showSuccessNotification('Prices Updated', '<p>Oracle prices have been updated with latest RedStone data.</p>');
         
     } catch (error) {
@@ -501,7 +501,7 @@ async function handleUpdatePrices() {
             btn.disabled = false;
         }, 2000);
         
-        const { showErrorNotification } = await import('./ui.js?v=2.4');
+        const { showErrorNotification } = await import('./ui.js?v=2.6');
         showErrorNotification('Update Failed', `<p>Could not update oracle prices: ${error.message}</p>`);
     }
 }
@@ -2463,7 +2463,7 @@ function trackMintProgress(flow) {
                     finalizeToggleBtn.classList.add('hidden');
                 }
                 // Hide claim button during finalize
-                const finalizeClaimBtn = elements.mintActions?.querySelector('.claim-wsxmr-btn');
+                const finalizeClaimBtn = getElements().mintActions?.querySelector('.claim-wsxmr-btn');
                 if (finalizeClaimBtn) {
                     finalizeClaimBtn.classList.add('hidden');
                 }
