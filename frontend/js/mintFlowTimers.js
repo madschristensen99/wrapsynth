@@ -101,7 +101,7 @@ export async function startDeadlineTimer(mintFlow) {
                                 refundBtn.remove();
                                 const { clearActiveSwap } = await import('./storage.js');
                                 clearActiveSwap();
-                                const { resetMintUI } = await import('./ui.js?v=2.4');
+                                const { resetMintUI } = await import('./ui.js?v=2.6');
                                 resetMintUI();
                             } else if (status === 1 || status === 2 || status === 3) {
                                 // Still cancellable; call cancelMint
@@ -112,7 +112,7 @@ export async function startDeadlineTimer(mintFlow) {
                                 refundBtn.remove();
                                 const { clearActiveSwap } = await import('./storage.js');
                                 clearActiveSwap();
-                                const { resetMintUI } = await import('./ui.js?v=2.4');
+                                const { resetMintUI } = await import('./ui.js?v=2.6');
                                 resetMintUI();
                             } else if (status === 4) {
                                 // Already completed
@@ -120,7 +120,7 @@ export async function startDeadlineTimer(mintFlow) {
                                 refundBtn.remove();
                                 const { clearActiveSwap } = await import('./storage.js');
                                 clearActiveSwap();
-                                const { resetMintUI } = await import('./ui.js?v=2.4');
+                                const { resetMintUI } = await import('./ui.js?v=2.6');
                                 resetMintUI();
                             } else {
                                 throw new Error(`Unexpected mint status: ${status}`);
