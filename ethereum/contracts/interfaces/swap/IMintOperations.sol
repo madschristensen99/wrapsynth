@@ -41,9 +41,12 @@ interface IMintOperations is IErrors {
     );
     
     event LPKeyProvided(bytes32 indexed requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey);
-    event MintReady(bytes32 indexed requestId);
+    event MintReady(bytes32 indexed requestId, bytes32 lpCommitment);
     event MintFinalized(bytes32 indexed requestId, bytes32 secret);
     event MintCancelled(bytes32 indexed requestId);
+    event MintExpiredReady(bytes32 indexed requestId);
+    event GriefingDepositClaimed(bytes32 indexed requestId, bytes32 lpSecret);
+    event MintGriefingUnclaimed(bytes32 indexed requestId);
     
     // ========== ERRORS ==========
     
@@ -76,7 +79,7 @@ interface IMintOperations is IErrors {
     
     /// @notice LP confirms XMR has been locked on Monero
     /// @param requestId The mint request ID
-    function setMintReady(bytes32 requestId) external payable;
+    function setMintReady(bytes32 requestId, bytes32 lpCommitment) external payable;
     
     /// @notice Finalize mint by revealing the secret
     /// @param requestId The mint request ID
@@ -84,8 +87,20 @@ interface IMintOperations is IErrors {
     function finalizeMint(bytes32 requestId, bytes32 secret) external;
     
     /// @notice Cancel a timed-out mint request (permissionless)
+    /// @dev For PENDING/KEY_PROVIDED: refunds deposit to user. For READY: transitions to EXPIRED_READY.
     /// @param requestId The mint request ID
     function cancelMint(bytes32 requestId) external;
+
+    /// @notice LP claims griefing deposit after mint expired in READY state
+    /// @dev LP must reveal lpSecret matching lpCommitment set during setMintReady
+    /// @param requestId The mint request ID
+    /// @param lpSecret The LP's secret scalar
+    function claimGriefingDeposit(bytes32 requestId, bytes32 lpSecret) external;
+
+    /// @notice Sweep unclaimed expired mint after LP claim window passes
+    /// @dev Returns griefing deposit to user, bond to LP. Callable by anyone.
+    /// @param requestId The mint request ID
+    function sweepUnclaimedExpiredMint(bytes32 requestId) external;
     
     // ========== VIEW FUNCTIONS ==========
     

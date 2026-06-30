@@ -24,6 +24,7 @@ contract wsXmrStorage {
     uint256 public constant MAX_MINT_TIMEOUT_BLOCKS = 17280; // ~24 hours at 5s/block
     uint256 public constant DEFAULT_MINT_TIMEOUT_BLOCKS = 720; // ~1 hour
     uint256 public constant MINT_READY_EXTENSION_BLOCKS = 1440; // ~2 hours at 5s/block
+    uint256 public constant LP_CLAIM_WINDOW_BLOCKS = 360; // ~30 min for LP to claim after mint expiry
 
     uint256 public constant MIN_BURN_TIMEOUT_BLOCKS = 360; // ~30 min at 5s/block
     uint256 public constant MAX_BURN_TIMEOUT_BLOCKS = 17280; // ~24 hours at 5s/block
@@ -73,7 +74,8 @@ contract wsXmrStorage {
         KEY_PROVIDED,
         READY,
         COMPLETED,
-        CANCELLED
+        CANCELLED,
+        EXPIRED_READY
     }
     
     enum BurnStatus {
@@ -124,6 +126,7 @@ contract wsXmrStorage {
         uint256 lpBond;              // LP bond posted when setMintReady called
         uint256 normalizedDebtAmount;
         uint256 vaultMintNonce;
+        bytes32 lpCommitment;   // keccak256(Ed25519.scalarMultBase(lpSecret)) — set in setMintReady
         MintStatus status;
     }
     
