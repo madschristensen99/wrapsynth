@@ -121,46 +121,57 @@
   .feat h3{font-family:'Plus Jakarta Sans';font-weight:600;font-size:17px;letter-spacing:-.01em}
   .feat p{color:var(--muted);font-size:14px;margin-top:9px;line-height:1.55}
 
-  /* WHO */
-  .who-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:44px}
+  /* MEET */
+  .who-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;margin-top:44px;max-width:680px}
   @media(max-width:820px){.who-grid{grid-template-columns:1fr}}
   .who-card{background:linear-gradient(135deg,rgba(255,255,255,.02),rgba(255,255,255,.005));
-    border:1px solid var(--line-2);border-radius:16px;padding:28px 24px;
-    transition:all .3s cubic-bezier(.4,0,.2,1);backdrop-filter:blur(8px)}
+    border:1px solid var(--line-2);border-radius:16px;padding:32px 28px;
+    transition:all .3s cubic-bezier(.4,0,.2,1);backdrop-filter:blur(8px);
+    display:flex;flex-direction:column;align-items:center;text-align:center}
   .who-card:hover{border-color:rgba(255,122,61,.3);transform:translateY(-4px);
     box-shadow:0 8px 48px rgba(255,122,61,.1),0 0 0 1px rgba(255,122,61,.1)}
-  .who-card .ic{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;
-    background:rgba(255,122,61,.12);border:1px solid rgba(255,122,61,.25);margin-bottom:14px;
-    box-shadow:0 0 16px rgba(255,122,61,.08)}
-  .who-card .ic svg{width:16px;height:16px;stroke:var(--xmr);fill:none;stroke-width:1.7;
-    stroke-linecap:round;stroke-linejoin:round}
-  .who-card h3{font-family:'Plus Jakarta Sans';font-weight:600;font-size:17px;letter-spacing:-.01em}
-  .who-card p{color:var(--muted);font-size:14px;margin-top:9px;line-height:1.55}
-  .who-builder{margin-top:14px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;
-    padding:20px 24px;border-radius:16px;border:1px solid var(--line-2);
-    background:linear-gradient(135deg,rgba(30,58,110,.08),rgba(255,255,255,.01))}
-  .who-builder .wb-tag{font-family:'JetBrains Mono';font-size:12px;color:var(--teal);
-    border:1px solid rgba(74,214,200,.3);border-radius:6px;padding:4px 10px;
-    background:rgba(74,214,200,.08)}
-  .who-builder .wb-txt{font-size:14px;color:var(--muted);line-height:1.5}
-  .who-builder .wb-txt b{color:var(--fg);font-weight:500}
+  .who-card .avatar{width:96px;height:96px;border-radius:50%;object-fit:cover;
+    margin-bottom:18px;border:2px solid var(--line);
+    box-shadow:0 0 24px rgba(255,122,61,.1)}
+  .who-card h3{font-family:'Plus Jakarta Sans';font-weight:600;font-size:19px;letter-spacing:-.01em}
+  .who-card .role{font-family:'JetBrains Mono';font-size:12px;color:var(--xmr);
+    text-transform:uppercase;letter-spacing:.08em;margin-top:6px}
+  .who-card .socials{display:flex;gap:12px;margin-top:16px}
+  .who-card .socials a{display:flex;align-items:center;justify-content:center;
+    width:36px;height:36px;border-radius:10px;border:1px solid var(--line-2);
+    background:rgba(255,255,255,.03);transition:all .2s;color:var(--muted)}
+  .who-card .socials a:hover{border-color:rgba(62,252,224,.4);color:var(--teal);
+    box-shadow:0 0 16px rgba(62,252,224,.1)}
+  .who-card .socials svg{width:18px;height:18px;fill:currentColor}
+  .tg-join{margin-top:28px}
 
-  /* SPEC FEATURES */
-  .spec-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:44px}
-  @media(max-width:820px){.spec-grid{grid-template-columns:1fr}}
-  .spec{background:linear-gradient(135deg,rgba(255,255,255,.02),rgba(255,255,255,.005));
-    border:1px solid var(--line-2);border-radius:14px;padding:22px 24px;
+  /* SEQUENCE DIAGRAMS */
+  .seq-tabs{display:flex;gap:8px;margin-top:44px;overflow-x:auto;scrollbar-width:thin;
+    scrollbar-color:var(--line) transparent;padding-bottom:6px}
+  .seq-tabs::-webkit-scrollbar{height:4px}
+  .seq-tabs::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px}
+  .seq-tab{flex:0 0 auto;font-family:'Plus Jakarta Sans';font-weight:600;font-size:13px;
+    color:var(--muted);background:rgba(255,255,255,.03);border:1px solid var(--line-2);
+    border-radius:10px;padding:10px 16px;cursor:pointer;transition:all .2s;white-space:nowrap}
+  .seq-tab:hover{color:var(--fg);border-color:rgba(74,214,200,.3)}
+  .seq-tab.active{color:var(--teal);border-color:rgba(74,214,200,.4);
+    background:rgba(74,214,200,.08);box-shadow:0 0 24px rgba(74,214,200,.08)}
+  .seq-panels{margin-top:20px;position:relative}
+  .seq-panel{display:none;animation:seqFade .3s ease}
+  .seq-panel.active{display:block}
+  @keyframes seqFade{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+  .seq-card{background:linear-gradient(135deg,rgba(255,255,255,.02),rgba(255,255,255,.005));
+    border:1px solid var(--line-2);border-radius:14px;padding:28px 24px;
     transition:border-color .2s,box-shadow .2s}
-  .spec:hover{border-color:rgba(74,214,200,.3);box-shadow:0 0 32px rgba(74,214,200,.06)}
-  .spec .sh{display:flex;align-items:center;gap:10px;margin-bottom:10px}
-  .spec .sh .ic{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;
-    background:rgba(74,214,200,.1);border:1px solid rgba(74,214,200,.2);flex-shrink:0}
-  .spec .sh .ic svg{width:16px;height:16px;stroke:var(--teal);fill:none;stroke-width:1.7;
-    stroke-linecap:round;stroke-linejoin:round}
-  .spec .sh h3{font-family:'Plus Jakarta Sans';font-weight:600;font-size:16px;letter-spacing:-.01em}
-  .spec p{color:var(--muted);font-size:13.5px;line-height:1.55}
-  .spec .tags{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-  .spec .tag{font-family:'JetBrains Mono';font-size:11px;color:var(--muted);
+  .seq-card:hover{border-color:rgba(74,214,200,.2);box-shadow:0 0 32px rgba(74,214,200,.04)}
+  .seq-diagram{width:100%;overflow-x:auto;margin-bottom:16px;scrollbar-width:thin;
+    scrollbar-color:var(--line) transparent}
+  .seq-diagram::-webkit-scrollbar{height:4px}
+  .seq-diagram::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px}
+  .seq-diagram svg{width:100%;min-width:520px;height:auto;display:block}
+  .seq-desc{color:var(--muted);font-size:14px;line-height:1.6;margin-bottom:14px}
+  .seq-tags{display:flex;gap:8px;flex-wrap:wrap}
+  .seq-tag{font-family:'JetBrains Mono';font-size:11px;color:var(--muted);
     border:1px solid var(--line);border-radius:5px;padding:3px 8px;background:rgba(255,255,255,.03)}
 
   /* STEPS */
@@ -292,6 +303,46 @@
   .tl-feat .fh{font-family:'Plus Jakarta Sans';font-weight:700;font-size:14px;color:var(--teal);
     margin-bottom:4px}
   .tl-feat .fb{font-size:13px;color:var(--muted);line-height:1.5}
+
+  /* BUBBLE CHART */
+  .bc-wrap{position:relative;margin:48px auto 0;max-width:560px;aspect-ratio:1/1}
+  .bc-lines{position:absolute;inset:0;width:100%;height:100%;z-index:1;pointer-events:none}
+  .bc-lines line{stroke:rgba(255,255,255,.1);stroke-width:.4;stroke-dasharray:2 2;
+    transition:stroke .3s,stroke-width .3s}
+  .bc-lines line.on{stroke:rgba(62,252,224,.35);stroke-width:.6}
+  .bc-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:104px;height:104px;border-radius:50%;z-index:5;display:grid;place-items:center;
+    background:radial-gradient(circle,rgba(22,22,33,.95),rgba(22,22,33,.6));
+    border:2px solid rgba(62,252,224,.3);
+    box-shadow:0 0 40px rgba(62,252,224,.15),0 0 80px rgba(255,122,61,.06)}
+  .bc-center img{width:56px;height:56px;border-radius:12px}
+  .bc-center .bc-lbl{position:absolute;bottom:-22px;left:50%;transform:translateX(-50%);
+    font-family:'Plus Jakarta Sans';font-weight:700;font-size:13px;color:var(--teal);white-space:nowrap}
+  .bub{position:absolute;border-radius:50%;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+    padding:10px;background:linear-gradient(135deg,rgba(255,255,255,.04),rgba(255,255,255,.01));
+    border:1px solid var(--line-2);backdrop-filter:blur(8px);z-index:3}
+  .bub .b-tag{font-family:'JetBrains Mono';font-size:9px;text-transform:uppercase;letter-spacing:.08em;opacity:.7;margin-bottom:3px}
+  .bub .b-title{font-family:'Plus Jakarta Sans';font-weight:600;font-size:13px;letter-spacing:-.01em;line-height:1.2}
+  .bub .b-sub{font-size:10.5px;color:var(--muted);margin-top:3px;line-height:1.3}
+  .bub.xmr .b-tag{color:var(--xmr)}.bub.teal .b-tag{color:var(--teal)}
+  .bub.green .b-tag{color:var(--green)}.bub.amber .b-tag{color:var(--amber)}
+  .bub.xmr.active{border-color:rgba(255,122,61,.5);box-shadow:0 0 40px rgba(255,122,61,.18)}
+  .bub.green.active{border-color:rgba(74,240,170,.5);box-shadow:0 0 40px rgba(74,240,170,.18)}
+  .bub.amber.active{border-color:rgba(255,217,94,.5);box-shadow:0 0 40px rgba(255,217,94,.18)}
+  .b-trade{top:2%;left:2%;width:130px;height:130px}
+  .b-earn{top:2%;right:2%;width:130px;height:130px}
+  .b-build{bottom:2%;right:2%;width:130px;height:130px}
+  .b-spend{bottom:2%;left:2%;width:130px;height:130px}
+  .bp-panels{display:none}
+  @media(max-width:680px){
+    .bc-wrap{aspect-ratio:auto;display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+    .bc-lines{display:none}
+    .bc-center{position:relative;top:auto;left:auto;transform:none;grid-column:1/-1;margin:0 auto 8px}
+    .bub{position:relative;top:auto;left:auto;right:auto;bottom:auto;transform:none;margin:0;
+      width:100%!important;height:auto!important;min-height:110px;border-radius:16px}
+    .bub:hover{transform:translateY(-3px)}.bub.active{transform:translateY(-2px)}
+  }
 </style>
 </head>
 <body>
@@ -300,13 +351,12 @@
   <div class="nav-in">
     <a class="brand" href="#"><img src="./wrapsynth-symbol.png" alt="Wrapsynth" style="width:22px;height:22px;border-radius:6px">Wrapsynth</a>
     <nav class="nav-links">
-      <a href="#who">Audience</a>
-      <a href="#features">Features</a>
+      <a href="#who">Meet</a>
       <a href="#what">Metrics</a>
       <a href="#when">History</a>
-      <a href="#why">Benefits</a>
-      <a href="#how">Process</a>
-      <a href="https://github.com/madschristensen99/wrapsynth" target="_blank">GitHub</a>
+      <a href="#where">Smart Contracts</a>
+      <a href="#advantages">Advantages</a>
+      <a href="#features">Features</a>
       <a class="nav-cta" href="app.html">Launch app →</a>
     </nav>
   </div>
@@ -316,15 +366,14 @@
   <canvas id="gl"></canvas>
   <div class="hero-scrim"></div>
   <div class="hero-in">
-    <span class="eyebrow rv r1"><span class="dot"></span>Live on Gnosis mainnet</span>
-    <h1 class="rv r2">Bring <span class="o">Monero</span> to <span class="t">DeFi</span> with atomic liquidity.</h1>
-    <p class="lede rv r3">Trustless, permissionless wrapped Monero. Exchange XMR for <b>wsXMR</b>
+    <h1 class="rv r1">Bring <span class="o">Monero</span> to <span class="t">DeFi</span> with atomic liquidity.</h1>
+    <p class="lede rv r2">Trustless, permissionless wrapped Monero. Exchange XMR for <b>wsXMR</b>
       backed by over-200% collateral through <b>atomic mints and burns</b> — no custodian, no bridge multisig to trust.</p>
-    <div class="hero-ctas rv r4">
+    <div class="hero-ctas rv r3">
       <a class="btn btn-primary" href="app.html">Launch app →</a>
-      <a class="btn btn-ghost" href="#how">How it works</a>
+      <a class="btn btn-ghost" href="#features">How it works</a>
     </div>
-    <div class="hero-stats rv r5">
+    <div class="hero-stats rv r4">
       <div class="hs"><div class="n"><span class="o">&gt;200%</span></div><div class="k">Overcollateralized</div></div>
       <div class="hs"><div class="n">24h max</div><div class="k">Atomic swap timeout</div></div>
       <div class="hs">
@@ -342,36 +391,44 @@
   </div>
 </section>
 
-<!-- WHO -->
+<!-- MEET -->
 <section id="who" class="sec-line">
   <div class="wrap sec-pad">
-    <span class="eyebrow-sm">Who</span>
-    <h2 class="sec-h">Who uses Wrapsynth?</h2>
-    <p class="sec-sub">Swappers, liquidity providers, and merchants — all trustless, all peer-to-peer.</p>
+    <span class="eyebrow-sm">Meet</span>
+    <h2 class="sec-h">The builders</h2>
+    <p class="sec-sub">Two developers building trustless wrapped Monero — open source, no VC, no token grift. Plus a community of developers, supporters, and contributors.</p>
     <div class="who-grid">
       <div class="who-card">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M7 16V4m0 0L3 8m4-4l4 4"/><path d="M17 8v12m0 0l4-4m-4 4l-4-4"/></svg></div>
-        <h3>Swappers</h3>
-        <p>Swap XMR for wsXMR and back — like an instant exchange, but trustless. No custodian, no KYC, no counterparty risk. Once you hold wsXMR, trade it for any token on any DEX across EVM.</p>
+        <img class="avatar" src="./mads.jpeg" alt="REMSee">
+        <h3>REMSee</h3>
+        <div class="role">Lead Developer</div>
+        <div class="socials">
+          <a href="https://github.com/madschristensen99" target="_blank" rel="noopener" aria-label="GitHub">
+            <svg viewBox="0 0 24 24"><path d="M12 .5C5.37.5 0 5.78 0 12.29c0 5.21 3.44 9.63 8.21 11.19.6.11.82-.25.82-.56 0-.28-.01-1.02-.02-2-3.34.71-4.04-1.58-4.04-1.58-.55-1.37-1.34-1.74-1.34-1.74-1.09-.73.08-.72.08-.72 1.21.08 1.85 1.22 1.85 1.22 1.07 1.8 2.81 1.28 3.5.98.11-.76.42-1.28.76-1.57-2.67-.3-5.47-1.31-5.47-5.84 0-1.29.47-2.35 1.23-3.18-.12-.3-.53-1.52.12-3.16 0 0 1-.32 3.3 1.21a11.6 11.6 0 0 1 6 0c2.3-1.53 3.3-1.21 3.3-1.21.65 1.64.24 2.86.12 3.16.77.83 1.23 1.89 1.23 3.18 0 4.54-2.81 5.54-5.49 5.83.43.36.81 1.08.81 2.18 0 1.58-.01 2.85-.01 3.24 0 .31.22.68.83.56A12.02 12.02 0 0 0 24 12.29C24 5.78 18.63.5 12 .5z"/></svg>
+          </a>
+          <a href="https://x.com/fungerbilXMR" target="_blank" rel="noopener" aria-label="Twitter">
+            <svg viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+          </a>
+        </div>
       </div>
       <div class="who-card">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
-        <h3>Liquidity providers</h3>
-        <p>Post sDAI as collateral in a vault, earn mint fees and burn rewards. You never take custody of XMR — the atomic swap protocol handles exchange. Your collateral earns LP fees while backing wsXMR.</p>
-      </div>
-      <div class="who-card">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg></div>
-        <h3>Merchants</h3>
-        <p>Accept XMR payments and settle in wsXMR or stablecoins on EVM rails. Programmable, composable, and auditable — without exposing your customers to custodial risk or CEX dependency.</p>
+        <img class="avatar" src="./taproot_400x400.jpg" alt="Taproot">
+        <h3>Taproot</h3>
+        <div class="role">Protocol Engineer</div>
+        <div class="socials">
+          <a href="https://github.com/kkoshiya" target="_blank" rel="noopener" aria-label="GitHub">
+            <svg viewBox="0 0 24 24"><path d="M12 .5C5.37.5 0 5.78 0 12.29c0 5.21 3.44 9.63 8.21 11.19.6.11.82-.25.82-.56 0-.28-.01-1.02-.02-2-3.34.71-4.04-1.58-4.04-1.58-.55-1.37-1.34-1.74-1.34-1.74-1.09-.73.08-.72.08-.72 1.21.08 1.85 1.22 1.85 1.22 1.07 1.8 2.81 1.28 3.5.98.11-.76.42-1.28.76-1.57-2.67-.3-5.47-1.31-5.47-5.84 0-1.29.47-2.35 1.23-3.18-.12-.3-.53-1.52.12-3.16 0 0 1-.32 3.3 1.21a11.6 11.6 0 0 1 6 0c2.3-1.53 3.3-1.21 3.3-1.21.65 1.64.24 2.86.12 3.16.77.83 1.23 1.89 1.23 3.18 0 4.54-2.81 5.54-5.49 5.83.43.36.81 1.08.81 2.18 0 1.58-.01 2.85-.01 3.24 0 .31.22.68.83.56A12.02 12.02 0 0 0 24 12.29C24 5.78 18.63.5 12 .5z"/></svg>
+          </a>
+          <a href="https://x.com/kyle_corsola" target="_blank" rel="noopener" aria-label="Twitter">
+            <svg viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+          </a>
+        </div>
       </div>
     </div>
-    <div class="who-builder">
-      <span class="wb-tag">MIT open source licence</span>
-      <span class="wb-tag">No VC</span>
-      <span class="wb-tag">No token grift</span>
-      <span class="wb-tag">No protocol fees</span>
-      <div class="wb-txt"><b>Built by a solo developer</b> — no team, no treasury, no governance token to dump. The code is on GitHub, the contracts are verified on Gnosisscan, and the protocol runs on its own.</div>
-    </div>
+    <a class="btn btn-ghost tg-join" href="https://t.me/fungerbilswap" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.531 6.998-3.02 3.332-1.387 4.025-1.627 4.476-1.635z"/></svg>
+      Join our Telegram
+    </a>
   </div>
 </section>
 
@@ -379,7 +436,7 @@
 <section id="what" class="sec-line">
   <div class="wrap sec-pad">
     <span class="eyebrow-sm">Metrics</span>
-    <h2 class="sec-h">Metrics</h2>
+    <h2 class="sec-h">On-chain activity</h2>
     <p class="sec-sub">Wrapsynth is a tokenization ferry — it moves XMR into EVM without custody. Atomic swaps, overcollateralized vaults, no multisig. Live on Gnosis Chain mainnet.</p>
     <div class="metrics">
       <div class="met"><div class="n tl" id="stat-supply">--</div><div class="k">wsXMR supply</div><div class="s">Circulating</div></div>
@@ -390,52 +447,11 @@
   </div>
 </section>
 
-<!-- FEATURES: PROTOCOL MECHANICS -->
-<section id="features" class="sec-line">
-  <div class="wrap sec-pad">
-    <span class="eyebrow-sm">Features</span>
-    <h2 class="sec-h">Protocol mechanics</h2>
-    <p class="sec-sub">The moving parts that make Wrapsynth work — configurable, on-chain, verifiable.</p>
-    <div class="spec-grid">
-      <div class="spec">
-        <div class="sh"><div class="ic"><svg viewBox="0 0 24 24"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div><h3>Mint fees & burn rewards</h3></div>
-        <p>LPs charge a configurable mint fee in basis points. Burners receive a burn reward, also in bps, incentivizing the burn flow that releases XMR back to users. Both are set per-vault and visible on-chain.</p>
-        <div class="tags"><span class="tag">Configurable bps</span><span class="tag">Per-vault</span><span class="tag">On-chain</span></div>
-      </div>
-      <div class="spec">
-        <div class="sh"><div class="ic"><svg viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/></svg></div><h3>Yield war chest & buy-and-burn</h3></div>
-        <p>Excess sDAI yield from vaults accrues in an on-chain war chest. When XMR dips below its EMA, anyone can trigger a buy-and-burn — the chest redeems sDAI, buys wsXMR on Uniswap V3, and burns it. This reduces outstanding debt and tightens the collateral ratio for all holders.</p>
-        <div class="tags"><span class="tag">sDAI yield</span><span class="tag">Uniswap V3</span><span class="tag">Dip-triggered</span><span class="tag">Keeper reward</span></div>
-      </div>
-      <div class="spec">
-        <div class="sh"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="9" cy="7" r="4"/><circle cx="17" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><path d="M17 21v-2a4 4 0 0 0-3-3.87"/></svg></div><h3>CDP co-LP system</h3></div>
-        <p>Vaults can accept co-liquidity providers who deposit sDAI alongside the primary LP. Co-LPs share in fees proportionally, with a configurable range (maxCoLPRangeBps) capping their share of the vault.</p>
-        <div class="tags"><span class="tag">Co-LP deposits</span><span class="tag">Proportional fees</span><span class="tag">Range-limited</span></div>
-      </div>
-      <div class="spec">
-        <div class="sh"><div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg></div><h3>Overcollateralized CDP</h3></div>
-        <p>Every wsXMR is backed by >200% collateral at mint time. A 120% liquidation threshold and 10% liquidator bonus keep the system solvent. Real-time price feeds from Pyth and RedStone trigger automated liquidation.</p>
-        <div class="tags"><span class="tag">>200% ratio</span><span class="tag">120% threshold</span><span class="tag">10% bonus</span></div>
-      </div>
-      <div class="spec">
-        <div class="sh"><div class="ic"><svg viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div><h3>Atomic swap escrow</h3></div>
-        <p>XMR is held in a 2-of-2 Monero multisig until the swap completes or times out (24h max). No party has unilateral custody. The secret-reveal mechanism ensures atomicity — either both sides settle or neither does.</p>
-        <div class="tags"><span class="tag">2-of-2 multisig</span><span class="tag">24h timeout</span><span class="tag">No custodian</span></div>
-      </div>
-      <div class="spec">
-        <div class="sh"><div class="ic"><svg viewBox="0 0 24 24"><path d="M16 18 22 12 16 6"/><path d="M8 6 2 12 8 18"/></svg></div><h3>On-chain Ed25519 verification</h3></div>
-        <p>Secret commitments are verified on-chain using Ed25519 operations — the same curve Monero uses. The contract checks that the revealed secret matches the commitment before minting or releasing funds. No off-chain oracle needed.</p>
-        <div class="tags"><span class="tag">Ed25519</span><span class="tag">Monero-compatible</span><span class="tag">No oracle</span></div>
-      </div>
-    </div>
-  </div>
-</section>
-
 <!-- WHEN: TIMELINE / HISTORY -->
 <section id="when" class="sec-line">
   <div class="wrap sec-pad">
-    <span class="eyebrow-sm">When</span>
-    <h2 class="sec-h">How Wrapsynth came to be</h2>
+    <span class="eyebrow-sm">History</span>
+    <h2 class="sec-h">Wrapsynth's place in history</h2>
     <p class="sec-sub">Click a point to explore.</p>
     <div class="tl-h">
       <div class="tl-rail">
@@ -504,7 +520,7 @@
         </div></div>
         <div class="tl-panel resolution" id="tlp-9"><div class="tl-panel-card">
           <div class="tl-year">Today</div>
-          <div class="tl-title">No exchange can delist what doesn't need an exchange</div>
+          <div class="tl-title">Monero, compatible with decentralized exchanges</div>
           <div class="tl-body">Wrapsynth brings Monero to DeFi through <b>trustless atomic swaps</b> — no custodian, no multisig, no centralized listing to revoke. Monero's access to DeFi is now <b>permanent</b>.</div>
         </div></div>
       </div>
@@ -515,7 +531,7 @@
 <!-- WHERE: CONTRACTS -->
 <section id="where" class="sec-line">
   <div class="wrap sec-pad">
-    <span class="eyebrow-sm">Where</span>
+    <span class="eyebrow-sm">Smart Contracts</span>
     <h2 class="sec-h">Deployed on Gnosis</h2>
     <p class="sec-sub">Verified on Gnosisscan · Chain ID 100. Gnosis Chain — low fees, Ethereum-aligned, secure.</p>
     <div class="ctr-grid">
@@ -539,85 +555,69 @@
   </div>
 </section>
 
-<!-- WHY: VALUE PROPS -->
-<section id="why" class="sec-line">
+<!-- ADVANTAGES: BUBBLE CHART -->
+<section id="advantages" class="sec-line">
   <div class="wrap sec-pad">
-    <span class="eyebrow-sm">Why</span>
-    <h2 class="sec-h">Why Wrapsynth?</h2>
+    <span class="eyebrow-sm">Advantages</span>
+    <h2 class="sec-h">Built for composability</h2>
     <p class="sec-sub">Monero is the best money in crypto and the most isolated. No lending, no liquidity, no composability — just an asset you have to sell to ever use. Wrapsynth ends that, without asking you to trust a bridge operator with your coins.</p>
-    <div class="feat-grid">
-      <div class="feat">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
-        <h3>Put your XMR to work</h3>
-        <p>Monero has no native DeFi capabilities. wsXMR does. Earn yield, post collateral, or provide liquidity while keeping full exposure to the asset you actually want to hold.</p>
+    <p style="margin-top:16px;font-size:15px;color:var(--fg);font-weight:500">wsXMR is private money made composable. Everything below inherits both properties.</p>
+    <div class="bc-wrap">
+      <svg class="bc-lines" viewBox="0 0 100 100" preserveAspectRatio="none">
+        <line id="bl-0" x1="50" y1="50" x2="14" y2="14"/>
+        <line id="bl-1" x1="50" y1="50" x2="86" y2="14"/>
+        <line id="bl-2" x1="50" y1="50" x2="86" y2="86"/>
+        <line id="bl-3" x1="50" y1="50" x2="14" y2="86"/>
+      </svg>
+      <div class="bc-center">
+        <img src="./wrapsynth-symbol.png" alt="Wrapsynth">
+        <span class="bc-lbl">wsXMR</span>
       </div>
-      <div class="feat tl">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg></div>
-        <h3>Outlast the delistings</h3>
-        <p>As exchanges drop Monero jurisdiction by jurisdiction, holders lose their on-ramps. Wrapsynth is a path into EVM liquidity that doesn't depend on any CEX choosing to list you.</p>
+      <div class="bub xmr b-trade">
+        <span class="b-tag">Trade</span>
+        <span class="b-title">DEX liquidity & perps</span>
+        <span class="b-sub">Swap, hedge, settle</span>
       </div>
-      <div class="feat">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></div>
-        <h3>Private in, composable out</h3>
-        <p>Hold a private store of value, and touch public rails only when you choose to. Your net worth isn't broadcast by default.</p>
+      <div class="bub teal b-earn">
+        <span class="b-tag">Earn</span>
+        <span class="b-title">Yield & collateral</span>
+        <span class="b-sub">Put your XMR to work</span>
       </div>
-      <div class="feat tl">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg></div>
-        <h3>Peer-to-peer atomic exchanges</h3>
-        <p>Mints and burns settle directly between you and an LP — the secret commitment is verified on-chain. Monero is held in a 2-of-2 multisig until the exchange completes, so no single party ever has unilateral custody.</p>
+      <div class="bub green b-spend">
+        <span class="b-tag">Spend</span>
+        <span class="b-title">Payroll & commerce</span>
+        <span class="b-sub">Private payments, composable rails</span>
       </div>
-      <div class="feat">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg></div>
-        <h3>Always redeemable</h3>
-        <p>Every wsXMR is backed by 150% collateral in LP vaults, with a 120% liquidation threshold and a 10% liquidator bonus keeping the system solvent against real-time price feeds. Your claim is always good.</p>
-      </div>
-      <div class="feat tl">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div>
-        <h3>Live on mainnet</h3>
-        <p>Real XMR has minted and burned wsXMR on Gnosis Chain mainnet — a full cycle, live. Mints only clear when the on-chain cryptographic check passes, and the collateral ratio is a value you read straight from the contract.</p>
+      <div class="bub amber b-build">
+        <span class="b-tag">Build</span>
+        <span class="b-title">Cross-chain & agents</span>
+        <span class="b-sub">Settlement layer for private money</span>
       </div>
     </div>
   </div>
 </section>
 
-<!-- HOW IT WORKS -->
-<section id="how" class="sec-line">
+<!-- FEATURES: PROTOCOL MECHANICS -->
+<section id="features" class="sec-line">
   <div class="wrap sec-pad">
-    <span class="eyebrow-sm">How</span>
-    <h2 class="sec-h">How it works</h2>
-    <p class="sec-sub">Four steps to ferry your Monero to DeFi — trustless on both sides of the swap.</p>
-
-    <h3 style="font-family:'Plus Jakarta Sans';font-weight:600;font-size:18px;margin:36px 0 0;color:var(--teal)">Mint wsXMR</h3>
-    <div class="steps">
-      <div class="stp"><div class="num">1</div><h3>Initiate swap</h3>
-        <p>You create a mint request with a secret commitment and send XMR to the LP's Monero address.</p></div>
-      <div class="stp"><div class="num">2</div><h3>LP confirms receipt</h3>
-        <p>The LP verifies the XMR off-chain and marks the mint request READY on-chain.</p></div>
-      <div class="stp"><div class="num">3</div><h3>Reveal secret</h3>
-        <p>You reveal your secret to claim wsXMR — verified on-chain with Ed25519 operations (Monero-compatible).</p></div>
-      <div class="stp"><div class="num">4</div><h3>Receive wsXMR</h3>
-        <p>The contract mints wsXMR to your wallet, backed by real XMR and guaranteed by the LP's collateral in their vault.</p></div>
+    <span class="eyebrow-sm">Features</span>
+    <h2 class="sec-h">Protocol mechanics</h2>
+    <p class="sec-sub">The moving parts that make Wrapsynth work — configurable, on-chain, verifiable.</p>
+    <div class="seq-tabs">
+      <button class="seq-tab active" data-seq="0">Mint (XMR → wsXMR)</button>
+      <button class="seq-tab" data-seq="1">Burn (wsXMR → XMR)</button>
+      <button class="seq-tab" data-seq="2">War chest buy-and-burn</button>
+      <button class="seq-tab" data-seq="3">Co-LP system</button>
+      <button class="seq-tab" data-seq="4">Liquidation</button>
     </div>
-
-    <h3 style="font-family:'Plus Jakarta Sans';font-weight:600;font-size:18px;margin:48px 0 0;color:var(--xmr)">Burn wsXMR</h3>
-    <div class="steps">
-      <div class="stp"><div class="num">1</div><h3>Initiate burn</h3>
-        <p>You create a burn request with a secret commitment and send wsXMR to the contract.</p></div>
-      <div class="stp"><div class="num">2</div><h3>LP locks XMR</h3>
-        <p>The LP locks your XMR on Monero with a secret hash and proposes the lock on-chain.</p></div>
-      <div class="stp"><div class="num">3</div><h3>Confirm receipt</h3>
-        <p>You verify the Monero transaction and confirm the lock on-chain, binding both parties.</p></div>
-      <div class="stp"><div class="num">4</div><h3>Receive XMR</h3>
-        <p>The LP reveals the secret to finalize the burn. Your XMR unlocks and their collateral is released.</p></div>
-    </div>
+    <div class="seq-panels" id="seq-panels"></div>
   </div>
 </section>
 
 <!-- FINAL CTA -->
 <section class="sec-line">
   <div class="wrap final">
-    <div class="chk">✓ Gnosis Chain mainnet</div>
-    <h2>Ready to swap?</h2>
+    <h2>Fungibility is fundamental</h2>
     <p>Join the future of cross-chain privacy, backed by overcollateralized vaults.</p>
     <div class="hero-ctas">
       <a class="btn btn-primary" href="app.html">Launch app →</a>
@@ -831,6 +831,216 @@ function copyAddr(btn){
   } catch(err){
     console.warn('Failed to fetch protocol stats:',err);
   }
+})();
+
+/* Sequence diagrams: tab switching + SVG render */
+(function(){
+  var diagrams=[
+    {
+      desc:"User swaps XMR for wsXMR through an atomic swap. The on-chain collateralization requirement is 150%, but LPs effectively post >200% because they hold XMR alongside their sDAI vault collateral. The LP provides Ed25519 public keys for a 2-of-2 PTLC, and claims XMR by revealing the secret. The contract verifies the secret on-chain with Ed25519 \u2014 the same curve Monero uses \u2014 then mints wsXMR minus a configurable fee to the user and the fee to the LP. The user posts a griefing deposit in ETH; the LP posts a bond when marking the mint ready.",
+      tags:[">150% on-chain CR","2-of-2 PTLC","Ed25519 verify","Griefing deposit","LP bond","~1h timeout"],
+      actors:[
+        {name:"User",color:"xmr"},
+        {name:"Monero",color:"gray"},
+        {name:"VaultManager",color:"teal"},
+        {name:"LP",color:"xmr"},
+        {name:"Oracle",color:"gray"}
+      ],
+      messages:[
+        {from:0,to:2,label:"initiateMint(amt, commitment, pubkey) + ETH deposit",type:"call"},
+        {from:2,to:4,label:"read XMR price (storage)",type:"call"},
+        {from:4,to:2,label:"XMR price",type:"return"},
+        {from:2,to:2,label:"check CR \u2265 150%, reserve pendingDebt",type:"note"},
+        {from:3,to:2,label:"provideLPKey(spendKey, viewKey)",type:"call"},
+        {from:2,to:2,label:"status: KEY_PROVIDED",type:"note"},
+        {from:0,to:1,label:"lock XMR (PTLC 2-of-2)",type:"call"},
+        {from:3,to:1,label:"verify XMR locked",type:"call"},
+        {from:3,to:2,label:"setMintReady(commitment) + LP bond",type:"call"},
+        {from:2,to:2,label:"re-check CR, status: READY",type:"note"},
+        {from:3,to:1,label:"claim XMR (reveals secret)",type:"call"},
+        {from:0,to:2,label:"finalizeMint(secret)",type:"call"},
+        {from:2,to:2,label:"Ed25519: verify secret\u00b7G = commitment",type:"note"},
+        {from:2,to:0,label:"mint wsXMR (amt \u2212 fee)",type:"return"},
+        {from:2,to:3,label:"mint fee wsXMR to LP",type:"return"},
+        {from:2,to:0,label:"refund griefing deposit (pendingReturns)",type:"effect"},
+        {from:2,to:3,label:"refund LP bond (pendingReturns)",type:"effect"}
+      ]
+    },
+    {
+      desc:"User burns wsXMR to receive XMR through the reverse atomic swap. The contract locks 110% collateral over par and burns wsXMR. The LP locks XMR on Monero with a secret hash; the user confirms the lock on-chain, binding both parties. The user claims XMR (revealing the secret), the LP finalizes with the secret, and locked collateral is unlocked back in the vault while the burn reward is queued to the user in sDAI. If the LP fails to reveal, the user can claim slashed collateral (par + reward).",
+      tags:["110% collateral lock","2-of-2 PTLC","Ed25519 verify","Burn reward","Slashing"],
+      actors:[
+        {name:"User",color:"xmr"},
+        {name:"Monero",color:"gray"},
+        {name:"VaultManager",color:"teal"},
+        {name:"LP",color:"xmr"}
+      ],
+      messages:[
+        {from:0,to:2,label:"requestBurn(amt, vault, commitment, keys)",type:"call"},
+        {from:2,to:2,label:"lock 110% collateral, burn wsXMR, reduce debt",type:"note"},
+        {from:3,to:1,label:"lock XMR (PTLC with secret\u00b7G hash)",type:"call"},
+        {from:3,to:2,label:"proposeHash(secretHash, LP keys)",type:"call"},
+        {from:0,to:1,label:"verify XMR lock off-chain",type:"call"},
+        {from:0,to:2,label:"confirmMoneroLock()",type:"call"},
+        {from:2,to:2,label:"start slashing timer (COMMITTED)",type:"note"},
+        {from:0,to:1,label:"claim XMR (reveals secret)",type:"call"},
+        {from:3,to:2,label:"finalizeBurn(secret)",type:"call"},
+        {from:2,to:2,label:"Ed25519: verify secret\u00b7G = secretHash",type:"note"},
+        {from:2,to:2,label:"unlock collateral in vault, deduct reward",type:"note"},
+        {from:2,to:3,label:"collateral stays in vault",type:"effect"},
+        {from:2,to:0,label:"burn reward queued (sDAI, pendingReturns)",type:"effect"}
+      ]
+    },
+    {
+      desc:"Excess sDAI yield from vaults accrues in an on-chain war chest. When XMR dips below its EMA, anyone can trigger a buy-and-burn \u2014 the chest redeems sDAI to xDAI, swaps xDAI for wsXMR on Uniswap V3, and burns it. This reduces outstanding debt and tightens the collateral ratio for all holders. The keeper earns a 2% reward (queued in sDAI shares) for calling the function. A 24-hour cooldown prevents over-triggering.",
+      tags:["sDAI yield","Redeem \u2192 xDAI \u2192 wsXMR","Dip-triggered","2% keeper reward","24h cooldown"],
+      actors:[
+        {name:"Keeper",color:"xmr"},
+        {name:"VaultManager",color:"teal"},
+        {name:"Oracle",color:"gray"},
+        {name:"Uniswap V3",color:"gray"}
+      ],
+      messages:[
+        {from:1,to:1,label:"yield accrues in war chest",type:"note"},
+        {from:0,to:1,label:"triggerBuyAndBurn(poolFeeTier)",type:"call"},
+        {from:1,to:2,label:"read XMR spot & EMA (storage)",type:"call"},
+        {from:2,to:1,label:"spot + EMA prices",type:"return"},
+        {from:1,to:1,label:"verify spot \u2264 EMA \u00d7 99%",type:"note"},
+        {from:1,to:1,label:"redeem sDAI \u2192 xDAI (20% of chest)",type:"note"},
+        {from:1,to:3,label:"swap xDAI \u2192 wsXMR",type:"call"},
+        {from:3,to:1,label:"wsXMR received",type:"return"},
+        {from:1,to:1,label:"burn wsXMR, rescale debt index",type:"note"},
+        {from:1,to:0,label:"keeper reward queued (sDAI shares)",type:"effect"}
+      ]
+    },
+    {
+      desc:"Co-LPs provide wsXMR (not sDAI) that is paired with the LP vault's idle sDAI collateral into a Uniswap V3 concentrated liquidity position. The LP sets a max range (maxCoLPRangeBps) controlling how wide the position can be. Trading fees from the Uniswap position accrue separately: sDAI fees go to the LP vault, wsXMR fees go to the Co-LP. Either party can unwind the position; a keeper can rebalance when it goes out of range. Mint fees are separate and go entirely to the primary LP.",
+      tags:["Co-LP provides wsXMR","Uniswap V3 concentrated LP","Range-limited","Separate fee streams"],
+      actors:[
+        {name:"Primary LP",color:"xmr"},
+        {name:"VaultManager",color:"teal"},
+        {name:"Co-LP",color:"xmr"},
+        {name:"Uniswap V3",color:"gray"}
+      ],
+      messages:[
+        {from:0,to:1,label:"createVault() + depositCollateral()",type:"call"},
+        {from:0,to:1,label:"setMaxCoLPRange(maxBps)",type:"call"},
+        {from:2,to:1,label:"userOpenCoLP(vault, wsxmrAmt, deadline)",type:"call"},
+        {from:1,to:1,label:"pair vault sDAI + Co-LP wsXMR",type:"note"},
+        {from:1,to:3,label:"mint concentrated position",type:"call"},
+        {from:3,to:1,label:"tokenId, liquidity, amounts",type:"return"},
+        {from:1,to:1,label:"trading fees accrue in position",type:"note"},
+        {from:0,to:1,label:"collectCoLPFees(tokenId)",type:"call"},
+        {from:1,to:3,label:"collect accrued fees",type:"call"},
+        {from:3,to:1,label:"sDAI fees + wsXMR fees",type:"return"},
+        {from:1,to:0,label:"sDAI fees \u2192 vault (pendingReturns)",type:"effect"},
+        {from:1,to:2,label:"wsXMR fees \u2192 Co-LP (pendingReturns)",type:"effect"},
+        {from:2,to:1,label:"unwindCoLP(tokenId) or rebalanceCoLP",type:"call"}
+      ]
+    },
+    {
+      desc:"When a vault's collateral ratio drops below 120%, anyone can liquidate it. The liquidator burns wsXMR from the open market and seizes collateral at a 10% bonus (110% of debt value). In-flight burns are settled first: REQUESTED/PROPOSED burns are force-cancelled (wsXMR re-minted to user), while COMMITTED burns are slash-settled at par value. All co-LP positions are unwound. If the vault has residual bad debt after collateral is exhausted, it is written off to globalBadDebt. The liquidation and mint nonces are incremented, invalidating any pending mint/burn requests.",
+      tags:["CR < 120% trigger","10% liquidation bonus","In-flight burn settlement","Co-LP unwind","Bad debt write-off"],
+      actors:[
+        {name:"Liquidator",color:"xmr"},
+        {name:"VaultManager",color:"teal"},
+        {name:"wsXMR Token",color:"gray"},
+        {name:"sDAI",color:"gray"}
+      ],
+      messages:[
+        {from:0,to:1,label:"liquidate(vault, debtToClear)",type:"call"},
+        {from:1,to:1,label:"sync yield, check CR < 120%",type:"note"},
+        {from:1,to:1,label:"settle in-flight burns (cancel/slash)",type:"note"},
+        {from:1,to:1,label:"unwind all co-LP positions",type:"note"},
+        {from:1,to:1,label:"seize 110% of debt value in sDAI",type:"note"},
+        {from:1,to:2,label:"burn(debtToClear wsXMR)",type:"call"},
+        {from:2,to:1,label:"tokens burned",type:"return"},
+        {from:1,to:3,label:"transfer seized sDAI to liquidator",type:"call"},
+        {from:3,to:1,label:"transfer complete",type:"return"},
+        {from:1,to:1,label:"write off bad debt if collateral exhausted",type:"note"},
+        {from:1,to:1,label:"increment liquidationNonce + mintNonce",type:"note"},
+        {from:1,to:0,label:"VaultLiquidated event",type:"return"}
+      ]
+    }
+  ];
+
+  function cf(c){return c==='xmr'?'#ff7a3d':c==='teal'?'#3efce0':'#a8a8c0'}
+
+  function renderSVG(d,di){
+    var aw=120,ah=34,gap=178,msgH=42,top=56,bot=28,pad=22;
+    var n=d.actors.length;
+    var w=(n-1)*gap+aw+pad*2;
+    var h=top+d.messages.length*msgH+bot;
+    function ax(i){return pad+i*gap+aw/2}
+    function mkId(c){return c==='xmr'?'sx'+di:c==='teal'?'st'+di:'sg'+di}
+
+    var s='<svg viewBox="0 0 '+w+' '+h+'" xmlns="http://www.w3.org/2000/svg" style="font-family:Inter,sans-serif">';
+    s+='<defs>';
+    s+='<marker id="sx'+di+'" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#ff7a3d"/></marker>';
+    s+='<marker id="st'+di+'" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#3efce0"/></marker>';
+    s+='<marker id="sg'+di+'" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#a8a8c0"/></marker>';
+    s+='</defs>';
+
+    d.actors.forEach(function(a,i){
+      var x=ax(i),c=cf(a.color);
+      s+='<rect x="'+(x-aw/2)+'" y="14" width="'+aw+'" height="'+ah+'" rx="7" fill="#161621" stroke="'+c+'" stroke-width="1.5" opacity="0.95"/>';
+      s+='<text x="'+x+'" y="35" text-anchor="middle" fill="'+c+'" font-family="Plus Jakarta Sans" font-weight="600" font-size="12">'+a.name+'</text>';
+      s+='<line x1="'+x+'" y1="'+(14+ah)+'" x2="'+x+'" y2="'+(h-8)+'" stroke="'+c+'" stroke-width="1" stroke-dasharray="2 6" opacity="0.2"/>';
+    });
+
+    d.messages.forEach(function(m,i){
+      var y=top+i*msgH+22;
+      var fx=ax(m.from);
+
+      s+='<text x="'+(pad-6)+'" y="'+(y+3)+'" text-anchor="end" fill="#686880" font-family="JetBrains Mono" font-size="10">'+(i+1)+'</text>';
+
+      if(m.type==='note'){
+        var nw=Math.max(m.label.length*6.2+20,90);
+        var nh=22;
+        var nx=fx+10;
+        var nc=cf(d.actors[m.from].color);
+        s+='<rect x="'+nx+'" y="'+(y-nh/2)+'" width="'+nw+'" height="'+nh+'" rx="5" fill="rgba(255,255,255,0.04)" stroke="'+nc+'" stroke-width="1" opacity="0.5"/>';
+        s+='<text x="'+(nx+nw/2)+'" y="'+(y+4)+'" text-anchor="middle" fill="#a8a8c0" font-size="11">'+m.label+'</text>';
+      } else {
+        var tx=ax(m.to);
+        var ac=d.actors[m.from].color;
+        var c=cf(ac);
+        var mid=mkId(ac);
+        var dashStyle='';
+        if(m.type==='return'){dashStyle=' stroke-dasharray="6 4"'}
+        else if(m.type==='effect'){dashStyle=' stroke-dasharray="2 3"'}
+        s+='<line x1="'+fx+'" y1="'+y+'" x2="'+tx+'" y2="'+y+'" stroke="'+c+'" stroke-width="1.5"'+dashStyle+' marker-end="url(#'+mid+')"/>';
+        var mx=(fx+tx)/2;
+        s+='<text x="'+mx+'" y="'+(y-6)+'" text-anchor="middle" fill="#a8a8c0" font-size="11">'+m.label+'</text>';
+      }
+    });
+
+    s+='</svg>';
+    return s;
+  }
+
+  var container=document.getElementById('seq-panels');
+  if(!container)return;
+  diagrams.forEach(function(d,i){
+    var panel=document.createElement('div');
+    panel.className='seq-panel'+(i===0?' active':'');
+    panel.innerHTML='<div class="seq-card">'
+      +'<div class="seq-diagram">'+renderSVG(d,i)+'</div>'
+      +'<div class="seq-desc">'+d.desc+'</div>'
+      +'<div class="seq-tags">'+d.tags.map(function(t){return '<span class="seq-tag">'+t+'</span>'}).join('')+'</div>'
+      +'</div>';
+    container.appendChild(panel);
+  });
+
+  var tabs=document.querySelectorAll('.seq-tab');
+  var panels=container.querySelectorAll('.seq-panel');
+  tabs.forEach(function(tab){
+    tab.addEventListener('click',function(){
+      var idx=parseInt(tab.dataset.seq);
+      tabs.forEach(function(t,j){t.classList.toggle('active',j===idx)});
+      panels.forEach(function(p,j){p.classList.toggle('active',j===idx)});
+    });
+  });
 })();
 
 /* Timeline: click node to expand panel + auto-advance every 15s */
