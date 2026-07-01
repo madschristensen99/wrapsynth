@@ -36,7 +36,6 @@ import {
     updateBurnProgress,
     completeBurnStep,
     showSuccess,
-    showMintComplete,
     showBurnComplete,
     showError,
     showResumeError,
@@ -579,7 +578,14 @@ function autoResumeSwap(swap) {
             currentMintFlow = new MintFlow();
             setStartMintButtonText('Start New Mint');
             trackMintProgress(currentMintFlow);
-            currentMintFlow.resume(swap).catch(err => {
+            currentMintFlow.resume(swap).then(() => {
+                // Refresh balance and reset UI after successful auto-resume
+                const address = getUserAddress();
+                if (address) {
+                    getWsXmrBalance(address).then(balance => updateBalance(balance)).catch(() => {});
+                }
+                resetMintUI();
+            }).catch(err => {
                 console.error('Auto-resume mint error:', err);
                 const isStuck = (swap.state === 'lp-ready' || swap.state === 'finalize');
                 showResumeError(swap.requestId, err.message || 'Could not resume your mint. ' + (isStuck ? 'Click Dismiss to hide this swap.' : 'Please clear the swap and start fresh.'));
@@ -1457,6 +1463,14 @@ async function handleResumeSwap(specificSwap) {
             showMintTab();
             trackMintProgress(currentMintFlow);
             await currentMintFlow.resume(swap);
+
+            // Refresh balance and reset UI after successful mint resume
+            const address = getUserAddress();
+            if (address) {
+                const balance = await getWsXmrBalance(address);
+                updateBalance(balance);
+            }
+            resetMintUI();
         } else if (swap.type === 'burn') {
             currentBurnFlow = new BurnFlow();
             showBurnTab();
@@ -2352,15 +2366,12 @@ async function handleStartMint() {
             }
         }
 
-        // Success - celebration animation + banner
-        showMintComplete(amount);
-
         // Update balance
         const address = getUserAddress();
         const balance = await getWsXmrBalance(address);
         updateBalance(balance);
         
-        // Reset UI
+        // Reset UI (banner + confetti are already shown by complete())
         resetMintUI();
         
     } catch (error) {

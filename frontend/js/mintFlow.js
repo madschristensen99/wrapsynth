@@ -6,7 +6,7 @@ import { getPhantomAgent } from './phantomAgent.js';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
 import { keccak256, toHex, parseEther } from 'https://esm.sh/viem@2.7.0';
 import { startDeadlineTimer, startStatusPolling, stopTimers } from './mintFlowTimers.js';
-import { showLPVerificationStatus, updateMintProgress, showSuccess, showConfirmModal, showSuccessNotification } from './ui.js?v=2.6';
+import { showLPVerificationStatus, updateMintProgress, showSuccess, showConfirmModal, showSuccessNotification, showMintComplete } from './ui.js?v=2.6';
 
 export class MintFlow {
     constructor() {
@@ -620,7 +620,7 @@ export class MintFlow {
                 if (status === 4) {
                     console.log('Mint was already completed');
                     this.complete();
-                    throw new Error('Mint already completed');
+                    return;
                 }
                 
                 if (status === 3) {
@@ -818,7 +818,8 @@ export class MintFlow {
         saveToHistory(swapData);
         clearActiveSwap();
         this.cleanup();
-        
+
+        showMintComplete(this.xmrAmount);
         console.log('Mint flow completed successfully!');
     }
 
