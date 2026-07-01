@@ -709,7 +709,11 @@ app.listen(PORT, async () => {
   if (moneroWallet.isWalletConfigured()) {
     console.log('[Startup] Ensuring Monero wallet is open...');
     await moneroWallet.ensureWalletOpen();
-    console.log('[Startup] Monero wallet ready');
+    if (moneroWallet.isWalletRpcHealthy()) {
+      console.log('[Startup] Monero wallet ready');
+    } else {
+      console.error('[Startup] Monero wallet RPC unreachable — mint scanning will fail until monero-wallet-rpc is started');
+    }
   }
   await startupRecoverMints();
   await startupResolveStale();
