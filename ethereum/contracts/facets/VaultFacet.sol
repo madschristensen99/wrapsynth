@@ -78,7 +78,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
     
     /// @inheritdoc IVaultFacet
     function createVault() external {
-        if (_vaults[msg.sender].active) revert VaultAlreadyExists();
+        if (_vaults[msg.sender].lpAddress != address(0)) revert VaultAlreadyExists();
         if (vaultList.length >= MAX_VAULT_COUNT) revert MaxVaultsReached();
         
         _vaults[msg.sender] = Vault({
@@ -109,7 +109,12 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
     /// @inheritdoc IVaultFacet
     function deactivateVault() external {
         if (!_vaults[msg.sender].active) revert VaultDoesNotExist();
-        _vaults[msg.sender].active = false;
+        Vault storage vault = _vaults[msg.sender];
+        if (vault.normalizedDebt > 0) revert VaultHasDebt();
+        if (vault.collateralShares > 0) revert VaultHasCollateral();
+        if (vault.lockedCollateral > 0) revert VaultHasLockedCollateral();
+        if (_vaultPositions[msg.sender].length > 0) revert VaultHasPositions();
+        vault.active = false;
     }
     
     // ========== COLLATERAL MANAGEMENT ==========
@@ -179,30 +184,19 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         uint256 availableCollateral = vault.collateralShares - vault.lockedCollateral;
         if (availableCollateral < shares) revert InsufficientCollateral();
         
-        // Check health ratio
-        uint256 newCollateralAmount = vault.collateralShares - shares;
+        // Check health ratio using same valuation as liquidation
         uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
         uint256 totalObligations = actualDebt + vault.pendingDebt;
         
         if (totalObligations > 0) {
-            uint256 availableForDebt = newCollateralAmount > vault.lockedCollateral 
-                ? newCollateralAmount - vault.lockedCollateral 
-                : 0;
-            
-            uint256 ratio;
-            if (vault.deployedSDAIShares > 0) {
-                // Add back deployed shares to available collateral for CR calculation
-                // The deployed sDAI is still vault collateral even if position is out of range
-                uint256 totalAvailableShares = availableForDebt + vault.deployedSDAIShares;
-                ratio = _calculateCollateralRatio(totalAvailableShares, totalObligations);
-            } else {
-                ratio = _calculateCollateralRatio(availableForDebt, totalObligations);
+            vault.collateralShares -= shares;
+            uint256 ratio = _calculateCRWithPositions(msg.sender, totalObligations);
+            if (ratio < COLLATERAL_RATIO) {
+                revert InsufficientCollateral();
             }
-            
-            if (ratio < COLLATERAL_RATIO) revert InsufficientCollateral();
+        } else {
+            vault.collateralShares -= shares;
         }
-        
-        vault.collateralShares -= shares;
         
         uint256 daiReceived = ISavingsDAI(GnosisAddresses.SDAI).redeem(shares, msg.sender, address(this));
         
@@ -386,6 +380,11 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         });
         _vaultPositions[lpVault].push(tokenId);
         _userPositions[msg.sender].push(tokenId);
+
+        // Verify vault remains healthy after co-LP deployment
+        uint256 postDeployDebt = _denormalizeDebt(vault.normalizedDebt);
+        uint256 postDeployRatio = _calculateCRWithPositions(lpVault, postDeployDebt);
+        if (postDeployRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
 
         emit CoLPDeployed(lpVault, msg.sender, tokenId, daiConsumed, wsxmrConsumed, rangeBps);
     }
@@ -650,6 +649,31 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         uint256 collateralPrice = _getCollateralPriceFromStorage();
         return CollateralLogic.calculateRatioFromShares(
             collateralShares,
+            debtAmount,
+            GnosisAddresses.SDAI,
+            collateralPrice,
+            xmrPrice
+        );
+    }
+
+    function _calculateCRWithPositions(address vaultAddr, uint256 debtAmount)
+        internal view returns (uint256)
+    {
+        Vault memory vault = _vaults[vaultAddr];
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
+
+        if (vault.deployedSDAIShares == 0) {
+            return CollateralLogic.calculateRatioFromShares(
+                vault.collateralShares, debtAmount, GnosisAddresses.SDAI, collateralPrice, xmrPrice
+            );
+        }
+
+        (uint256 positionDAI, uint256 positionWsxmr) = _getVaultPositionTotalsAtOracle(vaultAddr, xmrPrice);
+        return CollateralLogic.calculateVaultCRWithDeployment(
+            vault.collateralShares,
+            positionDAI,
+            positionWsxmr,
             debtAmount,
             GnosisAddresses.SDAI,
             collateralPrice,

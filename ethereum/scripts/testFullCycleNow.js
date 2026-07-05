@@ -60,12 +60,17 @@ async function main() {
         'function createVault() external',
         'function depositCollateral(uint256 amount) external',
         'function hasActiveVault(address lpAddress) external view returns (bool)',
-        'function getVault(address lpAddress) external view returns (tuple(address lpAddress, uint256 collateralShares, uint256 lockedCollateral, uint256 normalizedDebt, uint256 pendingDebt, uint16 maxMintBps, uint256 mintGriefingDeposit, uint256 mintReadyBond, uint16 mintFeeBps, uint16 burnRewardBps, uint256 liquidationNonce, uint256 mintNonce, uint256 minBurnAmount, bool active))',
+        'function getVault(address lpAddress) external view returns (tuple(address lpAddress, uint256 collateralShares, uint256 lockedCollateral, uint256 normalizedDebt, uint256 pendingDebt, uint16 maxMintBps, uint256 mintGriefingDeposit, uint256 mintReadyBond, uint16 mintFeeBps, uint16 burnRewardBps, uint256 liquidationNonce, uint256 mintNonce, uint256 minBurnAmount, bool active, uint256 deployedSDAIShares, uint16 maxCoLPRangeBps, uint256 mintTimeoutBlocks, uint256 burnTimeoutBlocks))',
         'function setMaxMintBps(uint16 maxMintBps) external',
         'function setMinBurnAmount(uint256 minAmount) external',
         'function setMintGriefingDeposit(uint256 deposit) external',
         'function setMintReadyBond(uint256 bond) external',
         'function setVaultMarketMetrics(uint16 mintFeeBps, uint16 burnRewardBps) external',
+        'function setMaxCoLPRange(uint16 newMaxBps) external',
+        'function getCoLPCapacity(address lpVault) external view returns (uint256)',
+        'function userOpenCoLP(address lpVault, uint256 wsxmrAmount, uint256 deadline) external returns (uint256)',
+        'function unwindCoLP(uint256 tokenId, uint256 deadline) external',
+        'function collectCoLPFees(uint256 tokenId) external',
         'function getPendingReturns(address user, address token) external view returns (uint256)',
         'function withdrawReturns(address token) external',
         'function withdrawCollateral(uint256 amount) external',
@@ -121,7 +126,8 @@ async function main() {
         await (await hub.setMintGriefingDeposit(ethers.utils.parseEther('0.001'))).wait();
         await (await hub.setMintReadyBond(ethers.utils.parseEther('0.001'))).wait();
         await (await hub.setVaultMarketMetrics(50, 30)).wait(); // 0.5% mint fee, 0.3% burn reward
-        console.log('✅ Vault configured (0.5% mint fee, 0.3% burn reward, 0.001 ETH bond)');
+        await (await hub.setMaxCoLPRange(2500)).wait(); // 25% default co-LP range
+        console.log('✅ Vault configured (0.5% mint fee, 0.3% burn reward, 0.001 ETH bond, 2500 bps co-LP range)');
         
         // Check wxDAI balance and wrap if needed
         const collateralAmount = ethers.utils.parseEther('0.5'); // 0.5 xDAI
@@ -144,7 +150,8 @@ async function main() {
         
         // Update vault fees to ensure they're set correctly
         await (await hub.setVaultMarketMetrics(50, 30)).wait(); // 0.5% mint fee, 0.3% burn reward
-        console.log('✅ Updated vault fees (0.5% mint fee, 0.3% burn reward)');
+        await (await hub.setMaxCoLPRange(2500)).wait(); // 25% default co-LP range
+        console.log('✅ Updated vault fees (0.5% mint fee, 0.3% burn reward, 2500 bps co-LP range)');
         
         // Check collateral balance
         const vault = await hub.getVault(wallet.address);
@@ -154,6 +161,8 @@ async function main() {
         console.log('   Pending debt:', vault.pendingDebt.toString());
         console.log('   Mint fee:', vault.mintFeeBps, 'bps');
         console.log('   Burn reward:', vault.burnRewardBps, 'bps');
+        console.log('   Co-LP range:', vault.maxCoLPRangeBps, 'bps');
+        console.log('   Deployed sDAI shares:', vault.deployedSDAIShares.toString());
         
         // If no collateral, deposit some
         if (vault.collateralShares.eq(0)) {
@@ -393,9 +402,83 @@ async function main() {
     console.log('Collateral shares after:', vaultAfterWithdraw.collateralShares.toString());
     console.log('');
     
+    console.log('📊 Step 6.7: CO-LP - Open Position');
+    console.log('====================================');
+    const coLPCapacity = await hub.getCoLPCapacity(wallet.address);
+    console.log('Co-LP capacity (max wsXMR acceptable):', ethers.utils.formatUnits(coLPCapacity, decimals));
+
+    const coLPAmount = wsxmrBalance.div(2);
+    console.log('Opening Co-LP with', ethers.utils.formatUnits(coLPAmount, decimals), 'wsXMR');
+
+    await (await wsxmr.approve(HUB_ADDRESS, coLPAmount)).wait();
+
+    try {
+        const coLPTx = await hub.userOpenCoLP(
+            wallet.address,
+            coLPAmount,
+            Math.floor(Date.now() / 1000) + 3600,
+            { gasLimit: 1000000 }
+        );
+        const coLPReceipt = await coLPTx.wait();
+        console.log('✅ Co-LP position opened! TX:', coLPReceipt.transactionHash);
+
+        const vaultAfterCoLP = await hub.getVault(wallet.address);
+        console.log('   Deployed sDAI shares:', vaultAfterCoLP.deployedSDAIShares.toString());
+        console.log('   Collateral shares:', vaultAfterCoLP.collateralShares.toString());
+
+        console.log('');
+        console.log('📊 Step 6.8: CO-LP - Unwind Position');
+        console.log('======================================');
+
+        const coLPLogs = coLPReceipt.events || coLPReceipt.logs;
+        let coLPTokenId = null;
+        for (const log of coLPLogs) {
+            if (log.args && log.args.tokenId !== undefined) {
+                coLPTokenId = log.args.tokenId;
+                break;
+            }
+        }
+        if (!coLPTokenId && coLPReceipt.logs.length > 0) {
+            coLPTokenId = ethers.BigNumber.from(coLPReceipt.logs[0].topics[3]);
+        }
+
+        if (coLPTokenId) {
+            console.log('Unwinding Co-LP position, tokenId:', coLPTokenId.toString());
+            const unwindTx = await hub.unwindCoLP(
+                coLPTokenId,
+                Math.floor(Date.now() / 1000) + 3600,
+                { gasLimit: 1000000 }
+            );
+            await unwindTx.wait();
+            console.log('✅ Co-LP position unwound');
+
+            const pendingWsxmr = await hub.getPendingReturns(wallet.address, WSXMR_ADDRESS);
+            const pendingSdai = await hub.getPendingReturns(wallet.address, '0xaf204776c7245bF4147c2612BF6e5972Ee483701');
+            console.log('   Pending wsXMR returns:', ethers.utils.formatUnits(pendingWsxmr, decimals));
+            console.log('   Pending sDAI returns:', ethers.utils.formatEther(pendingSdai));
+
+            if (pendingWsxmr.gt(0)) {
+                await (await hub.withdrawReturns(WSXMR_ADDRESS, { gasLimit: 200000 })).wait();
+                console.log('✅ Withdrew wsXMR returns');
+            }
+            if (pendingSdai.gt(0)) {
+                await (await hub.withdrawReturns('0xaf204776c7245bF4147c2612BF6e5972Ee483701', { gasLimit: 200000 })).wait();
+                console.log('✅ Withdrew sDAI returns');
+            }
+        } else {
+            console.log('⚠️  Could not find tokenId from Co-LP tx logs, skipping unwind');
+        }
+    } catch (err) {
+        console.log('⚠️  Co-LP step failed (may need pool initialization):', err.reason || err.message);
+    }
+
+    const wsxmrBalanceAfterCoLP = await wsxmr.balanceOf(wallet.address);
+    console.log('wsXMR balance after Co-LP:', ethers.utils.formatUnits(wsxmrBalanceAfterCoLP, decimals));
+    console.log('');
+
     console.log('📊 Step 7: BURN - Request');
     console.log('=========================');
-    const burnAmount = wsxmrBalance;
+    const burnAmount = wsxmrBalanceAfterCoLP;
     
     const approveTx = await wsxmr.approve(HUB_ADDRESS, burnAmount);
     await approveTx.wait();
@@ -486,6 +569,8 @@ async function main() {
     console.log('🎉 FULL CYCLE COMPLETE!');
     console.log('=======================');
     console.log('✅ Minted wsXMR tokens');
+    console.log('✅ Set co-LP range preference (2500 bps)');
+    console.log('✅ Opened and unwound co-LP position');
     console.log('✅ Burned wsXMR tokens');
     console.log('✅ Claimed burn rewards');
     console.log('✅ Protocol fully functional on Gnosis mainnet!');

@@ -66,16 +66,17 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         }
         
         IwsXmrHub(address(this)).burnTokens(address(this), wsxmrBought);
-        
-        uint256 netDebtReduction = wsxmrBought > globalPendingBurnDebt ? wsxmrBought - globalPendingBurnDebt : 0;
-        
-        if (netDebtReduction > 0 && globalTotalDebt > 0) {
-            // B1: Always rescale individual vault debts when reducing the debt index.
-            // Proportional index reduction without rescaling vault normalized debts
-            // causes precision loss (small debts round to zero) and breaks the invariant
-            // that actualDebt = normalizedDebt * index / 1e18.
-            _migrateDebtIndex();
+
+        if (wsxmrBought >= globalTotalDebt) {
+            globalTotalDebt = 0;
+            globalDebtIndex = 1e18;
+        } else {
+            uint256 oldDebt = globalTotalDebt;
+            globalTotalDebt -= wsxmrBought;
+            globalDebtIndex = (globalDebtIndex * globalTotalDebt) / oldDebt;
         }
+
+        _migrateDebtIndex();
         
         emit BuyAndBurnExecuted(sDAIToSpend, wsxmrBought, keeperReward, globalDebtIndex);
     }
