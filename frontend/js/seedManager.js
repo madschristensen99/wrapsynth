@@ -100,14 +100,9 @@ export function generateKeysFromSeed(seedPhrase) {
 
 /**
  * Generate commitment from secret for Wrapsynth verification.
- * Matches the Solana on-chain verifier exactly:
- *   commitment = keccak256(compress(secret · G))
- * where compress yields a 32-byte little-endian CompressedEdwardsY.
- *
- * NOTE: This is the canonical Monero/dalek format. It does NOT match the EVM
- * Ed25519Helper.computeCommitment (keccak256(abi.encodePacked(px, py)) over
- * the 64-byte big-endian affine pair). All off-chain generators that verify
- * on Solana must use this 32-byte compressed scheme.
+ * Matches the EVM on-chain verifier exactly:
+ *   commitment = keccak256(abi.encodePacked(px, py))
+ * where (px, py) are the affine coordinates of secret * G as uint256 big-endian.
  *
  * @param {bigint} secret - Private key (spend key) as a scalar
  * @returns {string} Commitment hash (bytes32)
@@ -119,11 +114,17 @@ export function generateCommitment(secret) {
     // Generate Ed25519 public key: P = secret * G
     const publicKeyPoint = Point.BASE.multiply(secretReduced);
 
-    // Canonical Monero / dalek format: 32-byte compressed point
-    const publicKeyBytes = publicKeyPoint.toRawBytes();
+    // Get affine coordinates (px, py) as bigints
+    const affine = publicKeyPoint.toAffine();
+    const px = affine.x;
+    const py = affine.y;
 
-    // Hash the 32 bytes directly — NOT the EVM 64-byte affine pair
-    const commitment = keccak256(toHex(publicKeyBytes));
+    // Encode as abi.encodePacked(px, py) — each as 32-byte big-endian
+    const pxHex = px.toString(16).padStart(64, '0');
+    const pyHex = py.toString(16).padStart(64, '0');
+    const packed = '0x' + pxHex + pyHex;
+
+    const commitment = keccak256(packed);
 
     return commitment;
 }
