@@ -27,7 +27,7 @@ async function main() {
     const hubAbi = [
         'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment, bytes32 userPublicKey) external payable returns (bytes32)',
         'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
-        'function setMintReady(bytes32 requestId) external payable',
+        'function setMintReady(bytes32 requestId, bytes32 lpCommitment) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
         'function updateOraclePrices(bytes[] calldata updateData) external payable',
         'function userOpenCoLP(address lpVault, uint256 wsxmrAmount, uint256 deadline) external returns (uint256 tokenId)',
@@ -118,7 +118,8 @@ async function main() {
     }
 
     try {
-        const readyTx = await hub.setMintReady(requestId, { value: griefingDeposit, gasLimit: 200000, maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'), maxFeePerGas: ethers.utils.parseUnits('20', 'gwei') });
+        const lpCommitment = ethers.utils.id('lp-commitment');
+        const readyTx = await hub.setMintReady(requestId, lpCommitment, { value: griefingDeposit, gasLimit: 200000, maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'), maxFeePerGas: ethers.utils.parseUnits('20', 'gwei') });
         await readyTx.wait();
         console.log('  Mint ready');
     } catch (err) {

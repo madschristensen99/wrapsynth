@@ -1,65 +1,64 @@
 <svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <!-- Dark base gradient -->
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0f0f1a"/>
-      <stop offset="50%" stop-color="#15152a"/>
-      <stop offset="100%" stop-color="#1a1a2e"/>
+      <stop offset="0%" stop-color="#0c0c14"/>
+      <stop offset="100%" stop-color="#161621"/>
     </linearGradient>
-    <!-- Orange glow -->
-    <radialGradient id="glow1" cx="20%" cy="30%" r="50%">
-      <stop offset="0%" stop-color="#ff6b00" stop-opacity="0.25"/>
-      <stop offset="100%" stop-color="transparent" stop-opacity="0"/>
+    <radialGradient id="glow1" cx="35%" cy="45%" r="55%">
+      <stop offset="0%" stop-color="#ff7a3d" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#ff7a3d" stop-opacity="0"/>
     </radialGradient>
-    <radialGradient id="glow2" cx="80%" cy="70%" r="45%">
-      <stop offset="0%" stop-color="#ff8533" stop-opacity="0.15"/>
-      <stop offset="100%" stop-color="transparent" stop-opacity="0"/>
+    <radialGradient id="glow2" cx="65%" cy="55%" r="50%">
+      <stop offset="0%" stop-color="#3efce0" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#3efce0" stop-opacity="0"/>
     </radialGradient>
-    <!-- Accent gradient -->
-    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#ff6b00"/>
-      <stop offset="100%" stop-color="#ff8533"/>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ff7a3d"/>
+      <stop offset="100%" stop-color="#3efce0"/>
     </linearGradient>
-    <!-- Grid pattern -->
-    <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
-      <path d="M 60 0 L 0 0 0 60" fill="none" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
-    </pattern>
+    <linearGradient id="ctaBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ff8a4d"/>
+      <stop offset="100%" stop-color="#ff7a3d"/>
+    </linearGradient>
+    <filter id="markGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="ctaGlow" x="-30%" y="-50%" width="160%" height="200%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
   </defs>
 
-  <!-- Base -->
   <rect width="1200" height="630" fill="url(#bg)"/>
   <rect width="1200" height="630" fill="url(#glow1)"/>
   <rect width="1200" height="630" fill="url(#glow2)"/>
-  <rect width="1200" height="630" fill="url(#grid)"/>
 
-  <!-- Decorative orb rings -->
-  <circle cx="200" cy="500" r="180" fill="none" stroke="rgba(255,107,0,0.08)" stroke-width="1"/>
-  <circle cx="200" cy="500" r="220" fill="none" stroke="rgba(255,107,0,0.05)" stroke-width="1"/>
-  <circle cx="1000" cy="150" r="120" fill="none" stroke="rgba(255,133,51,0.06)" stroke-width="1"/>
+  <!-- Gradient mark (logo will be composited on top later) -->
+  <rect x="565" y="90" width="70" height="70" rx="18" fill="url(#mark)" filter="url(#markGlow)"/>
 
-  <!-- Abstract geometric shapes -->
-  <polygon points="150,200 200,130 250,200 200,270" fill="none" stroke="url(#accent)" stroke-width="2" opacity="0.3"/>
-  <polygon points="1050,430 1100,360 1150,430 1100,500" fill="none" stroke="url(#accent)" stroke-width="2" opacity="0.2"/>
+  <text x="600" y="280" font-family="'Plus Jakarta Sans', 'Inter', sans-serif" font-size="72" font-weight="800" fill="#ffffff" text-anchor="middle" letter-spacing="-0.035em">Bring <tspan fill="#ff7a3d">Monero</tspan> to <tspan fill="#3efce0">DeFi</tspan></text>
 
-  <!-- Horizontal accent line -->
-  <rect x="500" y="320" width="200" height="3" rx="1.5" fill="url(#accent)" opacity="0.8"/>
+  <text x="600" y="335" font-family="'Inter', sans-serif" font-size="26" font-weight="400" fill="#a8a8c0" text-anchor="middle">Trustless wrapped Monero via atomic liquidity</text>
 
-  <!-- Small decorative dots -->
-  <circle cx="480" cy="321.5" r="4" fill="#ff6b00" opacity="0.9"/>
-  <circle cx="720" cy="321.5" r="4" fill="#ff8533" opacity="0.9"/>
+  <rect x="470" y="390" width="260" height="56" rx="14" fill="url(#ctaBg)" filter="url(#ctaGlow)"/>
+  <text x="600" y="427" font-family="'Plus Jakarta Sans', sans-serif" font-size="22" font-weight="600" fill="#160a02" text-anchor="middle">Launch app  →</text>
 
-  <!-- Main title -->
-  <text x="600" y="260" font-family="'Inter', -apple-system, BlinkMacSystemFont, sans-serif" font-size="156" font-weight="900" fill="#ffffff" text-anchor="middle" letter-spacing="-0.04em">Wrapsynth</text>
+  <text x="600" y="510" font-family="'JetBrains Mono', monospace" font-size="22" font-weight="600" fill="#ff7a3d" text-anchor="middle" letter-spacing="-0.01em">&gt;200%</text>
+  <text x="600" y="535" font-family="'Inter', sans-serif" font-size="15" font-weight="400" fill="#686880" text-anchor="middle">Overcollateralized</text>
 
-  <!-- Tagline -->
-  <text x="600" y="410" font-family="'Inter', -apple-system, BlinkMacSystemFont, sans-serif" font-size="52" font-weight="500" fill="#a0a0b8" text-anchor="middle" letter-spacing="0.02em">Atomic Liquidity for Monero</text>
+  <text x="430" y="510" font-family="'JetBrains Mono', monospace" font-size="22" font-weight="600" fill="#ffffff" text-anchor="middle">24h</text>
+  <text x="430" y="535" font-family="'Inter', sans-serif" font-size="15" font-weight="400" fill="#686880" text-anchor="middle">Swap timeout</text>
 
-  <!-- Bottom stats line -->
-  <text x="600" y="580" font-family="'JetBrains Mono', 'Fira Code', monospace" font-size="24" font-weight="500" fill="#5a5a78" text-anchor="middle" letter-spacing="0.08em">GNOSIS CHAIN  ·  >200% COLLATERAL  ·  TRUSTLESS</text>
+  <text x="770" y="510" font-family="'JetBrains Mono', monospace" font-size="22" font-weight="600" fill="#3efce0" text-anchor="middle">wsXMR</text>
+  <text x="770" y="535" font-family="'Inter', sans-serif" font-size="15" font-weight="400" fill="#686880" text-anchor="middle">On Gnosis Chain</text>
 
-  <!-- Corner accent brackets -->
-  <path d="M 60 60 L 60 100 L 100 100" fill="none" stroke="rgba(255,107,0,0.4)" stroke-width="2" stroke-linecap="round"/>
-  <path d="M 1140 60 L 1140 100 L 1100 100" fill="none" stroke="rgba(255,107,0,0.4)" stroke-width="2" stroke-linecap="round"/>
-  <path d="M 60 570 L 60 530 L 100 530" fill="none" stroke="rgba(255,107,0,0.4)" stroke-width="2" stroke-linecap="round"/>
-  <path d="M 1140 570 L 1140 530 L 1100 530" fill="none" stroke="rgba(255,107,0,0.4)" stroke-width="2" stroke-linecap="round"/>
+  <line x1="515" y1="495" x2="515" y2="540" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+  <line x1="685" y1="495" x2="685" y2="540" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
 </svg>

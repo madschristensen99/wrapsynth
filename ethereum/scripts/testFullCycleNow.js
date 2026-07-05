@@ -76,7 +76,7 @@ async function main() {
         'function withdrawCollateral(uint256 amount) external',
         'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment, bytes32 userPublicKey) external payable returns (bytes32)',
         'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
-        'function setMintReady(bytes32 requestId) external payable',
+        'function setMintReady(bytes32 requestId, bytes32 lpCommitment) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
         'function requestBurn(uint256 wsxmrAmount, address lpVault, address burnRecipient, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey) external returns (bytes32)',
         'function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
@@ -352,7 +352,8 @@ async function main() {
     console.log('📊 Step 5: MINT - LP Sets Ready');
     console.log('================================');
     const lpBond = ethers.utils.parseEther('0.001');
-    const readyTx = await hub.setMintReady(requestId, { value: lpBond });
+    const lpCommitment = ethers.utils.id('lp-commitment');
+    const readyTx = await hub.setMintReady(requestId, lpCommitment, { value: lpBond });
     await readyTx.wait();
     console.log('✅ LP marked ready');
     console.log('');
