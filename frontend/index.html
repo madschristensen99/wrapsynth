@@ -305,35 +305,37 @@
   .tl-feat .fb{font-size:13px;color:var(--muted);line-height:1.5}
 
   /* BUBBLE CHART */
-  .bc-wrap{position:relative;margin:48px auto 0;max-width:560px;aspect-ratio:1/1}
+  .bc-wrap{position:relative;margin:48px auto 0;max-width:660px;aspect-ratio:1/1}
   .bc-lines{position:absolute;inset:0;width:100%;height:100%;z-index:1;pointer-events:none}
   .bc-lines line{stroke:rgba(255,255,255,.1);stroke-width:.4;stroke-dasharray:2 2;
-    transition:stroke .3s,stroke-width .3s}
+    transition:stroke .3s,stroke-width .3s;
+    animation:dashFlow 3s linear infinite}
   .bc-lines line.on{stroke:rgba(62,252,224,.35);stroke-width:.6}
+  @keyframes dashFlow{to{stroke-dashoffset:4}}
   .bc-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-    width:104px;height:104px;border-radius:50%;z-index:5;display:grid;place-items:center;
+    width:140px;height:140px;border-radius:50%;z-index:5;display:grid;place-items:center;
     background:radial-gradient(circle,rgba(22,22,33,.95),rgba(22,22,33,.6));
     border:2px solid rgba(62,252,224,.3);
     box-shadow:0 0 40px rgba(62,252,224,.15),0 0 80px rgba(255,122,61,.06)}
-  .bc-center img{width:56px;height:56px;border-radius:12px}
-  .bc-center .bc-lbl{position:absolute;bottom:-22px;left:50%;transform:translateX(-50%);
-    font-family:'Plus Jakarta Sans';font-weight:700;font-size:13px;color:var(--teal);white-space:nowrap}
+  .bc-center img{width:76px;height:76px;border-radius:14px}
+  .bc-center .bc-lbl{position:absolute;bottom:-26px;left:50%;transform:translateX(-50%);
+    font-family:'Plus Jakarta Sans';font-weight:700;font-size:16px;color:var(--teal);white-space:nowrap}
   .bub{position:absolute;border-radius:50%;
     display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
     padding:10px;background:linear-gradient(135deg,rgba(255,255,255,.04),rgba(255,255,255,.01));
     border:1px solid var(--line-2);backdrop-filter:blur(8px);z-index:3}
-  .bub .b-tag{font-family:'JetBrains Mono';font-size:9px;text-transform:uppercase;letter-spacing:.08em;opacity:.7;margin-bottom:3px}
-  .bub .b-title{font-family:'Plus Jakarta Sans';font-weight:600;font-size:13px;letter-spacing:-.01em;line-height:1.2}
-  .bub .b-sub{font-size:10.5px;color:var(--muted);margin-top:3px;line-height:1.3}
+  .bub .b-tag{font-family:'JetBrains Mono';font-size:11px;text-transform:uppercase;letter-spacing:.08em;opacity:.7;margin-bottom:4px}
+  .bub .b-title{font-family:'Plus Jakarta Sans';font-weight:600;font-size:16px;letter-spacing:-.01em;line-height:1.2}
+  .bub .b-sub{font-size:12.5px;color:var(--muted);margin-top:4px;line-height:1.3}
   .bub.xmr .b-tag{color:var(--xmr)}.bub.teal .b-tag{color:var(--teal)}
   .bub.green .b-tag{color:var(--green)}.bub.amber .b-tag{color:var(--amber)}
   .bub.xmr.active{border-color:rgba(255,122,61,.5);box-shadow:0 0 40px rgba(255,122,61,.18)}
   .bub.green.active{border-color:rgba(74,240,170,.5);box-shadow:0 0 40px rgba(74,240,170,.18)}
   .bub.amber.active{border-color:rgba(255,217,94,.5);box-shadow:0 0 40px rgba(255,217,94,.18)}
-  .b-trade{top:2%;left:2%;width:130px;height:130px}
-  .b-earn{top:2%;right:2%;width:130px;height:130px}
-  .b-build{bottom:2%;right:2%;width:130px;height:130px}
-  .b-spend{bottom:2%;left:2%;width:130px;height:130px}
+  .b-trade{top:0;left:0;width:175px;height:175px}
+  .b-earn{top:0;right:0;width:175px;height:175px}
+  .b-build{bottom:0;right:0;width:175px;height:175px}
+  .b-spend{bottom:0;left:0;width:175px;height:175px}
   .bp-panels{display:none}
   @media(max-width:680px){
     .bc-wrap{aspect-ratio:auto;display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
@@ -353,7 +355,7 @@
     <nav class="nav-links">
       <a href="#who">Meet</a>
       <a href="#what">Metrics</a>
-      <a href="#when">History</a>
+      <a href="#when">Timeline</a>
       <a href="#where">Smart Contracts</a>
       <a href="#advantages">Advantages</a>
       <a href="#features">Features</a>
@@ -409,6 +411,9 @@
           <a href="https://x.com/fungerbilXMR" target="_blank" rel="noopener" aria-label="Twitter">
             <svg viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
           </a>
+          <a href="https://www.youtube.com/@remsee1608" target="_blank" rel="noopener" aria-label="YouTube">
+            <svg viewBox="0 0 24 24"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+          </a>
         </div>
       </div>
       <div class="who-card">
@@ -450,7 +455,7 @@
 <!-- WHEN: TIMELINE / HISTORY -->
 <section id="when" class="sec-line">
   <div class="wrap sec-pad">
-    <span class="eyebrow-sm">History</span>
+    <span class="eyebrow-sm">Timeline</span>
     <h2 class="sec-h">Wrapsynth's place in history</h2>
     <p class="sec-sub">Click a point to explore.</p>
     <div class="tl-h">
@@ -560,14 +565,14 @@
   <div class="wrap sec-pad">
     <span class="eyebrow-sm">Advantages</span>
     <h2 class="sec-h">Built for composability</h2>
-    <p class="sec-sub">Monero is the best money in crypto and the most isolated. No lending, no liquidity, no composability — just an asset you have to sell to ever use. Wrapsynth ends that, without asking you to trust a bridge operator with your coins.</p>
+    <p class="sec-sub">Monero is the best blockchain for money and also the most isolated. No lending, no liquidity, no composability — just an asset you have to sell to ever use. Wrapsynth ends that, without asking you to trust a bridge operator with your coins.</p>
     <p style="margin-top:16px;font-size:15px;color:var(--fg);font-weight:500">wsXMR is private money made composable. Everything below inherits both properties.</p>
     <div class="bc-wrap">
       <svg class="bc-lines" viewBox="0 0 100 100" preserveAspectRatio="none">
-        <line id="bl-0" x1="50" y1="50" x2="14" y2="14"/>
-        <line id="bl-1" x1="50" y1="50" x2="86" y2="14"/>
-        <line id="bl-2" x1="50" y1="50" x2="86" y2="86"/>
-        <line id="bl-3" x1="50" y1="50" x2="14" y2="86"/>
+        <line id="bl-0" x1="50" y1="50" x2="10" y2="10"/>
+        <line id="bl-1" x1="50" y1="50" x2="90" y2="10"/>
+        <line id="bl-2" x1="50" y1="50" x2="90" y2="90"/>
+        <line id="bl-3" x1="50" y1="50" x2="10" y2="90"/>
       </svg>
       <div class="bc-center">
         <img src="./wrapsynth-symbol.png" alt="Wrapsynth">
@@ -580,7 +585,7 @@
       </div>
       <div class="bub teal b-earn">
         <span class="b-tag">Earn</span>
-        <span class="b-title">Yield & collateral</span>
+        <span class="b-title">Yield, Collateral, and Governance</span>
         <span class="b-sub">Put your XMR to work</span>
       </div>
       <div class="bub green b-spend">
@@ -647,7 +652,6 @@
       </div>
     </div>
     <div class="foot-bot">
-      <span class="disc">Experimental software · Not audited · Mainnet deployment</span>
       <span>v1.0.0 · MIT License</span>
     </div>
   </div>
@@ -857,11 +861,11 @@ function copyAddr(btn){
         {from:3,to:1,label:"verify XMR locked",type:"call"},
         {from:3,to:2,label:"setMintReady(commitment) + LP bond",type:"call"},
         {from:2,to:2,label:"re-check CR, status: READY",type:"note"},
-        {from:3,to:1,label:"claim XMR (reveals secret)",type:"call"},
-        {from:0,to:2,label:"finalizeMint(secret)",type:"call"},
+        {from:0,to:2,label:"finalizeMint(secret) \u2014 user reveals",type:"call"},
         {from:2,to:2,label:"Ed25519: verify secret\u00b7G = commitment",type:"note"},
         {from:2,to:0,label:"mint wsXMR (amt \u2212 fee)",type:"return"},
         {from:2,to:3,label:"mint fee wsXMR to LP",type:"return"},
+        {from:3,to:1,label:"claim XMR (using revealed secret)",type:"call"},
         {from:2,to:0,label:"refund griefing deposit (pendingReturns)",type:"effect"},
         {from:2,to:3,label:"refund LP bond (pendingReturns)",type:"effect"}
       ]
@@ -976,9 +980,9 @@ function copyAddr(btn){
 
     var s='<svg viewBox="0 0 '+w+' '+h+'" xmlns="http://www.w3.org/2000/svg" style="font-family:Inter,sans-serif">';
     s+='<defs>';
-    s+='<marker id="sx'+di+'" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#ff7a3d"/></marker>';
-    s+='<marker id="st'+di+'" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#3efce0"/></marker>';
-    s+='<marker id="sg'+di+'" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#a8a8c0"/></marker>';
+    s+='<marker id="sx'+di+'" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#ff7a3d"/></marker>';
+    s+='<marker id="st'+di+'" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#3efce0"/></marker>';
+    s+='<marker id="sg'+di+'" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#a8a8c0"/></marker>';
     s+='</defs>';
 
     d.actors.forEach(function(a,i){
@@ -995,12 +999,23 @@ function copyAddr(btn){
       s+='<text x="'+(pad-6)+'" y="'+(y+3)+'" text-anchor="end" fill="#686880" font-family="JetBrains Mono" font-size="10">'+(i+1)+'</text>';
 
       if(m.type==='note'){
-        var nw=Math.max(m.label.length*6.2+20,90);
-        var nh=22;
+        var maxW=240,maxChars=Math.floor((maxW-20)/6.2);
+        var lines=[];
+        var words=m.label.split(' '),cur='';
+        for(var wi=0;wi<words.length;wi++){
+          if((cur+(cur?' ':'')+words[wi]).length>maxChars){lines.push(cur);cur=words[wi]}
+          else{cur=cur?(cur+' '+words[wi]):words[wi]}
+        }
+        if(cur)lines.push(cur);
+        var nw=Math.max(Math.max.apply(null,lines.map(function(l){return l.length}))*6.2+20,90);
+        var nh=18*lines.length+8;
         var nx=fx+10;
         var nc=cf(d.actors[m.from].color);
         s+='<rect x="'+nx+'" y="'+(y-nh/2)+'" width="'+nw+'" height="'+nh+'" rx="5" fill="rgba(255,255,255,0.04)" stroke="'+nc+'" stroke-width="1" opacity="0.5"/>';
-        s+='<text x="'+(nx+nw/2)+'" y="'+(y+4)+'" text-anchor="middle" fill="#a8a8c0" font-size="11">'+m.label+'</text>';
+        lines.forEach(function(l,li){
+          var ly=y-(nh/2)+14+li*18;
+          s+='<text x="'+(nx+nw/2)+'" y="'+ly+'" text-anchor="middle" fill="#a8a8c0" font-size="11">'+l+'</text>';
+        });
       } else {
         var tx=ax(m.to);
         var ac=d.actors[m.from].color;

@@ -32,6 +32,10 @@ interface IVaultFacet is IErrors {
     error MaxVaultsReached();
     error ExceedsMaxMargin();
     error ETHTransferFailed();
+    error VaultHasDebt();
+    error VaultHasCollateral();
+    error VaultHasLockedCollateral();
+    error VaultHasPositions();
     
     // ========== VAULT LIFECYCLE ==========
     
