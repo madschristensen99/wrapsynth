@@ -324,11 +324,15 @@
     display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
     padding:10px;background:linear-gradient(135deg,rgba(255,255,255,.04),rgba(255,255,255,.01));
     border:1px solid var(--line-2);backdrop-filter:blur(8px);z-index:3}
+  .bub .b-icon{width:34px;height:34px;margin-bottom:6px;opacity:.85}
+  .bub .b-icon svg{width:100%;height:100%;display:block}
   .bub .b-tag{font-family:'JetBrains Mono';font-size:11px;text-transform:uppercase;letter-spacing:.08em;opacity:.7;margin-bottom:4px}
   .bub .b-title{font-family:'Plus Jakarta Sans';font-weight:600;font-size:16px;letter-spacing:-.01em;line-height:1.2}
   .bub .b-sub{font-size:12.5px;color:var(--muted);margin-top:4px;line-height:1.3}
   .bub.xmr .b-tag{color:var(--xmr)}.bub.teal .b-tag{color:var(--teal)}
   .bub.green .b-tag{color:var(--green)}.bub.amber .b-tag{color:var(--amber)}
+  .bub.xmr .b-icon{color:var(--xmr)}.bub.teal .b-icon{color:var(--teal)}
+  .bub.green .b-icon{color:var(--green)}.bub.amber .b-icon{color:var(--amber)}
   .bub.xmr.active{border-color:rgba(255,122,61,.5);box-shadow:0 0 40px rgba(255,122,61,.18)}
   .bub.green.active{border-color:rgba(74,240,170,.5);box-shadow:0 0 40px rgba(74,240,170,.18)}
   .bub.amber.active{border-color:rgba(255,217,94,.5);box-shadow:0 0 40px rgba(255,217,94,.18)}
@@ -579,21 +583,25 @@
         <span class="bc-lbl">wsXMR</span>
       </div>
       <div class="bub xmr b-trade">
+        <span class="b-icon"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 24h24M6 24V14M11 24V8M16 24V18M21 24V11M26 24V6"/><path d="M6 14l5-6 5 10 5-7 5 5" stroke-dasharray="2 3" opacity=".5"/></svg></span>
         <span class="b-tag">Trade</span>
         <span class="b-title">DEX liquidity & perps</span>
         <span class="b-sub">Swap, hedge, settle</span>
       </div>
       <div class="bub teal b-earn">
+        <span class="b-icon"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="16" cy="16" r="11"/><path d="M16 8v8l5 3"/><path d="M16 5v3M16 24v3M5 16h3M24 16h3" opacity=".5"/></svg></span>
         <span class="b-tag">Earn</span>
         <span class="b-title">Yield, Collateral, and Governance</span>
         <span class="b-sub">Put your XMR to work</span>
       </div>
       <div class="bub green b-spend">
+        <span class="b-icon"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="24" height="16" rx="3"/><path d="M4 13h24"/><path d="M8 18h5M8 21h3"/><circle cx="22" cy="19" r="2"/></svg></span>
         <span class="b-tag">Spend</span>
         <span class="b-title">Payroll & commerce</span>
         <span class="b-sub">Private payments, composable rails</span>
       </div>
       <div class="bub amber b-build">
+        <span class="b-icon"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="4"/><circle cx="24" cy="8" r="4"/><circle cx="8" cy="24" r="4"/><circle cx="24" cy="24" r="4"/><path d="M12 8h12M8 12v12M24 12v12M12 24h12" opacity=".4"/><path d="M11 11l10 10M21 11l-10 10"/></svg></span>
         <span class="b-tag">Build</span>
         <span class="b-title">Cross-chain & agents</span>
         <span class="b-sub">Settlement layer for private money</span>

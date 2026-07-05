@@ -27,11 +27,11 @@ export const NETWORKS = {
 
 // Contract addresses - source of truth: ../../deployment.json
 export const CONTRACTS = {
-    hub: DC.wsXmrHub || '0x2147f47829014B0b32531124d45A30352e721F75',
-    wsxmrToken: DC.wsXMR || '0xB59AC6A4443ACBc22dCd5F4Fb0db485ADDDd7bB8',
-    liquidityRouter: DC.liquidityRouter || '0x161d50B1D4bb196C5ECeDA82dd7dD708887F1546',
+    hub: DC.wsXmrHub || '0x512a76C2E4edC0695F6195Dd88BBa7AE425AA160',
+    wsxmrToken: DC.wsXMR || '0x4bD004F941D115a57D892d6C5F84F4A21a17F979',
+    liquidityRouter: DC.liquidityRouter || '0x67507CE0682DEc4011f98DD87983C4Fe5e2e0905',
     sDAI: DE.sDAI || '0xaf204776c7245bF4147c2612BF6e5972Ee483701',
-    uniswapV3Pool: DP.uniswapV3Pool || '0xf993E42DE700abE5Aa2027987Ab6874319f00d70',
+    uniswapV3Pool: DP.uniswapV3Pool || '0x67C96d27A4855A3fFD11698E7db8884576E93942',
     // Default LP vault to use for mints (the active LP running the LP node)
     defaultLpVault: DLC.defaultLpVault || '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB'
 };
@@ -198,7 +198,7 @@ export const ABIS = {
         // Mint flow
         'function initiateMint(address lpVault, address recipient, uint256 xmrAmount, bytes32 claimCommitment, bytes32 userPublicKey) external payable returns (bytes32 requestId)',
         'function provideLPKey(bytes32 requestId, bytes32 lpPublicKey) external',
-        'function setMintReady(bytes32 requestId) external payable',
+        'function setMintReady(bytes32 requestId, bytes32 lpCommitment) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
         'function cancelMint(bytes32 requestId) external',
         'function lpPublicKeys(bytes32 requestId) external view returns (bytes32)',
@@ -307,7 +307,7 @@ export const ABIS = {
         // Events
         'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout)',
         'event LPKeyProvided(bytes32 indexed requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey)',
-        'event MintReady(bytes32 indexed requestId)',
+        'event MintReady(bytes32 indexed requestId, bytes32 lpCommitment)',
         'event MintFinalized(bytes32 indexed requestId, bytes32 secret)',
         'event MintCancelled(bytes32 indexed requestId)',
         'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey)',

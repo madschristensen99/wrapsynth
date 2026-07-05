@@ -83,7 +83,7 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         uint256 daiAmount,
         uint256 wsxmrAmount,
         uint16 rangeBps,
-        uint256 centerXmrPrice,
+        uint256 /*centerXmrPrice*/,
         uint256 deadline,
         uint16 slippageBps
     ) external onlyDiamond returns (
@@ -97,10 +97,9 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (slippageBps >= BPS_DENOMINATOR) revert SlippageExceeded();
 
-        // Center position at oracle price, not manipulable pool spot
+        // Center position on the pool's actual price so it always starts in-range
         (uint160 sqrtPriceX96, , , , , , ) = IUniswapV3Pool(pool).slot0();
-        uint160 oracleSqrtPriceX96 = _priceToSqrtPriceX96(centerXmrPrice, 1e18);
-        int24 centerTick = TickMath.getTickAtSqrtRatio(oracleSqrtPriceX96);
+        int24 centerTick = TickMath.getTickAtSqrtRatio(sqrtPriceX96);
 
         int24 halfWidth = int24(int256(uint256(rangeBps) / 2));
         

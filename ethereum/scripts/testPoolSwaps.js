@@ -117,6 +117,11 @@ async function main() {
         process.exit(1);
     }
 
+    // Determine token ordering dynamically
+    const wsxmrIsToken0 = token0.toLowerCase() === WSXMR_ADDRESS.toLowerCase();
+    console.log('  wsXMR is token0:', wsxmrIsToken0);
+    console.log('');
+
     // --- Swap 1: wsXMR -> sDAI (via SwapHelper) ---
     if (liquidity.gte(MIN_SWAP_LIQUIDITY) && wsxmrBalanceAfterLP.gt(10)) {
         const wsxmrSwapAmount = ethers.BigNumber.from('1000'); // 0.00001 wsXMR
@@ -134,11 +139,12 @@ async function main() {
         // Capture balance before swap
         const sdaiBefore1 = await sdai.balanceOf(wallet.address);
 
-        // sDAI is token0, wsXMR is token1, so wsXMR -> sDAI is zeroForOne = false
+        // wsXMR -> sDAI: if wsXMR is token0, zeroForOne=true; if wsXMR is token1, zeroForOne=false
+        const zeroForOne1 = wsxmrIsToken0;
         const swap1 = await swapHelper.swap(
             poolAddr,
             wallet.address,
-            false, // zeroForOne=false (selling token1=wsXMR for token0=sDAI)
+            zeroForOne1,
             wsxmrSwapAmount,
             0, // sqrtPriceLimitX96 (no limit)
             {
@@ -178,11 +184,12 @@ async function main() {
         // Capture balance before swap
         const wsxmrBefore2 = await wsxmr.balanceOf(wallet.address);
 
-        // sDAI is token0, wsXMR is token1, so sDAI -> wsXMR is zeroForOne = true
+        // sDAI -> wsXMR: if sDAI is token0 (wsXMR is token1), zeroForOne=true; if sDAI is token1 (wsXMR is token0), zeroForOne=false
+        const zeroForOne2 = !wsxmrIsToken0;
         const swap2 = await swapHelper.swap(
             poolAddr,
             wallet.address,
-            true, // zeroForOne=true (selling token0=sDAI for token1=wsXMR)
+            zeroForOne2,
             sdaiSwapAmount,
             0, // sqrtPriceLimitX96 (no limit)
             {
