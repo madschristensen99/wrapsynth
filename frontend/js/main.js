@@ -36,7 +36,6 @@ import {
     updateBurnProgress,
     completeBurnStep,
     showSuccess,
-    showMintComplete,
     showBurnComplete,
     showError,
     showResumeError,
@@ -51,7 +50,7 @@ import {
     setStartMintButtonText,
     showPreviousMintBanner,
     hidePreviousMintBanner
-} from './ui.js?v=2.4';
+} from './ui.js?v=2.6';
 
 import { MintFlow } from './mintFlow.js';
 import { stopTimers } from './mintFlowTimers.js';
@@ -490,7 +489,7 @@ async function handleUpdatePrices() {
         }, 2000);
         
         console.log('✅ Oracle prices updated successfully');
-        const { showSuccessNotification } = await import('./ui.js?v=2.4');
+        const { showSuccessNotification } = await import('./ui.js?v=2.6');
         showSuccessNotification('Prices Updated', '<p>Oracle prices have been updated with latest RedStone data.</p>');
         
     } catch (error) {
@@ -501,7 +500,7 @@ async function handleUpdatePrices() {
             btn.disabled = false;
         }, 2000);
         
-        const { showErrorNotification } = await import('./ui.js?v=2.4');
+        const { showErrorNotification } = await import('./ui.js?v=2.6');
         showErrorNotification('Update Failed', `<p>Could not update oracle prices: ${error.message}</p>`);
     }
 }
@@ -579,7 +578,14 @@ function autoResumeSwap(swap) {
             currentMintFlow = new MintFlow();
             setStartMintButtonText('Start New Mint');
             trackMintProgress(currentMintFlow);
-            currentMintFlow.resume(swap).catch(err => {
+            currentMintFlow.resume(swap).then(() => {
+                // Refresh balance and reset UI after successful auto-resume
+                const address = getUserAddress();
+                if (address) {
+                    getWsXmrBalance(address).then(balance => updateBalance(balance)).catch(() => {});
+                }
+                resetMintUI();
+            }).catch(err => {
                 console.error('Auto-resume mint error:', err);
                 const isStuck = (swap.state === 'lp-ready' || swap.state === 'finalize');
                 showResumeError(swap.requestId, err.message || 'Could not resume your mint. ' + (isStuck ? 'Click Dismiss to hide this swap.' : 'Please clear the swap and start fresh.'));
@@ -1457,6 +1463,14 @@ async function handleResumeSwap(specificSwap) {
             showMintTab();
             trackMintProgress(currentMintFlow);
             await currentMintFlow.resume(swap);
+
+            // Refresh balance and reset UI after successful mint resume
+            const address = getUserAddress();
+            if (address) {
+                const balance = await getWsXmrBalance(address);
+                updateBalance(balance);
+            }
+            resetMintUI();
         } else if (swap.type === 'burn') {
             currentBurnFlow = new BurnFlow();
             showBurnTab();
@@ -2352,15 +2366,12 @@ async function handleStartMint() {
             }
         }
 
-        // Success - celebration animation + banner
-        showMintComplete(amount);
-
         // Update balance
         const address = getUserAddress();
         const balance = await getWsXmrBalance(address);
         updateBalance(balance);
         
-        // Reset UI
+        // Reset UI (banner + confetti are already shown by complete())
         resetMintUI();
         
     } catch (error) {
@@ -2463,7 +2474,7 @@ function trackMintProgress(flow) {
                     finalizeToggleBtn.classList.add('hidden');
                 }
                 // Hide claim button during finalize
-                const finalizeClaimBtn = elements.mintActions?.querySelector('.claim-wsxmr-btn');
+                const finalizeClaimBtn = getElements().mintActions?.querySelector('.claim-wsxmr-btn');
                 if (finalizeClaimBtn) {
                     finalizeClaimBtn.classList.add('hidden');
                 }

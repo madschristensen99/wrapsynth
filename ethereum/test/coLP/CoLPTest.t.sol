@@ -24,6 +24,8 @@ interface IUniswapV3SwapCallback {
     function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external;
 }
 
+event CoLPRangePreferenceUpdated(address indexed vault, uint16 maxRangeBps);
+
 contract MockVerifierProxy {
     function verify(bytes calldata) external pure returns (bool) {
         return true;
@@ -143,7 +145,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         MintFacet(address(hub)).provideLPKey(userMints[0], lpPublicKey, lpPublicKey);
 
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(userMints[0]);
+        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(userMints[0], bytes32(uint256(0xdeadbeef)));
 
         vm.prank(user);
         MintFacet(address(hub)).finalizeMint(userMints[0], testSecret);
@@ -326,7 +328,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         MintFacet(address(hub)).provideLPKey(user2Mints[0], lpPublicKey2, lpPublicKey2);
         
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(user2Mints[0]);
+        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(user2Mints[0], bytes32(uint256(0xdeadbeef)));
 
         vm.prank(user2);
         MintFacet(address(hub)).finalizeMint(user2Mints[0], secret2);
@@ -538,7 +540,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey3, lpPublicKey3);
 
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(requestId);
+        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(requestId, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(user3);
         MintFacet(address(hub)).finalizeMint(requestId, secret3);
@@ -661,7 +663,119 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         console.log("PASS: non-LP cannot set timeout");
     }
 
-    // ========== TEST 17: Collect Co-LP fees authorization ==========
+    // ========== TEST 17: setMaxCoLPRange ==========
+
+    function test_SetMaxCoLPRange_ValidRange() public {
+        vm.startPrank(lp);
+        VaultFacet(address(hub)).setMaxCoLPRange(3000);
+        wsXmrStorage.Vault memory vault = _getVault(lp);
+        assertEq(vault.maxCoLPRangeBps, 3000, "maxCoLPRangeBps should be 3000");
+
+        VaultFacet(address(hub)).setMaxCoLPRange(5000);
+        vault = _getVault(lp);
+        assertEq(vault.maxCoLPRangeBps, 5000, "maxCoLPRangeBps should be 5000");
+
+        // Reset to default
+        VaultFacet(address(hub)).setMaxCoLPRange(2500);
+        vault = _getVault(lp);
+        assertEq(vault.maxCoLPRangeBps, 2500, "maxCoLPRangeBps should be 2500");
+
+        console.log("PASS: setMaxCoLPRange valid range");
+        vm.stopPrank();
+    }
+
+    function test_SetMaxCoLPRange_BoundaryValues() public {
+        vm.startPrank(lp);
+
+        // Min boundary (1000 = MIN_COLP_RANGE_BPS)
+        VaultFacet(address(hub)).setMaxCoLPRange(1000);
+        wsXmrStorage.Vault memory vault = _getVault(lp);
+        assertEq(vault.maxCoLPRangeBps, 1000, "should accept min boundary");
+
+        // Max boundary (10000 = MAX_COLP_RANGE_BPS)
+        VaultFacet(address(hub)).setMaxCoLPRange(10000);
+        vault = _getVault(lp);
+        assertEq(vault.maxCoLPRangeBps, 10000, "should accept max boundary");
+
+        // Reset
+        VaultFacet(address(hub)).setMaxCoLPRange(2500);
+        vm.stopPrank();
+
+        console.log("PASS: setMaxCoLPRange boundary values");
+    }
+
+    function test_SetMaxCoLPRange_BelowMinReverts() public {
+        vm.prank(lp);
+        vm.expectRevert();
+        VaultFacet(address(hub)).setMaxCoLPRange(999);
+
+        console.log("PASS: setMaxCoLPRange below min reverts");
+    }
+
+    function test_SetMaxCoLPRange_AboveMaxReverts() public {
+        vm.prank(lp);
+        vm.expectRevert();
+        VaultFacet(address(hub)).setMaxCoLPRange(10001);
+
+        console.log("PASS: setMaxCoLPRange above max reverts");
+    }
+
+    function test_SetMaxCoLPRange_NonLPReverts() public {
+        address rando = makeAddr("rando");
+
+        vm.prank(rando);
+        vm.expectRevert();
+        VaultFacet(address(hub)).setMaxCoLPRange(2500);
+
+        console.log("PASS: non-LP cannot setMaxCoLPRange");
+    }
+
+    function test_SetMaxCoLPRange_EventEmitted() public {
+        vm.prank(lp);
+        vm.expectEmit(true, false, false, true);
+        emit CoLPRangePreferenceUpdated(lp, 4000);
+        VaultFacet(address(hub)).setMaxCoLPRange(4000);
+
+        // Reset
+        vm.prank(lp);
+        VaultFacet(address(hub)).setMaxCoLPRange(2500);
+
+        console.log("PASS: setMaxCoLPRange emits event");
+    }
+
+    function test_SetMaxCoLPRange_DefaultValue() public {
+        // Vault was created in setUp() — default should be DEFAULT_COLP_RANGE_BPS (2500)
+        wsXmrStorage.Vault memory vault = _getVault(lp);
+        assertEq(vault.maxCoLPRangeBps, 2500, "default maxCoLPRangeBps should be 2500");
+
+        console.log("PASS: setMaxCoLPRange default value is 2500");
+    }
+
+    function test_RebalanceCoLP_ExceedsMaxRangeReverts() public {
+        // Set max range to 1500 (tight)
+        vm.prank(lp);
+        VaultFacet(address(hub)).setMaxCoLPRange(1500);
+
+        // Open a position (uses default 2500 range since we set 1500 after createVault)
+        uint256 wsxmrBalance = wsxmr.balanceOf(user);
+        uint256 wsxmrToDeposit = wsxmrBalance / 2;
+
+        vm.prank(user);
+        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+
+        // LP tries to rebalance with 2000 bps — exceeds maxCoLPRangeBps of 1500
+        vm.prank(lp);
+        vm.expectRevert();
+        VaultFacet(address(hub)).rebalanceCoLP(tokenId, 2000, block.timestamp + 1 hours);
+
+        // Reset max range to default
+        vm.prank(lp);
+        VaultFacet(address(hub)).setMaxCoLPRange(2500);
+
+        console.log("PASS: rebalanceCoLP exceeds max range reverts");
+    }
+
+    // ========== TEST 18: Collect Co-LP fees authorization ==========
 
     function test_CollectCoLPFees_LPCanCall() public {
         uint256 wsxmrBalance = wsxmr.balanceOf(user);
@@ -836,7 +950,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
 
         // LP sets mint ready
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(largeMints[0]);
+        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(largeMints[0], bytes32(uint256(0xdeadbeef)));
 
         // User finalizes mint
         vm.prank(largeUser);

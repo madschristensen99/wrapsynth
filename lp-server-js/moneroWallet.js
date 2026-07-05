@@ -2,11 +2,28 @@
 // Handles: scanning for deposits, sending XMR, wallet state queries
 
 import crypto from 'crypto';
+import { spawn } from 'child_process';
+import { setTimeout as sleep } from 'timers/promises';
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 const WALLET_RPC_URL = process.env.MONERO_WALLET_RPC_URL || null;
 const WALLET_RPC_USER = process.env.MONERO_WALLET_RPC_USER || null;
 const WALLET_RPC_PASSWORD = process.env.MONERO_WALLET_RPC_PASSWORD || null;
+const WALLET_RPC_PORT = WALLET_RPC_URL ? new URL(WALLET_RPC_URL).port : '18082';
+const WALLET_RPC_HOST = WALLET_RPC_URL ? new URL(WALLET_RPC_URL).hostname : '127.0.0.1';
+
+// Fallback Monero daemon URLs for getDaemonHeight()
+// Used in order until one succeeds
+const DAEMON_URLS = (
+  process.env.MONERO_DAEMON_URLS
+    ? process.env.MONERO_DAEMON_URLS.split(',').map(s => s.trim()).filter(Boolean)
+    : [
+      'https://xmr-node.cakewallet.com:18081',
+      'https://node.moneroworld.com:18081',
+      'https://xmr-node-eu.cakewallet.com:18081',
+      'https://monero.stackotus.com:18081',
+    ]
+);
 
 // ─── Wallet Mutex ───────────────────────────────────────────────────────────
 // monero-wallet-rpc only supports one open wallet at a time.
@@ -29,43 +46,67 @@ function getAuthHeader() {
   return 'Basic ' + Buffer.from(creds).toString('base64');
 }
 
-async function walletRpc(method, params = {}) {
+let _walletRpcHealthy = null; // null = unknown, true = healthy, false = unreachable
+
+async function walletRpc(method, params = {}, retries = 3, timeoutMs = 60000) {
   if (!WALLET_RPC_URL) {
-    throw new Error('MONERO_WALLET_RPC_URL not configured');
+    throw new Error('MONERO_WALLET_RPC_URL not configured — start monero-wallet-rpc and set this in .env');
   }
 
   const headers = { 'Content-Type': 'application/json' };
   const auth = getAuthHeader();
   if (auth) headers['Authorization'] = auth;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000);
-  try {
-    const res = await fetch(WALLET_RPC_URL + '/json_rpc', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ jsonrpc: '2.0', id: '0', method, params }),
-      signal: controller.signal,
-    });
+  let lastErr;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(WALLET_RPC_URL + '/json_rpc', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ jsonrpc: '2.0', id: '0', method, params }),
+        signal: controller.signal,
+      });
 
-    if (!res.ok) {
-      throw new Error(`wallet-rpc HTTP ${res.status}`);
-    }
+      if (!res.ok) {
+        throw new Error(`wallet-rpc HTTP ${res.status}`);
+      }
 
-    const data = await res.json();
-    if (data.error) {
-      throw new Error(`wallet-rpc error: ${JSON.stringify(data.error)}`);
-    }
+      const data = await res.json();
+      if (data.error) {
+        throw new Error(`wallet-rpc error: ${JSON.stringify(data.error)}`);
+      }
 
-    return data.result;
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      throw new Error(`wallet-rpc timeout: ${method} took >60s`);
+      _walletRpcHealthy = true;
+      return data.result;
+    } catch (err) {
+      lastErr = err;
+      if (err.name === 'AbortError') {
+        lastErr = new Error(`wallet-rpc timeout: ${method} took >60s`);
+      }
+      // Only retry on connection errors, not application errors (already exists, file errors, etc.)
+      const isConnectionError = lastErr.message.includes('fetch failed')
+        || lastErr.message.includes('ECONNREFUSED')
+        || lastErr.message.includes('timeout')
+        || lastErr.name === 'AbortError';
+      if (attempt < retries && isConnectionError) {
+        const backoff = attempt * 1000;
+        console.warn(`[Monero] walletRpc ${method} attempt ${attempt}/${retries} failed: ${lastErr.message}, retrying in ${backoff}ms...`);
+        await new Promise(r => setTimeout(r, backoff));
+      } else {
+        break; // Don't retry on application errors
+      }
+    } finally {
+      clearTimeout(timeout);
     }
-    throw err;
-  } finally {
-    clearTimeout(timeout);
   }
+
+  _walletRpcHealthy = false;
+  throw new Error(
+    `wallet-rpc unreachable after ${retries} attempts: ${lastErr.message}. ` +
+    `Ensure monero-wallet-rpc is running at ${WALLET_RPC_URL}`
+  );
 }
 
 // ─── Balance & Transfers ────────────────────────────────────────────────────
@@ -155,12 +196,21 @@ async function _pollForDeposit(expectedAmountAtomic, opts = {}) {
   const walletPass = 'deposit-scan-password';
   const mainWalletName = process.env.MONERO_WALLET_NAME || 'lp-wallet';
   const mainWalletPass = process.env.MONERO_WALLET_PASSWORD || 'lp-wallet-password';
+  const walletDir = process.env.MONERO_WALLET_DIR || '/home/remsee/wsFrontendOverhaul/lp-server-js/monero-wallets';
 
   console.log(`[Monero] Creating view-only wallet for deposit address: ${depositAddress.slice(0, 16)}...`);
 
   // Create or open a view-only wallet for this specific deposit address
   try {
     await walletRpc('close_wallet', {});
+    // Clean up stale deposit wallet files from previous runs
+    try {
+      const fs = await import('fs');
+      for (const ext of ['', '.keys', '.address.txt']) {
+        const p = `${walletDir}/${walletName}${ext}`;
+        if (fs.existsSync(p)) fs.unlinkSync(p);
+      }
+    } catch {}
     try {
       await walletRpc('generate_from_keys', {
         filename: walletName,
@@ -171,7 +221,7 @@ async function _pollForDeposit(expectedAmountAtomic, opts = {}) {
       });
       console.log('[Monero] View-only wallet created for deposit address');
     } catch (genErr) {
-      // Wallet might already exist, try opening it
+      // Wallet might already exist in the RPC's memory, try opening it
       if (genErr.message.includes('already exists') || genErr.message.includes('file_exists')) {
         await walletRpc('open_wallet', { filename: walletName, password: walletPass });
         console.log('[Monero] Opened existing view-only wallet for deposit address');
@@ -189,7 +239,7 @@ async function _pollForDeposit(expectedAmountAtomic, opts = {}) {
   // Refresh the view-only wallet to scan the blockchain
   try {
     console.log('[Monero] Refreshing view-only wallet (scanning blockchain)...');
-    const refreshRes = await walletRpc('refresh', {});
+    const refreshRes = await walletRpc('refresh', {}, 3, 300000);
     console.log(`[Monero] Refresh complete: blocks_fetched=${refreshRes.blocks_fetched || 0}`);
   } catch (err) {
     console.warn('[Monero] Refresh failed (continuing anyway):', err.message);
@@ -220,7 +270,7 @@ async function _pollForDeposit(expectedAmountAtomic, opts = {}) {
 
         // Refresh again to pick up any new blocks
         if (txs.length === 0) {
-          await walletRpc('refresh', {});
+          await walletRpc('refresh', {}, 3, 300000);
         }
       } catch (err) {
         console.warn('[Monero] pollForDeposit error:', err.message);
@@ -325,33 +375,150 @@ export async function createSubaddress(accountIndex = 0, label = '') {
  * blocks while a wallet is loading/refreshing).
  */
 export async function getDaemonHeight() {
-  const daemonUrl = process.env.MONERO_DAEMON_URL || 'https://xmr-node.cakewallet.com:18081';
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10000);
+  // First try via wallet RPC (uses the wallet's already-connected daemon)
+  // Only trust it if the height is reasonable for Monero mainnet (> 1000000)
+  // A freshly created unsynced wallet returns height 1
   try {
-    const res = await fetch(`${daemonUrl}/json_rpc`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: '0', method: 'get_info', params: {} }),
-      signal: controller.signal,
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(`daemon error: ${JSON.stringify(data.error)}`);
-    return Number(data.result.height);
-  } finally {
-    clearTimeout(timeout);
+    const res = await walletRpc('get_height', {});
+    const h = Number(res.height);
+    if (h > 1000000) return h;
+  } catch {}
+
+  // Fall back to direct daemon queries
+  for (const daemonUrl of DAEMON_URLS) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const res = await fetch(`${daemonUrl}/json_rpc`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: '0', method: 'get_info', params: {} }),
+        signal: controller.signal,
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(`daemon error: ${JSON.stringify(data.error)}`);
+      return Number(data.result.height);
+    } catch (err) {
+      console.warn(`[Monero] Daemon ${daemonUrl} failed: ${err.message}, trying next...`);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+  throw new Error('All Monero daemon URLs failed — check your internet connection or set MONERO_DAEMON_URLS in .env');
 }
 
 // ─── Wallet Open ────────────────────────────────────────────────────────────
 
 let walletOpened = false;
+let _walletRpcProcess = null;
+let _ensureWalletPromise = null; // Mutex: prevents concurrent ensureWalletOpen calls
+
+// ─── Auto-start monero-wallet-rpc ───────────────────────────────────────────
+
+async function checkWalletRpcReachable() {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(WALLET_RPC_URL + '/json_rpc', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: '0', method: 'get_version', params: {} }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function startWalletRpc() {
+  if (_walletRpcProcess) {
+    // Process already spawned — check if it's still alive
+    if (_walletRpcProcess.exitCode === null && _walletRpcProcess.killed === false) {
+      return true;
+    }
+    _walletRpcProcess = null;
+  }
+
+  const walletDir = process.env.MONERO_WALLET_DIR || '/home/remsee/wsFrontendOverhaul/lp-server-js/monero-wallets';
+  const daemonAddr = process.env.MONERO_DAEMON_ADDRESS || DAEMON_URLS[0].replace('https://', '').replace('http://', '');
+
+  console.log(`[Monero] Starting monero-wallet-rpc on ${WALLET_RPC_HOST}:${WALLET_RPC_PORT}...`);
+  console.log(`[Monero]   wallet-dir: ${walletDir}`);
+  console.log(`[Monero]   daemon:     ${daemonAddr}`);
+
+  try {
+    _walletRpcProcess = spawn('monero-wallet-rpc', [
+      '--wallet-dir', walletDir,
+      '--rpc-bind-port', String(WALLET_RPC_PORT),
+      '--rpc-bind-ip', WALLET_RPC_HOST,
+      '--daemon-address', daemonAddr,
+      '--trusted-daemon',
+      '--daemon-ssl', 'enabled',
+      '--daemon-ssl-allow-any-cert',
+      '--disable-rpc-login',
+      '--non-interactive',
+    ], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    _walletRpcProcess.stdout?.on('data', (data) => {
+      const line = data.toString().trim();
+      if (line) console.log(`[Monero RPC] ${line}`);
+    });
+    _walletRpcProcess.stderr?.on('data', (data) => {
+      const line = data.toString().trim();
+      if (line) console.log(`[Monero RPC] ${line}`);
+    });
+    _walletRpcProcess.on('exit', (code) => {
+      console.warn(`[Monero] wallet-rpc process exited with code ${code}`);
+      _walletRpcProcess = null;
+      _walletRpcHealthy = false;
+      walletOpened = false;
+    });
+  } catch (err) {
+    console.error('[Monero] Failed to spawn monero-wallet-rpc:', err.message);
+    console.error('[Monero] Is monero-wallet-rpc installed and in PATH?');
+    return false;
+  }
+
+  // Wait for RPC to be ready (up to 30s)
+  for (let i = 0; i < 60; i++) {
+    await sleep(500);
+    if (await checkWalletRpcReachable()) {
+      console.log('[Monero] wallet-rpc is ready');
+      return true;
+    }
+  }
+
+  console.error('[Monero] wallet-rpc did not become ready within 30s');
+  return false;
+}
 
 export async function ensureWalletOpen() {
+  if (walletOpened) return;
+  // Mutex: if another call is already running, wait for it
+  if (_ensureWalletPromise) return _ensureWalletPromise;
+  _ensureWalletPromise = _ensureWalletOpen().finally(() => { _ensureWalletPromise = null; });
+  return _ensureWalletPromise;
+}
+
+async function _ensureWalletOpen() {
   if (walletOpened) return;
   const walletName = process.env.MONERO_WALLET_NAME || 'lp-wallet';
   const walletPass = process.env.MONERO_WALLET_PASSWORD || 'lp-wallet-password';
   const walletDir = process.env.MONERO_WALLET_DIR || '/home/remsee/wsFrontendOverhaul/lp-server-js/monero-wallets';
+
+  // If wallet RPC is not reachable, try to start it automatically
+  if (!(await checkWalletRpcReachable())) {
+    console.warn('[Monero] Wallet RPC not reachable, auto-starting...');
+    const started = await startWalletRpc();
+    if (!started) {
+      console.error('[Monero] Could not start wallet RPC. Mint scanning will fail.');
+      return;
+    }
+  }
 
   // First check if a wallet is already open
   try {
@@ -459,8 +626,26 @@ export async function ensureWalletOpen() {
     walletOpened = true;
     console.log('[Monero] Wallet regenerated from keys:', walletName);
   } catch (err) {
+    // "Wallet already exists" means a concurrent call already created it — just open it
+    if (err.message.includes('already exists') || err.message.includes('file_exists')) {
+      try {
+        await walletRpc('open_wallet', { filename: walletName, password: walletPass });
+        walletOpened = true;
+        console.log('[Monero] Wallet opened (already existed):', walletName);
+        return;
+      } catch (openErr) {
+        // Wallet might already be open in RPC — check if we can use it
+        try {
+          await walletRpc('get_balance', {});
+          walletOpened = true;
+          console.log('[Monero] Wallet already open in RPC:', walletName);
+          return;
+        } catch {}
+        console.error('[Monero] Failed to open existing wallet:', openErr.message);
+      }
+    }
     console.error('[Monero] Failed to regenerate wallet from keys:', err.message);
-    walletOpened = true; // Mark as opened to stop retrying
+    walletOpened = false; // Don't mark as opened — allow retry on next call
   }
 }
 
@@ -468,6 +653,10 @@ export async function ensureWalletOpen() {
 
 export function isWalletConfigured() {
   return !!WALLET_RPC_URL;
+}
+
+export function isWalletRpcHealthy() {
+  return _walletRpcHealthy === true;
 }
 
 // Auto-open wallet on first import if RPC URL is configured
