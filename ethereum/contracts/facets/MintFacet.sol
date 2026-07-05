@@ -104,6 +104,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             lpBond: 0,  // Bond posted later when LP calls setMintReady
             normalizedDebtAmount: 0,
             vaultMintNonce: vault.mintNonce,
+            lpCommitment: bytes32(0),
             status: MintStatus.PENDING
         });
         
@@ -147,11 +148,12 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         emit LPKeyProvided(requestId, lpPublicSpendKey, lpPublicViewKey);
     }
     
-    function setMintReady(bytes32 requestId) external payable {
+    function setMintReady(bytes32 requestId, bytes32 lpCommitment) external payable {
         MintRequest storage request = mintRequests[requestId];
         if (request.status != MintStatus.KEY_PROVIDED) revert InvalidStatus();
         if (msg.sender != request.lpVault) revert Unauthorized();
         if (block.number >= request.timeout) revert DeadlineExpired();
+        if (lpCommitment == bytes32(0)) revert InvalidCommitment();
         
         Vault storage vault = _vaults[request.lpVault];
         if (request.vaultMintNonce != vault.mintNonce) revert InvalidStatus();
@@ -171,9 +173,10 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         uint256 currentRatio = _calculateCollateralRatio(availableCollateral, projectedDebt);
         if (currentRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
         
+        request.lpCommitment = lpCommitment;
         request.status = MintStatus.READY;
         request.timeout = block.number + MINT_READY_EXTENSION_BLOCKS;
-        emit MintReady(requestId);
+        emit MintReady(requestId, lpCommitment);
     }
     
     function finalizeMint(bytes32 requestId, bytes32 secret) external {
@@ -263,29 +266,72 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         
         MintStatus originalStatus = request.status;
         uint256 depositToTransfer = request.griefingDeposit;
-        uint256 bondToTransfer = request.lpBond;
-        
-        request.status = MintStatus.CANCELLED;
-        emit MintCancelled(requestId);
         
         if (originalStatus == MintStatus.PENDING || originalStatus == MintStatus.KEY_PROVIDED) {
-            // Timeout before LP marked ready - user gets griefing deposit back via pull
+            request.status = MintStatus.CANCELLED;
+            emit MintCancelled(requestId);
             if (depositToTransfer > 0) {
                 pendingReturns[request.initiator][address(0)] += depositToTransfer;
                 emit ReturnQueued(request.initiator, address(0), depositToTransfer);
             }
         } else {
-            // C1: LP marked READY but failed to provide secret
-            // Slash griefing deposit to LP (anti-grief), return LP bond to LP
-            if (depositToTransfer > 0) {
-                pendingReturns[request.lpVault][address(0)] += depositToTransfer;
-                emit ReturnQueued(request.lpVault, address(0), depositToTransfer);
-            }
-            if (bondToTransfer > 0) {
-                pendingReturns[request.lpVault][address(0)] += bondToTransfer;
-                emit ReturnQueued(request.lpVault, address(0), bondToTransfer);
-            }
+            // READY, timed out, user never finalized.
+            // Move to EXPIRED_READY — LP must claim with secret reveal.
+            request.status = MintStatus.EXPIRED_READY;
+            request.timeout = block.number + LP_CLAIM_WINDOW_BLOCKS;
+            emit MintExpiredReady(requestId);
         }
+        
+        _reentrancyStatus = _NOT_ENTERED;
+    }
+    
+    function claimGriefingDeposit(bytes32 requestId, bytes32 lpSecret) external {
+        if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
+        _reentrancyStatus = _ENTERED;
+        
+        MintRequest storage request = mintRequests[requestId];
+        if (request.status != MintStatus.EXPIRED_READY) revert InvalidStatus();
+        if (msg.sender != request.lpVault) revert Unauthorized();
+        
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(lpSecret));
+        bytes32 computed = keccak256(abi.encodePacked(px, py));
+        if (computed != request.lpCommitment) revert InvalidSecret();
+        
+        request.status = MintStatus.CANCELLED;
+        
+        if (request.griefingDeposit > 0) {
+            pendingReturns[request.lpVault][address(0)] += request.griefingDeposit;
+            emit ReturnQueued(request.lpVault, address(0), request.griefingDeposit);
+        }
+        if (request.lpBond > 0) {
+            pendingReturns[request.lpVault][address(0)] += request.lpBond;
+            emit ReturnQueued(request.lpVault, address(0), request.lpBond);
+        }
+        emit GriefingDepositClaimed(requestId, lpSecret);
+        
+        _reentrancyStatus = _NOT_ENTERED;
+    }
+    
+    function sweepUnclaimedExpiredMint(bytes32 requestId) external {
+        if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
+        _reentrancyStatus = _ENTERED;
+        
+        MintRequest storage request = mintRequests[requestId];
+        if (request.status != MintStatus.EXPIRED_READY) revert InvalidStatus();
+        if (block.number < request.timeout) revert TimeoutNotReached();
+        
+        request.status = MintStatus.CANCELLED;
+        
+        // LP never proved liveness — return user's deposit, return LP's bond
+        if (request.griefingDeposit > 0) {
+            pendingReturns[request.initiator][address(0)] += request.griefingDeposit;
+            emit ReturnQueued(request.initiator, address(0), request.griefingDeposit);
+        }
+        if (request.lpBond > 0) {
+            pendingReturns[request.lpVault][address(0)] += request.lpBond;
+            emit ReturnQueued(request.lpVault, address(0), request.lpBond);
+        }
+        emit MintGriefingUnclaimed(requestId);
         
         _reentrancyStatus = _NOT_ENTERED;
     }
@@ -305,7 +351,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         // Count pending/ready requests
         for (uint256 i = 0; i < vaultReqs.length; i++) {
             MintRequest storage req = mintRequests[vaultReqs[i]];
-            if (req.status == MintStatus.PENDING || req.status == MintStatus.KEY_PROVIDED || req.status == MintStatus.READY) {
+            if (req.status == MintStatus.PENDING || req.status == MintStatus.KEY_PROVIDED || req.status == MintStatus.READY || req.status == MintStatus.EXPIRED_READY) {
                 count++;
             }
         }
@@ -315,7 +361,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         uint256 index = 0;
         for (uint256 i = 0; i < vaultReqs.length; i++) {
             MintRequest storage req = mintRequests[vaultReqs[i]];
-            if (req.status == MintStatus.PENDING || req.status == MintStatus.KEY_PROVIDED || req.status == MintStatus.READY) {
+            if (req.status == MintStatus.PENDING || req.status == MintStatus.KEY_PROVIDED || req.status == MintStatus.READY || req.status == MintStatus.EXPIRED_READY) {
                 result[index++] = vaultReqs[i];
             }
         }
@@ -379,17 +425,19 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     
     /// @notice Returns all function selectors implemented by this facet
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](10);
+        bytes4[] memory sels = new bytes4[](12);
         sels[0] = this.initiateMint.selector;
         sels[1] = this.provideLPKey.selector;
         sels[2] = this.setMintReady.selector;
         sels[3] = this.finalizeMint.selector;
         sels[4] = this.cancelMint.selector;
-        sels[5] = this.getMintRequest.selector;
-        sels[6] = this.getUserMintRequests.selector;
-        sels[7] = this.getVaultPendingMints.selector;
-        sels[8] = this.calculateWsxmrAmount.selector;
-        sels[9] = this.calculateMintFee.selector;
+        sels[5] = this.claimGriefingDeposit.selector;
+        sels[6] = this.sweepUnclaimedExpiredMint.selector;
+        sels[7] = this.getMintRequest.selector;
+        sels[8] = this.getUserMintRequests.selector;
+        sels[9] = this.getVaultPendingMints.selector;
+        sels[10] = this.calculateWsxmrAmount.selector;
+        sels[11] = this.calculateMintFee.selector;
         return sels;
     }
 }

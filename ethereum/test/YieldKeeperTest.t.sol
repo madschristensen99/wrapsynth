@@ -124,7 +124,7 @@ contract YieldKeeperTest is Test {
         vm.prank(lp);
         MintFacet(address(hub)).provideLPKey(userMints[0], lpPublicKey, lpPublicKey);
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(userMints[0]);
+        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(userMints[0], bytes32(uint256(0xdeadbeef)));
         vm.prank(user);
         MintFacet(address(hub)).finalizeMint(userMints[0], testSecret);
     }

@@ -79,6 +79,8 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         if (!fromRouter) {
             IwsXmrHub(address(this)).burnTokens(user, wsxmrAmount);
+        } else {
+            IwsXmrHub(address(this)).burnTokens(address(this), wsxmrAmount);
         }
         
         // B1: Total collateral model - never subtract from collateralShares when locking
@@ -191,6 +193,8 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     function finalizeBurn(bytes32 requestId, bytes32 secret) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
+        
+        if (secret == 0) revert InvalidSecret();
         
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
