@@ -14,8 +14,8 @@
 <link rel="stylesheet" href="app-styles.css">
 <style>
 .lp-header{
-  background:linear-gradient(135deg,rgba(47,230,196,.08),rgba(47,230,196,.02));
-  border:1px solid rgba(47,230,196,.2);
+  background:linear-gradient(135deg,rgba(61,155,138,.08),rgba(61,155,138,.02));
+  border:1px solid rgba(61,155,138,.2);
   border-radius:20px;
   padding:32px;
   margin-bottom:24px;
@@ -47,7 +47,7 @@
   transition:all .3s ease;
 }
 .stat-card:hover{
-  border-color:rgba(47,230,196,.3);
+  border-color:rgba(61,155,138,.3);
   transform:translateY(-2px);
 }
 .stat-label{
@@ -121,7 +121,7 @@
     <a href="index.html" class="brand" style="text-decoration:none"><img src="./wrapsynth-symbol.png" alt="Wrapsynth" style="width:22px;height:22px;border-radius:6px">Wrapsynth</a>
     <div class="nav-right">
       <span class="pill"><img src="https://gnosisscan.io/assets/generic/html/favicon-light.ico" alt="Gnosis" style="width:14px;height:14px;margin-right:4px">Gnosis</span>
-      <a href="app.html" style="padding:8px 16px;background:linear-gradient(135deg,var(--teal),#22b894);color:#000;font-weight:600;border-radius:10px;text-decoration:none;font-size:14px;transition:all .2s ease;display:inline-block" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 12px rgba(47,230,196,.3)'" onmouseout="this.style.transform='';this.style.boxShadow=''">Back to App</a>
+      <a href="app.html" style="padding:8px 16px;background:linear-gradient(135deg,var(--teal),#2a8a7a);color:#000;font-weight:600;border-radius:10px;text-decoration:none;font-size:14px;transition:all .2s ease;display:inline-block" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 12px rgba(61,155,138,.3)'" onmouseout="this.style.transform='';this.style.boxShadow=''">Back to App</a>
     </div>
   </nav>
 
@@ -219,7 +219,7 @@ async function loadVaultDetails(address) {
     transport: http('https://rpc.gnosischain.com')
   });
 
-  const hub = '0x2147f47829014B0b32531124d45A30352e721F75';
+  const hub = '0x512a76C2E4edC0695F6195Dd88BBa7AE425AA160';
   const shortAddr = `${address.slice(0, 6)}...${address.slice(-4)}`;
   
   document.getElementById('lp-name').textContent = `LP Vault ${shortAddr}`;
