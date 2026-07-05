@@ -63,7 +63,7 @@ async function main() {
         'function withdrawReturns(address token) external',
         'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment, bytes32 userPublicKey) external payable returns (bytes32)',
         'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
-        'function setMintReady(bytes32 requestId) external payable',
+        'function setMintReady(bytes32 requestId, bytes32 lpCommitment) external payable',
         'function finalizeMint(bytes32 requestId, bytes32 secret) external',
         'function updateOraclePrices(bytes[] calldata updateData) external payable',
         'event CoLPDeployed(address indexed lpVault, address indexed user, uint256 indexed tokenId, uint256 sDAIShares, uint256 wsxmrAmount, uint16 rangeBps)',
@@ -187,7 +187,8 @@ async function main() {
         await provideTx.wait();
         console.log('  LP key provided:', provideTx.hash);
 
-        const readyTx = await hub.setMintReady(requestId, { value: griefingDeposit, gasLimit: 200000 });
+        const lpCommitment = ethers.utils.id('lp-commitment');
+        const readyTx = await hub.setMintReady(requestId, lpCommitment, { value: griefingDeposit, gasLimit: 200000 });
         await readyTx.wait();
         console.log('  Mint ready:', readyTx.hash);
 

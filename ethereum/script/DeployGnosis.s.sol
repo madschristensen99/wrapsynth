@@ -20,7 +20,7 @@ contract DeployGnosis is Script {
     // No verifier needed for RedStone (uses off-chain signed data)
     address constant VERIFIER = address(0);
     address constant SDAI = 0xaf204776c7245bF4147c2612BF6e5972Ee483701;
-    uint256 constant XMR_PRICE = 390 * 1e18; // Initial XMR price for pool initialization
+    // XMR price fetched dynamically at deploy time via FFI
 
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
@@ -31,6 +31,16 @@ contract DeployGnosis is Script {
         console.log("============================================================");
         console.log("Deployer:", deployer);
         console.log("Balance:", deployer.balance / 1e18, "xDAI");
+        console.log("");
+
+        // Fetch current XMR price from Coingecko
+        string[] memory inputs = new string[](3);
+        inputs[0] = "bash";
+        inputs[1] = "-c";
+        inputs[2] = "curl -s 'https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd' | jq -r '.monero.usd | floor | tostring'";
+        bytes memory res = vm.ffi(inputs);
+        uint256 xmrPrice = vm.parseUint(string(res)) * 1e18;
+        console.log("Fetched XMR price:", xmrPrice / 1e18, "USD");
         console.log("");
 
         vm.startBroadcast(deployerPrivateKey);
@@ -115,11 +125,11 @@ contract DeployGnosis is Script {
         if (success && data.length >= 32) {
             uint160 sqrtPriceX96 = abi.decode(data, (uint160));
             if (sqrtPriceX96 == 0) {
-                console.log("Initializing pool at $390 XMR...");
+                console.log("Initializing pool at dynamic XMR price...");
                 bool sDAIIsToken0 = SDAI < address(wsxmr);
                 console.log("sDAI is token0:", sDAIIsToken0);
-                console.log("XMR_PRICE:", XMR_PRICE);
-                uint160 targetSqrtPriceX96 = _priceToSqrtPriceX96(XMR_PRICE, sDAIIsToken0);
+                console.log("XMR_PRICE:", xmrPrice);
+                uint160 targetSqrtPriceX96 = _priceToSqrtPriceX96(xmrPrice, sDAIIsToken0);
                 console.log("Calculated sqrtPriceX96:", targetSqrtPriceX96);
                 (bool ok,) = pool.call(abi.encodeWithSignature("initialize(uint160)", targetSqrtPriceX96));
                 require(ok, "Pool initialization failed");
