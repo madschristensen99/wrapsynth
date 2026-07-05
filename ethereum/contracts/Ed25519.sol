@@ -127,8 +127,7 @@ library Ed25519 {
     }
 
     function compressPoint(uint256 x, uint256 y) internal pure returns (uint256) {
-        uint256 compressed = y | ((x & 1) << 255);        
-        // Return is in Big Endian order - need to change endianness to stick to Monero's convention of using Little Endian
-        return compressed;
+        uint256 compressed = y | ((x & 1) << 255);
+        return changeEndianness(compressed);
     }
 }

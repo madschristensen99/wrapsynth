@@ -192,7 +192,6 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
                 }
                 globalBadDebt += badDebt;
                 emit BadDebtWrittenOff(lpVault, badDebt);
-                emit BadDebtSocialized(lpVault, badDebt, globalDebtIndex);
             }
         }
         
@@ -308,9 +307,21 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         newV.collateralShares += absorbedCollateral;
         
         // C2: Track absorbed collateral as principal to prevent yield extraction
+        // Must update BOTH lpPrincipalShares (used in withdrawals) AND lpPrincipalDeposits
+        // (used by YieldLogic.calculateExtractableYield as the yield threshold)
+        uint256 absorbedDai = ISavingsDAI(GnosisAddresses.SDAI).convertToAssets(absorbedCollateral);
         lpPrincipalShares[msg.sender] += absorbedCollateral;
+        lpPrincipalDeposits[msg.sender] += absorbedDai;
+        globalLpPrincipal += absorbedDai;
+
+        if (globalLpPrincipalShares >= lpPrincipalShares[oldVault]) {
+            globalLpPrincipalShares -= lpPrincipalShares[oldVault];
+        }
+        if (globalLpPrincipal >= lpPrincipalDeposits[oldVault]) {
+            globalLpPrincipal -= lpPrincipalDeposits[oldVault];
+        }
         lpPrincipalShares[oldVault] = 0;
-        
+
         // Zero out old vault — must clear ALL state to prevent phantom locked collateral
         oldV.normalizedDebt = 0;
         oldV.collateralShares = 0;
