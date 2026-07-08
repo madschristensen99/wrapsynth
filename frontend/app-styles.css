@@ -426,6 +426,27 @@ body:not(.js-loaded) .panel{display:none!important}
   .burn-complete-banner { animation: none; opacity: 1; transform: none; }
 }
 
+/* CO-LP POSITION CARDS */
+.position-card{display:flex;align-items:center;justify-content:space-between;
+  padding:12px 14px;background:var(--panel-2);border:1px solid var(--line-2);
+  border-radius:12px;gap:10px;transition:transform .2s,box-shadow .2s,border-color .2s}
+.position-card:hover{transform:translateY(-2px);border-color:var(--line);
+  box-shadow:0 4px 16px rgba(0,0,0,.3),0 0 20px rgba(62,252,224,.06)}
+.position-card .position-info{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
+.position-card .position-token{font-family:'JetBrains Mono';font-size:13px;font-weight:600;color:var(--fg)}
+.position-card .position-meta{font-family:'JetBrains Mono';font-size:11px;color:var(--muted);line-height:1.4;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.position-card .position-actions{display:flex;gap:6px;flex-shrink:0}
+.position-card .position-actions button{font-family:'Plus Jakarta Sans';font-weight:600;font-size:12px;
+  padding:6px 12px;border-radius:8px;cursor:pointer;border:1px solid var(--line);
+  background:rgba(255,255,255,.06);color:var(--fg);transition:all .15s}
+.position-card .position-actions button:hover{background:var(--teal);color:#0a0a0b;border-color:var(--teal);
+  box-shadow:0 0 16px rgba(62,252,224,.2)}
+.position-card .position-actions button.btn-unwind{background:rgba(255,133,128,.1);color:var(--red);
+  border-color:rgba(255,133,128,.3)}
+.position-card .position-actions button.btn-unwind:hover{background:var(--red);color:#fff;border-color:var(--red);
+  box-shadow:0 0 16px rgba(255,133,128,.2)}
+
 /* ── Slide-in Notifications ── */
 .notification-container {
   position: fixed;
