@@ -359,6 +359,11 @@ body:not(.js-loaded) .panel{display:none!important}
 .percentage-btn:active{background:rgba(255,122,61,.32)}
 #burn-percentage-feedback{font-size:11px;color:var(--teal);margin-left:auto;opacity:0;transition:opacity .2s;font-family:'Plus Jakarta Sans';font-weight:600}
 
+.colp-percentage-btn{font-family:'Plus Jakarta Sans';font-weight:600;font-size:11px;padding:4px 10px;background:rgba(255,122,61,.1);border:1px solid rgba(255,122,61,.35);border-radius:6px;color:var(--xmr);cursor:pointer;transition:all .15s}
+.colp-percentage-btn:hover{background:rgba(255,122,61,.2);border-color:rgba(255,122,61,.55);box-shadow:0 0 16px rgba(255,122,61,.15)}
+.colp-percentage-btn:active{background:rgba(255,122,61,.32)}
+#colp-percentage-feedback{font-size:11px;color:var(--teal);margin-left:auto;opacity:0;transition:opacity .2s;font-family:'Plus Jakarta Sans';font-weight:600}
+
 @media(prefers-reduced-motion:reduce){.gdot{animation:none}}
 
 /* ── Celebration Banners ── */
@@ -429,7 +434,7 @@ body:not(.js-loaded) .panel{display:none!important}
 /* CO-LP POSITION CARDS */
 .position-card{display:flex;align-items:center;justify-content:space-between;
   padding:12px 14px;background:var(--panel-2);border:1px solid var(--line-2);
-  border-radius:12px;gap:10px;transition:transform .2s,box-shadow .2s,border-color .2s}
+  border-radius:12px;gap:10px;transition:transform .2s,box-shadow .2s,border-color .2s;flex-wrap:wrap}
 .position-card:hover{transform:translateY(-2px);border-color:var(--line);
   box-shadow:0 4px 16px rgba(0,0,0,.3),0 0 20px rgba(62,252,224,.06)}
 .position-card .position-info{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
@@ -446,6 +451,10 @@ body:not(.js-loaded) .panel{display:none!important}
   border-color:rgba(255,133,128,.3)}
 .position-card .position-actions button.btn-unwind:hover{background:var(--red);color:#fff;border-color:var(--red);
   box-shadow:0 0 16px rgba(255,133,128,.2)}
+.position-card .colp-rebalance-input{width:60px;font-family:'JetBrains Mono';font-size:12px;
+  padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel-2);
+  color:var(--fg);text-align:center}
+.position-card .colp-rebalance-input:focus{outline:none;border-color:var(--teal)}
 
 /* ── Slide-in Notifications ── */
 .notification-container {
