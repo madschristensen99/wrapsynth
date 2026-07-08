@@ -144,14 +144,44 @@ if ('serviceWorker' in navigator) {
 
         <div class="meta">
           <div class="r"><span>LP Vault</span>
-            <select id="mint-vault-select" style="background:var(--input);border:1px solid var(--line);border-radius:6px;padding:4px 8px;color:var(--fg);font-family:'JetBrains Mono';font-size:12px">
-              <option value="">Loading vaults...</option>
-            </select>
+            <div class="vault-picker" id="mint-vault-picker">
+              <div class="vp-selected" id="mint-vp-selected">
+                <span class="vp-dot" style="background:var(--muted)"></span>
+                <span class="vp-addr">Loading vaults...</span>
+                <span class="vp-cr"></span>
+                <span class="vp-chev"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></span>
+              </div>
+              <div class="vp-list" id="mint-vp-list"></div>
+              <select id="mint-vault-select" style="display:none">
+                <option value="">Loading vaults...</option>
+              </select>
+            </div>
           </div>
           <div class="r" id="mint-vault-info" style="display:none"><span>Vault capacity</span><b id="mint-capacity">—</b></div>
           <div class="r"><span id="mint-fee-label">LP mint fee</span><b id="mint-fee">—</b></div>
           <div class="r"><span>LP timeout window</span><b id="mint-timeout">—</b></div>
-          <div class="r"><span>Backing collateral</span><b id="mint-backing-collateral">DAI · 150%</b></div>
+          <div class="r"><span>Backing collateral</span><b id="mint-backing-collateral">—</b></div>
+        </div>
+
+        <div id="mint-lp-detail" class="lp-detail hidden">
+          <div class="lp-detail-toggle" id="mint-lp-detail-toggle">
+            <span class="chev"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span>
+            <span>LP Details</span>
+          </div>
+          <div class="lp-detail-body">
+            <div class="lp-detail-top">
+              <div class="lp-detail-chart" id="mint-lp-chart"></div>
+              <div class="lp-detail-stats">
+                <div class="lp-stat-row"><span>Collateral ratio</span><b id="mint-lp-cr" class="lp-cr">—</b></div>
+                <div class="lp-stat-row"><span>Total collateral</span><b id="mint-lp-collateral">—</b></div>
+                <div class="lp-stat-row"><span>Total debt</span><b id="mint-lp-debt">—</b></div>
+                <div class="lp-stat-row"><span>Mint capacity</span><b id="mint-lp-capacity">—</b></div>
+                <div class="lp-stat-row"><span>Griefing deposit</span><b id="mint-lp-griefing">—</b></div>
+                <div class="lp-stat-row"><span>LP address</span><a id="mint-lp-scan-link" href="#" target="_blank" rel="noopener">GnosisScan ↗</a></div>
+              </div>
+            </div>
+            <div class="lp-detail-breakdown" id="mint-lp-breakdown"></div>
+          </div>
         </div>
 
         <div id="mint-capacity-info" class="hidden" style="margin-top:8px;font-size:12.5px;color:var(--muted);text-align:center"></div>
@@ -206,14 +236,44 @@ if ('serviceWorker' in navigator) {
 
         <div class="meta">
           <div class="r"><span>LP Vault</span>
-            <select id="burn-vault-select" style="background:var(--input);border:1px solid var(--line);border-radius:6px;padding:4px 8px;color:var(--fg);font-family:'JetBrains Mono';font-size:12px">
-              <option value="">Loading vaults...</option>
-            </select>
+            <div class="vault-picker" id="burn-vault-picker">
+              <div class="vp-selected" id="burn-vp-selected">
+                <span class="vp-dot" style="background:var(--muted)"></span>
+                <span class="vp-addr">Loading vaults...</span>
+                <span class="vp-cr"></span>
+                <span class="vp-chev"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></span>
+              </div>
+              <div class="vp-list" id="burn-vp-list"></div>
+              <select id="burn-vault-select" style="display:none">
+                <option value="">Loading vaults...</option>
+              </select>
+            </div>
           </div>
           <div class="r" id="burn-vault-info" style="display:none"><span>Vault capacity</span><b id="burn-capacity">—</b></div>
           <div class="r"><span id="burn-fee-label">Burn reward</span><b id="burn-fee">—</b></div>
           <div class="r"><span>Burn reward (sDAI)</span><b id="burn-reward-sdai">—</b></div>
           <div class="r"><span>LP timeout window</span><b id="burn-timeout">—</b></div>
+        </div>
+
+        <div id="burn-lp-detail" class="lp-detail hidden">
+          <div class="lp-detail-toggle" id="burn-lp-detail-toggle">
+            <span class="chev"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span>
+            <span>LP Details</span>
+          </div>
+          <div class="lp-detail-body">
+            <div class="lp-detail-top">
+              <div class="lp-detail-chart" id="burn-lp-chart"></div>
+              <div class="lp-detail-stats">
+                <div class="lp-stat-row"><span>Collateral ratio</span><b id="burn-lp-cr" class="lp-cr">—</b></div>
+                <div class="lp-stat-row"><span>Total collateral</span><b id="burn-lp-collateral">—</b></div>
+                <div class="lp-stat-row"><span>Total debt</span><b id="burn-lp-debt">—</b></div>
+                <div class="lp-stat-row"><span>Burn reward</span><b id="burn-lp-reward">—</b></div>
+                <div class="lp-stat-row"><span>Min burn amount</span><b id="burn-lp-min">—</b></div>
+                <div class="lp-stat-row"><span>LP address</span><a id="burn-lp-scan-link" href="#" target="_blank" rel="noopener">GnosisScan ↗</a></div>
+              </div>
+            </div>
+            <div class="lp-detail-breakdown" id="burn-lp-breakdown"></div>
+          </div>
         </div>
 
         <button class="cta" id="start-burn" disabled>Enter an amount</button>
@@ -335,6 +395,6 @@ if ('serviceWorker' in navigator) {
   if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status);
   window.DEPLOYMENT = await res.json();
 </script>
-<script type="module" src="./js/main.js?v=2.6"></script>
+<script type="module" src="./js/main.js?v=2.8"></script>
 </body>
 </html>

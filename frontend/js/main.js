@@ -49,8 +49,11 @@ import {
     setWithdrawReturnsVisible,
     setStartMintButtonText,
     showPreviousMintBanner,
-    hidePreviousMintBanner
-} from './ui.js?v=2.6';
+    hidePreviousMintBanner,
+    renderLPDetailCard,
+    initLPDetailToggles,
+    initVaultPickers
+} from './ui.js?v=2.8';
 
 import { MintFlow } from './mintFlow.js';
 import { stopTimers } from './mintFlowTimers.js';
@@ -306,6 +309,10 @@ async function init() {
     
     // Load vaults (public reads via HTTP fallback work even without wallet)
     await loadVaults();
+    
+    // Wire up LP detail card toggles and vault pickers
+    initLPDetailToggles();
+    initVaultPickers();
     
     // Check for active swap
     checkForActiveSwap();
@@ -1905,6 +1912,8 @@ async function loadVaults() {
                         burnRewardBps: Number(vaultData.burnRewardBps || 0),
                         mintTimeoutBlocks: Number(vaultData.mintTimeoutBlocks || 0),
                         burnTimeoutBlocks: Number(vaultData.burnTimeoutBlocks || 0),
+                        mintGriefingDeposit: vaultData.mintGriefingDeposit,
+                        minBurnAmount: vaultData.minBurnAmount,
                     };
                     console.log('Adding active vault:', vault);
                     activeVaults.push(vault);
@@ -1985,6 +1994,21 @@ async function loadVaults() {
             // If user already typed an amount before vaults loaded, update receive box now
             updateMintReceiveAmount();
             updateBurnReceiveAmount();
+
+            // Render LP detail cards for the initially selected vault
+            renderLPDetailCard(true, firstVault);
+            renderLPDetailCard(false, firstVault);
+
+            // Update backing collateral display
+            const backingEl = document.getElementById('mint-backing-collateral');
+            if (backingEl) {
+                const coll = firstVault.collateralAmount || 0;
+                const debt = firstVault.actualDebt ? Number(firstVault.actualDebt) / 1e8 : 0;
+                const xmrPrice = firstVault.xmrPrice || 200;
+                const collPrice = firstVault.collPrice || 1.0;
+                const cr = debt * xmrPrice > 0 ? Math.round((coll * collPrice) / (debt * xmrPrice) * 100) : 200;
+                backingEl.textContent = `sDAI · ${cr}%`;
+            }
         }
         
     } catch (error) {
@@ -2239,31 +2263,20 @@ async function handleVaultSelect(isMint) {
 
     if (!vaultAddress) return;
 
-    try {
-        // Fetch vault info
-        const vaultData = await readHub('getVault', [vaultAddress]);
+    // Primary path: use cached vault data (already fetched by loadVaults)
+    const vault = cachedVaults.find(v => v.address.toLowerCase() === vaultAddress.toLowerCase());
 
-        const vaultInfo = {
-            totalXmrLocked: vaultData[0],
-            totalCollateral: vaultData[1],
-            collateralToken: vaultData[2],
-            collateralizationRatio: vaultData[3],
-            mintGriefingDeposit: vaultData[4],
-            isActive: vaultData[5],
-            lpVault: vaultAddress
-        };
+    if (vault) {
+        // Render the expandable LP detail card
+        renderLPDetailCard(isMint, vault);
 
-        showVaultInfo(vaultInfo, isMint);
-
-        // Update fee labels, rate text, and receive amount
-        const mintFeeBps = Number(vaultData.mintFeeBps || vaultData[8] || 0);
-        const burnRewardBps = Number(vaultData.burnRewardBps || vaultData[9] || 0);
+        // Update fee labels and rate text
+        const mintFeeBps = vault.mintFeeBps || 0;
+        const burnRewardBps = vault.burnRewardBps || 0;
         updateSwapRateDisplay(isMint, mintFeeBps, burnRewardBps);
 
-        // Update LP timeout window display (Gnosis ≈ 5s block time)
-        const burnTimeoutBlocks = Number(vaultData.burnTimeoutBlocks || vaultData[17] || 0);
-        const mintTimeoutBlocks = Number(vaultData.mintTimeoutBlocks || vaultData[16] || 0);
-        const timeoutBlocks = isMint ? mintTimeoutBlocks : burnTimeoutBlocks;
+        // Update timeout window display (Gnosis ≈ 5s block time)
+        const timeoutBlocks = isMint ? (vault.mintTimeoutBlocks || 0) : (vault.burnTimeoutBlocks || 0);
         if (timeoutBlocks > 0) {
             const timeoutHours = (timeoutBlocks * 5) / 3600;
             const timeoutEl = document.getElementById(isMint ? 'mint-timeout' : 'burn-timeout');
@@ -2276,17 +2289,49 @@ async function handleVaultSelect(isMint) {
             }
         }
 
-        if (isMint) {
-            updateMintCapacityDisplay();
-            updateMintReceiveAmount();
-        } else {
-            updateBurnReceiveAmount();
-            updateBurnRewardDisplay();
+        // Update backing collateral display dynamically
+        const backingEl = document.getElementById('mint-backing-collateral');
+        if (backingEl) {
+            const coll = vault.collateralAmount || 0;
+            const debt = vault.actualDebt ? Number(vault.actualDebt) / 1e8 : 0;
+            const xmrPrice = vault.xmrPrice || 200;
+            const collPrice = vault.collPrice || 1.0;
+            const cr = debt * xmrPrice > 0 ? Math.round((coll * collPrice) / (debt * xmrPrice) * 100) : 200;
+            backingEl.textContent = `sDAI · ${cr}%`;
         }
+    } else {
+        // Fallback: fetch from RPC if not in cache
+        try {
+            const vaultData = await readHub('getVault', [vaultAddress]);
+            const mintFeeBps = Number(vaultData.mintFeeBps || 0);
+            const burnRewardBps = Number(vaultData.burnRewardBps || 0);
+            updateSwapRateDisplay(isMint, mintFeeBps, burnRewardBps);
 
-    } catch (error) {
-        console.warn('Could not fetch vault info (contracts may not be deployed):', error.message);
-        // Don't show error modal for this, just log it
+            const burnTimeoutBlocks = Number(vaultData.burnTimeoutBlocks || 0);
+            const mintTimeoutBlocks = Number(vaultData.mintTimeoutBlocks || 0);
+            const timeoutBlocks = isMint ? mintTimeoutBlocks : burnTimeoutBlocks;
+            if (timeoutBlocks > 0) {
+                const timeoutHours = (timeoutBlocks * 5) / 3600;
+                const timeoutEl = document.getElementById(isMint ? 'mint-timeout' : 'burn-timeout');
+                if (timeoutEl) {
+                    if (timeoutHours >= 1) {
+                        timeoutEl.textContent = `${timeoutHours.toFixed(1)}h · slash protected`;
+                    } else {
+                        timeoutEl.textContent = `${Math.round(timeoutHours * 60)}m · slash protected`;
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('Could not fetch vault info (contracts may not be deployed):', error.message);
+        }
+    }
+
+    if (isMint) {
+        updateMintCapacityDisplay();
+        updateMintReceiveAmount();
+    } else {
+        updateBurnReceiveAmount();
+        updateBurnRewardDisplay();
     }
 }
 
