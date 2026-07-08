@@ -12,6 +12,8 @@ export const NETWORKS = {
         id: D.chainId || 100,
         name: 'Gnosis Chain',
         rpcUrls: [
+            'https://rpc.gnosischain.com',
+            'https://gnosis-rpc.publicnode.com',
             'https://rpc.ankr.com/gnosis',
             'https://gnosis.api.onfinality.io/public',
             'https://rpc.gnosis.gateway.fm'
