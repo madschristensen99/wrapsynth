@@ -389,21 +389,13 @@ function setupEventHandlers() {
     elements.burnAmount.addEventListener('input', updateBurnReceiveAmount);
     
     // Co-LP handlers
-    const coLpVaultSelect = document.getElementById('co-lp-vault-select');
+    const coLpVaultSelect = document.getElementById('colp-vault-select');
     if (coLpVaultSelect) {
         coLpVaultSelect.addEventListener('change', handleCoLPVaultSelect);
     }
     const coLpOpenBtn = document.getElementById('co-lp-open');
     if (coLpOpenBtn) {
         coLpOpenBtn.addEventListener('click', handleCoLPOpen);
-    }
-    const coLpUnwindBtn = document.getElementById('co-lp-unwind');
-    if (coLpUnwindBtn) {
-        coLpUnwindBtn.addEventListener('click', handleCoLPUnwind);
-    }
-    const coLpRebalanceBtn = document.getElementById('co-lp-rebalance');
-    if (coLpRebalanceBtn) {
-        coLpRebalanceBtn.addEventListener('click', handleCoLPRebalance);
     }
     const coLpSetRangeBtn = document.getElementById('co-lp-set-range');
     if (coLpSetRangeBtn) {
@@ -417,6 +409,11 @@ function setupEventHandlers() {
     // Burn percentage buttons
     document.querySelectorAll('.percentage-btn').forEach(btn => {
         btn.addEventListener('click', handleBurnPercentage);
+    });
+
+    // Co-LP percentage buttons
+    document.querySelectorAll('.colp-percentage-btn').forEach(btn => {
+        btn.addEventListener('click', handleCoLPPercentage);
     });
     
     // Manual price update button
@@ -459,6 +456,47 @@ async function handleBurnPercentage(event) {
         const burnAmountInput = document.getElementById('burn-amount');
         burnAmountInput.value = amount.toFixed(8);
         
+        feedback.textContent = `✓ ${percentage}%`;
+        feedback.style.opacity = '1';
+        setTimeout(() => { feedback.style.opacity = '0'; }, 1500);
+    } catch (error) {
+        console.error('Failed to get balance:', error);
+        feedback.textContent = 'Error';
+        feedback.style.opacity = '1';
+        setTimeout(() => { feedback.style.opacity = '0'; }, 2000);
+    }
+}
+
+/**
+ * Handle Co-LP percentage button clicks
+ */
+async function handleCoLPPercentage(event) {
+    const percentage = parseInt(event.target.dataset.percentage);
+    const feedback = document.getElementById('colp-percentage-feedback');
+    const amountInput = document.getElementById('co-lp-amount');
+
+    if (!getUserAddress()) {
+        feedback.textContent = 'Connect wallet first';
+        feedback.style.opacity = '1';
+        setTimeout(() => { feedback.style.opacity = '0'; }, 2000);
+        return;
+    }
+
+    try {
+        const address = getUserAddress();
+        const balance = await getWsXmrBalance(address);
+        const balanceNum = Number(balance) / 1e8;
+
+        if (balanceNum === 0) {
+            feedback.textContent = 'No balance';
+            feedback.style.opacity = '1';
+            setTimeout(() => { feedback.style.opacity = '0'; }, 2000);
+            return;
+        }
+
+        const amount = (balanceNum * percentage) / 100;
+        amountInput.value = amount.toFixed(8);
+
         feedback.textContent = `✓ ${percentage}%`;
         feedback.style.opacity = '1';
         setTimeout(() => { feedback.style.opacity = '0'; }, 1500);
@@ -1001,6 +1039,7 @@ async function handleRefreshCoLPPositions() {
                         <span class="position-meta">Vault: ${vaultShort} · ${p.wsxmrAmount} wsXMR · Range: ${p.rangeBps} bps</span>
                     </div>
                     <div class="position-actions">
+                        <input class="colp-rebalance-input" type="number" placeholder="bps" min="1000" max="10000" value="${p.rangeBps}" data-token-id="${p.tokenId}" />
                         <button class="btn-rebalance" data-token-id="${p.tokenId}">Rebalance</button>
                         <button class="btn-unwind" data-token-id="${p.tokenId}">Close</button>
                     </div>
@@ -1010,20 +1049,17 @@ async function handleRefreshCoLPPositions() {
 
         // Wire up action buttons on each card
         listEl.querySelectorAll('.btn-rebalance').forEach(btn => {
-            btn.addEventListener('click', () => {
+            btn.addEventListener('click', async () => {
                 const tokenId = btn.dataset.tokenId;
-                const tokenIdInput = document.getElementById('co-lp-token-id');
-                if (tokenIdInput) tokenIdInput.value = tokenId;
-                // Scroll to manage section
-                tokenIdInput?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                const bpsInput = listEl.querySelector(`.colp-rebalance-input[data-token-id="${tokenId}"]`);
+                const rangeBps = Number(bpsInput?.value);
+                await handleCoLPRebalance(tokenId, rangeBps);
             });
         });
         listEl.querySelectorAll('.btn-unwind').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const tokenId = btn.dataset.tokenId;
-                const tokenIdInput = document.getElementById('co-lp-token-id');
-                if (tokenIdInput) tokenIdInput.value = tokenId;
-                await handleCoLPUnwind();
+                await handleCoLPUnwind(tokenId);
             });
         });
 
@@ -1100,7 +1136,7 @@ async function checkCoLPLPStatus() {
  * Handle Co-LP vault selection - fetch and display capacity
  */
 async function handleCoLPVaultSelect() {
-    const select = document.getElementById('co-lp-vault-select');
+    const select = document.getElementById('colp-vault-select');
     const capacityDiv = document.getElementById('co-lp-capacity');
     if (!select || !capacityDiv) return;
 
@@ -1128,7 +1164,7 @@ async function handleCoLPVaultSelect() {
  */
 async function handleCoLPOpen() {
     const amountInput = document.getElementById('co-lp-amount');
-    const vaultSelect = document.getElementById('co-lp-vault-select');
+    const vaultSelect = document.getElementById('colp-vault-select');
 
     if (!getUserAddress()) {
         showError('Wallet Required', 'Please connect your wallet');
@@ -1176,16 +1212,15 @@ async function handleCoLPOpen() {
 /**
  * Handle unwind Co-LP position
  */
-async function handleCoLPUnwind() {
-    const tokenIdInput = document.getElementById('co-lp-token-id');
-    const tokenId = tokenIdInput?.value?.trim();
+async function handleCoLPUnwind(tokenIdParam) {
+    const tokenId = tokenIdParam?.toString().trim();
 
     if (!getUserAddress()) {
         showError('Wallet Required', 'Please connect your wallet');
         return;
     }
     if (!tokenId || isNaN(Number(tokenId))) {
-        showError('Invalid Input', 'Enter a valid position token ID');
+        showError('Invalid Input', 'Invalid position token ID');
         return;
     }
 
@@ -1207,18 +1242,16 @@ async function handleCoLPUnwind() {
 /**
  * Handle rebalance Co-LP position
  */
-async function handleCoLPRebalance() {
-    const tokenIdInput = document.getElementById('co-lp-token-id');
-    const rangeBpsInput = document.getElementById('co-lp-rebalance-bps');
-    const tokenId = tokenIdInput?.value?.trim();
-    const rangeBps = Number(rangeBpsInput?.value);
+async function handleCoLPRebalance(tokenIdParam, rangeBpsParam) {
+    const tokenId = tokenIdParam?.toString().trim();
+    const rangeBps = Number(rangeBpsParam);
 
     if (!getUserAddress()) {
         showError('Wallet Required', 'Please connect your wallet');
         return;
     }
     if (!tokenId || isNaN(Number(tokenId))) {
-        showError('Invalid Input', 'Enter a valid position token ID');
+        showError('Invalid Input', 'Invalid position token ID');
         return;
     }
     if (!rangeBps || rangeBps < 1000 || rangeBps > 10000) {

@@ -293,7 +293,10 @@ if ('serviceWorker' in navigator) {
       <!-- CO-LP PANEL -->
       <div class="body panel hidden" id="co-lp-panel" data-panel="co-lp">
         <div style="padding:0 4px">
-          <h3 style="font-family:'Plus Jakarta Sans';font-size:15px;font-weight:600;margin-bottom:12px">Your Co-LP Positions</h3>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <h3 style="font-family:'Plus Jakarta Sans';font-size:15px;font-weight:600">Your Co-LP Positions</h3>
+            <button class="cta ghost" id="co-lp-refresh-positions" style="padding:6px 10px;font-size:13px">↻ Refresh</button>
+          </div>
           <div id="co-lp-positions-list" style="margin-bottom:20px">
             <div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">Connect wallet to see positions</div>
           </div>
@@ -304,9 +307,18 @@ if ('serviceWorker' in navigator) {
           <div class="meta" style="margin-top:12px">
             <div class="r">
               <span>Select Vault</span>
-              <select id="co-lp-vault-select" style="background:var(--input);border:1px solid var(--line);border-radius:6px;padding:4px 8px;color:var(--fg);font-family:'JetBrains Mono';font-size:12px">
-                <option value="">Loading vaults...</option>
-              </select>
+              <div class="vault-picker" id="colp-vault-picker">
+                <div class="vp-selected" id="colp-vp-selected">
+                  <span class="vp-dot" style="background:var(--muted)"></span>
+                  <span class="vp-addr">Loading vaults...</span>
+                  <span class="vp-cr"></span>
+                  <span class="vp-chev"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></span>
+                </div>
+                <div class="vp-list" id="colp-vp-list"></div>
+                <select id="colp-vault-select" style="display:none">
+                  <option value="">Loading vaults...</option>
+                </select>
+              </div>
             </div>
             <div class="r" id="co-lp-capacity" style="display:none"><span>Available capacity</span><b>--</b></div>
           </div>
@@ -314,28 +326,22 @@ if ('serviceWorker' in navigator) {
           <div class="addr-field">
             <input id="co-lp-amount" type="number" step="0.0001" placeholder="wsXMR amount to provide" />
           </div>
-          
+          <div class="pct-row">
+            <button class="colp-percentage-btn" data-percentage="25">25%</button>
+            <button class="colp-percentage-btn" data-percentage="50">50%</button>
+            <button class="colp-percentage-btn" data-percentage="100">MAX</button>
+            <span id="colp-percentage-feedback"></span>
+          </div>
+
           <button class="cta" id="co-lp-open" disabled>Open Co-LP Position</button>
           
           <div id="co-lp-lp-settings" class="hidden" style="margin-top:20px;padding-top:20px;border-top:1px solid var(--line-2)">
             <h3 style="font-family:'Plus Jakarta Sans';font-size:14px;font-weight:600;margin-bottom:12px">LP Settings</h3>
             <div class="label-row"><span>Max Co-LP Range (bps)</span></div>
             <div class="addr-field">
-              <input id="co-lp-max-range" type="number" placeholder="e.g. 500" />
+              <input id="co-lp-max-range" type="number" placeholder="e.g. 2500" />
             </div>
             <button class="cta ghost" id="co-lp-set-range">Update Range</button>
-          </div>
-          
-          <div style="margin-top:20px">
-            <h3 style="font-family:'Plus Jakarta Sans';font-size:14px;font-weight:600;margin-bottom:8px">Manage Position</h3>
-            <div class="addr-field">
-              <input id="co-lp-token-id" type="number" placeholder="NFT Token ID" />
-            </div>
-            <div style="display:flex;gap:8px;margin-top:8px">
-              <button class="cta ghost" id="co-lp-rebalance" style="flex:1">Rebalance</button>
-              <button class="cta ghost" id="co-lp-unwind" style="flex:1">Close Position</button>
-            </div>
-            <button class="cta ghost" id="co-lp-refresh-positions" style="margin-top:8px;width:100%">↻ Refresh Positions</button>
           </div>
         </div>
       </div>

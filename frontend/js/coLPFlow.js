@@ -276,36 +276,39 @@ export class CoLPFlow {
             'event CoLPRebalanced(uint256 indexed oldTokenId, uint256 indexed newTokenId, address indexed vault, address user, address caller, uint16 newRangeBps)'
         ]);
 
-        // Query CoLPDeployed events for this user
-        const deployedEvents = await publicClient.getContractEvents({
-            address: CONTRACTS.hub,
-            abi: hubAbi,
-            eventName: 'CoLPDeployed',
-            args: { user: this.userAddress },
-            fromBlock: safeFromBlock,
-            toBlock: 'latest'
-        });
+        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+        const getEventsWithRetry = async (eventName, args, retries = 2) => {
+            for (let attempt = 0; attempt <= retries; attempt++) {
+                try {
+                    return await publicClient.getContractEvents({
+                        address: CONTRACTS.hub,
+                        abi: hubAbi,
+                        eventName,
+                        args,
+                        fromBlock: safeFromBlock,
+                        toBlock: 'latest'
+                    });
+                } catch (err) {
+                    if (attempt < retries) {
+                        await sleep(500 * (attempt + 1));
+                        continue;
+                    }
+                    console.warn(`[coLPFlow] Failed to fetch ${eventName} (RPC rate-limited):`, err.shortMessage || err.message);
+                    return [];
+                }
+            }
+            return [];
+        };
 
-        // Query CoLPUnwound events for this user
-        const unwoundEvents = await publicClient.getContractEvents({
-            address: CONTRACTS.hub,
-            abi: hubAbi,
-            eventName: 'CoLPUnwound',
-            args: { user: this.userAddress },
-            fromBlock: safeFromBlock,
-            toBlock: 'latest'
-        });
+        // Query events with small delays between calls to avoid 429s
+        const deployedEvents = await getEventsWithRetry('CoLPDeployed', { user: this.userAddress });
+        await sleep(200);
+        const unwoundEvents = await getEventsWithRetry('CoLPUnwound', { user: this.userAddress });
+        await sleep(200);
 
         // Track rebalanced tokenIds: oldTokenId -> newTokenId
         const rebalanceMap = new Map(); // oldTokenId -> newTokenId
-        const rebalanceEvents = await publicClient.getContractEvents({
-            address: CONTRACTS.hub,
-            abi: hubAbi,
-            eventName: 'CoLPRebalanced',
-            args: { user: this.userAddress },
-            fromBlock: safeFromBlock,
-            toBlock: 'latest'
-        });
+        const rebalanceEvents = await getEventsWithRetry('CoLPRebalanced', { user: this.userAddress });
         for (const ev of rebalanceEvents) {
             rebalanceMap.set(ev.args.oldTokenId.toString(), ev.args.newTokenId.toString());
         }

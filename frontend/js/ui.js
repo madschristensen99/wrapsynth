@@ -559,7 +559,7 @@ function updateVaultPickerSelected(prefix, vault) {
  * Wire up open/close handlers for vault pickers.
  */
 export function initVaultPickers() {
-    ['mint', 'burn'].forEach(prefix => {
+    ['mint', 'burn', 'colp'].forEach(prefix => {
         const picker = document.getElementById(`${prefix}-vault-picker`);
         const selected = document.getElementById(`${prefix}-vp-selected`);
         if (!picker || !selected) return;
@@ -613,9 +613,10 @@ export function populateVaults(vaults) {
     // Render custom vault pickers
     renderVaultPicker('mint', vaults);
     renderVaultPicker('burn', vaults);
+    renderVaultPicker('colp', vaults);
     
     // Also populate Co-LP vault select
-    const coLpVaultSelect = document.getElementById('co-lp-vault-select');
+    const coLpVaultSelect = document.getElementById('colp-vault-select');
     if (coLpVaultSelect) {
         coLpVaultSelect.innerHTML = mintOptions;
     }
