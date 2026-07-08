@@ -453,7 +453,152 @@ export async function showBurnTab() {
 }
 
 /**
- * Populate vault select dropdown
+ * Compute vault summary stats for display in dropdowns.
+ */
+function vaultSummary(v) {
+    const collateral = v.collateralAmount || 0;
+    const debt = v.actualDebt ? Number(v.actualDebt) / 1e8 : 0;
+    const xmrPrice = v.xmrPrice || 200;
+    const collPrice = v.collPrice || 1.0;
+    const collateralUSD = collateral * collPrice;
+    const debtUSD = debt * xmrPrice;
+    const cr = debtUSD > 0 ? Math.round((collateralUSD / debtUSD) * 100) : 200;
+    const crColor = cr >= 200 ? 'var(--teal)' : cr >= 150 ? 'var(--amber)' : 'var(--red)';
+    const dotColor = cr >= 200 ? '#2fe6c4' : cr >= 150 ? '#facc15' : '#ff4444';
+    const cap = v.maxMintCapacityXmr || 0;
+    const capPct = collateral > 0 ? Math.min(100, (cap * xmrPrice / (collateralUSD || 1)) * 100) : 0;
+    const feePct = (v.mintFeeBps || 0) / 100;
+    return { cr, crColor, dotColor, cap, capPct, feePct, collateral, debt };
+}
+
+/**
+ * Render a single vault picker dropdown (mint or burn).
+ */
+export function renderVaultPicker(prefix, vaults) {
+    const listEl = document.getElementById(`${prefix}-vp-list`);
+    const selectedEl = document.getElementById(`${prefix}-vp-selected`);
+    const hiddenSelect = document.getElementById(`${prefix}-vault-select`);
+    if (!listEl || !selectedEl || !hiddenSelect) return;
+
+    // Populate hidden select for .value compatibility
+    hiddenSelect.innerHTML = vaults.map(v =>
+        `<option value="${v.address}">${v.name || formatAddress(v.address)}</option>`
+    ).join('');
+
+    if (vaults.length === 0) {
+        listEl.innerHTML = '<div class="vp-option" style="cursor:default;justify-content:center">No vaults available</div>';
+        return;
+    }
+
+    // Render option rows
+    listEl.innerHTML = vaults.map((v, i) => {
+        const s = vaultSummary(v);
+        const shortAddr = `${v.address.slice(0, 6)}...${v.address.slice(-4)}`;
+        const capDisplay = s.cap < 0.001 ? s.cap.toExponential(1) : s.cap < 1 ? s.cap.toFixed(3) : s.cap.toFixed(1);
+        return `<div class="vp-option${i === 0 ? ' selected' : ''}" data-address="${v.address}">
+            <span class="vp-o-dot" style="background:${s.dotColor};box-shadow:0 0 6px ${s.dotColor}60"></span>
+            <span class="vp-o-addr">${shortAddr}</span>
+            <span class="vp-o-cr" style="color:${s.crColor}">${s.cr > 9999 ? '>9k' : s.cr + '%'} CR</span>
+            <span class="vp-o-fee">${s.feePct.toFixed(1)}%</span>
+            <span class="vp-o-cap">
+                <span class="vp-o-cap-bar"><span class="vp-o-cap-fill" style="width:${s.capPct.toFixed(0)}%;background:${s.dotColor}"></span></span>
+                <span class="vp-o-cap-val">${capDisplay}</span>
+            </span>
+        </div>`;
+    }).join('');
+
+    // Set initial selected display (first vault)
+    updateVaultPickerSelected(prefix, vaults[0]);
+
+    // Wire up option clicks
+    listEl.querySelectorAll('.vp-option').forEach(opt => {
+        opt.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const addr = opt.dataset.address;
+            const vault = vaults.find(v => v.address === addr);
+            if (!vault) return;
+
+            // Update hidden select value
+            hiddenSelect.value = addr;
+
+            // Update selected display
+            updateVaultPickerSelected(prefix, vault);
+
+            // Mark selected option
+            listEl.querySelectorAll('.vp-option').forEach(o => o.classList.remove('selected'));
+            opt.classList.add('selected');
+
+            // Close dropdown
+            document.getElementById(`${prefix}-vault-picker`).classList.remove('open');
+
+            // Dispatch change event so handleVaultSelect fires
+            hiddenSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+    });
+}
+
+/**
+ * Update the collapsed selected display for a vault picker.
+ */
+function updateVaultPickerSelected(prefix, vault) {
+    const selectedEl = document.getElementById(`${prefix}-vp-selected`);
+    if (!selectedEl) return;
+
+    const s = vaultSummary(vault);
+    const shortAddr = `${vault.address.slice(0, 6)}...${vault.address.slice(-4)}`;
+
+    selectedEl.querySelector('.vp-dot').style.background = s.dotColor;
+    selectedEl.querySelector('.vp-dot').style.boxShadow = `0 0 6px ${s.dotColor}60`;
+    selectedEl.querySelector('.vp-addr').textContent = shortAddr;
+    const crEl = selectedEl.querySelector('.vp-cr');
+    crEl.textContent = `${s.cr > 9999 ? '>9,999%' : s.cr + '%'} CR`;
+    crEl.style.color = s.crColor;
+}
+
+/**
+ * Wire up open/close handlers for vault pickers.
+ */
+export function initVaultPickers() {
+    ['mint', 'burn'].forEach(prefix => {
+        const picker = document.getElementById(`${prefix}-vault-picker`);
+        const selected = document.getElementById(`${prefix}-vp-selected`);
+        if (!picker || !selected) return;
+
+        // Toggle open on click
+        selected.addEventListener('click', (e) => {
+            if (picker.classList.contains('disabled')) return;
+            // Close all other pickers
+            document.querySelectorAll('.vault-picker.open').forEach(p => {
+                if (p !== picker) p.classList.remove('open');
+            });
+            picker.classList.toggle('open');
+        });
+    });
+
+    // Click outside to close all pickers
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.vault-picker')) {
+            document.querySelectorAll('.vault-picker.open').forEach(p => p.classList.remove('open'));
+        }
+    });
+}
+
+/**
+ * Set vault picker disabled state.
+ */
+export function setVaultPickerDisabled(prefix, disabled) {
+    const picker = document.getElementById(`${prefix}-vault-picker`);
+    if (!picker) return;
+    if (disabled) {
+        picker.classList.add('disabled');
+        picker.classList.remove('open');
+    } else {
+        picker.classList.remove('disabled');
+    }
+}
+
+/**
+ * Populate vault select dropdown + custom vault pickers
  */
 export function populateVaults(vaults) {
     const mintOptions = vaults.map(v => 
@@ -464,6 +609,10 @@ export function populateVaults(vaults) {
     
     elements.mintVaultSelect.innerHTML = mintOptions;
     elements.burnVaultSelect.innerHTML = burnOptions;
+    
+    // Render custom vault pickers
+    renderVaultPicker('mint', vaults);
+    renderVaultPicker('burn', vaults);
     
     // Also populate Co-LP vault select
     const coLpVaultSelect = document.getElementById('co-lp-vault-select');
@@ -563,6 +712,108 @@ export function showVaultInfo(vaultData, isMint = true) {
     
     infoElement.innerHTML = html;
     infoElement.classList.remove('hidden');
+}
+
+/**
+ * Render the expandable LP detail card below the vault dropdown.
+ * Uses data from cachedVaults (already fetched by loadVaults).
+ */
+export function renderLPDetailCard(isMint, vault) {
+    const prefix = isMint ? 'mint' : 'burn';
+    const card = document.getElementById(`${prefix}-lp-detail`);
+    if (!card || !vault) {
+        if (card) card.classList.add('hidden');
+        return;
+    }
+
+    const collateral = vault.collateralAmount || 0;
+    const debt = vault.actualDebt ? Number(vault.actualDebt) / 1e8 : 0;
+    const xmrPrice = vault.xmrPrice || 200;
+    const collPrice = vault.collPrice || 1.0;
+    const collateralUSD = collateral * collPrice;
+    const debtUSD = debt * xmrPrice;
+    const cr = debtUSD > 0 ? Math.round((collateralUSD / debtUSD) * 100) : 200;
+    const crDisplay = cr > 9999 ? '>9,999%' : `${cr}%`;
+    const crColor = cr >= 200 ? 'var(--teal)' : cr >= 150 ? 'var(--amber)' : 'var(--red)';
+
+    // Collateral breakdown
+    const usedColl = vault.usedCollateral || 0;
+    const pendingColl = vault.pendingCollateral || 0;
+    const bufferColl = vault.bufferCollateral || 0;
+    const coLpColl = vault.deployedSDAIShares ? Number(vault.deployedSDAIShares) / 1e18 : 0;
+    const totalColl = collateral;
+    const freeColl = Math.max(0, totalColl - usedColl - pendingColl - bufferColl - coLpColl);
+
+    const usedPct = totalColl > 0 ? (usedColl / totalColl) * 100 : 0;
+    const pendingPct = totalColl > 0 ? (pendingColl / totalColl) * 100 : 0;
+    const bufferPct = totalColl > 0 ? (bufferColl / totalColl) * 100 : 0;
+    const coLpPct = totalColl > 0 ? (coLpColl / totalColl) * 100 : 0;
+    const freePct = totalColl > 0 ? (freeColl / totalColl) * 100 : 0;
+
+    const pieChart = makePieChart(usedPct, pendingPct, bufferPct, coLpPct, freePct);
+
+    // Populate chart
+    const chartEl = document.getElementById(`${prefix}-lp-chart`);
+    if (chartEl) chartEl.innerHTML = pieChart;
+
+    // Populate stats
+    const set = (id, val) => { const el = document.getElementById(`${prefix}-lp-${id}`); if (el) el.innerHTML = val; };
+
+    set('cr', `<span style="color:${crColor};text-shadow:0 0 16px ${crColor}40">${crDisplay}</span>`);
+    set('collateral', `${collateral.toFixed(4)} sDAI`);
+    set('debt', `${debt.toFixed(4)} wsXMR`);
+
+    if (isMint) {
+        const cap = vault.maxMintCapacityXmr || 0;
+        set('capacity', `${cap < 0.0001 ? cap.toExponential(2) : cap.toFixed(4)} XMR`);
+        const griefing = vault.mintGriefingDeposit ? Number(vault.mintGriefingDeposit) / 1e18 : 0;
+        set('griefing', `${griefing.toFixed(3)} xDAI`);
+    } else {
+        const rewardPct = (vault.burnRewardBps || 0) / 100;
+        set('reward', `${rewardPct.toFixed(2)}%`);
+        const minBurn = vault.minBurnAmount ? Number(vault.minBurnAmount) / 1e8 : 0;
+        set('min', `${minBurn.toFixed(4)} wsXMR`);
+    }
+
+    // Scan link
+    const scanLink = document.getElementById(`${prefix}-lp-scan-link`);
+    if (scanLink) scanLink.href = `https://gnosisscan.io/address/${vault.address}`;
+
+    // Breakdown bars
+    const breakdownEl = document.getElementById(`${prefix}-lp-breakdown`);
+    if (breakdownEl) {
+        const bars = [
+            { label: 'reserved', pct: usedPct, val: usedColl, color: '#ff4444' },
+            { label: 'pending', pct: pendingPct, val: pendingColl, color: '#8b5cf6' },
+            { label: 'safety', pct: bufferPct, val: bufferColl, color: '#facc15' },
+            { label: 'co-lp', pct: coLpPct, val: coLpColl, color: '#3b82f6' },
+            { label: 'free', pct: freePct, val: freeColl, color: '#2fe6c4' },
+        ];
+        breakdownEl.innerHTML = bars.map(b => `
+            <div class="lp-bk">
+                <span class="dot" style="background:${b.color};box-shadow:0 0 6px ${b.color}60"></span>
+                <span style="min-width:55px">${b.label}</span>
+                <span class="bar"><span class="fill" style="width:${b.pct.toFixed(1)}%;background:${b.color}"></span></span>
+                <span class="val">${b.val.toFixed(2)}</span>
+            </div>
+        `).join('');
+    }
+
+    // Show the card
+    card.classList.remove('hidden');
+}
+
+/**
+ * Wire up toggle click handlers for LP detail cards.
+ */
+export function initLPDetailToggles() {
+    ['mint', 'burn'].forEach(prefix => {
+        const toggle = document.getElementById(`${prefix}-lp-detail-toggle`);
+        const card = document.getElementById(`${prefix}-lp-detail`);
+        if (toggle && card) {
+            toggle.addEventListener('click', () => card.classList.toggle('open'));
+        }
+    });
 }
 
 const MINT_STEP_MAP = {
@@ -1315,11 +1566,13 @@ export function disableInputs(isMint = true) {
     if (isMint) {
         elements.mintAmount.disabled = true;
         elements.mintVaultSelect.disabled = true;
+        setVaultPickerDisabled('mint', true);
     } else {
         elements.burnAmount.disabled = true;
         elements.burnXmrDestination.disabled = true;
         elements.burnVaultSelect.disabled = true;
         elements.startBurn.disabled = true;
+        setVaultPickerDisabled('burn', true);
     }
 }
 
@@ -1330,11 +1583,13 @@ export function enableInputs(isMint = true) {
     if (isMint) {
         elements.mintAmount.disabled = false;
         elements.mintVaultSelect.disabled = false;
+        setVaultPickerDisabled('mint', false);
     } else {
         elements.burnAmount.disabled = false;
         elements.burnXmrDestination.disabled = false;
         elements.burnVaultSelect.disabled = false;
         elements.startBurn.disabled = false;
+        setVaultPickerDisabled('burn', false);
     }
 }
 

@@ -196,6 +196,32 @@
   .met .k{font-size:13px;color:var(--fg);margin-top:8px;font-weight:500}
   .met .s{font-size:12px;color:var(--muted);margin-top:2px}
 
+  /* FERRY DOCK CARTOON */
+  .ferry-dock-wrap{display:flex;gap:32px;align-items:center;margin-top:24px;flex-wrap:wrap}
+  .ferry-dock-ill{flex:0 0 460px;width:460px;max-width:100%}
+  .ferry-dock-svg{width:100%;display:block;border-radius:16px;border:1px solid var(--line-2);
+    background:linear-gradient(180deg,#0d1428 0%,#0a1020 60%,#080d18 100%);
+    box-shadow:0 8px 48px rgba(0,0,0,.4),inset 0 0 60px rgba(62,252,224,.04);overflow:hidden}
+  .ferry-rock-1{animation:ferryRock1 8s ease-in-out infinite}
+  .ferry-rock-2{animation:ferryRock2 9s ease-in-out infinite}
+  .ferry-rock-3{animation:ferryRock3 7.5s ease-in-out infinite}
+  .ferry-rock-4{animation:ferryRock4 10s ease-in-out infinite}
+  .ferry-rock-5{animation:ferryRock5 8.5s ease-in-out infinite}
+  .ferry-rock-6{animation:ferryRock6 9.5s ease-in-out infinite}
+  @keyframes ferryRock1{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-1px) rotate(.3deg)}}
+  @keyframes ferryRock2{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-.8px) rotate(-.25deg)}}
+  @keyframes ferryRock3{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-1px) rotate(.35deg)}}
+  @keyframes ferryRock4{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-.5px) rotate(-.3deg)}}
+  @keyframes ferryRock5{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-1px) rotate(.2deg)}}
+  @keyframes ferryRock6{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-.8px) rotate(-.3deg)}}
+  .ferry-flag{animation:ferryFlag 2.5s ease-in-out infinite;transform-origin:left center;transform-box:fill-box}
+  @keyframes ferryFlag{0%,100%{transform:skewX(0deg)}50%{transform:skewX(6deg)}}
+  @media(prefers-reduced-motion:reduce){
+    .ferry-rock-1,.ferry-rock-2,.ferry-rock-3,.ferry-rock-4,.ferry-rock-5,.ferry-rock-6{animation:none}
+    .ferry-flag{animation:none}
+  }
+  @media(max-width:820px){.ferry-dock-ill{flex:0 0 100%;width:100%;max-width:500px;margin:0 auto}}
+
   /* CONTRACTS */
   .ctr-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:44px}
   @media(max-width:760px){.ctr-grid{grid-template-columns:1fr}}
@@ -446,7 +472,144 @@
   <div class="wrap sec-pad">
     <span class="eyebrow-sm">Metrics</span>
     <h2 class="sec-h">On-chain activity</h2>
-    <p class="sec-sub">Wrapsynth is a tokenization ferry — it moves XMR into EVM without custody. Atomic swaps, overcollateralized vaults, no multisig. Live on Gnosis Chain mainnet.</p>
+    <div class="ferry-dock-wrap">
+      <p class="sec-sub" style="margin-top:0">Wrapsynth is a tokenization ferry dock — it moves XMR into EVM without custody. Atomic swaps, overcollateralized vaults, no multisig. Live on Gnosis Chain mainnet.</p>
+      <div class="ferry-dock-ill">
+        <svg class="ferry-dock-svg" viewBox="0 0 520 320" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="fd-water" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#0d1a2e"/><stop offset="100%" stop-color="#080d18"/>
+            </linearGradient>
+            <linearGradient id="fd-dock" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#2e2e44"/><stop offset="100%" stop-color="#1a1a2e"/>
+            </linearGradient>
+            <linearGradient id="fd-xmr" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#3a1a0a"/><stop offset="100%" stop-color="#1a0a04"/>
+            </linearGradient>
+            <linearGradient id="fd-evm" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#0a2a2a"/><stop offset="100%" stop-color="#041a1a"/>
+            </linearGradient>
+          </defs>
+
+          <!-- Water background -->
+          <rect x="0" y="0" width="520" height="320" fill="url(#fd-water)"/>
+          <!-- Water lines -->
+          <g opacity=".08" stroke="#3efce0" stroke-width=".5" fill="none">
+            <path d="M0 50 Q 80 46 160 50 T 320 50 T 520 50"/>
+            <path d="M0 280 Q 80 276 160 280 T 320 280 T 520 280"/>
+          </g>
+
+          <!-- ═══ LEFT ISLAND: MONERO ═══ -->
+          <path d="M0 0 L 90 0 L 90 120 Q 70 135 50 130 Q 30 125 20 135 Q 10 140 0 130 Z" fill="url(#fd-xmr)"/>
+          <path d="M0 190 Q 10 185 20 195 Q 30 200 50 195 Q 70 190 90 200 L 90 320 L 0 320 Z" fill="url(#fd-xmr)"/>
+          <!-- Monero label -->
+          <text x="45" y="165" text-anchor="middle" fill="#ff7a3d" font-family="Plus Jakarta Sans" font-weight="700" font-size="20">XMR</text>
+
+          <!-- ═══ RIGHT ISLAND: EVM ═══ -->
+          <path d="M430 0 L 520 0 L 520 130 Q 510 140 500 135 Q 490 125 470 130 Q 450 135 430 120 Z" fill="url(#fd-evm)"/>
+          <path d="M430 200 Q 450 190 470 195 Q 490 200 500 195 Q 510 185 520 190 L 520 320 L 430 320 Z" fill="url(#fd-evm)"/>
+          <!-- EVM label -->
+          <text x="475" y="165" text-anchor="middle" fill="#3efce0" font-family="Plus Jakarta Sans" font-weight="700" font-size="20">DeFi</text>
+
+          <!-- ═══ DOCK: connects both islands, sticks out from each side ═══ -->
+          <!-- Left dock arm (from Monero island) -->
+          <rect x="90" y="130" width="120" height="60" fill="url(#fd-dock)" rx="3"/>
+          <rect x="90" y="128" width="120" height="2" fill="#3a3a52" opacity=".6"/>
+          <rect x="90" y="189" width="120" height="2" fill="#3a3a52" opacity=".6"/>
+          <!-- Right dock arm (to EVM island) -->
+          <rect x="310" y="130" width="120" height="60" fill="url(#fd-dock)" rx="3"/>
+          <rect x="310" y="128" width="120" height="2" fill="#3a3a52" opacity=".6"/>
+          <rect x="310" y="189" width="120" height="2" fill="#3a3a52" opacity=".6"/>
+          <!-- Dock planks -->
+          <line x1="120" y1="130" x2="120" y2="190" stroke="#33334a" stroke-width="1" opacity=".4"/>
+          <line x1="150" y1="130" x2="150" y2="190" stroke="#33334a" stroke-width="1" opacity=".4"/>
+          <line x1="180" y1="130" x2="180" y2="190" stroke="#33334a" stroke-width="1" opacity=".4"/>
+          <line x1="340" y1="130" x2="340" y2="190" stroke="#33334a" stroke-width="1" opacity=".4"/>
+          <line x1="370" y1="130" x2="370" y2="190" stroke="#33334a" stroke-width="1" opacity=".4"/>
+          <line x1="400" y1="130" x2="400" y2="190" stroke="#33334a" stroke-width="1" opacity=".4"/>
+          <!-- Bollards -->
+          <rect x="96" y="136" width="5" height="12" fill="#4a4a66" rx="2"/>
+          <rect x="199" y="136" width="5" height="12" fill="#4a4a66" rx="2"/>
+          <rect x="316" y="136" width="5" height="12" fill="#4a4a66" rx="2"/>
+          <rect x="419" y="136" width="5" height="12" fill="#4a4a66" rx="2"/>
+          <!-- ═══ FERRY 1: Large cargo ferry (top, between islands) ═══ -->
+          <g transform="translate(200,30)"><g class="ferry-rock-1">
+            <path d="M0 16 Q 0 36 10 33 L 110 33 Q 120 36 120 16 Z" fill="#2a4a6a" stroke="#3efce0" stroke-width=".8" opacity=".9"/>
+            <rect x="8" y="6" width="104" height="12" fill="#3a5a7a" stroke="#3efce0" stroke-width=".5" opacity=".85" rx="1"/>
+            <rect x="38" y="-4" width="28" height="12" fill="#2a4a6a" stroke="#3efce0" stroke-width=".5" rx="2"/>
+            <rect x="42" y="-1" width="6" height="5" fill="#3efce0" opacity=".4" rx="1"/>
+            <rect x="52" y="-1" width="6" height="5" fill="#3efce0" opacity=".4" rx="1"/>
+            <rect x="86" y="-8" width="6" height="16" fill="#3a5a7a" stroke="#3efce0" stroke-width=".4" rx="1"/>
+            <rect x="10" y="9" width="18" height="7" fill="#ff7a3d" opacity=".5" rx="1"/>
+            <rect x="30" y="9" width="18" height="7" fill="#3efce0" opacity=".3" rx="1"/>
+            <line x1="52" y1="-4" x2="52" y2="-16" stroke="#3efce0" stroke-width=".8" opacity=".5"/>
+            <path class="ferry-flag" d="M52 -16 L 64 -13 L 52 -10 Z" fill="#ff7a3d" opacity=".8"/>
+            <text x="60" y="48" text-anchor="middle" fill="#a8a8c0" font-family="JetBrains Mono" font-size="7">LP · 0x492c..f3Aa</text>
+          </g></g>
+
+          <!-- ═══ FERRY 2: Medium ferry (top-left, near Monero) ═══ -->
+          <g transform="translate(100,60)"><g class="ferry-rock-2">
+            <path d="M0 12 Q 0 26 8 24 L 72 24 Q 80 26 80 12 Z" fill="#1a3a2a" stroke="#4af0aa" stroke-width=".8" opacity=".9"/>
+            <rect x="6" y="4" width="68" height="10" fill="#2a4a3a" stroke="#4af0aa" stroke-width=".5" opacity=".85" rx="1"/>
+            <rect x="26" y="-2" width="16" height="8" fill="#1a3a2a" stroke="#4af0aa" stroke-width=".5" rx="2"/>
+            <rect x="29" y="0" width="4" height="4" fill="#4af0aa" opacity=".4" rx="1"/>
+            <rect x="35" y="0" width="4" height="4" fill="#4af0aa" opacity=".4" rx="1"/>
+            <rect x="58" y="-6" width="5" height="12" fill="#2a4a3a" stroke="#4af0aa" stroke-width=".4" rx="1"/>
+            <rect x="8" y="6" width="12" height="6" fill="#4af0aa" opacity=".25" rx="1"/>
+            <rect x="22" y="6" width="12" height="6" fill="#ffd95e" opacity=".3" rx="1"/>
+            <text x="40" y="38" text-anchor="middle" fill="#a8a8c0" font-family="JetBrains Mono" font-size="7">LP · 0xb1e2..8cD1</text>
+          </g></g>
+
+          <!-- ═══ FERRY 3: Small tugboat (top-right, near EVM) ═══ -->
+          <g transform="translate(350,55)"><g class="ferry-rock-3">
+            <path d="M0 8 Q 0 18 5 17 L 35 17 Q 40 18 40 8 Z" fill="#3a1a4a" stroke="#b388ff" stroke-width=".7" opacity=".9"/>
+            <rect x="4" y="2" width="32" height="8" fill="#4a2a5a" stroke="#b388ff" stroke-width=".5" rx="2"/>
+            <rect x="13" y="-3" width="12" height="7" fill="#3a1a4a" stroke="#b388ff" stroke-width=".5" rx="2"/>
+            <rect x="16" y="-1" width="3" height="3" fill="#b388ff" opacity=".4" rx="1"/>
+            <rect x="21" y="-1" width="3" height="3" fill="#b388ff" opacity=".4" rx="1"/>
+            <rect x="19" y="-6" width="4" height="10" fill="#4a2a5a" stroke="#b388ff" stroke-width=".4" rx="1"/>
+            <text x="20" y="30" text-anchor="middle" fill="#a8a8c0" font-family="JetBrains Mono" font-size="7">LP · 0xf0a1..2eB9</text>
+          </g></g>
+
+          <!-- ═══ FERRY 4: Tiny sailboat (bottom-left, near Monero) ═══ -->
+          <g transform="translate(110,230)"><g class="ferry-rock-4">
+            <path d="M0 6 Q 0 14 4 13 L 28 13 Q 32 14 32 6 Z" fill="#2a2a4a" stroke="#3efce0" stroke-width=".6" opacity=".88"/>
+            <rect x="3" y="2" width="26" height="5" fill="#3a3a5a" stroke="#3efce0" stroke-width=".3" rx="1"/>
+            <line x1="16" y1="2" x2="16" y2="-18" stroke="#3efce0" stroke-width="1" opacity=".5"/>
+            <path d="M16 -18 L 16 -1 L 28 -7 Z" fill="#3efce0" opacity=".15" stroke="#3efce0" stroke-width=".4"/>
+            <path d="M16 -18 L 16 -1 L 6 -7 Z" fill="#3efce0" opacity=".1" stroke="#3efce0" stroke-width=".4"/>
+            <text x="16" y="26" text-anchor="middle" fill="#a8a8c0" font-family="JetBrains Mono" font-size="7">LP · 7BkP..4xZ</text>
+          </g></g>
+
+          <!-- ═══ FERRY 5: Wide barge (bottom, between islands) ═══ -->
+          <g transform="translate(180,230)"><g class="ferry-rock-5">
+            <path d="M0 12 Q 0 26 7 24 L 153 24 Q 160 26 160 12 Z" fill="#4a4a1a" stroke="#ffd95e" stroke-width=".8" opacity=".88"/>
+            <rect x="6" y="3" width="148" height="10" fill="#5a5a2a" stroke="#ffd95e" stroke-width=".5" opacity=".85" rx="1"/>
+            <rect x="60" y="-4" width="28" height="9" fill="#4a4a1a" stroke="#ffd95e" stroke-width=".5" rx="2"/>
+            <rect x="64" y="-1" width="6" height="5" fill="#ffd95e" opacity=".4" rx="1"/>
+            <rect x="72" y="-1" width="6" height="5" fill="#ffd95e" opacity=".4" rx="1"/>
+            <rect x="80" y="-1" width="6" height="5" fill="#ffd95e" opacity=".4" rx="1"/>
+            <rect x="100" y="-8" width="5" height="14" fill="#5a5a2a" stroke="#ffd95e" stroke-width=".4" rx="1"/>
+            <rect x="110" y="-8" width="5" height="14" fill="#5a5a2a" stroke="#ffd95e" stroke-width=".4" rx="1"/>
+            <rect x="8" y="5" width="20" height="7" fill="#ff7a3d" opacity=".4" rx="1"/>
+            <rect x="30" y="5" width="20" height="7" fill="#3efce0" opacity=".25" rx="1"/>
+            <rect x="120" y="5" width="20" height="7" fill="#b388ff" opacity=".3" rx="1"/>
+            <rect x="142" y="5" width="10" height="7" fill="#4af0aa" opacity=".25" rx="1"/>
+            <line x1="74" y1="-4" x2="74" y2="-14" stroke="#ffd95e" stroke-width=".8" opacity=".5"/>
+            <path class="ferry-flag" d="M74 -14 L 84 -11 L 74 -8 Z" fill="#3efce0" opacity=".7"/>
+            <text x="80" y="38" text-anchor="middle" fill="#a8a8c0" font-family="JetBrains Mono" font-size="7">LP · 3KqR..9mT</text>
+          </g></g>
+
+          <!-- ═══ FERRY 6: Small speedboat (bottom-right, near EVM) ═══ -->
+          <g transform="translate(370,240)"><g class="ferry-rock-6">
+            <path d="M0 8 Q 0 20 6 19 L 44 19 Q 50 20 50 8 Z" fill="#4a2a1a" stroke="#ff7a3d" stroke-width=".7" opacity=".9"/>
+            <rect x="5" y="1" width="40" height="8" fill="#5a3a2a" stroke="#ff7a3d" stroke-width=".5" rx="2"/>
+            <path d="M12 1 L 18 -4 L 26 1 Z" fill="#ff7a3d" opacity=".3" stroke="#ff7a3d" stroke-width=".4"/>
+            <text x="25" y="32" text-anchor="middle" fill="#a8a8c0" font-family="JetBrains Mono" font-size="7">LP · Hx8W..2pL</text>
+          </g></g>
+        </svg>
+      </div>
+    </div>
     <div class="metrics">
       <div class="met"><div class="n tl" id="stat-supply">--</div><div class="k">wsXMR supply</div><div class="s">Circulating</div></div>
       <div class="met"><div class="n" id="stat-tvl">--</div><div class="k">Total value locked</div><div class="s">sDAI collateral</div></div>
@@ -569,7 +732,7 @@
   <div class="wrap sec-pad">
     <span class="eyebrow-sm">Advantages</span>
     <h2 class="sec-h">Built for composability</h2>
-    <p class="sec-sub">Monero is the best blockchain for money and also the most isolated. No lending, no liquidity, no composability — just an asset you have to sell to ever use. Wrapsynth ends that, without asking you to trust a bridge operator with your coins.</p>
+    <p class="sec-sub">Monero is the best monetary blockchain and also the most isolated. No lending, no liquidity, no composability — just an asset you have to sell to ever use. Wrapsynth ends that, without asking you to trust a bridge operator with your coins.</p>
     <p style="margin-top:16px;font-size:15px;color:var(--fg);font-weight:500">wsXMR is private money made composable. Everything below inherits both properties.</p>
     <div class="bc-wrap">
       <svg class="bc-lines" viewBox="0 0 100 100" preserveAspectRatio="none">
@@ -631,7 +794,7 @@
 <section class="sec-line">
   <div class="wrap final">
     <h2>Fungibility is fundamental</h2>
-    <p>Join the future of cross-chain privacy, backed by overcollateralized vaults.</p>
+    <p>Use Monero in DeFi. No custodians, no bridges, no trust required.</p>
     <div class="hero-ctas">
       <a class="btn btn-primary" href="app.html">Launch app →</a>
       <a class="btn btn-ghost" href="https://github.com/madschristensen99/wrapsynth" target="_blank">Read the docs</a>
