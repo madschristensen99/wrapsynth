@@ -25,17 +25,18 @@ let userAddress = null;
  * Initialize viem clients
  */
 function getTransport() {
-    const httpTransports = NETWORKS.gnosis.rpcUrls.map(url => http(url));
+    const retryOpts = { retryCount: 2, retryDelay: 800 };
+    const httpTransports = NETWORKS.gnosis.rpcUrls.map(url => http(url, retryOpts));
     // If MetaMask is available, use it for reads — bypasses CORS and rate limits entirely,
     // but fallback to HTTP RPCs if the wallet transport fails (e.g. wallet locked)
     if (typeof window !== 'undefined' && window.ethereum) {
         return fallback([
-            custom(window.ethereum),
+            custom(window.ethereum, retryOpts),
             ...httpTransports
-        ], { rank: false });
+        ], { rank: false, retryCount: 2 });
     }
     // Fallback to HTTP RPCs for users without a wallet
-    return fallback(httpTransports, { rank: false });
+    return fallback(httpTransports, { rank: false, retryCount: 2 });
 }
 
 export async function initializeClients() {

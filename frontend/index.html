@@ -1067,7 +1067,7 @@ function copyAddr(btn){
       ]
     },
     {
-      desc:"Excess sDAI yield from vaults accrues in an on-chain war chest. When XMR dips below its EMA, anyone can trigger a buy-and-burn \u2014 the chest redeems sDAI to xDAI, swaps xDAI for wsXMR on Uniswap V3, and burns it. This reduces outstanding debt and tightens the collateral ratio for all holders. The keeper earns a 2% reward (queued in sDAI shares) for calling the function. A 24-hour cooldown prevents over-triggering.",
+      desc:"Excess sDAI yield from vaults accrues in an on-chain war chest. When XMR dips below its Exponential Moving Average (EMA), anyone can trigger a buy-and-burn \u2014 the chest redeems sDAI to xDAI, swaps xDAI for wsXMR on Uniswap V3, and burns it. This reduces outstanding debt and tightens the collateral ratio for all holders. The keeper earns a 2% reward (queued in sDAI shares) for calling the function. A 24-hour cooldown prevents over-triggering.",
       tags:["sDAI yield","Redeem \u2192 xDAI \u2192 wsXMR","Dip-triggered","2% keeper reward","24h cooldown"],
       actors:[
         {name:"Keeper",color:"xmr"},

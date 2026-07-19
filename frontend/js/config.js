@@ -14,8 +14,6 @@ export const NETWORKS = {
         rpcUrls: [
             'https://rpc.gnosischain.com',
             'https://gnosis-rpc.publicnode.com',
-            'https://rpc.ankr.com/gnosis',
-            'https://gnosis.api.onfinality.io/public',
             'https://rpc.gnosis.gateway.fm'
         ],
         blockExplorer: D.explorer || 'https://gnosisscan.io',
@@ -160,6 +158,7 @@ export const RAW_ABIS = {
                 { name: 'lpBond', type: 'uint256' },
                 { name: 'normalizedDebtAmount', type: 'uint256' },
                 { name: 'vaultMintNonce', type: 'uint256' },
+                { name: 'lpCommitment', type: 'bytes32' },
                 { name: 'status', type: 'uint8' }
             ],
             name: '',
