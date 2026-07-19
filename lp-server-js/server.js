@@ -51,8 +51,10 @@ const HUB_ABI = [
   'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout)',
   'event LPKeyProvided(bytes32 indexed requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey)',
   'event MintReady(bytes32 indexed requestId, bytes32 lpCommitment)',
+  'event MintFinalized(bytes32 indexed requestId, bytes32 secret)',
+  'event MintCancelled(bytes32 indexed requestId)',
   // Burn events
-  'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment)',
+  'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey)',
   'event HashProposed(bytes32 indexed requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey)',
   'event BurnCommitted(bytes32 indexed requestId, uint256 deadline)',
   'event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 rewardPaid)',
@@ -75,7 +77,8 @@ const HUB_ABI = [
 ];
 
 // ─── Ethers Setup ───────────────────────────────────────────────────────────
-const provider = new ethers.JsonRpcProvider(RPC_URL, CHAIN_ID);
+const gnosisNetwork = new ethers.Network('gnosis', CHAIN_ID);
+const provider = new ethers.JsonRpcProvider(RPC_URL, gnosisNetwork, { staticNetwork: true });
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 const hub = new ethers.Contract(HUB_ADDRESS, HUB_ABI, wallet);
 
@@ -86,6 +89,7 @@ console.log(`RPC: ${RPC_URL}`);
 
 // ─── In-memory tracking ─────────────────────────────────────────────────────
 const pendingMints = new Map(); // requestId -> { initiatedAt, keyPostedAt }
+let lpMoneroAddress = process.env.MONERO_LP_ADDRESS || null; // fetched from wallet at startup
 
 // ─── Mint Processing Mutex ──────────────────────────────────────────────────
 // monero-wallet-rpc can only have one wallet open at a time, so mint processing
@@ -284,6 +288,24 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
   pendingMints.set(reqIdHex, mint);
   console.log(`[Mint] LP commitment for ${reqIdHex}: ${lpCommitment}`);
 
+  // Persist lpSecret to disk so we can sweep XMR after finalization even if server restarts
+  try {
+    const secretsFile = path.join(__dirname, 'lp-secrets.json');
+    let secrets = {};
+    if (fs.existsSync(secretsFile)) {
+      secrets = JSON.parse(fs.readFileSync(secretsFile, 'utf8'));
+    }
+    secrets[reqIdHex] = {
+      lpSecret: mint.lpSecret,
+      lpCommitment: lpCommitment,
+      initiatedAtBlock: mint.initiatedAtBlock || 0,
+      xmrAmount: mint.xmrAmount,
+    };
+    fs.writeFileSync(secretsFile, JSON.stringify(secrets, null, 2));
+  } catch (err) {
+    console.warn(`[Mint] Could not persist lpSecret for ${reqIdHex}:`, err.message);
+  }
+
   // 6. Fetch required bond from vault config and call setMintReady
   const vault = await hub.getVault(wallet.address);
   const requiredBond = vault.mintReadyBond;
@@ -398,6 +420,122 @@ async function startupRecoverMints() {
     } catch (err) {
       console.warn(`[Recovery] Could not check mint ${reqIdHex}:`, err.message);
     }
+  }
+}
+
+// ─── Startup Sweep: Collect XMR from finalized mints ───────────────────────
+async function startupSweepFinalizedMints() {
+  const secretsFile = path.join(__dirname, 'lp-secrets.json');
+  if (!fs.existsSync(secretsFile)) {
+    console.log('[Sweep] No persisted lpSecrets found — skipping startup sweep');
+    return;
+  }
+
+  let secrets;
+  try {
+    secrets = JSON.parse(fs.readFileSync(secretsFile, 'utf8'));
+  } catch (err) {
+    console.warn('[Sweep] Could not parse lp-secrets.json:', err.message);
+    return;
+  }
+
+  const reqIds = Object.keys(secrets);
+  if (reqIds.length === 0) {
+    console.log('[Sweep] No persisted secrets — skipping startup sweep');
+    return;
+  }
+
+  console.log(`[Sweep] Checking ${reqIds.length} persisted mint(s) for sweeping...`);
+
+  if (!process.env.MONERO_VIEW_KEY || !lpMoneroAddress) {
+    console.warn('[Sweep] MONERO_VIEW_KEY or LP Monero address not available — cannot sweep');
+    return;
+  }
+
+  for (const reqIdHex of reqIds) {
+    const entry = secrets[reqIdHex];
+    if (entry.swept) {
+      console.log(`[Sweep] ${reqIdHex} already swept — skipping`);
+      continue;
+    }
+
+    try {
+      // Check on-chain status
+      const mintReq = await hub.getMintRequest(reqIdHex);
+      const status = Number(mintReq.status);
+
+      if (status === 5) {
+        // Cancelled — no XMR to sweep
+        console.log(`[Sweep] ${reqIdHex} was cancelled — marking swept (nothing to collect)`);
+        entry.swept = true;
+        continue;
+      }
+
+      if (status !== 4) {
+        // Not yet finalized — skip
+        console.log(`[Sweep] ${reqIdHex} status=${status} (not finalized) — skipping`);
+        continue;
+      }
+
+      // Status is COMPLETED — need to find the MintFinalized event to get user's secret
+      console.log(`[Sweep] ${reqIdHex} is COMPLETED — looking for MintFinalized event...`);
+
+      // Scan recent blocks for the MintFinalized event
+      const currentBlock = await provider.getBlockNumber();
+      const fromBlock = Math.max(0, currentBlock - 10000);
+      const filter = hub.filters.MintFinalized(reqIdHex);
+      const events = await hub.queryFilter(filter, fromBlock, currentBlock);
+
+      if (events.length === 0) {
+        console.warn(`[Sweep] Could not find MintFinalized event for ${reqIdHex} — skipping`);
+        continue;
+      }
+
+      const userSecret = ethers.hexlify(events[0].args.secret);
+      console.log(`[Sweep] Found MintFinalized for ${reqIdHex}, sweeping XMR...`);
+
+      const result = await moneroWallet.sweepMintDeposit({
+        userSecretHex: userSecret,
+        lpSecretHex: entry.lpSecret,
+        lpViewKeyHex: process.env.MONERO_VIEW_KEY,
+        lpMainAddress: lpMoneroAddress,
+        restoreHeight: entry.initiatedAtBlock || 0,
+      });
+
+      if (result.swept) {
+        entry.swept = true;
+        entry.sweepTxHashes = result.txHashes;
+        entry.sweepAmount = result.amount.toString();
+        console.log(`[Sweep] Successfully swept ${result.amount} atomic units for ${reqIdHex}`);
+      } else {
+        console.log(`[Sweep] Could not sweep ${reqIdHex} yet — funds may be confirming. Will retry on next poll.`);
+        // Load into pendingMints so the event poller can retry
+        pendingMints.set(reqIdHex, {
+          requestId: reqIdHex,
+          lpSecret: entry.lpSecret,
+          initiatedAtBlock: entry.initiatedAtBlock || 0,
+          sweepAttempted: false,
+          processing: false,
+        });
+      }
+    } catch (err) {
+      console.error(`[Sweep] Failed for ${reqIdHex}:`, err.message || err);
+      // Load into pendingMints for retry by event poller
+      pendingMints.set(reqIdHex, {
+        requestId: reqIdHex,
+        lpSecret: entry.lpSecret,
+        initiatedAtBlock: entry.initiatedAtBlock || 0,
+        sweepAttempted: false,
+        processing: false,
+      });
+    }
+  }
+
+  // Persist updated state
+  try {
+    fs.writeFileSync(secretsFile, JSON.stringify(secrets, null, 2));
+  } catch (err) {
+    console.warn('[Sweep] Could not save updated lp-secrets.json:', err.message);
   }
 }
 
@@ -538,6 +676,7 @@ async function startEventListener() {
           userPublicKey: ethers.hexlify(userPublicKey),
           claimCommitment: ethers.hexlify(claimCommitment),
           initiatedAt: Date.now(),
+          initiatedAtBlock: event.blockNumber || 0,
           processing: true,
         });
 
@@ -556,6 +695,100 @@ async function startEventListener() {
             pendingMints.set(reqIdHex, mint);
           }
         })();
+      }
+
+      // Poll for MintFinalized — sweep XMR from deposit address to LP wallet
+      let finalizedEvents = [];
+      try {
+        const finalizedFilter = hub.filters.MintFinalized();
+        finalizedEvents = await hub.queryFilter(finalizedFilter, lastCheckedBlock + 1, currentBlock);
+      } catch (err) {
+        console.warn('[Event] Could not query MintFinalized events:', err.message);
+      }
+
+      for (const event of finalizedEvents) {
+        const { requestId, secret } = event.args;
+        const reqIdHex = ethers.hexlify(requestId);
+        const mint = pendingMints.get(reqIdHex);
+        if (!mint || mint.swept || mint.sweepAttempted) continue;
+
+        console.log(`[Event] MintFinalized ${reqIdHex} — user secret revealed`);
+        mint.sweepAttempted = true;
+        pendingMints.set(reqIdHex, mint);
+
+        // Sweep async so we don't block the event loop
+        (async () => {
+          try {
+            if (!mint.lpSecret) {
+              console.warn(`[Sweep] No lpSecret stored for ${reqIdHex} — cannot sweep`);
+              return;
+            }
+            if (!process.env.MONERO_VIEW_KEY || !lpMoneroAddress) {
+              console.warn(`[Sweep] MONERO_VIEW_KEY or LP Monero address not available — skipping sweep for ${reqIdHex}`);
+              return;
+            }
+
+            // Use the block number from the MintInitiated event as restore height
+            const restoreHeight = mint.initiatedAtBlock || 0;
+            console.log(`[Sweep] Sweeping XMR for ${reqIdHex}...`);
+            const result = await moneroWallet.sweepMintDeposit({
+              userSecretHex: ethers.hexlify(secret),
+              lpSecretHex: mint.lpSecret,
+              lpViewKeyHex: process.env.MONERO_VIEW_KEY,
+              lpMainAddress: lpMoneroAddress,
+              restoreHeight,
+            });
+
+            if (result.swept) {
+              mint.swept = true;
+              mint.sweepTxHashes = result.txHashes;
+              mint.sweepAmount = result.amount.toString();
+              pendingMints.set(reqIdHex, mint);
+              console.log(`[Sweep] Successfully swept ${result.amount} atomic units for ${reqIdHex}`);
+              // Persist swept state
+              try {
+                const secretsFile = path.join(__dirname, 'lp-secrets.json');
+                if (fs.existsSync(secretsFile)) {
+                  const secrets = JSON.parse(fs.readFileSync(secretsFile, 'utf8'));
+                  if (secrets[reqIdHex]) {
+                    secrets[reqIdHex].swept = true;
+                    secrets[reqIdHex].sweepTxHashes = result.txHashes;
+                    secrets[reqIdHex].sweepAmount = result.amount.toString();
+                    fs.writeFileSync(secretsFile, JSON.stringify(secrets, null, 2));
+                  }
+                }
+              } catch (persistErr) {
+                console.warn(`[Sweep] Could not persist swept state for ${reqIdHex}:`, persistErr.message);
+              }
+            } else {
+              console.log(`[Sweep] Could not sweep yet for ${reqIdHex} — funds may be confirming. Will retry on next poll.`);
+              mint.sweepAttempted = false; // allow retry
+              pendingMints.set(reqIdHex, mint);
+            }
+          } catch (err) {
+            console.error(`[Sweep] Failed for ${reqIdHex}:`, err.message || err);
+            mint.sweepAttempted = false; // allow retry
+            pendingMints.set(reqIdHex, mint);
+          }
+        })();
+      }
+
+      // Poll for MintCancelled — cleanup
+      let cancelledEvents = [];
+      try {
+        const cancelledFilter = hub.filters.MintCancelled();
+        cancelledEvents = await hub.queryFilter(cancelledFilter, lastCheckedBlock + 1, currentBlock);
+      } catch (err) {
+        // Non-critical
+      }
+
+      for (const event of cancelledEvents) {
+        const { requestId } = event.args;
+        const reqIdHex = ethers.hexlify(requestId);
+        if (pendingMints.has(reqIdHex)) {
+          console.log(`[Event] MintCancelled ${reqIdHex} — cleaning up`);
+          pendingMints.delete(reqIdHex);
+        }
       }
 
       lastCheckedBlock = currentBlock;
@@ -721,11 +954,22 @@ app.listen(PORT, async () => {
     await moneroWallet.ensureWalletOpen();
     if (moneroWallet.isWalletRpcHealthy()) {
       console.log('[Startup] Monero wallet ready');
+      // Fetch LP's main Monero address for sweeping
+      if (!lpMoneroAddress) {
+        try {
+          const addrInfo = await moneroWallet.getAddresses(0);
+          lpMoneroAddress = addrInfo.primary;
+          console.log(`[Startup] LP Monero address: ${lpMoneroAddress}`);
+        } catch (err) {
+          console.warn('[Startup] Could not fetch LP Monero address:', err.message);
+        }
+      }
     } else {
       console.error('[Startup] Monero wallet RPC unreachable — mint scanning will fail until monero-wallet-rpc is started');
     }
   }
   await startupRecoverMints();
   await startupResolveStale();
+  await startupSweepFinalizedMints();
   burnHandler.attachEventListeners(hub, wallet, provider);
 });
