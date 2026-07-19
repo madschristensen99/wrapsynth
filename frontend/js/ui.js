@@ -1133,6 +1133,11 @@ export function updateBurnProgress(step, status = null) {
     const stepIndex = BURN_STEP_MAP[step];
     if (stepIndex === undefined) return;
 
+    if (!elements.burnProgress) {
+        console.warn('[UI] burn-progress element not found, skipping updateBurnProgress');
+        return;
+    }
+
     const steps = elements.burnProgress.querySelectorAll('.step');
 
     steps.forEach((stepEl, idx) => {

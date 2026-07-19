@@ -336,6 +336,166 @@ async function _sendXmr({ destination, amountAtomic, priority = 1, accountIndex 
   };
 }
 
+/**
+ * Sweep XMR from a mint deposit address to the LP's main wallet.
+ * After MintFinalized, both secrets are known:
+ *   - userSecret (revealed in MintFinalized event)
+ *   - lpSecret (stored by LP server during setMintReady)
+ * The full private spend key = (userSecret + lpSecret) mod l
+ * The view key = LP's private view key (from env)
+ *
+ * @param {string} userSecretHex - user's secret from MintFinalized (0x-prefixed hex)
+ * @param {string} lpSecretHex - LP's secret stored during setMintReady (0x-prefixed hex)
+ * @param {string} lpViewKeyHex - LP's private view key (hex, no prefix)
+ * @param {string} lpMainAddress - LP's main Monero address to sweep to
+ * @param {number} restoreHeight - block height to start scanning from
+ * @returns {Promise<{swept: boolean, txHashes: string[], amount: bigint}>}
+ */
+export async function sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpMainAddress, restoreHeight = 0 }) {
+  if (!WALLET_RPC_URL) {
+    console.warn('[Monero] MONERO_WALLET_RPC_URL not set — skipping sweep');
+    return { swept: false, txHashes: [], amount: 0n };
+  }
+  return withWalletLock(() => _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpMainAddress, restoreHeight }));
+}
+
+async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpMainAddress, restoreHeight }) {
+  const ed = await import('@noble/ed25519');
+  const { createHash } = await import('crypto');
+  if (!ed.etc.sha512Sync) {
+    ed.etc.sha512Sync = (...m) => createHash('sha512').update(Buffer.concat(m)).digest();
+  }
+
+  const ED25519_L = 2n ** 252n + 27742317777372353535851937790883648493n;
+
+  // Combine secrets: full_spend = (userSecret + lpSecret) mod l
+  const userSecretBigInt = BigInt(userSecretHex) % ED25519_L;
+  const lpSecretBigInt = BigInt(lpSecretHex) % ED25519_L;
+  const combinedSpendScalar = (userSecretBigInt + lpSecretBigInt) % ED25519_L;
+
+  // Convert scalar to little-endian hex for Monero
+  const combinedSpendLe = combinedSpendScalar.toString(16).padStart(64, '0');
+  // Monero expects little-endian byte order for keys
+  const combinedSpendBytes = Buffer.from(combinedSpendLe, 'hex').reverse();
+  const combinedSpendHex = combinedSpendBytes.toString('hex');
+
+  // Derive the public spend key for address computation
+  const G = ed.ExtendedPoint.BASE;
+  const pubSpend = G.multiply(combinedSpendScalar);
+  const pubSpendBytes = Buffer.from(pubSpend.toRawBytes());
+
+  // Derive public view key from private view key
+  const viewPrivBytes = Buffer.from(lpViewKeyHex, 'hex');
+  const viewLe = BigInt('0x' + viewPrivBytes.reverse().toString('hex')) % ED25519_L;
+  const pubView = G.multiply(viewLe);
+  const pubViewBytes = Buffer.from(pubView.toRawBytes());
+
+  // Compute Monero address
+  const { ethers } = await import('ethers');
+  const netByte = 0x12;
+  const addrData = Buffer.concat([Buffer.from([netByte]), pubSpendBytes, pubViewBytes]);
+  const checksum = Buffer.from(ethers.keccak256(addrData).slice(2), 'hex').slice(0, 4);
+
+  // Base58 encode
+  const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  function base58Encode(data) {
+    const ENCODED_BLOCK_SIZES = [0, 2, 3, 5, 6, 7, 9, 10, 11];
+    function encodeBlock(block) {
+      let num = 0n;
+      for (let i = 0; i < block.length; i++) num = num * 256n + BigInt(block[i]);
+      let encoded = '';
+      while (num > 0n) { encoded = ALPHABET[Number(num % 58n)] + encoded; num /= 58n; }
+      while (encoded.length < ENCODED_BLOCK_SIZES[block.length]) encoded = '1' + encoded;
+      return encoded;
+    }
+    let result = '';
+    for (let i = 0; i < data.length; i += 8) result += encodeBlock(data.slice(i, i + 8));
+    return result;
+  }
+  const depositAddress = base58Encode(Buffer.concat([addrData, checksum]));
+
+  console.log(`[Monero] Sweep: deposit address ${depositAddress}`);
+  console.log(`[Monero] Sweep: combined spend key (LE) = ${combinedSpendHex}`);
+
+  // Create wallet from keys
+  const walletName = 'sweep-tmp';
+  const walletPass = 'sweep';
+  const fs = await import('fs');
+  const walletDir = process.env.MONERO_WALLET_DIR || '/tmp/monero-wallets';
+
+  // Delete old temp wallet files
+  for (const ext of ['', '.keys', '.address.txt']) {
+    const p = `${walletDir}/${walletName}${ext}`;
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+  }
+
+  try {
+    try {
+      await walletRpc('generate_from_keys', {
+        filename: walletName,
+        password: walletPass,
+        address: depositAddress,
+        spendkey: combinedSpendHex,
+        viewkey: lpViewKeyHex,
+        restore_height: restoreHeight,
+      });
+      walletOpened = true;
+      console.log('[Monero] Sweep wallet created from keys');
+    } catch (err) {
+      if (err.message.includes('already exists') || err.message.includes('file_exists')) {
+        await walletRpc('open_wallet', { filename: walletName, password: walletPass });
+        walletOpened = true;
+      } else {
+        throw err;
+      }
+    }
+
+    // Refresh to scan for incoming transactions
+    console.log('[Monero] Refreshing sweep wallet...');
+    try {
+      await walletRpc('refresh', { start_height: restoreHeight });
+    } catch (err) {
+      console.warn('[Monero] Refresh error during sweep:', err.message);
+    }
+
+    // Check balance
+    const balanceRes = await walletRpc('get_balance', { account_index: 0 });
+    const balance = BigInt(balanceRes.balance);
+    const unlockedBalance = BigInt(balanceRes.unlocked_balance || 0);
+    console.log(`[Monero] Sweep wallet balance: ${balance} atomic (${unlockedBalance} unlocked)`);
+
+    if (unlockedBalance === 0n) {
+      console.log('[Monero] No unlocked balance to sweep — funds may still be confirming');
+      return { swept: false, txHashes: [], amount: 0n, balance };
+    }
+
+    // Sweep all funds to LP main address
+    console.log(`[Monero] Sweeping ${unlockedBalance} atomic units to ${lpMainAddress}`);
+    const sweepRes = await walletRpc('sweep_all', {
+      address: lpMainAddress,
+      account_index: 0,
+      priority: 1,
+      get_tx_keys: true,
+    });
+
+    const txHashes = Array.isArray(sweepRes.tx_hash_list) ? sweepRes.tx_hash_list : [sweepRes.tx_hash];
+    const amount = BigInt(sweepRes.amount_list?.[0] || 0);
+    console.log(`[Monero] Sweep complete: ${txHashes.length} tx(s), total ${amount} atomic units`);
+
+    return { swept: true, txHashes, amount };
+  } finally {
+    // Always restore the main LP wallet
+    console.log('[Monero] Restoring main LP wallet after sweep...');
+    try {
+      await walletRpc('close_wallet', {});
+      walletOpened = false;
+      await ensureWalletOpen();
+    } catch (err) {
+      console.warn('[Monero] Failed to restore main wallet after sweep:', err.message);
+    }
+  }
+}
+
 // ─── Address Management ───────────────────────────────────────────────────────
 
 /**

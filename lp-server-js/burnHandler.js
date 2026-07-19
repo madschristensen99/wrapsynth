@@ -327,7 +327,7 @@ function attachEventListeners(hub, _wallet, _provider) {
   // Extra ABI fragments the main server may not have included.
   // We create a new contract instance with the merged ABI so burn events decode properly.
   const burnAbi = [
-    'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment)',
+    'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey)',
     'event HashProposed(bytes32 indexed requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey)',
     'event BurnCommitted(bytes32 indexed requestId, uint256 deadline)',
     'event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 rewardPaid)',
