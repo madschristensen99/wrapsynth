@@ -859,6 +859,11 @@ export function updateMintProgress(step, status = null) {
         if (textEl) textEl.textContent = status || note.text;
     }
 
+    if (!elements.mintProgress) {
+        console.warn('[UI] mint-progress element not found, skipping updateMintProgress');
+        return;
+    }
+
     const steps = elements.mintProgress.querySelectorAll('.step');
 
     steps.forEach((stepEl, idx) => {
@@ -897,6 +902,7 @@ export function updateMintProgress(step, status = null) {
 export function completeMintStep(step) {
     const stepIndex = MINT_STEP_MAP[step];
     if (stepIndex === undefined) return;
+    if (!elements.mintProgress) return;
     const stepEl = elements.mintProgress.querySelectorAll('.step')[stepIndex];
     if (stepEl) {
         stepEl.classList.add('done');
@@ -1057,6 +1063,24 @@ export function showClaimWsXmrButton(onClaim) {
     // Hide verification status
     if (elements.waitingLpVerification) {
         elements.waitingLpVerification.classList.add('hidden');
+    }
+    
+    // Hide deposit info (QR code, address, amount, confirm sent button)
+    if (elements.mintDepositInfo) {
+        elements.mintDepositInfo.classList.add('hidden');
+        elements.mintDepositInfo.style.display = 'none';
+    }
+    if (elements.mintQrCode) {
+        elements.mintQrCode.style.display = 'none';
+    }
+    if (elements.mintXmrAddress) {
+        elements.mintXmrAddress.style.display = 'none';
+    }
+    if (elements.mintExactAmount) {
+        elements.mintExactAmount.style.display = 'none';
+    }
+    if (elements.confirmSentXmr) {
+        elements.confirmSentXmr.classList.add('hidden');
     }
     
     // Ensure mint actions container exists

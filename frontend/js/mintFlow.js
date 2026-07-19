@@ -505,19 +505,21 @@ export class MintFlow {
             const statusPollInterval = setInterval(async () => {
                 try {
                     const req = await readHub('getMintRequest', [this.requestId]);
-                    if (Number(req.status) === 3) {
+                    const status = Number(req.status);
+                    console.log(`[Mint Poll] Status: ${status} (1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED)`);
+                    if (status === 3) {
                         console.log('Mint became READY while waiting for user confirmation');
                         clearInterval(statusPollInterval);
                         if (this.userConfirmResolve) this.userConfirmResolve();
-                    } else if (Number(req.status) === 5) {
+                    } else if (status === 5) {
                         console.log('Mint was cancelled while waiting for user confirmation');
                         clearInterval(statusPollInterval);
                         if (this.userConfirmResolve) this.userConfirmResolve();
                     }
                 } catch (e) {
-                    // Ignore polling errors
+                    console.warn('[Mint Poll] Failed to check status:', e.message || e);
                 }
-            }, 10000);
+            }, 5000);
             
             await new Promise((resolve) => {
                 this.userConfirmResolve = resolve;
@@ -541,9 +543,10 @@ export class MintFlow {
             updateSwapState({ requestId: this.requestId, state: this.state });
             console.log('LP confirmed XMR received. Waiting for user to claim wsXMR...');
             await this.setupClaimButton();
-            return new Promise((resolve) => {
+            await new Promise((resolve) => {
                 this.userClaimResolve = resolve;
             });
+            return;
         }
 
         // Start deadline countdown timer
@@ -985,8 +988,48 @@ export class MintFlow {
                 if (this.state === 'expired') return;
                 await this.finalize();
                 break;
-            case 'deposit':
             case 'lp-ready':
+                // Mint was already READY - check on-chain status and go straight to claim
+                console.log('Resuming from lp-ready, checking on-chain status...');
+                try {
+                    const req = await readHub('getMintRequest', [this.requestId]);
+                    const status = Number(req.status);
+                    console.log(`[Resume] On-chain status: ${status}`);
+                    if (status === 3) {
+                        this.state = 'lp-ready';
+                        console.log('Mint is READY, showing claim button...');
+                        await this.setupClaimButton();
+                        await new Promise((resolve) => {
+                            this.userClaimResolve = resolve;
+                        });
+                        await this.finalize();
+                        return;
+                    } else if (status === 4) {
+                        console.log('Mint already completed on-chain');
+                        const { removeActiveSwap, saveToHistory } = await import('./storage.js');
+                        const { showSuccess, resetMintUI } = await import('./ui.js?v=2.6');
+                        saveToHistory({ ...savedState, status: 'Completed', completedAt: Date.now() });
+                        removeActiveSwap(this.requestId);
+                        showSuccess('Mint Completed', 'This mint was already finalized on-chain.');
+                        resetMintUI();
+                        return;
+                    } else if (status === 5) {
+                        console.log('Mint was cancelled on-chain');
+                        const { removeActiveSwap, saveToHistory } = await import('./storage.js');
+                        const { showError, resetMintUI } = await import('./ui.js?v=2.6');
+                        saveToHistory({ ...savedState, status: 'Cancelled', completedAt: Date.now() });
+                        removeActiveSwap(this.requestId);
+                        showError('Mint Cancelled', 'This mint was cancelled on-chain.');
+                        resetMintUI();
+                        return;
+                    }
+                    // If status is 1 or 2, fall through to deposit flow
+                    console.log(`Status is ${status}, falling through to deposit flow...`);
+                } catch (e) {
+                    console.warn('Could not check on-chain status, falling through to deposit flow:', e.message);
+                }
+                // Fall through to deposit case
+            case 'deposit':
                 // Check if we have a valid deposit address, otherwise derive locally
                 if (savedState.depositAddress && savedState.depositAddress.startsWith('4')) {
                     // Valid Monero address from saved state
@@ -997,14 +1040,30 @@ export class MintFlow {
                     console.log('Deriving deposit address from saved LP public keys...');
                     this.depositAddress = await this.agent.deriveSharedMoneroAddress(savedState.lpPublicSpendKey, savedState.lpPublicViewKey);
                     console.log('Derived Monero Deposit Address:', this.depositAddress);
-                } else if (savedState.lpPublicKey) {
-                    // Legacy: old format with single key - fetch view key from contract
-                    console.log('Legacy format detected, fetching view key from contract...');
-                    const lpPublicViewKey = await readHub('lpPublicViewKeys', [this.requestId]);
-                    this.depositAddress = await this.agent.deriveSharedMoneroAddress(savedState.lpPublicKey, lpPublicViewKey);
-                    console.log('Derived Monero Deposit Address:', this.depositAddress);
                 } else {
-                    throw new Error('No deposit address or LP public keys found in saved swap state.');
+                    // Fetch LP keys from contract and derive deposit address
+                    console.log('No deposit info in saved state, fetching LP keys from contract...');
+                    try {
+                        const lpPublicSpendKey = await readHub('lpPublicKeys', [this.requestId]);
+                        const lpPublicViewKey = await readHub('lpPublicViewKeys', [this.requestId]);
+                        if (lpPublicSpendKey && lpPublicSpendKey !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
+                            this.lpPublicSpendKey = lpPublicSpendKey;
+                            this.lpPublicViewKey = lpPublicViewKey;
+                            this.depositAddress = await this.agent.deriveSharedMoneroAddress(lpPublicSpendKey, lpPublicViewKey);
+                            console.log('Derived Monero Deposit Address from contract:', this.depositAddress);
+                            // Save for future resumes
+                            updateSwapState({
+                                requestId: this.requestId,
+                                depositAddress: this.depositAddress,
+                                lpPublicSpendKey: lpPublicSpendKey,
+                                lpPublicViewKey: lpPublicViewKey
+                            });
+                        } else {
+                            throw new Error('LP keys not yet posted on-chain for this mint.');
+                        }
+                    } catch (fetchErr) {
+                        throw new Error('Could not fetch LP keys from contract: ' + fetchErr.message);
+                    }
                 }
                 
                 console.log('Send exactly', this.xmrAmount, 'XMR to this address');
@@ -1017,8 +1076,8 @@ export class MintFlow {
                     requestId: this.requestId,
                     state: 'deposit',
                     depositAddress: this.depositAddress,
-                    lpPublicSpendKey: savedState.lpPublicSpendKey,
-                    lpPublicViewKey: savedState.lpPublicViewKey
+                    lpPublicSpendKey: this.lpPublicSpendKey || savedState.lpPublicSpendKey,
+                    lpPublicViewKey: this.lpPublicViewKey || savedState.lpPublicViewKey
                 });
                 
                 // Force UI update by importing and calling showMintDepositInfo

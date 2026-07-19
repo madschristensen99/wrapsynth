@@ -53,7 +53,7 @@ import {
     renderLPDetailCard,
     initLPDetailToggles,
     initVaultPickers
-} from './ui.js?v=2.8';
+} from './ui.js?v=3.0';
 
 import { MintFlow } from './mintFlow.js';
 import { stopTimers } from './mintFlowTimers.js';
@@ -620,17 +620,20 @@ function autoResumeSwap(swap) {
                 return;
             }
             showMintTab();
+            currentResumingSwapId = swap.requestId;
             currentMintFlow = new MintFlow();
             setStartMintButtonText('Start New Mint');
             trackMintProgress(currentMintFlow);
             currentMintFlow.resume(swap).then(() => {
                 // Refresh balance and reset UI after successful auto-resume
+                currentResumingSwapId = null;
                 const address = getUserAddress();
                 if (address) {
                     getWsXmrBalance(address).then(balance => updateBalance(balance)).catch(() => {});
                 }
                 resetMintUI();
             }).catch(err => {
+                currentResumingSwapId = null;
                 console.error('Auto-resume mint error:', err);
                 const isStuck = (swap.state === 'lp-ready' || swap.state === 'finalize');
                 showResumeError(swap.requestId, err.message || 'Could not resume your mint. ' + (isStuck ? 'Click Dismiss to hide this swap.' : 'Please clear the swap and start fresh.'));

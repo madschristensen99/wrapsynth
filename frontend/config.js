@@ -22,15 +22,15 @@ export const NETWORKS = {
         rpcUrls: {
             default: {
                 http: [
-                    'https://rpc.ankr.com/gnosis',
-                    'https://gnosis.api.onfinality.io/public',
+                    'https://rpc.gnosischain.com',
+                    'https://gnosis-rpc.publicnode.com',
                     'https://rpc.gnosis.gateway.fm'
                 ],
             },
             public: {
                 http: [
-                    'https://rpc.ankr.com/gnosis',
-                    'https://gnosis.api.onfinality.io/public',
+                    'https://rpc.gnosischain.com',
+                    'https://gnosis-rpc.publicnode.com',
                     'https://rpc.gnosis.gateway.fm'
                 ],
             },

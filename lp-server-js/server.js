@@ -8,6 +8,8 @@ import { fileURLToPath } from 'url';
 import * as burnHandler from './burnHandler.js';
 import * as moneroWallet from './moneroWallet.js';
 import * as moneroCrypto from './moneroCrypto.js';
+import { computeSecretHash } from './commitment.js';
+import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,7 +50,7 @@ const HUB_ABI = [
   // Mint events
   'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout)',
   'event LPKeyProvided(bytes32 indexed requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey)',
-  'event MintReady(bytes32 indexed requestId)',
+  'event MintReady(bytes32 indexed requestId, bytes32 lpCommitment)',
   // Burn events
   'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment)',
   'event HashProposed(bytes32 indexed requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey)',
@@ -58,7 +60,7 @@ const HUB_ABI = [
   'event BurnAborted(bytes32 indexed requestId)',
   // Functions
   'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
-  'function setMintReady(bytes32 requestId) external payable',
+  'function setMintReady(bytes32 requestId, bytes32 lpCommitment) external payable',
   'function getVault(address lpAddress) external view returns (tuple(address lpAddress, uint256 collateralShares, uint256 lockedCollateral, uint256 normalizedDebt, uint256 pendingDebt, uint16 maxMintBps, uint256 mintGriefingDeposit, uint256 mintReadyBond, uint16 mintFeeBps, uint16 burnRewardBps, uint256 liquidationNonce, uint256 mintNonce, uint256 minBurnAmount, bool active, uint256 deployedSDAIShares, uint16 maxCoLPRangeBps))',
   'function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
   'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
@@ -274,13 +276,21 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
     console.warn(`[Chain] Proceeding with setMintReady anyway (may revert with StalePrice)...`);
   }
 
-  // 5. Fetch required bond from vault config and call setMintReady
+  // 5. Generate LP secret + commitment for the mint PTLC
+  const lpSecret = crypto.randomBytes(32);
+  const { secretHash: lpCommitment } = await computeSecretHash(lpSecret);
+  mint.lpSecret = '0x' + lpSecret.toString('hex');
+  mint.lpCommitment = lpCommitment;
+  pendingMints.set(reqIdHex, mint);
+  console.log(`[Mint] LP commitment for ${reqIdHex}: ${lpCommitment}`);
+
+  // 6. Fetch required bond from vault config and call setMintReady
   const vault = await hub.getVault(wallet.address);
   const requiredBond = vault.mintReadyBond;
   console.log(`[Chain] Vault mintReadyBond: ${ethers.formatEther(requiredBond)} ETH`);
 
-  console.log(`[Chain] Calling setMintReady(${reqIdHex}) with bond ${ethers.formatEther(requiredBond)} ETH...`);
-  const tx2 = await hub.setMintReady(reqIdHex, { value: requiredBond });
+  console.log(`[Chain] Calling setMintReady(${reqIdHex}, ${lpCommitment}) with bond ${ethers.formatEther(requiredBond)} ETH...`);
+  const tx2 = await hub.setMintReady(reqIdHex, lpCommitment, { value: requiredBond });
   console.log(`[Chain] setMintReady tx: ${tx2.hash}`);
   const receipt2 = await tx2.wait();
   console.log(`[Chain] setMintReady confirmed in block ${receipt2.blockNumber}`);
