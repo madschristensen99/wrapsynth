@@ -1562,6 +1562,10 @@ export function showBurnSweepError(errorMsg) {
     const progressEl = document.getElementById('burn-sweep-progress');
     if (progressEl) progressEl.classList.add('hidden');
 
+    // Hide the complete banner if it exists
+    const completeEl = document.getElementById('burn-sweep-complete');
+    if (completeEl) completeEl.classList.add('hidden');
+
     let el = document.getElementById('burn-sweep-error');
     if (!el) {
         el = document.createElement('div');
@@ -1570,13 +1574,52 @@ export function showBurnSweepError(errorMsg) {
         burnPanel.appendChild(el);
     }
 
+    // Try to extract a user-friendly message from the error
+    let friendly = 'An unexpected error occurred while sweeping XMR to your destination address.';
+    let detail = errorMsg;
+
+    if (errorMsg.includes('No unlocked balance') || errorMsg.includes('balance is 0')) {
+        friendly = 'The XMR at the shared address is not yet unlocked. Monero requires ~10 confirmations before funds can be spent. Please wait and try again.';
+    } else if (errorMsg.includes('No balance') || errorMsg.includes('no funds')) {
+        friendly = 'No XMR found at the shared address. The LP may not have sent XMR yet.';
+    } else if (errorMsg.includes('daemon') || errorMsg.includes('connection') || errorMsg.includes('fetch')) {
+        friendly = 'Could not connect to the Monero network. Please check your internet connection and try again.';
+    } else if (errorMsg.includes('WASM') || errorMsg.includes('wasm') || errorMsg.includes('module not loaded')) {
+        friendly = 'The Monero WASM module failed to load. Please refresh the page and try again.';
+    }
+
     el.innerHTML = `
-        <div class="error-box">
-            <strong>Sweep Failed</strong>
-            <p>${errorMsg}</p>
+        <div class="burn-sweep-error-inner">
+            <div class="burn-sweep-error-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="8" x2="12" y2="12"/>
+                    <line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+            </div>
+            <div class="burn-sweep-error-content">
+                <h3>Sweep Failed</h3>
+                <p class="burn-sweep-error-friendly">${friendly}</p>
+                <details class="burn-sweep-error-details">
+                    <summary>Technical details</summary>
+                    <p>${detail}</p>
+                </details>
+            </div>
+            <button class="cta" id="burn-sweep-retry">↻ Retry sweep</button>
         </div>
     `;
     el.classList.remove('hidden');
+
+    // Wire retry button
+    const retryBtn = document.getElementById('burn-sweep-retry');
+    if (retryBtn) {
+        retryBtn.addEventListener('click', () => {
+            el.classList.add('hidden');
+            showBurnSweepProgress('Retrying sweep...');
+            // Dispatch a custom event so burnFlow.js can re-attempt the sweep
+            window.dispatchEvent(new CustomEvent('burn-sweep-retry'));
+        });
+    }
 }
 
 /**
