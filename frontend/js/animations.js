@@ -97,9 +97,9 @@ export function launchMintCelebration() {
   const balloonColors = [BRAND.xmr, BRAND.teal, BRAND.green, BRAND.amber, BRAND.purple, BRAND.blue];
   const fwColors = [BRAND.teal, BRAND.green, BRAND.amber, BRAND.purple, BRAND.blue, '#ff69b4', '#ffd700'];
 
-  // ── Confetti (500 pieces, 4 shapes) ──────────────────────────
-  const SHAPES = ['rect', 'circle', 'star', 'ribbon'];
-  for (let i = 0; i < 500; i++) {
+  // ── Confetti (350 pieces, 3 shapes) ──────────────────────────
+  const SHAPES = ['rect', 'star', 'ribbon'];
+  for (let i = 0; i < 350; i++) {
     const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
     confetti.push({
       x: Math.random() * w,

@@ -1,10 +1,10 @@
 // Burn Flow - wsXMR to XMR (5-step Diamond Architecture)
 
-import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG } from './config.js';
-import { readHub, writeHub, writeHubUnsafe, readWsxmr, writeWsxmr, watchContractEvent, getUserAddress } from './viemClient.js';
+import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG, MONERO_CONFIG } from './config.js';
+import { readHub, writeHub, writeHubUnsafe, readWsxmr, writeWsxmr, writeWsxmrUnsafe, watchContractEvent, getUserAddress } from './viemClient.js';
 import { getPhantomAgent } from './phantomAgent.js';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
-import { updateBurnProgress, showBurnVerificationLoading, showBurnVerificationDetails, showBurnVerificationManual, showBurnAddressPanel, showBurnSweepProgress, showBurnSweepComplete, showBurnSweepError, showBurnKeysFallback } from './ui.js?v=3.3';
+import { updateBurnProgress, showBurnVerificationLoading, showBurnVerificationDetails, showBurnVerificationManual, showBurnAddressPanel, showBurnSweepProgress, showBurnSweepComplete, showBurnSweepError, showBurnKeysFallback, showBurnScanProgress, showBurnXmrFound } from './ui.js?v=3.4';
 import { getMoneroRpc } from './moneroRpc.js';
 import { sweepBurnOutput, getCombinedKeysForImport } from './burnSweep.js';
 import { keccak256, toHex } from 'https://esm.sh/viem@2.7.0';
@@ -18,6 +18,8 @@ export class BurnFlow {
         this.wsxmrAmount = null;
         this.destination = null;
         this.secretHash = null;
+        this.sharedMoneroAddress = null;
+        this.privateViewKeyHex = null;
         this.eventWatchers = [];
         this.lpProposeStartTime = null;
         this.lpProposeTimeout = 1800000; // 30 minutes in ms
@@ -94,7 +96,12 @@ export class BurnFlow {
         const userAddress = getUserAddress();
         const wsxmrAmountAtomic = BigInt(Math.floor(this.wsxmrAmount * Math.pow(10, DECIMALS.wsXMR)));
 
-        await writeWsxmr('approve', [CONTRACTS.hub, wsxmrAmountAtomic]);
+        try {
+            await writeWsxmr('approve', [CONTRACTS.hub, wsxmrAmountAtomic]);
+        } catch (approveErr) {
+            console.warn('Approve simulation failed, trying unsafe fallback:', approveErr.message);
+            await writeWsxmrUnsafe('approve', [CONTRACTS.hub, wsxmrAmountAtomic]);
+        }
         console.log('wsXMR approved for burn');
 
         // Push fresh prices before attempting requestBurn
@@ -237,6 +244,9 @@ export class BurnFlow {
             console.log('Derived burn Monero address:', moneroAddress);
             console.log('User view key for scanning:', viewKey);
             
+            this.sharedMoneroAddress = moneroAddress;
+            this.privateViewKeyHex = viewKey;
+            
             updateSwapState({
                 requestId: this.requestId,
                 lpStatus: 'found',
@@ -289,6 +299,9 @@ export class BurnFlow {
 
             console.log('Derived burn Monero address:', moneroAddress);
             console.log('User view key for scanning:', viewKey);
+
+            this.sharedMoneroAddress = moneroAddress;
+            this.privateViewKeyHex = viewKey;
 
             updateSwapState({
                 requestId: this.requestId,
@@ -359,28 +372,40 @@ export class BurnFlow {
             state: this.state,
             message: 'Verifying Monero transaction on blockchain...'
         });
-        updateBurnProgress('confirm-lock', 'Checking Monero blockchain...');
+        updateBurnProgress('confirm-lock', 'Scanning Monero blockchain for XMR...');
         showBurnVerificationLoading();
 
-        console.log('LP has sent XMR to:', this.destination);
+        console.log('LP has sent XMR to shared address:', this.sharedMoneroAddress);
         console.log('Expected amount:', this.wsxmrAmount, 'XMR');
         console.log('Secret hash:', this.secretHash);
 
-        const moneroRpc = getMoneroRpc();
+        const expectedAtomic = BigInt(Math.floor(this.wsxmrAmount * 1e12));
 
-        // Fetch Monero chain status directly from public daemon (no LP server)
-        let moneroHeight = null;
+        // Convert private view key (0x big-endian hex) to little-endian hex for monero-ts
+        const viewKeyHex = this.privateViewKeyHex.replace(/^0x/, '').padStart(64, '0');
+        const viewKeyBytes = new Uint8Array(32);
+        for (let i = 0; i < 32; i++) {
+            viewKeyBytes[i] = parseInt(viewKeyHex.substr(i * 2, 2), 16);
+        }
+        viewKeyBytes.reverse();
+        const viewKeyLe = Array.from(viewKeyBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+
+        // Get restore height — start scanning from ~50 blocks before current height
+        let restoreHeight = 0;
         try {
-            moneroHeight = await moneroRpc.getHeight();
-            console.log('Monero blockchain height:', moneroHeight);
+            const moneroRpc = getMoneroRpc();
+            const height = await moneroRpc.getHeight();
+            restoreHeight = Math.max(0, height - 50);
+            console.log('Monero blockchain height:', height, 'restore from:', restoreHeight);
         } catch (e) {
-            console.warn('Could not reach Monero daemon:', e);
+            console.warn('Could not reach Monero daemon for height:', e.message);
         }
 
-        return new Promise((resolve, reject) => {
+        return new Promise(async (resolve, reject) => {
+            let confirmed = false;
+            let viewWallet = null;
             let scanInterval = null;
             let timeoutId = null;
-            let confirmed = false;
 
             const cleanup = () => {
                 if (scanInterval) clearInterval(scanInterval);
@@ -391,14 +416,32 @@ export class BurnFlow {
                 if (manualBtn) manualBtn.replaceWith(manualBtn.cloneNode(true));
             };
 
+            const closeWallet = async () => {
+                if (viewWallet) {
+                    try { await viewWallet.close(); } catch (e) { /* ignore */ }
+                    viewWallet = null;
+                }
+            };
+
             const onConfirm = async () => {
                 if (confirmed) return;
                 confirmed = true;
                 cleanup();
+                await closeWallet();
                 updateBurnProgress('confirm-lock', 'Submitting confirmation to blockchain...');
 
                 try {
-                    const receipt = await writeHub('confirmMoneroLock', [this.requestId]);
+                    let receipt;
+                    try {
+                        receipt = await writeHub('confirmMoneroLock', [this.requestId]);
+                    } catch (simErr) {
+                        if (simErr.message && simErr.message.includes('internal error')) {
+                            console.warn('confirmMoneroLock simulation failed, trying unsafe fallback...');
+                            receipt = await writeHubUnsafe('confirmMoneroLock', [this.requestId], 0n, 500000n);
+                        } else {
+                            throw simErr;
+                        }
+                    }
                     console.log('Monero lock confirmed on-chain, tx:', receipt.transactionHash);
 
                     updateSwapState({
@@ -414,11 +457,140 @@ export class BurnFlow {
                     console.error('confirmMoneroLock on-chain failed:', error);
                     updateBurnProgress('confirm-lock', 'Confirmation failed — try again');
                     confirmed = false;
-                    reject(error);
+                    // Show manual buttons again and re-wire for retry
+                    showBurnVerificationManual();
+                    const loadingEl = document.getElementById('burn-status-loading');
+                    if (loadingEl) loadingEl.classList.add('hidden');
+                    wireButtons();
                 }
             };
 
-            // Wire up both confirm buttons
+            // Show verification details with what we know
+            showBurnVerificationDetails({
+                destination: this.sharedMoneroAddress || '',
+                txHash: this.secretHash ? `Secret hash: ${this.secretHash.slice(0, 16)}...${this.secretHash.slice(-16)}` : 'Unknown',
+                confirmations: restoreHeight > 0 ? `Scanning from block ${restoreHeight.toLocaleString()}` : 'Preparing scan...',
+                amount: this.wsxmrAmount
+            });
+
+            // Try auto-verification with monero-ts view-only wallet
+            try {
+                showBurnScanProgress('Loading Monero WASM wallet for scanning...');
+
+                let moneroTs;
+                if (typeof window !== 'undefined' && window.monero_ts) {
+                    moneroTs = window.monero_ts;
+                } else {
+                    throw new Error('Monero WASM module not loaded');
+                }
+
+                showBurnScanProgress('Creating view-only wallet to scan shared address...');
+                console.log('[BurnVerify] Creating view-only wallet for address:', this.sharedMoneroAddress);
+
+                viewWallet = await moneroTs.createWalletFull({
+                    password: 'burn-verify-tmp',
+                    networkType: moneroTs.MoneroNetworkType.MAINNET,
+                    primaryAddress: this.sharedMoneroAddress,
+                    privateViewKey: viewKeyLe,
+                    serverUri: MONERO_CONFIG.rpcUrl,
+                    restoreHeight: restoreHeight,
+                });
+
+                showBurnScanProgress('Syncing wallet to scan for incoming XMR...');
+                await viewWallet.startSyncing();
+
+                // Poll for incoming transactions
+                let scanStartTime = Date.now();
+                const scanTimeout = 180000; // 3 minutes
+
+                const checkForXmr = async () => {
+                    if (confirmed) return;
+                    const elapsed = Date.now() - scanStartTime;
+                    if (elapsed > scanTimeout) {
+                        console.warn('[BurnVerify] Auto-scan timeout, falling back to manual confirm');
+                        await closeWallet();
+                        showBurnVerificationManual();
+                        updateBurnProgress('confirm-lock', 'Auto-scan timeout — confirm manually');
+                        return;
+                    }
+
+                    try {
+                        const syncHeight = await viewWallet.getSyncHeight();
+                        const daemonHeight = await viewWallet.getDaemonHeight();
+                        const balance = await viewWallet.getBalance();
+
+                        console.log(`[BurnVerify] Sync: ${syncHeight}/${daemonHeight}, balance: ${balance.toString()}`);
+
+                        if (balance.toString() !== '0') {
+                            // Found incoming XMR!
+                            const unlockedBalance = await viewWallet.getUnlockedBalance();
+                            const txs = await viewWallet.getTxs();
+                            let confirmations = 0;
+                            let receivedAmount = 0n;
+
+                            for (const tx of txs) {
+                                if (tx.getIncomingAmount && tx.getIncomingAmount) {
+                                    const amt = BigInt(tx.getIncomingAmount().toString());
+                                    if (amt > 0n) receivedAmount += amt;
+                                }
+                                if (tx.getNumConfirmations && tx.getNumConfirmations()) {
+                                    confirmations = Math.max(confirmations, tx.getNumConfirmations());
+                                }
+                            }
+
+                            console.log(`[BurnVerify] XMR found! Amount: ${receivedAmount}, confirmations: ${confirmations}`);
+
+                            const xmrAmount = Number(receivedAmount) / 1e12;
+                            showBurnXmrFound(xmrAmount, confirmations);
+                            updateBurnProgress('confirm-lock', `✓ XMR verified: ${xmrAmount} XMR (${confirmations} confs)`);
+                            updateSwapState({
+                                requestId: this.requestId,
+                                state: this.state,
+                                message: `XMR verified: ${xmrAmount} XMR received`
+                            });
+
+                            await closeWallet();
+
+                            // Auto-confirm after short delay so user sees the success state
+                            setTimeout(() => onConfirm(), 1500);
+                            return;
+                        }
+
+                        // Still syncing or no XMR yet
+                        showBurnScanProgress(`Scanning... ${syncHeight}/${daemonHeight} blocks synced`);
+                        updateBurnProgress('confirm-lock', `Scanning Monero... ${syncHeight}/${daemonHeight}`);
+                    } catch (e) {
+                        console.warn('[BurnVerify] Scan check error:', e.message);
+                        showBurnScanProgress(`Scanning... (retrying)`);
+                    }
+                };
+
+                // Check every 5 seconds
+                scanInterval = setInterval(checkForXmr, 5000);
+
+                // Initial check after 3 seconds (let sync start)
+                setTimeout(checkForXmr, 3000);
+
+                // Overall timeout
+                timeoutId = setTimeout(() => {
+                    if (!confirmed) {
+                        console.warn('[BurnVerify] Overall timeout, falling back to manual');
+                        clearInterval(scanInterval);
+                        closeWallet().then(() => {
+                            showBurnVerificationManual();
+                            updateBurnProgress('confirm-lock', 'Auto-scan timeout — confirm manually');
+                        });
+                    }
+                }, scanTimeout + 10000);
+
+            } catch (wasmError) {
+                console.warn('[BurnVerify] View-only wallet failed, falling back to manual:', wasmError.message);
+                await closeWallet();
+                showBurnVerificationManual();
+                updateBurnProgress('confirm-lock', 'Confirm receipt of XMR to proceed...');
+            }
+
+            // Wire up manual confirm buttons as fallback (always available)
             const wireButtons = () => {
                 const btn = document.getElementById('burn-confirm-receipt');
                 const manualBtn = document.getElementById('burn-confirm-receipt-manual');
@@ -426,21 +598,6 @@ export class BurnFlow {
                 if (manualBtn) manualBtn.addEventListener('click', onConfirm);
             };
             wireButtons();
-
-            // Show verification details immediately with what we know from on-chain data
-            showBurnVerificationDetails({
-                destination: this.destination || '',
-                txHash: this.secretHash ? `Secret hash: ${this.secretHash.slice(0, 16)}...${this.secretHash.slice(-16)}` : 'Unknown',
-                confirmations: moneroHeight !== null ? `Daemon height ${moneroHeight.toLocaleString()}` : 'Daemon unreachable',
-                amount: this.wsxmrAmount
-            });
-
-            // The LP sends XMR to the shared address but does not embed the secret hash
-            // in the Monero tx extra. The user should verify via their own Monero wallet
-            // or block explorer, then manually confirm receipt.
-            console.log('Monero verification: user must manually confirm receipt of XMR');
-            showBurnVerificationManual();
-            updateBurnProgress('confirm-lock', 'Confirm receipt of XMR to proceed...');
         });
     }
 
@@ -666,7 +823,12 @@ export class BurnFlow {
         this.agent = getPhantomAgent();
         await this.agent.initialize('BURN', this.wsxmrAmount.toString(), this.destination);
 
+        // Restore shared address and view key if available from saved state
+        if (savedState.moneroAddress) this.sharedMoneroAddress = savedState.moneroAddress;
+        if (savedState.viewKey) this.privateViewKeyHex = savedState.viewKey;
+
         switch (this.state) {
+            case 'evm-request':
             case 'lp-propose':
                 await this.waitForLPProposal();
                 await this.confirmMoneroLock();

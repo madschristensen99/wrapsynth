@@ -843,6 +843,15 @@ const BURN_STEP_MAP = {
     'lp-finalize': 3
 };
 
+const BURN_STEP_NOTE = {
+    'init': { num: '01', text: 'Requesting signature…' },
+    'evm-request': { num: '01', text: 'Submitting burn request to blockchain…' },
+    'lp-propose': { num: '02', text: 'Waiting for LP to send XMR to your shared address…' },
+    'confirm-lock': { num: '03', text: 'Verifying XMR receipt on Monero blockchain…' },
+    'lp-finalize': { num: '04', text: 'Waiting for LP to finalize and reveal secret…' },
+    'completed': { num: '04', text: 'Burn complete — XMR swept to your destination.' }
+};
+
 /**
  * Update mint progress
  */
@@ -1139,33 +1148,48 @@ export function updateBurnProgress(step, status = null) {
         return;
     }
 
+    // Update step-note label
+    const note = BURN_STEP_NOTE[step];
+    if (note) {
+        const numEl = document.getElementById('burn-step-num');
+        const textEl = document.getElementById('burn-step-text');
+        if (numEl) numEl.textContent = note.num;
+        if (textEl) textEl.textContent = note.text;
+    }
+
     const steps = elements.burnProgress.querySelectorAll('.step');
 
     steps.forEach((stepEl, idx) => {
         if (idx === stepIndex) {
             stepEl.classList.add('cur');
             stepEl.classList.remove('done');
-            const body = stepEl.querySelector('.step-body');
-            if (body) {
-                body.style.willChange = 'grid-template-rows';
-                requestAnimationFrame(() => {
-                    body.style.willChange = '';
-                });
-            }
-            if (status) {
-                const statusEl = stepEl.querySelector('.step-status');
-                if (statusEl) {
-                    if (status.includes('Waiting')) {
-                        statusEl.innerHTML = `<svg class="spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:6px;color:var(--accent-orange);"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> ${status}`;
-                    } else {
-                        statusEl.textContent = status;
-                    }
-                }
-            }
         } else {
             stepEl.classList.remove('cur');
         }
     });
+
+    // Update dynamic loading indicator
+    const loadingEl = document.getElementById('burn-status-loading');
+    if (loadingEl) {
+        if (status) {
+            loadingEl.classList.remove('hidden');
+            const isWaiting = status.includes('Waiting') || status.includes('Scanning') || status.includes('Submitting');
+            const spinnerSvg = `<svg class="spin" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>`;
+            let detail = '';
+            if (step === 'lp-propose') {
+                detail = '<span class="burn-status-detail">The LP server generates a secret, sends XMR to your shared Monero address, and commits the secret hash on-chain. This typically takes 1–5 minutes.</span>';
+            } else if (step === 'confirm-lock') {
+                detail = '<span class="burn-status-detail">Scanning the Monero blockchain with your view key to verify the LP sent XMR to the shared address.</span>';
+            } else if (step === 'lp-finalize') {
+                detail = '<span class="burn-status-detail">The LP reveals its secret on-chain, which lets you combine keys and sweep XMR to your destination.</span>';
+            } else if (step === 'evm-request') {
+                detail = '<span class="burn-status-detail">Submitting the burn transaction to the EVM chain. Your wsXMR is burned and the LP is notified.</span>';
+            }
+            loadingEl.innerHTML = `${isWaiting ? spinnerSvg : '<span style="font-size:16px;">✓</span>'} <span>${status}${detail}</span>`;
+        } else {
+            loadingEl.classList.add('hidden');
+        }
+    }
 
     elements.burnProgress.classList.remove('hidden');
     elements.burnProgress.style.display = 'block';
@@ -1177,17 +1201,10 @@ export function updateBurnProgress(step, status = null) {
 export function completeBurnStep(step) {
     const stepIndex = BURN_STEP_MAP[step];
     if (stepIndex === undefined) return;
-    const stepEl = elements.burnProgress.querySelectorAll('.step')[stepIndex];
+    const stepEl = elements.burnProgress?.querySelectorAll('.step')[stepIndex];
     if (stepEl) {
         stepEl.classList.add('done');
         stepEl.classList.remove('cur');
-        const statusEl = stepEl.querySelector('.step-status');
-        if (statusEl && !statusEl.dataset.originalText) {
-            statusEl.dataset.originalText = statusEl.textContent;
-        }
-        if (statusEl) {
-            statusEl.textContent = 'Done';
-        }
     }
 }
 
@@ -1420,6 +1437,49 @@ export function showBurnVerificationManual() {
 }
 
 /**
+ * Show burn XMR scan progress (view-only wallet scanning)
+ * @param {string} message - Progress message
+ * @param {number|null} foundAmount - Amount found in atomic units, or null if not yet found
+ */
+export function showBurnScanProgress(message, foundAmount = null) {
+    const loading = document.getElementById('burn-verification-loading');
+    const details = document.getElementById('burn-verification-details');
+    const manual = document.getElementById('burn-verification-manual');
+
+    if (loading) {
+        loading.classList.remove('hidden');
+        loading.innerHTML = `
+            <svg class="spin" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent-orange);"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+            <span>${message}</span>
+        `;
+    }
+    if (details) details.classList.add('hidden');
+    // Keep manual buttons visible so user can confirm manually while scan runs
+    if (manual) manual.classList.remove('hidden');
+}
+
+/**
+ * Show burn XMR found state (auto-verified)
+ * @param {string} amount - Amount in XMR (human readable)
+ * @param {number} confirmations - Number of confirmations
+ */
+export function showBurnXmrFound(amount, confirmations) {
+    const loading = document.getElementById('burn-verification-loading');
+    const details = document.getElementById('burn-verification-details');
+    const manual = document.getElementById('burn-verification-manual');
+
+    if (loading) loading.classList.add('hidden');
+    if (manual) manual.classList.add('hidden');
+    if (details) {
+        details.classList.remove('hidden');
+        const amountEl = document.getElementById('burn-verify-amount');
+        const confsEl = document.getElementById('burn-verify-confirmations');
+        if (amountEl) amountEl.textContent = `${amount} XMR ✓`;
+        if (confsEl) confsEl.textContent = `${confirmations} confirmation${confirmations !== 1 ? 's' : ''}`;
+    }
+}
+
+/**
  * Show burn address panel with Monero address and view key
  * @param {Object} data - { moneroAddress, viewKey }
  */
@@ -1433,6 +1493,9 @@ export function showBurnAddressPanel(data) {
         viewKeyEl.textContent = data.viewKey || '';
         panel.classList.remove('hidden');
     }
+    // Hide the generic loading indicator — LP has committed
+    const loadingEl = document.getElementById('burn-status-loading');
+    if (loadingEl) loadingEl.classList.add('hidden');
 }
 
 /**

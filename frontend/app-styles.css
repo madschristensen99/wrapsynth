@@ -435,6 +435,74 @@ body:not(.js-loaded) .panel{display:none!important}
   .burn-complete-banner { animation: none; opacity: 1; transform: none; }
 }
 
+/* ── Burn Address Panel ── */
+.burn-address-panel{
+  margin-top:12px;padding:12px 16px;
+  background:var(--panel-2);border:1px solid var(--line-2);border-radius:12px;
+}
+
+/* ── Burn Status Loading ── */
+.burn-status-loading{
+  display:flex;align-items:center;gap:10px;padding:14px 16px;margin-top:10px;
+  background:var(--panel-2);border:1px solid var(--line-2);border-radius:12px;
+  font-size:0.875rem;color:var(--text-2);line-height:1.5;
+  animation:burnPulse 2s ease-in-out infinite;
+}
+.burn-status-loading.hidden{display:none}
+.burn-status-loading .spin{
+  flex-shrink:0;color:var(--accent-orange,#f60);
+  animation:spin 1s linear infinite;
+}
+.burn-status-loading .burn-status-detail{
+  display:block;font-size:0.78rem;color:var(--text-muted,#888);margin-top:3px;
+}
+@keyframes burnPulse{
+  0%,100%{border-color:var(--line-2,#2a2a4a)}
+  50%{border-color:var(--accent-orange,#f60)}
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.burn-address-panel .verification-row{
+  display:flex;align-items:flex-start;gap:8px;padding:6px 0;
+  border-bottom:1px solid var(--line-2);font-size:13px;
+}
+.burn-address-panel .verification-row:last-child{border-bottom:none}
+.burn-address-panel .verification-label{
+  color:var(--text-2);font-weight:500;min-width:130px;flex-shrink:0;
+}
+.burn-address-panel .verification-value{
+  font-family:var(--font-mono);word-break:break-all;color:var(--text-1);font-size:12px;
+}
+
+/* ── Burn Verification ── */
+#burn-verification-loading{
+  display:flex;align-items:center;gap:8px;padding:12px 16px;margin-top:8px;
+  background:var(--panel-2);border:1px solid var(--line-2);border-radius:12px;
+  font-size:13px;color:var(--text-2);
+}
+#burn-verification-details{
+  margin-top:8px;padding:12px 16px;
+  background:var(--panel-2);border:1px solid var(--line-2);border-radius:12px;
+}
+#burn-verification-details .verification-row{
+  display:flex;align-items:flex-start;gap:8px;padding:6px 0;
+  border-bottom:1px solid var(--line-2);font-size:13px;
+}
+#burn-verification-details .verification-row:last-child{border-bottom:none}
+#burn-verification-details .verification-label{
+  color:var(--text-2);font-weight:500;min-width:100px;flex-shrink:0;
+}
+#burn-verification-details .verification-value{
+  font-family:var(--font-mono);word-break:break-all;color:var(--text-1);font-size:12px;
+}
+#burn-verification-manual{
+  margin-top:8px;padding:12px 16px;
+  background:var(--panel-2);border:1px solid var(--line-2);border-radius:12px;
+}
+#burn-verification-manual .action-buttons{
+  display:flex;gap:12px;margin-top:12px;flex-wrap:wrap;
+}
+#burn-verification-manual .cta{flex:1;min-width:180px;}
+
 /* ── Burn Sweep ── */
 .burn-sweep-progress{
   display:flex;align-items:center;gap:12px;padding:16px;
