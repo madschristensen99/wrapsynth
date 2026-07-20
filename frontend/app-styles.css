@@ -521,10 +521,40 @@ body:not(.js-loaded) .panel{display:none!important}
 .burn-sweep-complete h3{margin:0 0 4px;font-size:16px;color:#3efce0}
 .burn-sweep-complete p{margin:2px 0;font-size:13px}
 .burn-sweep-error{
-  padding:16px;background:rgba(255,90,30,.08);border:1px solid rgba(255,90,30,.3);
-  border-radius:12px;margin-top:12px;
+  padding:0;background:rgba(255,90,30,.08);border:1px solid rgba(255,90,30,.3);
+  border-radius:12px;margin-top:12px;overflow:hidden;
 }
-.burn-sweep-error p{margin:4px 0;font-size:13px;color:var(--text-2)}
+.burn-sweep-error-inner{
+  display:flex;align-items:flex-start;gap:14px;padding:18px;
+}
+.burn-sweep-error-icon{
+  flex-shrink:0;width:40px;height:40px;border-radius:10px;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(255,90,30,.15);color:#ff6b3d;
+}
+.burn-sweep-error-content{flex:1;min-width:0;}
+.burn-sweep-error h3{
+  margin:0 0 6px;font-size:15px;font-weight:700;color:#ff6b3d;
+  font-family:'Plus Jakarta Sans',sans-serif;
+}
+.burn-sweep-error-friendly{
+  margin:0;font-size:13px;color:var(--text-2);line-height:1.5;
+}
+.burn-sweep-error-details{
+  margin-top:8px;font-size:12px;
+}
+.burn-sweep-error-details summary{
+  cursor:pointer;color:var(--text-muted,#888);user-select:none;
+}
+.burn-sweep-error-details p{
+  margin:6px 0 0;font-family:'JetBrains Mono',monospace;
+  font-size:11px;color:var(--text-muted,#888);word-break:break-all;
+  line-height:1.4;
+}
+#burn-sweep-retry{
+  flex-shrink:0;align-self:center;padding:10px 18px;font-size:13px;
+  white-space:nowrap;
+}
 
 /* CO-LP POSITION CARDS */
 .position-card{display:flex;align-items:center;justify-content:space-between;
