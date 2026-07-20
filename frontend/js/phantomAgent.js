@@ -4,7 +4,7 @@
 
 import { toHex } from 'https://esm.sh/viem@2.7.0';
 import { getUserAddress } from './viemClient.js';
-import { createKeySet } from './seedManager.js?v=2.6';
+import { createKeySet } from './seedManager.js?v=3.2';
 import { storeSeed, loadSeed, hasStoredSeed } from './seedStorage.js';
 import { showSeedGenerationModal } from './seedUI.js';
 import { computeDepositAddress } from './moneroCrypto.js';
@@ -50,11 +50,14 @@ class PhantomAgent {
         } else if (autoGenerate) {
             // Auto-generate wallet silently (MoneroSwap style)
             console.log('Auto-generating wallet...');
-            const { generateSeedPhrase } = await import('./seedManager.js?v=2.6');
+            const { generateSeedPhrase } = await import('./seedManager.js?v=3.2');
             this.seed = generateSeedPhrase(12);
             this.keySet = createKeySet(this.seed);
             seedData = { seed: this.seed, keySet: this.keySet };
             console.log('✅ Wallet auto-generated');
+
+            // Show lightweight seed backup caution (no words on screen, just copy button)
+            this._showSeedBackupCaution();
         } else {
             // Show UI for manual seed management (optional)
             console.log('Showing seed generation UI...');
@@ -82,6 +85,86 @@ class PhantomAgent {
             publicSpendKey: this.keySet.publicSpendKey,
             publicViewKey: this.keySet.publicViewKey
         };
+    }
+
+    /**
+     * Show a lightweight, non-blocking caution toast after auto-generation.
+     * Tells user the seed was auto-saved in browser and offers a copy button.
+     * Does NOT display seed words on screen — only copy to clipboard.
+     */
+    _showSeedBackupCaution() {
+        if (!this.seed) return;
+
+        // Avoid duplicate toasts
+        const existing = document.getElementById('seed-caution-toast');
+        if (existing) existing.remove();
+
+        const toast = document.createElement('div');
+        toast.id = 'seed-caution-toast';
+        toast.style.cssText = `
+            position: fixed; bottom: 20px; right: 20px; z-index: 10000;
+            max-width: 380px; padding: 16px 20px;
+            background: var(--panel-2, #1a1a2e); border: 1px solid var(--line-2, #2a2a4a);
+            border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,.4);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 13px; color: var(--text-2, #b0b0c0);
+            display: flex; flex-direction: column; gap: 10px;
+            animation: slideUp .3s ease;
+        `;
+
+        toast.innerHTML = `
+            <div style="display: flex; align-items: flex-start; gap: 10px;">
+                <span style="font-size: 20px; flex-shrink: 0;">🔐</span>
+                <div>
+                    <strong style="color: var(--fg, #e0e0f0); display: block; margin-bottom: 4px;">Wallet seed auto-saved</strong>
+                    <span>A recovery seed was generated and saved in your browser. Back it up for safety — you'll need it to recover funds if your browser data is cleared.</span>
+                </div>
+            </div>
+            <div style="display: flex; gap: 8px; align-self: flex-end;">
+                <button id="seed-caution-copy" style="
+                    padding: 6px 14px; font-size: 12px; cursor: pointer;
+                    background: var(--panel-3, #2a2a4a); color: var(--fg, #e0e0f0);
+                    border: 1px solid var(--line-2, #3a3a5a); border-radius: 6px;
+                ">Copy seed</button>
+                <button id="seed-caution-dismiss" style="
+                    padding: 6px 14px; font-size: 12px; cursor: pointer;
+                    background: transparent; color: var(--muted, #888);
+                    border: none; border-radius: 6px;
+                ">Dismiss</button>
+            </div>
+        `;
+
+        // Add slide-up animation
+        const style = document.createElement('style');
+        style.textContent = `@keyframes slideUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}`;
+        if (!document.getElementById('seed-caution-anim')) {
+            style.id = 'seed-caution-anim';
+            document.head.appendChild(style);
+        }
+
+        document.body.appendChild(toast);
+
+        const copyBtn = document.getElementById('seed-caution-copy');
+        const dismissBtn = document.getElementById('seed-caution-dismiss');
+
+        copyBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(this.seed);
+                copyBtn.textContent = 'Copied!';
+                copyBtn.style.color = '#3efce0';
+                setTimeout(() => {
+                    copyBtn.textContent = 'Copy seed';
+                    copyBtn.style.color = '';
+                }, 2000);
+            } catch (e) {
+                copyBtn.textContent = 'Copy failed';
+            }
+        });
+
+        dismissBtn.addEventListener('click', () => toast.remove());
+
+        // Auto-dismiss after 30 seconds
+        setTimeout(() => { if (toast.parentNode) toast.remove(); }, 30000);
     }
 
     /**

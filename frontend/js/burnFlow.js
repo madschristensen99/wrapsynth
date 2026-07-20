@@ -4,8 +4,9 @@ import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG } from './config.js';
 import { readHub, writeHub, writeHubUnsafe, readWsxmr, writeWsxmr, watchContractEvent, getUserAddress } from './viemClient.js';
 import { getPhantomAgent } from './phantomAgent.js';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
-import { updateBurnProgress, showBurnVerificationLoading, showBurnVerificationDetails, showBurnVerificationManual, showBurnAddressPanel } from './ui.js?v=2.6';
+import { updateBurnProgress, showBurnVerificationLoading, showBurnVerificationDetails, showBurnVerificationManual, showBurnAddressPanel, showBurnSweepProgress, showBurnSweepComplete, showBurnSweepError, showBurnKeysFallback } from './ui.js?v=3.3';
 import { getMoneroRpc } from './moneroRpc.js';
+import { sweepBurnOutput, getCombinedKeysForImport } from './burnSweep.js';
 import { keccak256, toHex } from 'https://esm.sh/viem@2.7.0';
 
 export class BurnFlow {
@@ -37,7 +38,8 @@ export class BurnFlow {
         await this.requestBurnOnEVM();
         await this.waitForLPProposal();
         await this.confirmMoneroLock();
-        await this.waitForLPFinalize();
+        const lpSecret = await this.waitForLPFinalize();
+        await this.sweepXMR(lpSecret);
         await this.complete();
     }
 
@@ -59,8 +61,19 @@ export class BurnFlow {
         console.log('Agent initialized:', agentData);
         console.log('Derived Monero address for receiving XMR:', agentData.moneroAddress);
 
+        // Store seed for resume (encrypted in browser) — same as mintFlow does
+        const { storeSeed } = await import('./seedStorage.js');
+        const publicSpendKeyHex = toHex(this.agent.keySet.publicSpendKey);
+        try {
+            await storeSeed(this.agent.seed, publicSpendKeyHex);
+            console.log('Seed stored for resume');
+        } catch (e) {
+            console.warn('Could not store seed:', e.message);
+        }
+
         updateSwapState({
             moneroAddress: agentData.moneroAddress,
+            publicSpendKey: publicSpendKeyHex,
             message: `Your XMR will be sent to: ${agentData.moneroAddress}`
         });
     }
@@ -251,7 +264,71 @@ export class BurnFlow {
             });
         }, SWAP_CONFIG.pollInterval);
 
+        // Polling fallback: periodically check for HashProposed events
+        // in case watchContractEvent fails (RPC timeouts / rate limiting)
+        let pollIntervalId = null;
+        let resolved = false;
+        let resolvePropose = null;
+
+        const handleHashProposed = async (event) => {
+            if (resolved) return;
+            resolved = true;
+            clearInterval(countdownInterval);
+            if (pollIntervalId) clearInterval(pollIntervalId);
+
+            this.secretHash = event.secretHash;
+            const lpPublicSpendKey = event.lpPublicSpendKey;
+            const lpPublicViewKey = event.lpPublicViewKey;
+
+            // Derive the shared Monero address using user's actual public keys
+            const { computeBurnAddress } = await import('./moneroCrypto.js');
+            const userPublicKey = this.agent.getPublicSpendKeyHex();
+            const userViewKey = this.agent.getPublicViewKeyHex();
+            const moneroAddress = await computeBurnAddress(userPublicKey, userViewKey, lpPublicSpendKey);
+            const viewKey = this.agent.getPrivateViewKeyHex();
+
+            console.log('Derived burn Monero address:', moneroAddress);
+            console.log('User view key for scanning:', viewKey);
+
+            updateSwapState({
+                requestId: this.requestId,
+                lpStatus: 'found',
+                lpMessage: 'LP has sent XMR to the shared address',
+                secretHash: this.secretHash,
+                moneroAddress,
+                viewKey
+            });
+            showBurnAddressPanel({ moneroAddress, viewKey });
+            updateBurnProgress('lp-propose', '✓ LP committed — XMR sent');
+            if (resolvePropose) resolvePropose();
+        };
+
+        // Start polling fallback every 15s
+        pollIntervalId = setInterval(async () => {
+            if (resolved) return;
+            try {
+                const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
+                const currentBlock = await getBlockNumber();
+                const fromBlock = currentBlock - 200n;
+                const events = await getPastEvents(
+                    CONTRACTS.hub,
+                    ABIS.hub,
+                    'HashProposed',
+                    fromBlock,
+                    'latest',
+                    { requestId: this.requestId }
+                );
+                if (events && events.length > 0) {
+                    console.log('[Burn Poll] HashProposed event found via polling fallback!');
+                    await handleHashProposed(events[0].args);
+                }
+            } catch (e) {
+                console.warn('[Burn Poll] Polling fallback error:', e.message);
+            }
+        }, 15000);
+
         return new Promise((resolve, reject) => {
+            resolvePropose = resolve;
             const unwatch = watchContractEvent(
                 CONTRACTS.hub,
                 ABIS.hub,
@@ -259,34 +336,8 @@ export class BurnFlow {
                 { requestId: this.requestId },
                 async (log) => {
                     console.log('HashProposed event received - LP has sent XMR!');
-                    const event = log.args;
-                    this.secretHash = event.secretHash;
-                    const lpPublicSpendKey = event.lpPublicSpendKey;
-                    const lpPublicViewKey = event.lpPublicViewKey;
-                    
-                    // Derive the shared Monero address using user's actual public keys
-                    const { computeBurnAddress } = await import('./moneroCrypto.js');
-                    const userPublicKey = this.agent.getPublicSpendKeyHex();
-                    const userViewKey = this.agent.getPublicViewKeyHex();
-                    const moneroAddress = await computeBurnAddress(userPublicKey, userViewKey, lpPublicSpendKey);
-                    const viewKey = this.agent.getPrivateViewKeyHex();
-                    
-                    console.log('Derived burn Monero address:', moneroAddress);
-                    console.log('User view key for scanning:', viewKey);
-                    
-                    updateSwapState({
-                        requestId: this.requestId,
-                        lpStatus: 'found',
-                        lpMessage: 'LP has sent XMR to the shared address',
-                        secretHash: this.secretHash,
-                        moneroAddress,
-                        viewKey
-                    });
-                    showBurnAddressPanel({ moneroAddress, viewKey });
-                    updateBurnProgress('lp-propose', '✓ LP committed — XMR sent');
-                    clearInterval(countdownInterval);
+                    await handleHashProposed(log.args);
                     unwatch();
-                    resolve();
                 }
             );
 
@@ -294,8 +345,9 @@ export class BurnFlow {
 
             setTimeout(() => {
                 clearInterval(countdownInterval);
+                if (pollIntervalId) clearInterval(pollIntervalId);
                 unwatch();
-                reject(new Error('LP proposal timeout - LP did not send XMR in time'));
+                if (!resolved) reject(new Error('LP proposal timeout - LP did not send XMR in time'));
             }, this.lpProposeTimeout);
         });
     }
@@ -419,7 +471,19 @@ export class BurnFlow {
 
         console.log('No past BurnFinalized event found, setting up watcher for new events...');
 
+        let finalizeResolved = false;
+
         return new Promise((resolve, reject) => {
+            let finalizePollId = null;
+
+            const handleFinalized = (secret) => {
+                if (finalizeResolved) return null;
+                finalizeResolved = true;
+                if (finalizePollId) clearInterval(finalizePollId);
+                console.log('Secret revealed:', secret);
+                return secret;
+            };
+
             const unwatch = watchContractEvent(
                 CONTRACTS.hub,
                 ABIS.hub,
@@ -427,20 +491,108 @@ export class BurnFlow {
                 { requestId: this.requestId },
                 (log) => {
                     console.log('BurnFinalized event received');
-                    const secret = log.args.secret;
-                    console.log('Secret revealed:', secret);
-                    unwatch();
-                    resolve(secret);
+                    const secret = handleFinalized(log.args.secret);
+                    if (secret !== null) {
+                        unwatch();
+                        resolve(secret);
+                    }
                 }
             );
 
             this.eventWatchers.push(unwatch);
 
+            // Polling fallback every 15s
+            finalizePollId = setInterval(async () => {
+                if (finalizeResolved) return;
+                try {
+                    const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
+                    const currentBlock = await getBlockNumber();
+                    const fromBlock = currentBlock - 200n;
+                    const events = await getPastEvents(
+                        CONTRACTS.hub,
+                        ABIS.hub,
+                        'BurnFinalized',
+                        fromBlock,
+                        'latest',
+                        { requestId: this.requestId }
+                    );
+                    if (events && events.length > 0) {
+                        console.log('[Burn Poll] BurnFinalized event found via polling fallback!');
+                        const secret = handleFinalized(events[0].args.secret);
+                        if (secret !== null) {
+                            unwatch();
+                            resolve(secret);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[Burn Poll] Finalize polling fallback error:', e.message);
+                }
+            }, 15000);
+
             setTimeout(() => {
+                if (finalizePollId) clearInterval(finalizePollId);
                 unwatch();
-                reject(new Error('LP finalize timeout'));
+                if (!finalizeResolved) reject(new Error('LP finalize timeout'));
             }, 1800000);
         });
+    }
+
+    async sweepXMR(lpSecret) {
+        this.state = 'sweeping';
+        updateSwapState({ state: this.state, message: 'Claiming XMR from shared address...' });
+        showBurnSweepProgress('Preparing to claim XMR...');
+
+        const userSecret = this.agent.getSecret();
+        const userViewKey = this.agent.getPrivateViewKeyHex();
+
+        // Get restore height from when the burn was proposed
+        let restoreHeight = 0;
+        try {
+            const moneroRpc = getMoneroRpc();
+            restoreHeight = await moneroRpc.getHeight() - 50; // Start 50 blocks before current
+        } catch (e) {
+            console.warn('Could not get Monero height for restore:', e.message);
+        }
+
+        try {
+            const result = await sweepBurnOutput({
+                userSecretHex: userSecret,
+                lpSecretHex: lpSecret,
+                userViewKeyHex: userViewKey,
+                destination: this.destination,
+                restoreHeight,
+                onProgress: (msg) => {
+                    showBurnSweepProgress(msg);
+                    updateSwapState({ state: 'sweeping', message: msg });
+                }
+            });
+
+            if (result.swept) {
+                showBurnSweepComplete(result.txHashes[0], Number(result.amount) / 1e12);
+                updateSwapState({
+                    state: 'swept',
+                    sweepTxHash: result.txHashes[0],
+                    sweepAmount: result.amount
+                });
+            } else {
+                throw new Error('Sweep did not complete');
+            }
+        } catch (sweepErr) {
+            console.error('Burn sweep failed:', sweepErr);
+            showBurnSweepError(sweepErr.message);
+
+            // Show fallback: let user copy keys for manual import
+            const keys = getCombinedKeysForImport(userSecret, lpSecret, userViewKey);
+            showBurnKeysFallback(keys, this.destination);
+
+            // Save state so user can retry later
+            updateSwapState({
+                state: 'sweep-failed',
+                lpSecret: lpSecret,
+                message: 'Sweep failed. Use copied keys to claim XMR manually, or retry.'
+            });
+            throw sweepErr;
+        }
     }
 
     async complete() {
@@ -518,17 +670,42 @@ export class BurnFlow {
             case 'lp-propose':
                 await this.waitForLPProposal();
                 await this.confirmMoneroLock();
-                await this.waitForLPFinalize();
+                const lpSecret1 = await this.waitForLPFinalize();
+                await this.sweepXMR(lpSecret1);
                 await this.complete();
                 break;
             case 'confirm-lock':
                 await this.confirmMoneroLock();
-                await this.waitForLPFinalize();
+                const lpSecret2 = await this.waitForLPFinalize();
+                await this.sweepXMR(lpSecret2);
                 await this.complete();
                 break;
             case 'lp-finalize':
-                await this.waitForLPFinalize();
+                const lpSecret3 = await this.waitForLPFinalize();
+                await this.sweepXMR(lpSecret3);
                 await this.complete();
+                break;
+            case 'sweeping':
+            case 'sweep-failed':
+                // Re-derive LP secret from on-chain event
+                const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
+                const currentBlock = await getBlockNumber();
+                const fromBlock = currentBlock - 10000n;
+                const pastEvents = await getPastEvents(
+                    CONTRACTS.hub,
+                    ABIS.hub,
+                    'BurnFinalized',
+                    fromBlock,
+                    'latest',
+                    { requestId: this.requestId }
+                );
+                if (pastEvents && pastEvents.length > 0) {
+                    const lpSecret = pastEvents[0].args.secret;
+                    await this.sweepXMR(lpSecret);
+                    await this.complete();
+                } else {
+                    throw new Error('Cannot resume: BurnFinalized event not found');
+                }
                 break;
             default:
                 throw new Error('Cannot resume from state: ' + this.state);

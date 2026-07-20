@@ -262,12 +262,12 @@ export function showResumeBanner(swaps, onResume, onResolve) {
             && (swap.state === 'deposit' || swap.state === 'lp-verifying')
             && swap.depositAddress;
 
-        // Burns are always resumable; mints need the stored publicSpendKey to regenerate the secret
+        // Both burns and mints need the stored publicSpendKey to resume
         // Exclude zero-value keys (0x000...0) that come from uninitialized on-chain fields
         const hasValidKey = swap.publicSpendKey != null
             && swap.publicSpendKey !== ''
             && swap.publicSpendKey !== '0x0000000000000000000000000000000000000000000000000000000000000000';
-        const canResume = swap.type === 'burn' ? true : hasValidKey;
+        const canResume = hasValidKey;
         // A mint is only truly claimable if the LP has verified it AND we still have the secret.
         // Without the secret we cannot generate the view key to verify the LP's proof.
         const isClaimableMint = swap.type === 'mint' && (swap.state === 'lp-ready' || swap.state === 'finalize') && canResume;
@@ -990,6 +990,7 @@ export async function showMintDepositInfo(address, amount) {
     // Show button, hide verification status initially
     if (elements.confirmSentXmr) {
         elements.confirmSentXmr.classList.remove('hidden');
+        elements.confirmSentXmr.innerHTML = `<button class="cta" style="width:100%;margin-top:12px;">I've sent the XMR</button>`;
     }
     if (elements.waitingLpVerification) {
         elements.waitingLpVerification.classList.add('hidden');
@@ -1432,6 +1433,171 @@ export function showBurnAddressPanel(data) {
         viewKeyEl.textContent = data.viewKey || '';
         panel.classList.remove('hidden');
     }
+}
+
+/**
+ * Show burn sweep progress (claiming XMR from shared address)
+ * @param {string} message - Progress message
+ */
+export function showBurnSweepProgress(message) {
+    const burnPanel = document.getElementById('burn-panel');
+    if (!burnPanel) return;
+
+    let el = document.getElementById('burn-sweep-progress');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'burn-sweep-progress';
+        el.className = 'burn-sweep-progress';
+        burnPanel.appendChild(el);
+    }
+
+    el.innerHTML = `
+        <div class="sweep-spinner"></div>
+        <p>${message}</p>
+    `;
+    el.classList.remove('hidden');
+}
+
+/**
+ * Show burn sweep complete
+ * @param {string} txHash - Monero transaction hash
+ * @param {number} amount - Amount in XMR
+ */
+export function showBurnSweepComplete(txHash, amount) {
+    const burnPanel = document.getElementById('burn-panel');
+    if (!burnPanel) return;
+
+    const progressEl = document.getElementById('burn-sweep-progress');
+    if (progressEl) progressEl.classList.add('hidden');
+
+    let el = document.getElementById('burn-sweep-complete');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'burn-sweep-complete';
+        el.className = 'burn-sweep-complete';
+        burnPanel.appendChild(el);
+    }
+
+    el.innerHTML = `
+        <div class="burn-complete-inner">
+            <h3>XMR Received!</h3>
+            <p>Swept ${amount.toFixed(8)} XMR to your destination address</p>
+            <p class="text-muted">Tx: ${txHash.slice(0, 16)}...${txHash.slice(-16)}</p>
+        </div>
+    `;
+    el.classList.remove('hidden');
+}
+
+/**
+ * Show burn sweep error
+ * @param {string} errorMsg - Error message
+ */
+export function showBurnSweepError(errorMsg) {
+    const burnPanel = document.getElementById('burn-panel');
+    if (!burnPanel) return;
+
+    const progressEl = document.getElementById('burn-sweep-progress');
+    if (progressEl) progressEl.classList.add('hidden');
+
+    let el = document.getElementById('burn-sweep-error');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'burn-sweep-error';
+        el.className = 'burn-sweep-error';
+        burnPanel.appendChild(el);
+    }
+
+    el.innerHTML = `
+        <div class="error-box">
+            <strong>Sweep Failed</strong>
+            <p>${errorMsg}</p>
+        </div>
+    `;
+    el.classList.remove('hidden');
+}
+
+/**
+ * Show burn keys fallback modal (copy-only, no on-screen key display)
+ * Lets user copy combined private keys for manual import into Monero GUI wallet
+ * @param {Object} keys - { spendKey, viewKey } (little-endian hex, no 0x)
+ * @param {string} destination - User's destination address
+ */
+export function showBurnKeysFallback(keys, destination) {
+    const existing = document.getElementById('burn-keys-fallback-overlay');
+    if (existing) existing.remove();
+
+    const modalHTML = `
+        <div id="burn-keys-fallback-overlay" class="modal-overlay">
+            <div class="modal-content" style="max-width: 500px;">
+                <div class="modal-header">
+                    <h2>Claim Your XMR Manually</h2>
+                    <button class="btn-close" id="fallback-close">×</button>
+                </div>
+                <div class="modal-body">
+                    <div class="warning-box">
+                        <strong>Automatic sweep failed.</strong>
+                        <p>You can still claim your XMR by importing these keys into a Monero wallet (like Monero GUI or Feather Wallet).</p>
+                    </div>
+                    <div class="info-box" style="margin-top: 12px;">
+                        <p><strong>Steps:</strong></p>
+                        <ol>
+                            <li>Copy the private spend key and view key below</li>
+                            <li>Open Monero GUI Wallet → Restore from keys</li>
+                            <li>Paste the keys and set restore height</li>
+                            <li>Wait for sync, then sweep all to your destination</li>
+                        </ol>
+                    </div>
+                    <div style="margin-top: 16px;">
+                        <label style="display: block; margin-bottom: 6px; font-weight: 600;">Private Spend Key</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="password" id="fallback-spend-key" value="${keys.spendKey}" readonly style="flex: 1; font-family: monospace; font-size: 12px; padding: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px;">
+                            <button class="btn-secondary" id="fallback-copy-spend">Copy</button>
+                        </div>
+                    </div>
+                    <div style="margin-top: 12px;">
+                        <label style="display: block; margin-bottom: 6px; font-weight: 600;">Private View Key</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="password" id="fallback-view-key" value="${keys.viewKey}" readonly style="flex: 1; font-family: monospace; font-size: 12px; padding: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px;">
+                            <button class="btn-secondary" id="fallback-copy-view">Copy</button>
+                        </div>
+                    </div>
+                    <div style="margin-top: 12px;">
+                        <label style="display: block; margin-bottom: 6px; font-weight: 600;">Destination Address</label>
+                        <p style="font-family: monospace; font-size: 11px; word-break: break-all; color: var(--text-muted);">${destination}</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-primary" id="fallback-done">Done</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+    const overlay = document.getElementById('burn-keys-fallback-overlay');
+    const closeBtn = document.getElementById('fallback-close');
+    const doneBtn = document.getElementById('fallback-done');
+    const copySpend = document.getElementById('fallback-copy-spend');
+    const copyView = document.getElementById('fallback-copy-view');
+
+    const close = () => overlay.remove();
+
+    closeBtn.addEventListener('click', close);
+    doneBtn.addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+    copySpend.addEventListener('click', async () => {
+        await navigator.clipboard.writeText(keys.spendKey);
+        copySpend.textContent = 'Copied!';
+        setTimeout(() => copySpend.textContent = 'Copy', 2000);
+    });
+
+    copyView.addEventListener('click', async () => {
+        await navigator.clipboard.writeText(keys.viewKey);
+        copyView.textContent = 'Copied!';
+        setTimeout(() => copyView.textContent = 'Copy', 2000);
+    });
 }
 
 /**

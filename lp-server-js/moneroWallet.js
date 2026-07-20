@@ -309,6 +309,34 @@ export async function sendXmr({ destination, amountAtomic, priority = 1, account
 
 async function _sendXmr({ destination, amountAtomic, priority = 1, accountIndex = 0 }) {
 
+  // Pre-flight balance check for better error messaging
+  try {
+    const balRes = await walletRpc('get_balance', { account_index: accountIndex });
+    const totalBalance = BigInt(balRes.balance || 0);
+    const unlockedBalance = BigInt(balRes.unlocked_balance || 0);
+    const needed = BigInt(amountAtomic);
+
+    if (totalBalance < needed) {
+      const totalXmr = Number(totalBalance) / 1e12;
+      const neededXmr = Number(needed) / 1e12;
+      throw new Error(`Insufficient XMR: wallet has ${totalXmr.toFixed(6)} XMR total, need ${neededXmr.toFixed(6)} XMR. Fund the LP wallet.`);
+    }
+
+    if (unlockedBalance < needed) {
+      const unlockedXmr = Number(unlockedBalance) / 1e12;
+      const neededXmr = Number(needed) / 1e12;
+      const lockedXmr = (Number(totalBalance) - Number(unlockedBalance)) / 1e12;
+      throw new Error(`XMR locked: wallet has ${unlockedXmr.toFixed(6)} XMR unlocked (need ${neededXmr.toFixed(6)} XMR). ${lockedXmr.toFixed(6)} XMR is locked waiting for confirmations. Retry shortly.`);
+    }
+  } catch (e) {
+    // If the pre-flight check itself fails (e.g. wallet busy), proceed to transfer
+    // and let the actual error surface
+    if (e.message.includes('Insufficient XMR') || e.message.includes('XMR locked')) {
+      throw e;
+    }
+    console.warn('[Monero] Pre-flight balance check failed, proceeding to transfer:', e.message);
+  }
+
   const destinations = [{
     address: destination,
     amount: Number(amountAtomic),
@@ -423,6 +451,17 @@ async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpM
   const fs = await import('fs');
   const walletDir = process.env.MONERO_WALLET_DIR || '/tmp/monero-wallets';
 
+  // Fetch Monero daemon height for restore_height — the EVM block number
+  // passed as restoreHeight is NOT a Monero block height.
+  let moneroRestoreHeight = 0;
+  try {
+    const daemonHeight = await getDaemonHeight();
+    moneroRestoreHeight = Math.max(0, daemonHeight - 200);
+    console.log(`[Monero] generate_from_keys restore_height=${moneroRestoreHeight} (daemon: ${daemonHeight}, ignored EVM height: ${restoreHeight})`);
+  } catch (e) {
+    console.warn('[Monero] Could not fetch daemon height for wallet creation:', e.message);
+  }
+
   // Delete old temp wallet files
   for (const ext of ['', '.keys', '.address.txt']) {
     const p = `${walletDir}/${walletName}${ext}`;
@@ -437,7 +476,7 @@ async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpM
         address: depositAddress,
         spendkey: combinedSpendHex,
         viewkey: lpViewKeyHex,
-        restore_height: restoreHeight,
+        restore_height: moneroRestoreHeight,
       });
       walletOpened = true;
       console.log('[Monero] Sweep wallet created from keys');
@@ -450,10 +489,10 @@ async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpM
       }
     }
 
-    // Refresh to scan for incoming transactions
+    // Refresh to scan for incoming transactions using the Monero height
     console.log('[Monero] Refreshing sweep wallet...');
     try {
-      await walletRpc('refresh', { start_height: restoreHeight });
+      await walletRpc('refresh', { start_height: moneroRestoreHeight });
     } catch (err) {
       console.warn('[Monero] Refresh error during sweep:', err.message);
     }
