@@ -6,7 +6,7 @@ import { getPhantomAgent } from './phantomAgent.js';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
 import { keccak256, toHex, parseEther } from 'https://esm.sh/viem@2.7.0';
 import { startDeadlineTimer, startStatusPolling, stopTimers } from './mintFlowTimers.js';
-import { showLPVerificationStatus, updateMintProgress, showSuccess, showConfirmModal, showSuccessNotification, showMintComplete } from './ui.js?v=2.6';
+import { showLPVerificationStatus, updateMintProgress, showSuccess, showConfirmModal, showSuccessNotification, showMintComplete } from './ui.js?v=3.3';
 
 export class MintFlow {
     constructor() {
@@ -55,7 +55,8 @@ export class MintFlow {
     }
 
     setupConfirmSentButton() {
-        const confirmBtn = document.getElementById('confirm-sent-xmr');
+        const confirmDiv = document.getElementById('confirm-sent-xmr');
+        const confirmBtn = confirmDiv?.querySelector('button');
         if (confirmBtn) {
             confirmBtn.onclick = () => {
                 showLPVerificationStatus();
@@ -124,7 +125,7 @@ export class MintFlow {
             this.cleanup();
 
             // Show success
-            const { showSuccess, resetMintUI } = await import('./ui.js?v=2.6');
+            const { showSuccess, resetMintUI } = await import('./ui.js?v=3.3');
             showSuccess('Mint Cancelled', 'The mint has been cancelled. You can now start a new mint.');
 
             // Reset UI
@@ -136,7 +137,7 @@ export class MintFlow {
             
         } catch (error) {
             console.error('Error cancelling mint:', error);
-            const { showError } = await import('./ui.js?v=2.6');
+            const { showError } = await import('./ui.js?v=3.3');
             
             // Handle TimeoutNotReached gracefully
             if (error.message && error.message.includes('TimeoutNotReached')) {
@@ -161,7 +162,7 @@ export class MintFlow {
         const blocksRemaining = await this._getBlocksRemaining();
         if (blocksRemaining !== null && blocksRemaining > 0) {
             const minutes = Math.ceil(blocksRemaining * 5 / 60);
-            const { showError } = await import('./ui.js?v=2.6');
+            const { showError } = await import('./ui.js?v=3.3');
             showError(
                 'Cannot Cancel Yet',
                 `The mint timeout has not been reached. You must wait ~${minutes} more minutes (${blocksRemaining} blocks) before cancelling.`
@@ -615,7 +616,7 @@ export class MintFlow {
                     console.log('Mint was cancelled by LP after MintReady event');
                     this.state = 'expired';
                     updateSwapState({ requestId: this.requestId, state: this.state });
-                    const { showError } = await import('./ui.js?v=2.6');
+                    const { showError } = await import('./ui.js?v=3.3');
                     showError('Mint Cancelled', 'The LP cancelled this mint. If you had a griefing deposit, you can withdraw it via Pending Returns.');
                     throw new Error('Mint cancelled by LP');
                 }
@@ -663,7 +664,7 @@ export class MintFlow {
     }
 
     async setupClaimButton() {
-        const { showClaimWsXmrButton } = await import('./ui.js?v=2.6');
+        const { showClaimWsXmrButton } = await import('./ui.js?v=3.3');
         showClaimWsXmrButton(() => {
             console.log('User clicked Claim wsXMR');
             if (this.userClaimResolve) {
@@ -700,7 +701,7 @@ export class MintFlow {
             const status = Number(mintReq.status);
             
             if (status === 5) {
-                const { showError } = await import('./ui.js?v=2.6');
+                const { showError } = await import('./ui.js?v=3.3');
                 showError('Mint Cancelled', 'This mint was cancelled by the LP. If you had a griefing deposit, you can withdraw it via Pending Returns.');
                 throw new Error('Mint was cancelled');
             }
@@ -712,7 +713,7 @@ export class MintFlow {
             }
             
             if (status !== 3) {
-                const { showError } = await import('./ui.js?v=2.6');
+                const { showError } = await import('./ui.js?v=3.3');
                 showError('Invalid Status', `Cannot finalize mint - current status is ${status}. Expected status 3 (READY).`);
                 throw new Error(`Invalid mint status: ${status}`);
             }
@@ -745,7 +746,7 @@ export class MintFlow {
                     if (status === 5) {
                         this.state = 'expired';
                         updateSwapState({ requestId: this.requestId, state: 'expired', message: 'Mint was cancelled on-chain.' });
-                        const { showError } = await import('./ui.js?v=2.6');
+                        const { showError } = await import('./ui.js?v=3.3');
                         showError('Mint Cancelled', 'This mint was cancelled. If you had a griefing deposit, you can withdraw it via Pending Returns.');
                         throw new Error('Mint was cancelled');
                     }
@@ -763,7 +764,7 @@ export class MintFlow {
                     }
                     console.warn('Could not query status after InvalidStatus:', checkErr.message);
                 }
-                const { showError } = await import('./ui.js?v=2.6');
+                const { showError } = await import('./ui.js?v=3.3');
                 showError(
                     'Mint Cancelled or Expired', 
                     'This mint is no longer in READY status. The LP may have cancelled it. If you had a griefing deposit, you can withdraw it via Pending Returns.'
@@ -890,7 +891,7 @@ export class MintFlow {
             if (status === 5) {
                 console.log('Mint was cancelled on-chain; aborting resume');
                 const { removeActiveSwap, saveToHistory } = await import('./storage.js');
-                const { showError, resetMintUI } = await import('./ui.js?v=2.6');
+                const { showError, resetMintUI } = await import('./ui.js?v=3.3');
                 saveToHistory({ ...savedState, status: 'Cancelled', completedAt: Date.now() });
                 removeActiveSwap(this.requestId);
                 showError('Mint Cancelled', 'This mint was cancelled on-chain. If you had a griefing deposit, you can withdraw it via Pending Returns.');
@@ -900,7 +901,7 @@ export class MintFlow {
             if (status === 4) {
                 console.log('Mint was already completed on-chain; clearing from active swaps');
                 const { removeActiveSwap, saveToHistory } = await import('./storage.js');
-                const { showSuccess, resetMintUI } = await import('./ui.js?v=2.6');
+                const { showSuccess, resetMintUI } = await import('./ui.js?v=3.3');
                 saveToHistory({ ...savedState, status: 'Completed', completedAt: Date.now() });
                 removeActiveSwap(this.requestId);
                 showSuccess('Mint Completed', 'This mint was already finalized on-chain.');
@@ -910,7 +911,7 @@ export class MintFlow {
             if (status === 0) {
                 console.log('Mint is invalid on-chain; clearing from active swaps');
                 const { removeActiveSwap } = await import('./storage.js');
-                const { resetMintUI } = await import('./ui.js?v=2.6');
+                const { resetMintUI } = await import('./ui.js?v=3.3');
                 removeActiveSwap(this.requestId);
                 resetMintUI();
                 throw new Error('Mint is invalid on-chain');
@@ -1007,7 +1008,7 @@ export class MintFlow {
                     } else if (status === 4) {
                         console.log('Mint already completed on-chain');
                         const { removeActiveSwap, saveToHistory } = await import('./storage.js');
-                        const { showSuccess, resetMintUI } = await import('./ui.js?v=2.6');
+                        const { showSuccess, resetMintUI } = await import('./ui.js?v=3.3');
                         saveToHistory({ ...savedState, status: 'Completed', completedAt: Date.now() });
                         removeActiveSwap(this.requestId);
                         showSuccess('Mint Completed', 'This mint was already finalized on-chain.');
@@ -1016,7 +1017,7 @@ export class MintFlow {
                     } else if (status === 5) {
                         console.log('Mint was cancelled on-chain');
                         const { removeActiveSwap, saveToHistory } = await import('./storage.js');
-                        const { showError, resetMintUI } = await import('./ui.js?v=2.6');
+                        const { showError, resetMintUI } = await import('./ui.js?v=3.3');
                         saveToHistory({ ...savedState, status: 'Cancelled', completedAt: Date.now() });
                         removeActiveSwap(this.requestId);
                         showError('Mint Cancelled', 'This mint was cancelled on-chain.');
@@ -1081,7 +1082,7 @@ export class MintFlow {
                 });
                 
                 // Force UI update by importing and calling showMintDepositInfo
-                const { showMintDepositInfo } = await import('./ui.js?v=2.6');
+                const { showMintDepositInfo } = await import('./ui.js?v=3.3');
                 showMintDepositInfo(this.depositAddress, this.xmrAmount);
                 
                 await this.waitForLPReady();
@@ -1139,7 +1140,7 @@ export class MintFlow {
                         });
                         
                         // Force UI update to show deposit info
-                        const { showMintDepositInfo } = await import('./ui.js?v=2.6');
+                        const { showMintDepositInfo } = await import('./ui.js?v=3.3');
                         showMintDepositInfo(this.depositAddress, this.xmrAmount);
                         console.log('Deposit info UI updated with address');
                     } catch (e) {

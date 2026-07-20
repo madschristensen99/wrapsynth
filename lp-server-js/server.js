@@ -622,7 +622,17 @@ async function startupResolveStale() {
 
 // ─── On-chain Event Listener ────────────────────────────────────────────────
 async function startEventListener() {
-  let lastCheckedBlock = await provider.getBlockNumber();
+  let lastCheckedBlock;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      lastCheckedBlock = await provider.getBlockNumber();
+      break;
+    } catch (err) {
+      console.error(`[Event] Failed to get block number (attempt ${attempt}/5):`, err.message);
+      if (attempt === 5) throw err;
+      await new Promise(r => setTimeout(r, 5000));
+    }
+  }
   console.log(`Listening for MintInitiated from block ${lastCheckedBlock}`);
 
   // Poll every 15 seconds using getLogs instead of hub.on() to avoid filter issues
@@ -947,7 +957,12 @@ burnHandler.registerRoutes(app);
 // ─── Start Server ─────────────────────────────────────────────────────────────
 app.listen(PORT, async () => {
   console.log(`HTTP server listening on http://localhost:${PORT}`);
-  await startEventListener();
+  try {
+    await startEventListener();
+  } catch (err) {
+    console.error('[Startup] Event listener failed after retries:', err.message);
+    console.error('[Startup] Server will continue but event polling may be delayed.');
+  }
   // Ensure main wallet is open before recovery tries to create deposit wallets
   if (moneroWallet.isWalletConfigured()) {
     console.log('[Startup] Ensuring Monero wallet is open...');
@@ -968,8 +983,25 @@ app.listen(PORT, async () => {
       console.error('[Startup] Monero wallet RPC unreachable — mint scanning will fail until monero-wallet-rpc is started');
     }
   }
-  await startupRecoverMints();
-  await startupResolveStale();
-  await startupSweepFinalizedMints();
-  burnHandler.attachEventListeners(hub, wallet, provider);
+  try {
+    await startupRecoverMints();
+  } catch (err) {
+    console.error('[Startup] Mint recovery failed:', err.message);
+  }
+  try {
+    await startupResolveStale();
+  } catch (err) {
+    console.error('[Startup] Stale resolution failed:', err.message);
+  }
+  try {
+    await startupSweepFinalizedMints();
+  } catch (err) {
+    console.error('[Startup] Sweep finalized mints failed:', err.message);
+  }
+  try {
+    burnHandler.attachEventListeners(hub, wallet, provider);
+  } catch (err) {
+    console.error('[Startup] Burn handler attach failed:', err.message);
+  }
+  console.log('[Startup] All startup tasks attempted. Server is running.');
 });

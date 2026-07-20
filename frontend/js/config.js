@@ -218,6 +218,7 @@ export const ABIS = {
         'function claimSlashedCollateral(bytes32 requestId) external',
         'function cancelBurn(bytes32 requestId) external',
         'function getUserBurnRequests(address user) external view returns (bytes32[])',
+        'function getVaultBurnRequests(address vault) external view returns (bytes32[])',
 
         // Vault (LP-side)
         'function createVault() external',

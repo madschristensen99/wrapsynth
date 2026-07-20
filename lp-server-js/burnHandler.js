@@ -210,6 +210,19 @@ async function processPropose(reqIdHex, customKeys = {}) {
     } catch (xmrErr) {
       console.error(`[Burn] XMR send failed for ${reqIdHex}:`, xmrErr.message);
       burn.error = xmrErr.message;
+      // If funds are locked (not insufficient), retry after a short delay
+      if (xmrErr.message.includes('XMR locked') || xmrErr.message.includes('not enough money')) {
+        console.log(`[Burn] Will retry XMR send for ${reqIdHex} in 30s...`);
+        setTimeout(async () => {
+          try {
+            if (burn.state !== 'requested') return;
+            console.log(`[Burn] Retrying XMR send for ${reqIdHex}...`);
+            await processPropose(reqIdHex);
+          } catch (retryErr) {
+            console.error(`[Burn] Retry failed for ${reqIdHex}:`, retryErr.message);
+          }
+        }, 30000);
+      }
       // Do NOT proceed with proposeHash if XMR send failed
       return;
     }

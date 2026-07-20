@@ -131,6 +131,10 @@ nav{display:flex;align-items:center;justify-content:space-between;height:66px;
 .coin{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;color:#0a0a0b}
 .coin.x{background:var(--xmr)}.coin.w{background:var(--teal)}
 
+.usd-equiv{font-size:12.5px;color:var(--muted);text-align:right;padding:0;min-height:0;font-family:'JetBrains Mono'}
+#mint-usd-equiv{padding:4px 16px 0;min-height:18px}
+.pct-row .usd-equiv{margin-left:auto}
+
 .swap-mid{display:flex;justify-content:center;margin:-6px 0;position:relative;z-index:1}
 .swap-ic{width:34px;height:34px;border-radius:10px;background:var(--panel-2);border:1px solid var(--line);
   display:grid;place-items:center;color:var(--muted);font-size:15px;box-shadow:0 0 16px rgba(62,252,224,.08);transition:box-shadow .2s,color .2s}
@@ -430,6 +434,29 @@ body:not(.js-loaded) .panel{display:none!important}
   .mint-complete-banner,
   .burn-complete-banner { animation: none; opacity: 1; transform: none; }
 }
+
+/* ── Burn Sweep ── */
+.burn-sweep-progress{
+  display:flex;align-items:center;gap:12px;padding:16px;
+  background:var(--panel-2);border:1px solid var(--line-2);border-radius:12px;margin-top:12px;
+}
+.burn-sweep-progress p{margin:0;font-size:14px;color:var(--text-2)}
+.sweep-spinner{
+  width:20px;height:20px;border:2px solid var(--line-2);border-top-color:var(--orange);
+  border-radius:50%;animation:spin 1s linear infinite;flex-shrink:0;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.burn-sweep-complete{
+  padding:16px;background:linear-gradient(135deg,rgba(62,252,224,.1),rgba(62,252,224,.05));
+  border:1px solid rgba(62,252,224,.4);border-radius:12px;margin-top:12px;
+}
+.burn-sweep-complete h3{margin:0 0 4px;font-size:16px;color:#3efce0}
+.burn-sweep-complete p{margin:2px 0;font-size:13px}
+.burn-sweep-error{
+  padding:16px;background:rgba(255,90,30,.08);border:1px solid rgba(255,90,30,.3);
+  border-radius:12px;margin-top:12px;
+}
+.burn-sweep-error p{margin:4px 0;font-size:13px;color:var(--text-2)}
 
 /* CO-LP POSITION CARDS */
 .position-card{display:flex;align-items:center;justify-content:space-between;

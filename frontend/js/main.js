@@ -53,7 +53,7 @@ import {
     renderLPDetailCard,
     initLPDetailToggles,
     initVaultPickers
-} from './ui.js?v=3.0';
+} from './ui.js?v=3.3';
 
 import { MintFlow } from './mintFlow.js';
 import { stopTimers } from './mintFlowTimers.js';
@@ -95,6 +95,13 @@ async function fetchXmrPrice(forceRefresh = false) {
         const priceElement = document.getElementById('xmrPx');
         if (priceElement) {
             priceElement.textContent = price != null ? `$${price.toFixed(2)}` : '$--';
+        }
+        // Refresh USD equivalent displays if user already typed an amount
+        if (price && price > 0) {
+            const mintAmount = parseFloat(document.getElementById('mint-amount')?.value);
+            if (!isNaN(mintAmount) && mintAmount > 0) updateUsdEquivalent('mint-usd-equiv', mintAmount);
+            const burnAmount = parseFloat(document.getElementById('burn-amount')?.value);
+            if (!isNaN(burnAmount) && burnAmount > 0) updateUsdEquivalent('burn-usd-equiv', burnAmount);
         }
     };
 
@@ -393,6 +400,10 @@ function setupEventHandlers() {
     if (coLpVaultSelect) {
         coLpVaultSelect.addEventListener('change', handleCoLPVaultSelect);
     }
+    const coLpAmountInput = document.getElementById('co-lp-amount');
+    if (coLpAmountInput) {
+        coLpAmountInput.addEventListener('input', validateCoLPOpenButton);
+    }
     const coLpOpenBtn = document.getElementById('co-lp-open');
     if (coLpOpenBtn) {
         coLpOpenBtn.addEventListener('click', handleCoLPOpen);
@@ -455,6 +466,7 @@ async function handleBurnPercentage(event) {
         const amount = (balanceNum * percentage) / 100;
         const burnAmountInput = document.getElementById('burn-amount');
         burnAmountInput.value = amount.toFixed(8);
+        burnAmountInput.dispatchEvent(new Event('input', { bubbles: true }));
         
         feedback.textContent = `✓ ${percentage}%`;
         feedback.style.opacity = '1';
@@ -500,6 +512,7 @@ async function handleCoLPPercentage(event) {
         feedback.textContent = `✓ ${percentage}%`;
         feedback.style.opacity = '1';
         setTimeout(() => { feedback.style.opacity = '0'; }, 1500);
+        validateCoLPOpenButton();
     } catch (error) {
         console.error('Failed to get balance:', error);
         feedback.textContent = 'Error';
@@ -534,7 +547,7 @@ async function handleUpdatePrices() {
         }, 2000);
         
         console.log('✅ Oracle prices updated successfully');
-        const { showSuccessNotification } = await import('./ui.js?v=2.6');
+        const { showSuccessNotification } = await import('./ui.js?v=3.3');
         showSuccessNotification('Prices Updated', '<p>Oracle prices have been updated with latest RedStone data.</p>');
         
     } catch (error) {
@@ -545,7 +558,7 @@ async function handleUpdatePrices() {
             btn.disabled = false;
         }, 2000);
         
-        const { showErrorNotification } = await import('./ui.js?v=2.6');
+        const { showErrorNotification } = await import('./ui.js?v=3.3');
         showErrorNotification('Update Failed', `<p>Could not update oracle prices: ${error.message}</p>`);
     }
 }
@@ -577,6 +590,7 @@ async function handleConnectWallet() {
         // Refresh Co-LP state
         await refreshCoLPBalance();
         await handleRefreshCoLPPositions();
+        validateCoLPOpenButton();
 
         // Check for active swaps on chain
         await checkForActiveSwapOnChain(address);
@@ -672,6 +686,7 @@ async function handleAccountChange(newAddress) {
         await loadVaults();
         await refreshCoLPBalance();
         await handleRefreshCoLPPositions();
+        validateCoLPOpenButton();
         await checkForActiveSwapOnChain(newAddress);
         await checkPendingReturns(newAddress);
         
@@ -769,6 +784,7 @@ async function handleChainChange(chainId) {
             await loadVaults();
             await refreshCoLPBalance();
             await handleRefreshCoLPPositions();
+            validateCoLPOpenButton();
         }
     } catch (error) {
         console.error('Error handling chain change:', error);
@@ -915,12 +931,12 @@ async function checkForActiveSwapOnChain(userAddress) {
             // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=FINALIZED, 5=CANCELLED, 6=SLASHED
             if (burnReq.status === 1 || burnReq.status === 2 || burnReq.status === 3) {
                 // Check if burn has expired (only for REQUESTED/PROPOSED status)
+                let isExpired = false;
                 if (burnReq.status === 1 || burnReq.status === 2) {
                     const deadline = Number(burnReq.deadline);
                     if (currentBlock >= deadline) {
                         console.log('[CHAIN CHECK] Burn expired:', { requestId, deadline, currentBlock });
-                        // Don't add to active list - it's expired and can be cancelled
-                        continue;
+                        isExpired = true;
                     }
                 }
 
@@ -1136,6 +1152,23 @@ async function checkCoLPLPStatus() {
 }
 
 /**
+ * Enable/disable the Co-LP open button based on form state
+ */
+function validateCoLPOpenButton() {
+    const btn = document.getElementById('co-lp-open');
+    if (!btn) return;
+    const amountInput = document.getElementById('co-lp-amount');
+    const vaultSelect = document.getElementById('colp-vault-select');
+    const connected = !!getUserAddress();
+    const hasVault = !!vaultSelect?.value;
+    const amount = parseFloat(amountInput?.value);
+    const hasAmount = !isNaN(amount) && amount > 0;
+    const shouldEnable = connected && hasVault && hasAmount;
+    btn.disabled = !shouldEnable;
+    console.log('[CoLP Validate]', { connected, hasVault, vaultValue: vaultSelect?.value, hasAmount, amount: amountInput?.value, shouldEnable });
+}
+
+/**
  * Handle Co-LP vault selection - fetch and display capacity
  */
 async function handleCoLPVaultSelect() {
@@ -1146,6 +1179,7 @@ async function handleCoLPVaultSelect() {
     const lpVault = select.value;
     if (!lpVault) {
         capacityDiv.classList.add('hidden');
+        validateCoLPOpenButton();
         return;
     }
 
@@ -1160,6 +1194,7 @@ async function handleCoLPVaultSelect() {
         console.warn('Could not fetch Co-LP capacity:', error.message);
         capacityDiv.classList.add('hidden');
     }
+    validateCoLPOpenButton();
 }
 
 /**
@@ -1703,11 +1738,20 @@ async function handleResolveSwap(swap) {
                 return;
             }
         }
-        // REQUESTED burn: cancel on-chain to recover wsXMR
+        // REQUESTED burn: abort on-chain to recover wsXMR
         else if (swap.type === 'burn' && swap.state === 'evm-request') {
             console.log('Resolving stale burn on-chain:', swap.requestId);
-            const { writeHub, getPublicClient } = await import('./viemClient.js');
+            const { getPublicClient, getWalletClient, getUserAddress } = await import('./viemClient.js');
+            const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
             const publicClient = getPublicClient();
+            const walletClient = getWalletClient();
+            const userAddr = getUserAddress();
+            
+            // Inline ABIs to bypass cached viemClient.js parsedABIs
+            const burnResolveAbi = parseAbi([
+                'function abortBurn(bytes32 requestId) external',
+                'function resolveDeclinedProposal(bytes32 requestId) external'
+            ]);
             
             // Check burn request status and deadline before cancelling
             const burnReq = await readHub('getBurnRequest', [swap.requestId]);
@@ -1722,17 +1766,48 @@ async function handleResolveSwap(swap) {
             if (status === 4 || status === 5 || status === 6) {
                 // Already resolved on-chain, just clear locally
                 showResumeSuccess(swap.requestId, 'This burn has already been cancelled, completed, or slashed on-chain.');
-            } else if (status === 1 || status === 2) {
+            } else if (status === 1) {
+                // REQUESTED: call abortBurn to restore wsXMR
                 if (currentBlock >= deadline) {
-                    const receipt = await writeHub('cancelBurn', [swap.requestId]);
-                    console.log('cancelBurn tx:', receipt.transactionHash);
-                    showResumeSuccess(swap.requestId, 'Burn cancelled. Your wsXMR has been returned.');
+                    const { request } = await publicClient.simulateContract({
+                        address: CONTRACTS.hub,
+                        abi: burnResolveAbi,
+                        functionName: 'abortBurn',
+                        args: [swap.requestId],
+                        account: userAddr
+                    });
+                    const hash = await walletClient.writeContract({ ...request, account: userAddr });
+                    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+                    console.log('abortBurn tx:', receipt.transactionHash);
+                    showResumeSuccess(swap.requestId, 'Burn aborted. Your wsXMR has been restored.');
                 } else {
                     const blocksRemaining = Number(deadline - currentBlock);
-                    const estSeconds = blocksRemaining * 5; // ~5s per block on Gnosis
+                    const estSeconds = blocksRemaining * 5;
                     const mins = Math.floor(estSeconds / 60);
                     const secs = estSeconds % 60;
-                    showResumeError(swap.requestId, `Deadline has not expired. Please wait ~${mins}m ${secs}s more (${blocksRemaining} blocks) before you can cancel this burn.`);
+                    showResumeError(swap.requestId, `Deadline has not expired. Please wait ~${mins}m ${secs}s more (${blocksRemaining} blocks) before you can abort this burn.`);
+                    return; // Don't clear from storage
+                }
+            } else if (status === 2) {
+                // PROPOSED: call resolveDeclinedProposal to restore wsXMR
+                if (currentBlock >= deadline) {
+                    const { request } = await publicClient.simulateContract({
+                        address: CONTRACTS.hub,
+                        abi: burnResolveAbi,
+                        functionName: 'resolveDeclinedProposal',
+                        args: [swap.requestId],
+                        account: userAddr
+                    });
+                    const hash = await walletClient.writeContract({ ...request, account: userAddr });
+                    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+                    console.log('resolveDeclinedProposal tx:', receipt.transactionHash);
+                    showResumeSuccess(swap.requestId, 'Burn proposal declined. Your wsXMR has been restored.');
+                } else {
+                    const blocksRemaining = Number(deadline - currentBlock);
+                    const estSeconds = blocksRemaining * 5;
+                    const mins = Math.floor(estSeconds / 60);
+                    const secs = estSeconds % 60;
+                    showResumeError(swap.requestId, `Deadline has not expired. Please wait ~${mins}m ${secs}s more (${blocksRemaining} blocks) before you can resolve this burn.`);
                     return; // Don't clear from storage
                 }
             } else {
@@ -1860,9 +1935,32 @@ async function loadVaults() {
                     const actualDebt = (normalizedDebt * BigInt(globalDebtIndex.toString())) / BigInt(1e18);
                     const debtAmount = Number(actualDebt) / 1e8; // wsXMR has 8 decimals
                     const pendingDebtAmount = Number(vaultData.pendingDebt) / 1e8;
-                    const totalDebt = debtAmount + pendingDebtAmount;
+
+                    // Query active burn requests (REQUESTED/PROPOSED/COMMITTED) to include in-flight debt
+                    // that isn't captured in vault.pendingDebt (which only tracks PROPOSED+ burns)
+                    let inFlightBurnDebt = 0;
+                    try {
+                        const burnIds = await readHub('getVaultBurnRequests', [vaultAddress]);
+                        for (const burnId of burnIds) {
+                            try {
+                                const burnReq = await readHub('getBurnRequest', [burnId]);
+                                const status = Number(burnReq.status);
+                                // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED
+                                if (status === 1 || status === 2 || status === 3) {
+                                    inFlightBurnDebt += Number(burnReq.wsxmrAmount) / 1e8;
+                                }
+                            } catch (e) { /* skip individual burn errors */ }
+                        }
+                        if (inFlightBurnDebt > 0) {
+                            console.log(`[Capacity] Found ${inFlightBurnDebt} wsXMR in active burns for vault ${vaultAddress.slice(0, 8)}`);
+                        }
+                    } catch (e) {
+                        console.warn('[Capacity] Could not query vault burn requests:', e.message);
+                    }
+
+                    const totalDebt = debtAmount + pendingDebtAmount + inFlightBurnDebt;
                     const debtValueUsd = debtAmount * xmrPrice;
-                    const pendingDebtValueUsd = pendingDebtAmount * xmrPrice;
+                    const pendingDebtValueUsd = (pendingDebtAmount + inFlightBurnDebt) * xmrPrice;
                     const totalDebtValueUsd = totalDebt * xmrPrice;
 
                     const usedCollateral = collPrice > 0 ? debtValueUsd / collPrice : 0;
@@ -2112,7 +2210,7 @@ function updateMintCapacityDisplay() {
  */
 function updateSwapRateDisplay(isMint, mintFeeBps, burnRewardBps) {
     const feePct = (isMint ? mintFeeBps : burnRewardBps) / 100;
-    const feeLabel = isMint ? 'LP mint fee' : 'Burn reward';
+    const feeLabel = isMint ? 'LP mint fee' : 'Reward rate';
     console.log(`[RateDisplay] isMint=${isMint} feeBps=${isMint ? mintFeeBps : burnRewardBps} feePct=${feePct}%`);
 
     if (isMint) {
@@ -2137,6 +2235,22 @@ function updateSwapRateDisplay(isMint, mintFeeBps, burnRewardBps) {
 }
 
 /**
+ * Update the USD equivalent display for an amount input.
+ * Uses the cached XMR price (wsXMR ≈ XMR 1:1).
+ */
+function updateUsdEquivalent(elementId, amount) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    const price = priceCache.value;
+    if (!amount || amount <= 0 || !price || price <= 0) {
+        el.textContent = '';
+        return;
+    }
+    const usdValue = amount * price;
+    el.textContent = `≈ $${usdValue < 0.01 ? usdValue.toFixed(4) : usdValue < 1 ? usdValue.toFixed(3) : usdValue.toFixed(2)}`;
+}
+
+/**
  * Calculate and display mint receive amount based on input and vault fee
  */
 function updateMintReceiveAmount() {
@@ -2149,6 +2263,7 @@ function updateMintReceiveAmount() {
         const amount = parseFloat(amountStr);
         if (isNaN(amount) || amount <= 0) {
             receiveEl.value = '';
+            updateUsdEquivalent('mint-usd-equiv', 0);
             return;
         }
 
@@ -2158,6 +2273,7 @@ function updateMintReceiveAmount() {
         const feePct = feeBps / 100;
         const receiveAmount = amount * (1 - feePct / 100);
         receiveEl.value = receiveAmount.toFixed(6);
+        updateUsdEquivalent('mint-usd-equiv', amount);
         updateMintBackingCollateral();
     } catch (err) {
         console.error('[Receive] Mint receive update failed:', err);
@@ -2223,11 +2339,13 @@ function updateBurnReceiveAmount() {
         const amount = parseFloat(amountStr);
         if (isNaN(amount) || amount <= 0) {
             receiveEl.value = '';
+            updateUsdEquivalent('burn-usd-equiv', 0);
             return;
         }
 
         // Burn is 1:1 — user receives the same XMR amount they burn
         receiveEl.value = amount.toFixed(6);
+        updateUsdEquivalent('burn-usd-equiv', amount);
 
         // Also update the sDAI reward display
         updateBurnRewardDisplay();
@@ -2237,9 +2355,16 @@ function updateBurnReceiveAmount() {
 }
 
 /**
- * Calculate and display burn reward in sDAI using on-chain calculateBurnCollateral
+ * Calculate and display burn reward in sDAI using on-chain calculateBurnCollateral.
+ * Debounced to avoid 2 RPC calls per keystroke.
  */
-async function updateBurnRewardDisplay() {
+let burnRewardDebounce = null;
+function updateBurnRewardDisplay() {
+    clearTimeout(burnRewardDebounce);
+    burnRewardDebounce = setTimeout(_updateBurnRewardDisplay, 400);
+}
+
+async function _updateBurnRewardDisplay() {
     try {
         const amountStr = document.getElementById('burn-amount')?.value || '';
         const vaultSelect = document.getElementById('burn-vault-select');
@@ -2260,18 +2385,24 @@ async function updateBurnRewardDisplay() {
 
         const wsxmrAmount = BigInt(Math.round(amount * 1e8));
         const { getPublicClient } = await import('./viemClient.js');
+        const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
         const publicClient = getPublicClient();
 
         // Call calculateBurnCollateral to get exact on-chain rewardLock (sDAI shares)
+        // Include StalePrice error in ABI so viem decodes it properly
+        const hubAbi = parseAbi([
+            'function calculateBurnCollateral(address lpVault, uint256 wsxmrAmount) external view returns (uint256 baseLock, uint256 rewardLock)',
+            'error StalePrice()'
+        ]);
         const result = await publicClient.readContract({
             address: CONTRACTS.hub,
-            abi: ['function calculateBurnCollateral(address lpVault, uint256 wsxmrAmount) external view returns (uint256 baseLock, uint256 rewardLock)'],
+            abi: hubAbi,
             functionName: 'calculateBurnCollateral',
             args: [vaultAddress, wsxmrAmount]
         });
 
         // Convert sDAI shares to DAI assets for display
-        const sDAIAbi = ['function convertToAssets(uint256 shares) external view returns (uint256)'];
+        const sDAIAbi = parseAbi(['function convertToAssets(uint256 shares) external view returns (uint256)']);
         const assetsWei = await publicClient.readContract({
             address: CONTRACTS.sDAI,
             abi: sDAIAbi,
@@ -2280,11 +2411,23 @@ async function updateBurnRewardDisplay() {
         });
 
         const rewardDai = Number(assetsWei) / 1e18;
-        rewardEl.textContent = rewardDai > 0 ? `${rewardDai.toFixed(4)} sDAI` : '—';
+        if (rewardDai > 0) {
+            // sDAI ≈ $1, so DAI value is the USD equivalent
+            const usdStr = rewardDai < 0.01 ? rewardDai.toFixed(4) : rewardDai < 1 ? rewardDai.toFixed(3) : rewardDai.toFixed(2);
+            rewardEl.innerHTML = `${rewardDai.toFixed(4)} sDAI <span style="color:var(--muted);font-size:11px">≈ $${usdStr}</span>`;
+        } else {
+            rewardEl.textContent = '—';
+        }
     } catch (err) {
-        console.warn('[Reward] Burn reward display failed:', err.message);
         const rewardEl = document.getElementById('burn-reward-sdai');
-        if (rewardEl) rewardEl.textContent = '—';
+        if (rewardEl) {
+            if (err.errorName === 'StalePrice' || err.message?.includes('StalePrice') || err.message?.includes('0x19abf40e')) {
+                rewardEl.textContent = '— (oracle stale)';
+            } else {
+                console.warn('[Reward] Burn reward display failed:', err.message);
+                rewardEl.textContent = '—';
+            }
+        }
     }
 }
 

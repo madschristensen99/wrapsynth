@@ -135,6 +135,7 @@ if ('serviceWorker' in navigator) {
           <input id="mint-amount" inputmode="decimal" placeholder="0.0" />
           <span class="asset"><img src="./monero-symbol-1280.png" alt="XMR" style="width:20px;height:20px;margin-right:6px">XMR</span>
         </div>
+        <div class="usd-equiv" id="mint-usd-equiv"></div>
         <div class="swap-mid"><div class="swap-ic">↓</div></div>
         <div class="label-row"><span>You receive</span><span id="mint-rate">Select a vault</span></div>
         <div class="field">
@@ -223,6 +224,7 @@ if ('serviceWorker' in navigator) {
           <button class="percentage-btn" data-percentage="50">50%</button>
           <button class="percentage-btn" data-percentage="100">MAX</button>
           <span id="burn-percentage-feedback"></span>
+          <span class="usd-equiv" id="burn-usd-equiv"></span>
         </div>
         <div class="swap-mid"><div class="swap-ic">↓</div></div>
         <div class="label-row"><span>You receive</span><span id="burn-rate">Select a vault</span></div>
@@ -250,8 +252,8 @@ if ('serviceWorker' in navigator) {
             </div>
           </div>
           <div class="r" id="burn-vault-info" style="display:none"><span>Vault capacity</span><b id="burn-capacity">—</b></div>
-          <div class="r"><span id="burn-fee-label">Burn reward</span><b id="burn-fee">—</b></div>
-          <div class="r"><span>Burn reward (sDAI)</span><b id="burn-reward-sdai">—</b></div>
+          <div class="r"><span id="burn-fee-label">Reward rate</span><b id="burn-fee">—</b></div>
+          <div class="r"><span>Burn reward</span><b id="burn-reward-sdai">—</b></div>
           <div class="r"><span>LP timeout window</span><b id="burn-timeout">—</b></div>
         </div>
 
@@ -401,6 +403,8 @@ if ('serviceWorker' in navigator) {
   if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status);
   window.DEPLOYMENT = await res.json();
 </script>
-<script type="module" src="./js/main.js?v=3.0"></script>
+<!-- Monero WASM wallet (loaded as classic script, exposes window.monero_ts) -->
+<script src="./js/monero-ts.js"></script>
+<script type="module" src="./js/main.js?v=3.7"></script>
 </body>
 </html>

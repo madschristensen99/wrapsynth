@@ -6,8 +6,15 @@ import { gnosis } from 'https://esm.sh/viem@2.7.0/chains';
 import { NETWORKS, CONTRACTS, ABIS, RAW_ABIS } from './config.js';
 
 // Parse ABIs once at module level
+// Append burn resolution functions that may be missing from cached config.js
+const _extraHubAbi = parseAbi([
+    'function abortBurn(bytes32 requestId) external',
+    'function forceSettleBurn(bytes32 requestId) external',
+    'function resolveDeclinedProposal(bytes32 requestId) external',
+    'function getVaultBurnRequests(address vault) external view returns (bytes32[])'
+]);
 export const parsedABIs = {
-    hub: parseAbi(ABIS.hub),
+    hub: [...parseAbi(ABIS.hub), ..._extraHubAbi],
     wsxmr: parseAbi(ABIS.wsxmr),
     liquidityRouter: parseAbi(ABIS.liquidityRouter)
 };
