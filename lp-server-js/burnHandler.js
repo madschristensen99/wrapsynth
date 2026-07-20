@@ -6,6 +6,7 @@ import * as ethers from 'ethers';
 import { computeSecretHash } from './commitment.js';
 import * as moneroWallet from './moneroWallet.js';
 import * as moneroCrypto from './moneroCrypto.js';
+import { updateOraclePricesManual } from './oracleUpdate.js';
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 const AUTO_PROCESS_BURNS = (process.env.AUTO_PROCESS_BURNS || 'false').toLowerCase() === 'true';
@@ -288,14 +289,30 @@ async function processFinalize(reqIdHex) {
   }
   if (!burn.secret) throw new Error(`Secret not available for ${reqIdHex}`);
 
-  // Wait a grace period so the user has time to claim XMR on-chain
-  if (BURN_FINALIZE_DELAY_MS > 0) {
-    console.log(`[Burn] Waiting ${BURN_FINALIZE_DELAY_MS}ms before finalizeBurn...`);
-    await new Promise(r => setTimeout(r, BURN_FINALIZE_DELAY_MS));
+  // Update oracle prices before finalizeBurn (contract requires fresh price)
+  try {
+    await updateOraclePricesManual();
+  } catch (priceErr) {
+    console.warn(`[Burn] Oracle price update failed before finalize: ${priceErr.message}`);
+    console.log('[Burn] Proceeding with finalizeBurn anyway (may revert with StalePrice)...');
   }
 
   console.log(`[Burn] Calling finalizeBurn(${reqIdHex}, ...) secret: ${burn.secret.slice(0, 10)}...`);
-  const tx = await hubContract.finalizeBurn(reqIdHex, burn.secret);
+
+  let tx;
+  try {
+    tx = await hubContract.finalizeBurn(reqIdHex, burn.secret);
+  } catch (err) {
+    // If StalePrice, retry once more after price update
+    if (err.message && (err.message.includes('0x19abf40e') || err.message.includes('StalePrice'))) {
+      console.warn('[Burn] StalePrice on finalizeBurn, updating prices and retrying...');
+      await updateOraclePricesManual();
+      tx = await hubContract.finalizeBurn(reqIdHex, burn.secret);
+    } else {
+      throw err;
+    }
+  }
+
   console.log(`[Burn] finalizeBurn tx: ${tx.hash}`);
   const receipt = await tx.wait();
   console.log(`[Burn] finalizeBurn confirmed in block ${receipt.blockNumber}`);
