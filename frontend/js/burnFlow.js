@@ -590,12 +590,17 @@ export class BurnFlow {
                 updateBurnProgress('confirm-lock', 'Confirm receipt of XMR to proceed...');
             }
 
-            // Wire up manual confirm buttons as fallback (always available)
+            // Wire up confirm button and manual verify button
             const wireButtons = () => {
                 const btn = document.getElementById('burn-confirm-receipt');
                 const manualBtn = document.getElementById('burn-confirm-receipt-manual');
                 if (btn) btn.addEventListener('click', onConfirm);
-                if (manualBtn) manualBtn.addEventListener('click', onConfirm);
+                if (manualBtn) manualBtn.addEventListener('click', () => {
+                    const addr = this.sharedMoneroAddress || '';
+                    if (addr) {
+                        window.open(`https://xmrchain.net/search?value=${addr}`, '_blank');
+                    }
+                });
             };
             wireButtons();
         });
@@ -696,6 +701,7 @@ export class BurnFlow {
 
     async sweepXMR(lpSecret) {
         this.state = 'sweeping';
+        this._lastLpSecret = lpSecret; // Store for retry
         updateSwapState({ state: this.state, message: 'Claiming XMR from shared address...' });
         showBurnSweepProgress('Preparing to claim XMR...');
 
@@ -711,6 +717,13 @@ export class BurnFlow {
             console.warn('Could not get Monero height for restore:', e.message);
         }
 
+        // Set up retry listener (cleaned up on success or new attempt)
+        const retryHandler = async () => {
+            window.removeEventListener('burn-sweep-retry', retryHandler);
+            await this.sweepXMR(this._lastLpSecret);
+        };
+        window.addEventListener('burn-sweep-retry', retryHandler);
+
         try {
             const result = await sweepBurnOutput({
                 userSecretHex: userSecret,
@@ -725,6 +738,7 @@ export class BurnFlow {
             });
 
             if (result.swept) {
+                window.removeEventListener('burn-sweep-retry', retryHandler);
                 showBurnSweepComplete(result.txHashes[0], Number(result.amount) / 1e12);
                 updateSwapState({
                     state: 'swept',
