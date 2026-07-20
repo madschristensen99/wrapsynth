@@ -2847,21 +2847,25 @@ function trackBurnProgress(flow) {
                     const remaining = Math.max(0, flow.lpProposeTimeout - elapsed);
                     const mins = Math.floor(remaining / 60000);
                     const secs = Math.floor((remaining % 60000) / 1000);
-                    lpStatus = `Waiting for LP to lock XMR... ${mins}:${secs.toString().padStart(2, '0')} remaining`;
+                    if (remaining > 0) {
+                        lpStatus = `Waiting for LP to send XMR... ${mins}:${secs.toString().padStart(2, '0')} remaining`;
+                    } else {
+                        lpStatus = 'LP response overdue — still waiting...';
+                    }
                 }
                 updateBurnProgress('lp-propose', lpStatus);
                 break;
             case 'confirm-lock':
                 completeBurnStep('lp-propose');
-                // Status is managed by confirmMoneroLock inline verification UI
-                updateBurnProgress('confirm-lock');
+                updateBurnProgress('confirm-lock', 'Verifying XMR receipt...');
                 break;
             case 'lp-finalize':
                 completeBurnStep('confirm-lock');
-                updateBurnProgress('lp-finalize', 'Finalizing on EVM...');
+                updateBurnProgress('lp-finalize', 'Waiting for LP to finalize...');
                 break;
             case 'completed':
                 completeBurnStep('lp-finalize');
+                updateBurnProgress('completed', 'Burn complete!');
                 clearInterval(checkState);
                 break;
         }

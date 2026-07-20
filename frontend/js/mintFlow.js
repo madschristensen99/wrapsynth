@@ -499,6 +499,13 @@ export class MintFlow {
         // Only wait for user confirmation if not already in lp-verifying (i.e. not resuming mid-flow)
         if (!isAlreadyReady && this.state !== 'lp-verifying') {
             console.log('Waiting for user to confirm XMR sent...');
+            
+            // Ensure the deposit info UI (including the "I've sent XMR" button) is rendered
+            // before wiring up the click handler — trackMintProgress may not have fired yet
+            if (this.depositAddress) {
+                const { showMintDepositInfo } = await import('./ui.js?v=3.3');
+                await showMintDepositInfo(this.depositAddress, this.xmrAmount);
+            }
             this.setupConfirmSentButton();
             
             // Poll on-chain status while waiting for user confirmation

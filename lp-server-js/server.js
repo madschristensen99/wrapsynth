@@ -9,6 +9,7 @@ import * as burnHandler from './burnHandler.js';
 import * as moneroWallet from './moneroWallet.js';
 import * as moneroCrypto from './moneroCrypto.js';
 import { computeSecretHash } from './commitment.js';
+import { setHubWallet, updateOraclePricesManual } from './oracleUpdate.js';
 import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -136,48 +137,9 @@ async function generateEd25519Keys() {
   };
 }
 
-// ─── Oracle Price Update (manual RedStone payload, bypasses WrapperBuilder) ──
-async function updateOraclePricesManual() {
-  const { DataServiceWrapper } = await import('@redstone-finance/evm-connector');
-  const { getSignersForDataServiceId } = await import('@redstone-finance/oracles-smartweave-contracts');
-  const authorizedSigners = getSignersForDataServiceId('redstone-primary-prod');
-
-  const wrapper = new DataServiceWrapper({
-    dataServiceId: 'redstone-primary-prod',
-    uniqueSignersCount: 3,
-    dataPackagesIds: ['XMR', 'DAI'],
-    authorizedSigners,
-  });
-
-  console.log(`[Chain] Updating oracle prices before setMintReady...`);
-  let lastErr;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      // Get raw RedStone payload hex (bypasses WrapperBuilder contract wrapping)
-      const redstonePayload = await wrapper.getRedstonePayloadForManualUsage(hub);
-
-      // Build updateOraclePrices([]) calldata and append RedStone payload
-      const baseData = hub.interface.encodeFunctionData('updateOraclePrices', [[]]);
-      const fullData = baseData + redstonePayload.slice(2);
-
-      const updateTx = await wallet.sendTransaction({
-        to: HUB_ADDRESS,
-        data: fullData,
-      });
-      await updateTx.wait();
-      console.log(`[Chain] Oracle prices updated (tx: ${updateTx.hash})`);
-      return;
-    } catch (err) {
-      lastErr = err;
-      if (attempt < 2) {
-        const delay = 2000 * Math.pow(2, attempt);
-        console.log(`[Chain] RedStone retry in ${delay/1000}s... (${attempt + 2}/3)`);
-        await new Promise(r => setTimeout(r, delay));
-      }
-    }
-  }
-  throw lastErr;
-}
+// ─── Oracle Price Update: imported from oracleUpdate.js ────────────────────
+// Initialize with hub and wallet instances
+setHubWallet(hub, wallet, HUB_ADDRESS);
 
 // ─── Core Mint Processing ───────────────────────────────────────────────────
 async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {

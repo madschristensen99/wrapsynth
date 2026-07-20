@@ -309,6 +309,26 @@ export async function writeWsxmr(functionName, args = []) {
 }
 
 /**
+ * Write to wsXMR token contract WITHOUT simulation — fallback when
+ * RPC simulation fails with "internal error".
+ */
+export async function writeWsxmrUnsafe(functionName, args = [], gas = 200000n) {
+    const client = getWalletClient();
+
+    const hash = await client.writeContract({
+        address: CONTRACTS.wsxmrToken,
+        abi: parsedABIs.wsxmr,
+        functionName,
+        args,
+        gas,
+        account: userAddress
+    });
+
+    const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
+    return receipt;
+}
+
+/**
  * Get user's wsXMR balance
  */
 export async function getWsXmrBalance(address = null) {
