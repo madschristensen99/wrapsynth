@@ -44,6 +44,7 @@ contract wsXmrStorage {
     uint256 public constant MAX_PRICE_DEVIATION_BPS = 2000; // 20%
     uint256 public constant MAX_BURN_REQUESTS_PER_VAULT = 50;
     uint256 public constant MAX_VAULT_COUNT = 10000;
+    uint256 public constant MIN_VAULT_COLLATERAL_BPS = 100; // 1% of max vault collateral — below this, dormant vaults are evictable
     uint256 public constant MIN_BURN_AMOUNT = 1e4; // 0.0001 wsXMR (~$0.04 at $400/XMR)
     // Collateral reserved per burn as a buffer OVER PAR (not the vault solvency ratio).
     // Par is fixed at request via xmrPriceAtRequest, so this only needs to cover DAI depeg
@@ -69,6 +70,7 @@ contract wsXmrStorage {
     // ========== ERRORS ==========
     
     error PendingMintLock(); // Vault has active READY mints — state-changing ops blocked
+    error NoEvictableVaultFound(); // Cap reached and no dormant vaults available for eviction
     
     // ========== ENUMS ==========
     
@@ -225,6 +227,8 @@ contract wsXmrStorage {
     
     // Vault list
     address[] public vaultList;
+    uint256 public activeVaultCount;
+    mapping(address => uint256) public vaultListIndex; // address => index in vaultList (O(1) removal)
     
     // Pending returns
     mapping(address => mapping(address => uint256)) public pendingReturns;
@@ -249,6 +253,14 @@ contract wsXmrStorage {
 
     // Total pending READY mints across all vaults — blocks triggerBuyAndBurn (global index shift)
     uint256 public totalPendingMints;
+
+    // Oracle price updater (moved from SimpleOracleFacet to avoid storage collision with _selectorToFacet)
+    address public priceUpdater;
+
+    // H2: Batch processing state for debt wipe and index migration (avoids unbounded loops)
+    uint256 public debtWipeBatchStart;   // 0 = idle, 1-indexed start when active
+    uint256 public migrationBatchStart;  // 0 = idle, 1-indexed start when active
+    uint256 public migrationOldIndex;    // old index to apply during lazy migration
 
     // ========== INTERNAL HELPERS ==========
     
@@ -294,7 +306,7 @@ contract wsXmrStorage {
      * Example: If adding 3 new uint256 variables, change to:
      * uint256[47] private __gap;
      */
-    uint256[41] private __gap;
+    uint256[37] private __gap;
     
     // ========== CONSTRUCTOR ==========
     

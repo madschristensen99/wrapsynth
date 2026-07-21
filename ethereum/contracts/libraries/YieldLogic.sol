@@ -71,6 +71,18 @@ library YieldLogic {
             }
         }
         
+        // M4: Share-level floor — never extract so much that collateralShares drops below lockedCollateral.
+        // The USD-level check above can pass when sDAI exchange rate appreciates, but lockedCollateral
+        // is denominated in shares and must always remain covered.
+        if (collateralShares > lockedCollateral) {
+            uint256 maxByLocked = collateralShares - lockedCollateral;
+            if (vaultYieldShares > maxByLocked) {
+                vaultYieldShares = maxByLocked;
+            }
+        } else {
+            return 0;
+        }
+        
         return vaultYieldShares;
     }
     
