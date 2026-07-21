@@ -26,6 +26,10 @@ interface IYieldFacet {
     error InvalidSpotPrice();
     error InvalidEMAPrice();
     error PriceExponentMismatch();
+    error WipeInProgress();
+    error MigrationInProgress();
+    error WipeNotInProgress();
+    error MigrationNotInProgress();
     
     // ========== CONSTANTS ==========
     // Note: Constants are defined in wsXmrStorage:
@@ -60,4 +64,12 @@ interface IYieldFacet {
     
     /// @notice Check if pool fee tier is allowed
     function isPoolFeeTierAllowed(uint24 tier) external view returns (bool);
+    
+    /// @notice Continue an in-progress debt wipe
+    /// @param batchSize Maximum number of vaults to process
+    function continueDebtWipe(uint256 batchSize) external;
+    
+    /// @notice Continue an in-progress debt index migration
+    /// @param batchSize Maximum number of vaults to process
+    function continueDebtMigration(uint256 batchSize) external;
 }

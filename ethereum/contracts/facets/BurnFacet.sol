@@ -18,6 +18,15 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         wsXmrStorage(_wsxmrToken, _verifierProxy) 
     {}
     
+    /// @notice Initiate a burn request — user locks wsXMR and commits to a Monero destination via Ed25519 keys
+    /// @dev Caller must be the user. Burns wsXMR from the user's balance and locks LP collateral.
+    /// @param wsxmrAmount Amount of wsXMR to burn (8 decimals)
+    /// @param lpVault Address of the LP vault serving the burn
+    /// @param user Address of the user initiating the burn (must be msg.sender)
+    /// @param claimCommitment keccak256(secret·G) — Ed25519 point commitment binding the user's secret
+    /// @param userPublicKey User's Ed25519 public spend key (x-coordinate, 32 bytes)
+    /// @param userViewKey User's Ed25519 public view key (x-coordinate, 32 bytes)
+    /// @return requestId Unique burn request identifier
     function requestBurn(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey) external returns (bytes32) {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
@@ -29,6 +38,16 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         return requestId;
     }
     
+    /// @notice Initiate a burn request from the liquidity router — burns wsXMR from the router's internal balance
+    /// @dev Only callable by the registered liquidity router. Same as requestBurn but burns from hub balance
+    ///      (router has already received wsXMR via depositWsxmr).
+    /// @param wsxmrAmount Amount of wsXMR to burn (8 decimals)
+    /// @param lpVault Address of the LP vault serving the burn
+    /// @param user Address of the user on whose behalf the router is burning
+    /// @param claimCommitment keccak256(secret·G) — Ed25519 point commitment
+    /// @param userPublicKey User's Ed25519 public spend key (x-coordinate)
+    /// @param userViewKey User's Ed25519 public view key (x-coordinate)
+    /// @return requestId Unique burn request identifier
     function requestBurnFromRouter(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey) external returns (bytes32) {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
@@ -40,6 +59,12 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         return requestId;
     }
     
+    /// @dev Internal burn request logic shared by requestBurn and requestBurnFromRouter.
+    ///      Validates vault state, checks burn limits, locks LP collateral (total model — only increments
+    ///      lockedCollateral, never decrements collateralShares), burns wsXMR tokens, and records the request.
+    ///      Debt is NOT reduced at request time — it is reduced only at settlement (finalize, slash, forceSettle, abort).
+    ///      This eliminates the class of index-shift debt inflation bugs that would occur if debt were reduced
+    ///      and then needed to be restored on cancel/abort.
     function _requestBurn(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey, bool fromRouter) internal returns (bytes32) {
         if (claimCommitment == bytes32(0)) revert InvalidCommitment();
         if (wsxmrAmount == 0) revert ZeroAmount();
@@ -190,6 +215,12 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         _reentrancyStatus = _NOT_ENTERED;
     }
     
+    /// @notice LP finalizes the burn by revealing the Ed25519 secret — settles the burn and releases collateral
+    /// @dev Verifies that scalarMultBase(secret) matches the committed secretHash from proposeHash.
+    ///      Releases locked collateral, pays burn reward to user via pendingReturns, and reduces vault debt.
+    ///      Can be called by anyone holding the secret (typically the LP after sending XMR).
+    /// @param requestId The burn request ID
+    /// @param secret The Ed25519 scalar that unlocks the Monero output
     function finalizeBurn(bytes32 requestId, bytes32 secret) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
@@ -226,7 +257,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
             normalizedBurnAmount = vault.normalizedDebt;
         }
         vault.normalizedDebt -= normalizedBurnAmount;
-        globalTotalDebt -= request.wsxmrAmount;
+        globalTotalDebt -= _denormalizeDebt(normalizedBurnAmount);
         
         if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
         else globalPendingBurnDebt -= request.wsxmrAmount;
@@ -243,6 +274,11 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         _reentrancyStatus = _NOT_ENTERED;
     }
     
+    /// @notice User claims slashed collateral when LP fails to finalize after the commit deadline
+    /// @dev User receives min(par, lockedCollateral) + reward in sDAI via pendingReturns.
+    ///      Par is fixed at request time via xmrPriceAtRequest, protecting the user from XMR price appreciation.
+    ///      Excess locked collateral above par returns to the vault.
+    /// @param requestId The burn request ID
     function claimSlashedCollateral(bytes32 requestId) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
@@ -279,7 +315,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
             normalizedBurnAmount = vault.normalizedDebt;
         }
         vault.normalizedDebt -= normalizedBurnAmount;
-        globalTotalDebt -= request.wsxmrAmount;
+        globalTotalDebt -= _denormalizeDebt(normalizedBurnAmount);
         
         if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
         else globalPendingBurnDebt -= request.wsxmrAmount;
@@ -294,6 +330,12 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         _reentrancyStatus = _NOT_ENTERED;
     }
     
+    /// @notice User aborts a burn request before the LP has proposed a hash (status must be REQUESTED)
+    /// @dev Only callable after the burn deadline has expired and the LP has not proposed.
+    ///      Restores wsXMR to the user and releases the locked LP collateral.
+    ///      If the vault was liquidated since the burn was requested (liquidationNonce changed),
+    ///      the locked collateral is not released back (it was already handled by liquidation).
+    /// @param requestId The burn request ID
     function abortBurn(bytes32 requestId) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
@@ -323,6 +365,10 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         _reentrancyStatus = _NOT_ENTERED;
     }
     
+    /// @notice User force-settles a burn when the LP never proposed a hash (status must be REQUESTED, deadline expired)
+    /// @dev Unlike abortBurn, this pays the user par value in sDAI (no reward) instead of restoring wsXMR.
+    ///      This is used when the user prefers collateral over getting wsXMR back.
+    /// @param requestId The burn request ID
     function forceSettleBurn(bytes32 requestId) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
@@ -355,7 +401,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
             normalizedBurnAmount = vault.normalizedDebt;
         }
         vault.normalizedDebt -= normalizedBurnAmount;
-        globalTotalDebt -= request.wsxmrAmount;
+        globalTotalDebt -= _denormalizeDebt(normalizedBurnAmount);
         
         if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
         else globalPendingBurnDebt -= request.wsxmrAmount;
@@ -371,6 +417,11 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         _reentrancyStatus = _NOT_ENTERED;
     }
     
+    /// @notice Resolve a burn where the LP proposed a hash but the user never confirmed (status must be PROPOSED, deadline expired)
+    /// @dev Permissionless — anyone can call after the commit deadline expires.
+    ///      Restores wsXMR to the user and releases the locked LP collateral.
+    ///      If the vault was liquidated since the burn was requested, the locked collateral is not released.
+    /// @param requestId The burn request ID
     function resolveDeclinedProposal(bytes32 requestId) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
@@ -399,18 +450,34 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         _reentrancyStatus = _NOT_ENTERED;
     }
     
+    /// @notice Get full burn request state
+    /// @param requestId The burn request ID
+    /// @return BurnRequest struct with all fields
     function getBurnRequest(bytes32 requestId) external view returns (BurnRequest memory) {
         return burnRequests[requestId];
     }
     
+    /// @notice Get all burn request IDs for a user
+    /// @param user Address to query
+    /// @return Array of burn request IDs
     function getUserBurnRequests(address user) external view returns (bytes32[] memory) {
         return userBurnRequests[user];
     }
     
+    /// @notice Get all burn request IDs for a vault
+    /// @param vault Vault address to query
+    /// @return Array of burn request IDs
     function getVaultBurnRequests(address vault) external view returns (bytes32[] memory) {
         return vaultBurnRequests[vault];
     }
     
+    /// @notice Calculate the collateral to lock for a burn request
+    /// @dev Computes par value in DAI from the current XMR price, applies BURN_LOCK_RATIO (110%) buffer,
+    ///      and converts to sDAI shares. Reward is the vault's burnRewardBps fraction of par.
+    /// @param lpVault The LP vault address
+    /// @param wsxmrAmount Amount of wsXMR to burn (8 decimals)
+    /// @return baseLock sDAI shares locked as par + buffer collateral
+    /// @return rewardLock sDAI shares locked as burn reward for the user
     function calculateBurnCollateral(address lpVault, uint256 wsxmrAmount) public view returns (uint256 baseLock, uint256 rewardLock) {
         // Compute off PAR directly, converting USD -> DAI via collateral price so the lock
         // is in the same units as the slash/settle side (which divide par USD by collateralPrice).
@@ -424,6 +491,10 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         rewardLock = _daiToShares(rewardDai);
     }
     
+    /// @notice Check if a burn amount meets the vault's minimum burn requirement
+    /// @param lpVault The LP vault address
+    /// @param wsxmrAmount Amount to check (8 decimals)
+    /// @return True if amount meets both global and vault-specific minimums
     function meetsMinimumBurn(address lpVault, uint256 wsxmrAmount) external view returns (bool) {
         if (wsxmrAmount < MIN_BURN_AMOUNT) return false;
         uint256 vaultMin = _vaults[lpVault].minBurnAmount;
@@ -431,6 +502,9 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         return true;
     }
     
+    /// @notice Count active burn requests for a vault (REQUESTED, PROPOSED, or COMMITTED status)
+    /// @param lpVault The LP vault address
+    /// @return Number of active burn requests
     function getActiveBurnCount(address lpVault) external view returns (uint256) {
         bytes32[] storage vaultBurns = vaultBurnRequests[lpVault];
         uint256 count = 0;
@@ -454,6 +528,10 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     }
     
     
+    /// @dev Syncs vault yield by harvesting excess sDAI shares generated since the last sync.
+    ///      Uses YieldLogic to compute the yield portion (collateral growth above principal).
+    ///      Harvested shares are moved from vault.collateralShares to yieldWarChest.
+    ///      Skips oracle calls if vault has no debt and no pending debt (gas optimization).
     function _syncVaultYield(address lpAddress) internal {
         Vault storage vault = _vaults[lpAddress];
         
@@ -484,6 +562,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         }
     }
     
+    /// @dev Convert DAI amount to sDAI shares via staticcall to the sDAI contract's convertToShares
     function _daiToShares(uint256 daiAmount) internal view returns (uint256) {
         (bool success, bytes memory data) = GnosisAddresses.SDAI.staticcall(
             abi.encodeWithSignature("convertToShares(uint256)", daiAmount)
@@ -492,6 +571,9 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         return abi.decode(data, (uint256));
     }
     
+    /// @dev Removes inactive (completed/cancelled/slashed) burn requests from the vault's burn array.
+    ///      Compacts the array in-place by shifting active requests to the front and popping the rest.
+    /// @return activeCount Number of active burn requests remaining after cleanup
     function _cleanupBurnRequests(bytes32[] storage vaultBurns) internal returns (uint256 activeCount) {
         uint256 writeIndex = 0;
         activeCount = 0;

@@ -321,6 +321,9 @@ contract ConcurrencyDebtInvariantTest is Test {
         vm.prank(keeper);
         YieldFacet(address(hub)).triggerBuyAndBurn(3000);
 
+        // Complete the batch debt wipe
+        YieldFacet(address(hub)).continueDebtWipe(10000);
+
         // All vault debts should be zeroed
         assertEq(_getVaultNormalizedDebt(lp), 0, "LP1 debt should be zeroed after full wipe");
         assertEq(_getVaultNormalizedDebt(lp2), 0, "LP2 debt should be zeroed after full wipe");
@@ -450,6 +453,9 @@ contract ConcurrencyDebtInvariantTest is Test {
 
         vm.prank(keeper);
         YieldFacet(address(hub)).triggerBuyAndBurn(3000);
+
+        // Complete the batch debt wipe
+        YieldFacet(address(hub)).continueDebtWipe(10000);
 
         uint256 sum = _getActualDebt(lp) + _getActualDebt(lp2);
         assertEq(sum, _getGlobalTotalDebt(), "Sum of actualDebts should equal globalTotalDebt after full wipe");
