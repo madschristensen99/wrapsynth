@@ -64,7 +64,6 @@ async function main() {
         'function setMaxMintBps(uint16 maxMintBps) external',
         'function setMinBurnAmount(uint256 minAmount) external',
         'function setMintGriefingDeposit(uint256 deposit) external',
-        'function setMintReadyBond(uint256 bond) external',
         'function setVaultMarketMetrics(uint16 mintFeeBps, uint16 burnRewardBps) external',
         'function setMaxCoLPRange(uint16 newMaxBps) external',
         'function getCoLPCapacity(address lpVault) external view returns (uint256)',
@@ -124,7 +123,6 @@ async function main() {
         await (await hub.setMaxMintBps(0)).wait();
         await (await hub.setMinBurnAmount(0)).wait();
         await (await hub.setMintGriefingDeposit(ethers.utils.parseEther('0.001'))).wait();
-        await (await hub.setMintReadyBond(ethers.utils.parseEther('0.001'))).wait();
         await (await hub.setVaultMarketMetrics(50, 30)).wait(); // 0.5% mint fee, 0.3% burn reward
         await (await hub.setMaxCoLPRange(2500)).wait(); // 25% default co-LP range
         console.log('✅ Vault configured (0.5% mint fee, 0.3% burn reward, 0.001 ETH bond, 2500 bps co-LP range)');
@@ -351,9 +349,8 @@ async function main() {
     
     console.log('📊 Step 5: MINT - LP Sets Ready');
     console.log('================================');
-    const lpBond = ethers.utils.parseEther('0.001');
     const lpCommitment = ethers.utils.id('lp-commitment');
-    const readyTx = await hub.setMintReady(requestId, lpCommitment, { value: lpBond });
+    const readyTx = await hub.setMintReady(requestId, lpCommitment);
     await readyTx.wait();
     console.log('✅ LP marked ready');
     console.log('');

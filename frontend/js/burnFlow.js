@@ -356,11 +356,41 @@ export class BurnFlow {
 
             this.eventWatchers.push(unwatch);
 
-            setTimeout(() => {
+            setTimeout(async () => {
                 clearInterval(countdownInterval);
                 if (pollIntervalId) clearInterval(pollIntervalId);
                 unwatch();
-                if (!resolved) reject(new Error('LP proposal timeout - LP did not send XMR in time'));
+                if (!resolved) {
+                    // Check if burn deadline has passed — user can abort
+                    try {
+                        const burnReq = await readHub('getBurnRequest', [this.requestId]);
+                        const status = Number(burnReq.status);
+                        if (status === 1) {
+                            const { showConfirmModal, showError, showSuccess } = await import('./ui.js?v=3.4');
+                            const confirmed = await showConfirmModal(
+                                'LP Did Not Respond',
+                                '<p>The LP did not propose a secret hash in time. You can abort the burn to recover your wsXMR.</p><p>Would you like to abort now?</p>'
+                            );
+                            if (confirmed) {
+                                try {
+                                    await writeHub('abortBurn', [this.requestId]);
+                                    showSuccess('Burn Aborted', 'Your wsXMR has been restored.');
+                                    resolvePropose();
+                                    return;
+                                } catch (abortErr) {
+                                    if (abortErr.message && abortErr.message.includes('DeadlineNotExpired')) {
+                                        showError('Cannot Abort Yet', 'The burn deadline has not been reached on-chain yet. Please wait a bit longer.');
+                                    } else {
+                                        showError('Abort Failed', abortErr.message || 'Failed to abort burn');
+                                    }
+                                }
+                            }
+                        }
+                    } catch (statusErr) {
+                        console.error('Error checking burn status on proposal timeout:', statusErr);
+                    }
+                    reject(new Error('LP proposal timeout - LP did not send XMR in time'));
+                }
             }, this.lpProposeTimeout);
         });
     }
@@ -691,10 +721,96 @@ export class BurnFlow {
                 }
             }, 15000);
 
-            setTimeout(() => {
+            setTimeout(async () => {
                 if (finalizePollId) clearInterval(finalizePollId);
                 unwatch();
-                if (!finalizeResolved) reject(new Error('LP finalize timeout'));
+                if (!finalizeResolved) {
+                    // Check on-chain status to offer the correct recovery path
+                    try {
+                        const burnReq = await readHub('getBurnRequest', [this.requestId]);
+                        const status = Number(burnReq.status);
+                        // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=COMPLETED, 5=SLASHED, 6=CANCELLED
+
+                        if (status === 3) {
+                            // COMMITTED — LP didn't finalize, user can claim slashed collateral
+                            const { showError, showConfirmModal } = await import('./ui.js?v=3.4');
+                            const confirmed = await showConfirmModal(
+                                'LP Failed to Finalize',
+                                '<p>The LP did not finalize the burn in time. You can claim slashed collateral (par value + reward) from the LP\'s vault.</p><p>Would you like to claim now?</p>'
+                            );
+                            if (confirmed) {
+                                try {
+                                    await this.claimSlashed();
+                                    const { showSuccess } = await import('./ui.js?v=3.4');
+                                    showSuccess('Slashed Collateral Claimed', 'Your sDAI has been queued. Withdraw it via Pending Returns.');
+                                    resolve(null);
+                                    return;
+                                } catch (claimErr) {
+                                    if (claimErr.message && claimErr.message.includes('DeadlineNotExpired')) {
+                                        showError('Cannot Claim Yet', 'The grace period has not expired. Please wait a bit longer and try cancelling again.');
+                                    } else {
+                                        showError('Claim Failed', claimErr.message || 'Failed to claim slashed collateral');
+                                    }
+                                }
+                            }
+                            reject(new Error('LP finalize timeout — slashed collateral available to claim'));
+                            return;
+                        } else if (status === 1) {
+                            // REQUESTED — LP never proposed, user can abort
+                            const { showConfirmModal } = await import('./ui.js?v=3.4');
+                            const confirmed = await showConfirmModal(
+                                'LP Did Not Respond',
+                                '<p>The LP did not respond to your burn request in time. You can abort the burn to recover your wsXMR.</p><p>Would you like to abort now?</p>'
+                            );
+                            if (confirmed) {
+                                try {
+                                    await writeHub('abortBurn', [this.requestId]);
+                                    const { showSuccess } = await import('./ui.js?v=3.4');
+                                    showSuccess('Burn Aborted', 'Your wsXMR has been restored.');
+                                    resolve(null);
+                                    return;
+                                } catch (abortErr) {
+                                    if (abortErr.message && abortErr.message.includes('DeadlineNotExpired')) {
+                                        const { showError } = await import('./ui.js?v=3.4');
+                                        showError('Cannot Abort Yet', 'The burn deadline has not been reached yet.');
+                                    } else {
+                                        throw abortErr;
+                                    }
+                                }
+                            }
+                            reject(new Error('LP finalize timeout — burn can be aborted'));
+                            return;
+                        } else if (status === 2) {
+                            // PROPOSED — LP proposed but didn't follow through, anyone can resolve
+                            const { showConfirmModal } = await import('./ui.js?v=3.4');
+                            const confirmed = await showConfirmModal(
+                                'LP Proposal Expired',
+                                '<p>The LP proposed a secret hash but did not lock XMR in time. You can resolve this to recover your wsXMR.</p><p>Would you like to resolve now?</p>'
+                            );
+                            if (confirmed) {
+                                try {
+                                    await writeHub('resolveDeclinedProposal', [this.requestId]);
+                                    const { showSuccess } = await import('./ui.js?v=3.4');
+                                    showSuccess('Burn Resolved', 'Your wsXMR has been restored.');
+                                    resolve(null);
+                                    return;
+                                } catch (resolveErr) {
+                                    if (resolveErr.message && resolveErr.message.includes('DeadlineNotExpired')) {
+                                        const { showError } = await import('./ui.js?v=3.4');
+                                        showError('Cannot Resolve Yet', 'The burn deadline has not been reached yet.');
+                                    } else {
+                                        throw resolveErr;
+                                    }
+                                }
+                            }
+                            reject(new Error('LP finalize timeout — proposal can be resolved'));
+                            return;
+                        }
+                    } catch (statusErr) {
+                        console.error('Error checking burn status on timeout:', statusErr);
+                    }
+                    reject(new Error('LP finalize timeout'));
+                }
             }, 1800000);
         });
     }
@@ -803,10 +919,64 @@ export class BurnFlow {
 
         if (this.requestId) {
             try {
-                await writeHub('cancelBurn', [this.requestId]);
-                console.log('Burn request canceled on EVM');
+                const burnReq = await readHub('getBurnRequest', [this.requestId]);
+                const status = Number(burnReq.status);
+                // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=COMPLETED, 5=SLASHED, 6=CANCELLED
+
+                if (status === 1) {
+                    // REQUESTED — user can abort after deadline
+                    try {
+                        await writeHub('abortBurn', [this.requestId]);
+                        console.log('Burn aborted on EVM');
+                    } catch (err) {
+                        if (err.message && err.message.includes('DeadlineNotExpired')) {
+                            const { showError } = await import('./ui.js?v=3.4');
+                            showError('Cannot Cancel Yet', 'The burn deadline has not been reached yet. Please wait until the timeout expires.');
+                            return;
+                        }
+                        throw err;
+                    }
+                } else if (status === 2) {
+                    // PROPOSED — anyone can resolve after deadline
+                    try {
+                        await writeHub('resolveDeclinedProposal', [this.requestId]);
+                        console.log('Burn proposal resolved (declined) on EVM');
+                    } catch (err) {
+                        if (err.message && err.message.includes('DeadlineNotExpired')) {
+                            const { showError } = await import('./ui.js?v=3.4');
+                            showError('Cannot Cancel Yet', 'The burn deadline has not been reached yet. Please wait until the timeout expires.');
+                            return;
+                        }
+                        throw err;
+                    }
+                } else if (status === 3) {
+                    // COMMITTED — user can claim slashed collateral after deadline + grace
+                    try {
+                        await writeHub('claimSlashedCollateral', [this.requestId]);
+                        console.log('Slashed collateral claimed on EVM');
+                    } catch (err) {
+                        if (err.message && err.message.includes('DeadlineNotExpired')) {
+                            const { showError } = await import('./ui.js?v=3.4');
+                            showError('Cannot Claim Yet', 'The burn deadline plus grace period has not been reached yet. Please wait a bit longer.');
+                            return;
+                        }
+                        throw err;
+                    }
+                } else if (status === 4) {
+                    // COMPLETED — nothing to cancel
+                    console.log('Burn already completed');
+                } else if (status === 5 || status === 6) {
+                    // SLASHED or CANCELLED — claim any pending returns
+                    await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
+                    console.log('Pending returns withdrawn');
+                } else {
+                    console.warn(`Burn status is ${status}; no cancel action possible`);
+                }
             } catch (error) {
                 console.error('Error canceling burn on EVM:', error);
+                const { showError } = await import('./ui.js?v=3.4');
+                showError('Cancel Failed', error.message || 'Failed to cancel burn');
+                return;
             }
         }
 

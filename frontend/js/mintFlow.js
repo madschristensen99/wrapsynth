@@ -487,12 +487,15 @@ export class MintFlow {
         }
 
         const isAlreadyReady = mintRequest && Number(mintRequest.status) === 3;
-        const isExpired = mintRequest && Number(mintRequest.status) === 5;
+        const isExpired = mintRequest && (Number(mintRequest.status) === 5 || Number(mintRequest.status) === 6);
 
         if (isExpired) {
-            console.log('Mint expired on-chain');
+            console.log('Mint expired on-chain, status:', Number(mintRequest.status));
             this.state = 'expired';
-            updateSwapState({ requestId: this.requestId, state: 'expired', message: 'Mint expired. Cancel to refund your deposit.' });
+            const expiryMsg = Number(mintRequest.status) === 6
+                ? 'Mint expired (READY timeout). LP has a claim window. Cancel to check if you can sweep your deposit.'
+                : 'Mint expired. Cancel to refund your deposit.';
+            updateSwapState({ requestId: this.requestId, state: 'expired', message: expiryMsg });
             return;
         }
 
@@ -514,13 +517,13 @@ export class MintFlow {
                 try {
                     const req = await readHub('getMintRequest', [this.requestId]);
                     const status = Number(req.status);
-                    console.log(`[Mint Poll] Status: ${status} (1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED)`);
+                    console.log(`[Mint Poll] Status: ${status} (1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED, 6=EXPIRED_READY)`);
                     if (status === 3) {
                         console.log('Mint became READY while waiting for user confirmation');
                         clearInterval(statusPollInterval);
                         if (this.userConfirmResolve) this.userConfirmResolve();
-                    } else if (status === 5) {
-                        console.log('Mint was cancelled while waiting for user confirmation');
+                    } else if (status === 5 || status === 6) {
+                        console.log('Mint was cancelled/expired while waiting for user confirmation');
                         clearInterval(statusPollInterval);
                         if (this.userConfirmResolve) this.userConfirmResolve();
                     }
@@ -841,10 +844,33 @@ export class MintFlow {
             try {
                 const mintReq = await readHub('getMintRequest', [this.requestId]);
                 const status = Number(mintReq.status);
-                // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
+                // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED, 6=EXPIRED_READY
                 if (status === 5) {
                     await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
                     console.log('Mint already cancelled; claimed refund via withdrawReturns');
+                } else if (status === 6) {
+                    // EXPIRED_READY — LP has a claim window to reveal secret and take deposit.
+                    // If LP doesn't claim within the window, anyone can sweep to return deposit to user.
+                    const { getPublicClient } = await import('./viemClient.js');
+                    const publicClient = getPublicClient();
+                    const currentBlock = await publicClient.getBlockNumber();
+                    const claimWindowEnd = Number(mintReq.timeout);
+                    if (currentBlock >= claimWindowEnd) {
+                        // LP claim window expired — sweep to recover deposit
+                        await writeHub('sweepUnclaimedExpiredMint', [this.requestId]);
+                        console.log('Expired mint swept — deposit returned to user');
+                        await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
+                        console.log('Refund claimed via withdrawReturns');
+                    } else {
+                        const blocksRemaining = claimWindowEnd - Number(currentBlock);
+                        const minutes = Math.ceil(blocksRemaining * 5 / 60);
+                        const { showError } = await import('./ui.js?v=3.3');
+                        showError(
+                            'Waiting for LP Claim Window',
+                            `This mint expired without finalization. The LP has ~${minutes} minutes (${blocksRemaining} blocks) to claim the griefing deposit by revealing their secret. If the LP does not claim, you can sweep your deposit back after the window expires.`
+                        );
+                        return;
+                    }
                 } else if (status === 1 || status === 2 || status === 3) {
                     // Check timeout before calling cancelMint to avoid TimeoutNotReached revert
                     const blocksRemaining = await this._getBlocksRemaining();
@@ -860,6 +886,9 @@ export class MintFlow {
                 }
             } catch (error) {
                 console.error('Error canceling mint on EVM:', error);
+                const { showError } = await import('./ui.js?v=3.3');
+                showError('Cancel Failed', error.message || 'Failed to cancel mint');
+                return;
             }
         }
 
@@ -894,7 +923,7 @@ export class MintFlow {
         try {
             const mintReq = await readHub('getMintRequest', [this.requestId]);
             const status = Number(mintReq.status);
-            // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
+            // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED, 6=EXPIRED_READY
             if (status === 5) {
                 console.log('Mint was cancelled on-chain; aborting resume');
                 const { removeActiveSwap, saveToHistory } = await import('./storage.js');
@@ -904,6 +933,16 @@ export class MintFlow {
                 showError('Mint Cancelled', 'This mint was cancelled on-chain. If you had a griefing deposit, you can withdraw it via Pending Returns.');
                 resetMintUI();
                 throw new Error('Mint cancelled on-chain');
+            }
+            if (status === 6) {
+                console.log('Mint is EXPIRED_READY on-chain; aborting resume');
+                const { removeActiveSwap, saveToHistory } = await import('./storage.js');
+                const { showError, resetMintUI } = await import('./ui.js?v=3.3');
+                saveToHistory({ ...savedState, status: 'Expired', completedAt: Date.now() });
+                removeActiveSwap(this.requestId);
+                showError('Mint Expired', 'This mint expired without finalization. Use Cancel to check if you can sweep your deposit back after the LP claim window.');
+                resetMintUI();
+                throw new Error('Mint expired (EXPIRED_READY) on-chain');
             }
             if (status === 4) {
                 console.log('Mint was already completed on-chain; clearing from active swaps');

@@ -171,7 +171,7 @@ async function main() {
     }
 
     try {
-        const readyTx = await hub.setMintReady(requestId, { value: griefingDeposit, gasLimit: 200000, maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'), maxFeePerGas: ethers.utils.parseUnits('20', 'gwei') });
+        const readyTx = await hub.setMintReady(requestId, { gasLimit: 200000, maxPriorityFeePerGas: ethers.utils.parseUnits("10", "gwei"), maxFeePerGas: ethers.utils.parseUnits("20", "gwei") });
         await readyTx.wait();
         console.log('  Mint ready');
     } catch (err) {
