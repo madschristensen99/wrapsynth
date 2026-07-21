@@ -277,7 +277,6 @@ contract PoolSwapTest is Test, IUniswapV3SwapCallback {
         VaultFacet(address(hub)).setMaxMintBps(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
-        VaultFacet(address(hub)).setMintReadyBond(0.001 ether);
 
         deal(GnosisAddresses.SDAI, lp, 1000 ether);
         IERC20(GnosisAddresses.SDAI).approve(address(hub), 1000 ether);
@@ -301,7 +300,7 @@ contract PoolSwapTest is Test, IUniswapV3SwapCallback {
         MintFacet(address(hub)).provideLPKey(mintRequestId, lpPublicKey, lpPublicKey);
 
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(mintRequestId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(mintRequestId, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(user);
         MintFacet(address(hub)).finalizeMint(mintRequestId, testSecret);
@@ -381,7 +380,6 @@ contract PoolSwapTest is Test, IUniswapV3SwapCallback {
         VaultFacet(address(hub)).setMaxMintBps(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
-        VaultFacet(address(hub)).setMintReadyBond(0.001 ether);
 
         deal(GnosisAddresses.SDAI, lp, 1000 ether);
         IERC20(GnosisAddresses.SDAI).approve(address(hub), 1000 ether);
@@ -437,7 +435,6 @@ contract PoolSwapTest is Test, IUniswapV3SwapCallback {
         VaultFacet(address(hub)).setMaxMintBps(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
-        VaultFacet(address(hub)).setMintReadyBond(0.001 ether);
 
         deal(GnosisAddresses.SDAI, lp, 1000 ether);
         IERC20(GnosisAddresses.SDAI).approve(address(hub), 1000 ether);

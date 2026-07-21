@@ -23,6 +23,7 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         if (!allowedPoolFeeTiers[poolFeeTier]) revert InvalidPoolFeeTier();
         if (block.timestamp < lastBuyTimestamp + COOLDOWN_PERIOD) revert CooldownActive();
         if (yieldWarChest == 0) revert WarChestEmpty();
+        if (totalPendingMints > 0) revert PendingMintLock();
         
         uint256 spotPrice = _getXmrPriceFromStorage();
         uint256 emaPrice = IOracleFacet(address(this)).getXmrEmaPrice();
@@ -67,13 +68,24 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         
         IwsXmrHub(address(this)).burnTokens(address(this), wsxmrBought);
 
-        if (wsxmrBought >= globalTotalDebt) {
-            globalTotalDebt = 0;
+        // Effective debt excludes wsXMR already locked in pending burns (burned by users,
+        // not yet settled). Only effective debt is eligible for proportional forgiveness.
+        uint256 effectiveDebt = globalTotalDebt > globalPendingBurnDebt
+            ? globalTotalDebt - globalPendingBurnDebt
+            : 0;
+
+        if (wsxmrBought >= effectiveDebt) {
+            // Full wipe: zero all vault normalized debts before resetting index.
+            // Without this, vaults' actualDebt would inflate when index jumps to 1e18.
+            for (uint256 i = 0; i < vaultList.length; i++) {
+                _vaults[vaultList[i]].normalizedDebt = 0;
+            }
+            globalTotalDebt = globalPendingBurnDebt; // only pending burn debt remains
             globalDebtIndex = 1e18;
         } else {
-            uint256 oldDebt = globalTotalDebt;
+            uint256 remainingDebt = effectiveDebt - wsxmrBought;
             globalTotalDebt -= wsxmrBought;
-            globalDebtIndex = (globalDebtIndex * globalTotalDebt) / oldDebt;
+            globalDebtIndex = (globalDebtIndex * remainingDebt) / effectiveDebt;
         }
 
         _migrateDebtIndex();

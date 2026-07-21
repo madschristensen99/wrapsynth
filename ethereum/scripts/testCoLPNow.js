@@ -54,7 +54,6 @@ async function main() {
         'function setMaxMintBps(uint16 maxMintBps) external',
         'function setMinBurnAmount(uint256 minAmount) external',
         'function setMintGriefingDeposit(uint256 deposit) external',
-        'function setMintReadyBond(uint256 bond) external',
         'function setVaultMarketMetrics(uint16 mintFeeBps, uint16 burnRewardBps) external',
         'function userOpenCoLP(address lpVault, uint256 wsxmrAmount, uint256 deadline) external returns (uint256 tokenId)',
         'function unwindCoLP(uint256 tokenId, uint256 deadline) external',
@@ -115,7 +114,6 @@ async function main() {
         await (await hub.setMaxMintBps(0, { gasLimit: 200000 })).wait();
         await (await hub.setMinBurnAmount(0, { gasLimit: 200000 })).wait();
         await (await hub.setMintGriefingDeposit(ethers.utils.parseEther('0.001'), { gasLimit: 200000 })).wait();
-        await (await hub.setMintReadyBond(ethers.utils.parseEther('0.001'), { gasLimit: 200000 })).wait();
         await (await hub.setVaultMarketMetrics(50, 30, { gasLimit: 200000 })).wait();
         console.log('Vault created and configured');
     } else {
@@ -188,7 +186,7 @@ async function main() {
         console.log('  LP key provided:', provideTx.hash);
 
         const lpCommitment = ethers.utils.id('lp-commitment');
-        const readyTx = await hub.setMintReady(requestId, lpCommitment, { value: griefingDeposit, gasLimit: 200000 });
+        const readyTx = await hub.setMintReady(requestId, lpCommitment, { gasLimit: 200000 });
         await readyTx.wait();
         console.log('  Mint ready:', readyTx.hash);
 

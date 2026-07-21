@@ -13,8 +13,9 @@ This document provides chain-agnostic sequence diagrams for the wsXMR Liquidity 
 7. [Fee Collection](#fee-collection)
 8. [Mint Flow (XMR → wsXMR)](#mint-flow-xmr--wsxmr)
 9. [Burn Flow (wsXMR → XMR)](#burn-flow-wsxmr--xmr)
-10. [Liquidation Flow](#liquidation-flow)
+10. [Liquidation Flow](#liquidation-flow) (hard + soft/backstop)
 11. [Buy-and-Burn Mechanism](#buy-and-burn-mechanism)
+12. [Withdrawal Flows](#withdrawal-flows)
 
 ---
 
@@ -79,7 +80,13 @@ sequenceDiagram
     LP->>VM: createVault()
     activate VM
     VM->>VM: Check vault doesn't exist
-    VM->>VM: Check max vault limit
+    alt Vault already exists
+        VM-->>LP: Revert: VaultAlreadyExists
+    end
+    VM->>VM: Check max vault limit (10,000)
+    alt Limit reached
+        VM-->>LP: Revert: MaxVaultCount
+    end
     VM->>VM: Initialize vault struct
     VM-->>LP: VaultCreated event
     deactivate VM
@@ -101,10 +108,57 @@ sequenceDiagram
 
     LP->>VM: setVaultMarketMetrics(mintFeeBps, burnRewardBps)
     VM->>VM: Validate fee limits (max 10%)
+    alt Fees exceed maximum
+        VM-->>LP: Revert: InvalidValue
+    end
     VM-->>LP: VaultMarketMetricsUpdated event
 
     LP->>VM: setMintGriefingDeposit(ethAmount)
     VM-->>LP: MintGriefingDepositUpdated event
+```
+
+### Vault Deactivation & Collateral Withdrawal
+
+```mermaid
+sequenceDiagram
+    participant LP as Liquidity Provider
+    participant VM as VaultManager
+    participant Collateral as Collateral Token
+
+    Note over LP,VM: Deactivate Vault
+    LP->>VM: deactivateVault()
+    activate VM
+    alt Vault has debt
+        VM-->>LP: Revert: HasDebt
+    else Vault has collateral
+        VM-->>LP: Revert: HasCollateral
+    else Vault has locked collateral
+        VM-->>LP: Revert: HasLockedCollateral
+    else Vault has co-LP positions
+        VM-->>LP: Revert: HasPositions
+    end
+    VM->>VM: Set active = false
+    VM-->>LP: VaultDeactivated event
+    deactivate VM
+
+    Note over LP,VM: Withdraw Collateral
+    LP->>VM: withdrawCollateral(amount)
+    activate VM
+    VM->>VM: Check no pending READY mints
+    alt Pending mints exist
+        VM-->>LP: Revert: PendingMintLock
+    end
+    VM->>VM: Sync vault yield
+    VM->>VM: Calculate new collateral amount
+    VM->>VM: Check CR >= 150% after withdrawal
+    alt CR < 150%
+        VM-->>LP: Revert: InsufficientCollateral
+    end
+    VM->>Collateral: transfer(LP, amount)
+    Collateral-->>VM: Transfer complete
+    VM->>VM: Update collateral & principal tracking
+    VM-->>LP: CollateralWithdrawn event
+    deactivate VM
 ```
 
 ---
@@ -352,17 +406,25 @@ sequenceDiagram
     participant Monero as Monero Network
 
     Note over User,Monero: Step 1: User initiates mint request
-    User->>VM: initiateMint(lpVault, recipient, xmrAmount, commitment, timeout)
+    User->>VM: initiateMint(lpVault, recipient, xmrAmount, commitment, userPublicKey)
     activate VM
     Note right of User: Includes griefing deposit in ETH
-    VM->>VM: Validate vault capacity
+    VM->>VM: Validate vault active & capacity (maxMintBps)
+    alt Insufficient collateral (CR < 150%)
+        VM-->>User: Revert: InsufficientCollateral
+    else Vault inactive or zero amount
+        VM-->>User: Revert: VaultDoesNotExist / InvalidValue
+    end
     VM->>VM: Reserve pendingDebt
     VM->>VM: Store mint request (PENDING)
     VM-->>User: MintInitiated event, requestId
     deactivate VM
 
     Note over User,Monero: Step 2: LP provides public key for atomic swap
-    LP->>VM: provideLPKey(requestId, lpPublicKey)
+    LP->>VM: provideLPKey(requestId, lpPublicKey, lpPublicViewKey)
+    alt Wrong status or unauthorized
+        VM-->>LP: Revert: InvalidStatus / Unauthorized
+    end
     VM->>VM: Store lpPublicKeys[requestId]
     VM-->>LP: LPKeyProvided event
 
@@ -374,9 +436,12 @@ sequenceDiagram
     LP->>Monero: Verify XMR lock exists
     LP->>VM: setMintReady(requestId)
     activate VM
-    VM->>VM: Verify vault still healthy
+    VM->>VM: Sync vault yield & re-check CR
+    alt CR < 150% after yield sync
+        VM-->>LP: Revert: InsufficientCollateral
+    end
     VM->>VM: Update status to READY
-    VM->>VM: Extend timeout for user
+    VM->>VM: Extend timeout for user (MINT_READY_EXTENSION_BLOCKS)
     VM-->>LP: MintReady event
     deactivate VM
 
@@ -387,6 +452,17 @@ sequenceDiagram
     Note over User,Monero: Step 6: User finalizes mint with revealed secret
     User->>VM: finalizeMint(requestId, secret)
     activate VM
+    VM->>VM: Verify status is READY
+    VM->>VM: Sync vault yield & re-check CR
+    alt CR < 150% after yield sync
+        VM-->>User: Revert: InsufficientCollateral
+    end
+    alt Vault mintNonce changed (liquidation occurred)
+        VM->>VM: Auto-cancel: queue deposit + LP bond to pendingReturns
+        VM-->>User: MintCancelled event
+    else Secret does not match commitment
+        VM-->>User: Revert: InvalidSecret
+    end
     VM->>VM: Verify secret matches commitment (Ed25519)
     VM->>VM: Convert pendingDebt to normalizedDebt
     VM->>VM: Update globalTotalDebt
@@ -409,19 +485,35 @@ sequenceDiagram
     participant User
     participant LP as Liquidity Provider
 
-    Note over Anyone,LP: Scenario A: LP never responded (PENDING timeout)
+    Note over Anyone,LP: Scenario A: LP never responded (PENDING or KEY_PROVIDED timeout)
     Anyone->>VM: cancelMint(requestId)
-    VM->>VM: Verify PENDING and timeout reached
+    VM->>VM: Verify PENDING/KEY_PROVIDED and timeout reached
     VM->>VM: Release pendingDebt
     VM->>VM: Queue refund to User (LP didn't act)
     VM-->>Anyone: MintCancelled event
 
-    Note over Anyone,LP: Scenario B: User didn't finalize (READY timeout)
+    Note over Anyone,LP: Scenario B: User didn't finalize (READY timeout → EXPIRED_READY)
     Anyone->>VM: cancelMint(requestId)
     VM->>VM: Verify READY and timeout reached
-    VM->>VM: Release pendingDebt
-    VM->>VM: Queue deposit to LP (User didn't act)
-    VM-->>Anyone: MintCancelled event
+    VM->>VM: Move to EXPIRED_READY (not CANCELLED yet)
+    VM->>VM: Set new timeout = block + LP_CLAIM_WINDOW_BLOCKS (~30 min)
+    VM-->>Anyone: MintExpiredReady event
+
+    Note over Anyone,LP: Scenario B1: LP claims griefing deposit (within claim window)
+    LP->>VM: claimGriefingDeposit(requestId, lpSecret)
+    VM->>VM: Verify EXPIRED_READY and caller is LP
+    VM->>VM: Verify secret matches lpCommitment (Ed25519)
+    VM->>VM: Queue griefing deposit + LP bond to LP
+    VM->>VM: Mark CANCELLED
+    VM-->>LP: GriefingDepositClaimed event
+
+    Note over Anyone,LP: Scenario B2: LP doesn't claim (claim window expires)
+    Anyone->>VM: sweepUnclaimedExpiredMint(requestId)
+    VM->>VM: Verify EXPIRED_READY and claim window expired
+    VM->>VM: Queue griefing deposit to User
+    VM->>VM: Queue LP bond to LP
+    VM->>VM: Mark CANCELLED
+    VM-->>Anyone: MintGriefingUnclaimed event
 ```
 
 ---
@@ -439,10 +531,20 @@ sequenceDiagram
     participant Monero as Monero Network
 
     Note over User,Monero: Step 1: User requests burn
-    User->>VM: requestBurn(wsxmrAmount, lpVault)
+    User->>VM: requestBurn(wsxmrAmount, lpVault, userAddress, claimCommitment, userPublicKey, userViewKey)
     activate VM
-    VM->>VM: Validate vault has sufficient debt
-    VM->>VM: Calculate collateral to lock (130% buffer)
+    VM->>VM: Validate amount >= MIN_BURN_AMOUNT
+    VM->>VM: Validate vault has sufficient debt & capacity
+    alt Below minimum burn amount
+        VM-->>User: Revert: InvalidValue
+    else Burn exceeds vault debt
+        VM-->>User: Revert: InsufficientDebt
+    else Vault has pending READY mints
+        VM-->>User: Revert: PendingMintLock
+    else Max burn requests reached (50/vault)
+        VM-->>User: Revert: InsufficientCollateral
+    end
+    VM->>VM: Calculate collateral to lock (110% buffer)
     VM->>VM: Calculate reward collateral
     VM->>Token: burn(user, wsxmrAmount)
     Token-->>VM: Tokens burned
@@ -455,8 +557,13 @@ sequenceDiagram
     Note over User,Monero: Step 2: LP locks XMR on Monero and proposes hash
     LP->>Monero: Lock XMR with PTLC
     Note right of LP: Generates secret, uses hash in PTLC
-    LP->>VM: proposeHash(requestId, secretHash)
+    LP->>VM: proposeHash(requestId, secretHash, lpPublicSpendKey, lpPublicViewKey)
     activate VM
+    alt Wrong status or deadline expired
+        VM-->>LP: Revert: InvalidStatus / DeadlineExpired
+    else Unauthorized caller
+        VM-->>LP: Revert: Unauthorized
+    end
     VM->>VM: Store secretHash
     VM->>VM: Update status to PROPOSED
     VM-->>LP: HashProposed event
@@ -480,6 +587,9 @@ sequenceDiagram
     activate VM
     VM->>VM: Verify secret matches hash (Ed25519)
     VM->>VM: Calculate safe reward (maintain vault health)
+    alt Vault collateral insufficient for reward
+        VM-->>LP: Revert: InsufficientCollateral
+    end
     VM->>VM: Unlock collateral back to vault
     VM->>VM: Queue reward to user
     VM->>VM: Mark COMPLETED
@@ -494,35 +604,71 @@ sequenceDiagram
     participant User
     participant Anyone
     participant VM as VaultManager
+    participant Token as wsXMR Token
 
-    Note over User,VM: Scenario A: LP failed to reveal secret (slashing)
+    Note over User,VM: Scenario A: LP failed to reveal secret (COMMITTED timeout → slashing)
     User->>VM: claimSlashedCollateral(requestId)
-    VM->>VM: Verify COMMITTED and deadline passed
-    VM->>VM: Seize locked + reward collateral
-    VM->>VM: Queue collateral to user
+    VM->>VM: Verify COMMITTED and deadline + BURN_FINALIZE_GRACE_BLOCKS passed
+    alt Grace period not yet expired
+        VM-->>User: Revert: DeadlineNotExpired
+    end
+    VM->>VM: Calculate par value (wsxmrAmount * xmrPriceAtRequest)
+    VM->>VM: Cap user base at min(par, lockedCollateral)
+    VM->>VM: Seize locked + reward collateral from vault
+    VM->>VM: Queue par + reward to user via pendingReturns
     VM->>VM: Mark SLASHED
     VM-->>User: BurnSlashed event
 
-    Note over User,VM: Scenario B: LP never responded (cancellation)
-    Anyone->>VM: cancelBurn(requestId)
-    VM->>VM: Verify REQUESTED/PROPOSED and deadline passed
-    alt Vault healthy after restore
-        VM->>VM: Restore normalizedDebt
-        VM->>VM: Unlock collateral to vault
-        VM->>VM: Re-mint wsXMR to user
-    else Vault unhealthy
-        VM->>VM: Compensate user with fair value
-        VM->>VM: Return excess to vault
+    Note over User,VM: Scenario B: LP never proposed (REQUESTED timeout → abort)
+    User->>VM: abortBurn(requestId)
+    VM->>VM: Verify REQUESTED and deadline passed
+    alt Deadline not yet expired
+        VM-->>User: Revert: DeadlineNotExpired
     end
+    VM->>VM: Unlock collateral back to vault
+    VM->>VM: Restore vault normalizedDebt (capped at current index)
+    VM->>Token: mint(user, wsxmrAmount) — restore burned tokens
     VM->>VM: Mark CANCELLED
-    VM-->>Anyone: BurnCancelled event
+    VM-->>User: BurnAborted event
+
+    Note over User,VM: Scenario B1: REQUESTED timeout → force settle (alternative to abort)
+    User->>VM: forceSettleBurn(requestId)
+    VM->>VM: Verify REQUESTED and deadline passed
+    VM->>VM: Calculate par value in sDAI (no reward)
+    VM->>VM: Seize par from locked collateral
+    VM->>VM: Queue par to user via pendingReturns
+    VM->>VM: Mark SLASHED
+    VM-->>User: BurnForceSettled event
+
+    Note over User,VM: Scenario C: LP proposed but didn't follow through (PROPOSED timeout)
+    Anyone->>VM: resolveDeclinedProposal(requestId)
+    VM->>VM: Verify PROPOSED and deadline passed
+    VM->>VM: Unlock collateral back to vault
+    VM->>VM: Restore vault normalizedDebt (capped at current index)
+    VM->>Token: mint(user, wsxmrAmount) — restore burned tokens
+    VM->>VM: Mark CANCELLED
+    VM-->>Anyone: BurnProposalDeclined event
+
+    Note over User,VM: Scenario D: Vault liquidated during active burn
+    Note right of VM: Liquidation handles in-flight burns automatically
+    alt Burn is REQUESTED or PROPOSED
+        VM->>VM: Unlock collateral, restore debt
+        VM->>Token: mint(user, wsxmrAmount)
+        VM->>VM: Mark CANCELLED
+    else Burn is COMMITTED
+        VM->>VM: Par-capped slash settlement
+        VM->>VM: Queue par + reward to user
+        VM->>VM: Mark SLASHED
+    end
 ```
 
 ---
 
 ## Liquidation Flow
 
-Liquidating an undercollateralized vault.
+Two mechanisms exist for handling undercollateralized vaults: **hard liquidation** (collateral seized, debt written off) and **soft liquidation / backstop** (new LP absorbs the vault's position).
+
+### Hard Liquidation
 
 ```mermaid
 sequenceDiagram
@@ -543,10 +689,18 @@ sequenceDiagram
         VM-->>Liquidator: Revert: VaultHealthy
     end
     
-    VM->>VM: Check no locked collateral
-    alt Has locked burns
-        VM-->>Liquidator: Revert: CancelBurnsFirst
+    VM->>VM: Settle in-flight burns
+    alt REQUESTED or PROPOSED burns
+        VM->>VM: Unlock collateral, restore debt
+        VM->>Token: mint(user, wsxmrAmount)
+        VM->>VM: Mark burn CANCELLED
+    else COMMITTED burns
+        VM->>VM: Par-capped slash: queue par + reward to user
+        VM->>VM: Mark burn SLASHED
     end
+    
+    VM->>VM: Unwind all co-LP positions
+    VM->>VM: Return sDAI to vault, queue wsXMR to co-LPs
     
     VM->>VM: Calculate collateral to seize (110% of debt value)
     VM->>VM: Cap at available collateral
@@ -574,6 +728,56 @@ sequenceDiagram
     deactivate VM
 ```
 
+### Soft Liquidation — Vault Backstop
+
+```mermaid
+sequenceDiagram
+    participant NewLP as New LP (Backstopper)
+    participant VM as VaultManager
+    participant OldVault as Underwater Vault
+    participant NewVault as New LP's Vault
+    participant Token as wsXMR Token
+
+    NewLP->>VM: backstopVault(oldVault)
+    activate VM
+    
+    VM->>VM: Verify both vaults active & different
+    VM->>VM: Extract yield from both vaults to war chest
+    
+    VM->>VM: Check old vault is underwater (CR < 120%)
+    alt Vault healthy
+        VM-->>NewLP: Revert: VaultHealthy
+    end
+    
+    VM->>VM: Settle in-flight burns (same as hard liquidation)
+    alt REQUESTED or PROPOSED burns
+        VM->>Token: mint(user, wsxmrAmount)
+        VM->>VM: Mark burn CANCELLED
+    else COMMITTED burns
+        VM->>VM: Par-capped slash settlement
+        VM->>VM: Mark burn SLASHED
+    end
+    
+    VM->>VM: Unwind all co-LP positions on old vault
+    
+    VM->>VM: Transfer debt + collateral to new vault
+    VM->>NewVault: normalizedDebt += oldVault.normalizedDebt
+    VM->>NewVault: collateralShares += oldVault.collateralShares
+    VM->>VM: Track absorbed collateral as principal (not yield-extractable)
+    
+    VM->>VM: Zero out old vault (debt, collateral, nonces)
+    
+    VM->>VM: Verify new vault is healthy (CR >= 150%)
+    alt New vault unhealthy after merger
+        VM-->>NewLP: Revert: InsufficientCollateral
+    end
+    
+    VM-->>NewLP: VaultBackstopped event
+    deactivate VM
+    
+    Note over NewLP,NewVault: New LP now holds the old vault's debt at a discount — collateral < debt at market, but combined with their own excess collateral, the position is healthy.
+```
+
 ---
 
 ## Buy-and-Burn Mechanism
@@ -592,7 +796,20 @@ sequenceDiagram
     activate VM
     
     VM->>VM: Verify pool fee tier is allowed
-    VM->>VM: Check cooldown elapsed (30 min)
+    VM->>VM: Check cooldown elapsed (24 hours)
+    alt Cooldown not elapsed
+        VM-->>Keeper: Revert: CooldownNotElapsed
+    end
+    
+    VM->>VM: Check no pending READY mints
+    alt Pending mints exist
+        VM-->>Keeper: Revert: PendingMintLock
+    end
+    
+    VM->>VM: Check war chest has funds
+    alt War chest empty
+        VM-->>Keeper: Revert: InsufficientFunds
+    end
     
     VM->>Oracle: Get XMR spot price
     Oracle-->>VM: Spot price
@@ -604,7 +821,6 @@ sequenceDiagram
         VM-->>Keeper: Revert: XMRNotDipped
     end
     
-    VM->>VM: Check war chest has funds
     VM->>VM: Calculate 20% chunk
     VM->>VM: Calculate keeper reward (2%)
     
@@ -616,11 +832,14 @@ sequenceDiagram
     VM->>Oracle: Get sDAI price
     Oracle-->>VM: sDAI price
     VM->>VM: Calculate expected wsXMR output
-    VM->>VM: Apply 2% max slippage
+    VM->>VM: Apply 1% max slippage (MEV_SLIPPAGE_BPS)
     
     VM->>DEX: approve(spendAmount)
     VM->>DEX: exactInputSingle(sDAI → wsXMR)
     DEX-->>VM: wsXMR bought
+    alt Swap returned less than minWsxmr
+        VM-->>Keeper: Revert: swap slippage exceeded
+    end
     
     VM->>Token: burn(VM, wsxmrBought)
     Token-->>VM: Tokens burned
@@ -628,8 +847,17 @@ sequenceDiagram
     VM->>VM: Calculate new globalDebtIndex
     VM->>VM: Update globalTotalDebt
     
-    alt Bad debt exists
-        VM->>VM: Reduce globalBadDebt proportionally
+    alt wsxmrBought >= effectiveDebt (full debt wipe)
+        VM->>VM: Zero ALL vault normalizedDebts
+        VM->>VM: Reset globalDebtIndex to 1e18
+        VM->>VM: Zero globalTotalDebt
+    else Partial debt reduction
+        alt Bad debt exists
+            VM->>VM: Reduce globalBadDebt proportionally
+        end
+        alt globalDebtIndex dropped significantly
+            VM->>VM: Migrate debt index (rescale all vault normalized debts)
+        end
     end
     
     VM-->>Keeper: BuyAndBurnExecuted event

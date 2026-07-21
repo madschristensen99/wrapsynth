@@ -159,7 +159,7 @@ async function checkMint(publicClient, requestId, currentBlock) {
         console.log(`Amount: ${xmrAmount.toFixed(6)} XMR → ${wsxmrAmount.toFixed(8)} wsXMR`);
         console.log(`Timeout: Block ${timeout} ${isExpired ? '⚠️  EXPIRED' : '✅ Valid'}`);
         console.log(`Griefing Deposit: ${formatEther(mint.griefingDeposit)} xDAI`);
-        console.log(`LP Bond: ${formatEther(mint.lpBond)} xDAI`);
+        
         console.log(`LP Key Provided: ${hasLpKey ? '✅ Yes' : '❌ No'}`);
 
         // Diagnosis

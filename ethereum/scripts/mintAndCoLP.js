@@ -119,7 +119,7 @@ async function main() {
 
     try {
         const lpCommitment = ethers.utils.id('lp-commitment');
-        const readyTx = await hub.setMintReady(requestId, lpCommitment, { value: griefingDeposit, gasLimit: 200000, maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'), maxFeePerGas: ethers.utils.parseUnits('20', 'gwei') });
+        const readyTx = await hub.setMintReady(requestId, lpCommitment, { gasLimit: 200000, maxPriorityFeePerGas: ethers.utils.parseUnits("10", "gwei"), maxFeePerGas: ethers.utils.parseUnits("20", "gwei") });
         await readyTx.wait();
         console.log('  Mint ready');
     } catch (err) {

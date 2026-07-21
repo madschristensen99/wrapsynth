@@ -121,7 +121,6 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         VaultFacet(address(hub)).setMaxMintBps(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
-        VaultFacet(address(hub)).setMintReadyBond(0.001 ether);
 
         // Get sDAI for LP
         deal(GnosisAddresses.SDAI, lp, 1000 ether);
@@ -145,7 +144,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         MintFacet(address(hub)).provideLPKey(userMints[0], lpPublicKey, lpPublicKey);
 
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(userMints[0], bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(userMints[0], bytes32(uint256(0xdeadbeef)));
 
         vm.prank(user);
         MintFacet(address(hub)).finalizeMint(userMints[0], testSecret);
@@ -328,7 +327,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         MintFacet(address(hub)).provideLPKey(user2Mints[0], lpPublicKey2, lpPublicKey2);
         
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(user2Mints[0], bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(user2Mints[0], bytes32(uint256(0xdeadbeef)));
 
         vm.prank(user2);
         MintFacet(address(hub)).finalizeMint(user2Mints[0], secret2);
@@ -540,7 +539,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey3, lpPublicKey3);
 
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(requestId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(requestId, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(user3);
         MintFacet(address(hub)).finalizeMint(requestId, secret3);
@@ -950,7 +949,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
 
         // LP sets mint ready
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(largeMints[0], bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(largeMints[0], bytes32(uint256(0xdeadbeef)));
 
         // User finalizes mint
         vm.prank(largeUser);

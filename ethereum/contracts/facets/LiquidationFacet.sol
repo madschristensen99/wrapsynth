@@ -59,6 +59,14 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         v.collateralShares -= userPayout;
         globalPendingBurnDebt -= burnReq.wsxmrAmount;
 
+        // Debt reduction happens here at settlement
+        uint256 normalizedBurnAmount = (burnReq.wsxmrAmount * 1e18 + globalDebtIndex - 1) / globalDebtIndex;
+        if (normalizedBurnAmount > v.normalizedDebt) {
+            normalizedBurnAmount = v.normalizedDebt;
+        }
+        v.normalizedDebt -= normalizedBurnAmount;
+        globalTotalDebt -= burnReq.wsxmrAmount;
+
         pendingReturns[burnReq.user][GnosisAddresses.SDAI] += userPayout;
         globalPendingSDAI += userPayout;
         emit ReturnQueued(burnReq.user, GnosisAddresses.SDAI, userPayout);
@@ -124,8 +132,6 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
                 // Force-cancel: unwind burn to free collateral for liquidation
                 if (burnReq.vaultLiquidationNonce == vault.liquidationNonce) {
                     vault.lockedCollateral -= (burnReq.lockedCollateral + burnReq.rewardCollateral);
-                    vault.normalizedDebt += burnReq.normalizedDebtAmount;
-                    globalTotalDebt += burnReq.wsxmrAmount;
                 }
                 globalPendingBurnDebt -= burnReq.wsxmrAmount;
                 

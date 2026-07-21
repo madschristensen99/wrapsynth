@@ -110,7 +110,7 @@ contract SecurityGuardTest is Test {
 
         vm.prank(attacker);
         vm.expectRevert(IErrors.Unauthorized.selector);
-        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(reqId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(reqId, bytes32(uint256(0xdeadbeef)));
     }
 
     /// @notice Non-LP cannot claim griefing deposit on expired ready mint
@@ -193,7 +193,7 @@ contract SecurityGuardTest is Test {
 
         vm.prank(lp);
         vm.expectRevert(IErrors.DeadlineExpired.selector);
-        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(reqId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(reqId, bytes32(uint256(0xdeadbeef)));
     }
 
     // ========== BURN: AUTHORIZATION ==========
@@ -494,7 +494,6 @@ contract SecurityGuardTest is Test {
         VaultFacet(address(hub)).setMaxMintBps(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
-        VaultFacet(address(hub)).setMintReadyBond(0.001 ether);
         VaultFacet(address(hub)).setVaultMarketMetrics(100, 100);
         vm.stopPrank();
     }
@@ -518,7 +517,7 @@ contract SecurityGuardTest is Test {
 
     function _setMintReady(address _lp, bytes32 reqId) internal {
         vm.prank(_lp);
-        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(reqId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(reqId, bytes32(uint256(0xdeadbeef)));
     }
 
     function _mintForUser(address _user, address _lp) internal returns (uint256) {

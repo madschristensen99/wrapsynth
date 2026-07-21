@@ -89,7 +89,6 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
             pendingDebt: 0,
             maxMintBps: 0,
             mintGriefingDeposit: 0,
-            mintReadyBond: 0,
             mintFeeBps: 0,
             burnRewardBps: 0,
             liquidationNonce: 0,
@@ -99,7 +98,8 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
             deployedSDAIShares: 0,
             maxCoLPRangeBps: uint16(DEFAULT_COLP_RANGE_BPS),
             mintTimeoutBlocks: DEFAULT_MINT_TIMEOUT_BLOCKS,
-            burnTimeoutBlocks: DEFAULT_BURN_TIMEOUT_BLOCKS
+            burnTimeoutBlocks: DEFAULT_BURN_TIMEOUT_BLOCKS,
+            pendingMintCount: 0
         });
         
         vaultList.push(msg.sender);
@@ -174,6 +174,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         if (shares == 0) revert ZeroAmount();
         
         Vault storage vault = _vaults[msg.sender];
+        if (vault.pendingMintCount > 0) revert PendingMintLock();
         
         // Sync yield FIRST
         _syncVaultYield(msg.sender);
@@ -232,14 +233,6 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         if (!_vaults[msg.sender].active) revert VaultDoesNotExist();
         _vaults[msg.sender].mintGriefingDeposit = deposit;
         emit MintGriefingDepositUpdated(msg.sender, deposit);
-    }
-    
-    /// @notice Set LP bond required when calling setMintReady
-    /// @param bond Amount of native token LP must post when marking mint ready
-    function setMintReadyBond(uint256 bond) external {
-        if (!_vaults[msg.sender].active) revert VaultDoesNotExist();
-        _vaults[msg.sender].mintReadyBond = bond;
-        emit MintReadyBondUpdated(msg.sender, bond);
     }
     
     /// @inheritdoc IVaultFacet
@@ -568,38 +561,37 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
     /// @notice Returns all function selectors implemented by this facet
     /// @dev Used by Diamond to build selector → facet routing table
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](31);
+        bytes4[] memory sels = new bytes4[](30);
         sels[0] = this.createVault.selector;
         sels[1] = this.deactivateVault.selector;
         sels[2] = this.depositCollateral.selector;
         sels[3] = this.depositShares.selector;
         sels[4] = this.withdrawCollateral.selector;
         sels[5] = this.setMintGriefingDeposit.selector;
-        sels[6] = this.setMintReadyBond.selector;
-        sels[7] = this.setVaultMarketMetrics.selector;
-        sels[8] = this.setMaxMintBps.selector;
-        sels[9] = this.setMinBurnAmount.selector;
-        sels[10] = this.setMinterWhitelist.selector;
-        sels[11] = this.batchSetMinterWhitelist.selector;
-        sels[12] = this.withdrawReturns.selector;
-        sels[13] = this.getVault.selector;
-        sels[14] = this.getVaultHealth.selector;
-        sels[15] = this.getVaultDebt.selector;
-        sels[16] = this.getVaultCount.selector;
-        sels[17] = this.getVaultAtIndex.selector;
-        sels[18] = this.getPendingReturns.selector;
-        sels[19] = this.hasActiveVault.selector;
-        sels[20] = this.getPositionMetadata.selector;
-        sels[21] = this.isMinterWhitelisted.selector;
-        sels[22] = this.selectors.selector;
-        sels[23] = this.setMaxCoLPRange.selector;
-        sels[24] = this.userOpenCoLP.selector;
-        sels[25] = this.collectCoLPFees.selector;
-        sels[26] = this.unwindCoLP.selector;
-        sels[27] = this.rebalanceCoLP.selector;
-        sels[28] = this.getCoLPCapacity.selector;
-        sels[29] = this.setMintTimeoutBlocks.selector;
-        sels[30] = this.setBurnTimeoutBlocks.selector;
+        sels[6] = this.setVaultMarketMetrics.selector;
+        sels[7] = this.setMaxMintBps.selector;
+        sels[8] = this.setMinBurnAmount.selector;
+        sels[9] = this.setMinterWhitelist.selector;
+        sels[10] = this.batchSetMinterWhitelist.selector;
+        sels[11] = this.withdrawReturns.selector;
+        sels[12] = this.getVault.selector;
+        sels[13] = this.getVaultHealth.selector;
+        sels[14] = this.getVaultDebt.selector;
+        sels[15] = this.getVaultCount.selector;
+        sels[16] = this.getVaultAtIndex.selector;
+        sels[17] = this.getPendingReturns.selector;
+        sels[18] = this.hasActiveVault.selector;
+        sels[19] = this.getPositionMetadata.selector;
+        sels[20] = this.isMinterWhitelisted.selector;
+        sels[21] = this.selectors.selector;
+        sels[22] = this.setMaxCoLPRange.selector;
+        sels[23] = this.userOpenCoLP.selector;
+        sels[24] = this.collectCoLPFees.selector;
+        sels[25] = this.unwindCoLP.selector;
+        sels[26] = this.rebalanceCoLP.selector;
+        sels[27] = this.getCoLPCapacity.selector;
+        sels[28] = this.setMintTimeoutBlocks.selector;
+        sels[29] = this.setBurnTimeoutBlocks.selector;
         return sels;
     }
     

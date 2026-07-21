@@ -66,6 +66,10 @@ contract wsXmrStorage {
     
     event ReturnQueued(address indexed user, address indexed token, uint256 amount);
     
+    // ========== ERRORS ==========
+    
+    error PendingMintLock(); // Vault has active READY mints — state-changing ops blocked
+    
     // ========== ENUMS ==========
     
     enum MintStatus {
@@ -98,7 +102,6 @@ contract wsXmrStorage {
         uint256 pendingDebt;
         uint16 maxMintBps;
         uint256 mintGriefingDeposit;
-        uint256 mintReadyBond;        // LP bond required when calling setMintReady
         uint16 mintFeeBps;
         uint16 burnRewardBps;
         uint256 liquidationNonce;
@@ -109,6 +112,7 @@ contract wsXmrStorage {
         uint16 maxCoLPRangeBps;
         uint256 mintTimeoutBlocks;
         uint256 burnTimeoutBlocks;
+        uint256 pendingMintCount;     // Number of active READY mints — blocks state-changing ops
     }
     
     struct MintRequest {
@@ -123,7 +127,6 @@ contract wsXmrStorage {
         bytes32 userPublicKey;       // User's compressed Ed25519 public key for 2-of-2 address derivation
         uint256 timeout;
         uint256 griefingDeposit;
-        uint256 lpBond;              // LP bond posted when setMintReady called
         uint256 normalizedDebtAmount;
         uint256 vaultMintNonce;
         bytes32 lpCommitment;   // keccak256(Ed25519.scalarMultBase(lpSecret)) — set in setMintReady
@@ -244,6 +247,9 @@ contract wsXmrStorage {
     // M1: On-chain EMA price accumulator (18 decimals, 0 until first oracle update)
     uint256 public xmrEmaPrice;
 
+    // Total pending READY mints across all vaults — blocks triggerBuyAndBurn (global index shift)
+    uint256 public totalPendingMints;
+
     // ========== INTERNAL HELPERS ==========
     
     /// @dev Internal helper to get XMR price from storage (avoids diamond staticcall issues)
@@ -288,7 +294,7 @@ contract wsXmrStorage {
      * Example: If adding 3 new uint256 variables, change to:
      * uint256[47] private __gap;
      */
-    uint256[43] private __gap;
+    uint256[41] private __gap;
     
     // ========== CONSTRUCTOR ==========
     
