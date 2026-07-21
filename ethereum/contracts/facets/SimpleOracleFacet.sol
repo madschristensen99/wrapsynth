@@ -11,8 +11,6 @@ import {IOracleFacet} from "../interfaces/facets/IOracleFacet.sol";
  */
 contract SimpleOracleFacet is wsXmrStorage, IOracleFacet {
     
-    address public priceUpdater;
-    
     event PricesUpdated(uint256 xmrPrice, uint256 daiPrice, uint256 timestamp);
     event UpdaterChanged(address indexed oldUpdater, address indexed newUpdater);
     
@@ -31,14 +29,19 @@ contract SimpleOracleFacet is wsXmrStorage, IOracleFacet {
 
         uint256 newPrice = xmrPrice * 1e10;
 
-        // H3: Deviation guard — reject updates that move more than MAX_PRICE_DEVIATION_BPS.
-        // Staleness-scaled: if last update is >90s old, skip guard so a stuck oracle can re-anchor.
-        uint256 timeSinceUpdate = block.timestamp - lastXmrPriceTimestamp;
-        if (msg.sender != deployer && timeSinceUpdate < 90 seconds) {
+        // M2: Deviation guard — always enforced for priceUpdater to prevent compromised oracle attacks.
+        // Deployer bypasses for trusted setup/recovery. For stale updates (>90s), allow 2x threshold so
+        // a stuck oracle can re-anchor without being unbounded.
+        if (msg.sender != deployer) {
+            uint256 timeSinceUpdate = block.timestamp - lastXmrPriceTimestamp;
+            uint256 maxDeviation = MAX_PRICE_DEVIATION_BPS;
+            if (timeSinceUpdate >= 90 seconds) {
+                maxDeviation = MAX_PRICE_DEVIATION_BPS * 2;
+            }
             uint256 oldPrice = uint256(uint192(lastXmrPrice)) * 1e10;
             if (oldPrice > 0) {
                 uint256 diff = oldPrice > newPrice ? oldPrice - newPrice : newPrice - oldPrice;
-                require((diff * BPS_DENOMINATOR) / oldPrice <= MAX_PRICE_DEVIATION_BPS, "Price deviation too high");
+                require((diff * BPS_DENOMINATOR) / oldPrice <= maxDeviation, "Price deviation too high");
             }
         }
 

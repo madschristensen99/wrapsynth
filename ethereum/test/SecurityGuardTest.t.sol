@@ -476,6 +476,100 @@ contract SecurityGuardTest is Test {
         SimpleOracleFacet(address(hub)).getXmrPrice();
     }
 
+    // ========== VAULT EVICTION: GRIEFING PREVENTION ==========
+    // activeVaultCount is at storage slot 37 (after vaultList at slot 36)
+    uint256 constant ACTIVE_VAULT_COUNT_SLOT = 37;
+
+    /// @notice Empty vaults are evictable when cap is reached
+    function test_Vault_Eviction_EmptyVaultEvicted() public {
+        // Create an empty vault (the griefer)
+        address griefer = makeAddr("griefer");
+        vm.prank(griefer);
+        VaultFacet(address(hub)).createVault();
+
+        // Set activeVaultCount to cap so next createVault triggers eviction
+        vm.store(address(hub), bytes32(ACTIVE_VAULT_COUNT_SLOT), bytes32(uint256(10000)));
+
+        // New LP creates vault — should evict the empty griefer vault
+        address newLp = makeAddr("newLp");
+        vm.prank(newLp);
+        VaultFacet(address(hub)).createVault();
+
+        // New LP should have an active vault (setMintGriefingDeposit should work)
+        vm.prank(newLp);
+        VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
+
+        // Griefer's vault should be evicted — setMintGriefingDeposit should revert
+        vm.prank(griefer);
+        vm.expectRevert(IErrors.VaultDoesNotExist.selector);
+        VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
+    }
+
+    /// @notice Vault with debt cannot be evicted
+    function test_Vault_Eviction_VaultWithDebt_Protected() public {
+        // lp already has a vault with collateral from setUp
+        // Create an empty griefer vault
+        address griefer = makeAddr("griefer2");
+        vm.prank(griefer);
+        VaultFacet(address(hub)).createVault();
+
+        // Mint some debt from lp's vault so it has normalizedDebt > 0
+        _mintForUser(user, lp);
+
+        // Set activeVaultCount to cap
+        vm.store(address(hub), bytes32(ACTIVE_VAULT_COUNT_SLOT), bytes32(uint256(10000)));
+
+        // New LP creates vault — should evict the empty griefer vault, NOT lp (who has debt)
+        address newLp = makeAddr("newLp2");
+        vm.prank(newLp);
+        VaultFacet(address(hub)).createVault();
+
+        // lp should still be active (setMintGriefingDeposit should work)
+        vm.prank(lp);
+        VaultFacet(address(hub)).setMintGriefingDeposit(0.002 ether);
+
+        // Griefer should be evicted – setMintGriefingDeposit should revert
+        vm.prank(griefer);
+        vm.expectRevert(IErrors.VaultDoesNotExist.selector);
+        VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
+    }
+
+    /// @notice When all vaults have collateral above 1% threshold, creation reverts
+    function test_Vault_Eviction_AllVaultsAboveThreshold_Reverts() public {
+        // lp has 100 ether (100e18 sDAI shares) from setUp
+        // Create a second vault with 2 ether — above 1% of lp's 100 ether
+        address small = makeAddr("small");
+        _createVaultAndDeposit(small, 2 ether);
+
+        // Set activeVaultCount to cap
+        vm.store(address(hub), bytes32(ACTIVE_VAULT_COUNT_SLOT), bytes32(uint256(10000)));
+
+        // Both vaults have collateral >= 1% of max (100 ether * 1% = 1 ether)
+        // small has 2 ether > 1 ether threshold, so not evictable
+        address newLp = makeAddr("newLp3");
+        vm.prank(newLp);
+        vm.expectRevert(wsXmrStorage.NoEvictableVaultFound.selector);
+        VaultFacet(address(hub)).createVault();
+    }
+
+    /// @notice deactivateVault removes from vaultList and decrements activeVaultCount
+    function test_Vault_Deactivate_ReducesActiveCount() public {
+        uint256 countBefore = VaultFacet(address(hub)).getVaultCount();
+
+        // Create a second vault with no collateral
+        address lp3 = makeAddr("lp3");
+        vm.prank(lp3);
+        VaultFacet(address(hub)).createVault();
+
+        assertEq(VaultFacet(address(hub)).getVaultCount(), countBefore + 1);
+
+        // Deactivate it
+        vm.prank(lp3);
+        VaultFacet(address(hub)).deactivateVault();
+
+        assertEq(VaultFacet(address(hub)).getVaultCount(), countBefore);
+    }
+
     // ========== HELPERS ==========
 
     function _createVaultAndDeposit(address who, uint256 amount) internal {
@@ -560,6 +654,7 @@ interface IVaultFacet {
     error MaxVaultsReached();
     error ExceedsMaxMargin();
     error ETHTransferFailed();
+    error VaultNotEvictable();
 }
 
 interface IOracleFacet {

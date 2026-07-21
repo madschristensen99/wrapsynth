@@ -11,7 +11,6 @@ import {CollateralLogic} from "../libraries/CollateralLogic.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {GnosisAddresses} from "../GnosisAddresses.sol";
 import {YieldLogic} from "../libraries/YieldLogic.sol";
-import {GnosisAddresses} from "../GnosisAddresses.sol";
 import {IwsXmrLiquidityRouter} from "../interfaces/router/IwsXmrLiquidityRouter.sol";
 import {ISavingsDAI} from "../interfaces/external/ISavingsDAI.sol";
 import {IBurnOperations} from "../interfaces/swap/IBurnOperations.sol";
@@ -65,7 +64,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             normalizedBurnAmount = v.normalizedDebt;
         }
         v.normalizedDebt -= normalizedBurnAmount;
-        globalTotalDebt -= burnReq.wsxmrAmount;
+        globalTotalDebt -= _denormalizeDebt(normalizedBurnAmount);
 
         pendingReturns[burnReq.user][GnosisAddresses.SDAI] += userPayout;
         globalPendingSDAI += userPayout;
@@ -75,6 +74,15 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         emit BurnSlashed(burnReq.requestId, burnReq.user, userPayout);
     }
     
+    /// @notice Liquidate an undercollateralized vault — burns wsXMR from caller and seizes sDAI collateral at a bonus
+    /// @dev Permissionless. Requires vault's collateral ratio (including deployed positions) to be below LIQUIDATION_RATIO.
+    ///      Before seizing collateral, handles in-flight burns: force-cancels REQUESTED/PROPOSED burns (restoring wsXMR to users),
+    ///      settles COMMITTED burns via par-capped slash. Then unwinds all deployed Uniswap V3 positions.
+    ///      Seizes collateral at LIQUIDATION_BONUS premium over debt value. Never seizes locked collateral.
+    ///      Writes off bad debt if vault is fully drained. Increments liquidationNonce and mintNonce to invalidate
+    ///      pending mints and future burn cancellations.
+    /// @param lpVault Address of the vault to liquidate
+    /// @param debtToClear Amount of wsXMR debt to liquidate (8 decimals); capped to vault's actual debt
     function liquidate(address lpVault, uint256 debtToClear) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
@@ -281,8 +289,6 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             if (burnReq.status == BurnStatus.REQUESTED || burnReq.status == BurnStatus.PROPOSED) {
                 if (burnReq.vaultLiquidationNonce == oldV.liquidationNonce) {
                     oldV.lockedCollateral -= (burnReq.lockedCollateral + burnReq.rewardCollateral);
-                    oldV.normalizedDebt += burnReq.normalizedDebtAmount;
-                    globalTotalDebt += burnReq.wsxmrAmount;
                 }
                 globalPendingBurnDebt -= burnReq.wsxmrAmount;
                 IwsXmrHub(address(this)).mintTokens(burnReq.user, burnReq.wsxmrAmount);
@@ -346,6 +352,9 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         _reentrancyStatus = _NOT_ENTERED;
     }
     
+    /// @notice Check if a vault is currently liquidatable (below LIQUIDATION_RATIO)
+    /// @param lpVault The vault address to check
+    /// @return True if the vault can be liquidated
     function isVaultLiquidatable(address lpVault) external view returns (bool) {
         Vault memory vault = _vaults[lpVault];
         uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
@@ -355,6 +364,11 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         return ratio < LIQUIDATION_RATIO;
     }
     
+    /// @notice Calculate the outcome of a liquidation without executing it
+    /// @param lpVault The vault address
+    /// @param debtToClear Requested wsXMR debt to liquidate (8 decimals)
+    /// @return collateralSeized sDAI shares that would be seized
+    /// @return actualDebtCleared Actual wsXMR debt that would be cleared (may be less than requested if collateral is insufficient)
     function calculateLiquidation(address lpVault, uint256 debtToClear) external view returns (uint256 collateralSeized, uint256 actualDebtCleared) {
         Vault memory vault = _vaults[lpVault];
         uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
@@ -371,8 +385,11 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         uint256 collateralToSeizeDai = (collateralValueUsd * SDAI_DECIMALS) / collateralPrice;
         collateralSeized = _daiToShares(collateralToSeizeDai);
         
-        if (collateralSeized > vault.collateralShares) {
-            collateralSeized = vault.collateralShares;
+        uint256 availableCollateral = vault.collateralShares > vault.lockedCollateral
+            ? vault.collateralShares - vault.lockedCollateral
+            : 0;
+        if (collateralSeized > availableCollateral) {
+            collateralSeized = availableCollateral;
             uint256 actualDaiAmount = _sharesToDai(collateralSeized);
             uint256 actualCollateralValueUsd = (actualDaiAmount * collateralPrice) / SDAI_DECIMALS;
             actualDebtCleared = (actualCollateralValueUsd * RATIO_PRECISION * WSXMR_DECIMALS) / (LIQUIDATION_BONUS * xmrPrice);
@@ -385,6 +402,13 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         }
     }
     
+    /// @notice Scan a range of vaults for liquidatable ones
+    /// @dev Iterates vaultList from startIndex, checking each vault's collateral ratio.
+    ///      Returns arrays of vault addresses and their actual debts for liquidatable vaults.
+    /// @param startIndex Starting index in vaultList
+    /// @param count Maximum number of vaults to check
+    /// @return vaults_ Array of liquidatable vault addresses
+    /// @return debts Array of corresponding actual debt amounts
     function getLiquidatableVaults(uint256 startIndex, uint256 count) external view returns (address[] memory vaults_, uint256[] memory debts) {
         uint256 totalVaults = vaultList.length;
         uint256 maxResults = count;
@@ -412,6 +436,10 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         }
     }
 
+    /// @dev Calculates a vault's collateral ratio including deployed Uniswap V3 positions.
+    ///      If the vault has no deployed positions (deployedSDAIShares == 0), uses the simple ratio from idle collateral.
+    ///      Otherwise, fetches position totals at oracle price and uses CollateralLogic.calculateVaultCRWithDeployment.
+    /// @return Ratio as (collateralValueUSD * 100) / debtValueUSD, where 150 = 150%
     function _calculateCRWithPositions(address vaultAddr, uint256 debtAmount)
         internal view returns (uint256)
     {
@@ -437,6 +465,8 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         );
     }
     
+    /// @dev Gets total DAI and wsXMR amounts across all deployed Uniswap V3 positions for a vault,
+    ///      valued at the given oracle price. Iterates all position token IDs and queries the router.
     function _getVaultPositionTotalsAtOracle(address vaultAddr, uint256 xmrPrice)
         internal view
         returns (uint256 totalDAI, uint256 totalWsxmr)
@@ -450,6 +480,9 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         }
     }
     
+    /// @dev Unwinds all deployed Uniswap V3 positions for a vault during liquidation or backstop.
+    ///      Drains each position via the router, returns sDAI to vault collateral and wsXMR to user via pendingReturns.
+    ///      Removes positions from both vault and user position arrays. Emits CoLPUnwound for each.
     function _unwindAllVaultPositions(address lpVault, uint256 xmrPrice) internal {
         Vault storage vault = _vaults[lpVault];
         
@@ -491,6 +524,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         }
     }
     
+    /// @dev Convert DAI amount to sDAI shares via staticcall to the sDAI contract's convertToShares
     function _daiToShares(uint256 daiAmount) internal view returns (uint256) {
         (bool success, bytes memory data) = GnosisAddresses.SDAI.staticcall(
             abi.encodeWithSignature("convertToShares(uint256)", daiAmount)
@@ -499,6 +533,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         return abi.decode(data, (uint256));
     }
     
+    /// @dev Convert sDAI shares to DAI amount via staticcall to the sDAI contract's convertToAssets
     function _sharesToDai(uint256 shares) internal view returns (uint256) {
         (bool success, bytes memory data) = GnosisAddresses.SDAI.staticcall(
             abi.encodeWithSignature("convertToAssets(uint256)", shares)
