@@ -101,7 +101,6 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             userPublicKey: userPublicKey,
             timeout: timeoutBlock,
             griefingDeposit: msg.value,
-            lpBond: 0,  // Bond posted later when LP calls setMintReady
             normalizedDebtAmount: 0,
             vaultMintNonce: vault.mintNonce,
             lpCommitment: bytes32(0),
@@ -148,7 +147,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         emit LPKeyProvided(requestId, lpPublicSpendKey, lpPublicViewKey);
     }
     
-    function setMintReady(bytes32 requestId, bytes32 lpCommitment) external payable {
+    function setMintReady(bytes32 requestId, bytes32 lpCommitment) external {
         MintRequest storage request = mintRequests[requestId];
         if (request.status != MintStatus.KEY_PROVIDED) revert InvalidStatus();
         if (msg.sender != request.lpVault) revert Unauthorized();
@@ -157,11 +156,6 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         
         Vault storage vault = _vaults[request.lpVault];
         if (request.vaultMintNonce != vault.mintNonce) revert InvalidStatus();
-        
-        // Require LP bond proportional to mint amount
-        uint256 requiredBond = vault.mintReadyBond;
-        if (msg.value < requiredBond) revert InsufficientBond();
-        request.lpBond = msg.value;
         
         _syncVaultYield(request.lpVault);
         
@@ -176,6 +170,8 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         request.lpCommitment = lpCommitment;
         request.status = MintStatus.READY;
         request.timeout = block.number + MINT_READY_EXTENSION_BLOCKS;
+        vault.pendingMintCount++;
+        totalPendingMints++;
         emit MintReady(requestId, lpCommitment);
     }
     
@@ -206,14 +202,11 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         
         if (request.vaultMintNonce != vault.mintNonce) {
             request.status = MintStatus.CANCELLED;
+            vault.pendingMintCount--;
+            totalPendingMints--;
             if (request.griefingDeposit > 0) {
                 pendingReturns[request.initiator][address(0)] += request.griefingDeposit;
                 emit ReturnQueued(request.initiator, address(0), request.griefingDeposit);
-            }
-            // C3: Return LP bond if present (nonce mismatch strands bond)
-            if (request.lpBond > 0) {
-                pendingReturns[request.lpVault][address(0)] += request.lpBond;
-                emit ReturnQueued(request.lpVault, address(0), request.lpBond);
             }
             emit MintCancelled(request.requestId);
             _reentrancyStatus = _NOT_ENTERED;
@@ -236,12 +229,8 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             emit ReturnQueued(request.initiator, address(0), request.griefingDeposit);
         }
         
-        // Return LP bond
-        if (request.lpBond > 0) {
-            pendingReturns[request.lpVault][address(0)] += request.lpBond;
-            emit ReturnQueued(request.lpVault, address(0), request.lpBond);
-        }
-        
+        vault.pendingMintCount--;
+        totalPendingMints--;
         request.status = MintStatus.COMPLETED;
         emit MintFinalized(requestId, secret);
         
@@ -297,15 +286,14 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         bytes32 computed = keccak256(abi.encodePacked(px, py));
         if (computed != request.lpCommitment) revert InvalidSecret();
         
+        Vault storage vault = _vaults[request.lpVault];
         request.status = MintStatus.CANCELLED;
+        vault.pendingMintCount--;
+        totalPendingMints--;
         
         if (request.griefingDeposit > 0) {
             pendingReturns[request.lpVault][address(0)] += request.griefingDeposit;
             emit ReturnQueued(request.lpVault, address(0), request.griefingDeposit);
-        }
-        if (request.lpBond > 0) {
-            pendingReturns[request.lpVault][address(0)] += request.lpBond;
-            emit ReturnQueued(request.lpVault, address(0), request.lpBond);
         }
         emit GriefingDepositClaimed(requestId, lpSecret);
         
@@ -320,16 +308,15 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         if (request.status != MintStatus.EXPIRED_READY) revert InvalidStatus();
         if (block.number < request.timeout) revert TimeoutNotReached();
         
+        Vault storage vault = _vaults[request.lpVault];
         request.status = MintStatus.CANCELLED;
+        vault.pendingMintCount--;
+        totalPendingMints--;
         
-        // LP never proved liveness — return user's deposit, return LP's bond
+        // LP never proved liveness — return user's deposit
         if (request.griefingDeposit > 0) {
             pendingReturns[request.initiator][address(0)] += request.griefingDeposit;
             emit ReturnQueued(request.initiator, address(0), request.griefingDeposit);
-        }
-        if (request.lpBond > 0) {
-            pendingReturns[request.lpVault][address(0)] += request.lpBond;
-            emit ReturnQueued(request.lpVault, address(0), request.lpBond);
         }
         emit MintGriefingUnclaimed(requestId);
         

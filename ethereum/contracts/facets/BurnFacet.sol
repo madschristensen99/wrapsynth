@@ -52,6 +52,8 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         if (wsxmrAmount < MIN_BURN_AMOUNT) revert BelowMinimumBurn();
         
         Vault storage vault = _vaults[lpVault];
+        if (vault.pendingMintCount > 0) revert PendingMintLock();
+        
         if (vault.minBurnAmount > 0 && wsxmrAmount < vault.minBurnAmount) revert BelowMinimumBurn();
         
         // M1: Burn cannot exceed the vault's own debt
@@ -85,15 +87,13 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         // B1: Total collateral model - never subtract from collateralShares when locking
         vault.lockedCollateral += totalLock;
-        
-        uint256 normalizedBurnAmount = (wsxmrAmount * 1e18 + globalDebtIndex - 1) / globalDebtIndex;
-        if (normalizedBurnAmount > vault.normalizedDebt) {
-            normalizedBurnAmount = vault.normalizedDebt;
-        }
-        vault.normalizedDebt -= normalizedBurnAmount;
-        globalTotalDebt -= wsxmrAmount;
+
+        // Debt is NOT reduced here — it stays until the burn settles (finalizeBurn,
+        // claimSlashedCollateral, forceSettleBurn, or _settleCommittedBurnSlash).
+        // This eliminates the need to restore debt on cancel/abort, removing the
+        // entire class of index-shift debt inflation bugs.
         globalPendingBurnDebt += wsxmrAmount;
-        
+
         bytes32 requestId = keccak256(abi.encodePacked(user, lpVault, wsxmrAmount, ++_requestNonce));
         if (burnRequests[requestId].status != BurnStatus.INVALID) revert BurnAlreadyExists();
         
@@ -109,7 +109,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         req.rewardCollateral = rewardCollateral;
         req.deadline = block.number + vault.burnTimeoutBlocks;
         req.vaultLiquidationNonce = vault.liquidationNonce;
-        req.normalizedDebtAmount = normalizedBurnAmount;
+        req.normalizedDebtAmount = 0; // No longer set at request time — debt not reduced
         req.status = BurnStatus.REQUESTED;
         req.userClaimCommitment = claimCommitment;
         req.userPublicKey = userPublicKey;
@@ -220,6 +220,14 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         if (vault.collateralShares < safeReward) revert InsufficientCollateral();
         vault.collateralShares -= safeReward;
         
+        // Debt reduction happens here at settlement, not at request time
+        uint256 normalizedBurnAmount = (request.wsxmrAmount * 1e18 + globalDebtIndex - 1) / globalDebtIndex;
+        if (normalizedBurnAmount > vault.normalizedDebt) {
+            normalizedBurnAmount = vault.normalizedDebt;
+        }
+        vault.normalizedDebt -= normalizedBurnAmount;
+        globalTotalDebt -= request.wsxmrAmount;
+        
         if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
         else globalPendingBurnDebt -= request.wsxmrAmount;
         
@@ -265,6 +273,14 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         if (vault.collateralShares < userPayout) revert InsufficientCollateral();
         vault.collateralShares -= userPayout;
         
+        // Debt reduction happens here at settlement
+        uint256 normalizedBurnAmount = (request.wsxmrAmount * 1e18 + globalDebtIndex - 1) / globalDebtIndex;
+        if (normalizedBurnAmount > vault.normalizedDebt) {
+            normalizedBurnAmount = vault.normalizedDebt;
+        }
+        vault.normalizedDebt -= normalizedBurnAmount;
+        globalTotalDebt -= request.wsxmrAmount;
+        
         if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
         else globalPendingBurnDebt -= request.wsxmrAmount;
 
@@ -293,8 +309,6 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
             uint256 totalLock = request.lockedCollateral + request.rewardCollateral;
             if (vault.lockedCollateral < totalLock) revert InsufficientCollateral();
             vault.lockedCollateral -= totalLock;
-            vault.normalizedDebt += request.normalizedDebtAmount;
-            globalTotalDebt += request.wsxmrAmount;
         }
         
         if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
@@ -334,6 +348,15 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         vault.lockedCollateral -= totalLock;
         if (vault.collateralShares < userBase) revert InsufficientCollateral();
         vault.collateralShares -= userBase;
+        
+        // Debt reduction happens here at settlement
+        uint256 normalizedBurnAmount = (request.wsxmrAmount * 1e18 + globalDebtIndex - 1) / globalDebtIndex;
+        if (normalizedBurnAmount > vault.normalizedDebt) {
+            normalizedBurnAmount = vault.normalizedDebt;
+        }
+        vault.normalizedDebt -= normalizedBurnAmount;
+        globalTotalDebt -= request.wsxmrAmount;
+        
         if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
         else globalPendingBurnDebt -= request.wsxmrAmount;
         
@@ -362,8 +385,6 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
             uint256 totalLock = request.lockedCollateral + request.rewardCollateral;
             if (vault.lockedCollateral < totalLock) revert InsufficientCollateral();
             vault.lockedCollateral -= totalLock;
-            vault.normalizedDebt += request.normalizedDebtAmount;
-            globalTotalDebt += request.wsxmrAmount;
         }
         
         if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;

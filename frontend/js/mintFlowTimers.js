@@ -103,6 +103,31 @@ export async function startDeadlineTimer(mintFlow) {
                                 clearActiveSwap();
                                 const { resetMintUI } = await import('./ui.js?v=3.3');
                                 resetMintUI();
+                            } else if (status === 6) {
+                                // EXPIRED_READY — LP has a claim window
+                                const claimWindowEnd = Number(mintReq.timeout);
+                                const { getPublicClient } = await import('./viemClient.js');
+                                const pubClient = getPublicClient();
+                                const currentBlock = await pubClient.getBlockNumber();
+                                if (currentBlock >= claimWindowEnd) {
+                                    // LP claim window expired — sweep to recover deposit
+                                    refundBtn.textContent = 'Sweeping expired mint...';
+                                    await writeHub('sweepUnclaimedExpiredMint', [mintFlow.requestId]);
+                                    await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
+                                    timerElement.innerHTML = '<strong style="color:var(--success-color);">Deposit Recovered</strong>';
+                                    refundBtn.remove();
+                                    const { clearActiveSwap } = await import('./storage.js');
+                                    clearActiveSwap();
+                                    const { resetMintUI } = await import('./ui.js?v=3.3');
+                                    resetMintUI();
+                                } else {
+                                    // LP still has time to claim
+                                    const blocksRemaining = claimWindowEnd - Number(currentBlock);
+                                    const minutes = Math.ceil(blocksRemaining * 5 / 60);
+                                    refundBtn.disabled = true;
+                                    refundBtn.textContent = `Waiting for LP claim window (~${minutes} min)`;
+                                    timerElement.innerHTML += `<br><span style="font-size:0.75rem;color:var(--warning-color);">LP can claim deposit for ~${minutes} more minutes. After that, you can sweep it back.</span>`;
+                                }
                             } else if (status === 1 || status === 2 || status === 3) {
                                 // Still cancellable; call cancelMint
                                 refundBtn.textContent = 'Cancelling...';

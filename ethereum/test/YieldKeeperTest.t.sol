@@ -103,7 +103,6 @@ contract YieldKeeperTest is Test {
         VaultFacet(address(hub)).setMaxMintBps(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
-        VaultFacet(address(hub)).setMintReadyBond(0.001 ether);
 
         deal(GnosisAddresses.SDAI, lp, 10000 ether);
         IERC20(GnosisAddresses.SDAI).approve(address(hub), 10000 ether);
@@ -124,7 +123,7 @@ contract YieldKeeperTest is Test {
         vm.prank(lp);
         MintFacet(address(hub)).provideLPKey(userMints[0], lpPublicKey, lpPublicKey);
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady{value: 0.001 ether}(userMints[0], bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(userMints[0], bytes32(uint256(0xdeadbeef)));
         vm.prank(user);
         MintFacet(address(hub)).finalizeMint(userMints[0], testSecret);
     }

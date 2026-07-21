@@ -235,7 +235,6 @@ contract OracleCoverageTest is Test {
         VaultFacet(address(hub)).setMaxMintBps(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
-        VaultFacet(address(hub)).setMintReadyBond(0.001 ether);
         VaultFacet(address(hub)).setVaultMarketMetrics(100, 100);
         vm.stopPrank();
     }
