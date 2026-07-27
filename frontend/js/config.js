@@ -121,7 +121,6 @@ export const RAW_ABIS = {
                 { name: 'pendingDebt', type: 'uint256' },
                 { name: 'maxMintBps', type: 'uint16' },
                 { name: 'mintGriefingDeposit', type: 'uint256' },
-                { name: 'mintReadyBond', type: 'uint256' },
                 { name: 'mintFeeBps', type: 'uint16' },
                 { name: 'burnRewardBps', type: 'uint16' },
                 { name: 'liquidationNonce', type: 'uint256' },
@@ -131,7 +130,8 @@ export const RAW_ABIS = {
                 { name: 'deployedSDAIShares', type: 'uint256' },
                 { name: 'maxCoLPRangeBps', type: 'uint16' },
                 { name: 'mintTimeoutBlocks', type: 'uint256' },
-                { name: 'burnTimeoutBlocks', type: 'uint256' }
+                { name: 'burnTimeoutBlocks', type: 'uint256' },
+                { name: 'pendingMintCount', type: 'uint256' }
             ],
             name: '',
             type: 'tuple'
@@ -227,13 +227,13 @@ export const ABIS = {
         'function depositShares(uint256 shares) external',
         'function withdrawCollateral(uint256 shares) external',
         'function setMintGriefingDeposit(uint256 deposit) external',
-        'function setMintReadyBond(uint256 bond) external',
         'function setVaultMarketMetrics(uint16 mintFeeBps, uint16 burnRewardBps) external',
         'function setMaxMintBps(uint16 maxMintBps) external',
         'function setMinBurnAmount(uint256 minAmount) external',
         'function withdrawReturns(address token) external',
         'function getVaultHealth(address lpAddress) external view returns (uint256 ratio)',
         'function getVaultDebt(address lpAddress) external view returns (uint256)',
+        'function getMintCapacity(address lpVault) external view returns (uint256 maxWsxmrAmount)',
         'function getVaultCount() external view returns (uint256)',
         'function vaultList(uint256 index) external view returns (address)',
         'function getPendingReturns(address user, address token) external view returns (uint256)',

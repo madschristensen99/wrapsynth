@@ -9,6 +9,8 @@ import {IwsXMR} from "../interfaces/core/IwsXMR.sol";
 import {IwsXmrLiquidityRouter} from "../interfaces/router/IwsXmrLiquidityRouter.sol";
 import {VaultFacet} from "../facets/VaultFacet.sol";
 import {GnosisAddresses} from "../GnosisAddresses.sol";
+import {YieldLogic} from "../libraries/YieldLogic.sol";
+import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
 /**
  * @title wsXmrHub
@@ -212,9 +214,9 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     
     // ========== VIEW FUNCTIONS ==========
     
-    /// @notice Get total number of vaults
+    /// @notice Get total number of active vaults
     function getVaultCount() external view returns (uint256) {
-        return vaultList.length;
+        return activeVaultCount;
     }
     
     /// @notice Get actual debt from normalized debt
@@ -283,6 +285,65 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     /// @return The denormalized debt amount
     function getVaultDebt(address lpAddress) external view returns (uint256) {
         return (_vaults[lpAddress].normalizedDebt * globalDebtIndex) / 1e18;
+    }
+
+    /// @notice Get max wsXMR amount a vault can mint in a single transaction
+    /// @dev Direct implementation to avoid TSTORE in staticcall issue.
+    ///      Simulates yield sync and collateral ratio check exactly as initiateMint would.
+    /// @param lpVault LP vault address
+    /// @return maxWsxmrAmount Maximum wsXMR (8 decimals) that can be minted
+    function getMintCapacity(address lpVault) external view returns (uint256 maxWsxmrAmount) {
+        Vault memory vault = _vaults[lpVault];
+        if (!vault.active) return 0;
+
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
+
+        // Simulate _syncVaultYield: calculate yield that would be extracted
+        uint256 collateralShares = vault.collateralShares;
+        uint256 actualDebt = (vault.normalizedDebt * globalDebtIndex) / 1e18;
+        if (collateralShares > 0 && (actualDebt > 0 || vault.pendingDebt > 0)) {
+            uint256 yieldShares = YieldLogic.calculateExtractableYield(
+                collateralShares,
+                vault.lockedCollateral,
+                lpPrincipalDeposits[lpVault],
+                actualDebt,
+                vault.pendingDebt,
+                xmrPrice,
+                collateralPrice
+            );
+            collateralShares -= yieldShares;
+        }
+
+        // Available collateral after yield sync (same as initiateMint)
+        uint256 availableCollateral = collateralShares > vault.lockedCollateral
+            ? collateralShares - vault.lockedCollateral
+            : 0;
+        if (availableCollateral == 0) return 0;
+
+        // Convert available shares to DAI, then to USD
+        uint256 collateralAmount = IERC4626(GnosisAddresses.SDAI).convertToAssets(availableCollateral);
+        uint256 collateralValueUsd = (collateralAmount * collateralPrice) / SDAI_DECIMALS;
+
+        // Current debt value in USD
+        uint256 currentDebt = actualDebt + vault.pendingDebt;
+        uint256 currentDebtValueUsd = (currentDebt * xmrPrice) / WSXMR_DECIMALS;
+
+        // Max total debt at 150% CR
+        uint256 maxTotalDebtValueUsd = (collateralValueUsd * RATIO_PRECISION) / COLLATERAL_RATIO;
+        if (currentDebtValueUsd >= maxTotalDebtValueUsd) return 0;
+
+        uint256 maxAdditionalDebtValueUsd = maxTotalDebtValueUsd - currentDebtValueUsd;
+        maxWsxmrAmount = (maxAdditionalDebtValueUsd * WSXMR_DECIMALS) / xmrPrice;
+
+        // Apply maxMintBps limit (limits single mint USD value)
+        if (vault.maxMintBps > 0) {
+            uint256 maxMintAllowedUsd = (maxTotalDebtValueUsd * vault.maxMintBps) / BPS_DENOMINATOR;
+            uint256 maxMintFromBps = (maxMintAllowedUsd * WSXMR_DECIMALS) / xmrPrice;
+            if (maxMintFromBps < maxWsxmrAmount) {
+                maxWsxmrAmount = maxMintFromBps;
+            }
+        }
     }
     
     // ========== FALLBACK ==========

@@ -244,7 +244,6 @@ async function loadVaultDetails(address) {
             {name: 'pendingDebt', type: 'uint256'},
             {name: 'maxMintBps', type: 'uint16'},
             {name: 'mintGriefingDeposit', type: 'uint256'},
-            {name: 'mintReadyBond', type: 'uint256'},
             {name: 'mintFeeBps', type: 'uint16'},
             {name: 'burnRewardBps', type: 'uint16'},
             {name: 'liquidationNonce', type: 'uint256'},
@@ -252,7 +251,10 @@ async function loadVaultDetails(address) {
             {name: 'minBurnAmount', type: 'uint256'},
             {name: 'active', type: 'bool'},
             {name: 'deployedSDAIShares', type: 'uint256'},
-            {name: 'maxCoLPRangeBps', type: 'uint16'}
+            {name: 'maxCoLPRangeBps', type: 'uint16'},
+            {name: 'mintTimeoutBlocks', type: 'uint256'},
+            {name: 'burnTimeoutBlocks', type: 'uint256'},
+            {name: 'pendingMintCount', type: 'uint256'}
           ]
         }]
       }],

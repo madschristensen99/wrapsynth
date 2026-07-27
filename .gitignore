@@ -303,3 +303,6 @@ lp-server-js/monero-wallets/
 # Monero wallet RPC logs
 lp-server-js/monero-wallet-rpc.log*
 
+# LP secrets (contains private keys, commitments)
+lp-server-js/lp-secrets.json
+

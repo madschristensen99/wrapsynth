@@ -5,6 +5,7 @@
   "scripts": {
     "compile": "forge build",
     "test": "forge test",
+    "check-abi": "node scripts/checkAbiConformance.js",
     "test:vvv": "forge test -vvv",
     "snapshot": "forge snapshot",
     "coverage": "forge coverage",

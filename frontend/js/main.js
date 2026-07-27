@@ -1998,17 +1998,25 @@ async function loadVaults() {
                         freeCollateral
                     });
 
-                    // New debt must also maintain 150% CR, so divide free collateral by 1.5
-                    let maxMintCapacityXmr = xmrPrice > 0 ? (freeCollateral * collPrice) / (1.5 * xmrPrice) : 0;
-
-                    // Enforce maxMintBps cap if configured (mirrors MintFacet check)
-                    const maxMintBps = Number(vaultData.maxMintBps);
-                    if (maxMintBps > 0) {
-                        const collateralValueUsd = collAmountDAI * collPrice;
-                        const maxTotalDebtCapacity = (collateralValueUsd * 100) / 150;
-                        const maxMintAllowedUsd = (maxTotalDebtCapacity * maxMintBps) / 10000;
-                        const maxMintBpsCapacity = maxMintAllowedUsd / xmrPrice;
-                        maxMintCapacityXmr = Math.min(maxMintCapacityXmr, maxMintBpsCapacity);
+                    // Query on-chain mint capacity (accounts for yield sync, same as initiateMint)
+                    let maxMintCapacityXmr = 0;
+                    try {
+                        const maxWsxmrAmount = await readHub('getMintCapacity', [vaultAddress]);
+                        // Convert wsXMR (8 decimals) to XMR (12 decimals): multiply by 1e4
+                        maxMintCapacityXmr = Number(maxWsxmrAmount) / 1e8 * 1e4;
+                        console.log('On-chain mint capacity (wsXMR):', maxWsxmrAmount.toString(), '=> XMR:', maxMintCapacityXmr);
+                    } catch (e) {
+                        console.warn('getMintCapacity failed (prices may be stale), falling back to manual calc:', e.message);
+                        // Fallback to manual calculation if oracle prices are stale
+                        maxMintCapacityXmr = xmrPrice > 0 ? (freeCollateral * collPrice) / (1.5 * xmrPrice) : 0;
+                        const maxMintBps = Number(vaultData.maxMintBps);
+                        if (maxMintBps > 0) {
+                            const collateralValueUsd = collAmountDAI * collPrice;
+                            const maxTotalDebtCapacity = (collateralValueUsd * 100) / 150;
+                            const maxMintAllowedUsd = (maxTotalDebtCapacity * maxMintBps) / 10000;
+                            const maxMintBpsCapacity = maxMintAllowedUsd / xmrPrice;
+                            maxMintCapacityXmr = Math.min(maxMintCapacityXmr, maxMintBpsCapacity);
+                        }
                     }
 
                     // Convert total collateral shares to sDAI
