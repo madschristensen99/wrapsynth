@@ -79,10 +79,23 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
     /// @inheritdoc IVaultFacet
     function createVault() external {
         if (_vaults[msg.sender].lpAddress != address(0)) revert VaultAlreadyExists();
-        if (vaultList.length >= MAX_VAULT_COUNT) revert MaxVaultsReached();
-        
-        _vaults[msg.sender] = Vault({
-            lpAddress: msg.sender,
+
+        if (activeVaultCount < MAX_VAULT_COUNT) {
+            // Normal path: cap not reached, just add
+            _createVaultInternal(msg.sender);
+        } else {
+            // Cap reached: try to evict a dormant vault
+            address evictable = _findEvictableVault();
+            if (evictable == address(0)) revert NoEvictableVaultFound();
+            _evictVault(evictable);
+            _createVaultInternal(msg.sender);
+            emit VaultEvicted(evictable, msg.sender);
+        }
+    }
+
+    function _createVaultInternal(address lp) internal {
+        _vaults[lp] = Vault({
+            lpAddress: lp,
             collateralShares: 0,
             lockedCollateral: 0,
             normalizedDebt: 0,
@@ -101,9 +114,11 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
             burnTimeoutBlocks: DEFAULT_BURN_TIMEOUT_BLOCKS,
             pendingMintCount: 0
         });
-        
-        vaultList.push(msg.sender);
-        emit VaultCreated(msg.sender);
+
+        vaultListIndex[lp] = vaultList.length;
+        vaultList.push(lp);
+        activeVaultCount++;
+        emit VaultCreated(lp);
     }
     
     /// @inheritdoc IVaultFacet
@@ -115,6 +130,8 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         if (vault.lockedCollateral > 0) revert VaultHasLockedCollateral();
         if (_vaultPositions[msg.sender].length > 0) revert VaultHasPositions();
         vault.active = false;
+        _removeFromVaultList(msg.sender);
+        activeVaultCount--;
     }
     
     // ========== COLLATERAL MANAGEMENT ==========
@@ -525,10 +542,75 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
     function getVaultDebt(address lpAddress) external view returns (uint256) {
         return _denormalizeDebt(_vaults[lpAddress].normalizedDebt);
     }
+
+    /// @inheritdoc IVaultFacet
+    function getMintCapacity(address lpVault) external view returns (uint256 maxWsxmrAmount) {
+        Vault memory vault = _vaults[lpVault];
+        if (!vault.active) return 0;
+
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
+
+        // Simulate _syncVaultYield: calculate yield that would be extracted
+        uint256 collateralShares = vault.collateralShares;
+        uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
+        if (collateralShares > 0 && (actualDebt > 0 || vault.pendingDebt > 0)) {
+            uint256 yieldShares = YieldLogic.calculateExtractableYield(
+                collateralShares,
+                vault.lockedCollateral,
+                lpPrincipalDeposits[lpVault],
+                actualDebt,
+                vault.pendingDebt,
+                xmrPrice,
+                collateralPrice
+            );
+            collateralShares -= yieldShares;
+        }
+
+        // Available collateral after yield sync (same as initiateMint)
+        uint256 availableCollateral = collateralShares > vault.lockedCollateral
+            ? collateralShares - vault.lockedCollateral
+            : 0;
+        if (availableCollateral == 0) return 0;
+
+        // Convert available shares to DAI, then to USD
+        uint256 collateralAmount = IERC4626(GnosisAddresses.SDAI).convertToAssets(availableCollateral);
+        uint256 collateralValueUsd = (collateralAmount * collateralPrice) / SDAI_DECIMALS;
+
+        // Current debt value in USD
+        uint256 currentDebt = actualDebt + vault.pendingDebt;
+        uint256 currentDebtValueUsd = (currentDebt * xmrPrice) / WSXMR_DECIMALS;
+
+        // Max total debt at 150% CR
+        uint256 maxTotalDebtValueUsd = (collateralValueUsd * RATIO_PRECISION) / COLLATERAL_RATIO;
+        if (currentDebtValueUsd >= maxTotalDebtValueUsd) return 0;
+
+        uint256 maxAdditionalDebtValueUsd = maxTotalDebtValueUsd - currentDebtValueUsd;
+        maxWsxmrAmount = (maxAdditionalDebtValueUsd * WSXMR_DECIMALS) / xmrPrice;
+
+        // Apply maxMintBps limit (limits single mint USD value)
+        if (vault.maxMintBps > 0) {
+            uint256 maxMintAllowedUsd = (maxTotalDebtValueUsd * vault.maxMintBps) / BPS_DENOMINATOR;
+            uint256 maxMintFromBps = (maxMintAllowedUsd * WSXMR_DECIMALS) / xmrPrice;
+            if (maxMintFromBps < maxWsxmrAmount) {
+                maxWsxmrAmount = maxMintFromBps;
+            }
+        }
+    }
+    
+    /// @inheritdoc IVaultFacet
+    function getMaxVaultCollateral() external view returns (uint256 maxCollateral) {
+        for (uint256 i = 0; i < vaultList.length; i++) {
+            Vault memory vault = _vaults[vaultList[i]];
+            if (vault.active && vault.collateralShares > maxCollateral) {
+                maxCollateral = vault.collateralShares;
+            }
+        }
+    }
     
     /// @inheritdoc IVaultFacet
     function getVaultCount() external view returns (uint256) {
-        return vaultList.length;
+        return activeVaultCount;
     }
     
     /// @inheritdoc IVaultFacet
@@ -561,7 +643,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
     /// @notice Returns all function selectors implemented by this facet
     /// @dev Used by Diamond to build selector → facet routing table
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](30);
+        bytes4[] memory sels = new bytes4[](32);
         sels[0] = this.createVault.selector;
         sels[1] = this.deactivateVault.selector;
         sels[2] = this.depositCollateral.selector;
@@ -592,6 +674,8 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         sels[27] = this.getCoLPCapacity.selector;
         sels[28] = this.setMintTimeoutBlocks.selector;
         sels[29] = this.setBurnTimeoutBlocks.selector;
+        sels[30] = this.getMaxVaultCollateral.selector;
+        sels[31] = this.calculateCollateralRatio.selector;
         return sels;
     }
     
@@ -779,5 +863,90 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         _userPositions[user].push(tokenId);
 
         emit CoLPDeployed(lpVault, user, tokenId, daiConsumed, wsxmrConsumed, rangeBps);
+    }
+
+    // ========== VAULT EVICTION INTERNALS ==========
+
+    function _removeFromVaultList(address vaultAddr) internal {
+        uint256 idx = vaultListIndex[vaultAddr];
+        uint256 lastIdx = vaultList.length - 1;
+
+        if (idx != lastIdx) {
+            address lastVault = vaultList[lastIdx];
+            vaultList[idx] = lastVault;
+            vaultListIndex[lastVault] = idx;
+        }
+
+        vaultList.pop();
+        delete vaultListIndex[vaultAddr];
+    }
+
+    function _isVaultEvictable(address vaultAddr, uint256 maxCollateral) internal view returns (bool) {
+        Vault memory vault = _vaults[vaultAddr];
+        if (!vault.active) return false;
+        if (vault.normalizedDebt > 0) return false;
+        if (vault.lockedCollateral > 0) return false;
+        if (vault.pendingMintCount > 0) return false;
+        if (_vaultPositions[vaultAddr].length > 0) return false;
+
+        if (maxCollateral == 0) {
+            return vault.collateralShares == 0;
+        }
+
+        uint256 threshold = (maxCollateral * MIN_VAULT_COLLATERAL_BPS) / BPS_DENOMINATOR;
+        return vault.collateralShares < threshold;
+    }
+
+    function _findEvictableVault() internal view returns (address) {
+        uint256 maxCollateral = 0;
+        for (uint256 i = 0; i < vaultList.length; i++) {
+            Vault memory vault = _vaults[vaultList[i]];
+            if (vault.active && vault.collateralShares > maxCollateral) {
+                maxCollateral = vault.collateralShares;
+            }
+        }
+
+        for (uint256 i = 0; i < vaultList.length; i++) {
+            if (_isVaultEvictable(vaultList[i], maxCollateral)) {
+                return vaultList[i];
+            }
+        }
+
+        return address(0);
+    }
+
+    function _evictVault(address vaultAddr) internal {
+        Vault storage vault = _vaults[vaultAddr];
+
+        if (vault.collateralShares > 0) {
+            uint256 shares = vault.collateralShares;
+            vault.collateralShares = 0;
+
+            uint256 daiReceived = ISavingsDAI(GnosisAddresses.SDAI).redeem(shares, vaultAddr, address(this));
+
+            uint256 principalToDeduct = lpPrincipalDeposits[vaultAddr];
+            if (principalToDeduct > globalLpPrincipal) {
+                principalToDeduct = globalLpPrincipal;
+            }
+            lpPrincipalDeposits[vaultAddr] = 0;
+            globalLpPrincipal -= principalToDeduct;
+
+            uint256 sharesToDeduct = lpPrincipalShares[vaultAddr];
+            if (sharesToDeduct > globalLpPrincipalShares) {
+                sharesToDeduct = globalLpPrincipalShares;
+            }
+            lpPrincipalShares[vaultAddr] = 0;
+            globalLpPrincipalShares -= sharesToDeduct;
+        }
+
+        vault.active = false;
+        vault.lpAddress = address(0);
+        vault.normalizedDebt = 0;
+        vault.pendingDebt = 0;
+        vault.lockedCollateral = 0;
+        vault.pendingMintCount = 0;
+
+        _removeFromVaultList(vaultAddr);
+        activeVaultCount--;
     }
 }

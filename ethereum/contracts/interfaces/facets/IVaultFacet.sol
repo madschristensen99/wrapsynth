@@ -13,6 +13,7 @@ interface IVaultFacet is IErrors {
     // ========== EVENTS ==========
     
     event VaultCreated(address indexed lpAddress);
+    event VaultEvicted(address indexed evictedVault, address indexed newVault);
     event CollateralDeposited(address indexed lpAddress, uint256 underlyingAmount, uint256 shares);
     event CollateralWithdrawn(address indexed lpAddress, uint256 underlyingAmount, uint256 shares);
     event MintGriefingDepositUpdated(address indexed lpVault, uint256 newDeposit);
@@ -35,6 +36,7 @@ interface IVaultFacet is IErrors {
     error VaultHasCollateral();
     error VaultHasLockedCollateral();
     error VaultHasPositions();
+    error VaultNotEvictable();
     
     // ========== VAULT LIFECYCLE ==========
     
@@ -145,6 +147,16 @@ interface IVaultFacet is IErrors {
     
     /// @notice Get vault's actual debt (after applying debt index)
     function getVaultDebt(address lpAddress) external view returns (uint256);
+
+    /// @notice Get max wsXMR amount a vault can mint in a single transaction
+    /// @dev Simulates yield sync and collateral ratio check exactly as initiateMint would
+    /// @param lpVault LP vault address
+    /// @return maxWsxmrAmount Maximum wsXMR (8 decimals) that can be minted
+    function getMintCapacity(address lpVault) external view returns (uint256 maxWsxmrAmount);
+    
+    /// @notice Get the largest collateral amount among all active vaults
+    /// @return maxCollateral The maximum collateralShares value
+    function getMaxVaultCollateral() external view returns (uint256 maxCollateral);
     
     /// @notice Get total number of vaults
     function getVaultCount() external view returns (uint256);

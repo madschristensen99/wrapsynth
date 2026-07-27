@@ -86,11 +86,6 @@ contract VaultFacetCoverageTest is Test {
         SimpleOracleFacet(address(hub)).setPriceUpdater(priceUpdater);
         SimpleOracleFacet(address(hub)).updatePrices(XMR_PRICE_8DEC, DAI_PRICE_8DEC);
 
-        // Register calculateCollateralRatio selector (not in VaultFacet.selectors())
-        bytes4[] memory crSelector = new bytes4[](1);
-        crSelector[0] = VaultFacet.calculateCollateralRatio.selector;
-        hub.addSelectors(address(vaultFacet), crSelector);
-
         _createVaultAndDeposit(lp, 100 ether);
         _configureVault(lp);
     }
@@ -292,6 +287,105 @@ contract VaultFacetCoverageTest is Test {
     function test_GetActualDebt_WithIndex() public {
         uint256 debt = IHubAdmin(address(hub)).getActualDebt(1000);
         assertEq(debt, 1000, "should equal normalized when index is 1e18");
+    }
+
+    // ========== getMintCapacity ==========
+
+    function test_GetMintCapacity_ZeroDebtVault() public {
+        // Vault has 100 sDAI shares deposited, no debt
+        // XMR price = $390, DAI price = $1
+        // sDAI shares → DAI via convertToAssets (forked, real rate)
+        // capacity = (collateralUSD * 100 / 150) / xmrPrice  (in wsXMR 8 decimals)
+        uint256 capacity = VaultFacet(address(hub)).getMintCapacity(lp);
+        assertGt(capacity, 0, "vault with collateral and no debt should have capacity");
+
+        // Verify: initiateMint with exactly this amount should succeed
+        // getMintCapacity returns wsXMR (8 decimals), initiateMint takes XMR (12 decimals)
+        // xmrAmount = wsxmrAmount * 1e4, but we need to be slightly under to avoid rounding
+        uint256 xmrAmount = capacity * 1e4;
+        // Use capacity - 1 to avoid rounding edge at the boundary
+        if (xmrAmount > 1e4) xmrAmount -= 1e4;
+
+        bytes32 secret = bytes32(uint256(0x5678));
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
+        bytes32 commitment = keccak256(abi.encodePacked(px, py));
+
+        vm.prank(user);
+        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
+            lp, user, xmrAmount, commitment, bytes32(uint256(0xcafe))
+        );
+    }
+
+    function test_GetMintCapacity_WithExistingDebt() public {
+        // First, create a mint to add pending debt
+        bytes32 secret = bytes32(uint256(0x5678));
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
+        bytes32 commitment = keccak256(abi.encodePacked(px, py));
+
+        uint256 firstMintXmr = 1e10; // 0.01 XMR (12 decimals)
+        vm.prank(user);
+        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
+            lp, user, firstMintXmr, commitment, bytes32(uint256(0xcafe))
+        );
+
+        // Now capacity should be reduced
+        uint256 capacity = VaultFacet(address(hub)).getMintCapacity(lp);
+        assertGt(capacity, 0, "should still have capacity after small mint");
+
+        // Capacity should be less than what a fresh vault would have
+        // (since we now have pending debt)
+        uint256 freshCapacity = VaultFacet(address(hub)).getMintCapacity(lp2);
+        // lp2 has no vault, so this should be 0 — create one for comparison
+        _createVaultAndDeposit(lp2, 100 ether);
+        freshCapacity = VaultFacet(address(hub)).getMintCapacity(lp2);
+        assertLt(capacity, freshCapacity, "vault with debt should have less capacity");
+    }
+
+    function test_GetMintCapacity_InactiveVault_ReturnsZero() public {
+        address newLp = makeAddr("inactiveLp");
+        // Create vault but don't deposit
+        vm.prank(newLp);
+        VaultFacet(address(hub)).createVault();
+
+        uint256 capacity = VaultFacet(address(hub)).getMintCapacity(newLp);
+        assertEq(capacity, 0, "inactive vault with no collateral should return 0");
+    }
+
+    function test_GetMintCapacity_NoVault_ReturnsZero() public {
+        uint256 capacity = VaultFacet(address(hub)).getMintCapacity(attacker);
+        assertEq(capacity, 0, "non-existent vault should return 0");
+    }
+
+    function test_GetMintCapacity_MaxMintBpsCapsCapacity() public {
+        // Set maxMintBps to 10% (1000 bps)
+        vm.prank(lp);
+        VaultFacet(address(hub)).setMaxMintBps(1000);
+
+        uint256 capacity = VaultFacet(address(hub)).getMintCapacity(lp);
+        assertGt(capacity, 0, "should have capacity with maxMintBps set");
+
+        // Without maxMintBps, capacity should be higher
+        vm.prank(lp);
+        VaultFacet(address(hub)).setMaxMintBps(0);
+        uint256 uncappedCapacity = VaultFacet(address(hub)).getMintCapacity(lp);
+        assertGt(uncappedCapacity, capacity, "uncapped capacity should be higher");
+    }
+
+    function test_GetMintCapacity_ExceedingCapacityReverts() public {
+        uint256 capacity = VaultFacet(address(hub)).getMintCapacity(lp);
+        assertGt(capacity, 0, "should have capacity");
+
+        // Try to mint more than capacity (add 10% buffer to ensure it exceeds)
+        uint256 xmrAmount = (capacity * 11 / 10) * 1e4;
+        bytes32 secret = bytes32(uint256(0x9999));
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
+        bytes32 commitment = keccak256(abi.encodePacked(px, py));
+
+        vm.prank(user);
+        vm.expectRevert(IErrors.InsufficientCollateral.selector);
+        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
+            lp, user, xmrAmount, commitment, bytes32(uint256(0xbabe))
+        );
     }
 
     // ========== HELPERS ==========

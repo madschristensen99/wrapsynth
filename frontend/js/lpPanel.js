@@ -137,7 +137,7 @@ export class LPPanel {
             pendingDebt: formatUnits(this.vault.pendingDebt, DECIMALS.wsXMR),
             maxMintBps: this.vault.maxMintBps,
             mintGriefingDeposit: formatUnits(this.vault.mintGriefingDeposit, DECIMALS.ETH),
-            mintReadyBond: formatUnits(this.vault.mintReadyBond, DECIMALS.ETH),
+            pendingMintCount: this.vault.pendingMintCount?.toString() || '0',
             mintFeeBps: this.vault.mintFeeBps,
             burnRewardBps: this.vault.burnRewardBps,
             minBurnAmount: formatUnits(this.vault.minBurnAmount, DECIMALS.wsXMR),
