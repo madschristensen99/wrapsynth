@@ -392,6 +392,7 @@ function setupEventHandlers() {
 
     // Burn flow
     elements.startBurn.addEventListener('click', handleStartBurn);
+    if (elements.cancelBurn) elements.cancelBurn.addEventListener('click', handleCancelBurn);
     elements.burnVaultSelect.addEventListener('change', () => handleVaultSelect(false));
     elements.burnAmount.addEventListener('input', updateBurnReceiveAmount);
     
@@ -2759,6 +2760,26 @@ async function handleCancelMint() {
         showSuccess('Mint Cancelled', 'Mint cancelled and XMR refunded');
     } catch (error) {
         console.error('Cancel error:', error);
+        showError('Cancel Error', error.message);
+    }
+}
+
+/**
+ * Handle cancel burn
+ */
+async function handleCancelBurn() {
+    if (!currentBurnFlow) return;
+
+    const confirmed = confirm('Are you sure you want to cancel this burn? Depending on the current state, your wsXMR will be restored or you will receive slashed collateral.');
+    if (!confirmed) return;
+
+    try {
+        stopTimers(currentBurnFlow);
+        await currentBurnFlow.cancel();
+        resetBurnUI();
+        showSuccess('Burn Cancelled', 'Burn cancelled successfully');
+    } catch (error) {
+        console.error('Burn cancel error:', error);
         showError('Cancel Error', error.message);
     }
 }

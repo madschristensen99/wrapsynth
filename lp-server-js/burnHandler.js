@@ -3,10 +3,16 @@
 
 import crypto from 'crypto';
 import * as ethers from 'ethers';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { computeSecretHash } from './commitment.js';
 import * as moneroWallet from './moneroWallet.js';
 import * as moneroCrypto from './moneroCrypto.js';
 import { updateOraclePricesManual } from './oracleUpdate.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const BURN_SECRETS_FILE = path.join(__dirname, 'lp-burn-secrets.json');
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 const AUTO_PROCESS_BURNS = (process.env.AUTO_PROCESS_BURNS || 'false').toLowerCase() === 'true';
@@ -24,6 +30,59 @@ const pendingBurns = new Map(); // requestId -> burn state object
 let hubContract = null;
 let wallet = null;
 let provider = null;
+
+// ─── Burn Secret Persistence ─────────────────────────────────────────────────
+
+function loadBurnSecrets() {
+  try {
+    if (fs.existsSync(BURN_SECRETS_FILE)) {
+      return JSON.parse(fs.readFileSync(BURN_SECRETS_FILE, 'utf8'));
+    }
+  } catch (err) {
+    console.warn('[Burn] Could not load lp-burn-secrets.json:', err.message);
+  }
+  return {};
+}
+
+function saveBurnSecrets(secrets) {
+  try {
+    fs.writeFileSync(BURN_SECRETS_FILE, JSON.stringify(secrets, null, 2));
+  } catch (err) {
+    console.warn('[Burn] Could not save lp-burn-secrets.json:', err.message);
+  }
+}
+
+function persistBurnSecret(reqIdHex, burn) {
+  const secrets = loadBurnSecrets();
+  secrets[reqIdHex] = {
+    secret: burn.secret,
+    secretHash: burn.secretHash,
+    lpPublicSpendKey: burn.lpPublicSpendKey,
+    lpPublicViewKey: burn.lpPublicViewKey,
+    sharedAddress: burn.sharedAddress,
+    moneroTxHash: burn.moneroTxHash,
+    xmrAmount: burn.xmrAmount,
+    wsxmrAmount: burn.wsxmrAmount,
+    user: burn.user,
+    lpVault: burn.lpVault,
+    state: burn.state,
+    proposeTxHash: burn.proposeTxHash,
+    finalizeTxHash: burn.finalizeTxHash,
+    createdAt: burn.createdAt,
+    updatedAt: Date.now(),
+  };
+  saveBurnSecrets(secrets);
+}
+
+function updateBurnSecretState(reqIdHex, state, extra = {}) {
+  const secrets = loadBurnSecrets();
+  if (secrets[reqIdHex]) {
+    secrets[reqIdHex].state = state;
+    secrets[reqIdHex].updatedAt = Date.now();
+    Object.assign(secrets[reqIdHex], extra);
+    saveBurnSecrets(secrets);
+  }
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -200,45 +259,8 @@ async function processPropose(reqIdHex, customKeys = {}) {
   burn.secret = bytesToHex(secret);
   burn.secretHash = secretHash;
 
-  // ─── 5. Send XMR to the shared Monero address ────────────────────────────────
-  if (sharedAddress && moneroWallet.isWalletConfigured()) {
-    try {
-      const xmrAmountAtomic = BigInt(burn.xmrAmount);
-      console.log(`[Burn] Sending XMR to shared address ${sharedAddress} ...`);
-      const result = await sendXmr(sharedAddress, xmrAmountAtomic);
-      burn.moneroTxHash = result.txHash;
-      console.log(`[Burn] XMR send result: txHash=${result.txHash}, sent=${result.sent}`);
-    } catch (xmrErr) {
-      console.error(`[Burn] XMR send failed for ${reqIdHex}:`, xmrErr.message);
-      burn.error = xmrErr.message;
-      // If funds are locked (not insufficient), retry after a short delay
-      if (xmrErr.message.includes('XMR locked') || xmrErr.message.includes('not enough money')) {
-        console.log(`[Burn] Will retry XMR send for ${reqIdHex} in 30s...`);
-        setTimeout(async () => {
-          try {
-            if (burn.state !== 'requested') return;
-            console.log(`[Burn] Retrying XMR send for ${reqIdHex}...`);
-            await processPropose(reqIdHex);
-          } catch (retryErr) {
-            console.error(`[Burn] Retry failed for ${reqIdHex}:`, retryErr.message);
-          }
-        }, 30000);
-      }
-      // Do NOT proceed with proposeHash if XMR send failed
-      return;
-    }
-  } else if (moneroWallet.isWalletConfigured()) {
-    console.warn(`[Burn] Shared address could not be computed — skipping XMR send`);
-  } else {
-    console.warn(`[Burn] MONERO_WALLET_RPC_URL not configured — skipping XMR send`);
-  }
-
-  // ─── 6. Delay then call proposeHash on-chain ─────────────────────────────────
-  if (BURN_PROPOSE_DELAY_MS > 0) {
-    console.log(`[Burn] Waiting ${BURN_PROPOSE_DELAY_MS}ms before proposeHash...`);
-    await new Promise(r => setTimeout(r, BURN_PROPOSE_DELAY_MS));
-  }
-
+  // ─── 5. Call proposeHash on-chain FIRST (before sending XMR) ───────────────
+  // This ensures if the tx reverts, no XMR is sent to an unproposed shared address.
   console.log(`[Burn] Calling proposeHash(${reqIdHex}, ${secretHash}, ...)`);
   const tx = await hubContract.proposeHash(reqIdHex, secretHash, lpPublicSpendKey, lpPublicViewKey);
   console.log(`[Burn] proposeHash tx: ${tx.hash}`);
@@ -247,6 +269,49 @@ async function processPropose(reqIdHex, customKeys = {}) {
 
   burn.state = 'proposed';
   burn.proposeTxHash = tx.hash;
+
+  // Persist burn secret immediately after proposeHash confirms
+  persistBurnSecret(reqIdHex, burn);
+
+  // ─── 6. Send XMR to the shared Monero address (after proposeHash confirms) ──
+  if (sharedAddress && moneroWallet.isWalletConfigured()) {
+    try {
+      const xmrAmountAtomic = BigInt(burn.xmrAmount);
+      console.log(`[Burn] Sending XMR to shared address ${sharedAddress} ...`);
+      const result = await sendXmr(sharedAddress, xmrAmountAtomic);
+      burn.moneroTxHash = result.txHash;
+      console.log(`[Burn] XMR send result: txHash=${result.txHash}, sent=${result.sent}`);
+      updateBurnSecretState(reqIdHex, 'proposed', { moneroTxHash: result.txHash });
+    } catch (xmrErr) {
+      console.error(`[Burn] XMR send failed for ${reqIdHex}:`, xmrErr.message);
+      burn.error = xmrErr.message;
+      updateBurnSecretState(reqIdHex, 'proposed', { error: xmrErr.message });
+      // If funds are locked (not insufficient), retry after a short delay
+      if (xmrErr.message.includes('XMR locked') || xmrErr.message.includes('not enough money')) {
+        console.log(`[Burn] Will retry XMR send for ${reqIdHex} in 30s...`);
+        setTimeout(async () => {
+          try {
+            if (burn.state !== 'proposed') return;
+            console.log(`[Burn] Retrying XMR send for ${reqIdHex}...`);
+            const xmrAmountAtomic = BigInt(burn.xmrAmount);
+            const result = await sendXmr(sharedAddress, xmrAmountAtomic);
+            burn.moneroTxHash = result.txHash;
+            updateBurnSecretState(reqIdHex, 'proposed', { moneroTxHash: result.txHash });
+            console.log(`[Burn] XMR retry send succeeded: txHash=${result.txHash}`);
+          } catch (retryErr) {
+            console.error(`[Burn] XMR retry failed for ${reqIdHex}:`, retryErr.message);
+          }
+        }, 30000);
+      }
+      // XMR send failed but proposeHash already confirmed — the burn is proposed on-chain
+      // LP's XMR is not sent yet; user will not confirm lock and burn will eventually be resolved
+      return;
+    }
+  } else if (moneroWallet.isWalletConfigured()) {
+    console.warn(`[Burn] Shared address could not be computed — skipping XMR send`);
+  } else {
+    console.warn(`[Burn] MONERO_WALLET_RPC_URL not configured — skipping XMR send`);
+  }
 }
 
 /**
@@ -264,6 +329,7 @@ async function handleBurnCommitted(requestId) {
   }
 
   burn.state = 'committed';
+  updateBurnSecretState(reqIdHex, 'committed');
 
   if (!AUTO_PROCESS_BURNS) {
     console.log(`[Burn] AUTO_PROCESS_BURNS is off — waiting for manual POST /burn/finalize`);
@@ -319,6 +385,7 @@ async function processFinalize(reqIdHex) {
 
   burn.state = 'finalized';
   burn.finalizeTxHash = tx.hash;
+  updateBurnSecretState(reqIdHex, 'finalized', { finalizeTxHash: tx.hash });
 }
 
 /**
@@ -335,6 +402,7 @@ async function handleBurnFinalized(requestId, secret, rewardPaid) {
     burn.state = 'finalized';
     burn.finalizeTxHash = 'event'; // we saw it via event
   }
+  updateBurnSecretState(reqIdHex, 'finalized');
 }
 
 /**
@@ -345,6 +413,7 @@ async function handleBurnCancelled(requestId) {
   console.log(`[Burn] BurnCancelled/Aborted ${reqIdHex}`);
   const burn = pendingBurns.get(reqIdHex);
   if (burn) burn.state = 'cancelled';
+  updateBurnSecretState(reqIdHex, 'cancelled');
 }
 
 // ─── Event Listener Setup ───────────────────────────────────────────────────
@@ -515,6 +584,7 @@ function registerRoutes(app) {
 
       const burn = pendingBurns.get(reqIdHex);
       if (burn) burn.state = 'slashed';
+      updateBurnSecretState(reqIdHex, 'slashed');
 
       res.json({
         success: true,
@@ -554,10 +624,152 @@ function registerRoutes(app) {
   });
 }
 
+// ─── Startup Recovery ─────────────────────────────────────────────────────
+
+/**
+ * Recover burn state after server restart.
+ * Loads persisted burn secrets, queries on-chain status, and rehydrates
+ * the pendingBurns Map. Resumes processing for active burns.
+ * Must be called after attachEventListeners so hubContract is set.
+ */
+async function startupRecoverBurns() {
+  if (!hubContract) {
+    console.warn('[Burn Recovery] hubContract not set — skipping');
+    return;
+  }
+
+  const secrets = loadBurnSecrets();
+  const reqIds = Object.keys(secrets);
+  if (reqIds.length === 0) {
+    console.log('[Burn Recovery] No persisted burn secrets found');
+    return;
+  }
+
+  console.log(`[Burn Recovery] Found ${reqIds.length} persisted burn(s), checking on-chain status...`);
+
+  for (const reqIdHex of reqIds) {
+    const saved = secrets[reqIdHex];
+    try {
+      const burnReq = await hubContract.getBurnRequest(reqIdHex);
+      const status = Number(burnReq.state);
+
+      // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=COMPLETED, 5=CANCELLED, 6=SLASHED
+      if (status === 4 || status === 5 || status === 6) {
+        console.log(`[Burn Recovery] ${reqIdHex} is terminal (status=${status}), skipping`);
+        continue;
+      }
+
+      // Rehydrate BurnState in pendingBurns
+      const burn = new BurnState(
+        reqIdHex, saved.user, saved.lpVault,
+        saved.wsxmrAmount, saved.xmrAmount,
+        saved.claimCommitment || ethers.ZeroHash,
+        saved.userPublicKey || ethers.ZeroHash,
+        saved.userViewKey || ethers.ZeroHash
+      );
+      burn.secret = saved.secret;
+      burn.secretHash = saved.secretHash;
+      burn.lpPublicSpendKey = saved.lpPublicSpendKey;
+      burn.lpPublicViewKey = saved.lpPublicViewKey;
+      burn.sharedAddress = saved.sharedAddress;
+      burn.moneroTxHash = saved.moneroTxHash;
+      burn.proposeTxHash = saved.proposeTxHash;
+      burn.finalizeTxHash = saved.finalizeTxHash;
+      burn.createdAt = saved.createdAt || Date.now();
+
+      if (status === 1) {
+        // REQUESTED — LP never proposed (may have crashed before proposeHash)
+        burn.state = 'requested';
+        pendingBurns.set(reqIdHex, burn);
+        console.log(`[Burn Recovery] ${reqIdHex} is REQUESTED — re-running processPropose`);
+        if (AUTO_PROCESS_BURNS) {
+          (async () => {
+            try { await processPropose(reqIdHex); }
+            catch (err) { console.error(`[Burn Recovery] processPropose failed for ${reqIdHex}:`, err.message); }
+          })();
+        }
+      } else if (status === 2) {
+        // PROPOSED — waiting for user to confirmMoneroLock
+        burn.state = 'proposed';
+        pendingBurns.set(reqIdHex, burn);
+        console.log(`[Burn Recovery] ${reqIdHex} is PROPOSED — waiting for BurnCommitted event`);
+      } else if (status === 3) {
+        // COMMITTED — user confirmed, LP needs to finalize
+        burn.state = 'committed';
+        pendingBurns.set(reqIdHex, burn);
+        console.log(`[Burn Recovery] ${reqIdHex} is COMMITTED — finalizing now`);
+        if (AUTO_PROCESS_BURNS) {
+          (async () => {
+            try { await processFinalize(reqIdHex); }
+            catch (err) { console.error(`[Burn Recovery] processFinalize failed for ${reqIdHex}:`, err.message); }
+          })();
+        }
+      }
+    } catch (err) {
+      console.warn(`[Burn Recovery] Could not check burn ${reqIdHex}:`, err.message);
+    }
+  }
+
+  // Also scan recent BurnRequested events for our vault that aren't in persisted secrets
+  try {
+    const currentBlock = await provider.getBlockNumber();
+    const fromBlock = Math.max(0, currentBlock - 10000);
+    const burnEvents = await hubContract.queryFilter(hubContract.filters.BurnRequested(), fromBlock, currentBlock);
+    const ourBurns = burnEvents.filter(
+      e => e.args.lpVault.toLowerCase() === wallet.address.toLowerCase()
+    );
+
+    for (const event of ourBurns) {
+      const reqIdHex = ethers.hexlify(event.args.requestId);
+      if (pendingBurns.has(reqIdHex) || secrets[reqIdHex]) continue;
+
+      try {
+        const burnReq = await hubContract.getBurnRequest(reqIdHex);
+        const status = Number(burnReq.state);
+        if (status === 4 || status === 5 || status === 6) continue;
+
+        console.log(`[Burn Recovery] Found untracked active burn ${reqIdHex} (status=${status}) — rehydrating`);
+        const burn = new BurnState(
+          reqIdHex, event.args.user, event.args.lpVault,
+          event.args.wsxmrAmount, event.args.xmrAmount,
+          event.args.claimCommitment, event.args.userPublicKey, event.args.userViewKey
+        );
+
+        if (status === 1) {
+          burn.state = 'requested';
+          pendingBurns.set(reqIdHex, burn);
+          if (AUTO_PROCESS_BURNS) {
+            (async () => {
+              try { await processPropose(reqIdHex); }
+              catch (err) { console.error(`[Burn Recovery] processPropose failed for ${reqIdHex}:`, err.message); }
+            })();
+          }
+        } else if (status === 2) {
+          burn.state = 'proposed';
+          pendingBurns.set(reqIdHex, burn);
+        } else if (status === 3) {
+          // COMMITTED but no persisted secret — can't finalize without LP secret
+          burn.state = 'committed';
+          burn.error = 'LP secret lost — cannot finalize';
+          pendingBurns.set(reqIdHex, burn);
+          console.error(`[Burn Recovery] ${reqIdHex} is COMMITTED but LP secret not persisted — CANNOT FINALIZE`);
+        }
+      } catch (err) {
+        console.warn(`[Burn Recovery] Could not check untracked burn ${reqIdHex}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.warn('[Burn Recovery] Could not scan recent BurnRequested events:', err.message);
+  }
+
+  console.log('[Burn Recovery] Recovery complete');
+}
+
 // ─── Module Export ──────────────────────────────────────────────────────────
 
 export {
   attachEventListeners,
   registerRoutes,
+  startupRecoverBurns,
   pendingBurns,
 };

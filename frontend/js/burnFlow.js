@@ -16,7 +16,7 @@ import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG, MONERO_CONFIG } from './config.
 import { readHub, writeHub, writeHubUnsafe, readWsxmr, writeWsxmr, writeWsxmrUnsafe, watchContractEvent, getUserAddress } from './viemClient.js';
 import { getPhantomAgent } from './phantomAgent.js';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
-import { updateBurnProgress, showBurnVerificationLoading, showBurnVerificationDetails, showBurnVerificationManual, showBurnAddressPanel, showBurnSweepProgress, showBurnSweepComplete, showBurnSweepError, showBurnKeysFallback, showBurnScanProgress, showBurnXmrFound } from './ui.js?v=3.4';
+import { updateBurnProgress, showBurnVerificationLoading, showBurnVerificationDetails, showBurnVerificationManual, showBurnAddressPanel, showBurnSweepProgress, showBurnSweepComplete, showBurnSweepError, showBurnKeysFallback, showBurnKeysOption, hideBurnKeysOption, showBurnScanProgress, showBurnXmrFound } from './ui.js?v=3.4';
 import { getMoneroRpc } from './moneroRpc.js';
 import { sweepBurnOutput, getCombinedKeysForImport } from './burnSweep.js';
 import { keccak256, toHex } from 'https://esm.sh/viem@2.7.0';
@@ -881,6 +881,10 @@ export class BurnFlow {
         const userSecret = this.agent.getSecret();
         const userViewKey = this.agent.getPrivateViewKeyHex();
 
+        // Show "Copy keys for manual import" option alongside auto-sweep
+        const keys = getCombinedKeysForImport(userSecret, lpSecret, userViewKey);
+        showBurnKeysOption(keys, this.destination);
+
         // Get restore height from when the burn was proposed
         let restoreHeight = 0;
         try {
@@ -912,6 +916,7 @@ export class BurnFlow {
 
             if (result.swept) {
                 window.removeEventListener('burn-sweep-retry', retryHandler);
+                hideBurnKeysOption();
                 showBurnSweepComplete(result.txHashes[0], Number(result.amount) / 1e12);
                 updateSwapState({
                     state: 'swept',
@@ -926,7 +931,6 @@ export class BurnFlow {
             showBurnSweepError(sweepErr.message);
 
             // Show fallback: let user copy keys for manual import
-            const keys = getCombinedKeysForImport(userSecret, lpSecret, userViewKey);
             showBurnKeysFallback(keys, this.destination);
 
             // Save state so user can retry later

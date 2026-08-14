@@ -770,6 +770,55 @@ async function startEventListener() {
   }, 15000);
 }
 
+// ─── Mint Deposit Scan Auto-Retry ───────────────────────────────────────────
+// Periodically retry mints that failed auto-processing (e.g. deposit scan timeout).
+// Re-runs processMint for mints in KEY_PROVIDED status with autoProcessError set.
+// Limits to 3 retries per mint to avoid infinite loops.
+
+setInterval(async () => {
+  for (const [reqIdHex, mint] of pendingMints.entries()) {
+    if (!mint.autoProcessError) continue;
+    if (mint.processing) continue;
+    if (mint.retryCount >= 3) continue;
+
+    try {
+      const mintReq = await hub.getMintRequest(reqIdHex);
+      const status = Number(mintReq.status);
+      // Only retry if still KEY_PROVIDED (2) — deposit may have arrived since last attempt
+      if (status !== 2) {
+        if (status === 4 || status === 5) {
+          pendingMints.delete(reqIdHex);
+        }
+        continue;
+      }
+
+      mint.retryCount = (mint.retryCount || 0) + 1;
+      mint.processing = true;
+      mint.autoProcessError = null;
+      pendingMints.set(reqIdHex, mint);
+
+      console.log(`[Retry] Re-attempting mint ${reqIdHex} (retry ${mint.retryCount}/3)`);
+
+      const lpSpendKey = await hub.lpPublicKeys(reqIdHex);
+      const lpViewKey = await hub.lpPublicViewKeys(reqIdHex);
+
+      serializeMint(async () => {
+        try {
+          await processMint(reqIdHex, lpSpendKey, lpViewKey);
+        } catch (err) {
+          console.error(`[Retry] Failed retry for mint ${reqIdHex}:`, err.message || err);
+          const m = pendingMints.get(reqIdHex) || {};
+          m.autoProcessError = err.message || String(err);
+          m.processing = false;
+          pendingMints.set(reqIdHex, m);
+        }
+      });
+    } catch (err) {
+      console.warn(`[Retry] Could not check mint ${reqIdHex} for retry:`, err.message);
+    }
+  }
+}, 300000); // 5 minutes
+
 // ─── HTTP Routes ────────────────────────────────────────────────────────────
 
 // Health check
@@ -964,6 +1013,11 @@ app.listen(PORT, async () => {
     burnHandler.attachEventListeners(hub, wallet, provider);
   } catch (err) {
     console.error('[Startup] Burn handler attach failed:', err.message);
+  }
+  try {
+    await burnHandler.startupRecoverBurns();
+  } catch (err) {
+    console.error('[Startup] Burn recovery failed:', err.message);
   }
   console.log('[Startup] All startup tasks attempted. Server is running.');
 });
