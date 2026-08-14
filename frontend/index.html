@@ -709,18 +709,18 @@
     <div class="ctr-grid">
       <div class="ctr">
         <div class="lab">wsXmrHub <span class="badge">DIAMOND · EIP-2535</span></div>
-        <div class="addr" data-addr="0x512a76C2E4edC0695F6195Dd88BBa7AE425AA160">0x512a76C2E4edC0695F6195Dd88BBa7AE425AA160</div>
+        <div class="addr" data-addr="0x26dA95a7712B7663f4A159f92bf1e229D8e24E7b">0x26dA95a7712B7663f4A159f92bf1e229D8e24E7b</div>
         <div class="acts">
           <button onclick="copyAddr(this)">Copy address</button>
-          <a href="https://gnosisscan.io/address/0x512a76C2E4edC0695F6195Dd88BBa7AE425AA160" target="_blank">View on Gnosisscan ↗</a>
+          <a href="https://gnosisscan.io/address/0x26dA95a7712B7663f4A159f92bf1e229D8e24E7b" target="_blank">View on Gnosisscan ↗</a>
         </div>
       </div>
       <div class="ctr">
         <div class="lab">wsXMR token <span class="badge">ERC-20 · 8 dec</span></div>
-        <div class="addr" data-addr="0x4bD004F941D115a57D892d6C5F84F4A21a17F979">0x4bD004F941D115a57D892d6C5F84F4A21a17F979</div>
+        <div class="addr" data-addr="0x7a7cFca18Bf01B3c3D5A21E82318879454446D2c">0x7a7cFca18Bf01B3c3D5A21E82318879454446D2c</div>
         <div class="acts">
           <button onclick="copyAddr(this)">Copy address</button>
-          <a href="https://gnosisscan.io/address/0x4bD004F941D115a57D892d6C5F84F4A21a17F979" target="_blank">View on Gnosisscan ↗</a>
+          <a href="https://gnosisscan.io/token/0x7a7cFca18Bf01B3c3D5A21E82318879454446D2c" target="_blank">View on Gnosisscan ↗</a>
         </div>
       </div>
     </div>
@@ -818,8 +818,8 @@
       </div>
       <div>
         <h4>Contract</h4>
-        <a href="https://gnosisscan.io/address/0x512a76C2E4edC0695F6195Dd88BBa7AE425AA160" target="_blank">wsXmrHub (Diamond)</a>
-        <a href="https://gnosisscan.io/address/0x4bD004F941D115a57D892d6C5F84F4A21a17F979" target="_blank">wsXMR token</a>
+        <a href="https://gnosisscan.io/address/0x26dA95a7712B7663f4A159f92bf1e229D8e24E7b" target="_blank">wsXmrHub (Diamond)</a>
+        <a href="https://gnosisscan.io/token/0x7a7cFca18Bf01B3c3D5A21E82318879454446D2c" target="_blank">wsXMR token</a>
       </div>
     </div>
     <div class="foot-bot">
@@ -878,8 +878,8 @@ function copyAddr(btn){
     const {gnosis}=await import('https://esm.sh/viem@2.21.54/chains');
     
     const client=createPublicClient({chain:gnosis,transport:http('https://rpc.gnosischain.com')});
-    const hub='0x512a76C2E4edC0695F6195Dd88BBa7AE425AA160';
-    const wsXMR='0x4bD004F941D115a57D892d6C5F84F4A21a17F979';
+    const hub='0x26dA95a7712B7663f4A159f92bf1e229D8e24E7b';
+    const wsXMR='0x7a7cFca18Bf01B3c3D5A21E82318879454446D2c';
     const sDAI='0xaf204776c7245bF4147c2612BF6e5972Ee483701';
     
     // Fetch wsXMR total supply
@@ -1152,13 +1152,37 @@ function copyAddr(btn){
 
   function cf(c){return c==='xmr'?'#ff7a3d':c==='teal'?'#3efce0':'#a8a8c0'}
 
+  function wrapNote(label,maxChars){
+    var lines=[];
+    var words=label.split(' '),cur='';
+    for(var wi=0;wi<words.length;wi++){
+      if((cur+(cur?' ':'')+words[wi]).length>maxChars){lines.push(cur);cur=words[wi]}
+      else{cur=cur?(cur+' '+words[wi]):words[wi]}
+    }
+    if(cur)lines.push(cur);
+    return lines;
+  }
+
   function renderSVG(d,di){
-    var aw=120,ah=34,gap=178,msgH=42,top=56,bot=28,pad=22;
+    var aw=120,ah=34,gap=178,msgH=42,minNoteH=42,notePad=12,top=56,bot=28,pad=22;
     var n=d.actors.length;
     var w=(n-1)*gap+aw+pad*2;
-    var h=top+d.messages.length*msgH+bot;
     function ax(i){return pad+i*gap+aw/2}
     function mkId(c){return c==='xmr'?'sx'+di:c==='teal'?'st'+di:'sg'+di}
+
+    var maxW=240,maxChars=Math.floor((maxW-20)/6.2);
+
+    var rowHeights=d.messages.map(function(m){
+      if(m.type==='note'){
+        var lines=wrapNote(m.label,maxChars);
+        var nh=18*lines.length+8+notePad;
+        return Math.max(nh,minNoteH);
+      }
+      return msgH;
+    });
+    var cumH=[0];
+    for(var ri=0;ri<rowHeights.length;ri++){cumH[ri+1]=cumH[ri]+rowHeights[ri]}
+    var h=top+cumH[rowHeights.length]+bot;
 
     var s='<svg viewBox="0 0 '+w+' '+h+'" xmlns="http://www.w3.org/2000/svg" style="font-family:Inter,sans-serif">';
     s+='<defs>';
@@ -1175,20 +1199,13 @@ function copyAddr(btn){
     });
 
     d.messages.forEach(function(m,i){
-      var y=top+i*msgH+22;
+      var y=top+cumH[i]+rowHeights[i]/2;
       var fx=ax(m.from);
 
       s+='<text x="'+(pad-6)+'" y="'+(y+3)+'" text-anchor="end" fill="#686880" font-family="JetBrains Mono" font-size="10">'+(i+1)+'</text>';
 
       if(m.type==='note'){
-        var maxW=240,maxChars=Math.floor((maxW-20)/6.2);
-        var lines=[];
-        var words=m.label.split(' '),cur='';
-        for(var wi=0;wi<words.length;wi++){
-          if((cur+(cur?' ':'')+words[wi]).length>maxChars){lines.push(cur);cur=words[wi]}
-          else{cur=cur?(cur+' '+words[wi]):words[wi]}
-        }
-        if(cur)lines.push(cur);
+        var lines=wrapNote(m.label,maxChars);
         var nw=Math.max(Math.max.apply(null,lines.map(function(l){return l.length}))*6.2+20,90);
         var nh=18*lines.length+8;
         var nx=fx+10;

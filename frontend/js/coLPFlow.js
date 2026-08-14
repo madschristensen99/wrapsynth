@@ -1,5 +1,12 @@
-// Co-LP Flow - Collateralized Liquidity Provider Position Manager
-// Connects to IVaultFacet (hub/diamond) for co-LP operations
+/**
+ * Co-LP Flow — Collateralized Liquidity Provider Position Manager
+ *
+ * Manages co-LP positions where users pair wsXMR with an LP vault's idle sDAI collateral
+ * to provide liquidity on Uniswap V3. Positions are represented as NFTs (UniV3 token IDs).
+ *
+ * Key operations: open (userOpenCoLP), unwind, rebalance, capacity check, preflight diagnostics.
+ * Also includes helpers for querying active positions via on-chain event history.
+ */
 
 import { CONTRACTS, ABIS, DECIMALS } from './config.js';
 import { readHub, writeHub, readWsxmr, writeWsxmr, getUserAddress, getPublicClient, getWalletClient } from './viemClient.js';
@@ -10,6 +17,10 @@ export class CoLPFlow {
         this.userAddress = null;
     }
 
+    /**
+     * Initialize the CoLPFlow instance — stores the connected wallet address.
+     * @returns {Promise<boolean>} true if wallet is connected
+     */
     async init() {
         this.userAddress = getUserAddress();
         if (!this.userAddress) {
@@ -356,6 +367,12 @@ export class CoLPFlow {
         return activePositions;
     }
 
+    /**
+     * Extract the Uniswap V3 NFT token ID from transaction event logs.
+     * Heuristic: looks for the last topic in multi-topic events within a plausible tokenId range.
+     * @param {Array} logs - Transaction receipt logs
+     * @returns {string|null} Token ID as string, or null if not found
+     */
     _extractTokenIdFromLogs(logs) {
         try {
             for (const log of logs) {
