@@ -933,3 +933,373 @@ sequenceDiagram
     end
     VM-->>User: ReturnsWithdrawn event
 ```
+
+---
+
+# Core Protocol Sequence Diagrams
+
+The diagrams below cover the mint, burn, liquidation, and yield flows for the wsXMR Hub + Facet diamond architecture on Gnosis Chain.
+
+## Mint Flow (XMR → wsXMR)
+
+### Happy Path
+
+```mermaid
+sequenceDiagram
+    participant User as User (Browser)
+    participant Hub as wsXmrHub
+    participant Mint as MintFacet
+    participant LP as LP Server
+    participant XMR as Monero Network
+
+    Note over User,LP: 1. Initiate Mint
+    User->>Hub: initiateMint(lpVault, recipient, xmrAmount, claimCommitment, userPublicKey)
+    Hub->>Mint: delegateCall initiateMint(...)
+    Mint->>Mint: Check vault active, griefing deposit, collateral ratio
+    Mint->>Mint: Create MintRequest (status=PENDING)
+    Mint-->>Hub: emit MintInitiated(requestId, ...)
+    Hub-->>User: return requestId
+
+    Note over User,LP: 2. LP Provides Keys
+    LP->>Hub: provideLPKey(requestId, lpPublicSpendKey, lpPublicViewKey)
+    Hub->>Mint: delegateCall provideLPKey(...)
+    Mint->>Mint: status = KEY_PROVIDED
+    Mint-->>Hub: emit LPKeyProvided(requestId, ...)
+
+    Note over User,LP: 3. User Sends XMR to Shared Address
+    User->>XMR: Send XMR to shared deposit address (userPubKey + LP keys)
+    Note over User,LP: User computes address = deriveMoneroAddress(userPubKey + lpPubSpendKey, userViewKey + lpPubViewKey)
+
+    Note over LP: LP scans Monero for deposit (pollForDeposit)
+    LP->>XMR: Create view-only wallet for shared address
+    XMR-->>LP: Deposit confirmed (amount matches)
+
+    Note over User,LP: 4. LP Confirms Receipt
+    LP->>Hub: setMintReady(requestId, lpCommitment)
+    Hub->>Mint: delegateCall setMintReady(...)
+    Mint->>Mint: Re-check collateral ratio after yield sync
+    Mint->>Mint: status = READY, pendingMintCount++
+    Mint-->>Hub: emit MintReady(requestId, lpCommitment)
+
+    Note over User,LP: 5. User Reveals Secret → Mint Finalized
+    User->>Hub: finalizeMint(requestId, secret)
+    Hub->>Mint: delegateCall finalizeMint(...)
+    Mint->>Mint: Verify scalarMultBase(secret) == claimCommitment
+    Mint->>Mint: Move pendingDebt → normalizedDebt, globalTotalDebt += wsxmrAmount
+    Mint->>Hub: mintTokens(recipient, wsxmrAmount - fee)
+    Mint->>Hub: mintTokens(lpVault, feeAmount)
+    Mint->>Mint: Return griefing deposit via pendingReturns
+    Mint->>Mint: status = COMPLETED, pendingMintCount--
+    Mint-->>Hub: emit MintFinalized(requestId, secret)
+
+    Note over LP: LP sweeps XMR from shared address (combine user secret + LP secret)
+```
+
+### Mint Timeout / Cancel Paths
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Mint as MintFacet
+    participant LP
+
+    alt LP never provides keys (PENDING timeout)
+        User->>Mint: cancelMint(requestId) [after timeout]
+        Mint->>Mint: status = CANCELLED
+        Mint->>Mint: Return griefing deposit to user
+        Mint-->>User: emit MintCancelled
+    end
+
+    alt LP provides keys but never sets ready (KEY_PROVIDED timeout)
+        User->>Mint: cancelMint(requestId) [after timeout]
+        Mint->>Mint: status = CANCELLED
+        Mint->>Mint: Return griefing deposit to user
+        Mint-->>User: emit MintCancelled
+    end
+
+    alt LP sets ready but user never finalizes (READY timeout)
+        User->>Mint: cancelMint(requestId) [after timeout]
+        Mint->>Mint: status = EXPIRED_READY
+        Mint->>Mint: Extend timeout by LP_CLAIM_WINDOW_BLOCKS
+        Mint-->>User: emit MintExpiredReady
+
+        alt LP claims griefing deposit (proves liveness)
+            LP->>Mint: claimGriefingDeposit(requestId, lpSecret)
+            Mint->>Mint: Verify scalarMultBase(lpSecret) == lpCommitment
+            Mint->>Mint: status = CANCELLED, griefing deposit → LP
+            Mint-->>LP: emit GriefingDepositClaimed
+        else LP never claims (LP_CLAIM_WINDOW expires)
+            User->>Mint: sweepUnclaimedExpiredMint(requestId)
+            Mint->>Mint: status = CANCELLED, griefing deposit → user
+            Mint-->>User: emit MintGriefingUnclaimed
+        end
+    end
+```
+
+## Burn Flow (wsXMR → XMR)
+
+### Happy Path
+
+```mermaid
+sequenceDiagram
+    participant User as User (Browser)
+    participant Hub as wsXmrHub
+    participant Burn as BurnFacet
+    participant LP as LP Server
+    participant XMR as Monero Network
+
+    Note over User,LP: 1. Request Burn
+    User->>Hub: requestBurn(wsxmrAmount, lpVault, user, claimCommitment, userPublicKey, userViewKey)
+    Hub->>Burn: delegateCall requestBurn(...)
+    Burn->>Hub: burnTokens(user, wsxmrAmount)
+    Burn->>Burn: Lock LP collateral (lockedCollateral += baseLock + rewardLock)
+    Burn->>Burn: globalPendingBurnDebt += wsxmrAmount (debt NOT reduced yet)
+    Burn->>Burn: Create BurnRequest (status=REQUESTED)
+    Burn-->>Hub: emit BurnRequested(requestId, ...)
+
+    Note over User,LP: 2. LP Proposes Hash (after locking XMR)
+    LP->>XMR: Send XMR to user's Monero destination (shared address)
+    LP->>Hub: proposeHash(requestId, secretHash, lpPublicSpendKey, lpPublicViewKey)
+    Hub->>Burn: delegateCall proposeHash(...)
+    Burn->>Burn: status = PROPOSED, set commit deadline
+    Burn-->>Hub: emit HashProposed(requestId, ...)
+
+    Note over User,LP: 3. User Confirms Monero Lock
+    Note over User: Client MUST verify off-chain: XMR amount matches, secret binding correct
+    User->>Hub: confirmMoneroLock(requestId)
+    Hub->>Burn: delegateCall confirmMoneroLock(...)
+    Burn->>Burn: status = COMMITTED, extend commit deadline
+    Burn-->>Hub: emit BurnCommitted(requestId, deadline)
+
+    Note over User,LP: 4. LP Finalizes Burn (reveals secret)
+    LP->>Hub: finalizeBurn(requestId, secret)
+    Hub->>Burn: delegateCall finalizeBurn(...)
+    Burn->>Burn: Verify scalarMultBase(secret) == secretHash
+    Burn->>Burn: Release locked collateral, pay reward via pendingReturns
+    Burn->>Burn: Reduce vault.normalizedDebt, globalTotalDebt
+    Burn->>Burn: status = COMPLETED
+    Burn-->>Hub: emit BurnFinalized(requestId, secret, reward)
+
+    Note over User: 5. User Sweeps XMR from Shared Address
+    User->>XMR: Combine userSecret + lpSecret → full private spend key
+    User->>XMR: Sweep all XMR from shared address to destination
+    XMR-->>User: XMR received
+```
+
+### Burn Failure Paths
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Burn as BurnFacet
+    participant LP
+
+    alt LP never proposes (REQUESTED timeout)
+        Note over User: Two options after deadline:
+
+        User->>Burn: abortBurn(requestId)
+        Burn->>Burn: Release locked collateral
+        Burn->>Burn: mintTokens(user, wsxmrAmount) — restore wsXMR
+        Burn->>Burn: status = CANCELLED
+        Burn-->>User: emit BurnAborted
+
+        User->>Burn: forceSettleBurn(requestId)
+        Burn->>Burn: Pay par value in sDAI (no reward) via pendingReturns
+        Burn->>Burn: Release locked collateral, reduce debt
+        Burn->>Burn: status = SLASHED
+        Burn-->>User: emit BurnForceSettled
+    end
+
+    alt LP proposes but user never confirms (PROPOSED timeout)
+        User->>Burn: resolveDeclinedProposal(requestId) [permissionless]
+        Burn->>Burn: Release locked collateral
+        Burn->>Burn: mintTokens(user, wsxmrAmount) — restore wsXMR
+        Burn->>Burn: status = CANCELLED
+        Burn-->>User: emit BurnProposalDeclined
+    end
+
+    alt User confirms but LP never finalizes (COMMITTED timeout + grace)
+        User->>Burn: claimSlashedCollateral(requestId)
+        Burn->>Burn: Pay min(par, lockedCollateral) + reward in sDAI
+        Burn->>Burn: Release locked collateral, reduce debt
+        Burn->>Burn: status = SLASHED
+        Burn-->>User: emit BurnSlashed
+    end
+```
+
+## Liquidation Flow
+
+```mermaid
+sequenceDiagram
+    participant Keeper as Keeper/Liquidator
+    participant Hub as wsXmrHub
+    participant Liq as LiquidationFacet
+    participant Router as LiquidityRouter
+    participant Vault as Underwater Vault
+
+    Note over Keeper: Pre-check: isVaultLiquidatable(vault) == true (CR < LIQUIDATION_RATIO)
+
+    Keeper->>Hub: liquidate(lpVault, debtToClear)
+    Hub->>Liq: delegateCall liquidate(...)
+
+    Note over Liq: Step 1: Harvest yield from vault
+    Liq->>Liq: syncVaultYield — move excess sDAI to yieldWarChest
+
+    Note over Liq: Step 2: Handle in-flight burns
+    loop For each burn in vault
+        alt REQUESTED or PROPOSED
+            Liq->>Liq: Force-cancel: release locked collateral
+            Liq->>Hub: mintTokens(user, wsxmrAmount) — restore wsXMR
+            Liq->>Liq: status = CANCELLED
+        else COMMITTED
+            Liq->>Liq: _settleCommittedBurnSlash: pay user par + reward in sDAI
+            Liq->>Liq: status = SLASHED
+        end
+    end
+
+    Note over Liq: Step 3: Unwind all deployed Uniswap V3 positions
+    loop For each position
+        Liq->>Router: drainPosition(tokenId, slippage, xmrPrice)
+        Router-->>Liq: daiOut, wsxmrOut
+        Liq->>Liq: vault.collateralShares += daiOut
+        Liq->>Liq: pendingReturns[user][wsxmr] += wsxmrOut
+        Liq-->>Liq: emit CoLPUnwound
+    end
+
+    Note over Liq: Step 4: Seize collateral
+    Liq->>Liq: Compute collateralToSeize = debtValue * LIQUIDATION_BONUS
+    Liq->>Liq: Cap to available (collateralShares - lockedCollateral)
+    Liq->>Liq: vault.collateralShares -= seized, vault.normalizedDebt -= cleared
+    Liq->>Liq: globalTotalDebt -= debtToClear
+
+    Note over Liq: Step 5: Write off bad debt if vault fully drained
+    alt vault.normalizedDebt > 0 && collateralShares == 0
+        Liq->>Liq: globalBadDebt += remaining, globalTotalDebt -= remaining
+        Liq-->>Liq: emit BadDebtWrittenOff
+    end
+
+    Note over Liq: Step 6: Transfer assets
+    Liq->>Liq: vault.liquidationNonce++, vault.mintNonce++
+    Liq->>Hub: burnTokens(keeper, debtToClear)
+    Liq->>Keeper: safeTransfer(sDAI, collateralToSeize)
+    Liq-->>Keeper: emit VaultLiquidated
+```
+
+## Vault Backstop Flow
+
+```mermaid
+sequenceDiagram
+    participant NewLP as New LP (Backstopper)
+    participant Hub as wsXmrHub
+    participant Liq as LiquidationFacet
+    participant OldVault as Underwater Vault
+    participant NewVault as New LP's Vault
+
+    NewLP->>Hub: backstopVault(oldVault)
+    Hub->>Liq: delegateCall backstopVault(...)
+
+    Note over Liq: Step 1: Harvest yield from both vaults
+    Liq->>Liq: syncVaultYield(oldVault), syncVaultYield(newVault)
+
+    Note over Liq: Step 2: Verify old vault is underwater
+    Liq->>Liq: _calculateCRWithPositions(oldVault) < LIQUIDATION_RATIO
+
+    Note over Liq: Step 3: Handle in-flight burns (same as liquidate)
+    Liq->>Liq: Force-cancel REQUESTED/PROPOSED, settle COMMITTED
+
+    Note over Liq: Step 4: Unwind old vault positions
+    Liq->>Liq: _unwindAllVaultPositions(oldVault)
+
+    Note over Liq: Step 5: Transfer debt + collateral to new vault
+    Liq->>Liq: newVault.normalizedDebt += oldVault.normalizedDebt
+    Liq->>Liq: newVault.collateralShares += oldVault.collateralShares
+    Liq->>Liq: Track absorbed collateral as principal (prevent yield siphon)
+
+    Note over Liq: Step 6: Zero out old vault
+    Liq->>Liq: oldVault.normalizedDebt = 0, collateralShares = 0, lockedCollateral = 0
+    Liq->>Liq: oldVault.liquidationNonce++, mintNonce++
+
+    Note over Liq: Step 7: Verify new vault is healthy
+    Liq->>Liq: _calculateCRWithPositions(newVault) >= COLLATERAL_RATIO
+    Liq-->>NewLP: emit VaultBackstopped(oldVault, newLP, debt, collateral)
+```
+
+## Yield / Buy-and-Burn Flow
+
+```mermaid
+sequenceDiagram
+    participant Keeper
+    participant Hub as wsXmrHub
+    participant Yield as YieldFacet
+    participant Oracle as OracleFacet
+    participant SDAI as sDAI Contract
+    participant Uni as Uniswap V3 Router
+
+    Note over Keeper: Pre-check: canTriggerBuyAndBurn() == true
+    Note over Keeper: Conditions: cooldown elapsed, war chest > 0, spot < EMA threshold, no pending mints
+
+    Keeper->>Hub: triggerBuyAndBurn(poolFeeTier)
+    Hub->>Yield: delegateCall triggerBuyAndBurn(...)
+
+    Note over Yield: Step 1: Check conditions
+    Yield->>Oracle: getXmrEmaPrice()
+    Oracle-->>Yield: emaPrice
+    Yield->>Yield: Verify spotPrice < emaPrice * EMA_TRIGGER_THRESHOLD
+
+    Note over Yield: Step 2: Carve out chunk + keeper reward
+    Yield->>Yield: sDAIToSpend = warChest * BUY_CHUNK_PERCENT
+    Yield->>Yield: keeperReward = sDAIToSpend * 2%
+    Yield->>Yield: yieldWarChest -= sDAIToSpend
+
+    Note over Yield: Step 3: Redeem sDAI → DAI
+    Yield->>SDAI: redeem(sDAIForSwap, address(this), address(this))
+    SDAI-->>Yield: daiAmount
+
+    Note over Yield: Step 4: Swap DAI → wsXMR on Uniswap V3
+    Yield->>Yield: Approve Uniswap router for DAI
+    Yield->>Uni: exactInputSingle(DAI → wsXMR, amountIn, minOut)
+    Uni-->>Yield: wsxmrBought
+
+    Note over Yield: Step 5: Pay keeper reward
+    Yield->>Yield: pendingReturns[keeper][sDAI] += keeperReward
+
+    Note over Yield: Step 6: Burn purchased wsXMR
+    Yield->>Hub: burnTokens(address(this), wsxmrBought)
+
+    Note over Yield: Step 7: Forgive debt
+    alt wsXMR bought >= effective debt (full wipe)
+        Yield->>Yield: Zero all vault normalizedDebts
+        Yield->>Yield: globalTotalDebt = globalPendingBurnDebt
+        Yield->>Yield: globalDebtIndex = 1e18
+    else Partial wipe
+        Yield->>Yield: globalTotalDebt -= wsxmrBought
+        Yield->>Yield: Scale globalDebtIndex down proportionally
+    end
+
+    Note over Yield: Step 8: Migrate debt index if too low
+    Yield->>Yield: _migrateDebtIndex (rescale if index < 1e18)
+
+    Yield-->>Keeper: emit BuyAndBurnExecuted(sDAISpent, wsXMRBurned, keeperReward, newIndex)
+```
+
+## Yield Harvest Flow
+
+```mermaid
+sequenceDiagram
+    participant Caller as Anyone
+    participant Hub as wsXmrHub
+    participant Yield as YieldFacet
+    participant YL as YieldLogic
+
+    Caller->>Hub: syncVaultYield(lpVault)
+    Hub->>Yield: delegateCall syncVaultYield(...)
+
+    Yield->>YL: calculateExtractableYield(collateralShares, lockedCollateral, principal, debt, ...)
+    YL-->>Yield: yieldShares (excess above principal + required collateral)
+
+    alt yieldShares > 0
+        Yield->>Yield: vault.collateralShares -= yieldShares
+        Yield->>Yield: yieldWarChest += yieldShares
+        Yield-->>Caller: emit YieldHarvested(lpVault, yieldShares)
+    end
+```

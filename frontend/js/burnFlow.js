@@ -1,4 +1,16 @@
-// Burn Flow - wsXMR to XMR (5-step Diamond Architecture)
+/**
+ * Burn Flow — wsXMR to XMR (5-step Diamond Architecture)
+ *
+ * State machine that orchestrates the full burn lifecycle:
+ *   idle → init → evm-request → lp-propose → confirm-lock → lp-finalize → sweep → completed
+ *
+ * Each step maps to an on-chain state transition in BurnFacet.sol:
+ *   requestBurn → proposeHash → confirmMoneroLock → finalizeBurn
+ *
+ * The user's wsXMR is burned at request time. The LP sends XMR to a shared Monero address
+ * and proposes a secret hash. The user verifies the XMR on-chain, confirms the lock, then
+ * the LP reveals their secret to finalize. The user combines secrets to sweep XMR.
+ */
 
 import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG, MONERO_CONFIG } from './config.js';
 import { readHub, writeHub, writeHubUnsafe, readWsxmr, writeWsxmr, writeWsxmrUnsafe, watchContractEvent, getUserAddress } from './viemClient.js';
@@ -25,6 +37,14 @@ export class BurnFlow {
         this.lpProposeTimeout = 1800000; // 30 minutes in ms
     }
 
+    /**
+     * Run the complete burn flow from start to finish.
+     * Orchestrates: agent init → EVM request → LP proposal wait → Monero lock confirm →
+     * LP finalize wait → XMR sweep → complete.
+     * @param {string} lpVault - LP vault address to burn against
+     * @param {number} wsxmrAmount - Amount of wsXMR to burn (human-readable)
+     * @param {string} destination - Monero destination address for receiving XMR
+     */
     async start(lpVault, wsxmrAmount, destination) {
         console.log('Starting burn flow:', { lpVault, wsxmrAmount, destination });
 
@@ -45,6 +65,11 @@ export class BurnFlow {
         await this.complete();
     }
 
+    /**
+     * Initialize the PhantomAgent for BURN mode — generates Ed25519 keys and derives
+     * the Monero address where the user will receive XMR from the LP.
+     * Stores the seed in encrypted browser storage for crash recovery.
+     */
     async initializeAgent() {
         this.state = 'init';
         updateSwapState({ 
@@ -87,6 +112,12 @@ export class BurnFlow {
         console.log('Oracle prices updated for burn');
     }
 
+    /**
+     * Call requestBurn on the Hub — approves wsXMR, pushes fresh oracle prices,
+     * submits the burn request with the user's Ed25519 commitment and public keys.
+     * Extracts the requestId from the BurnRequested event. Handles stale price retries
+     * and RPC simulation failures with unsafe fallback.
+     */
     async requestBurnOnEVM() {
         this.state = 'evm-request';
         updateSwapState({ state: this.state });
@@ -208,6 +239,12 @@ export class BurnFlow {
         updateSwapState({ requestId: this.requestId, state: this.state });
     }
 
+    /**
+     * Wait for the LP to call proposeHash on-chain (indicates LP has sent XMR to the
+     * shared Monero address). Checks for past HashProposed events (resume support),
+     * then watches for new events with a polling fallback. On event, derives the shared
+     * Monero address and shows it to the user. Offers abort option on timeout.
+     */
     async waitForLPProposal() {
         console.log('Waiting for LP to propose secret hash and send XMR...');
         this.lpProposeStartTime = Date.now();
@@ -395,6 +432,12 @@ export class BurnFlow {
         });
     }
 
+    /**
+     * Verify that the LP has sent XMR to the shared Monero address, then call
+     * confirmMoneroLock on-chain. Creates a view-only Monero wallet to auto-scan
+     * for incoming XMR. Falls back to manual confirmation if WASM wallet fails or
+     * times out. On confirm, submits the on-chain transaction to commit the burn.
+     */
     async confirmMoneroLock() {
         this.state = 'confirm-lock';
         updateSwapState({
@@ -636,6 +679,13 @@ export class BurnFlow {
         });
     }
 
+    /**
+     * Wait for the LP to call finalizeBurn on-chain (reveals their Ed25519 secret).
+     * Checks for past BurnFinalized events (resume support), then watches for new
+     * events with polling fallback. On timeout, checks burn status and offers
+     * claimSlashedCollateral if the LP failed to finalize.
+     * @returns {Promise<string>} The LP's revealed secret (bytes32 hex)
+     */
     async waitForLPFinalize() {
         console.log('Waiting for LP to finalize burn...');
 
@@ -815,6 +865,13 @@ export class BurnFlow {
         });
     }
 
+    /**
+     * Sweep XMR from the shared Monero address to the user's destination.
+     * Combines the user's Ed25519 secret with the LP's revealed secret to derive
+     * the full private spend key, then uses monero-ts WASM wallet to sweep all funds.
+     * Falls back to showing combined keys for manual import if sweep fails.
+     * @param {string} lpSecret - The LP's revealed Ed25519 secret (bytes32 hex)
+     */
     async sweepXMR(lpSecret) {
         this.state = 'sweeping';
         this._lastLpSecret = lpSecret; // Store for retry
@@ -882,6 +939,9 @@ export class BurnFlow {
         }
     }
 
+    /**
+     * Mark the burn as completed — saves to history, clears active swap, cleans up event watchers.
+     */
     async complete() {
         this.state = 'completed';
         
@@ -902,6 +962,10 @@ export class BurnFlow {
         console.log('Burn flow completed successfully!');
     }
 
+    /**
+     * Claim slashed collateral on-chain (claimSlashedCollateral). Used when the LP
+     * failed to finalize a COMMITTED burn after the grace period.
+     */
     async claimSlashed() {
         console.log('Claiming slashed collateral...');
 
@@ -914,6 +978,11 @@ export class BurnFlow {
         }
     }
 
+    /**
+     * Cancel or recover a burn based on its current on-chain status:
+     * REQUESTED → abortBurn, PROPOSED → resolveDeclinedProposal,
+     * COMMITTED → claimSlashedCollateral, SLASHED/CANCELLED → withdrawReturns.
+     */
     async cancel() {
         console.log('Canceling burn...');
 
@@ -995,6 +1064,12 @@ export class BurnFlow {
         this.eventWatchers = [];
     }
 
+    /**
+     * Resume the burn flow from a saved state (after page refresh or crash).
+     * Restores PhantomAgent from seed, re-derives shared address, and jumps to
+     * the appropriate step based on the saved state.
+     * @param {Object} savedState - Swap state from localStorage
+     */
     async resume(savedState) {
         console.log('Resuming burn flow from state:', savedState.state);
 
