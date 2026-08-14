@@ -1012,8 +1012,8 @@ function copyAddr(btn){
 (function(){
   var diagrams=[
     {
-      desc:"User swaps XMR for wsXMR through an atomic swap. The on-chain collateralization requirement is 150%, but LPs effectively post >200% because they hold XMR alongside their sDAI vault collateral. The LP provides Ed25519 public keys for a 2-of-2 PTLC, and claims XMR by revealing the secret. The contract verifies the secret on-chain with Ed25519 \u2014 the same curve Monero uses \u2014 then mints wsXMR minus a configurable fee to the user and the fee to the LP. The user posts a griefing deposit in ETH; the LP posts a bond when marking the mint ready. If the LP never responds, anyone can cancel after timeout and the user gets their deposit back. If the user doesn't finalize after READY, the mint enters EXPIRED_READY \u2014 the LP can claim the deposit by revealing their secret, or if they don't, anyone can sweep the deposit back to the user.",
-      tags:[">150% on-chain CR","2-of-2 PTLC","Ed25519 verify","Griefing deposit","LP bond","~1h timeout","EXPIRED_READY lifecycle"],
+      desc:"User swaps XMR for wsXMR through an atomic swap. The on-chain collateralization requirement is 150%, but LPs effectively post >200% because they hold XMR alongside their sDAI vault collateral. The LP provides Ed25519 public keys for a 2-of-2 PTLC (Point Time-Locked Contract), and claims XMR by revealing the secret. The contract verifies the secret on-chain with Ed25519 \u2014 the same curve Monero uses \u2014 then mints wsXMR minus a configurable fee to the user and the fee to the LP. The user posts a griefing deposit in ETH; the LP posts a bond when marking the mint ready. If the LP never responds, anyone can cancel after timeout and the user gets their deposit back. If the user doesn't finalize after READY, the mint enters EXPIRED_READY \u2014 the LP can claim the deposit by revealing their secret, or if they don't, anyone can sweep the deposit back to the user.",
+      tags:[">150% on-chain CR","2-of-2 PTLC (Point Time-Locked Contract)","Ed25519 verify","Griefing deposit","LP bond","~1h timeout","EXPIRED_READY lifecycle"],
       actors:[
         {name:"User",color:"xmr"},
         {name:"Monero",color:"gray"},
@@ -1045,7 +1045,7 @@ function copyAddr(btn){
     },
     {
       desc:"User burns wsXMR to receive XMR through the reverse atomic swap. The contract locks 110% collateral over par and burns wsXMR. The LP locks XMR on Monero with a secret hash; the user confirms the lock on-chain, binding both parties. The user claims XMR (revealing the secret), the LP finalizes with the secret, and locked collateral is unlocked back in the vault while the burn reward is queued to the user in sDAI. If the LP fails to reveal after COMMITTED, the user can claim slashed collateral (par + reward) after a grace period. If the LP never proposes (REQUESTED timeout), the user can abort to recover wsXMR or force-settle for par value in sDAI. If the LP proposed but didn't follow through (PROPOSED timeout), anyone can resolve to restore the user's wsXMR.",
-      tags:["110% collateral lock","2-of-2 PTLC","Ed25519 verify","Burn reward","Slashing","Abort/force-settle","Grace period"],
+      tags:["110% collateral lock","2-of-2 PTLC (Point Time-Locked Contract)","Ed25519 verify","Burn reward","Slashing","Abort/force-settle","Grace period"],
       actors:[
         {name:"User",color:"xmr"},
         {name:"Monero",color:"gray"},
@@ -1072,7 +1072,7 @@ function copyAddr(btn){
       ]
     },
     {
-      desc:"Excess sDAI yield from vaults accrues in an on-chain war chest. When XMR dips below its Exponential Moving Average (EMA), anyone can trigger a buy-and-burn \u2014 the chest redeems sDAI to xDAI, swaps xDAI for wsXMR on Uniswap V3, and burns it. This reduces outstanding debt and tightens the collateral ratio for all holders. The keeper earns a 2% reward (queued in sDAI shares) for calling the function. A 24-hour cooldown prevents over-triggering. Reverts if pending READY mints exist, war chest is empty, or swap slippage exceeds 1%.",
+      desc:"Excess sDAI yield from vaults accrues in an on-chain war chest. When XMR dips below its Exponential Moving Average (EMA), anyone can trigger a buy-and-burn \u2014 the chest redeems sDAI to xDAI, swaps xDAI for wsXMR on Uniswap V3, and burns it. This reduces outstanding debt and frees up collateral across all vaults. The keeper earns a 2% reward (queued in sDAI shares) for calling the function. A 24-hour cooldown prevents over-triggering. Reverts if pending READY mints exist, war chest is empty, or swap slippage exceeds 1%.",
       tags:["sDAI yield","Redeem \u2192 xDAI \u2192 wsXMR","Dip-triggered","2% keeper reward","24h cooldown","PendingMintLock guard","1% slippage cap"],
       actors:[
         {name:"Keeper",color:"xmr"},
@@ -1096,7 +1096,7 @@ function copyAddr(btn){
       ]
     },
     {
-      desc:"Co-LPs provide wsXMR (not sDAI) that is paired with the LP vault's idle sDAI collateral into a Uniswap V3 concentrated liquidity position. The LP sets a max range (maxCoLPRangeBps) controlling how wide the position can be. Trading fees from the Uniswap position accrue separately: sDAI fees go to the LP vault, wsXMR fees go to the Co-LP. Either party can unwind the position; a keeper can rebalance when it goes out of range. Mint fees are separate and go entirely to the primary LP.",
+      desc:"Co-LPs provide wsXMR that is paired with the LP vault's idle sDAI collateral into a Uniswap V3 concentrated liquidity position. The LP sets a max range (maxCoLPRangeBps) controlling how wide the position can be. Trading fees from the Uniswap position accrue separately: sDAI fees go to the LP vault, wsXMR fees go to the Co-LP. Either party can unwind the position; a keeper can rebalance when it goes out of range. Mint fees are separate and go entirely to the primary LP.",
       tags:["Co-LP provides wsXMR","Uniswap V3 concentrated LP","Range-limited","Separate fee streams"],
       actors:[
         {name:"Primary LP",color:"xmr"},
