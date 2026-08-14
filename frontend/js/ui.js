@@ -59,6 +59,7 @@ const elements = {
     burnUserBalance: null,
     startBurn: null,
     burnProgress: null,
+    cancelBurn: null,
     
     // Modal
     modalOverlay: null,
@@ -133,6 +134,7 @@ export function initUI() {
     console.log('[initUI] burnUserBalance element:', elements.burnUserBalance ? 'found' : 'NOT FOUND');
     elements.startBurn = document.getElementById('start-burn');
     elements.burnProgress = document.getElementById('burn-progress');
+    elements.cancelBurn = document.getElementById('cancel-burn');
     
     // Modal
     elements.modalOverlay = document.getElementById('modal-overlay');
@@ -1506,6 +1508,10 @@ export function showBurnSweepProgress(message) {
     const burnPanel = document.getElementById('burn-panel');
     if (!burnPanel) return;
 
+    // Hide cancel button during sweep
+    const cancelBtn = document.getElementById('cancel-burn');
+    if (cancelBtn) cancelBtn.classList.add('hidden');
+
     let el = document.getElementById('burn-sweep-progress');
     if (!el) {
         el = document.createElement('div');
@@ -1532,6 +1538,10 @@ export function showBurnSweepComplete(txHash, amount) {
 
     const progressEl = document.getElementById('burn-sweep-progress');
     if (progressEl) progressEl.classList.add('hidden');
+
+    // Hide cancel button on completion
+    const cancelBtn = document.getElementById('cancel-burn');
+    if (cancelBtn) cancelBtn.classList.add('hidden');
 
     let el = document.getElementById('burn-sweep-complete');
     if (!el) {
@@ -1620,6 +1630,44 @@ export function showBurnSweepError(errorMsg) {
             window.dispatchEvent(new CustomEvent('burn-sweep-retry'));
         });
     }
+}
+
+/**
+ * Show a non-intrusive "Copy keys for manual import" button during burn sweep.
+ * Lets user proactively copy combined keys without waiting for a sweep failure.
+ * @param {Object} keys - { spendKey, viewKey } (little-endian hex, no 0x)
+ * @param {string} destination - User's destination address
+ */
+export function showBurnKeysOption(keys, destination) {
+    const burnPanel = document.getElementById('burn-panel');
+    if (!burnPanel) return;
+
+    let el = document.getElementById('burn-keys-option');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'burn-keys-option';
+        el.className = 'burn-keys-option';
+        el.style.cssText = 'margin-top: 12px; text-align: center;';
+        burnPanel.appendChild(el);
+    }
+
+    el.innerHTML = `<button class="btn-secondary" id="burn-copy-keys-btn" style="font-size: 0.85rem; opacity: 0.8;">Copy keys for manual import</button>`;
+    el.classList.remove('hidden');
+
+    const btn = document.getElementById('burn-copy-keys-btn');
+    if (btn) {
+        btn.addEventListener('click', () => {
+            showBurnKeysFallback(keys, destination);
+        });
+    }
+}
+
+/**
+ * Hide the burn keys option button (call when sweep succeeds)
+ */
+export function hideBurnKeysOption() {
+    const el = document.getElementById('burn-keys-option');
+    if (el) el.classList.add('hidden');
 }
 
 /**
@@ -2013,6 +2061,7 @@ export function hidePreviousMintBanner() {
  */
 export function resetBurnUI() {
     elements.burnProgress.classList.add('hidden');
+    if (elements.cancelBurn) elements.cancelBurn.classList.remove('hidden');
     enableInputs(false);
 }
 
