@@ -18,6 +18,16 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         wsXmrStorage(_wsxmrToken, _verifierProxy) 
     {}
     
+    /// @notice Initiate a mint request — user commits to sending XMR and posts a griefing deposit
+    /// @dev Creates a mint request in PENDING status. The user's claimCommitment binds them to an Ed25519 secret
+    ///      that will be revealed at finalization. Checks vault capacity, collateral ratio, and optional max mint limit.
+    ///      Whitelisted minters bypass the griefing deposit requirement.
+    /// @param lpVault Address of the LP vault that will serve the mint
+    /// @param recipient Address that will receive the minted wsXMR (can differ from msg.sender)
+    /// @param xmrAmount Amount of XMR to send (12 decimals, atomic units)
+    /// @param claimCommitment keccak256(secret·G) — Ed25519 point commitment binding the user's secret
+    /// @param userPublicKey User's Ed25519 public spend key (x-coordinate, 32 bytes)
+    /// @return requestId Unique mint request identifier
     function initiateMint(
         address lpVault,
         address recipient,
@@ -147,6 +157,13 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         emit LPKeyProvided(requestId, lpPublicSpendKey, lpPublicViewKey);
     }
     
+    /// @notice LP confirms XMR receipt and signals the mint is ready for finalization
+    /// @dev Transitions from KEY_PROVIDED to READY. LP posts their commitment (keccak256 of LP secret·G).
+    ///      Re-checks collateral ratio after yield sync to ensure vault is still healthy.
+    ///      Extends timeout by MINT_READY_EXTENSION_BLOCKS. Increments vault pendingMintCount and totalPendingMints,
+    ///      which blocks other state-changing vault operations until the mint is finalized or cancelled.
+    /// @param requestId The mint request ID
+    /// @param lpCommitment keccak256(lpSecret·G) — LP's Ed25519 point commitment
     function setMintReady(bytes32 requestId, bytes32 lpCommitment) external {
         MintRequest storage request = mintRequests[requestId];
         if (request.status != MintStatus.KEY_PROVIDED) revert InvalidStatus();
@@ -175,6 +192,14 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         emit MintReady(requestId, lpCommitment);
     }
     
+    /// @notice User reveals the Ed25519 secret to finalize the mint — wsXMR is minted to recipient
+    /// @dev Verifies scalarMultBase(secret) matches the user's claimCommitment from initiateMint.
+    ///      Mints wsXMR (minus fee) to recipient and fee to LP. Returns griefing deposit via pendingReturns.
+    ///      Reduces vault.pendingDebt, increases vault.normalizedDebt and globalTotalDebt.
+    ///      If the vault was liquidated since the mint was set ready (mintNonce changed), the mint is cancelled
+    ///      and the griefing deposit is returned instead.
+    /// @param requestId The mint request ID
+    /// @param secret The Ed25519 scalar matching the user's claimCommitment
     function finalizeMint(bytes32 requestId, bytes32 secret) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
@@ -237,6 +262,12 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         _reentrancyStatus = _NOT_ENTERED;
     }
     
+    /// @notice Cancel a timed-out mint request — permissionless after the deadline expires
+    /// @dev For PENDING or KEY_PROVIDED status: cancels and returns griefing deposit to the user.
+    ///      For READY status: transitions to EXPIRED_READY instead — the LP has posted a bond and may
+    ///      claim the griefing deposit by revealing their secret within LP_CLAIM_WINDOW_BLOCKS.
+    ///      Reduces vault.pendingDebt if the vault has not been liquidated (mintNonce unchanged).
+    /// @param requestId The mint request ID
     function cancelMint(bytes32 requestId) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
@@ -274,6 +305,11 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         _reentrancyStatus = _NOT_ENTERED;
     }
     
+    /// @notice LP claims the user's griefing deposit for an expired-ready mint by revealing their secret
+    /// @dev Only callable by the LP vault. Verifies that scalarMultBase(lpSecret) matches the LP commitment
+    ///      from setMintReady. This proves the LP was ready to finalize and the user abandoned the mint.
+    /// @param requestId The mint request ID
+    /// @param lpSecret The LP's Ed25519 scalar matching their lpCommitment
     function claimGriefingDeposit(bytes32 requestId, bytes32 lpSecret) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
@@ -300,6 +336,10 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         _reentrancyStatus = _NOT_ENTERED;
     }
     
+    /// @notice Permissionless sweep of an expired-ready mint where the LP never claimed the griefing deposit
+    /// @dev After LP_CLAIM_WINDOW_BLOCKS expires with no LP claim, returns the griefing deposit to the user.
+    ///      This handles the case where the LP abandoned the mint after setting it ready.
+    /// @param requestId The mint request ID
     function sweepUnclaimedExpiredMint(bytes32 requestId) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
@@ -323,14 +363,23 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         _reentrancyStatus = _NOT_ENTERED;
     }
     
+    /// @notice Get full mint request state
+    /// @param requestId The mint request ID
+    /// @return MintRequest struct with all fields
     function getMintRequest(bytes32 requestId) external view returns (MintRequest memory) {
         return mintRequests[requestId];
     }
     
+    /// @notice Get all mint request IDs for a user
+    /// @param user Address to query
+    /// @return Array of mint request IDs
     function getUserMintRequests(address user) external view returns (bytes32[] memory) {
         return userMintRequests[user];
     }
     
+    /// @notice Get all pending mint request IDs for a vault (PENDING, KEY_PROVIDED, READY, or EXPIRED_READY)
+    /// @param lpVault Vault address to query
+    /// @return Array of active mint request IDs
     function getVaultPendingMints(address lpVault) external view returns (bytes32[] memory) {
         bytes32[] storage vaultReqs = vaultMintRequests[lpVault];
         uint256 count = 0;
@@ -356,15 +405,26 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         return result;
     }
     
+    /// @notice Convert XMR atomic units (12 decimals) to wsXMR amount (8 decimals)
+    /// @param xmrAmount Amount in XMR atomic units
+    /// @return Equivalent wsXMR amount
     function calculateWsxmrAmount(uint256 xmrAmount) external pure returns (uint256) {
         return xmrAmount / XMR_TO_WSXMR_DIVISOR;
     }
     
+    /// @notice Calculate the mint fee for a given wsXMR amount and vault
+    /// @param lpVault The LP vault address
+    /// @param wsxmrAmount Amount of wsXMR to mint (8 decimals)
+    /// @return Fee amount in wsXMR (8 decimals)
     function calculateMintFee(address lpVault, uint256 wsxmrAmount) external view returns (uint256) {
         return (wsxmrAmount * _vaults[lpVault].mintFeeBps) / BPS_DENOMINATOR;
     }
     
     
+    /// @dev Syncs vault yield by harvesting excess sDAI shares generated since the last sync.
+    ///      Uses YieldLogic to compute the yield portion (collateral growth above principal).
+    ///      Harvested shares are moved from vault.collateralShares to yieldWarChest.
+    ///      Skips oracle calls if vault has no debt and no pending debt (gas optimization).
     function _syncVaultYield(address lpAddress) internal {
         Vault storage vault = _vaults[lpAddress];
         
@@ -395,6 +455,9 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         }
     }
     
+    /// @dev Calculates the collateral ratio from sDAI shares and wsXMR debt using current oracle prices.
+    ///      Delegates to CollateralLogic.calculateRatioFromShares which converts shares to DAI via sDAI convertToAssets.
+    /// @return Ratio as (collateralValueUSD * 100) / debtValueUSD, where 150 = 150%
     function _calculateCollateralRatio(uint256 collateralShares, uint256 debtAmount) internal view returns (uint256) {
         // Read prices directly from storage using inherited helpers
         uint256 xmrPrice = _getXmrPriceFromStorage();

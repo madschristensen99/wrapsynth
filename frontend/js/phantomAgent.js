@@ -1,6 +1,20 @@
-// Phantom Agent - Seed-Based Wallet for Wrapsynth
-// Uses BIP-39 seed phrases with encrypted browser storage
-// EIP-7702 safe: seed phrases are true user-controlled secrets
+/**
+ * Phantom Agent — Seed-Based Wallet for WrapSynth
+ *
+ * Manages the user's Ed25519 key pair for Monero atomic swaps. Generates a BIP-39 seed,
+ * derives spend/view keys, and computes the commitment (keccak256 of the public key point)
+ * that is submitted to the smart contract at mint/burn initiation.
+ *
+ * The seed is stored in encrypted browser storage (IndexedDB, two-layer encryption)
+ * for crash recovery. The agent is a singleton — reset between swaps to prevent state pollution.
+ *
+ * Key concepts:
+ * - secret: Ed25519 scalar (private spend key), revealed at mint finalization
+ * - commitment: keccak256(scalarMultBase(secret)) — binds the user on-chain without revealing the secret
+ * - Shared Monero address: derived via Ed25519 point addition of user + LP public spend keys
+ *
+ * EIP-7702 safe: seed phrases are true user-controlled secrets, not signatures.
+ */
 
 import { toHex } from 'https://esm.sh/viem@2.7.0';
 import { getUserAddress } from './viemClient.js';

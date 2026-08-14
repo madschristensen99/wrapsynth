@@ -474,6 +474,13 @@ async function main() {
     console.log('wsXMR balance after Co-LP:', ethers.utils.formatUnits(wsxmrBalanceAfterCoLP, decimals));
     console.log('');
 
+    console.log('📊 Step 6.9: Refresh Prices (before burn)');
+    console.log('=============================================');
+    const burnPriceTx = await retryRedStone(() => wrapWithRedStone(hub).updateOraclePrices([]));
+    await burnPriceTx.wait();
+    console.log('✅ Prices refreshed for burn');
+    console.log('');
+
     console.log('📊 Step 7: BURN - Request');
     console.log('=========================');
     const burnAmount = wsxmrBalanceAfterCoLP;
@@ -520,6 +527,13 @@ async function main() {
     console.log('✅ User confirmed Monero lock');
     console.log('');
     
+    console.log('📊 Step 9.5: Refresh Prices (before finalize)');
+    console.log('==================================================');
+    const finalizePriceTx = await retryRedStone(() => wrapWithRedStone(hub).updateOraclePrices([]));
+    await finalizePriceTx.wait();
+    console.log('✅ Prices refreshed for finalize');
+    console.log('');
+
     console.log('📊 Step 10: BURN - LP Finalizes');
     console.log('================================');
     

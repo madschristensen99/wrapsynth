@@ -18,7 +18,7 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',system-ui,sans-ser
 /* QR Code */
 #mint-qr-code{display:none;margin:16px auto;width:200px;height:200px;background:#fff;border-radius:8px;padding:8px}
 #mint-qr-code[style*="block"]{display:block}
-#mint-xmr-address{display:none;margin:12px 0;padding:12px;background:var(--input);border:1px solid var(--line);border-radius:8px;display:flex;flex-direction:column;gap:12px}
+#mint-xmr-address{display:none;margin:12px 0;padding:12px;background:var(--input);border:1px solid var(--line);border-radius:8px;flex-direction:column;gap:12px}
 #mint-xmr-address-text{font-family:'Inter',system-ui,sans-serif;font-size:12px;word-break:break-all;color:var(--fg);line-height:1.6;letter-spacing:.01em}
 #copy-mint-address{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:7px 0;background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:6px;cursor:pointer;color:var(--muted);font-size:12px;font-family:'Inter',system-ui,sans-serif;transition:background .15s,border-color .15s,color .15s}
 #copy-mint-address:hover{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.25);color:var(--fg)}
