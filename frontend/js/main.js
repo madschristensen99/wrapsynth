@@ -1917,37 +1917,25 @@ async function loadVaults() {
             pricesFresh = true;
             console.log('Oracle prices (fresh):', { xmrPrice, collPrice, globalDebtIndex: globalDebtIndex.toString() });
         } catch (e) {
-            console.error('⚠️ ORACLE PRICES ARE STALE!', e.message);
-            // Try auto-updating prices once
-            try {
-                console.log('Auto-updating oracle prices...');
-                const { updateOraclePrices } = await import('./redstoneWrapper.js');
-                await updateOraclePrices();
-                const [xmrPriceWei, collPriceWei, gdiResult] = await Promise.all([
-                    readHub('getXmrPrice'),
-                    readHub('getCollateralPrice'),
-                    readHub('globalDebtIndex'),
-                ]);
-                xmrPrice = Number(xmrPriceWei) / 1e18;
-                collPrice = Number(collPriceWei) / 1e18;
-                globalDebtIndex = gdiResult;
-                pricesFresh = true;
-                console.log('Oracle prices updated:', { xmrPrice, collPrice });
-            } catch (updateErr) {
-                console.error('Auto price update failed:', updateErr.message);
-            }
-            // Still fetch globalDebtIndex even if prices are stale
+            console.warn('Oracle prices stale, using off-chain fallback:', e.message);
+            // Immediately use off-chain fallback — don't block vault loading
+            xmrPrice = priceCache.value || 0;
+            collPrice = 1.0; // sDAI ≈ $1
+            // Still fetch globalDebtIndex (separate from price oracle)
             try {
                 globalDebtIndex = await readHub('globalDebtIndex');
             } catch (e2) {
                 console.warn('Could not fetch globalDebtIndex:', e2.message);
             }
-            // Use off-chain fallback prices so we can still show estimated capacity
-            if (!pricesFresh) {
-                xmrPrice = priceCache.value || 0;
-                collPrice = 1.0; // sDAI ≈ $1
-                console.log('Using off-chain fallback prices:', { xmrPrice, collPrice, source: 'CoinGecko cache' });
-            }
+            console.log('Using off-chain fallback prices:', { xmrPrice, collPrice, source: 'CoinGecko cache' });
+            // Kick off oracle price update in background — don't await
+            import('./redstoneWrapper.js').then(({ updateOraclePrices }) => {
+                updateOraclePrices().then(() => {
+                    console.log('Background oracle price update succeeded');
+                }).catch(err => {
+                    console.warn('Background oracle price update failed:', err.message);
+                });
+            }).catch(() => {});
         }
 
         // Get sDAI contract for convertToAssets
