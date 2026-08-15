@@ -259,16 +259,48 @@ export async function writeHub(functionName, args = [], value = 0n, gas = undefi
  */
 export async function writeHubUnsafe(functionName, args = [], value = 0n, gas = 3000000n) {
     const client = getWalletClient();
+    const account = getUserAddress();
 
-    const hash = await client.writeContract({
-        address: CONTRACTS.hub,
+    const { encodeFunctionData } = await import('https://esm.sh/viem@2.7.0');
+
+    const data = encodeFunctionData({
         abi: parsedABIs.hub,
         functionName,
         args,
+    });
+
+    const nonce = await getPublicClient().getTransactionCount({ address: account });
+
+    const serializedTx = await client.signTransaction({
+        account,
+        chain: gnosis,
+        to: CONTRACTS.hub,
+        data,
         value,
         gas,
-        account: userAddress
+        gasPrice: 1000000000n,
+        nonce,
     });
+
+    const rpcUrls = NETWORKS.gnosis.rpcUrls;
+    let hash;
+    let lastErr;
+    for (const rpcUrl of rpcUrls) {
+        try {
+            console.log(`[writeHubUnsafe] Trying RPC: ${rpcUrl}...`);
+            const altClient = createPublicClient({
+                chain: gnosis,
+                transport: http(rpcUrl, { retryCount: 1, timeout: 15000 })
+            });
+            hash = await altClient.sendRawTransaction({ serializedTransaction: serializedTx });
+            console.log(`[writeHubUnsafe] Accepted by ${rpcUrl}`);
+            break;
+        } catch (err) {
+            console.warn(`[writeHubUnsafe] RPC ${rpcUrl} failed:`, err.message);
+            lastErr = err;
+        }
+    }
+    if (!hash) throw lastErr;
 
     const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
     return receipt;
@@ -314,15 +346,47 @@ export async function writeWsxmr(functionName, args = []) {
  */
 export async function writeWsxmrUnsafe(functionName, args = [], gas = 200000n) {
     const client = getWalletClient();
+    const account = getUserAddress();
 
-    const hash = await client.writeContract({
-        address: CONTRACTS.wsxmrToken,
+    const { encodeFunctionData } = await import('https://esm.sh/viem@2.7.0');
+
+    const data = encodeFunctionData({
         abi: parsedABIs.wsxmr,
         functionName,
         args,
-        gas,
-        account: userAddress
     });
+
+    const nonce = await getPublicClient().getTransactionCount({ address: account });
+
+    const serializedTx = await client.signTransaction({
+        account,
+        chain: gnosis,
+        to: CONTRACTS.wsxmrToken,
+        data,
+        gas,
+        gasPrice: 1000000000n,
+        nonce,
+    });
+
+    const rpcUrls = NETWORKS.gnosis.rpcUrls;
+    let hash;
+    let lastErr;
+    for (const rpcUrl of rpcUrls) {
+        try {
+            console.log(`[writeWsxmrUnsafe] Trying RPC: ${rpcUrl}...`);
+            const altClient = createPublicClient({
+                chain: gnosis,
+                transport: http(rpcUrl, { retryCount: 1, timeout: 15000 })
+            });
+            hash = await altClient.sendRawTransaction({ serializedTransaction: serializedTx });
+            console.log(`[writeWsxmrUnsafe] Accepted by ${rpcUrl}`);
+            break;
+        } catch (err) {
+            console.warn(`[writeWsxmrUnsafe] RPC ${rpcUrl} failed:`, err.message);
+            lastErr = err;
+        }
+    }
+    if (!hash) throw lastErr;
 
     const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
     return receipt;
