@@ -269,13 +269,16 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
   }
 
   // 6. Call setMintReady (non-payable — bond is tracked in vault config, not sent as ETH)
-  console.log(`[Chain] Calling setMintReady(${reqIdHex}, ${lpCommitment})...`);
+  // Force refresh nonce — oracle price update tx may have used the cached nonce
+  const mintNonce = await provider.getTransactionCount(wallet.address, 'latest');
+  console.log(`[Chain] Calling setMintReady(${reqIdHex}, ${lpCommitment})... nonce: ${mintNonce}`);
   let tx2;
   try {
-    tx2 = await hub.setMintReady(reqIdHex, lpCommitment, { gasLimit: 500000n });
+    tx2 = await hub.setMintReady(reqIdHex, lpCommitment, { gasLimit: 500000n, nonce: mintNonce });
   } catch (gasErr) {
     console.warn(`[Chain] setMintReady with manual gas failed: ${gasErr.message}`);
-    tx2 = await hub.setMintReady(reqIdHex, lpCommitment);
+    const retryNonce = await provider.getTransactionCount(wallet.address, 'latest');
+    tx2 = await hub.setMintReady(reqIdHex, lpCommitment, { nonce: retryNonce });
   }
   console.log(`[Chain] setMintReady tx: ${tx2.hash}`);
   const receipt2 = await tx2.wait();
