@@ -56,7 +56,7 @@ if (!lpPublicSpendKey || !lpPublicViewKey) {
     console.log('  LP Vault:', burnReq.lpVault);
     console.log('  wsXMR Amount:', burnReq.wsxmrAmount.toString());
     console.log('  XMR Amount:', burnReq.xmrAmount.toString());
-    console.log('  State:', burnReq.state.toString());
+    console.log('  State:', burnReq.status.toString());
 
     if (burnReq.lpVault.toLowerCase() !== wallet.address.toLowerCase()) {
       console.error('Error: This burn is not for our vault');
