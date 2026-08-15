@@ -764,7 +764,7 @@ async function startupRecoverBurns() {
   // Also scan recent BurnRequested events for our vault that aren't in persisted secrets
   try {
     const currentBlock = await provider.getBlockNumber();
-    const fromBlock = Math.max(0, currentBlock - 10000);
+    const fromBlock = Math.max(0, currentBlock - 9999);
     const burnEvents = await hubContract.queryFilter(hubContract.filters.BurnRequested(), fromBlock, currentBlock);
     const ourBurns = burnEvents.filter(
       e => e.args.lpVault.toLowerCase() === wallet.address.toLowerCase()
