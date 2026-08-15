@@ -61,6 +61,12 @@ export class BurnFlow {
         await this.waitForLPProposal();
         await this.confirmMoneroLock();
         const lpSecret = await this.waitForLPFinalize();
+        
+        // Burn is functionally complete — fire animation and banner now
+        const { showBurnComplete } = await import('./ui.js?v=' + Date.now());
+        showBurnComplete(this.wsxmrAmount);
+        
+        // Sweep is a post-burn claim step — don't let failures block completion
         await this.sweepXMR(lpSecret);
         await this.complete();
     }
@@ -560,12 +566,16 @@ export class BurnFlow {
                     throw new Error('Monero WASM module not loaded');
                 }
 
+                const mainnetType = (moneroTs.MoneroNetworkType && moneroTs.MoneroNetworkType.MAINNET !== undefined)
+                    ? moneroTs.MoneroNetworkType.MAINNET
+                    : 0;
+
                 showBurnScanProgress('Creating view-only wallet to scan shared address...');
                 console.log('[BurnVerify] Creating view-only wallet for address:', this.sharedMoneroAddress);
 
                 viewWallet = await moneroTs.createWalletFull({
                     password: 'burn-verify-tmp',
-                    networkType: moneroTs.MoneroNetworkType.MAINNET,
+                    networkType: mainnetType,
                     primaryAddress: this.sharedMoneroAddress,
                     privateViewKey: viewKeyLe,
                     serverUri: MONERO_CONFIG.rpcUrl,
@@ -673,8 +683,12 @@ export class BurnFlow {
                 if (btn) btn.addEventListener('click', onConfirm);
                 if (manualBtn) manualBtn.addEventListener('click', () => {
                     const addr = this.sharedMoneroAddress || '';
+                    const viewKey = this.privateViewKeyHex || '';
                     if (addr) {
-                        window.open(`https://xmrchain.net/search?value=${addr}`, '_blank');
+                        const params = new URLSearchParams();
+                        if (addr) params.set('address', addr);
+                        if (viewKey) params.set('view_key', viewKey);
+                        window.open(`https://explorer.monero.com/deposit?${params.toString()}`, '_blank');
                     }
                 });
             };
@@ -936,13 +950,13 @@ export class BurnFlow {
             // Show fallback: let user copy keys for manual import
             showBurnKeysFallback(keys, this.destination);
 
-            // Save state so user can retry later
+            // Save state so user can retry later — but don't throw, burn is already complete
+            this._sweepFailed = true;
             updateSwapState({
                 state: 'sweep-failed',
                 lpSecret: lpSecret,
                 message: 'Sweep failed. Use copied keys to claim XMR manually, or retry.'
             });
-            throw sweepErr;
         }
     }
 
@@ -959,6 +973,7 @@ export class BurnFlow {
             wsxmrAmount: this.wsxmrAmount,
             destination: this.destination,
             state: 'completed',
+            sweepStatus: this._sweepFailed ? 'keys-provided' : 'swept',
             timestamp: Date.now()
         };
         
@@ -966,7 +981,7 @@ export class BurnFlow {
         clearActiveSwap();
         this.cleanup();
         
-        console.log('Burn flow completed successfully!');
+        console.log('Burn flow completed! Sweep status:', swapData.sweepStatus);
     }
 
     /**
@@ -1099,22 +1114,27 @@ export class BurnFlow {
                 await this.waitForLPProposal();
                 await this.confirmMoneroLock();
                 const lpSecret1 = await this.waitForLPFinalize();
+                { const { showBurnComplete } = await import('./ui.js?v=' + Date.now()); showBurnComplete(this.wsxmrAmount); }
                 await this.sweepXMR(lpSecret1);
                 await this.complete();
                 break;
             case 'confirm-lock':
                 await this.confirmMoneroLock();
                 const lpSecret2 = await this.waitForLPFinalize();
+                { const { showBurnComplete } = await import('./ui.js?v=' + Date.now()); showBurnComplete(this.wsxmrAmount); }
                 await this.sweepXMR(lpSecret2);
                 await this.complete();
                 break;
             case 'lp-finalize':
                 const lpSecret3 = await this.waitForLPFinalize();
+                { const { showBurnComplete } = await import('./ui.js?v=' + Date.now()); showBurnComplete(this.wsxmrAmount); }
                 await this.sweepXMR(lpSecret3);
                 await this.complete();
                 break;
             case 'sweeping':
             case 'sweep-failed':
+                // Burn is already finalized on-chain — show completion banner immediately
+                { const { showBurnComplete } = await import('./ui.js?v=' + Date.now()); showBurnComplete(this.wsxmrAmount); }
                 // Re-derive LP secret from on-chain event
                 const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
                 const currentBlock = await getBlockNumber();

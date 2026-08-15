@@ -2943,9 +2943,6 @@ async function handleStartBurn() {
         // Start the flow
         await currentBurnFlow.start(vaultAddress, amount, destination);
         
-        // Success - fire animation + banner
-        showBurnComplete(amount);
-        
         // Update balance
         const address = getUserAddress();
         const balance = await getWsXmrBalance(address);

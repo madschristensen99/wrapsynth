@@ -286,6 +286,7 @@ if ('serviceWorker' in navigator) {
             <div class="step" data-s="1"><div class="bar"></div><div class="t">LP sends<br>XMR to you</div></div>
             <div class="step" data-s="2"><div class="bar"></div><div class="t">Commit burn<br>escrow collateral</div></div>
             <div class="step" data-s="3"><div class="bar"></div><div class="t">LP finalizes<br>reveal secret</div></div>
+            <div class="step" data-s="4"><div class="bar"></div><div class="t">Claim XMR<br>sweep to wallet</div></div>
           </div>
           <div class="step-note" id="burn-step-note"><span class="k" id="burn-step-num">01</span><span id="burn-step-text"></span></div>
 
@@ -304,7 +305,7 @@ if ('serviceWorker' in navigator) {
               <span class="verification-value" id="burn-view-key">—</span>
               <button class="btn-copy-sm" id="copy-burn-viewkey" title="Copy view key">Copy</button>
             </div>
-            <div class="verification-hint">Use the address + view key in a Monero block explorer (e.g. xmrchain.net) to verify incoming XMR</div>
+            <div class="verification-hint">Use the address + view key in a Monero block explorer (e.g. explorer.monero.com) to verify incoming XMR</div>
           </div>
 
           <!-- Burn verification: loading state -->
@@ -339,8 +340,14 @@ if ('serviceWorker' in navigator) {
               If you've verified XMR at the shared address (via Monero explorer or your wallet), confirm to proceed. The auto-scan will continue in the background.
             </p>
             <div class="action-buttons">
-              <button class="cta" id="burn-confirm-receipt">✓ I received the XMR — Confirm</button>
-              <button class="cta ghost" id="burn-confirm-receipt-manual">🔍 Verify on explorer</button>
+              <button class="cta" id="burn-confirm-receipt">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:4px"><polyline points="20 6 9 17 4 12"/></svg>
+                I received the XMR — Confirm
+              </button>
+              <button class="cta ghost" id="burn-confirm-receipt-manual">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:4px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                Verify on explorer
+              </button>
             </div>
           </div>
 
