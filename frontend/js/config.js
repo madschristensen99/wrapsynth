@@ -12,9 +12,9 @@ export const NETWORKS = {
         id: D.chainId || 100,
         name: 'Gnosis Chain',
         rpcUrls: [
-            'https://rpc.gnosischain.com',
             'https://gnosis-rpc.publicnode.com',
-            'https://rpc.gnosis.gateway.fm'
+            'https://rpc.gnosis.gateway.fm',
+            'https://rpc.gnosischain.com'
         ],
         blockExplorer: D.explorer || 'https://gnosisscan.io',
         nativeCurrency: {
@@ -155,7 +155,6 @@ export const RAW_ABIS = {
                 { name: 'userPublicKey', type: 'bytes32' },
                 { name: 'timeout', type: 'uint256' },
                 { name: 'griefingDeposit', type: 'uint256' },
-                { name: 'lpBond', type: 'uint256' },
                 { name: 'normalizedDebtAmount', type: 'uint256' },
                 { name: 'vaultMintNonce', type: 'uint256' },
                 { name: 'lpCommitment', type: 'bytes32' },
@@ -183,7 +182,11 @@ export const RAW_ABIS = {
                 { name: 'deadline', type: 'uint256' },
                 { name: 'vaultLiquidationNonce', type: 'uint256' },
                 { name: 'normalizedDebtAmount', type: 'uint256' },
-                { name: 'status', type: 'uint8' }
+                { name: 'status', type: 'uint8' },
+                { name: 'userClaimCommitment', type: 'bytes32' },
+                { name: 'userPublicKey', type: 'bytes32' },
+                { name: 'userViewKey', type: 'bytes32' },
+                { name: 'xmrPriceAtRequest', type: 'uint256' }
             ],
             name: '',
             type: 'tuple'

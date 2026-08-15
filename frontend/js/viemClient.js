@@ -34,12 +34,12 @@ let userAddress = null;
 function getTransport() {
     const retryOpts = { retryCount: 2, retryDelay: 800 };
     const httpTransports = NETWORKS.gnosis.rpcUrls.map(url => http(url, retryOpts));
-    // If MetaMask is available, use it for reads — bypasses CORS and rate limits entirely,
-    // but fallback to HTTP RPCs if the wallet transport fails (e.g. wallet locked)
+    // HTTP RPCs first for reads — MetaMask's internal RPC can be slow/unreliable on Gnosis.
+    // MetaMask is still used for writes via walletClient.
     if (typeof window !== 'undefined' && window.ethereum) {
         return fallback([
-            custom(window.ethereum, retryOpts),
-            ...httpTransports
+            ...httpTransports,
+            custom(window.ethereum, retryOpts)
         ], { rank: false, retryCount: 2 });
     }
     // Fallback to HTTP RPCs for users without a wallet
@@ -47,7 +47,7 @@ function getTransport() {
 }
 
 export async function initializeClients() {
-    // Create public client with hybrid transport (MetaMask > HTTP fallback)
+    // Create public client with HTTP RPCs first, MetaMask as fallback
     publicClient = createPublicClient({
         chain: gnosis,
         transport: getTransport()

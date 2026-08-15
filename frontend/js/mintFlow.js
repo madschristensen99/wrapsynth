@@ -75,16 +75,21 @@ export class MintFlow {
 
     setupConfirmSentButton() {
         const confirmDiv = document.getElementById('confirm-sent-xmr');
-        const confirmBtn = confirmDiv?.querySelector('button');
-        if (confirmBtn) {
-            confirmBtn.onclick = () => {
+        if (!confirmDiv) return;
+        // Remove any previous delegated listener
+        if (this._confirmClickHandler) {
+            confirmDiv.removeEventListener('click', this._confirmClickHandler);
+        }
+        // Use event delegation so the handler survives innerHTML overwrites
+        this._confirmClickHandler = (e) => {
+            if (e.target.closest('button')) {
                 showLPVerificationStatus();
-                // Resolve the promise waiting for user confirmation
                 if (this.userConfirmResolve) {
                     this.userConfirmResolve();
                 }
-            };
-        }
+            }
+        };
+        confirmDiv.addEventListener('click', this._confirmClickHandler);
     }
 
     /**
@@ -990,6 +995,9 @@ export class MintFlow {
         // ─── Validate on-chain status before resuming ─────────────────────────
         try {
             const mintReq = await readHub('getMintRequest', [this.requestId]);
+            if (!mintReq || mintReq.status == null) {
+                throw new Error('getMintRequest returned null — ABI may be mismatched or mint does not exist');
+            }
             const status = Number(mintReq.status);
             // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED, 6=EXPIRED_READY
             if (status === 5) {

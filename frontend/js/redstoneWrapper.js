@@ -83,9 +83,9 @@ export async function buildRedStonePayload() {
 }
 
 /**
- * Send an updateOraclePrices transaction with a pre-built RedStone payload.
- * Call buildRedStonePayload() first to get the payload, show prices to user,
- * then call this after user confirms.
+ * Send an updateOraclePrices transaction directly from the user's wallet.
+ * Signs with MetaMask, then sends raw tx through an alternative RPC endpoint
+ * because the default Gnosis RPC fails with InternalRpcError on large RedStone calldata.
  */
 export async function sendPriceUpdate({ functionData, redstonePayload }) {
     console.log('Sending price update transaction...');
@@ -94,16 +94,50 @@ export async function sendPriceUpdate({ functionData, redstonePayload }) {
     const publicClient = getPublicClient();
     const account = getUserAddress();
     const { gnosis } = await import('https://esm.sh/viem@2.7.0/chains');
+    const { createPublicClient, http } = await import('https://esm.sh/viem@2.7.0');
 
     const data = functionData + redstonePayload;
 
-    const hash = await walletClient.sendTransaction({
+    // Get nonce from public client
+    const nonce = await publicClient.getTransactionCount({ address: account });
+
+    // Sign the transaction with MetaMask
+    const serializedTx = await walletClient.signTransaction({
+        account,
+        chain: gnosis,
         to: CONTRACTS.hub,
         data,
-        account,
-        chain: gnosis
+        gas: 2000000n,
+        gasPrice: 1000000000n,
+        nonce,
     });
 
+    // Send raw tx through alternative RPCs (some Gnosis RPCs can't handle large RedStone calldata)
+    const rpcUrls = [
+        'https://gnosis-rpc.publicnode.com',
+        'https://rpc.gnosis.gateway.fm',
+        'https://rpc.gnosischain.com',
+    ];
+    let hash;
+    let lastErr;
+    for (const rpcUrl of rpcUrls) {
+        try {
+            console.log(`Trying RPC: ${rpcUrl}...`);
+            const altClient = createPublicClient({
+                chain: gnosis,
+                transport: http(rpcUrl, { retryCount: 1, timeout: 15000 })
+            });
+            hash = await altClient.sendRawTransaction({ serializedTransaction: serializedTx });
+            console.log(`✅ Accepted by ${rpcUrl}`);
+            break;
+        } catch (err) {
+            console.warn(`RPC ${rpcUrl} failed:`, err.message);
+            lastErr = err;
+        }
+    }
+    if (!hash) throw lastErr;
+
+    // Wait for receipt using the normal public client
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
 
     console.log('✅ Oracle prices updated successfully');

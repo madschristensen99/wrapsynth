@@ -287,7 +287,7 @@ async function processPropose(reqIdHex, customKeys = {}) {
       burn.error = xmrErr.message;
       updateBurnSecretState(reqIdHex, 'proposed', { error: xmrErr.message });
       // If funds are locked (not insufficient), retry after a short delay
-      if (xmrErr.message.includes('XMR locked') || xmrErr.message.includes('not enough money')) {
+      if (xmrErr.message.includes('XMR locked') || xmrErr.message.includes('not enough money') || xmrErr.message.includes('Insufficient XMR') || xmrErr.message.includes('0.000000 XMR')) {
         console.log(`[Burn] Will retry XMR send for ${reqIdHex} in 30s...`);
         setTimeout(async () => {
           try {
@@ -651,7 +651,7 @@ async function startupRecoverBurns() {
     const saved = secrets[reqIdHex];
     try {
       const burnReq = await hubContract.getBurnRequest(reqIdHex);
-      const status = Number(burnReq.state);
+      const status = Number(burnReq.status);
 
       // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=COMPLETED, 5=CANCELLED, 6=SLASHED
       if (status === 4 || status === 5 || status === 6) {
@@ -693,6 +693,36 @@ async function startupRecoverBurns() {
         burn.state = 'proposed';
         pendingBurns.set(reqIdHex, burn);
         console.log(`[Burn Recovery] ${reqIdHex} is PROPOSED — waiting for BurnCommitted event`);
+        // Recompute sharedAddress if missing (e.g. secret was saved manually)
+        if (!burn.sharedAddress && burn.userPublicKey && burn.userViewKey && burn.lpPublicSpendKey) {
+          try {
+            burn.sharedAddress = await moneroCrypto.computeBurnAddress(
+              ethers.hexlify(burn.userPublicKey),
+              ethers.hexlify(burn.userViewKey),
+              burn.lpPublicSpendKey
+            );
+            console.log(`[Burn Recovery] Recomputed shared address for ${reqIdHex}: ${burn.sharedAddress}`);
+          } catch (err) {
+            console.warn(`[Burn Recovery] Could not recompute shared address:`, err.message);
+          }
+        }
+        // Retry XMR send if it was never sent (e.g. wallet was empty at first attempt)
+        if (!burn.moneroTxHash && burn.sharedAddress && moneroWallet.isWalletConfigured()) {
+          console.log(`[Burn Recovery] ${reqIdHex} has no moneroTxHash — refreshing wallet and retrying XMR send...`);
+          (async () => {
+            try {
+              await moneroWallet.refreshWallet();
+              const xmrAmountAtomic = BigInt(burn.xmrAmount);
+              const result = await sendXmr(burn.sharedAddress, xmrAmountAtomic);
+              burn.moneroTxHash = result.txHash;
+              updateBurnSecretState(reqIdHex, 'proposed', { moneroTxHash: result.txHash, error: null });
+              console.log(`[Burn Recovery] XMR retry send succeeded for ${reqIdHex}: txHash=${result.txHash}`);
+            } catch (retryErr) {
+              console.error(`[Burn Recovery] XMR retry failed for ${reqIdHex}:`, retryErr.message);
+              updateBurnSecretState(reqIdHex, 'proposed', { error: retryErr.message });
+            }
+          })();
+        }
       } else if (status === 3) {
         // COMMITTED — user confirmed, LP needs to finalize
         burn.state = 'committed';
@@ -725,7 +755,7 @@ async function startupRecoverBurns() {
 
       try {
         const burnReq = await hubContract.getBurnRequest(reqIdHex);
-        const status = Number(burnReq.state);
+        const status = Number(burnReq.status);
         if (status === 4 || status === 5 || status === 6) continue;
 
         console.log(`[Burn Recovery] Found untracked active burn ${reqIdHex} (status=${status}) — rehydrating`);

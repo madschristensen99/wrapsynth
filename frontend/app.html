@@ -297,11 +297,14 @@ if ('serviceWorker' in navigator) {
             <div class="verification-row">
               <span class="verification-label">Shared XMR address</span>
               <span class="verification-value" id="burn-monero-address">—</span>
+              <button class="btn-copy-sm" id="copy-burn-address" title="Copy address">Copy</button>
             </div>
             <div class="verification-row">
               <span class="verification-label">Private view key</span>
               <span class="verification-value" id="burn-view-key">—</span>
+              <button class="btn-copy-sm" id="copy-burn-viewkey" title="Copy view key">Copy</button>
             </div>
+            <div class="verification-hint">Use the address + view key in a Monero block explorer (e.g. xmrchain.net) to verify incoming XMR</div>
           </div>
 
           <!-- Burn verification: loading state -->

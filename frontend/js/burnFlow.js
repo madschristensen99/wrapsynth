@@ -127,6 +127,7 @@ export class BurnFlow {
         const userAddress = getUserAddress();
         const wsxmrAmountAtomic = BigInt(Math.floor(this.wsxmrAmount * Math.pow(10, DECIMALS.wsXMR)));
 
+        updateBurnProgress('evm-request', 'Approving wsXMR spend (check wallet)...');
         try {
             await writeWsxmr('approve', [CONTRACTS.hub, wsxmrAmountAtomic]);
         } catch (approveErr) {
@@ -134,6 +135,7 @@ export class BurnFlow {
             await writeWsxmrUnsafe('approve', [CONTRACTS.hub, wsxmrAmountAtomic]);
         }
         console.log('wsXMR approved for burn');
+        updateBurnProgress('evm-request', '✓ wsXMR approved — updating oracle price...');
 
         // Push fresh prices before attempting requestBurn
         try {
@@ -153,6 +155,7 @@ export class BurnFlow {
 
         let receipt;
         const attemptRequestBurn = async () => {
+            updateBurnProgress('evm-request', 'Submitting burn request (check wallet)...');
             return await writeHub('requestBurn', [
                 wsxmrAmountAtomic,
                 this.lpVault,

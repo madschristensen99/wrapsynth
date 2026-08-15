@@ -118,8 +118,23 @@ export async function getBalance(accountIndex = 0) {
   const res = await walletRpc('get_balance', { account_index: accountIndex });
   return {
     balance: BigInt(res.balance),
-    unlocked: BigInt(res.unlocked_balance),
+    unlockedBalance: BigInt(res.unlocked_balance),
   };
+}
+
+/**
+ * Refresh the wallet to sync with the blockchain.
+ * Needed after wallet regeneration to detect incoming transactions.
+ */
+export async function refreshWallet() {
+  try {
+    const res = await walletRpc('refresh', {}, 3, 300000);
+    console.log(`[Monero] Wallet refresh complete: blocks_fetched=${res.blocks_fetched || 0}`);
+    return res;
+  } catch (err) {
+    console.warn('[Monero] Wallet refresh failed:', err.message);
+    return null;
+  }
 }
 
 /**
@@ -449,7 +464,7 @@ async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpM
   const walletName = 'sweep-tmp';
   const walletPass = 'sweep';
   const fs = await import('fs');
-  const walletDir = process.env.MONERO_WALLET_DIR || '/tmp/monero-wallets';
+  const walletDir = process.env.MONERO_WALLET_DIR || '/home/remsee/wsFrontendOverhaul/lp-server-js/monero-wallets';
 
   // Fetch Monero daemon height for restore_height — the EVM block number
   // passed as restoreHeight is NOT a Monero block height.

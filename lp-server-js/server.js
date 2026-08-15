@@ -63,14 +63,14 @@ const HUB_ABI = [
   'event BurnAborted(bytes32 indexed requestId)',
   // Functions
   'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
-  'function setMintReady(bytes32 requestId, bytes32 lpCommitment) external payable',
+  'function setMintReady(bytes32 requestId, bytes32 lpCommitment) external',
   'function getVault(address lpAddress) external view returns (tuple(address lpAddress, uint256 collateralShares, uint256 lockedCollateral, uint256 normalizedDebt, uint256 pendingDebt, uint16 maxMintBps, uint256 mintGriefingDeposit, uint256 mintReadyBond, uint16 mintFeeBps, uint16 burnRewardBps, uint256 liquidationNonce, uint256 mintNonce, uint256 minBurnAmount, bool active, uint256 deployedSDAIShares, uint16 maxCoLPRangeBps))',
   'function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
   'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
   'function claimSlashedCollateral(bytes32 requestId) external',
   'function resolveDeclinedProposal(bytes32 requestId) external',
-  'function getBurnRequest(bytes32 requestId) external view returns (tuple(address user, address lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 feeAmount, uint256 collateralLocked, uint256 rewardCollateral, bytes32 claimCommitment, bytes32 secretHash, uint256 timeout, uint256 commitDeadline, uint256 state))',
-  'function getMintRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout, uint256 griefingDeposit, uint256 lpBond, uint256 normalizedDebtAmount, uint256 vaultMintNonce, uint8 status))',
+  'function getBurnRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address user, address lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 lockedCollateral, uint256 rewardCollateral, bytes32 secretHash, uint256 deadline, uint256 vaultLiquidationNonce, uint256 normalizedDebtAmount, uint8 status, bytes32 userClaimCommitment, bytes32 userPublicKey, bytes32 userViewKey, uint256 xmrPriceAtRequest))',
+  'function getMintRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout, uint256 griefingDeposit, uint256 normalizedDebtAmount, uint256 vaultMintNonce, bytes32 lpCommitment, uint8 status))',
   'function lpPublicKeys(bytes32 requestId) external view returns (bytes32)',
   'function lpPublicViewKeys(bytes32 requestId) external view returns (bytes32)',
   'function updateOraclePrices(bytes[] calldata updateData) external payable',
@@ -268,13 +268,15 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
     console.warn(`[Mint] Could not persist lpSecret for ${reqIdHex}:`, err.message);
   }
 
-  // 6. Fetch required bond from vault config and call setMintReady
-  const vault = await hub.getVault(wallet.address);
-  const requiredBond = vault.mintReadyBond;
-  console.log(`[Chain] Vault mintReadyBond: ${ethers.formatEther(requiredBond)} ETH`);
-
-  console.log(`[Chain] Calling setMintReady(${reqIdHex}, ${lpCommitment}) with bond ${ethers.formatEther(requiredBond)} ETH...`);
-  const tx2 = await hub.setMintReady(reqIdHex, lpCommitment, { value: requiredBond });
+  // 6. Call setMintReady (non-payable — bond is tracked in vault config, not sent as ETH)
+  console.log(`[Chain] Calling setMintReady(${reqIdHex}, ${lpCommitment})...`);
+  let tx2;
+  try {
+    tx2 = await hub.setMintReady(reqIdHex, lpCommitment, { gasLimit: 500000n });
+  } catch (gasErr) {
+    console.warn(`[Chain] setMintReady with manual gas failed: ${gasErr.message}`);
+    tx2 = await hub.setMintReady(reqIdHex, lpCommitment);
+  }
   console.log(`[Chain] setMintReady tx: ${tx2.hash}`);
   const receipt2 = await tx2.wait();
   console.log(`[Chain] setMintReady confirmed in block ${receipt2.blockNumber}`);
@@ -560,8 +562,8 @@ async function startupResolveStale() {
     const reqIdHex = ethers.hexlify(event.args.requestId);
     try {
       const burnReq = await hub.getBurnRequest(reqIdHex);
-      const state = Number(burnReq.state);
-      const deadline = Number(burnReq.timeout);
+      const state = Number(burnReq.status);
+      const deadline = Number(burnReq.deadline);
 
       // State 2=PROPOSED — resolve if deadline passed (LP didn't commit or user didn't confirm)
       if (state === 2 && currentBlock >= deadline) {
