@@ -599,15 +599,15 @@ export class BurnFlow {
                 showBurnScanProgress('Syncing wallet to scan for incoming XMR...');
                 await viewWallet.startSyncing();
 
-                // Poll for incoming transactions
+                // Poll for incoming transactions — keep scanning until burn deadline
                 let scanStartTime = Date.now();
-                const scanTimeout = 180000; // 3 minutes
+                const scanTimeout = 30 * 60 * 1000; // 30 minutes (LP may need time to unlock XMR)
 
                 const checkForXmr = async () => {
                     if (confirmed) return;
                     const elapsed = Date.now() - scanStartTime;
                     if (elapsed > scanTimeout) {
-                        console.warn('[BurnVerify] Auto-scan timeout, falling back to manual confirm');
+                        console.warn('[BurnVerify] Auto-scan timeout after 30min, falling back to manual confirm');
                         await closeWallet();
                         showBurnVerificationManual();
                         updateBurnProgress('confirm-lock', 'Auto-scan timeout — confirm manually');
@@ -656,9 +656,15 @@ export class BurnFlow {
                             return;
                         }
 
-                        // Still syncing or no XMR yet
-                        showBurnScanProgress(`Scanning... ${syncHeight}/${daemonHeight} blocks synced`);
+                        // Still syncing or no XMR yet — show manual confirm alongside scan
+                        const elapsedMin = Math.floor(elapsed / 60000);
+                        const elapsedSec = Math.floor((elapsed % 60000) / 1000);
+                        showBurnScanProgress(`Scanning Monero chain... ${syncHeight}/${daemonHeight} blocks (${elapsedMin}m${elapsedSec}s)`);
                         updateBurnProgress('confirm-lock', `Scanning Monero... ${syncHeight}/${daemonHeight}`);
+                        // Show manual confirm button after 30s so user can confirm manually if they verified externally
+                        if (elapsed > 30000) {
+                            showBurnVerificationManual();
+                        }
                     } catch (e) {
                         console.warn('[BurnVerify] Scan check error:', e.message);
                         showBurnScanProgress(`Scanning... (retrying)`);
@@ -671,7 +677,7 @@ export class BurnFlow {
                 // Initial check after 3 seconds (let sync start)
                 setTimeout(checkForXmr, 3000);
 
-                // Overall timeout
+                // Overall timeout — same as scan timeout, no extra 10s
                 timeoutId = setTimeout(() => {
                     if (!confirmed) {
                         console.warn('[BurnVerify] Overall timeout, falling back to manual');
@@ -681,7 +687,7 @@ export class BurnFlow {
                             updateBurnProgress('confirm-lock', 'Auto-scan timeout — confirm manually');
                         });
                     }
-                }, scanTimeout + 10000);
+                }, scanTimeout);
 
             } catch (wasmError) {
                 console.warn('[BurnVerify] View-only wallet failed, falling back to manual:', wasmError.message);
@@ -689,6 +695,9 @@ export class BurnFlow {
                 showBurnVerificationManual();
                 updateBurnProgress('confirm-lock', 'Confirm receipt of XMR to proceed...');
             }
+
+            // Show manual confirm button immediately alongside auto-scan
+            showBurnVerificationManual();
 
             // Wire up confirm button and manual verify button
             const wireButtons = () => {
