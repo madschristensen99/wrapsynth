@@ -301,7 +301,20 @@ async function init() {
     onAccountsChanged(handleAccountChange);
     onChainChanged(handleChainChange);
 
+    // Start fire-and-forget fetches immediately after clients are ready
+    // (these don't depend on wallet connection)
+    fetchXmrPrice();
+    fetch24hVolume();
+    loadRecentActivity();
+    startActivityFeedWatcher();
+    updateProtocolStats();
+
+    // Wire up LP detail card toggles and vault pickers
+    initLPDetailToggles();
+    initVaultPickers();
+
     // Try to auto-connect wallet if previously authorized
+    // handleAccountChange already calls loadVaults(), so no separate call needed
     let autoConnected = false;
     try {
         const autoAddress = await ensureConnected();
@@ -313,25 +326,15 @@ async function init() {
     } catch (e) {
         console.warn('[INIT] Auto-connect failed:', e.message);
     }
-    
-    // Load vaults (public reads via HTTP fallback work even without wallet)
-    await loadVaults();
-    
-    // Wire up LP detail card toggles and vault pickers
-    initLPDetailToggles();
-    initVaultPickers();
-    
+
+    // Load vaults only if we didn't already via handleAccountChange
+    // (public reads via HTTP fallback work even without wallet)
+    if (!autoConnected) {
+        await loadVaults();
+    }
+
     // Check for active swap
     checkForActiveSwap();
-    
-    // Fetch XMR price (cached, falls back to CoinCap if CoinGecko blocked)
-    fetchXmrPrice();
-    fetch24hVolume();
-
-    // Load activity feed and protocol stats
-    loadRecentActivity();
-    startActivityFeedWatcher();
-    updateProtocolStats();
 
     // Update volume / activity / on-chain stats every 60 seconds
     setInterval(() => {
@@ -684,13 +687,18 @@ async function handleAccountChange(newAddress) {
             console.warn('Could not fetch balance:', error.message);
         }
         showWalletConnected(newAddress, balance);
-        await loadVaults();
-        await refreshCoLPBalance();
-        await handleRefreshCoLPPositions();
+
+        // Run all independent async operations in parallel
+        await Promise.all([
+            loadVaults(),
+            refreshCoLPBalance(balance),
+            handleRefreshCoLPPositions(),
+            checkForActiveSwapOnChain(newAddress),
+            checkPendingReturns(newAddress),
+        ]);
+
         validateCoLPOpenButton();
-        await checkForActiveSwapOnChain(newAddress);
-        await checkPendingReturns(newAddress);
-        
+
         // Auto-resume most recent swap, but keep banner visible for all
         const allSwaps = loadActiveSwaps();
         if (allSwaps.length > 0) {
@@ -826,108 +834,129 @@ async function checkForActiveSwapOnChain(userAddress) {
     const activeRequestIds = new Set();
 
     try {
-        // ─── Active Mints ────────────────────────────────────────────────────
-        console.log('[CHAIN CHECK] Calling getUserMintRequests for', userAddress);
-        let mintRequestIds;
-        try {
-            mintRequestIds = await readHub('getUserMintRequests', [userAddress]);
-            console.log('[CHAIN CHECK] getUserMintRequests returned', mintRequestIds?.length || 0, 'request(s):', mintRequestIds);
-        } catch (err) {
-            console.error('[CHAIN CHECK] getUserMintRequests FAILED:', err.message);
-            mintRequestIds = [];
-        }
-
-        // Get current block number for timeout checking
+        // Fetch mint request IDs, burn request IDs, and current block number in parallel
         const { getPublicClient } = await import('./viemClient.js');
         const publicClient = getPublicClient();
-        const currentBlock = await publicClient.getBlockNumber();
 
-        for (const requestId of mintRequestIds) {
-            let mintReq;
-            try {
-                mintReq = await readHub('getMintRequest', [requestId]);
-            } catch (err) {
-                console.error('[CHAIN CHECK] getMintRequest FAILED for', requestId, ':', err.message);
-                continue;
-            }
+        console.log('[CHAIN CHECK] Fetching mint IDs, burn IDs, and block number in parallel for', userAddress);
+        const [mintRequestIdsResult, burnRequestIdsResult, currentBlockResult] = await Promise.all([
+            readHub('getUserMintRequests', [userAddress]).catch(err => {
+                console.error('[CHAIN CHECK] getUserMintRequests FAILED:', err.message);
+                return [];
+            }),
+            readHub('getUserBurnRequests', [userAddress]).catch(err => {
+                console.error('[CHAIN CHECK] getUserBurnRequests FAILED:', err.message);
+                return [];
+            }),
+            publicClient.getBlockNumber().catch(err => {
+                console.error('[CHAIN CHECK] getBlockNumber FAILED:', err.message);
+                return 0n;
+            }),
+        ]);
 
+        const mintRequestIds = mintRequestIdsResult || [];
+        const burnRequestIds = burnRequestIdsResult || [];
+        const currentBlock = currentBlockResult;
+
+        console.log('[CHAIN CHECK] getUserMintRequests returned', mintRequestIds.length, 'request(s):', mintRequestIds);
+        console.log('[CHAIN CHECK] getUserBurnRequests returned', burnRequestIds.length, 'request(s)');
+
+        // Fetch all mint request details in parallel
+        const mintReqResults = await Promise.all(
+            mintRequestIds.map(requestId =>
+                readHub('getMintRequest', [requestId])
+                    .then(req => ({ requestId, mintReq: req }))
+                    .catch(err => {
+                        console.error('[CHAIN CHECK] getMintRequest FAILED for', requestId, ':', err.message);
+                        return { requestId, mintReq: null };
+                    })
+            )
+        );
+
+        // Process mint results and fetch lpPublicKeys in parallel for active mints
+        const activeMintEntries = [];
+        for (const { requestId, mintReq } of mintReqResults) {
+            if (!mintReq) continue;
             // Status: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
             if (mintReq.status === 1 || mintReq.status === 2 || mintReq.status === 3) {
-                // Check if mint has expired
                 const timeout = Number(mintReq.timeout);
                 if (currentBlock >= timeout) {
                     console.log('[CHAIN CHECK] Mint expired:', { requestId, timeout, currentBlock });
-                    // Don't add to active list - it's expired and should be cancelled
                     continue;
                 }
-
-                activeRequestIds.add(requestId);
-
-                let lpPublicKey = '0x0000000000000000000000000000000000000000000000000000000000000000';
-                try {
-                    lpPublicKey = await readHub('lpPublicKeys', [requestId]);
-                } catch (err) {
-                    console.warn('[CHAIN CHECK] lpPublicKeys query failed:', err.message);
-                }
-                const hasLpKey = lpPublicKey !== '0x0000000000000000000000000000000000000000000000000000000000000000';
-
-                let state;
-                if (mintReq.status === 3) state = 'lp-ready';  // READY - can finalize
-                else if (mintReq.status === 2) state = 'lp-verifying';  // KEY_PROVIDED - LP is verifying
-                else if (hasLpKey) state = 'deposit';  // PENDING with LP key - waiting for XMR
-                else state = 'awaiting-lp-key';  // PENDING without LP key
-
-                const xmrAmount = Number(mintReq.xmrAmount) / 1e12;
-                let swap = {
-                    type: 'mint',
-                    state,
-                    requestId,
-                    lpVault: mintReq.lpVault,
-                    xmrAmount,
-                    wsxmrAmount: mintReq.wsxmrAmount.toString(),
-                    griefingDeposit: mintReq.griefingDeposit.toString(),
-                    // Recover publicSpendKey from on-chain userPublicKey so resume works
-                    // even if localStorage lost it (e.g. cleared browser data)
-                    publicSpendKey: mintReq.userPublicKey,
-                    lastUpdated: Date.now()
-                };
-                // Preserve local-only fields (e.g. depositAddress, lpPublicSpendKey, dismissed) from existing entry
-                const existing = getActiveSwapByRequestId(requestId);
-                if (existing) {
-                    swap = { ...existing, ...swap };
-                    // Don't overwrite a valid existing publicSpendKey with chain data if they differ
-                    if (existing.publicSpendKey && existing.publicSpendKey !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
-                        swap.publicSpendKey = existing.publicSpendKey;
-                    }
-                    if (existing.dismissed) {
-                        console.log('[CHAIN CHECK] Preserving dismissed flag for', requestId.slice(0, 14));
-                    }
-                }
-                addOrUpdateActiveSwap(swap);
-                foundSwaps.push(swap);
-                console.log('[CHAIN CHECK] Active mint found:', { requestId, state, xmrAmount, dismissed: swap.dismissed });
+                activeMintEntries.push({ requestId, mintReq });
             }
         }
 
-        // ─── Active Burns ──────────────────────────────────────────────────────
-        console.log('[CHAIN CHECK] Calling getUserBurnRequests for', userAddress);
-        let burnRequestIds;
-        try {
-            burnRequestIds = await readHub('getUserBurnRequests', [userAddress]);
-            console.log('[CHAIN CHECK] getUserBurnRequests returned', burnRequestIds?.length || 0, 'request(s)');
-        } catch (err) {
-            console.error('[CHAIN CHECK] getUserBurnRequests FAILED:', err.message);
-            burnRequestIds = [];
+        // Fetch all lpPublicKeys for active mints in parallel
+        const lpKeyResults = await Promise.all(
+            activeMintEntries.map(({ requestId }) =>
+                readHub('lpPublicKeys', [requestId])
+                    .catch(err => {
+                        console.warn('[CHAIN CHECK] lpPublicKeys query failed:', err.message);
+                        return '0x0000000000000000000000000000000000000000000000000000000000000000';
+                    })
+            )
+        );
+
+        for (let i = 0; i < activeMintEntries.length; i++) {
+            const { requestId, mintReq } = activeMintEntries[i];
+            const lpPublicKey = lpKeyResults[i];
+            const hasLpKey = lpPublicKey !== '0x0000000000000000000000000000000000000000000000000000000000000000';
+
+            activeRequestIds.add(requestId);
+
+            let state;
+            if (mintReq.status === 3) state = 'lp-ready';  // READY - can finalize
+            else if (mintReq.status === 2) state = 'lp-verifying';  // KEY_PROVIDED - LP is verifying
+            else if (hasLpKey) state = 'deposit';  // PENDING with LP key - waiting for XMR
+            else state = 'awaiting-lp-key';  // PENDING without LP key
+
+            const xmrAmount = Number(mintReq.xmrAmount) / 1e12;
+            let swap = {
+                type: 'mint',
+                state,
+                requestId,
+                lpVault: mintReq.lpVault,
+                xmrAmount,
+                wsxmrAmount: mintReq.wsxmrAmount.toString(),
+                griefingDeposit: mintReq.griefingDeposit.toString(),
+                // Recover publicSpendKey from on-chain userPublicKey so resume works
+                // even if localStorage lost it (e.g. cleared browser data)
+                publicSpendKey: mintReq.userPublicKey,
+                lastUpdated: Date.now()
+            };
+            // Preserve local-only fields (e.g. depositAddress, lpPublicSpendKey, dismissed) from existing entry
+            const existing = getActiveSwapByRequestId(requestId);
+            if (existing) {
+                swap = { ...existing, ...swap };
+                // Don't overwrite a valid existing publicSpendKey with chain data if they differ
+                if (existing.publicSpendKey && existing.publicSpendKey !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
+                    swap.publicSpendKey = existing.publicSpendKey;
+                }
+                if (existing.dismissed) {
+                    console.log('[CHAIN CHECK] Preserving dismissed flag for', requestId.slice(0, 14));
+                }
+            }
+            addOrUpdateActiveSwap(swap);
+            foundSwaps.push(swap);
+            console.log('[CHAIN CHECK] Active mint found:', { requestId, state, xmrAmount, dismissed: swap.dismissed });
         }
 
-        for (const requestId of burnRequestIds) {
-            let burnReq;
-            try {
-                burnReq = await readHub('getBurnRequest', [requestId]);
-            } catch (err) {
-                console.error('[CHAIN CHECK] getBurnRequest FAILED for', requestId, ':', err.message);
-                continue;
-            }
+        // Fetch all burn request details in parallel
+        const burnReqResults = await Promise.all(
+            burnRequestIds.map(requestId =>
+                readHub('getBurnRequest', [requestId])
+                    .then(req => ({ requestId, burnReq: req }))
+                    .catch(err => {
+                        console.error('[CHAIN CHECK] getBurnRequest FAILED for', requestId, ':', err.message);
+                        return { requestId, burnReq: null };
+                    })
+            )
+        );
+
+        for (const { requestId, burnReq } of burnReqResults) {
+            if (!burnReq) continue;
 
             // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=FINALIZED, 5=CANCELLED, 6=SLASHED
             if (burnReq.status === 1 || burnReq.status === 2 || burnReq.status === 3) {
@@ -1107,13 +1136,13 @@ function renderCoLPPositions(positions) {
 /**
  * Refresh wsXMR balance shown in Co-LP panel
  */
-async function refreshCoLPBalance() {
+async function refreshCoLPBalance(prefetchedBalance) {
     try {
         const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js');
         const address = getUserAddress();
         const balanceEl = document.getElementById('co-lp-user-balance');
         if (address && balanceEl) {
-            const balance = await getWsXmrBalance(address);
+            const balance = prefetchedBalance !== undefined ? prefetchedBalance : await getWsXmrBalance(address);
             balanceEl.textContent = (Number(balance) / 1e8).toFixed(4);
         } else if (balanceEl) {
             balanceEl.textContent = '0';
@@ -1871,25 +1900,53 @@ async function loadVaults() {
         let totalCollateralWei = 0n;
 
         // Fetch oracle prices and globalDebtIndex for capacity calculation
-        let xmrPrice = 150;   // fallback USD per XMR
-        let collPrice = 1.0;  // fallback USD per sDAI
-        let globalDebtIndex = 1e18; // fallback (no scaling)
+        let xmrPrice = 0;
+        let collPrice = 0;
+        let globalDebtIndex = 1e18;
+        let pricesFresh = false;
         try {
-            // Try to get fresh prices first
-            const xmrPriceWei = await readHub('getXmrPrice');
-            const collPriceWei = await readHub('getCollateralPrice');
-            globalDebtIndex = await readHub('globalDebtIndex');
+            // Fetch all three in parallel
+            const [xmrPriceWei, collPriceWei, gdiResult] = await Promise.all([
+                readHub('getXmrPrice'),
+                readHub('getCollateralPrice'),
+                readHub('globalDebtIndex'),
+            ]);
             xmrPrice = Number(xmrPriceWei) / 1e18;
             collPrice = Number(collPriceWei) / 1e18;
+            globalDebtIndex = gdiResult;
+            pricesFresh = true;
             console.log('Oracle prices (fresh):', { xmrPrice, collPrice, globalDebtIndex: globalDebtIndex.toString() });
         } catch (e) {
-            console.error('⚠️ ORACLE PRICES ARE STALE! Click "Update Prices" button to refresh.');
-            console.warn('Using hardcoded fallback prices - capacity will be INCORRECT:', e.message);
+            console.error('⚠️ ORACLE PRICES ARE STALE!', e.message);
+            // Try auto-updating prices once
+            try {
+                console.log('Auto-updating oracle prices...');
+                const { updateOraclePrices } = await import('./redstoneWrapper.js');
+                await updateOraclePrices();
+                const [xmrPriceWei, collPriceWei, gdiResult] = await Promise.all([
+                    readHub('getXmrPrice'),
+                    readHub('getCollateralPrice'),
+                    readHub('globalDebtIndex'),
+                ]);
+                xmrPrice = Number(xmrPriceWei) / 1e18;
+                collPrice = Number(collPriceWei) / 1e18;
+                globalDebtIndex = gdiResult;
+                pricesFresh = true;
+                console.log('Oracle prices updated:', { xmrPrice, collPrice });
+            } catch (updateErr) {
+                console.error('Auto price update failed:', updateErr.message);
+            }
             // Still fetch globalDebtIndex even if prices are stale
             try {
                 globalDebtIndex = await readHub('globalDebtIndex');
             } catch (e2) {
                 console.warn('Could not fetch globalDebtIndex:', e2.message);
+            }
+            // Use off-chain fallback prices so we can still show estimated capacity
+            if (!pricesFresh) {
+                xmrPrice = priceCache.value || 0;
+                collPrice = 1.0; // sDAI ≈ $1
+                console.log('Using off-chain fallback prices:', { xmrPrice, collPrice, source: 'CoinGecko cache' });
             }
         }
 
@@ -1903,7 +1960,19 @@ async function loadVaults() {
         for (const vaultAddress of knownVaults) {
             try {
                 console.log('Fetching vault data for:', vaultAddress);
-                const vaultData = await readHub('getVault', [vaultAddress]);
+
+                // Fetch vault data, burn request IDs, and mint capacity in parallel
+                const [vaultData, burnIdsResult, mintCapacityResult] = await Promise.all([
+                    readHub('getVault', [vaultAddress]),
+                    readHub('getVaultBurnRequests', [vaultAddress]).catch(e => {
+                        console.warn('[Capacity] Could not query vault burn requests:', e.message);
+                        return [];
+                    }),
+                    readHub('getMintCapacity', [vaultAddress]).catch(e => {
+                        console.warn('getMintCapacity failed (prices may be stale):', e.message);
+                        return null;
+                    }),
+                ]);
 
                 console.log('Raw vault data:', vaultData);
                 console.log('Collateral shares:', vaultData.collateralShares?.toString());
@@ -1917,18 +1986,38 @@ async function loadVaults() {
                     const collShares = BigInt(vaultData.collateralShares.toString());
                     const lockedShares = BigInt(vaultData.lockedCollateral.toString());
                     const availableShares = collShares > lockedShares ? collShares - lockedShares : 0n;
-                    
-                    let collAmountDAI = Number(availableShares) / 1e18; // fallback: assume 1:1
-                    try {
-                        const assetsWei = await publicClient.readContract({
+
+                    // Fetch both convertToAssets calls and all burn request details in parallel
+                    const [assetsWeiResult, totalAssetsWeiResult, ...burnReqResults] = await Promise.all([
+                        publicClient.readContract({
                             address: sDAIAddress,
                             abi: sDAIAbi,
                             functionName: 'convertToAssets',
                             args: [availableShares]
-                        });
-                        collAmountDAI = Number(assetsWei) / 1e18;
-                    } catch (e) {
-                        console.warn('convertToAssets failed, using shares as fallback:', e.message);
+                        }).catch(e => {
+                            console.warn('convertToAssets failed, using shares as fallback:', e.message);
+                            return null;
+                        }),
+                        publicClient.readContract({
+                            address: sDAIAddress,
+                            abi: sDAIAbi,
+                            functionName: 'convertToAssets',
+                            args: [collShares]
+                        }).catch(e => {
+                            console.warn('convertToAssets for total collateral failed:', e.message);
+                            return null;
+                        }),
+                        ...burnIdsResult.map(burnId =>
+                            readHub('getBurnRequest', [burnId]).catch(e => {
+                                console.warn('[Capacity] getBurnRequest failed for', burnId, ':', e.message);
+                                return null;
+                            })
+                        ),
+                    ]);
+
+                    let collAmountDAI = Number(availableShares) / 1e18; // fallback: assume 1:1
+                    if (assetsWeiResult !== null) {
+                        collAmountDAI = Number(assetsWeiResult) / 1e18;
                     }
 
                     // Denormalize debt using globalDebtIndex (actualDebt = normalizedDebt * index / 1e18)
@@ -1937,26 +2026,18 @@ async function loadVaults() {
                     const debtAmount = Number(actualDebt) / 1e8; // wsXMR has 8 decimals
                     const pendingDebtAmount = Number(vaultData.pendingDebt) / 1e8;
 
-                    // Query active burn requests (REQUESTED/PROPOSED/COMMITTED) to include in-flight debt
-                    // that isn't captured in vault.pendingDebt (which only tracks PROPOSED+ burns)
+                    // Process burn requests to compute in-flight debt
                     let inFlightBurnDebt = 0;
-                    try {
-                        const burnIds = await readHub('getVaultBurnRequests', [vaultAddress]);
-                        for (const burnId of burnIds) {
-                            try {
-                                const burnReq = await readHub('getBurnRequest', [burnId]);
-                                const status = Number(burnReq.status);
-                                // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED
-                                if (status === 1 || status === 2 || status === 3) {
-                                    inFlightBurnDebt += Number(burnReq.wsxmrAmount) / 1e8;
-                                }
-                            } catch (e) { /* skip individual burn errors */ }
+                    for (const burnReq of burnReqResults) {
+                        if (!burnReq) continue;
+                        const status = Number(burnReq.status);
+                        // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED
+                        if (status === 1 || status === 2 || status === 3) {
+                            inFlightBurnDebt += Number(burnReq.wsxmrAmount) / 1e8;
                         }
-                        if (inFlightBurnDebt > 0) {
-                            console.log(`[Capacity] Found ${inFlightBurnDebt} wsXMR in active burns for vault ${vaultAddress.slice(0, 8)}`);
-                        }
-                    } catch (e) {
-                        console.warn('[Capacity] Could not query vault burn requests:', e.message);
+                    }
+                    if (inFlightBurnDebt > 0) {
+                        console.log(`[Capacity] Found ${inFlightBurnDebt} wsXMR in active burns for vault ${vaultAddress.slice(0, 8)}`);
                     }
 
                     const totalDebt = debtAmount + pendingDebtAmount + inFlightBurnDebt;
@@ -1999,17 +2080,17 @@ async function loadVaults() {
                         freeCollateral
                     });
 
-                    // Query on-chain mint capacity (accounts for yield sync, same as initiateMint)
+                    // Use pre-fetched mint capacity result (accounts for yield sync, same as initiateMint)
                     let maxMintCapacityXmr = 0;
-                    try {
-                        const maxWsxmrAmount = await readHub('getMintCapacity', [vaultAddress]);
-                        // Convert wsXMR (8 decimals) to XMR (12 decimals): multiply by 1e4
-                        maxMintCapacityXmr = Number(maxWsxmrAmount) / 1e8 * 1e4;
-                        console.log('On-chain mint capacity (wsXMR):', maxWsxmrAmount.toString(), '=> XMR:', maxMintCapacityXmr);
-                    } catch (e) {
-                        console.warn('getMintCapacity failed (prices may be stale), falling back to manual calc:', e.message);
-                        // Fallback to manual calculation if oracle prices are stale
-                        maxMintCapacityXmr = xmrPrice > 0 ? (freeCollateral * collPrice) / (1.5 * xmrPrice) : 0;
+                    let capacityAvailable = false;
+                    let capacityEstimated = false;
+                    if (mintCapacityResult !== null) {
+                        maxMintCapacityXmr = Number(mintCapacityResult) / 1e8;
+                        capacityAvailable = true;
+                        console.log('On-chain mint capacity (wsXMR):', mintCapacityResult.toString(), '=> XMR:', maxMintCapacityXmr);
+                    } else if (xmrPrice > 0 && collPrice > 0) {
+                        // Fallback: estimate from off-chain prices (CoinGecko + sDAI ≈ $1)
+                        maxMintCapacityXmr = (freeCollateral * collPrice) / (1.5 * xmrPrice);
                         const maxMintBps = Number(vaultData.maxMintBps);
                         if (maxMintBps > 0) {
                             const collateralValueUsd = collAmountDAI * collPrice;
@@ -2018,20 +2099,35 @@ async function loadVaults() {
                             const maxMintBpsCapacity = maxMintAllowedUsd / xmrPrice;
                             maxMintCapacityXmr = Math.min(maxMintCapacityXmr, maxMintBpsCapacity);
                         }
+                        capacityEstimated = true;
+                        console.log('Estimated mint capacity (off-chain prices):', maxMintCapacityXmr, 'XMR');
+                    } else {
+                        console.warn('getMintCapacity reverted and no off-chain prices available');
                     }
 
-                    // Convert total collateral shares to sDAI
+                    // Use pre-fetched total collateral conversion result
                     let totalCollateralDAI = Number(collShares) / 1e18;
-                    try {
-                        const totalAssetsWei = await publicClient.readContract({
-                            address: sDAIAddress,
-                            abi: sDAIAbi,
-                            functionName: 'convertToAssets',
-                            args: [collShares]
-                        });
-                        totalCollateralDAI = Number(totalAssetsWei) / 1e18;
-                    } catch (e) {
-                        console.warn('convertToAssets for total collateral failed:', e.message);
+                    if (totalAssetsWeiResult !== null) {
+                        totalCollateralDAI = Number(totalAssetsWeiResult) / 1e18;
+                    }
+
+                    // Derive breakdown from on-chain values when prices are fresh:
+                    // - lockedColl: from vault.lockedCollateral (burn escrow)
+                    // - usedColl: debt value in sDAI
+                    // - pendingColl: pending + in-flight burn debt in sDAI
+                    // - bufferColl: 50% of (used + pending) for 150% CR safety
+                    // - freeColl: back-calculate from on-chain getMintCapacity if available
+                    //   freeColl = capacity * 1.5 * xmrPrice / collPrice
+                    let breakdownUsedColl = usedCollateral;
+                    let breakdownPendingColl = pendingCollateral;
+                    let breakdownBufferColl = bufferCollateral;
+                    let breakdownFreeColl = freeCollateral;
+                    if (capacityAvailable && xmrPrice > 0 && collPrice > 0) {
+                        breakdownFreeColl = (maxMintCapacityXmr * 1.5 * xmrPrice) / collPrice;
+                    } else if (capacityEstimated) {
+                        breakdownFreeColl = freeCollateral; // already computed from off-chain prices
+                    } else if (!pricesFresh) {
+                        breakdownFreeColl = 0;
                     }
 
                     const vault = {
@@ -2044,13 +2140,16 @@ async function loadVaults() {
                         actualDebt: actualDebt,
                         pendingDebt: vaultData.pendingDebt,
                         deployedSDAIShares: vaultData.deployedSDAIShares,
-                        usedCollateral,
-                        pendingCollateral,
-                        bufferCollateral,
-                        freeCollateral,
+                        usedCollateral: breakdownUsedColl,
+                        pendingCollateral: breakdownPendingColl,
+                        bufferCollateral: breakdownBufferColl,
+                        freeCollateral: breakdownFreeColl,
                         maxMintCapacityXmr,
+                        capacityAvailable,
+                        capacityEstimated,
                         xmrPrice,
                         collPrice,
+                        pricesFresh,
                         mintFeeBps: Number(vaultData.mintFeeBps || 0),
                         burnRewardBps: Number(vaultData.burnRewardBps || 0),
                         mintTimeoutBlocks: Number(vaultData.mintTimeoutBlocks || 0),
@@ -2183,11 +2282,19 @@ function updateMintCapacityDisplay() {
         return;
     }
 
+    if (vault.capacityAvailable === false && !vault.capacityEstimated) {
+        capacityEl.classList.remove('hidden');
+        capacityEl.innerHTML = `<span style="color:var(--amber)">⚠ Oracle prices stale — capacity unavailable. Click "Update Prices" to refresh.</span>`;
+        if (elements.startMint) elements.startMint.disabled = true;
+        return;
+    }
+
     const maxCap = vault.maxMintCapacityXmr;
+    const estPrefix = vault.capacityEstimated ? '~' : '';
     const maxCapFormatted = maxCap < 0.0001 ? maxCap.toExponential(2) : maxCap.toFixed(4).replace(/\.?0+$/, '');
     const pctUsed = maxCap > 0 ? ((amount / maxCap) * 100) : 0;
 
-    let html = `Max capacity: <strong>${maxCapFormatted} XMR</strong>`;
+    let html = `Max capacity: <strong>${estPrefix}${maxCapFormatted} XMR</strong>${vault.capacityEstimated ? ' <span style="color:var(--muted);font-size:11px">(estimated)</span>' : ''}`;
 
     if (!isNaN(amount) && amount > 0) {
         if (amount > maxCap) {

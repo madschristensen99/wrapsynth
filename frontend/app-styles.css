@@ -472,6 +472,15 @@ body:not(.js-loaded) .panel{display:none!important}
 .burn-address-panel .verification-value{
   font-family:var(--font-mono);word-break:break-all;color:var(--text-1);font-size:12px;
 }
+.btn-copy-sm{
+  flex-shrink:0;padding:2px 10px;font-size:11px;font-weight:600;
+  background:var(--panel-3);border:1px solid var(--line-2);border-radius:6px;
+  color:var(--text-2);cursor:pointer;transition:all .15s;
+}
+.btn-copy-sm:hover{background:var(--panel-4);color:var(--text-1);}
+.verification-hint{
+  margin-top:8px;font-size:11px;color:var(--text-3);line-height:1.4;
+}
 
 /* ── Burn Verification ── */
 #burn-verification-loading{

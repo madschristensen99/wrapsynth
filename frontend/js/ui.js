@@ -496,7 +496,7 @@ export function renderVaultPicker(prefix, vaults) {
     listEl.innerHTML = vaults.map((v, i) => {
         const s = vaultSummary(v);
         const shortAddr = `${v.address.slice(0, 6)}...${v.address.slice(-4)}`;
-        const capDisplay = s.cap < 0.001 ? s.cap.toExponential(1) : s.cap < 1 ? s.cap.toFixed(3) : s.cap.toFixed(1);
+        const capDisplay = v.capacityAvailable === false && !v.capacityEstimated ? 'N/A' : (v.capacityEstimated ? '~' : '') + (s.cap < 0.001 ? s.cap.toExponential(1) : s.cap < 1 ? s.cap.toFixed(3) : s.cap.toFixed(1));
         return `<div class="vp-option${i === 0 ? ' selected' : ''}" data-address="${v.address}">
             <span class="vp-o-dot" style="background:${s.dotColor};box-shadow:0 0 6px ${s.dotColor}60"></span>
             <span class="vp-o-addr">${shortAddr}</span>
@@ -658,13 +658,15 @@ export function populateVaults(vaults) {
                 const pendingColl = v.pendingCollateral || 0;
                 const bufferColl = v.bufferCollateral || 0;
                 const coLpColl = v.deployedSDAIShares ? Number(v.deployedSDAIShares) / 1e18 : 0;
+                const lockedColl = v.lockedCollateral ? Number(v.lockedCollateral) / 1e18 : 0;
                 const totalColl = collateral;
-                const freeColl = Math.max(0, totalColl - usedColl - pendingColl - bufferColl - coLpColl);
+                const freeColl = v.capacityAvailable === false && !v.capacityEstimated ? 0 : (v.freeCollateral || 0);
                 
                 const usedPct = totalColl > 0 ? (usedColl / totalColl) * 100 : 0;
                 const pendingPct = totalColl > 0 ? (pendingColl / totalColl) * 100 : 0;
                 const bufferPct = totalColl > 0 ? (bufferColl / totalColl) * 100 : 0;
                 const coLpPct = totalColl > 0 ? (coLpColl / totalColl) * 100 : 0;
+                const lockedPct = totalColl > 0 ? (lockedColl / totalColl) * 100 : 0;
                 const freePct = totalColl > 0 ? (freeColl / totalColl) * 100 : 0;
                 
                 const pieChart = makePieChart(usedPct, pendingPct, bufferPct, coLpPct, freePct);
@@ -689,7 +691,8 @@ export function populateVaults(vaults) {
                       <span style="display:flex;align-items:center;gap:7px"><span style="color:#8b5cf6;font-size:14px;text-shadow:0 0 6px #8b5cf660">●</span> pending <b style="margin-left:auto;color:var(--fg)">${pendingColl.toFixed(2)}</b></span>
                       <span style="display:flex;align-items:center;gap:7px"><span style="color:#facc15;font-size:14px;text-shadow:0 0 6px #facc1560">●</span> safety <b style="margin-left:auto;color:var(--fg)">${bufferColl.toFixed(2)}</b></span>
                       <span style="display:flex;align-items:center;gap:7px"><span style="color:#3b82f6;font-size:14px;text-shadow:0 0 8px #3b82f680">●</span> co-lp <b style="margin-left:auto;color:var(--fg)">${coLpColl.toFixed(2)}</b></span>
-                      <span style="display:flex;align-items:center;gap:7px;grid-column:1/-1"><span style="color:#2fe6c4;font-size:14px;text-shadow:0 0 6px #2fe6c460">●</span> free <b style="margin-left:auto;color:var(--fg)">${freeColl.toFixed(2)}</b></span>
+                      <span style="display:flex;align-items:center;gap:7px"><span style="color:#f97316;font-size:14px;text-shadow:0 0 6px #f9731660">●</span> burn lock <b style="margin-left:auto;color:var(--fg)">${lockedColl.toFixed(2)}</b></span>
+                      <span style="display:flex;align-items:center;gap:7px;grid-column:1/-1"><span style="color:#2fe6c4;font-size:14px;text-shadow:0 0 6px #2fe6c460">●</span> free <b style="margin-left:auto;color:var(--fg)">${v.capacityAvailable === false && !v.capacityEstimated ? '<span style="color:var(--amber)">unavailable</span>' : (v.capacityEstimated ? '~' : '') + freeColl.toFixed(2)}</b></span>
                     </div>
                   </div>`;
             }).join('');
@@ -744,13 +747,15 @@ export function renderLPDetailCard(isMint, vault) {
     const pendingColl = vault.pendingCollateral || 0;
     const bufferColl = vault.bufferCollateral || 0;
     const coLpColl = vault.deployedSDAIShares ? Number(vault.deployedSDAIShares) / 1e18 : 0;
+    const lockedColl = vault.lockedCollateral ? Number(vault.lockedCollateral) / 1e18 : 0;
     const totalColl = collateral;
-    const freeColl = Math.max(0, totalColl - usedColl - pendingColl - bufferColl - coLpColl);
+    const freeColl = vault.capacityAvailable === false && !vault.capacityEstimated ? 0 : (vault.freeCollateral || 0);
 
     const usedPct = totalColl > 0 ? (usedColl / totalColl) * 100 : 0;
     const pendingPct = totalColl > 0 ? (pendingColl / totalColl) * 100 : 0;
     const bufferPct = totalColl > 0 ? (bufferColl / totalColl) * 100 : 0;
     const coLpPct = totalColl > 0 ? (coLpColl / totalColl) * 100 : 0;
+    const lockedPct = totalColl > 0 ? (lockedColl / totalColl) * 100 : 0;
     const freePct = totalColl > 0 ? (freeColl / totalColl) * 100 : 0;
 
     const pieChart = makePieChart(usedPct, pendingPct, bufferPct, coLpPct, freePct);
@@ -767,8 +772,14 @@ export function renderLPDetailCard(isMint, vault) {
     set('debt', `${debt.toFixed(4)} wsXMR`);
 
     if (isMint) {
-        const cap = vault.maxMintCapacityXmr || 0;
-        set('capacity', `${cap < 0.0001 ? cap.toExponential(2) : cap.toFixed(4)} XMR`);
+        if (vault.capacityAvailable === false && !vault.capacityEstimated) {
+            set('capacity', '<span style="color:var(--amber)">unavailable</span>');
+        } else {
+            const cap = vault.maxMintCapacityXmr || 0;
+            const estPrefix = vault.capacityEstimated ? '~' : '';
+            const capStr = cap < 0.0001 ? cap.toExponential(2) : cap.toFixed(4);
+            set('capacity', `${estPrefix}${capStr} XMR${vault.capacityEstimated ? ' <span style="color:var(--muted);font-size:10px">(est.)</span>' : ''}`);
+        }
         const griefing = vault.mintGriefingDeposit ? Number(vault.mintGriefingDeposit) / 1e18 : 0;
         set('griefing', `${griefing.toFixed(3)} xDAI`);
     } else {
@@ -790,7 +801,8 @@ export function renderLPDetailCard(isMint, vault) {
             { label: 'pending', pct: pendingPct, val: pendingColl, color: '#8b5cf6' },
             { label: 'safety', pct: bufferPct, val: bufferColl, color: '#facc15' },
             { label: 'co-lp', pct: coLpPct, val: coLpColl, color: '#3b82f6' },
-            { label: 'free', pct: freePct, val: freeColl, color: '#2fe6c4' },
+            { label: 'burn lock', pct: lockedPct, val: lockedColl, color: '#f97316' },
+            { label: vault.capacityAvailable === false && !vault.capacityEstimated ? 'free (stale)' : (vault.capacityEstimated ? 'free (~)' : 'free'), pct: freePct, val: vault.capacityAvailable === false && !vault.capacityEstimated ? 0 : freeColl, color: vault.capacityAvailable === false && !vault.capacityEstimated ? '#666' : '#2fe6c4' },
         ];
         breakdownEl.innerHTML = bars.map(b => `
             <div class="lp-bk">
@@ -1495,6 +1507,25 @@ export function showBurnAddressPanel(data) {
         viewKeyEl.textContent = data.viewKey || '';
         panel.classList.remove('hidden');
     }
+
+    // Wire up copy buttons
+    const copyAddr = document.getElementById('copy-burn-address');
+    const copyView = document.getElementById('copy-burn-viewkey');
+    if (copyAddr) {
+        copyAddr.onclick = async () => {
+            await navigator.clipboard.writeText(data.moneroAddress || '');
+            copyAddr.textContent = 'Copied!';
+            setTimeout(() => copyAddr.textContent = 'Copy', 2000);
+        };
+    }
+    if (copyView) {
+        copyView.onclick = async () => {
+            await navigator.clipboard.writeText(data.viewKey || '');
+            copyView.textContent = 'Copied!';
+            setTimeout(() => copyView.textContent = 'Copy', 2000);
+        };
+    }
+
     // Hide the generic loading indicator — LP has committed
     const loadingEl = document.getElementById('burn-status-loading');
     if (loadingEl) loadingEl.classList.add('hidden');
