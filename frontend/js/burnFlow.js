@@ -1003,7 +1003,18 @@ export class BurnFlow {
         saveToHistory(swapData);
         clearActiveSwap();
         this.cleanup();
-        
+
+        // Refresh vault data so mint capacity reflects the burned debt
+        try {
+            const { loadVaults } = await import('./main.js?v=' + Date.now());
+            if (typeof loadVaults === 'function') {
+                console.log('[Burn] Refreshing vault data after burn completion...');
+                loadVaults();
+            }
+        } catch (e) {
+            console.warn('[Burn] Could not refresh vault data:', e.message);
+        }
+
         console.log('Burn flow completed! Sweep status:', swapData.sweepStatus);
     }
 
