@@ -258,55 +258,86 @@ export class BurnFlow {
         console.log('Waiting for LP to propose secret hash and send XMR...');
         this.lpProposeStartTime = Date.now();
 
-        // First, check if HashProposed event was already emitted in the past
-        const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
-        const currentBlock = await getBlockNumber();
-        const fromBlock = currentBlock - 1000n; // Check last ~1000 blocks (about 1.5 hours on Gnosis)
-        
-        console.log(`Checking for past HashProposed events from block ${fromBlock} to ${currentBlock}...`);
-        const pastEvents = await getPastEvents(
-            CONTRACTS.hub,
-            ABIS.hub,
-            'HashProposed',
-            fromBlock,
-            'latest',
-            { requestId: this.requestId }
-        );
-
-        if (pastEvents && pastEvents.length > 0) {
-            console.log('Found existing HashProposed event - LP has already sent XMR!');
-            const event = pastEvents[0].args;
-            this.secretHash = event.secretHash;
-            const lpPublicSpendKey = event.lpPublicSpendKey;
-            const lpPublicViewKey = event.lpPublicViewKey;
-            
-            // Derive the shared Monero address using user's actual public keys
+        // Helper to derive and show the burn address from LP public keys
+        const deriveAndShowAddress = async (secretHash, lpPublicSpendKey, lpPublicViewKey) => {
             const { computeBurnAddress } = await import('./moneroCrypto.js');
             const userPublicKey = this.agent.getPublicSpendKeyHex();
             const userViewKey = this.agent.getPublicViewKeyHex();
             const moneroAddress = await computeBurnAddress(userPublicKey, userViewKey, lpPublicSpendKey);
             const viewKey = this.agent.getPrivateViewKeyHex();
-            
+
             console.log('Derived burn Monero address:', moneroAddress);
             console.log('User view key for scanning:', viewKey);
-            
+
+            this.secretHash = secretHash;
             this.sharedMoneroAddress = moneroAddress;
             this.privateViewKeyHex = viewKey;
-            
+
             updateSwapState({
                 requestId: this.requestId,
                 lpStatus: 'found',
                 lpMessage: 'LP has sent XMR to the shared address',
-                secretHash: this.secretHash,
+                secretHash,
                 moneroAddress,
                 viewKey
             });
             showBurnAddressPanel({ moneroAddress, viewKey });
             updateBurnProgress('lp-propose', '✓ LP committed — XMR sent');
-            return; // Event already happened, no need to wait
+        };
+
+        // Helper to check on-chain burn status and derive address from contract data
+        // This bypasses flaky eth_getLogs by reading contract state directly
+        const checkOnChainProposed = async () => {
+            try {
+                const burnReq = await readHub('getBurnRequest', [this.requestId]);
+                const status = Number(burnReq.status);
+                // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=COMPLETED, 5=CANCELLED, 6=SLASHED
+                if (status >= 2) {
+                    console.log(`[Burn] On-chain status is ${status} (>=PROPOSED), reading LP keys from contract...`);
+                    const lpPublicSpendKey = await readHub('lpPublicKeys', [this.requestId]);
+                    const lpPublicViewKey = await readHub('lpPublicViewKeys', [this.requestId]);
+                    if (lpPublicSpendKey && lpPublicSpendKey !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
+                        console.log('[Burn] Got LP public keys from contract, deriving address...');
+                        await deriveAndShowAddress(burnReq.secretHash, lpPublicSpendKey, lpPublicViewKey);
+                        return true;
+                    }
+                }
+            } catch (e) {
+                console.warn('[Burn] On-chain status check failed:', e.message);
+            }
+            return false;
+        };
+
+        // First, try checking on-chain status directly (most reliable)
+        if (await checkOnChainProposed()) return;
+
+        // Second, try past events check (may fail on flaky RPCs)
+        try {
+            const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
+            const currentBlock = await getBlockNumber();
+            const fromBlock = currentBlock - 1000n;
+
+            console.log(`Checking for past HashProposed events from block ${fromBlock} to ${currentBlock}...`);
+            const pastEvents = await getPastEvents(
+                CONTRACTS.hub,
+                ABIS.hub,
+                'HashProposed',
+                fromBlock,
+                'latest',
+                { requestId: this.requestId }
+            );
+
+            if (pastEvents && pastEvents.length > 0) {
+                console.log('Found existing HashProposed event - LP has already sent XMR!');
+                const event = pastEvents[0].args;
+                await deriveAndShowAddress(event.secretHash, event.lpPublicSpendKey, event.lpPublicViewKey);
+                return;
+            }
+        } catch (e) {
+            console.warn('[Burn] Past events check failed (RPC issue), falling back to polling:', e.message);
         }
 
-        console.log('No past HashProposed event found, setting up watcher for new events...');
+        console.log('No past HashProposed event found, setting up watcher + polling fallback...');
 
         // Update countdown in swap state while waiting
         const countdownInterval = setInterval(() => {
@@ -320,8 +351,6 @@ export class BurnFlow {
             });
         }, SWAP_CONFIG.pollInterval);
 
-        // Polling fallback: periodically check for HashProposed events
-        // in case watchContractEvent fails (RPC timeouts / rate limiting)
         let pollIntervalId = null;
         let resolved = false;
         let resolvePropose = null;
@@ -332,39 +361,24 @@ export class BurnFlow {
             clearInterval(countdownInterval);
             if (pollIntervalId) clearInterval(pollIntervalId);
 
-            this.secretHash = event.secretHash;
-            const lpPublicSpendKey = event.lpPublicSpendKey;
-            const lpPublicViewKey = event.lpPublicViewKey;
-
-            // Derive the shared Monero address using user's actual public keys
-            const { computeBurnAddress } = await import('./moneroCrypto.js');
-            const userPublicKey = this.agent.getPublicSpendKeyHex();
-            const userViewKey = this.agent.getPublicViewKeyHex();
-            const moneroAddress = await computeBurnAddress(userPublicKey, userViewKey, lpPublicSpendKey);
-            const viewKey = this.agent.getPrivateViewKeyHex();
-
-            console.log('Derived burn Monero address:', moneroAddress);
-            console.log('User view key for scanning:', viewKey);
-
-            this.sharedMoneroAddress = moneroAddress;
-            this.privateViewKeyHex = viewKey;
-
-            updateSwapState({
-                requestId: this.requestId,
-                lpStatus: 'found',
-                lpMessage: 'LP has sent XMR to the shared address',
-                secretHash: this.secretHash,
-                moneroAddress,
-                viewKey
-            });
-            showBurnAddressPanel({ moneroAddress, viewKey });
-            updateBurnProgress('lp-propose', '✓ LP committed — XMR sent');
+            await deriveAndShowAddress(event.secretHash, event.lpPublicSpendKey, event.lpPublicViewKey);
             if (resolvePropose) resolvePropose();
         };
 
-        // Start polling fallback every 15s
+        // Polling fallback every 10s: try on-chain status check first, then event query
         pollIntervalId = setInterval(async () => {
             if (resolved) return;
+
+            // Method 1: Direct on-chain status check (reliable, no eth_getLogs)
+            if (await checkOnChainProposed()) {
+                resolved = true;
+                clearInterval(countdownInterval);
+                if (pollIntervalId) clearInterval(pollIntervalId);
+                if (resolvePropose) resolvePropose();
+                return;
+            }
+
+            // Method 2: Event query fallback
             try {
                 const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
                 const currentBlock = await getBlockNumber();
@@ -384,7 +398,7 @@ export class BurnFlow {
             } catch (e) {
                 console.warn('[Burn Poll] Polling fallback error:', e.message);
             }
-        }, 15000);
+        }, 10000);
 
         return new Promise((resolve, reject) => {
             resolvePropose = resolve;
