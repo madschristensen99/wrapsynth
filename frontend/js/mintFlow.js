@@ -986,6 +986,7 @@ export class MintFlow {
 
         this.lpVault = savedState.lpVault;
         this.xmrAmount = savedState.xmrAmount;
+        this.wsxmrAmount = savedState.wsxmrAmount;
         this.requestId = savedState.requestId;
         this.state = savedState.state;
         if (savedState.timeout) {
