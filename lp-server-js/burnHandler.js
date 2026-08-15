@@ -450,6 +450,7 @@ function attachEventListeners(hub, _wallet, _provider) {
 
   // Use polling instead of hub.on() to avoid filter issues with Base Sepolia RPC
   let lastCheckedBlock = 0;
+  let lastPollError = '';
   provider.getBlockNumber().then(b => { lastCheckedBlock = b; });
 
   setInterval(async () => {
@@ -506,8 +507,13 @@ function attachEventListeners(hub, _wallet, _provider) {
       }
 
       lastCheckedBlock = currentBlock;
+      lastPollError = '';
     } catch (err) {
-      console.error('[Burn] Poll error:', err.message);
+      const msg = err.message || String(err);
+      if (msg !== lastPollError) {
+        console.error('[Burn] Poll error:', msg);
+        lastPollError = msg;
+      }
     }
   }, 15000);
 
@@ -731,12 +737,22 @@ async function startupRecoverBurns() {
       } else if (status === 3) {
         // COMMITTED — user confirmed, LP needs to finalize
         burn.state = 'committed';
+        burn.finalizeRetries = (saved.finalizeRetries || 0);
         pendingBurns.set(reqIdHex, burn);
-        console.log(`[Burn Recovery] ${reqIdHex} is COMMITTED — finalizing now`);
+        if (burn.finalizeRetries >= 3) {
+          console.log(`[Burn Recovery] ${reqIdHex} is COMMITTED but already failed ${burn.finalizeRetries}x — giving up`);
+          continue;
+        }
+        console.log(`[Burn Recovery] ${reqIdHex} is COMMITTED — finalizing now (attempt ${burn.finalizeRetries + 1}/3)`);
         if (AUTO_PROCESS_BURNS) {
           (async () => {
-            try { await processFinalize(reqIdHex); }
-            catch (err) { console.error(`[Burn Recovery] processFinalize failed for ${reqIdHex}:`, err.message); }
+            try {
+              await processFinalize(reqIdHex);
+            } catch (err) {
+              burn.finalizeRetries = (burn.finalizeRetries || 0) + 1;
+              updateBurnSecretState(reqIdHex, 'committed', { finalizeRetries: burn.finalizeRetries });
+              console.error(`[Burn Recovery] processFinalize failed for ${reqIdHex} (${burn.finalizeRetries}/3):`, err.message);
+            }
           })();
         }
       }
