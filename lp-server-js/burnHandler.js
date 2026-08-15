@@ -363,17 +363,22 @@ async function processFinalize(reqIdHex) {
     console.log('[Burn] Proceeding with finalizeBurn anyway (may revert with StalePrice)...');
   }
 
+  // Force refresh nonce — oracle price update tx may have used the cached nonce
+  const freshNonce = await provider.getTransactionCount(wallet.address, 'latest');
+  console.log(`[Burn] Using fresh nonce: ${freshNonce}`);
+
   console.log(`[Burn] Calling finalizeBurn(${reqIdHex}, ...) secret: ${burn.secret.slice(0, 10)}...`);
 
   let tx;
   try {
-    tx = await hubContract.finalizeBurn(reqIdHex, burn.secret);
+    tx = await hubContract.finalizeBurn(reqIdHex, burn.secret, { nonce: freshNonce });
   } catch (err) {
     // If StalePrice, retry once more after price update
     if (err.message && (err.message.includes('0x19abf40e') || err.message.includes('StalePrice'))) {
       console.warn('[Burn] StalePrice on finalizeBurn, updating prices and retrying...');
       await updateOraclePricesManual();
-      tx = await hubContract.finalizeBurn(reqIdHex, burn.secret);
+      const retryNonce = await provider.getTransactionCount(wallet.address, 'latest');
+      tx = await hubContract.finalizeBurn(reqIdHex, burn.secret, { nonce: retryNonce });
     } else {
       throw err;
     }

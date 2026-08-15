@@ -497,14 +497,17 @@ export function renderVaultPicker(prefix, vaults) {
         const s = vaultSummary(v);
         const shortAddr = `${v.address.slice(0, 6)}...${v.address.slice(-4)}`;
         const capDisplay = v.capacityAvailable === false && !v.capacityEstimated ? 'N/A' : (v.capacityEstimated ? '~' : '') + (s.cap < 0.001 ? s.cap.toExponential(1) : s.cap < 1 ? s.cap.toFixed(3) : s.cap.toFixed(1));
+        const capNearZero = s.cap > 0 && s.cap < 0.001;
+        const capColor = capNearZero ? '#facc15' : s.dotColor;
+        const lockIcon = v.lockedCollateral && Number(v.lockedCollateral) > 0n ? ' 🔒' : '';
         return `<div class="vp-option${i === 0 ? ' selected' : ''}" data-address="${v.address}">
-            <span class="vp-o-dot" style="background:${s.dotColor};box-shadow:0 0 6px ${s.dotColor}60"></span>
-            <span class="vp-o-addr">${shortAddr}</span>
+            <span class="vp-o-dot" style="background:${capNearZero ? '#facc15' : s.dotColor};box-shadow:0 0 6px ${capNearZero ? '#facc1560' : s.dotColor + '60'}"></span>
+            <span class="vp-o-addr">${shortAddr}${lockIcon}</span>
             <span class="vp-o-cr" style="color:${s.crColor}">${s.cr > 9999 ? '>9k' : s.cr + '%'} CR</span>
             <span class="vp-o-fee">${s.feePct.toFixed(1)}%</span>
             <span class="vp-o-cap">
-                <span class="vp-o-cap-bar"><span class="vp-o-cap-fill" style="width:${s.capPct.toFixed(0)}%;background:${s.dotColor}"></span></span>
-                <span class="vp-o-cap-val">${capDisplay}</span>
+                <span class="vp-o-cap-bar"><span class="vp-o-cap-fill" style="width:${s.capPct.toFixed(0)}%;background:${capColor}"></span></span>
+                <span class="vp-o-cap-val" style="color:${capNearZero ? 'var(--amber)' : ''}">${capDisplay}</span>
             </span>
         </div>`;
     }).join('');
@@ -854,7 +857,10 @@ const BURN_STEP_MAP = {
     'evm-request': 0,
     'lp-propose': 1,
     'confirm-lock': 2,
-    'lp-finalize': 3
+    'lp-finalize': 3,
+    'sweeping': 4,
+    'sweep-failed': 4,
+    'swept': 4
 };
 
 const BURN_STEP_NOTE = {
@@ -863,7 +869,10 @@ const BURN_STEP_NOTE = {
     'lp-propose': { num: '02', text: 'Waiting for LP to send XMR to your shared address…' },
     'confirm-lock': { num: '03', text: 'Verifying XMR receipt on Monero blockchain…' },
     'lp-finalize': { num: '04', text: 'Waiting for LP to finalize and reveal secret…' },
-    'completed': { num: '04', text: 'Burn complete — XMR swept to your destination.' }
+    'sweeping': { num: '05', text: 'Claiming XMR from shared address…' },
+    'sweep-failed': { num: '05', text: 'Sweep failed — use keys to claim manually, or retry.' },
+    'swept': { num: '05', text: 'XMR swept to your destination.' },
+    'completed': { num: '04', text: 'Burn complete — XMR claimed or keys provided.' }
 };
 
 /**
@@ -1603,7 +1612,6 @@ export function showBurnSweepError(errorMsg) {
     const progressEl = document.getElementById('burn-sweep-progress');
     if (progressEl) progressEl.classList.add('hidden');
 
-    // Hide the complete banner if it exists
     const completeEl = document.getElementById('burn-sweep-complete');
     if (completeEl) completeEl.classList.add('hidden');
 
@@ -1615,7 +1623,6 @@ export function showBurnSweepError(errorMsg) {
         burnPanel.appendChild(el);
     }
 
-    // Try to extract a user-friendly message from the error
     let friendly = 'An unexpected error occurred while sweeping XMR to your destination address.';
     let detail = errorMsg;
 
@@ -1632,7 +1639,7 @@ export function showBurnSweepError(errorMsg) {
     el.innerHTML = `
         <div class="burn-sweep-error-inner">
             <div class="burn-sweep-error-icon">
-                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="10"/>
                     <line x1="12" y1="8" x2="12" y2="12"/>
                     <line x1="12" y1="16" x2="12.01" y2="16"/>
@@ -1646,18 +1653,21 @@ export function showBurnSweepError(errorMsg) {
                     <p>${detail}</p>
                 </details>
             </div>
-            <button class="cta" id="burn-sweep-retry">↻ Retry sweep</button>
+        </div>
+        <div class="burn-sweep-error-actions">
+            <button class="cta" id="burn-sweep-retry">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:4px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                Retry sweep
+            </button>
         </div>
     `;
     el.classList.remove('hidden');
 
-    // Wire retry button
     const retryBtn = document.getElementById('burn-sweep-retry');
     if (retryBtn) {
         retryBtn.addEventListener('click', () => {
             el.classList.add('hidden');
             showBurnSweepProgress('Retrying sweep...');
-            // Dispatch a custom event so burnFlow.js can re-attempt the sweep
             window.dispatchEvent(new CustomEvent('burn-sweep-retry'));
         });
     }
@@ -1708,81 +1718,74 @@ export function hideBurnKeysOption() {
  * @param {string} destination - User's destination address
  */
 export function showBurnKeysFallback(keys, destination) {
+    const burnPanel = document.getElementById('burn-panel');
+    if (!burnPanel) return;
+
+    // Remove any existing overlay modal
     const existing = document.getElementById('burn-keys-fallback-overlay');
     if (existing) existing.remove();
 
-    const modalHTML = `
-        <div id="burn-keys-fallback-overlay" class="modal-overlay">
-            <div class="modal-content" style="max-width: 500px;">
-                <div class="modal-header">
-                    <h2>Claim Your XMR Manually</h2>
-                    <button class="btn-close" id="fallback-close">×</button>
+    let el = document.getElementById('burn-keys-fallback');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'burn-keys-fallback';
+        el.className = 'burn-keys-fallback';
+        burnPanel.appendChild(el);
+    }
+
+    el.innerHTML = `
+        <div class="burn-keys-fallback-header">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;color:var(--amber)"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+            <span>Automatic sweep failed — claim your XMR manually</span>
+        </div>
+        <p class="burn-keys-fallback-desc">Import these keys into a Monero wallet (Monero GUI, Feather Wallet) to access your funds:</p>
+        <div class="burn-keys-fallback-steps">
+            <span>1. Copy the private spend key and view key below</span>
+            <span>2. Open Monero GUI Wallet → Restore from keys</span>
+            <span>3. Paste the keys and set restore height</span>
+            <span>4. Wait for sync, then sweep all to your destination</span>
+        </div>
+        <div class="burn-keys-fallback-keys">
+            <div class="burn-key-row">
+                <label>Private Spend Key</label>
+                <div class="burn-key-copy">
+                    <input type="password" id="fallback-spend-key" value="${keys.spendKey}" readonly>
+                    <button class="btn-copy-sm" id="fallback-copy-spend">Copy</button>
                 </div>
-                <div class="modal-body">
-                    <div class="warning-box">
-                        <strong>Automatic sweep failed.</strong>
-                        <p>You can still claim your XMR by importing these keys into a Monero wallet (like Monero GUI or Feather Wallet).</p>
-                    </div>
-                    <div class="info-box" style="margin-top: 12px;">
-                        <p><strong>Steps:</strong></p>
-                        <ol>
-                            <li>Copy the private spend key and view key below</li>
-                            <li>Open Monero GUI Wallet → Restore from keys</li>
-                            <li>Paste the keys and set restore height</li>
-                            <li>Wait for sync, then sweep all to your destination</li>
-                        </ol>
-                    </div>
-                    <div style="margin-top: 16px;">
-                        <label style="display: block; margin-bottom: 6px; font-weight: 600;">Private Spend Key</label>
-                        <div style="display: flex; gap: 8px;">
-                            <input type="password" id="fallback-spend-key" value="${keys.spendKey}" readonly style="flex: 1; font-family: monospace; font-size: 12px; padding: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px;">
-                            <button class="btn-secondary" id="fallback-copy-spend">Copy</button>
-                        </div>
-                    </div>
-                    <div style="margin-top: 12px;">
-                        <label style="display: block; margin-bottom: 6px; font-weight: 600;">Private View Key</label>
-                        <div style="display: flex; gap: 8px;">
-                            <input type="password" id="fallback-view-key" value="${keys.viewKey}" readonly style="flex: 1; font-family: monospace; font-size: 12px; padding: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px;">
-                            <button class="btn-secondary" id="fallback-copy-view">Copy</button>
-                        </div>
-                    </div>
-                    <div style="margin-top: 12px;">
-                        <label style="display: block; margin-bottom: 6px; font-weight: 600;">Destination Address</label>
-                        <p style="font-family: monospace; font-size: 11px; word-break: break-all; color: var(--text-muted);">${destination}</p>
-                    </div>
+            </div>
+            <div class="burn-key-row">
+                <label>Private View Key</label>
+                <div class="burn-key-copy">
+                    <input type="password" id="fallback-view-key" value="${keys.viewKey}" readonly>
+                    <button class="btn-copy-sm" id="fallback-copy-view">Copy</button>
                 </div>
-                <div class="modal-footer">
-                    <button class="btn-primary" id="fallback-done">Done</button>
-                </div>
+            </div>
+            <div class="burn-key-row">
+                <label>Destination Address</label>
+                <p class="burn-key-dest">${destination}</p>
             </div>
         </div>
     `;
+    el.classList.remove('hidden');
 
-    document.body.insertAdjacentHTML('beforeend', modalHTML);
-
-    const overlay = document.getElementById('burn-keys-fallback-overlay');
-    const closeBtn = document.getElementById('fallback-close');
-    const doneBtn = document.getElementById('fallback-done');
     const copySpend = document.getElementById('fallback-copy-spend');
     const copyView = document.getElementById('fallback-copy-view');
 
-    const close = () => overlay.remove();
+    if (copySpend) {
+        copySpend.addEventListener('click', async () => {
+            await navigator.clipboard.writeText(keys.spendKey);
+            copySpend.textContent = 'Copied!';
+            setTimeout(() => copySpend.textContent = 'Copy', 2000);
+        });
+    }
 
-    closeBtn.addEventListener('click', close);
-    doneBtn.addEventListener('click', close);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-
-    copySpend.addEventListener('click', async () => {
-        await navigator.clipboard.writeText(keys.spendKey);
-        copySpend.textContent = 'Copied!';
-        setTimeout(() => copySpend.textContent = 'Copy', 2000);
-    });
-
-    copyView.addEventListener('click', async () => {
-        await navigator.clipboard.writeText(keys.viewKey);
-        copyView.textContent = 'Copied!';
-        setTimeout(() => copyView.textContent = 'Copy', 2000);
-    });
+    if (copyView) {
+        copyView.addEventListener('click', async () => {
+            await navigator.clipboard.writeText(keys.viewKey);
+            copyView.textContent = 'Copied!';
+            setTimeout(() => copyView.textContent = 'Copy', 2000);
+        });
+    }
 }
 
 /**

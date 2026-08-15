@@ -85,11 +85,16 @@ export async function sweepBurnOutput({ userSecretHex, lpSecretHex, userViewKeyH
         throw new Error('Monero WASM module not loaded. Ensure monero-ts.js is included in the page.');
     }
 
+    // MoneroNetworkType.MAINNET = 0; fall back to numeric if enum not yet initialized
+    const mainnetType = (moneroTs.MoneroNetworkType && moneroTs.MoneroNetworkType.MAINNET !== undefined)
+        ? moneroTs.MoneroNetworkType.MAINNET
+        : 0;
+
     // Create wallet from keys
     log('Creating wallet from keys...');
     const wallet = await moneroTs.createWalletFull({
         password: 'burn-sweep-tmp',
-        networkType: moneroTs.MoneroNetworkType.MAINNET,
+        networkType: mainnetType,
         privateSpendKey: combinedSpendLe,
         privateViewKey: viewKeyLe,
         serverUri: MONERO_CONFIG.rpcUrl,
