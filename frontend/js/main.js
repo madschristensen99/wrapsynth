@@ -1888,7 +1888,7 @@ async function handleResolveSwap(swap) {
 /**
  * Load available LP vaults
  */
-async function loadVaults() {
+export async function loadVaults() {
     try {
         // Hardcoded list of known LP vaults
         // In production, this would query events or use a registry
