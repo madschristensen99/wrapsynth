@@ -1060,31 +1060,13 @@ export function showLPVerificationStatus() {
     if (elements.waitingLpVerification) {
         elements.waitingLpVerification.classList.remove('hidden');
         elements.waitingLpVerification.innerHTML = `
-            <svg class="spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:6px;color:var(--accent-orange);"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> 
+            <svg class="spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:6px;color:var(--accent-orange);"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> 
             Waiting for LP to verify your transaction...
             <br>
             <span style="font-size:0.8rem;color:var(--text-muted);margin-left:20px;display:block;margin-top:4px;">
                 The LP waits for 10+ Monero blockchain confirmations before marking your deposit as verified (~15–30 min).
             </span>
-            <button id="show-tx-details-btn" class="btn btn-secondary" style="margin-top:12px;margin-left:20px;font-size:0.85rem;padding:6px 12px;">
-                ${getIconSVG('eye')} See TX Details
-            </button>
         `;
-        
-        // Add click handler for the button
-        const showTxDetailsBtn = document.getElementById('show-tx-details-btn');
-        if (showTxDetailsBtn && elements.mintDepositInfo) {
-            showTxDetailsBtn.onclick = () => {
-                const isHidden = elements.mintDepositInfo.classList.contains('hidden');
-                if (isHidden) {
-                    elements.mintDepositInfo.classList.remove('hidden');
-                    showTxDetailsBtn.innerHTML = `${getIconSVG('eye-off')} Hide TX Details`;
-                } else {
-                    elements.mintDepositInfo.classList.add('hidden');
-                    showTxDetailsBtn.innerHTML = `${getIconSVG('eye')} See TX Details`;
-                }
-            };
-        }
     }
 
 }
