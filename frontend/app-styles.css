@@ -461,6 +461,7 @@ body:not(.js-loaded) .panel{display:none!important}
   50%{border-color:var(--accent-orange,#f60)}
 }
 @keyframes spin{to{transform:rotate(360deg)}}
+.spin{animation:spin 1s linear infinite;display:inline-block}
 .burn-address-panel .verification-row{
   display:flex;align-items:flex-start;gap:8px;padding:6px 0;
   border-bottom:1px solid var(--line-2);font-size:13px;
