@@ -122,10 +122,14 @@ function tsLabel(ts) {
 }
 
 const MINT_STATUS = {
-  0: { label: 'Initiated', class: 'status-initiated' },
-  1: { label: 'Ready', class: 'status-proposed' },
-  2: { label: 'Finalized', class: 'status-completed' },
-  3: { label: 'Cancelled', class: 'status-cancelled' }
+  0: { label: 'Invalid', class: 'status-unknown' },
+  1: { label: 'Pending', class: 'status-initiated' },
+  2: { label: 'Key Provided', class: 'status-proposed' },
+  3: { label: 'Ready', class: 'status-committed' },
+  4: { label: 'Secret Revealed', class: 'status-committed' },
+  5: { label: 'Completed', class: 'status-completed' },
+  6: { label: 'Cancelled', class: 'status-cancelled' },
+  7: { label: 'Expired', class: 'status-cancelled' }
 };
 
 const BURN_STATUS = {

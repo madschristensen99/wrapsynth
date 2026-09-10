@@ -90,9 +90,9 @@ export async function startDeadlineTimer(mintFlow) {
                             // Check current on-chain status before deciding action
                             const mintReq = await readHub('getMintRequest', [mintFlow.requestId]);
                             const status = Number(mintReq.status);
-                            // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
+                            // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED, 7=EXPIRED_READY
                             
-                            if (status === 5) {
+                            if (status === 6) {
                                 // Already cancelled by LP node; claim refund via withdrawReturns
                                 refundBtn.textContent = 'Claiming refund...';
                                 const receipt = await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
@@ -103,7 +103,7 @@ export async function startDeadlineTimer(mintFlow) {
                                 clearActiveSwap();
                                 const { resetMintUI } = await import('./ui.js?v=3.3');
                                 resetMintUI();
-                            } else if (status === 6) {
+                            } else if (status === 7) {
                                 // EXPIRED_READY — LP has a claim window
                                 const claimWindowEnd = Number(mintReq.timeout);
                                 const { getPublicClient } = await import('./viemClient.js');
@@ -139,7 +139,7 @@ export async function startDeadlineTimer(mintFlow) {
                                 clearActiveSwap();
                                 const { resetMintUI } = await import('./ui.js?v=3.3');
                                 resetMintUI();
-                            } else if (status === 4) {
+                            } else if (status === 5) {
                                 // Already completed
                                 timerElement.innerHTML = '<strong style="color:var(--success-color);">Mint Completed</strong>';
                                 refundBtn.remove();

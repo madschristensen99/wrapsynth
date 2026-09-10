@@ -221,12 +221,12 @@ async function main() {
         
         console.log('📊 BURN - LP Proposes Hash');
         console.log('===========================');
+        // Use one secret for both EVM commitment and LP spend key (fix #65)
         const burnSecret = ethers.utils.randomBytes(32);
         const secretHash = await ed25519Helper.computeCommitment(burnSecret);
         
-        // Generate LP Ed25519 keys for burn
-        const burnLpSecret = ethers.utils.randomBytes(32);
-        const [burnLpPubX, burnLpPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(burnLpSecret));
+        // Derive LP public spend key from the same secret
+        const [burnLpPubX, burnLpPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(burnSecret));
         const burnLpSpendKey = ethers.utils.hexZeroPad(ethers.BigNumber.from(burnLpPubX).toHexString(), 32);
         const burnLpViewKey = ethers.utils.hexZeroPad(ethers.BigNumber.from(burnLpPubY).toHexString(), 32);
         
@@ -501,12 +501,12 @@ async function main() {
     
     console.log('📊 Step 8: BURN - LP Proposes Hash');
     console.log('===================================');
+    // Use one secret for both EVM commitment and LP spend key (fix #65)
     const burnSecret = ethers.utils.randomBytes(32);
     const secretHash = await ed25519Helper.computeCommitment(burnSecret);
     
-    // Generate LP Ed25519 keys for burn
-    const burnLpSecret = ethers.utils.randomBytes(32);
-    const [burnLpPubX, burnLpPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(burnLpSecret));
+    // Derive LP public spend key from the same secret
+    const [burnLpPubX, burnLpPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(burnSecret));
     const burnLpSpendKey = ethers.utils.hexZeroPad(ethers.BigNumber.from(burnLpPubX).toHexString(), 32);
     const burnLpViewKey = ethers.utils.hexZeroPad(ethers.BigNumber.from(burnLpPubY).toHexString(), 32);
     

@@ -1,22 +1,22 @@
 {
   "network": "Gnosis Chain Mainnet",
   "chainId": 100,
-  "deploymentDate": "2026-08-14T10:10:00.000Z",
+  "deploymentDate": "2026-08-18T14:18:00.000Z",
   "rpcUrl": "https://rpc.gnosischain.com",
   "wsUrl": "wss://rpc.gnosischain.com/wss",
   "explorer": "https://gnosisscan.io",
   "contracts": {
-    "wsXMR": "0x7a7cFca18Bf01B3c3D5A21E82318879454446D2c",
-    "wsXmrHub": "0x26dA95a7712B7663f4A159f92bf1e229D8e24E7b",
-    "liquidityRouter": "0x0708955Ac8fAC40b7A3e770bC52678433D547bb0",
-    "swapHelper": "0x729DebE7Af7189c3Ac19ffF3693b8A1fDa8Fca90",
+    "wsXMR": "0x35e3672b4f6bcb0c8bde814aa467f335b50bdd4f",
+    "wsXmrHub": "0xbed307ef521a0a3c3663858f53acfeacfe0ab4eb",
+    "liquidityRouter": "0x54572f3867c52f4178594787ed1956f695fcba09",
+    "swapHelper": "0x5ba4f79e01f46508cdb734e053d3db354c27d2c1",
     "facets": {
-      "RedStoneOracleFacet": "0x225B5DAfe2fa9c7b44C72c9Eb4fe29decD57a770",
-      "VaultFacet": "0x98FdaB5F5E9a4c0B09e4Ed4cD0BAb4064A7014F6",
-      "MintFacet": "0xF755Ce61e09653759F077cAd94d860cE2541d4ae",
-      "BurnFacet": "0x69D82216Ef1bf4c932846701D157ffF5886922e7",
-      "LiquidationFacet": "0x80c5d4c7154134bA1f1FAfee49eE1d059222664e",
-      "YieldFacet": "0xab0Fc63FdB6AAfdC461A369a8B185A0253613aBf"
+      "RedStoneOracleFacet": "0x4f2243dcb00f03225f902ee775e7175326a5debc",
+      "VaultFacet": "0xf471401ff59a242b08f230113987aa3a6207c167",
+      "MintFacet": "0x07ff8a45fdcc3e1b6d0905905ae0704cd8adf6f8",
+      "BurnFacet": "0x4337f0fedbd4113447f176847cefb1ba33be0136",
+      "LiquidationFacet": "0xacff85d2ef6f12ddecbb7623869c5a7394867097",
+      "YieldFacet": "0xff4c4baa041205a39c010e67a6fb8a583c98769e"
     }
   },
   "externalContracts": {
@@ -24,11 +24,11 @@
     "wxDAI": "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d",
     "UniswapV3Factory": "0xe32F7dD7e3f098D518ff19A22d5f028e076489B1",
     "UniswapV3PositionManager": "0xAE8fbE656a77519a7490054274910129c9244FA3",
-    "SwapHelper": "0x729DebE7Af7189c3Ac19ffF3693b8A1fDa8Fca90",
+    "SwapHelper": "0x5ba4f79e01f46508cdb734e053d3db354c27d2c1",
     "Ed25519Helper": "0xaECa36374039EAb9e267B5daa48bAb9Ab0e50F00"
   },
   "pool": {
-    "uniswapV3Pool": "0xCe099C9C5b6dc6Ca0D7c1E22Fbb49E7Bfd6829c2",
+    "uniswapV3Pool": "0x99dadF0B6A12eb4387662C74eB9710d0772091b8",
     "feeTier": 3000
   },
   "urls": {
