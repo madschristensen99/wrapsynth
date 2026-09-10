@@ -1,20 +1,21 @@
 # ⛴️ WrapSynth
 
-**A trustless cross-chain ferry for Monero. wsXMR is live on Gnosis Chain, backed by overcollateralized LP vaults and Ed25519 atomic swap commitments.**
+**A trustless cross-chain ferry for Monero. wsXMR is live in beta on Gnosis Chain, backed by overcollateralized LP vaults and Ed25519 atomic swap commitments. Mainnet launch on Aave Arc scheduled for September 18th.**
 
-🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/sDAI Pool on Gnosis](https://gnosisscan.io/address/0x4e610940E0feBC109Fc7C9ba6d453eE99ea53F07)**
+🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/sDAI Pool on Gnosis](https://www.geckoterminal.com/gnosis-chain/pools/0x4e610940e0febc109fc7c9ba6d453ee99ea53f07)**
 
 WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Users swap XMR for wsXMR through atomic-swap mechanics enforced on-chain: LPs post sDAI collateral, mint/burn settlement is gated by Ed25519 secret reveals verified on-chain, and timeout-based slashing protects both sides. No custodian, no federation, no trusted intermediary — every swap settles peer-to-peer between a user and an LP vault.
 
 ---
 
-## 🚀 Status: Live on Gnosis Chain Mainnet
+## 🚀 Status: Beta on Gnosis Chain — Aave Arc launch September 18th
 
-- ✅ Full hub + facet system deployed and **verified on Gnosisscan**
+- ✅ Full hub + facet system deployed and **verified on Gnosisscan** (beta)
 - ✅ **wsXMR/sDAI Uniswap V3 pool live** (0.3% fee tier)
 - ✅ Complete mint → trade → burn cycle executed end-to-end on mainnet
 - ✅ Two rounds of security review completed; all critical findings resolved (see [Security](#-security))
 - ✅ 633-line solvency invariant test suite + audit regression suite
+- 📅 **Aave Arc mainnet launch: September 18th, 2026**
 - 🔄 Solana port in development (`solana/`)
 
 ### Deployed Contracts (Gnosis Chain, ChainID 100)

@@ -449,10 +449,21 @@ sequenceDiagram
     LP->>Monero: Claim XMR with secret
     Note right of LP: Secret visible on Monero chain
 
-    Note over User,Monero: Step 6: User finalizes mint with revealed secret
-    User->>VM: finalizeMint(requestId, secret)
+    Note over User,Monero: Step 6: User reveals secret, then finalizeMint
+    User->>VM: revealSecret(requestId, secret)
     activate VM
     VM->>VM: Verify status is READY
+    VM->>VM: Ed25519: verify scalarMultBase(secret) == claimCommitment
+    alt Secret does not match commitment
+        VM-->>User: Revert: InvalidSecret
+    end
+    VM->>VM: Store revealedSecret, status = SECRET_REVEALED
+    VM-->>User: SecretRevealed event
+    deactivate VM
+
+    User->>VM: finalizeMint(requestId)
+    activate VM
+    VM->>VM: Verify status is SECRET_REVEALED
     VM->>VM: Sync vault yield & re-check CR
     alt CR < 150% after yield sync
         VM-->>User: Revert: InsufficientCollateral
@@ -460,10 +471,7 @@ sequenceDiagram
     alt Vault mintNonce changed (liquidation occurred)
         VM->>VM: Auto-cancel: queue deposit + LP bond to pendingReturns
         VM-->>User: MintCancelled event
-    else Secret does not match commitment
-        VM-->>User: Revert: InvalidSecret
     end
-    VM->>VM: Verify secret matches commitment (Ed25519)
     VM->>VM: Convert pendingDebt to normalizedDebt
     VM->>VM: Update globalTotalDebt
     VM->>Token: mint(recipient, wsxmrAmount - fee)
@@ -471,7 +479,7 @@ sequenceDiagram
     VM->>Token: mint(LP, feeAmount)
     Token-->>VM: Fee minted
     VM->>VM: Queue griefing deposit refund
-    VM->>VM: Mark COMPLETED
+    VM->>VM: Mark COMPLETED, pendingMintCount--
     VM-->>User: MintFinalized event
     deactivate VM
 ```
@@ -981,16 +989,22 @@ sequenceDiagram
     Mint->>Mint: status = READY, pendingMintCount++
     Mint-->>Hub: emit MintReady(requestId, lpCommitment)
 
-    Note over User,LP: 5. User Reveals Secret → Mint Finalized
-    User->>Hub: finalizeMint(requestId, secret)
-    Hub->>Mint: delegateCall finalizeMint(...)
+    Note over User,LP: 5. User Reveals Secret → Mint Finalized (two-step)
+    User->>Hub: revealSecret(requestId, secret)
+    Hub->>Mint: delegateCall revealSecret(...)
     Mint->>Mint: Verify scalarMultBase(secret) == claimCommitment
+    Mint->>Mint: Store revealedSecret, status = SECRET_REVEALED
+    Mint-->>Hub: emit SecretRevealed(requestId, secret)
+
+    User->>Hub: finalizeMint(requestId)
+    Hub->>Mint: delegateCall finalizeMint(...)
+    Mint->>Mint: Verify status is SECRET_REVEALED
     Mint->>Mint: Move pendingDebt → normalizedDebt, globalTotalDebt += wsxmrAmount
     Mint->>Hub: mintTokens(recipient, wsxmrAmount - fee)
     Mint->>Hub: mintTokens(lpVault, feeAmount)
     Mint->>Mint: Return griefing deposit via pendingReturns
     Mint->>Mint: status = COMPLETED, pendingMintCount--
-    Mint-->>Hub: emit MintFinalized(requestId, secret)
+    Mint-->>Hub: emit MintFinalized(requestId)
 
     Note over LP: LP sweeps XMR from shared address (combine user secret + LP secret)
 ```

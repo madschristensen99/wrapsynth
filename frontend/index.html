@@ -145,6 +145,26 @@
   .who-card .socials svg{width:18px;height:18px;fill:currentColor}
   .tg-join{margin-top:28px}
 
+  /* DONATE CARD */
+  .donate-card{margin-top:24px;display:flex;align-items:center;gap:16px;
+    background:linear-gradient(135deg,rgba(255,122,61,.04),rgba(255,255,255,.02));
+    border:1px solid var(--line-2);border-radius:14px;padding:18px 22px;max-width:680px;
+    transition:all .3s cubic-bezier(.4,0,.2,1)}
+  .donate-card:hover{border-color:rgba(255,122,61,.25);box-shadow:0 4px 32px rgba(255,122,61,.08)}
+  .donate-icon{flex-shrink:0}
+  .donate-icon svg{width:40px;height:40px}
+  .donate-body{flex:1;min-width:0}
+  .donate-label{font-family:'Plus Jakarta Sans';font-weight:600;font-size:14px;color:var(--fg);margin-bottom:4px}
+  .donate-addr{font-family:'JetBrains Mono';font-size:11.5px;color:var(--xmr);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .donate-copy{flex-shrink:0;display:flex;align-items:center;gap:6px;
+    padding:8px 14px;border-radius:10px;border:1px solid var(--line-2);
+    background:rgba(255,255,255,.04);color:var(--muted);font-size:12.5px;
+    font-family:'JetBrains Mono';cursor:pointer;transition:all .2s}
+  .donate-copy:hover{border-color:rgba(255,122,61,.4);color:var(--xmr);
+    background:rgba(255,122,61,.06)}
+  .donate-copy.copied{border-color:rgba(62,252,224,.4);color:var(--teal)}
+
   /* SEQUENCE DIAGRAMS */
   .seq-tabs{display:flex;gap:8px;margin-top:44px;overflow-x:auto;scrollbar-width:thin;
     scrollbar-color:var(--line) transparent;padding-bottom:6px}
@@ -460,6 +480,23 @@
         </div>
       </div>
     </div>
+    <div class="donate-card">
+      <div class="donate-icon">
+        <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="16" cy="16" r="15" fill="none" stroke="#ff7a3d" stroke-width="1.5" opacity=".4"/>
+          <path d="M16 4 C 10 4 5 9 5 16 C 5 23 10 28 16 28 C 22 28 27 23 27 16 C 27 9 22 4 16 4 Z" fill="#ff7a3d" opacity=".08"/>
+          <path d="M7 8 L7 24 L11 24 L11 15 L16 20 L21 15 L21 24 L25 24 L25 8 L23 8 L16 16 L9 8 Z" fill="#ff7a3d"/>
+        </svg>
+      </div>
+      <div class="donate-body">
+        <div class="donate-label">Support WrapSynth</div>
+        <div class="donate-addr" id="donate-addr">83PvXnBHDNmN4TtRdKXMr4Vq1uHerTthZDRjrTG4hMUyeLSd7pNYwM31eCmDdX9D3F61FsdA2XvTmT92eQzqWFwR9CJ4gb8</div>
+      </div>
+      <button class="donate-copy" id="donate-copy" onclick="copyDonateAddr()">
+        <svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+        <span id="donate-copy-text">Copy</span>
+      </button>
+    </div>
     <a class="btn btn-ghost tg-join" href="https://t.me/fungerbilswap" target="_blank" rel="noopener">
       <svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.531 6.998-3.02 3.332-1.387 4.025-1.627 4.476-1.635z"/></svg>
       Join our Telegram
@@ -709,18 +746,18 @@
     <div class="ctr-grid">
       <div class="ctr">
         <div class="lab">wsXmrHub <span class="badge">DIAMOND · EIP-2535</span></div>
-        <div class="addr" data-addr="0x26dA95a7712B7663f4A159f92bf1e229D8e24E7b">0x26dA95a7712B7663f4A159f92bf1e229D8e24E7b</div>
+        <div class="addr" data-addr="0x29BF76f72694A99e5C1483871aD62f87501fC99E">0x29BF76f72694A99e5C1483871aD62f87501fC99E</div>
         <div class="acts">
           <button onclick="copyAddr(this)">Copy address</button>
-          <a href="https://gnosisscan.io/address/0x26dA95a7712B7663f4A159f92bf1e229D8e24E7b" target="_blank">View on Gnosisscan ↗</a>
+          <a href="https://gnosisscan.io/address/0x29BF76f72694A99e5C1483871aD62f87501fC99E" target="_blank">View on Gnosisscan ↗</a>
         </div>
       </div>
       <div class="ctr">
         <div class="lab">wsXMR token <span class="badge">ERC-20 · 8 dec</span></div>
-        <div class="addr" data-addr="0x7a7cFca18Bf01B3c3D5A21E82318879454446D2c">0x7a7cFca18Bf01B3c3D5A21E82318879454446D2c</div>
+        <div class="addr" data-addr="0x8197d472823CC8BB5ae4077619bC85cAD19C4A5f">0x8197d472823CC8BB5ae4077619bC85cAD19C4A5f</div>
         <div class="acts">
           <button onclick="copyAddr(this)">Copy address</button>
-          <a href="https://gnosisscan.io/token/0x7a7cFca18Bf01B3c3D5A21E82318879454446D2c" target="_blank">View on Gnosisscan ↗</a>
+          <a href="https://gnosisscan.io/token/0x8197d472823CC8BB5ae4077619bC85cAD19C4A5f" target="_blank">View on Gnosisscan ↗</a>
         </div>
       </div>
     </div>
@@ -818,13 +855,13 @@
       </div>
       <div>
         <h4>Contract</h4>
-        <a href="https://gnosisscan.io/address/0x26dA95a7712B7663f4A159f92bf1e229D8e24E7b" target="_blank">wsXmrHub (Diamond)</a>
-        <a href="https://gnosisscan.io/token/0x7a7cFca18Bf01B3c3D5A21E82318879454446D2c" target="_blank">wsXMR token</a>
+        <a href="https://gnosisscan.io/address/0x29BF76f72694A99e5C1483871aD62f87501fC99E" target="_blank">wsXmrHub (Diamond)</a>
+        <a href="https://gnosisscan.io/token/0x8197d472823CC8BB5ae4077619bC85cAD19C4A5f" target="_blank">wsXMR token</a>
       </div>
     </div>
     <div class="foot-bot">
       <span>v1.0.0 · MIT License</span>
-      <span class="mono" style="font-size:11px;color:var(--faint)">💜 Donations: <span style="color:var(--xmr)">83PvXnBHDNmN4TtRdKXMr4Vq1uHerTthZDRjrTG4hMUyeLSd7pNYwM31eCmDdX9D3F61FsdA2XvTmT92eQzqWFwR9CJ4gb8</span></span>
+      <span class="mono" style="font-size:11px;color:var(--faint);display:inline-flex;align-items:center;gap:6px"><svg viewBox="0 0 32 32" style="width:14px;height:14px"><circle cx="16" cy="16" r="15" fill="none" stroke="#ff7a3d" stroke-width="1.5" opacity=".4"/><path d="M16 4 C 10 4 5 9 5 16 C 5 23 10 28 16 28 C 22 28 27 23 27 16 C 27 9 22 4 16 4 Z" fill="#ff7a3d" opacity=".08"/><path d="M7 8 L7 24 L11 24 L11 15 L16 20 L21 15 L21 24 L25 24 L25 8 L23 8 L16 16 L9 8 Z" fill="#ff7a3d"/></svg> Donations: <span style="color:var(--xmr)">83PvXnBHDNmN4TtRdKXMr4Vq1uHerTthZDRjrTG4hMUyeLSd7pNYwM31eCmDdX9D3F61FsdA2XvTmT92eQzqWFwR9CJ4gb8</span></span>
     </div>
   </div>
 </footer>
@@ -879,8 +916,8 @@ function copyAddr(btn){
     const {gnosis}=await import('https://esm.sh/viem@2.21.54/chains');
     
     const client=createPublicClient({chain:gnosis,transport:http('https://rpc.gnosischain.com')});
-    const hub='0x26dA95a7712B7663f4A159f92bf1e229D8e24E7b';
-    const wsXMR='0x7a7cFca18Bf01B3c3D5A21E82318879454446D2c';
+    const hub='0x29BF76f72694A99e5C1483871aD62f87501fC99E';
+    const wsXMR='0x8197d472823CC8BB5ae4077619bC85cAD19C4A5f';
     const sDAI='0xaf204776c7245bF4147c2612BF6e5972Ee483701';
     
     // Fetch wsXMR total supply
@@ -1033,8 +1070,9 @@ function copyAddr(btn){
         {from:3,to:1,label:"verify XMR locked",type:"call"},
         {from:3,to:2,label:"setMintReady(commitment) + LP bond",type:"call"},
         {from:2,to:2,label:"re-check CR, status: READY",type:"note"},
-        {from:0,to:2,label:"finalizeMint(secret) \u2014 user reveals",type:"call"},
-        {from:2,to:2,label:"Ed25519: verify secret\u00b7G = commitment",type:"note"},
+        {from:0,to:2,label:"revealSecret(secret) \u2014 user reveals",type:"call"},
+        {from:2,to:2,label:"Ed25519: verify secret\u00b7G = commitment, status: SECRET_REVEALED",type:"note"},
+        {from:2,to:2,label:"finalizeMint() \u2014 anyone calls",type:"call"},
         {from:2,to:0,label:"mint wsXMR (amt \u2212 fee)",type:"return"},
         {from:2,to:3,label:"mint fee wsXMR to LP",type:"return"},
         {from:3,to:1,label:"claim XMR (using revealed secret)",type:"call"},
@@ -1304,6 +1342,25 @@ function copyAddr(btn){
   panels[0].classList.add('active');
   startAuto();
 })();
+
+function copyDonateAddr(){
+  const addr=document.getElementById('donate-addr').textContent.trim();
+  navigator.clipboard.writeText(addr).then(()=>{
+    const btn=document.getElementById('donate-copy');
+    const txt=document.getElementById('donate-copy-text');
+    btn.classList.add('copied');
+    txt.textContent='Copied!';
+    setTimeout(()=>{btn.classList.remove('copied');txt.textContent='Copy';},2000);
+  }).catch(()=>{
+    const ta=document.createElement('textarea');
+    ta.value=addr;document.body.appendChild(ta);ta.select();
+    document.execCommand('copy');document.body.removeChild(ta);
+    const btn=document.getElementById('donate-copy');
+    const txt=document.getElementById('donate-copy-text');
+    btn.classList.add('copied');txt.textContent='Copied!';
+    setTimeout(()=>{btn.classList.remove('copied');txt.textContent='Copy';},2000);
+  });
+}
 </script>
 </body>
 </html>
