@@ -599,7 +599,8 @@ contract BurnSolvencyInvariantTest is Test {
         MintFacet(address(hub)).setMintReady(requestId, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(_user);
-        MintFacet(address(hub)).finalizeMint(requestId, secret);
+        MintFacet(address(hub)).revealSecret(requestId, secret);
+        MintFacet(address(hub)).finalizeMint(requestId);
 
         return wsxmr.balanceOf(_user);
     }

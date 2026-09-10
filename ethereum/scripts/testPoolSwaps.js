@@ -64,7 +64,7 @@ async function main() {
 
     const pool = new ethers.Contract(poolAddr, poolAbi, provider);
     const slot0 = await pool.slot0();
-    const liquidity = await pool.liquidity();
+    let liquidity = await pool.liquidity();
     const token0 = await pool.token0();
     const token1 = await pool.token1();
 
@@ -111,7 +111,8 @@ async function main() {
                 'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment, bytes32 userPublicKey) external payable returns (bytes32)',
                 'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
                 'function setMintReady(bytes32 requestId, bytes32 lpCommitment) external payable',
-                'function finalizeMint(bytes32 requestId, bytes32 secret) external',
+                'function revealSecret(bytes32 requestId, bytes32 secret) external',
+                'function finalizeMint(bytes32 requestId) external',
                 'function updateOraclePrices(bytes[]) external',
                 'function hasActiveVault(address) external view returns (bool)',
                 'function createVault() external',
@@ -178,7 +179,8 @@ async function main() {
             await (await hubForMint.provideLPKey(requestId, lpPublicKey, lpPublicKey, { gasLimit: 200000 })).wait();
             const lpCommitment = ethers.utils.id('lp-commitment');
             await (await hubForMint.setMintReady(requestId, lpCommitment, { gasLimit: 200000 })).wait();
-            await (await hubForMint.finalizeMint(requestId, secret, { gasLimit: 1000000 })).wait();
+            await (await hubForMint.revealSecret(requestId, secret, { gasLimit: 1000000 })).wait();
+            await (await hubForMint.finalizeMint(requestId, { gasLimit: 1000000 })).wait();
             wsxmrBal = await wsxmr.balanceOf(wallet.address);
             console.log('  Minted', ethers.utils.formatUnits(wsxmrBal, 8), 'wsXMR');
         }

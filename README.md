@@ -2,7 +2,7 @@
 
 **A trustless cross-chain ferry for Monero. wsXMR is live on Gnosis Chain, backed by overcollateralized LP vaults and Ed25519 atomic swap commitments.**
 
-🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/sDAI Pool on Gnosis](https://gnosisscan.io/address/0x99dadF0B6A12eb4387662C74eB9710d0772091b8)**
+🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/sDAI Pool on Gnosis](https://gnosisscan.io/address/0x4e610940E0feBC109Fc7C9ba6d453eE99ea53F07)**
 
 WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Users swap XMR for wsXMR through atomic-swap mechanics enforced on-chain: LPs post sDAI collateral, mint/burn settlement is gated by Ed25519 secret reveals verified on-chain, and timeout-based slashing protects both sides. No custodian, no federation, no trusted intermediary — every swap settles peer-to-peer between a user and an LP vault.
 
@@ -21,22 +21,22 @@ WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Us
 
 | Contract | Address |
 |---|---|
-| wsXMR Token | [`0x35e3672b4f6bcb0c8bde814aa467f335b50bdd4f`](https://gnosisscan.io/token/0x35e3672b4f6bcb0c8bde814aa467f335b50bdd4f) |
-| wsXmrHub | [`0xbed307ef521a0a3c3663858f53acfeacfe0ab4eb`](https://gnosisscan.io/address/0xbed307ef521a0a3c3663858f53acfeacfe0ab4eb) |
-| Liquidity Router | [`0x54572f3867c52f4178594787ed1956f695fcba09`](https://gnosisscan.io/address/0x54572f3867c52f4178594787ed1956f695fcba09) |
-| wsXMR/sDAI UniV3 Pool | [`0x99dadF0B6A12eb4387662C74eB9710d0772091b8`](https://gnosisscan.io/address/0x99dadF0B6A12eb4387662C74eB9710d0772091b8) |
+| wsXMR Token | [`0x8197d472823CC8BB5ae4077619bC85cAD19C4A5f`](https://gnosisscan.io/token/0x8197d472823CC8BB5ae4077619bC85cAD19C4A5f) |
+| wsXmrHub | [`0x29BF76f72694A99e5C1483871aD62f87501fC99E`](https://gnosisscan.io/address/0x29BF76f72694A99e5C1483871aD62f87501fC99E) |
+| Liquidity Router | [`0x52EcC68d3E38c86778e940A9fCeAB1e19f92F59e`](https://gnosisscan.io/address/0x52EcC68d3E38c86778e940A9fCeAB1e19f92F59e) |
+| wsXMR/sDAI UniV3 Pool | [`0x4e610940E0feBC109Fc7C9ba6d453eE99ea53F07`](https://gnosisscan.io/address/0x4e610940E0feBC109Fc7C9ba6d453eE99ea53F07) |
 
 <details>
 <summary>Facet addresses</summary>
 
 | Facet | Address |
 |---|---|
-| RedStoneOracleFacet | [`0x4f2243dcb00f03225f902ee775e7175326a5debc`](https://gnosisscan.io/address/0x4f2243dcb00f03225f902ee775e7175326a5debc) |
-| VaultFacet | [`0xf471401ff59a242b08f230113987aa3a6207c167`](https://gnosisscan.io/address/0xf471401ff59a242b08f230113987aa3a6207c167) |
-| MintFacet | [`0x07ff8a45fdcc3e1b6d0905905ae0704cd8adf6f8`](https://gnosisscan.io/address/0x07ff8a45fdcc3e1b6d0905ae0704cd8adf6f8) |
-| BurnFacet | [`0x4337f0fedbd4113447f176847cefb1ba33be0136`](https://gnosisscan.io/address/0x4337f0fedbd4113447f176847cefb1ba33be0136) |
-| LiquidationFacet | [`0xacff85d2ef6f12ddecbb7623869c5a7394867097`](https://gnosisscan.io/address/0xacff85d2ef6f12ddecbb7623869c5a7394867097) |
-| YieldFacet | [`0xff4c4baa041205a39c010e67a6fb8a583c98769e`](https://gnosisscan.io/address/0xff4c4baa041205a39c010e67a6fb8a583c98769e) |
+| RedStoneOracleFacet | [`0x6fE6e9CE3e385541FBAe77E47c10e2948939c6a2`](https://gnosisscan.io/address/0x6fE6e9CE3e385541FBAe77E47c10e2948939c6a2) |
+| VaultFacet | [`0xfb7E1d0B239E8B1C02b20CCEA283927C293B0519`](https://gnosisscan.io/address/0xfb7E1d0B239E8B1C02b20CCEA283927C293B0519) |
+| MintFacet | [`0x9a0c5bD186Fe4dbb673C2bc3df41b40329D0aCeC`](https://gnosisscan.io/address/0x9a0c5bD186Fe4dbb673C2bc3df41b40329D0aCeC) |
+| BurnFacet | [`0x2ca92dce1223B47088198F9AB7e505a097e8E6cC`](https://gnosisscan.io/address/0x2ca92dce1223B47088198F9AB7e505a097e8E6cC) |
+| LiquidationFacet | [`0x4d8dB172f94b49f99332e0E956dd26796c55Ee7D`](https://gnosisscan.io/address/0x4d8dB172f94b49f99332e0E956dd26796c55Ee7D) |
+| YieldFacet | [`0x73aa804A2fEc43f79eC66a8daF36a806e83Ce1BD`](https://gnosisscan.io/address/0x73aa804A2fEc43f79eC66a8daF36a806e83Ce1BD) |
 
 Full deployment manifest (external contracts, pool config, LP defaults): [`deployment.json`](./deployment.json)
 </details>
@@ -81,7 +81,7 @@ All protocol state and collateral live in a single contract, **wsXmrHub**, which
 1. **`initiateMint`** — user posts a claim commitment (Ed25519 point) and griefing deposit; the LP vault's capacity is reserved
 2. User sends XMR to the LP's Monero address
 3. **`setMintReady`** — LP confirms XMR receipt on-chain
-4. **`finalizeMint`** — user reveals the secret scalar; the contract verifies `scalarMultBase(secret)` matches the commitment, mints wsXMR, and refunds the deposit
+4. **`revealSecret`** + **`finalizeMint`** — user reveals the secret scalar; the contract verifies `scalarMultBase(secret)` matches the commitment, then anyone calls `finalizeMint` to mint wsXMR and refund the deposit
 
 ### Burning (wsXMR → XMR)
 

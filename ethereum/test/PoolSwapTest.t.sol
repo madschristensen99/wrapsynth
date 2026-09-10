@@ -303,7 +303,8 @@ contract PoolSwapTest is Test, IUniswapV3SwapCallback {
         MintFacet(address(hub)).setMintReady(mintRequestId, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(mintRequestId, testSecret);
+        MintFacet(address(hub)).revealSecret(mintRequestId, testSecret);
+        MintFacet(address(hub)).finalizeMint(mintRequestId);
 
         // 3. User opens Co-LP position
         uint256 wsxmrBalance = wsxmr.balanceOf(user);

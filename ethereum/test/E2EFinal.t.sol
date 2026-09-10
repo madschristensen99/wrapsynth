@@ -118,7 +118,8 @@ contract E2EFinalTest is Test {
         
         // User finalizes
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(requestId, testSecret);
+        MintFacet(address(hub)).revealSecret(requestId, testSecret);
+        MintFacet(address(hub)).finalizeMint(requestId);
         
         uint256 balance = wsxmr.balanceOf(user);
         console.log("[5] Mint finalized!");

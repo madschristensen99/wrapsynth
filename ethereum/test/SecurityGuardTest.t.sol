@@ -136,7 +136,7 @@ contract SecurityGuardTest is Test {
 
         vm.prank(user);
         vm.expectRevert(IErrors.InvalidStatus.selector);
-        MintFacet(address(hub)).finalizeMint(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
     }
 
     /// @notice finalizeMint with wrong secret must revert
@@ -147,7 +147,7 @@ contract SecurityGuardTest is Test {
 
         vm.prank(user);
         vm.expectRevert(IErrors.InvalidSecret.selector);
-        MintFacet(address(hub)).finalizeMint(reqId, bytes32(uint256(0xbadbad)));
+        MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0xbadbad)));
     }
 
     /// @notice provideLPKey on already-provided request must revert
@@ -620,7 +620,8 @@ contract SecurityGuardTest is Test {
         _setMintReady(_lp, reqId);
 
         vm.prank(_user);
-        MintFacet(address(hub)).finalizeMint(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).finalizeMint(reqId);
 
         return wsxmr.balanceOf(_user);
     }

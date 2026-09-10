@@ -106,7 +106,8 @@ contract MintBurnCoverageTest is Test {
         _provideLPKey(lp, reqId);
         _setMintReady(lp, reqId);
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).finalizeMint(reqId);
 
         bytes32[] memory pending = _getVaultPendingMints(lp);
         assertEq(pending.length, 0, "should have 0 pending after completion");
@@ -398,7 +399,8 @@ contract MintBurnCoverageTest is Test {
         _provideLPKey(_lp, reqId);
         _setMintReady(_lp, reqId);
         vm.prank(_user);
-        MintFacet(address(hub)).finalizeMint(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).finalizeMint(reqId);
         return wsxmr.balanceOf(_user);
     }
 

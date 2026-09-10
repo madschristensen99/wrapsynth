@@ -123,7 +123,8 @@ contract E2EAdvancedScenariosTest is Test {
         MintFacet(address(hub)).setMintReady(requestId, bytes32(uint256(0xdeadbeef)));
         
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(requestId, testSecret);
+        MintFacet(address(hub)).revealSecret(requestId, testSecret);
+        MintFacet(address(hub)).finalizeMint(requestId);
         
         return wsxmr.balanceOf(user);
     }
