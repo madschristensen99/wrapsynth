@@ -60,7 +60,7 @@ async function main() {
         'function createVault() external',
         'function depositCollateral(uint256 amount) external',
         'function hasActiveVault(address lpAddress) external view returns (bool)',
-        'function getVault(address lpAddress) external view returns (tuple(address lpAddress, uint256 collateralShares, uint256 lockedCollateral, uint256 normalizedDebt, uint256 pendingDebt, uint16 maxMintBps, uint256 mintGriefingDeposit, uint256 mintReadyBond, uint16 mintFeeBps, uint16 burnRewardBps, uint256 liquidationNonce, uint256 mintNonce, uint256 minBurnAmount, bool active, uint256 deployedSDAIShares, uint16 maxCoLPRangeBps, uint256 mintTimeoutBlocks, uint256 burnTimeoutBlocks))',
+        'function getVault(address lpAddress) external view returns (tuple(address lpAddress, uint256 collateralShares, uint256 lockedCollateral, uint256 normalizedDebt, uint256 pendingDebt, uint16 maxMintBps, uint256 mintGriefingDeposit, uint16 mintFeeBps, uint16 burnRewardBps, uint256 liquidationNonce, uint256 mintNonce, uint256 minBurnAmount, bool active, uint256 deployedSDAIShares, uint16 maxCoLPRangeBps, uint256 mintTimeoutBlocks, uint256 burnTimeoutBlocks, uint256 pendingMintCount))',
         'function setMaxMintBps(uint16 maxMintBps) external',
         'function setMinBurnAmount(uint256 minAmount) external',
         'function setMintGriefingDeposit(uint256 deposit) external',
@@ -76,7 +76,8 @@ async function main() {
         'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment, bytes32 userPublicKey) external payable returns (bytes32)',
         'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
         'function setMintReady(bytes32 requestId, bytes32 lpCommitment) external payable',
-        'function finalizeMint(bytes32 requestId, bytes32 secret) external',
+        'function revealSecret(bytes32 requestId, bytes32 secret) external',
+        'function finalizeMint(bytes32 requestId) external',
         'function requestBurn(uint256 wsxmrAmount, address lpVault, address burnRecipient, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey) external returns (bytes32)',
         'function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
         'function confirmMoneroLock(bytes32 requestId) external',
@@ -357,7 +358,10 @@ async function main() {
     
     console.log('📊 Step 6: MINT - Finalize');
     console.log('===========================');
-    const finalizeTx = await hub.finalizeMint(requestId, secret, { gasLimit: 1000000 });
+    const revealTx = await hub.revealSecret(requestId, secret, { gasLimit: 1000000 });
+    await revealTx.wait();
+    console.log('✅ Secret revealed!');
+    const finalizeTx = await hub.finalizeMint(requestId, { gasLimit: 1000000 });
     const finalizeReceipt = await finalizeTx.wait();
     console.log('✅ Mint finalized!');
     console.log('Gas:', finalizeReceipt.gasUsed.toString());

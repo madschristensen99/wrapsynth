@@ -27,11 +27,11 @@ export const NETWORKS = {
 
 // Contract addresses - source of truth: ../../deployment.json
 export const CONTRACTS = {
-    hub: DC.wsXmrHub || '0xbed307ef521a0a3c3663858f53acfeacfe0ab4eb',
-    wsxmrToken: DC.wsXMR || '0x35e3672b4f6bcb0c8bde814aa467f335b50bdd4f',
-    liquidityRouter: DC.liquidityRouter || '0x54572f3867c52f4178594787ed1956f695fcba09',
+    hub: DC.wsXmrHub || '0x29BF76f72694A99e5C1483871aD62f87501fC99E',
+    wsxmrToken: DC.wsXMR || '0x8197d472823CC8BB5ae4077619bC85cAD19C4A5f',
+    liquidityRouter: DC.liquidityRouter || '0x52EcC68d3E38c86778e940A9fCeAB1e19f92F59e',
     sDAI: DE.sDAI || '0xaf204776c7245bF4147c2612BF6e5972Ee483701',
-    uniswapV3Pool: DP.uniswapV3Pool || '0x99dadF0B6A12eb4387662C74eB9710d0772091b8',
+    uniswapV3Pool: DP.uniswapV3Pool || '0x4e610940E0feBC109Fc7C9ba6d453eE99ea53F07',
     // Default LP vault to use for mints (the active LP running the LP node)
     defaultLpVault: DLC.defaultLpVault || '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB'
 };

@@ -147,7 +147,8 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         MintFacet(address(hub)).setMintReady(userMints[0], bytes32(uint256(0xdeadbeef)));
 
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(userMints[0], testSecret);
+        MintFacet(address(hub)).revealSecret(userMints[0], testSecret);
+        MintFacet(address(hub)).finalizeMint(userMints[0]);
 
         // Approve router to spend user's wsXMR
         vm.prank(user);
@@ -330,7 +331,8 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         MintFacet(address(hub)).setMintReady(user2Mints[0], bytes32(uint256(0xdeadbeef)));
 
         vm.prank(user2);
-        MintFacet(address(hub)).finalizeMint(user2Mints[0], secret2);
+        MintFacet(address(hub)).revealSecret(user2Mints[0], secret2);
+        MintFacet(address(hub)).finalizeMint(user2Mints[0]);
 
         // Raise XMR price to make vault liquidatable (wsXMR debt becomes more valuable in USD)
         SimpleOracleFacet(address(hub)).updatePrices(2000_00000000, 1_00000000); // $2000 XMR
@@ -542,7 +544,8 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         MintFacet(address(hub)).setMintReady(requestId, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(user3);
-        MintFacet(address(hub)).finalizeMint(requestId, secret3);
+        MintFacet(address(hub)).revealSecret(requestId, secret3);
+        MintFacet(address(hub)).finalizeMint(requestId);
 
         uint256 balance = wsxmr.balanceOf(user3);
         assertTrue(balance > 0, "mint should work as before");
@@ -953,7 +956,8 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
 
         // User finalizes mint
         vm.prank(largeUser);
-        MintFacet(address(hub)).finalizeMint(largeMints[0], largeSecret);
+        MintFacet(address(hub)).revealSecret(largeMints[0], largeSecret);
+        MintFacet(address(hub)).finalizeMint(largeMints[0]);
 
         // Check user received wsXMR
         uint256 wsxmrBalance = wsxmr.balanceOf(largeUser);

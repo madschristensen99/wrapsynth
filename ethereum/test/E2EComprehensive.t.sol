@@ -113,7 +113,8 @@ contract E2EComprehensiveTest is Test {
         MintFacet(address(hub)).setMintReady(requestId, bytes32(uint256(0xdeadbeef)));
         
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(requestId, testSecret);
+        MintFacet(address(hub)).revealSecret(requestId, testSecret);
+        MintFacet(address(hub)).finalizeMint(requestId);
         
         uint256 balance = wsxmr.balanceOf(user);
         console.log("  Minted wsXMR:", balance);
@@ -232,7 +233,7 @@ contract E2EComprehensiveTest is Test {
         // Try to finalize - should fail
         vm.prank(user);
         vm.expectRevert();
-        MintFacet(address(hub)).finalizeMint(requestId, testSecret);
+        MintFacet(address(hub)).revealSecret(requestId, testSecret);
         
         console.log("  PASS - Cannot finalize cancelled mint\n");
     }
@@ -415,10 +416,12 @@ contract E2EComprehensiveTest is Test {
         
         // Both users finalize
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(requestId1, testSecret);
+        MintFacet(address(hub)).revealSecret(requestId1, testSecret);
+        MintFacet(address(hub)).finalizeMint(requestId1);
         
         vm.prank(user2);
-        MintFacet(address(hub)).finalizeMint(requestId2, secret2);
+        MintFacet(address(hub)).revealSecret(requestId2, secret2);
+        MintFacet(address(hub)).finalizeMint(requestId2);
         
         uint256 balance1 = wsxmr.balanceOf(user);
         uint256 balance2 = wsxmr.balanceOf(user2);
@@ -469,7 +472,8 @@ contract E2EComprehensiveTest is Test {
         BurnFacet(address(hub)).confirmMoneroLock(burnId);
         
         vm.prank(user2);
-        MintFacet(address(hub)).finalizeMint(mintId, secret2);
+        MintFacet(address(hub)).revealSecret(mintId, secret2);
+        MintFacet(address(hub)).finalizeMint(mintId);
         
         vm.prank(lp);
         BurnFacet(address(hub)).finalizeBurn(burnId, burnSecret);
@@ -499,7 +503,8 @@ contract E2EComprehensiveTest is Test {
         MintFacet(address(hub)).setMintReady(requestId, bytes32(uint256(0xdeadbeef)));
         
         vm.prank(_user);
-        MintFacet(address(hub)).finalizeMint(requestId, secret);
+        MintFacet(address(hub)).revealSecret(requestId, secret);
+        MintFacet(address(hub)).finalizeMint(requestId);
         
         return wsxmr.balanceOf(_user);
     }

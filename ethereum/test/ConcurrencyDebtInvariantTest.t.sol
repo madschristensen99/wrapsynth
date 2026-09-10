@@ -164,7 +164,8 @@ contract ConcurrencyDebtInvariantTest is Test {
 
         // Finalize the mint
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).finalizeMint(reqId);
 
         // Lock should be released
         assertEq(_getTotalPendingMints(), 0, "Should have 0 pending mints after finalize");
@@ -479,7 +480,8 @@ contract ConcurrencyDebtInvariantTest is Test {
 
         // Finalize should work
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).finalizeMint(reqId);
     }
 
     /// @notice setMintReadyBond function no longer exists
@@ -564,7 +566,8 @@ contract ConcurrencyDebtInvariantTest is Test {
         _setMintReady(_lp, reqId);
 
         vm.prank(_user);
-        MintFacet(address(hub)).finalizeMint(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).finalizeMint(reqId);
 
         return wsxmr.balanceOf(_user);
     }

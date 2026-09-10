@@ -125,7 +125,8 @@ contract YieldKeeperTest is Test {
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady(userMints[0], bytes32(uint256(0xdeadbeef)));
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(userMints[0], testSecret);
+        MintFacet(address(hub)).revealSecret(userMints[0], testSecret);
+        MintFacet(address(hub)).finalizeMint(userMints[0]);
     }
 
     // ========== TEST 1: syncVaultYield extracts yield after time passes ==========

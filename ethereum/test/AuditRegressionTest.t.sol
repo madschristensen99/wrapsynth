@@ -179,7 +179,8 @@ contract AuditRegressionTest is Test {
         MintFacet(address(hub)).setMintReady(reqId, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).finalizeMint(reqId);
 
         // Now artificially inflate sDAI value (simulate yield) by depositing more sDAI to the hub
         // But to test yield extraction properly, we deposit extra collateral then remove principal tracking
@@ -222,7 +223,8 @@ contract AuditRegressionTest is Test {
         MintFacet(address(hub)).setMintReady(reqId, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).finalizeMint(reqId);
 
         uint256 hubDebtBefore = hub.getVaultDebt(lp);
         assertGt(hubDebtBefore, 0, "Should have debt");
@@ -304,7 +306,8 @@ contract AuditRegressionTest is Test {
         MintFacet(address(hub)).setMintReady(reqId, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).finalizeMint(reqId);
 
         // Record pre-sync state
         uint256 principalDepositsBefore = hub.lpPrincipalDeposits(lp);
@@ -358,7 +361,8 @@ contract AuditRegressionTest is Test {
         vm.prank(vaultA);
         MintFacet(address(hub)).setMintReady(reqA, bytes32(uint256(0xdeadbeef)));
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(reqA, bytes32(uint256(0xaaaa)));
+        MintFacet(address(hub)).revealSecret(reqA, bytes32(uint256(0xaaaa)));
+        MintFacet(address(hub)).finalizeMint(reqA);
 
         // --- Vault B: healthy collateral, moderate debt ---
         _createVaultAndDeposit(vaultB, 10_000 ether);
@@ -375,7 +379,8 @@ contract AuditRegressionTest is Test {
         vm.prank(vaultB);
         MintFacet(address(hub)).setMintReady(reqB, bytes32(uint256(0xdeadbeef)));
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(reqB, bytes32(uint256(0xbbbb)));
+        MintFacet(address(hub)).revealSecret(reqB, bytes32(uint256(0xbbbb)));
+        MintFacet(address(hub)).finalizeMint(reqB);
 
         // Record pre-liquidation state
         uint256 vaultBDebtBefore = hub.getVaultDebt(vaultB);
@@ -449,7 +454,8 @@ contract AuditRegressionTest is Test {
 
         // finalizeMint must use the SAME formula (not actualDebt + pendingDebt + request.wsxmrAmount)
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(reqId, secret);
+        MintFacet(address(hub)).revealSecret(reqId, secret);
+        MintFacet(address(hub)).finalizeMint(reqId);
 
         // Assert mint succeeded
         uint256 minted = wsxmr.balanceOf(user);
@@ -487,7 +493,8 @@ contract AuditRegressionTest is Test {
         // Finalize first mint — projectedDebt should include BOTH pending amounts
         // (not double-count reqA)
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(reqA, secretA);
+        MintFacet(address(hub)).revealSecret(reqA, secretA);
+        MintFacet(address(hub)).finalizeMint(reqA);
 
         uint256 mintedA = wsxmr.balanceOf(user);
         assertGt(mintedA, 0, "N-1: first finalizeMint should succeed with two pending mints");
@@ -538,7 +545,8 @@ contract AuditRegressionTest is Test {
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady(mintId, bytes32(uint256(0xdeadbeef)));
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(mintId, bytes32(uint256(0x1111)));
+        MintFacet(address(hub)).revealSecret(mintId, bytes32(uint256(0x1111)));
+        MintFacet(address(hub)).finalizeMint(mintId);
 
         // Burn half to lock collateral
         uint256 userBalance = wsxmr.balanceOf(user);
@@ -600,7 +608,8 @@ contract AuditRegressionTest is Test {
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady(mintId, bytes32(uint256(0xdeadbeef)));
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(mintId, bytes32(uint256(0x1111)));
+        MintFacet(address(hub)).revealSecret(mintId, bytes32(uint256(0x1111)));
+        MintFacet(address(hub)).finalizeMint(mintId);
 
         // Burn to lock collateral
         uint256 userBalance = wsxmr.balanceOf(user);

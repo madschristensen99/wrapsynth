@@ -273,7 +273,8 @@ contract E2EFullCycleTest is Test {
         
         // User finalizes
         vm.prank(user);
-        MintFacet(address(hub)).finalizeMint(mintRequestId, testSecret);
+        MintFacet(address(hub)).revealSecret(mintRequestId, testSecret);
+        MintFacet(address(hub)).finalizeMint(mintRequestId);
         
         mintedAmount = wsxmr.balanceOf(user);
         console.log("[OK] Mint finalized!");

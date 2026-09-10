@@ -260,7 +260,8 @@ contract LiquidationCoverageTest is Test {
         _provideLPKey(_lp, reqId);
         _setMintReady(_lp, reqId);
         vm.prank(_user);
-        MintFacet(address(hub)).finalizeMint(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).finalizeMint(reqId);
         return wsxmr.balanceOf(_user);
     }
 }
