@@ -25,8 +25,9 @@ const HUB_ADDRESS = deployment.contracts.wsXmrHub;
 const CHAIN_ID = deployment.chainId || 100;
 
 const HUB_ABI = [
-  'function finalizeMint(bytes32 requestId, bytes32 secret) external',
-  'function getMintRequest(bytes32 requestId) external view returns (tuple(address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout, uint256 state))',
+  'function revealSecret(bytes32 requestId, bytes32 secret) external',
+  'function finalizeMint(bytes32 requestId) external',
+  'function getMintRequest(bytes32 requestId) external view returns (tuple(address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout, uint256 griefingDeposit, uint256 normalizedDebtAmount, uint256 vaultMintNonce, bytes32 lpCommitment, bytes32 revealedSecret, uint8 status))',
 ];
 
 const provider = new ethers.JsonRpcProvider(RPC_URL, CHAIN_ID);
@@ -52,18 +53,26 @@ try {
   // Check mint status
   console.log('\n1. Checking mint status...');
   const mintReq = await hub.getMintRequest(requestId);
-  console.log(`   State: ${mintReq.state} (2 = READY)`);
+  console.log(`   Status: ${mintReq.status} (3 = READY, 4 = SECRET_REVEALED)`);
   console.log(`   Recipient: ${mintReq.recipient}`);
   console.log(`   wsXMR Amount: ${ethers.formatUnits(mintReq.wsxmrAmount, 8)} wsXMR`);
 
-  if (mintReq.state.toString() !== '2') {
-    console.error(`\n❌ Mint is not in READY state (current state: ${mintReq.state})`);
+  if (Number(mintReq.status) === 3) {
+    // READY — need to reveal secret first
+    console.log('\n2a. Calling revealSecret...');
+    const revealTx = await hub.revealSecret(requestId, secret);
+    console.log(`   Transaction hash: ${revealTx.hash}`);
+    console.log('   Waiting for confirmation...');
+    await revealTx.wait();
+    console.log('   ✅ Secret revealed');
+  } else if (Number(mintReq.status) !== 4) {
+    console.error(`\n❌ Mint is not in READY or SECRET_REVEALED state (current status: ${mintReq.status})`);
     process.exit(1);
   }
 
   // Finalize mint
-  console.log('\n2. Calling finalizeMint...');
-  const tx = await hub.finalizeMint(requestId, secret);
+  console.log('\n2b. Calling finalizeMint...');
+  const tx = await hub.finalizeMint(requestId);
   console.log(`   Transaction hash: ${tx.hash}`);
   
   console.log('   Waiting for confirmation...');

@@ -24,6 +24,7 @@ const MONERO_WALLET_RPC_URL = process.env.MONERO_WALLET_RPC_URL || null;
 // If not set, keys must be supplied per-request via HTTP endpoints.
 const DEFAULT_LP_PUBLIC_SPEND_KEY = process.env.BURN_LP_PUBLIC_SPEND_KEY || null;
 const DEFAULT_LP_PUBLIC_VIEW_KEY = process.env.BURN_LP_PUBLIC_VIEW_KEY || null;
+const DEFAULT_LP_PRIVATE_SPEND_KEY = process.env.BURN_LP_PRIVATE_SPEND_KEY || null;
 
 // ─── State ──────────────────────────────────────────────────────────────────
 const pendingBurns = new Map(); // requestId -> burn state object
@@ -189,34 +190,62 @@ async function processPropose(reqIdHex, customKeys = {}) {
   if (!burn) throw new Error(`Unknown burn request: ${reqIdHex}`);
   if (burn.state !== 'requested') throw new Error(`Burn ${reqIdHex} is not in 'requested' state`);
 
-  // ─── 1. Generate LP Ed25519 keys (fresh per request) ──────────────────────
-  let lpPublicSpendKey, lpPublicViewKey;
-  if (customKeys.lpPublicSpendKey && customKeys.lpPublicViewKey) {
-    lpPublicSpendKey = normalizeHex32(customKeys.lpPublicSpendKey);
-    lpPublicViewKey = normalizeHex32(customKeys.lpPublicViewKey);
-  } else if (DEFAULT_LP_PUBLIC_SPEND_KEY && DEFAULT_LP_PUBLIC_VIEW_KEY) {
-    lpPublicSpendKey = normalizeHex32(DEFAULT_LP_PUBLIC_SPEND_KEY);
-    lpPublicViewKey = normalizeHex32(DEFAULT_LP_PUBLIC_VIEW_KEY);
-  } else {
-    const ed = await import('@noble/ed25519');
-    const { createHash } = await import('crypto');
-    if (!ed.etc.sha512Sync) {
-      ed.etc.sha512Sync = (...m) => createHash('sha512').update(Buffer.concat(m)).digest();
-    }
-    const spendPriv = ed.utils.randomPrivateKey();
-    // Use LP's wallet view key so the shared address is scannable by the LP
-    const viewPriv = Buffer.from(process.env.MONERO_VIEW_KEY, 'hex');
+  // ─── 1. Generate LP Ed25519 secret (used for both spend key and EVM commitment) ─
+  // The same secret serves as:
+  //   - LP's Ed25519 private spend key → lpPublicSpendKey = secret · G
+  //   - EVM secret → secretHash = keccak256(secret · G), revealed in finalizeBurn
+  // This ensures combineSpendKeys(userSecret, lpSecret) produces the correct
+  // combined private key for the shared Monero address.
+  const ed = await import('@noble/ed25519');
+  const { createHash } = await import('crypto');
+  if (!ed.etc.sha512Sync) {
+    ed.etc.sha512Sync = (...m) => createHash('sha512').update(Buffer.concat(m)).digest();
+  }
+  const ED25519_L = 2n ** 252n + 27742317777372353535851937790883648493n;
+  const G = ed.ExtendedPoint.BASE;
 
-    // Monero uses direct scalar multiplication (scalar * G), NOT ed.getPublicKey()
-    const ED25519_L = 2n ** 252n + 27742317777372353535851937790883648493n;
-    const G = ed.ExtendedPoint.BASE;
-    function scalarToPubKey(scalarBytes) {
-      const le = Buffer.from(scalarBytes).reverse();
-      const s = BigInt('0x' + le.toString('hex')) % ED25519_L;
-      return Buffer.from(G.multiply(s).toRawBytes());
+  // Read scalar as big-endian (matching EVM/Solidity uint256 and computeSecretHash)
+  function scalarToPubKeyBE(scalarBytes) {
+    const s = BigInt('0x' + Buffer.from(scalarBytes).toString('hex')) % ED25519_L;
+    return Buffer.from(G.multiply(s).toRawBytes());
+  }
+
+  let secret, lpPublicSpendKey, lpPublicViewKey;
+  if (customKeys.lpPrivateSpendKey) {
+    secret = hexToBytes(customKeys.lpPrivateSpendKey);
+    lpPublicSpendKey = '0x' + scalarToPubKeyBE(secret).toString('hex');
+    if (customKeys.lpPublicViewKey) {
+      lpPublicViewKey = normalizeHex32(customKeys.lpPublicViewKey);
+    } else if (process.env.MONERO_VIEW_KEY) {
+      const viewPriv = Buffer.from(process.env.MONERO_VIEW_KEY, 'hex');
+      lpPublicViewKey = '0x' + scalarToPubKeyBE(viewPriv).toString('hex');
+    } else {
+      throw new Error('LP view key not available — set MONERO_VIEW_KEY or provide lpPublicViewKey');
     }
-    lpPublicSpendKey = '0x' + scalarToPubKey(spendPriv).toString('hex');
-    lpPublicViewKey = '0x' + scalarToPubKey(viewPriv).toString('hex');
+  } else if (DEFAULT_LP_PRIVATE_SPEND_KEY) {
+    secret = hexToBytes(DEFAULT_LP_PRIVATE_SPEND_KEY);
+    lpPublicSpendKey = '0x' + scalarToPubKeyBE(secret).toString('hex');
+    if (DEFAULT_LP_PUBLIC_VIEW_KEY) {
+      lpPublicViewKey = normalizeHex32(DEFAULT_LP_PUBLIC_VIEW_KEY);
+    } else if (process.env.MONERO_VIEW_KEY) {
+      const viewPriv = Buffer.from(process.env.MONERO_VIEW_KEY, 'hex');
+      lpPublicViewKey = '0x' + scalarToPubKeyBE(viewPriv).toString('hex');
+    } else {
+      throw new Error('LP view key not available — set BURN_LP_PUBLIC_VIEW_KEY or MONERO_VIEW_KEY');
+    }
+    if (DEFAULT_LP_PUBLIC_SPEND_KEY && normalizeHex32(DEFAULT_LP_PUBLIC_SPEND_KEY) !== lpPublicSpendKey) {
+      console.warn('[Burn] BURN_LP_PUBLIC_SPEND_KEY does not match derived key from BURN_LP_PRIVATE_SPEND_KEY — using derived key');
+    }
+  } else {
+    secret = crypto.randomBytes(32);
+    lpPublicSpendKey = '0x' + scalarToPubKeyBE(secret).toString('hex');
+    if (process.env.MONERO_VIEW_KEY) {
+      const viewPriv = Buffer.from(process.env.MONERO_VIEW_KEY, 'hex');
+      lpPublicViewKey = '0x' + scalarToPubKeyBE(viewPriv).toString('hex');
+    } else {
+      const viewSecret = crypto.randomBytes(32);
+      lpPublicViewKey = '0x' + scalarToPubKeyBE(viewSecret).toString('hex');
+    }
   }
 
   burn.lpPublicSpendKey = lpPublicSpendKey;
@@ -249,8 +278,7 @@ async function processPropose(reqIdHex, customKeys = {}) {
     console.warn(`[Burn] Could not compute shared address:`, err.message);
   }
 
-  // ─── 4. Generate secret ──────────────────────────────────────────────────────
-  const secret = crypto.randomBytes(32);
+  // ─── 4. Compute EVM commitment from the same secret ──────────────────────────
   const { secretHash } = await computeSecretHash(secret);
 
   console.log(`[Burn] Generated secret for ${reqIdHex}`);
@@ -538,13 +566,13 @@ function registerRoutes(app) {
 
   // Manually propose hash for a burn request
   app.post('/burn/propose', async (req, res) => {
-    const { requestId, lpPublicSpendKey, lpPublicViewKey } = req.body;
+    const { requestId, lpPrivateSpendKey, lpPublicViewKey } = req.body;
     if (!requestId) return res.status(400).json({ error: 'requestId required' });
 
     const reqIdHex = ethers.hexlify(requestId);
 
     try {
-      await processPropose(reqIdHex, { lpPublicSpendKey, lpPublicViewKey });
+      await processPropose(reqIdHex, { lpPrivateSpendKey, lpPublicViewKey });
       res.json({
         success: true,
         requestId: reqIdHex,

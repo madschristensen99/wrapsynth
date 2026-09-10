@@ -79,6 +79,7 @@ contract wsXmrStorage {
         PENDING,
         KEY_PROVIDED,
         READY,
+        SECRET_REVEALED,
         COMPLETED,
         CANCELLED,
         EXPIRED_READY
@@ -132,6 +133,7 @@ contract wsXmrStorage {
         uint256 normalizedDebtAmount;
         uint256 vaultMintNonce;
         bytes32 lpCommitment;   // keccak256(Ed25519.scalarMultBase(lpSecret)) — set in setMintReady
+        bytes32 revealedSecret;  // User's Ed25519 secret, stored after revealSecret() succeeds
         MintStatus status;
     }
     
@@ -306,7 +308,7 @@ contract wsXmrStorage {
      * Example: If adding 3 new uint256 variables, change to:
      * uint256[47] private __gap;
      */
-    uint256[37] private __gap;
+    uint256[36] private __gap;
     
     // ========== CONSTRUCTOR ==========
     

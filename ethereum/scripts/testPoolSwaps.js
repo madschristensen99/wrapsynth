@@ -76,28 +76,148 @@ async function main() {
     console.log('  token1:', token1);
     console.log('');
 
-    // If pool liquidity is too low, swaps will revert with SPL (price slippage check).
-    // This happens when previous Co-LP tests have unwound all positions.
+    // If pool liquidity is too low, seed it by opening a Co-LP position before swaps
     const MIN_SWAP_LIQUIDITY = 1000000; // 1M units ~ enough for test swaps
-    if (liquidity.lt(MIN_SWAP_LIQUIDITY)) {
-        console.log('⚠️  Pool liquidity too low for swaps (' + liquidity.toString() + ').');
-        console.log('   Previous Co-LP tests unwound all positions. Skipping swap tests.');
-        console.log('   Co-LP creation and fee collection tests will still run below.');
-        console.log('');
-    }
+    let seededLiquidity = false;
 
     const sdai = new ethers.Contract(SDAI_ADDRESS, erc20Abi, wallet);
     const wsxmr = new ethers.Contract(WSXMR_ADDRESS, erc20Abi, wallet);
     const positionManager = new ethers.Contract(
         '0xAE8fbE656a77519a7490054274910129c9244FA3',
         [
-            'function mint(tuple(address token0, address token1, uint24 fee, int24 tickLower, int24 tickUpper, uint256 amount0Desired, uint256 amount1Desired, uint256 amount0Min, uint256 amount1Min, address recipient, uint256 deadline)) external payable returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)'
+            'function mint(tuple(address token0, address token1, uint24 fee, int24 tickLower, int24 tickUpper, uint256 amount0Desired, uint256 amount1Desired, uint256 amount0Min, uint256 amount1Min, address recipient, uint256 deadline)) external payable returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)',
+            'function balanceOf(address owner) external view returns (uint256)',
+            'function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256)',
+            'function positions(uint256 tokenId) external view returns (uint96 nonce, address operator, address token0, address token1, uint24 fee, int24 tickLower, int24 tickUpper, uint128 liquidity, uint256 feeGrowthInside0LastX128, uint256 feeGrowthInside1LastX128, uint128 tokensOwed0, uint128 tokensOwed1)'
         ],
         wallet
     );
 
-    // Skip adding liquidity - test with existing pool liquidity from Co-LP
-    console.log('Testing swaps with existing pool liquidity from Co-LP positions...');
+    if (liquidity.lt(MIN_SWAP_LIQUIDITY)) {
+        console.log('⚠️  Pool liquidity too low (' + liquidity.toString() + '). Seeding via Co-LP...');
+        console.log('');
+
+        // Need wsXMR for Co-LP — mint if necessary
+        let wsxmrBal = await wsxmr.balanceOf(wallet.address);
+        if (wsxmrBal.lt(ethers.utils.parseUnits('0.0002', 8))) {
+            console.log('  Minting wsXMR for Co-LP seed...');
+            const ed25519HelperAbi = [
+                'function computeCommitment(bytes32 secret) external view returns (bytes32)',
+                'function scalarMultBase(uint256 scalar) external view returns (uint256 x, uint256 y)',
+                'function compressPublicKey(uint256 px, uint256 py) external pure returns (uint256)'
+            ];
+            const ed25519Helper = new ethers.Contract('0xaECa36374039EAb9e267B5daa48bAb9Ab0e50F00', ed25519HelperAbi, provider);
+            const hubMintAbi = [
+                'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment, bytes32 userPublicKey) external payable returns (bytes32)',
+                'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
+                'function setMintReady(bytes32 requestId, bytes32 lpCommitment) external payable',
+                'function finalizeMint(bytes32 requestId, bytes32 secret) external',
+                'function updateOraclePrices(bytes[]) external',
+                'function hasActiveVault(address) external view returns (bool)',
+                'function createVault() external',
+                'function depositCollateral(uint256) external',
+                'function setMaxMintBps(uint16) external',
+                'function setMinBurnAmount(uint256) external',
+                'function setMintGriefingDeposit(uint256) external',
+                'function setVaultMarketMetrics(uint16, uint16) external'
+            ];
+            const hubForMint = new ethers.Contract(HUB_ADDRESS, hubMintAbi, wallet);
+
+            // Ensure vault exists
+            const hasVault = await hubForMint.hasActiveVault(wallet.address);
+            if (!hasVault) {
+                await (await hubForMint.createVault()).wait();
+                await (await hubForMint.setMaxMintBps(0)).wait();
+                await (await hubForMint.setMinBurnAmount(0)).wait();
+                await (await hubForMint.setMintGriefingDeposit(ethers.utils.parseEther('0.001'))).wait();
+                await (await hubForMint.setVaultMarketMetrics(50, 30)).wait();
+                const wxdaiAbi = ['function balanceOf(address) external view returns (uint256)', 'function approve(address, uint256) external returns (bool)', 'function deposit() external payable'];
+                const wxdai = new ethers.Contract('0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d', wxdaiAbi, wallet);
+                const collateralAmount = ethers.utils.parseEther('0.5');
+                const wxdaiBal = await wxdai.balanceOf(wallet.address);
+                if (wxdaiBal.lt(collateralAmount)) {
+                    await (await wxdai.deposit({ value: collateralAmount.sub(wxdaiBal) })).wait();
+                }
+                await (await wxdai.approve(HUB_ADDRESS, collateralAmount)).wait();
+                await (await hubForMint.depositCollateral(collateralAmount)).wait();
+                console.log('  Vault created and collateral deposited');
+            }
+
+            // Update prices
+            const authorizedSigners = getSignersForDataServiceId('redstone-primary-prod');
+            const wrappedHubForMint = WrapperBuilder.wrap(hubForMint).usingDataService({
+                dataServiceId: 'redstone-primary-prod',
+                uniqueSignersCount: 3,
+                dataPackagesIds: ['XMR', 'DAI'],
+                authorizedSigners
+            });
+            await (await wrappedHubForMint.updateOraclePrices([], { gasLimit: 500000 })).wait();
+            console.log('  Prices updated');
+
+            // Mint
+            const secret = ethers.utils.randomBytes(32);
+            const commitment = await ed25519Helper.computeCommitment(secret);
+            const [userPubX, userPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(secret));
+            const compressed = await ed25519Helper.compressPublicKey(userPubX, userPubY);
+            const userPublicKey = ethers.utils.hexZeroPad(compressed.toHexString(), 32);
+            const xmrAmount = ethers.BigNumber.from('200000000'); // 0.002 XMR -> 0.0002 wsXMR
+            const griefingDeposit = ethers.utils.parseEther('0.001');
+
+            const mintTx = await hubForMint.initiateMint(wallet.address, wallet.address, xmrAmount, commitment, userPublicKey, { value: griefingDeposit, gasLimit: 500000 });
+            const mintReceipt = await mintTx.wait();
+            const requestId = mintReceipt.logs[0].topics[1];
+            console.log('  Mint initiated:', requestId);
+
+            // Refresh prices
+            await (await wrappedHubForMint.updateOraclePrices([], { gasLimit: 500000 })).wait();
+
+            // LP provides key
+            const lpSecret = ethers.utils.randomBytes(32);
+            const [lpPubX, lpPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(lpSecret));
+            const lpPublicKey = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['uint256', 'uint256'], [lpPubX, lpPubY]));
+            await (await hubForMint.provideLPKey(requestId, lpPublicKey, lpPublicKey, { gasLimit: 200000 })).wait();
+            const lpCommitment = ethers.utils.id('lp-commitment');
+            await (await hubForMint.setMintReady(requestId, lpCommitment, { gasLimit: 200000 })).wait();
+            await (await hubForMint.finalizeMint(requestId, secret, { gasLimit: 1000000 })).wait();
+            wsxmrBal = await wsxmr.balanceOf(wallet.address);
+            console.log('  Minted', ethers.utils.formatUnits(wsxmrBal, 8), 'wsXMR');
+        }
+
+        // Open Co-LP to seed pool liquidity
+        const coLPAmount = ethers.utils.parseUnits('0.0001', 8); // 0.0001 wsXMR
+        if (wsxmrBal.gte(coLPAmount)) {
+            const hubCoLPAbi = [
+                'function userOpenCoLP(address lpVault, uint256 wsxmrAmount, uint256 deadline) external returns (uint256)',
+                'function updateOraclePrices(bytes[]) external'
+            ];
+            const hubForCoLP = new ethers.Contract(HUB_ADDRESS, hubCoLPAbi, wallet);
+            const authorizedSigners = getSignersForDataServiceId('redstone-primary-prod');
+            const wrappedHubCoLP = WrapperBuilder.wrap(hubForCoLP).usingDataService({
+                dataServiceId: 'redstone-primary-prod',
+                uniqueSignersCount: 3,
+                dataPackagesIds: ['XMR', 'DAI'],
+                authorizedSigners
+            });
+
+            await (await wsxmr.approve(HUB_ADDRESS, coLPAmount)).wait();
+            await (await wrappedHubCoLP.updateOraclePrices([], { gasLimit: 500000 })).wait();
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const coLPTx = await hubForCoLP.userOpenCoLP(wallet.address, coLPAmount, deadline, { gasLimit: 2000000 });
+            await coLPTx.wait();
+            console.log('  ✅ Co-LP position opened to seed pool liquidity:', coLPTx.hash);
+
+            // Re-check liquidity
+            const newLiquidity = await pool.liquidity();
+            console.log('  Pool liquidity after Co-LP:', newLiquidity.toString());
+            liquidity = newLiquidity;
+            seededLiquidity = true;
+        } else {
+            console.log('  ⚠️  Not enough wsXMR for Co-LP seed, skipping swaps');
+        }
+        console.log('');
+    }
+
+    console.log('Testing swaps with pool liquidity:', liquidity.toString());
     console.log('');
 
     const sdaiBalanceAfterLP = await sdai.balanceOf(wallet.address);
@@ -228,12 +348,7 @@ async function main() {
     const hub = new ethers.Contract(HUB_ADDRESS, hubAbi, wallet);
 
     // Check if we have an existing Co-LP position from previous tests
-    const positionManagerFullAbi = [
-        'function balanceOf(address owner) external view returns (uint256)',
-        'function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256)',
-        'function positions(uint256 tokenId) external view returns (uint96 nonce, address operator, address token0, address token1, uint24 fee, int24 tickLower, int24 tickUpper, uint128 liquidity, uint256 feeGrowthInside0LastX128, uint256 feeGrowthInside1LastX128, uint128 tokensOwed0, uint128 tokensOwed1)'
-    ];
-    const positionMgr = new ethers.Contract('0xAE8fbE656a77519a7490054274910129c9244FA3', positionManagerFullAbi, provider);
+    const positionMgr = positionManager; // reuse the one already created above
     
     const numPositions = await positionMgr.balanceOf(wallet.address);
     console.log('Existing NFT positions:', numPositions.toString());

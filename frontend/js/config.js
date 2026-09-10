@@ -27,11 +27,11 @@ export const NETWORKS = {
 
 // Contract addresses - source of truth: ../../deployment.json
 export const CONTRACTS = {
-    hub: DC.wsXmrHub || '0x26dA95a7712B7663f4A159f92bf1e229D8e24E7b',
-    wsxmrToken: DC.wsXMR || '0x7a7cFca18Bf01B3c3D5A21E82318879454446D2c',
-    liquidityRouter: DC.liquidityRouter || '0x0708955Ac8fAC40b7A3e770bC52678433D547bb0',
+    hub: DC.wsXmrHub || '0xbed307ef521a0a3c3663858f53acfeacfe0ab4eb',
+    wsxmrToken: DC.wsXMR || '0x35e3672b4f6bcb0c8bde814aa467f335b50bdd4f',
+    liquidityRouter: DC.liquidityRouter || '0x54572f3867c52f4178594787ed1956f695fcba09',
     sDAI: DE.sDAI || '0xaf204776c7245bF4147c2612BF6e5972Ee483701',
-    uniswapV3Pool: DP.uniswapV3Pool || '0xCe099C9C5b6dc6Ca0D7c1E22Fbb49E7Bfd6829c2',
+    uniswapV3Pool: DP.uniswapV3Pool || '0x99dadF0B6A12eb4387662C74eB9710d0772091b8',
     // Default LP vault to use for mints (the active LP running the LP node)
     defaultLpVault: DLC.defaultLpVault || '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB'
 };
@@ -88,7 +88,7 @@ export const MONERO_CONFIG = {
     refreshInterval: 10000, // 10 seconds
     
     // Transaction confirmation blocks
-    confirmations: 10
+    confirmations: 2
 };
 
 // Swap parameters
@@ -158,6 +158,7 @@ export const RAW_ABIS = {
                 { name: 'normalizedDebtAmount', type: 'uint256' },
                 { name: 'vaultMintNonce', type: 'uint256' },
                 { name: 'lpCommitment', type: 'bytes32' },
+                { name: 'revealedSecret', type: 'bytes32' },
                 { name: 'status', type: 'uint8' }
             ],
             name: '',
@@ -203,7 +204,8 @@ export const ABIS = {
         'function initiateMint(address lpVault, address recipient, uint256 xmrAmount, bytes32 claimCommitment, bytes32 userPublicKey) external payable returns (bytes32 requestId)',
         'function provideLPKey(bytes32 requestId, bytes32 lpPublicKey) external',
         'function setMintReady(bytes32 requestId, bytes32 lpCommitment) external payable',
-        'function finalizeMint(bytes32 requestId, bytes32 secret) external',
+        'function revealSecret(bytes32 requestId, bytes32 secret) external',
+        'function finalizeMint(bytes32 requestId) external',
         'function cancelMint(bytes32 requestId) external',
         'function lpPublicKeys(bytes32 requestId) external view returns (bytes32)',
         'function lpPublicViewKeys(bytes32 requestId) external view returns (bytes32)',

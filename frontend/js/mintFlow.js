@@ -576,12 +576,12 @@ export class MintFlow {
                 try {
                     const req = await readHub('getMintRequest', [this.requestId]);
                     const status = Number(req.status);
-                    console.log(`[Mint Poll] Status: ${status} (1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED, 6=EXPIRED_READY)`);
+                    console.log(`[Mint Poll] Status: ${status} (1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED, 7=EXPIRED_READY)`);
                     if (status === 3) {
                         console.log('Mint became READY while waiting for user confirmation');
                         clearInterval(statusPollInterval);
                         if (this.userConfirmResolve) this.userConfirmResolve();
-                    } else if (status === 5 || status === 6) {
+                    } else if (status === 6 || status === 7) {
                         console.log('Mint was cancelled/expired while waiting for user confirmation');
                         clearInterval(statusPollInterval);
                         if (this.userConfirmResolve) this.userConfirmResolve();
@@ -679,9 +679,9 @@ export class MintFlow {
             try {
                 currentMintRequest = await readHub('getMintRequest', [this.requestId]);
                 const status = Number(currentMintRequest.status);
-                // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
+                // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED
                 
-                if (status === 5) {
+                if (status === 6) {
                     console.log('Mint was cancelled by LP after MintReady event');
                     this.state = 'expired';
                     updateSwapState({ requestId: this.requestId, state: this.state });
@@ -690,7 +690,7 @@ export class MintFlow {
                     throw new Error('Mint cancelled by LP');
                 }
                 
-                if (status === 4) {
+                if (status === 5) {
                     console.log('Mint was already completed');
                     this.complete();
                     return;
@@ -772,116 +772,144 @@ export class MintFlow {
     }
 
     /**
-     * Internal finalize implementation — verifies on-chain status, calls finalizeMint,
-     * and handles various error cases (already completed, cancelled, race conditions).
+     * Internal finalize implementation — calls revealSecret (stores secret on-chain with
+     * minimal revert surface), then finalizeMint (permissionless, no secret in calldata).
      * On success, transitions to complete() and saves to history.
      */
     async _doFinalize() {
-        // Verify status one more time before attempting finalize
         const { readHub } = await import('./viemClient.js');
+
+        // Verify status before attempting reveal
         try {
             const mintReq = await readHub('getMintRequest', [this.requestId]);
             const status = Number(mintReq.status);
-            
-            if (status === 5) {
+
+            if (status === 6) {
                 const { showError } = await import('./ui.js?v=3.3');
                 showError('Mint Cancelled', 'This mint was cancelled by the LP. If you had a griefing deposit, you can withdraw it via Pending Returns.');
                 throw new Error('Mint was cancelled');
             }
-            
-            if (status === 4) {
+
+            if (status === 5) {
                 console.log('Mint already completed');
                 this.complete();
                 return;
             }
-            
-            if (status !== 3) {
+
+            if (status === 4) {
+                // Already SECRET_REVEALED — skip reveal, go straight to finalize
+                console.log('Secret already revealed, finalizing...');
+            } else if (status !== 3) {
                 const { showError } = await import('./ui.js?v=3.3');
-                showError('Invalid Status', `Cannot finalize mint - current status is ${status}. Expected status 3 (READY).`);
+                showError('Invalid Status', `Cannot finalize mint - current status is ${status}. Expected status 3 (READY) or 4 (SECRET_REVEALED).`);
                 throw new Error(`Invalid mint status: ${status}`);
             }
         } catch (error) {
             if (error.message.includes('cancelled') || error.message.includes('Invalid mint status')) {
                 throw error;
             }
-            // If we can't verify status (RPC error, etc.), don't blindly proceed
             console.error('Could not verify status before finalize:', error.message);
             throw new Error('Could not verify mint status before finalizing. Please check your connection and try again.');
         }
 
         const secret = this.agent.getSecret();
 
-        let receipt;
+        // Step 1: Reveal the secret — minimal revert surface (only InvalidSecret or InvalidStatus)
+        // This tx stores the secret on-chain and transitions to SECRET_REVEALED.
+        // If this tx reverts, the secret is exposed but the mint hasn't proceeded — however,
+        // the only revert conditions are the user's own error (wrong secret) or a status
+        // change (cancelled), neither of which leaks useful information to the LP.
+        let revealReceipt;
         try {
-            receipt = await writeHub('finalizeMint', [this.requestId, secret], 0n, 1000000n);
+            // Check if already revealed (status 4 = SECRET_REVEALED)
+            const mintReq = await readHub('getMintRequest', [this.requestId]);
+            const status = Number(mintReq.status);
+
+            if (status === 3) {
+                updateMintProgress('finalize', 'Revealing secret on-chain...');
+                revealReceipt = await writeHub('revealSecret', [this.requestId, secret], 0n, 500000n);
+                console.log('Secret revealed, tx:', revealReceipt.transactionHash);
+            } else if (status === 4) {
+                console.log('Secret already revealed, skipping reveal step');
+            } else if (status === 5) {
+                console.log('Mint already completed');
+                this.complete();
+                return;
+            } else if (status === 6) {
+                const { showError } = await import('./ui.js?v=3.3');
+                showError('Mint Cancelled', 'This mint was cancelled. If you had a griefing deposit, you can withdraw it via Pending Returns.');
+                throw new Error('Mint was cancelled');
+            } else {
+                throw new Error(`Unexpected mint status: ${status}`);
+            }
         } catch (error) {
             const isInvalidStatus = error.message && error.message.includes('InvalidStatus');
             if (isInvalidStatus) {
-                // Query actual on-chain status to give precise guidance and update UI
                 try {
                     const mintReq = await readHub('getMintRequest', [this.requestId]);
                     const status = Number(mintReq.status);
-                    if (status === 4) {
+                    if (status === 5) {
                         console.log('Mint already completed on-chain');
                         this.complete();
                         return;
                     }
-                    if (status === 5) {
+                    if (status === 6) {
                         this.state = 'expired';
                         updateSwapState({ requestId: this.requestId, state: 'expired', message: 'Mint was cancelled on-chain.' });
                         const { showError } = await import('./ui.js?v=3.3');
                         showError('Mint Cancelled', 'This mint was cancelled. If you had a griefing deposit, you can withdraw it via Pending Returns.');
                         throw new Error('Mint was cancelled');
                     }
-                    if (status === 3) {
-                        // Still READY — something else caused InvalidStatus (race condition?)
-                        throw new Error('Mint is still READY but transaction simulation failed. Please try again.');
+                    if (status === 4) {
+                        // Already SECRET_REVEALED — proceed to finalize
+                        console.log('Secret already revealed (race condition), proceeding to finalize');
+                    } else {
+                        throw new Error(`Mint status changed to ${status} — cannot finalize`);
                     }
-                    this.state = 'expired';
-                    updateSwapState({ requestId: this.requestId, state: 'expired', message: `Mint status is ${status} (not READY). Cannot finalize.` });
                 } catch (checkErr) {
                     if (checkErr.message.includes('already completed') ||
                         checkErr.message.includes('Mint was cancelled') ||
-                        checkErr.message.includes('still READY')) {
+                        checkErr.message.includes('already revealed')) {
                         throw checkErr;
                     }
                     console.warn('Could not query status after InvalidStatus:', checkErr.message);
-                }
-                const { showError } = await import('./ui.js?v=3.3');
-                showError(
-                    'Mint Cancelled or Expired', 
-                    'This mint is no longer in READY status. The LP may have cancelled it. If you had a griefing deposit, you can withdraw it via Pending Returns.'
-                );
-                throw new Error('Mint status changed - cannot finalize');
-            }
-            
-            const isStalePrice = error.message && (
-                error.message.includes('StalePrice') ||
-                error.message.includes('0x19abf40e')
-            );
-            if (isStalePrice) {
-                console.warn('StalePrice on finalizeMint - attempting to update oracle prices...');
-                try {
-                    updateMintProgress('finalize', 'Updating XMR price onchain...');
-                    await this.updatePrices();
-                    console.log('Prices updated, retrying finalizeMint...');
-                    receipt = await writeHub('finalizeMint', [this.requestId, secret], 0n, 1000000n);
-                } catch (retryError) {
-                    const stillStale = retryError.message && (
-                        retryError.message.includes('StalePrice') ||
-                        retryError.message.includes('0x19abf40e')
-                    );
-                    if (stillStale) {
-                        throw new Error(
-                            'Oracle prices are stale. The LP node typically updates prices automatically. ' +
-                            'Please wait 1-2 minutes and try again.'
-                        );
-                    }
-                    throw retryError;
+                    throw checkErr;
                 }
             } else {
                 throw error;
             }
+        }
+
+        // Step 2: Finalize the mint — permissionless, no secret in calldata.
+        // This tx mints wsXMR and cannot revert on oracle/CR issues.
+        let receipt;
+        try {
+            receipt = await writeHub('finalizeMint', [this.requestId], 0n, 1000000n);
+        } catch (error) {
+            const isInvalidStatus = error.message && error.message.includes('InvalidStatus');
+            if (isInvalidStatus) {
+                try {
+                    const mintReq = await readHub('getMintRequest', [this.requestId]);
+                    const status = Number(mintReq.status);
+                    if (status === 5) {
+                        console.log('Mint already completed on-chain');
+                        this.complete();
+                        return;
+                    }
+                    if (status === 6) {
+                        this.state = 'expired';
+                        updateSwapState({ requestId: this.requestId, state: 'expired', message: 'Mint was cancelled on-chain.' });
+                        const { showError } = await import('./ui.js?v=3.3');
+                        showError('Mint Cancelled', 'This mint was cancelled. If you had a griefing deposit, you can withdraw it via Pending Returns.');
+                        throw new Error('Mint was cancelled');
+                    }
+                } catch (checkErr) {
+                    if (checkErr.message.includes('already completed') || checkErr.message.includes('Mint was cancelled')) {
+                        throw checkErr;
+                    }
+                }
+            }
+            throw error;
         }
 
         console.log('Mint finalized, tx:', receipt.transactionHash);
@@ -917,11 +945,11 @@ export class MintFlow {
             try {
                 const mintReq = await readHub('getMintRequest', [this.requestId]);
                 const status = Number(mintReq.status);
-                // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED, 6=EXPIRED_READY
-                if (status === 5) {
+                // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED, 7=EXPIRED_READY
+                if (status === 6) {
                     await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
                     console.log('Mint already cancelled; claimed refund via withdrawReturns');
-                } else if (status === 6) {
+                } else if (status === 7) {
                     // EXPIRED_READY — LP has a claim window to reveal secret and take deposit.
                     // If LP doesn't claim within the window, anyone can sweep to return deposit to user.
                     const { getPublicClient } = await import('./viemClient.js');
@@ -1000,8 +1028,8 @@ export class MintFlow {
                 throw new Error('getMintRequest returned null — ABI may be mismatched or mint does not exist');
             }
             const status = Number(mintReq.status);
-            // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED, 6=EXPIRED_READY
-            if (status === 5) {
+            // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED, 7=EXPIRED_READY
+            if (status === 6) {
                 console.log('Mint was cancelled on-chain; aborting resume');
                 const { removeActiveSwap, saveToHistory } = await import('./storage.js');
                 const { showError, resetMintUI } = await import('./ui.js?v=3.3');
@@ -1011,7 +1039,7 @@ export class MintFlow {
                 resetMintUI();
                 throw new Error('Mint cancelled on-chain');
             }
-            if (status === 6) {
+            if (status === 7) {
                 console.log('Mint is EXPIRED_READY on-chain; aborting resume');
                 const { removeActiveSwap, saveToHistory } = await import('./storage.js');
                 const { showError, resetMintUI } = await import('./ui.js?v=3.3');
@@ -1021,7 +1049,7 @@ export class MintFlow {
                 resetMintUI();
                 throw new Error('Mint expired (EXPIRED_READY) on-chain');
             }
-            if (status === 4) {
+            if (status === 5) {
                 console.log('Mint was already completed on-chain; clearing from active swaps');
                 const { removeActiveSwap, saveToHistory } = await import('./storage.js');
                 const { showSuccess, resetMintUI } = await import('./ui.js?v=3.3');

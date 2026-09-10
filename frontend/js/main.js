@@ -877,8 +877,8 @@ async function checkForActiveSwapOnChain(userAddress) {
         const activeMintEntries = [];
         for (const { requestId, mintReq } of mintReqResults) {
             if (!mintReq) continue;
-            // Status: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
-            if (mintReq.status === 1 || mintReq.status === 2 || mintReq.status === 3) {
+            // Status: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED
+            if (mintReq.status === 1 || mintReq.status === 2 || mintReq.status === 3 || mintReq.status === 4) {
                 const timeout = Number(mintReq.timeout);
                 if (currentBlock >= timeout) {
                     console.log('[CHAIN CHECK] Mint expired:', { requestId, timeout, currentBlock });
@@ -1471,8 +1471,8 @@ async function handleResumeSwap(specificSwap) {
                 if (swap.type === 'mint') {
                     const mintReq = await readHub('getMintRequest', [swap.requestId]);
                     const status = Number(mintReq.status);
-                    // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
-                    if (status === 5) {
+                    // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED
+                    if (status === 6) {
                         console.log('Resume aborted: mint was cancelled on-chain');
                         saveToHistory({ ...swap, status: 'Cancelled', completedAt: Date.now() });
                         removeActiveSwap(swap.requestId);
@@ -1480,7 +1480,7 @@ async function handleResumeSwap(specificSwap) {
                         currentResumingSwapId = null;
                         return;
                     }
-                    if (status === 4) {
+                    if (status === 5) {
                         console.log('Resume aborted: mint already completed on-chain');
                         saveToHistory({ ...swap, status: 'Completed', completedAt: Date.now() });
                         removeActiveSwap(swap.requestId);
@@ -1740,11 +1740,11 @@ async function handleResolveSwap(swap) {
             const { readHub, writeHub } = await import('./viemClient.js');
             const mintReq = await readHub('getMintRequest', [swap.requestId]);
             const status = Number(mintReq.status);
-            // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED
-            if (status === 5) {
+            // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED
+            if (status === 6) {
                 await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
                 showResumeSuccess(swap.requestId, 'Mint was already cancelled. Your griefing deposit has been claimed.');
-            } else if (status === 1 || status === 2 || status === 3) {
+            } else if (status === 1 || status === 2 || status === 3 || status === 4) {
                 // Check timeout before calling cancelMint to avoid TimeoutNotReached revert
                 const { getPublicClient } = await import('./viemClient.js');
                 const publicClient = getPublicClient();
@@ -1761,7 +1761,7 @@ async function handleResolveSwap(swap) {
                 const receipt = await writeHub('cancelMint', [swap.requestId]);
                 console.log('cancelMint tx:', receipt.transactionHash);
                 showResumeSuccess(swap.requestId, 'Mint cancelled. Your griefing deposit has been refunded.');
-            } else if (status === 4) {
+            } else if (status === 5) {
                 showResumeSuccess(swap.requestId, 'This mint has already completed on-chain.');
             } else {
                 showResumeError(swap.requestId, `Unexpected mint status (${status}). Check block explorer.`);
@@ -1931,7 +1931,8 @@ export async function loadVaults() {
             // Kick off oracle price update in background — don't await
             import('./redstoneWrapper.js').then(({ updateOraclePrices }) => {
                 updateOraclePrices().then(() => {
-                    console.log('Background oracle price update succeeded');
+                    console.log('Background oracle price update succeeded — reloading vaults with fresh prices');
+                    loadVaults().catch(err => console.warn('Vault reload after oracle update failed:', err.message));
                 }).catch(err => {
                     console.warn('Background oracle price update failed:', err.message);
                 });

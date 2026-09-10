@@ -42,6 +42,7 @@ interface IMintOperations is IErrors {
     
     event LPKeyProvided(bytes32 indexed requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey);
     event MintReady(bytes32 indexed requestId, bytes32 lpCommitment);
+    event SecretRevealed(bytes32 indexed requestId, bytes32 secret);
     event MintFinalized(bytes32 indexed requestId, bytes32 secret);
     event MintCancelled(bytes32 indexed requestId);
     event MintExpiredReady(bytes32 indexed requestId);
@@ -81,10 +82,19 @@ interface IMintOperations is IErrors {
     /// @param requestId The mint request ID
     function setMintReady(bytes32 requestId, bytes32 lpCommitment) external;
     
-    /// @notice Finalize mint by revealing the secret
+    /// @notice User reveals the Ed25519 secret — verifies commitment and stores secret on-chain
+    /// @dev Only reverts on InvalidSecret (user's own error) or InvalidStatus (not READY).
+    ///      No external state dependencies — no oracle, no yield sync, no CR check.
+    ///      Transitions mint to SECRET_REVEALED. After this, finalizeMint() can be called by anyone.
     /// @param requestId The mint request ID
     /// @param secret The Ed25519 secret (scalar)
-    function finalizeMint(bytes32 requestId, bytes32 secret) external;
+    function revealSecret(bytes32 requestId, bytes32 secret) external;
+    
+    /// @notice Finalize a mint whose secret has been revealed — mints wsXMR to recipient
+    /// @dev Permissionless. Reads the verified secret from storage (not calldata).
+    ///      No oracle or CR checks — collateral was validated at setMintReady time.
+    /// @param requestId The mint request ID
+    function finalizeMint(bytes32 requestId) external;
     
     /// @notice Cancel a timed-out mint request (permissionless)
     /// @dev For PENDING/KEY_PROVIDED: refunds deposit to user. For READY: transitions to EXPIRED_READY.

@@ -462,12 +462,12 @@ if ('serviceWorker' in navigator) {
 
 <!-- Load deployment.json before any app modules -->
 <script type="module">
-  const res = await fetch('./deployment.json');
+  const res = await fetch('./deployment.json?t=' + Date.now());
   if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status);
   window.DEPLOYMENT = await res.json();
 </script>
 <!-- Monero WASM wallet (loaded as classic script, exposes window.monero_ts) -->
 <script src="./js/monero-ts.js"></script>
-<script type="module" src="./js/main.js?v=3.7"></script>
+<script type="module" src="./js/main.js?v=3.8"></script>
 </body>
 </html>

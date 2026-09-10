@@ -52,6 +52,7 @@ const HUB_ABI = [
   'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout)',
   'event LPKeyProvided(bytes32 indexed requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey)',
   'event MintReady(bytes32 indexed requestId, bytes32 lpCommitment)',
+  'event SecretRevealed(bytes32 indexed requestId, bytes32 secret)',
   'event MintFinalized(bytes32 indexed requestId, bytes32 secret)',
   'event MintCancelled(bytes32 indexed requestId)',
   // Burn events
@@ -64,13 +65,15 @@ const HUB_ABI = [
   // Functions
   'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
   'function setMintReady(bytes32 requestId, bytes32 lpCommitment) external',
+  'function revealSecret(bytes32 requestId, bytes32 secret) external',
+  'function finalizeMint(bytes32 requestId) external',
   'function getVault(address lpAddress) external view returns (tuple(address lpAddress, uint256 collateralShares, uint256 lockedCollateral, uint256 normalizedDebt, uint256 pendingDebt, uint16 maxMintBps, uint256 mintGriefingDeposit, uint256 mintReadyBond, uint16 mintFeeBps, uint16 burnRewardBps, uint256 liquidationNonce, uint256 mintNonce, uint256 minBurnAmount, bool active, uint256 deployedSDAIShares, uint16 maxCoLPRangeBps))',
   'function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
   'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
   'function claimSlashedCollateral(bytes32 requestId) external',
   'function resolveDeclinedProposal(bytes32 requestId) external',
   'function getBurnRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address user, address lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 lockedCollateral, uint256 rewardCollateral, bytes32 secretHash, uint256 deadline, uint256 vaultLiquidationNonce, uint256 normalizedDebtAmount, uint8 status, bytes32 userClaimCommitment, bytes32 userPublicKey, bytes32 userViewKey, uint256 xmrPriceAtRequest))',
-  'function getMintRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout, uint256 griefingDeposit, uint256 normalizedDebtAmount, uint256 vaultMintNonce, bytes32 lpCommitment, uint8 status))',
+  'function getMintRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout, uint256 griefingDeposit, uint256 normalizedDebtAmount, uint256 vaultMintNonce, bytes32 lpCommitment, bytes32 revealedSecret, uint8 status))',
   'function lpPublicKeys(bytes32 requestId) external view returns (bytes32)',
   'function lpPublicViewKeys(bytes32 requestId) external view returns (bytes32)',
   'function updateOraclePrices(bytes[] calldata updateData) external payable',
@@ -152,10 +155,10 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
   try {
     const mintReq = await hub.getMintRequest(reqIdHex);
     onChainStatus = Number(mintReq.status);
-    console.log(`[Chain] Mint ${reqIdHex} on-chain status: ${onChainStatus} (1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=COMPLETED, 5=CANCELLED)`);
+    console.log(`[Chain] Mint ${reqIdHex} on-chain status: ${onChainStatus} (1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED)`);
 
-    if (onChainStatus === 4 || onChainStatus === 5) {
-      console.log(`[Mint] Mint already ${onChainStatus === 4 ? 'completed' : 'cancelled'}, skipping`);
+    if (onChainStatus === 5 || onChainStatus === 6) {
+      console.log(`[Mint] Mint already ${onChainStatus === 5 ? 'completed' : 'cancelled'}, skipping`);
       pendingMints.delete(reqIdHex);
       return;
     }
@@ -320,7 +323,7 @@ async function startupRecoverMints() {
       const mintReq = await hub.getMintRequest(reqIdHex);
       const status = Number(mintReq.status);
 
-      if (status === 4 || status === 5) {
+      if (status === 5 || status === 6) {
         continue; // completed or cancelled
       }
 
@@ -431,35 +434,43 @@ async function startupSweepFinalizedMints() {
       const mintReq = await hub.getMintRequest(reqIdHex);
       const status = Number(mintReq.status);
 
-      if (status === 5) {
+      if (status === 6) {
         // Cancelled — no XMR to sweep
         console.log(`[Sweep] ${reqIdHex} was cancelled — marking swept (nothing to collect)`);
         entry.swept = true;
         continue;
       }
 
-      if (status !== 4) {
+      if (status !== 5) {
         // Not yet finalized — skip
         console.log(`[Sweep] ${reqIdHex} status=${status} (not finalized) — skipping`);
         continue;
       }
 
-      // Status is COMPLETED — need to find the MintFinalized event to get user's secret
-      console.log(`[Sweep] ${reqIdHex} is COMPLETED — looking for MintFinalized event...`);
+      // Status is COMPLETED — need to find the SecretRevealed event to get user's secret
+      console.log(`[Sweep] ${reqIdHex} is COMPLETED — looking for SecretRevealed event...`);
 
-      // Scan recent blocks for the MintFinalized event
+      // Scan recent blocks for the SecretRevealed event
       const currentBlock = await provider.getBlockNumber();
       const fromBlock = Math.max(0, currentBlock - 10000);
-      const filter = hub.filters.MintFinalized(reqIdHex);
+      const filter = hub.filters.SecretRevealed(reqIdHex);
       const events = await hub.queryFilter(filter, fromBlock, currentBlock);
 
-      if (events.length === 0) {
-        console.warn(`[Sweep] Could not find MintFinalized event for ${reqIdHex} — skipping`);
-        continue;
+      let userSecret;
+      if (events.length > 0) {
+        userSecret = ethers.hexlify(events[0].args.secret);
+      } else {
+        // Fall back to MintFinalized event (same secret, emitted at finalization)
+        const finalizeFilter = hub.filters.MintFinalized(reqIdHex);
+        const finalizeEvents = await hub.queryFilter(finalizeFilter, fromBlock, currentBlock);
+        if (finalizeEvents.length === 0) {
+          console.warn(`[Sweep] Could not find SecretRevealed or MintFinalized event for ${reqIdHex} — skipping`);
+          continue;
+        }
+        userSecret = ethers.hexlify(finalizeEvents[0].args.secret);
       }
 
-      const userSecret = ethers.hexlify(events[0].args.secret);
-      console.log(`[Sweep] Found MintFinalized for ${reqIdHex}, sweeping XMR...`);
+      console.log(`[Sweep] Found secret for ${reqIdHex}, sweeping XMR...`);
 
       const result = await moneroWallet.sweepMintDeposit({
         userSecretHex: userSecret,
@@ -791,7 +802,7 @@ setInterval(async () => {
       const status = Number(mintReq.status);
       // Only retry if still KEY_PROVIDED (2) — deposit may have arrived since last attempt
       if (status !== 2) {
-        if (status === 4 || status === 5) {
+        if (status === 5 || status === 6) {
           pendingMints.delete(reqIdHex);
         }
         continue;
@@ -880,8 +891,8 @@ app.post('/mint/scan', async (req, res) => {
     // Get on-chain status and LP keys
     const mintReq = await hub.getMintRequest(reqIdHex);
     const status = Number(mintReq.status);
-    if (status === 4 || status === 5) {
-      return res.json({ success: false, message: `Mint already ${status === 4 ? 'completed' : 'cancelled'}` });
+    if (status === 5 || status === 6) {
+      return res.json({ success: false, message: `Mint already ${status === 5 ? 'completed' : 'cancelled'}` });
     }
 
     const lpSpendKey = await hub.lpPublicKeys(reqIdHex);

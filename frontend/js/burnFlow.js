@@ -622,7 +622,7 @@ export class BurnFlow {
                         console.log(`[BurnVerify] Sync: ${syncHeight}/${daemonHeight}, balance: ${balance.toString()}`);
 
                         if (balance.toString() !== '0') {
-                            // Found incoming XMR!
+                            // Found incoming XMR — validate amount and confirmations
                             const unlockedBalance = await viewWallet.getUnlockedBalance();
                             const txs = await viewWallet.getTxs();
                             let confirmations = 0;
@@ -638,9 +638,24 @@ export class BurnFlow {
                                 }
                             }
 
-                            console.log(`[BurnVerify] XMR found! Amount: ${receivedAmount}, confirmations: ${confirmations}`);
-
                             const xmrAmount = Number(receivedAmount) / 1e12;
+                            const minConfirmations = MONERO_CONFIG.confirmations || 10;
+                            const amountSufficient = receivedAmount >= expectedAtomic;
+                            const confirmationsSufficient = confirmations >= minConfirmations;
+
+                            console.log(`[BurnVerify] XMR found! Amount: ${receivedAmount} (expected ${expectedAtomic}), confirmations: ${confirmations} (need ${minConfirmations})`);
+
+                            if (!amountSufficient || !confirmationsSufficient) {
+                                const reasons = [];
+                                if (!amountSufficient) reasons.push(`insufficient amount (${xmrAmount}/${this.wsxmrAmount} XMR)`);
+                                if (!confirmationsSufficient) reasons.push(`awaiting confirmations (${confirmations}/${minConfirmations})`);
+                                console.warn(`[BurnVerify] Not ready to confirm: ${reasons.join(', ')}`);
+                                showBurnScanProgress(`XMR received (${xmrAmount} XMR, ${confirmations} confs) — waiting for ${reasons.join(' & ')}`);
+                                updateBurnProgress('confirm-lock', `Waiting: ${reasons.join(', ')}`);
+                                // Keep scanning — don't confirm yet
+                                return;
+                            }
+
                             showBurnXmrFound(xmrAmount, confirmations);
                             updateBurnProgress('confirm-lock', `✓ XMR verified: ${xmrAmount} XMR (${confirmations} confs)`);
                             updateSwapState({

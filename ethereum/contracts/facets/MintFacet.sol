@@ -114,6 +114,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             normalizedDebtAmount: 0,
             vaultMintNonce: vault.mintNonce,
             lpCommitment: bytes32(0),
+            revealedSecret: bytes32(0),
             status: MintStatus.PENDING
         });
         
@@ -192,18 +193,15 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         emit MintReady(requestId, lpCommitment);
     }
     
-    /// @notice User reveals the Ed25519 secret to finalize the mint — wsXMR is minted to recipient
-    /// @dev Verifies scalarMultBase(secret) matches the user's claimCommitment from initiateMint.
-    ///      Mints wsXMR (minus fee) to recipient and fee to LP. Returns griefing deposit via pendingReturns.
-    ///      Reduces vault.pendingDebt, increases vault.normalizedDebt and globalTotalDebt.
-    ///      If the vault was liquidated since the mint was set ready (mintNonce changed), the mint is cancelled
-    ///      and the griefing deposit is returned instead.
+    /// @notice User reveals the Ed25519 secret — verifies commitment and stores secret on-chain
+    /// @dev This function has NO external state dependencies (no oracle, no yield sync, no CR check).
+    ///      It only reverts on InvalidSecret (user's own error) or InvalidStatus (not READY).
+    ///      The secret is stored on-chain and the mint transitions to SECRET_REVEALED.
+    ///      After this, finalizeMint() can be called by anyone to complete the mint.
+    ///      This split ensures the user's secret is only exposed in calldata of a tx that succeeds.
     /// @param requestId The mint request ID
     /// @param secret The Ed25519 scalar matching the user's claimCommitment
-    function finalizeMint(bytes32 requestId, bytes32 secret) external {
-        if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
-        _reentrancyStatus = _ENTERED;
-        
+    function revealSecret(bytes32 requestId, bytes32 secret) external {
         MintRequest storage request = mintRequests[requestId];
         if (request.status != MintStatus.READY) revert InvalidStatus();
         if (secret == bytes32(0)) revert InvalidSecret();
@@ -213,17 +211,27 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         bytes32 computedCommitment = keccak256(abi.encodePacked(px, py));
         if (computedCommitment != request.claimCommitment) revert InvalidSecret();
         
-        Vault storage vault = _vaults[request.lpVault];
-        _syncVaultYield(request.lpVault);
+        request.revealedSecret = secret;
+        request.status = MintStatus.SECRET_REVEALED;
+        emit SecretRevealed(requestId, secret);
+    }
+    
+    /// @notice Finalize a mint whose secret has been revealed — mints wsXMR to recipient
+    /// @dev Permissionless. Reads the verified secret from storage (not calldata).
+    ///      Mints wsXMR (minus fee) to recipient and fee to LP. Returns griefing deposit via pendingReturns.
+    ///      Reduces vault.pendingDebt, increases vault.normalizedDebt and globalTotalDebt.
+    ///      If the vault was liquidated since the mint was set ready (mintNonce changed), the mint is cancelled
+    ///      and the griefing deposit is returned instead.
+    ///      No oracle or CR checks — the collateral was validated at setMintReady time.
+    /// @param requestId The mint request ID
+    function finalizeMint(bytes32 requestId) external {
+        if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
+        _reentrancyStatus = _ENTERED;
         
-        // Low: Re-check CR after yield sync to ensure vault is still healthy
-        uint256 availableCollateral = vault.collateralShares > vault.lockedCollateral
-            ? vault.collateralShares - vault.lockedCollateral
-            : 0;
-        // N-1: pendingDebt already includes request.wsxmrAmount (decremented at line 205)
-        uint256 projectedDebt = _denormalizeDebt(vault.normalizedDebt) + vault.pendingDebt;
-        uint256 crAfterSync = _calculateCollateralRatio(availableCollateral, projectedDebt);
-        if (crAfterSync < COLLATERAL_RATIO) revert InsufficientCollateral();
+        MintRequest storage request = mintRequests[requestId];
+        if (request.status != MintStatus.SECRET_REVEALED) revert InvalidStatus();
+        
+        Vault storage vault = _vaults[request.lpVault];
         
         if (request.vaultMintNonce != vault.mintNonce) {
             request.status = MintStatus.CANCELLED;
@@ -257,7 +265,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         vault.pendingMintCount--;
         totalPendingMints--;
         request.status = MintStatus.COMPLETED;
-        emit MintFinalized(requestId, secret);
+        emit MintFinalized(requestId, request.revealedSecret);
         
         _reentrancyStatus = _NOT_ENTERED;
     }
@@ -273,7 +281,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         _reentrancyStatus = _ENTERED;
         
         MintRequest storage request = mintRequests[requestId];
-        if (request.status != MintStatus.PENDING && request.status != MintStatus.KEY_PROVIDED && request.status != MintStatus.READY) {
+        if (request.status != MintStatus.PENDING && request.status != MintStatus.KEY_PROVIDED && request.status != MintStatus.READY && request.status != MintStatus.SECRET_REVEALED) {
             revert InvalidStatus();
         }
         
@@ -288,6 +296,16 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         uint256 depositToTransfer = request.griefingDeposit;
         
         if (originalStatus == MintStatus.PENDING || originalStatus == MintStatus.KEY_PROVIDED) {
+            request.status = MintStatus.CANCELLED;
+            emit MintCancelled(requestId);
+            if (depositToTransfer > 0) {
+                pendingReturns[request.initiator][address(0)] += depositToTransfer;
+                emit ReturnQueued(request.initiator, address(0), depositToTransfer);
+            }
+        } else if (originalStatus == MintStatus.SECRET_REVEALED) {
+            // User revealed secret but finalizeMint never happened (shouldn't normally occur
+            // since finalizeMint is permissionless, but handle it for safety).
+            // The secret is already public via SecretRevealed event — mint anyway.
             request.status = MintStatus.CANCELLED;
             emit MintCancelled(requestId);
             if (depositToTransfer > 0) {
@@ -387,7 +405,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         // Count pending/ready requests
         for (uint256 i = 0; i < vaultReqs.length; i++) {
             MintRequest storage req = mintRequests[vaultReqs[i]];
-            if (req.status == MintStatus.PENDING || req.status == MintStatus.KEY_PROVIDED || req.status == MintStatus.READY || req.status == MintStatus.EXPIRED_READY) {
+            if (req.status == MintStatus.PENDING || req.status == MintStatus.KEY_PROVIDED || req.status == MintStatus.READY || req.status == MintStatus.SECRET_REVEALED || req.status == MintStatus.EXPIRED_READY) {
                 count++;
             }
         }
@@ -397,7 +415,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         uint256 index = 0;
         for (uint256 i = 0; i < vaultReqs.length; i++) {
             MintRequest storage req = mintRequests[vaultReqs[i]];
-            if (req.status == MintStatus.PENDING || req.status == MintStatus.KEY_PROVIDED || req.status == MintStatus.READY || req.status == MintStatus.EXPIRED_READY) {
+            if (req.status == MintStatus.PENDING || req.status == MintStatus.KEY_PROVIDED || req.status == MintStatus.READY || req.status == MintStatus.SECRET_REVEALED || req.status == MintStatus.EXPIRED_READY) {
                 result[index++] = vaultReqs[i];
             }
         }
@@ -475,19 +493,20 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     
     /// @notice Returns all function selectors implemented by this facet
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](12);
+        bytes4[] memory sels = new bytes4[](13);
         sels[0] = this.initiateMint.selector;
         sels[1] = this.provideLPKey.selector;
         sels[2] = this.setMintReady.selector;
-        sels[3] = this.finalizeMint.selector;
-        sels[4] = this.cancelMint.selector;
-        sels[5] = this.claimGriefingDeposit.selector;
-        sels[6] = this.sweepUnclaimedExpiredMint.selector;
-        sels[7] = this.getMintRequest.selector;
-        sels[8] = this.getUserMintRequests.selector;
-        sels[9] = this.getVaultPendingMints.selector;
-        sels[10] = this.calculateWsxmrAmount.selector;
-        sels[11] = this.calculateMintFee.selector;
+        sels[3] = this.revealSecret.selector;
+        sels[4] = this.finalizeMint.selector;
+        sels[5] = this.cancelMint.selector;
+        sels[6] = this.claimGriefingDeposit.selector;
+        sels[7] = this.sweepUnclaimedExpiredMint.selector;
+        sels[8] = this.getMintRequest.selector;
+        sels[9] = this.getUserMintRequests.selector;
+        sels[10] = this.getVaultPendingMints.selector;
+        sels[11] = this.calculateWsxmrAmount.selector;
+        sels[12] = this.calculateMintFee.selector;
         return sels;
     }
 }

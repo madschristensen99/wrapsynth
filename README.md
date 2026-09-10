@@ -2,7 +2,7 @@
 
 **A trustless cross-chain ferry for Monero. wsXMR is live on Gnosis Chain, backed by overcollateralized LP vaults and Ed25519 atomic swap commitments.**
 
-🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/sDAI Pool on Gnosis](https://gnosisscan.io/address/0xCe099C9C5b6dc6Ca0D7c1E22Fbb49E7Bfd6829c2)**
+🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/sDAI Pool on Gnosis](https://gnosisscan.io/address/0x99dadF0B6A12eb4387662C74eB9710d0772091b8)**
 
 WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Users swap XMR for wsXMR through atomic-swap mechanics enforced on-chain: LPs post sDAI collateral, mint/burn settlement is gated by Ed25519 secret reveals verified on-chain, and timeout-based slashing protects both sides. No custodian, no federation, no trusted intermediary — every swap settles peer-to-peer between a user and an LP vault.
 
@@ -21,22 +21,22 @@ WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Us
 
 | Contract | Address |
 |---|---|
-| wsXMR Token | [`0x7a7cFca18Bf01B3c3D5A21E82318879454446D2c`](https://gnosisscan.io/token/0x7a7cFca18Bf01B3c3D5A21E82318879454446D2c) |
-| wsXmrHub | [`0x26dA95a7712B7663f4A159f92bf1e229D8e24E7b`](https://gnosisscan.io/address/0x26dA95a7712B7663f4A159f92bf1e229D8e24E7b) |
-| Liquidity Router | [`0x0708955Ac8fAC40b7A3e770bC52678433D547bb0`](https://gnosisscan.io/address/0x0708955Ac8fAC40b7A3e770bC52678433D547bb0) |
-| wsXMR/sDAI UniV3 Pool | [`0xCe099C9C5b6dc6Ca0D7c1E22Fbb49E7Bfd6829c2`](https://gnosisscan.io/address/0xCe099C9C5b6dc6Ca0D7c1E22Fbb49E7Bfd6829c2) |
+| wsXMR Token | [`0x35e3672b4f6bcb0c8bde814aa467f335b50bdd4f`](https://gnosisscan.io/token/0x35e3672b4f6bcb0c8bde814aa467f335b50bdd4f) |
+| wsXmrHub | [`0xbed307ef521a0a3c3663858f53acfeacfe0ab4eb`](https://gnosisscan.io/address/0xbed307ef521a0a3c3663858f53acfeacfe0ab4eb) |
+| Liquidity Router | [`0x54572f3867c52f4178594787ed1956f695fcba09`](https://gnosisscan.io/address/0x54572f3867c52f4178594787ed1956f695fcba09) |
+| wsXMR/sDAI UniV3 Pool | [`0x99dadF0B6A12eb4387662C74eB9710d0772091b8`](https://gnosisscan.io/address/0x99dadF0B6A12eb4387662C74eB9710d0772091b8) |
 
 <details>
 <summary>Facet addresses</summary>
 
 | Facet | Address |
 |---|---|
-| RedStoneOracleFacet | [`0x225B5DAfe2fa9c7b44C72c9Eb4fe29decD57a770`](https://gnosisscan.io/address/0x225B5DAfe2fa9c7b44C72c9Eb4fe29decD57a770) |
-| VaultFacet | [`0x98FdaB5F5E9a4c0B09e4Ed4cD0BAb4064A7014F6`](https://gnosisscan.io/address/0x98FdaB5F5E9a4c0B09e4Ed4cD0BAb4064A7014F6) |
-| MintFacet | [`0xF755Ce61e09653759F077cAd94d860cE2541d4ae`](https://gnosisscan.io/address/0xF755Ce61e09653759F077cAd94d860cE2541d4ae) |
-| BurnFacet | [`0x69D82216Ef1bf4c932846701D157ffF5886922e7`](https://gnosisscan.io/address/0x69D82216Ef1bf4c932846701D157ffF5886922e7) |
-| LiquidationFacet | [`0x80c5d4c7154134bA1f1FAfee49eE1d059222664e`](https://gnosisscan.io/address/0x80c5d4c7154134bA1f1FAfee49eE1d059222664e) |
-| YieldFacet | [`0xab0Fc63FdB6AAfdC461A369a8B185A0253613aBf`](https://gnosisscan.io/address/0xab0Fc63FdB6AAfdC461A369a8B185A0253613aBf) |
+| RedStoneOracleFacet | [`0x4f2243dcb00f03225f902ee775e7175326a5debc`](https://gnosisscan.io/address/0x4f2243dcb00f03225f902ee775e7175326a5debc) |
+| VaultFacet | [`0xf471401ff59a242b08f230113987aa3a6207c167`](https://gnosisscan.io/address/0xf471401ff59a242b08f230113987aa3a6207c167) |
+| MintFacet | [`0x07ff8a45fdcc3e1b6d0905905ae0704cd8adf6f8`](https://gnosisscan.io/address/0x07ff8a45fdcc3e1b6d0905ae0704cd8adf6f8) |
+| BurnFacet | [`0x4337f0fedbd4113447f176847cefb1ba33be0136`](https://gnosisscan.io/address/0x4337f0fedbd4113447f176847cefb1ba33be0136) |
+| LiquidationFacet | [`0xacff85d2ef6f12ddecbb7623869c5a7394867097`](https://gnosisscan.io/address/0xacff85d2ef6f12ddecbb7623869c5a7394867097) |
+| YieldFacet | [`0xff4c4baa041205a39c010e67a6fb8a583c98769e`](https://gnosisscan.io/address/0xff4c4baa041205a39c010e67a6fb8a583c98769e) |
 
 Full deployment manifest (external contracts, pool config, LP defaults): [`deployment.json`](./deployment.json)
 </details>
@@ -212,7 +212,15 @@ wrapsynth/
 
 Experimental protocol software provided "as is." It has undergone security review but not formal third-party audit certification or formal verification. The developers assume no liability for losses. Interact at your own risk.
 
-## 📄 License
+## � Donations
+
+If you find WrapSynth useful, consider supporting the project:
+
+**XMR:** `83PvXnBHDNmN4TtRdKXMr4Vq1uHerTthZDRjrTG4hMUyeLSd7pNYwM31eCmDdX9D3F61FsdA2XvTmT92eQzqWFwR9CJ4gb8`
+
+---
+
+## �📄 License
 
 MIT
 
