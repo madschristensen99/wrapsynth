@@ -1,6 +1,6 @@
 # ⛴️ WrapSynth
 
-**A trustless cross-chain ferry for Monero. wsXMR is live in beta on Gnosis Chain, backed by overcollateralized LP vaults and Ed25519 atomic swap commitments. Mainnet launch on Aave Arc scheduled for September 18th.**
+**A trustless cross-chain ferry for Monero. wsXMR is live in beta on Gnosis Chain, backed by overcollateralized LP vaults and Ed25519 atomic swap commitments. Mainnet launch on Morpho scheduled for September 18th.**
 
 🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/sDAI Pool on Gnosis](https://www.geckoterminal.com/gnosis-chain/pools/0x4e610940e0febc109fc7c9ba6d453ee99ea53f07)**
 
@@ -8,14 +8,14 @@ WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Us
 
 ---
 
-## 🚀 Status: Beta on Gnosis Chain — Aave Arc launch September 18th
+## 🚀 Status: Beta on Gnosis Chain — Morpho launch September 18th
 
 - ✅ Full hub + facet system deployed and **verified on Gnosisscan** (beta)
 - ✅ **wsXMR/sDAI Uniswap V3 pool live** (0.3% fee tier)
 - ✅ Complete mint → trade → burn cycle executed end-to-end on mainnet
 - ✅ Two rounds of security review completed; all critical findings resolved (see [Security](#-security))
 - ✅ 633-line solvency invariant test suite + audit regression suite
-- 📅 **Aave Arc mainnet launch: September 18th, 2026**
+- 📅 **Morpho mainnet launch: September 18th, 2026**
 - 🔄 Solana port in development (`solana/`)
 
 ### Deployed Contracts (Gnosis Chain, ChainID 100)
