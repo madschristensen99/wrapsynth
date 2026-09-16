@@ -146,7 +146,7 @@ contract AuditRegressionTest is Test {
 
         // Cancel mint
         vm.prank(user);
-        MintFacet(address(hub)).cancelMint(reqId);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
         uint256 pendingAfter = _getPendingReturns(user, address(0));
         assertEq(pendingAfter, griefingDeposit, "ETH should be queued to pendingReturns, not pushed");
@@ -173,10 +173,10 @@ contract AuditRegressionTest is Test {
         bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, xmrAmount, commitment, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
 
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(reqId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(reqId);
 
         vm.prank(user);
         MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
@@ -217,10 +217,10 @@ contract AuditRegressionTest is Test {
         bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, xmrAmount, commitment, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
 
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(reqId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(reqId);
 
         vm.prank(user);
         MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
@@ -300,10 +300,10 @@ contract AuditRegressionTest is Test {
         bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, xmrAmount, commitment, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
 
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(reqId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(reqId);
 
         vm.prank(user);
         MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
@@ -357,9 +357,9 @@ contract AuditRegressionTest is Test {
         vm.prank(user);
         bytes32 reqA = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(vaultA, user, xmrAmountA, commitmentA, bytes32(uint256(0xdeadbeef)));
         vm.prank(vaultA);
-        MintFacet(address(hub)).provideLPKey(reqA, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).provideLPKey(reqA, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
         vm.prank(vaultA);
-        MintFacet(address(hub)).setMintReady(reqA, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(reqA);
         vm.prank(user);
         MintFacet(address(hub)).revealSecret(reqA, bytes32(uint256(0xaaaa)));
         MintFacet(address(hub)).finalizeMint(reqA);
@@ -375,9 +375,9 @@ contract AuditRegressionTest is Test {
         vm.prank(user);
         bytes32 reqB = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(vaultB, user, xmrAmountB, commitmentB, bytes32(uint256(0xdeadbeef)));
         vm.prank(vaultB);
-        MintFacet(address(hub)).provideLPKey(reqB, bytes32(uint256(0xbbbb)), bytes32(uint256(0xbbbb)));
+        MintFacet(address(hub)).provideLPKey(reqB, bytes32(uint256(0xbbbb)), bytes32(uint256(0xbbbb)), bytes32(uint256(0xdeadbeef)));
         vm.prank(vaultB);
-        MintFacet(address(hub)).setMintReady(reqB, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(reqB);
         vm.prank(user);
         MintFacet(address(hub)).revealSecret(reqB, bytes32(uint256(0xbbbb)));
         MintFacet(address(hub)).finalizeMint(reqB);
@@ -446,11 +446,11 @@ contract AuditRegressionTest is Test {
         bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, xmrAmount, commitment, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
 
         // setMintReady uses: projectedDebt = actualDebt + pendingDebt
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(reqId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(reqId);
 
         // finalizeMint must use the SAME formula (not actualDebt + pendingDebt + request.wsxmrAmount)
         vm.prank(user);
@@ -484,10 +484,10 @@ contract AuditRegressionTest is Test {
         // pendingDebt now includes BOTH mints
         // Provide keys and ready both
         vm.startPrank(lp);
-        MintFacet(address(hub)).provideLPKey(reqA, bytes32(uint256(0xdead)), bytes32(uint256(0xdead)));
-        MintFacet(address(hub)).provideLPKey(reqB, bytes32(uint256(0xbeef)), bytes32(uint256(0xbeef)));
-        MintFacet(address(hub)).setMintReady(reqA, bytes32(uint256(0xdeadbeef)));
-        MintFacet(address(hub)).setMintReady(reqB, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).provideLPKey(reqA, bytes32(uint256(0xdead)), bytes32(uint256(0xdead)), bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).provideLPKey(reqB, bytes32(uint256(0xbeef)), bytes32(uint256(0xbeef)), bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(reqA);
+        MintFacet(address(hub)).setMintReady(reqB);
         vm.stopPrank();
 
         // Finalize first mint — projectedDebt should include BOTH pending amounts
@@ -541,9 +541,9 @@ contract AuditRegressionTest is Test {
         vm.prank(user);
         bytes32 mintId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 100000000000, commitment1, bytes32(uint256(0xdeadbeef)));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(mintId, bytes32(uint256(0xABCD)), bytes32(uint256(0xABCD)));
+        MintFacet(address(hub)).provideLPKey(mintId, bytes32(uint256(0xABCD)), bytes32(uint256(0xABCD)), bytes32(uint256(0xdeadbeef)));
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(mintId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(mintId);
         vm.prank(user);
         MintFacet(address(hub)).revealSecret(mintId, bytes32(uint256(0x1111)));
         MintFacet(address(hub)).finalizeMint(mintId);
@@ -604,9 +604,9 @@ contract AuditRegressionTest is Test {
         vm.prank(user);
         bytes32 mintId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, 100000000000, commitment1, bytes32(uint256(0xdeadbeef)));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(mintId, bytes32(uint256(0xABCD)), bytes32(uint256(0xABCD)));
+        MintFacet(address(hub)).provideLPKey(mintId, bytes32(uint256(0xABCD)), bytes32(uint256(0xABCD)), bytes32(uint256(0xdeadbeef)));
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(mintId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(mintId);
         vm.prank(user);
         MintFacet(address(hub)).revealSecret(mintId, bytes32(uint256(0x1111)));
         MintFacet(address(hub)).finalizeMint(mintId);

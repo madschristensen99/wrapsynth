@@ -698,6 +698,9 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         // Skip yield calculation if no debt - no point checking prices
         if (actualDebt == 0 && vault.pendingDebt == 0) return;
         
+        // Skip yield extraction if oracle price is stale — don't block deposits/withdrawals
+        if (block.timestamp > lastXmrPriceTimestamp + 120 || block.timestamp > lastCollateralPriceTimestamp + 120) return;
+        
         uint256 xmrPrice = _getXmrPriceFromStorage();
         uint256 collateralPrice = _getCollateralPriceFromStorage();
         

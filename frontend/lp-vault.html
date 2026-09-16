@@ -204,6 +204,12 @@
 import { createPublicClient, http, formatUnits, parseAbi } from 'https://esm.sh/viem@2.21.54';
 import { gnosis } from 'https://esm.sh/viem@2.21.54/chains';
 
+// Load deployment.json
+const depRes = await fetch('./deployment.json?t=' + Date.now());
+if (!depRes.ok) throw new Error('Failed to load deployment.json: ' + depRes.status);
+const DEPLOYMENT = await depRes.json();
+const hub = DEPLOYMENT.contracts.wsXmrHub;
+
 const params = new URLSearchParams(window.location.search);
 const vaultAddress = params.get('address');
 
@@ -219,7 +225,6 @@ async function loadVaultDetails(address) {
     transport: http('https://rpc.gnosischain.com')
   });
 
-  const hub = '0x29BF76f72694A99e5C1483871aD62f87501fC99E';
   const shortAddr = `${address.slice(0, 6)}...${address.slice(-4)}`;
   
   document.getElementById('lp-name').textContent = `LP Vault ${shortAddr}`;
@@ -270,7 +275,7 @@ async function loadVaultDetails(address) {
     });
 
     // Calculate health manually (collateral / debt ratio in USD terms)
-    const sDAI = '0xaf204776c7245bF4147c2612BF6e5972Ee483701';
+    const sDAI = DEPLOYMENT.externalContracts.sDAI;
     const totalAssets = await client.readContract({
       address: sDAI,
       abi: parseAbi(['function convertToAssets(uint256 shares) external view returns (uint256)']),

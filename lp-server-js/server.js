@@ -12,6 +12,17 @@ import { computeSecretHash } from './commitment.js';
 import { setHubWallet, updateOraclePricesManual } from './oracleUpdate.js';
 import crypto from 'crypto';
 
+// ─── Global Error Handlers ──────────────────────────────────────────────────
+// Prevent process crash from uncaught async errors (e.g. RPC timeouts)
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught exception:', err.message || err);
+  if (err.stack) console.error(err.stack);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] Unhandled rejection:', reason?.message || reason);
+  if (reason?.stack) console.error(reason.stack);
+});
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -62,29 +73,34 @@ const HUB_ABI = [
   'event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 rewardPaid)',
   'event BurnCancelled(bytes32 indexed requestId)',
   'event BurnAborted(bytes32 indexed requestId)',
+  'event BurnProposalDeclined(bytes32 indexed requestId, bytes32 userSecret)',
   // Functions
-  'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
-  'function setMintReady(bytes32 requestId, bytes32 lpCommitment) external',
+  'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey, bytes32 lpCommitment) external',
+  'function setMintReady(bytes32 requestId) external',
   'function revealSecret(bytes32 requestId, bytes32 secret) external',
   'function finalizeMint(bytes32 requestId) external',
   'function getVault(address lpAddress) external view returns (tuple(address lpAddress, uint256 collateralShares, uint256 lockedCollateral, uint256 normalizedDebt, uint256 pendingDebt, uint16 maxMintBps, uint256 mintGriefingDeposit, uint16 mintFeeBps, uint16 burnRewardBps, uint256 liquidationNonce, uint256 mintNonce, uint256 minBurnAmount, bool active, uint256 deployedSDAIShares, uint16 maxCoLPRangeBps, uint256 mintTimeoutBlocks, uint256 burnTimeoutBlocks, uint256 pendingMintCount))',
   'function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
   'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
   'function claimSlashedCollateral(bytes32 requestId) external',
-  'function resolveDeclinedProposal(bytes32 requestId) external',
+  'function resolveDeclinedProposal(bytes32 requestId, bytes32 userSecret) external',
   'function getBurnRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address user, address lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 lockedCollateral, uint256 rewardCollateral, bytes32 secretHash, uint256 deadline, uint256 vaultLiquidationNonce, uint256 normalizedDebtAmount, uint8 status, bytes32 userClaimCommitment, bytes32 userPublicKey, bytes32 userViewKey, uint256 xmrPriceAtRequest))',
   'function getMintRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout, uint256 griefingDeposit, uint256 normalizedDebtAmount, uint256 vaultMintNonce, bytes32 lpCommitment, bytes32 revealedSecret, uint8 status))',
   'function lpPublicKeys(bytes32 requestId) external view returns (bytes32)',
   'function lpPublicViewKeys(bytes32 requestId) external view returns (bytes32)',
   'function updateOraclePrices(bytes[] calldata updateData) external payable',
-  'function cancelMint(bytes32 requestId) external',
+  'function cancelMint(bytes32 requestId, bytes32 userSecret) external',
 ];
 
 // ─── Ethers Setup ───────────────────────────────────────────────────────────
 const gnosisNetwork = new ethers.Network('gnosis', CHAIN_ID);
-const provider = new ethers.JsonRpcProvider(RPC_URL, gnosisNetwork, { staticNetwork: true });
+const provider = new ethers.JsonRpcProvider(RPC_URL, gnosisNetwork, { staticNetwork: true, batchMaxCount: 0, timeout: 30000 });
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 const hub = new ethers.Contract(HUB_ADDRESS, HUB_ABI, wallet);
+
+// ─── Nonce Manager ──────────────────────────────────────────────────────────
+import { initNonceManager, getNextNonce, withNonceLock, resetNonceCache } from './nonceManager.js';
+initNonceManager(provider, wallet.address);
 
 console.log(`LP Server starting...`);
 console.log(`Wallet / LP Vault: ${wallet.address}`);
@@ -115,7 +131,10 @@ async function generateEd25519Keys() {
     ed.etc.sha512Sync = (...m) => createHash('sha512').update(Buffer.concat(m)).digest();
   }
   
-  const spendPriv = ed.utils.randomPrivateKey();
+  // Generate ONE secret that serves as both the LP's PTLC secret AND the LP's
+  // Monero spend key contribution. The deposit address is derived from this,
+  // and the sweep uses the same value to reconstruct the private key.
+  const lpSpendPriv = crypto.randomBytes(32);
   // Use LP's wallet view key so we can scan deposit addresses with a view-only wallet
   const viewPriv = Buffer.from(process.env.MONERO_VIEW_KEY, 'hex');
 
@@ -132,11 +151,12 @@ async function generateEd25519Keys() {
     return Buffer.from(pub.toRawBytes());
   }
 
-  const spendPub = scalarToPubKey(spendPriv);
+  const spendPub = scalarToPubKey(lpSpendPriv);
   const viewPub = scalarToPubKey(viewPriv);
   return {
     lpPublicSpendKey: '0x' + spendPub.toString('hex'),
     lpPublicViewKey: '0x' + viewPub.toString('hex'),
+    lpSpendPriv: '0x' + lpSpendPriv.toString('hex'),
   };
 }
 
@@ -145,7 +165,7 @@ async function generateEd25519Keys() {
 setHubWallet(hub, wallet, HUB_ADDRESS);
 
 // ─── Core Mint Processing ───────────────────────────────────────────────────
-async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
+async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpSpendPriv) {
   console.log(`[Mint] Processing ${reqIdHex}`);
 
   const mint = pendingMints.get(reqIdHex) || {};
@@ -177,10 +197,39 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
     console.warn(`[Chain] Could not query mint status, proceeding anyway:`, err.message);
   }
 
-  // 1. Provide LP key on-chain (skip if already provided)
+  // 1. Compute LP secret and commitment (needed for provideLPKey)
+  let lpSecret;
+  if (lpSpendPriv) {
+    lpSecret = Buffer.from(lpSpendPriv.replace(/^0x/, ''), 'hex');
+  } else {
+    // Recovery case: keys came from on-chain, check if lpSecret was already persisted
+    try {
+      const secretsFile = path.join(__dirname, 'lp-secrets.json');
+      if (fs.existsSync(secretsFile)) {
+        const secrets = JSON.parse(fs.readFileSync(secretsFile, 'utf8'));
+        if (secrets[reqIdHex] && secrets[reqIdHex].lpSecret) {
+          lpSecret = Buffer.from(secrets[reqIdHex].lpSecret.replace(/^0x/, ''), 'hex');
+          console.log(`[Mint] Recovered lpSecret from persisted storage for ${reqIdHex}`);
+        }
+      }
+    } catch (e) { /* ignore */ }
+  }
+  if (!lpSecret) {
+    // Cannot recover — generate a new one (deposit address won't match if keys were already posted)
+    lpSecret = crypto.randomBytes(32);
+    console.warn(`[Mint] WARNING: Generated new lpSecret for ${reqIdHex} — if LP keys were already posted on-chain, sweep will fail!`);
+  }
+  const { secretHash: lpCommitment } = await computeSecretHash(lpSecret);
+  mint.lpSecret = '0x' + lpSecret.toString('hex');
+  mint.lpCommitment = lpCommitment;
+  pendingMints.set(reqIdHex, mint);
+  console.log(`[Mint] LP commitment for ${reqIdHex}: ${lpCommitment}`);
+
+  // 2. Provide LP key on-chain (skip if already provided)
   if (onChainStatus < 2) {
     console.log(`[Chain] Calling provideLPKey(${reqIdHex})...`);
-    const tx1 = await hub.provideLPKey(reqIdHex, lpPublicSpendKey, lpPublicViewKey);
+    const nonce = await getNextNonce();
+    const tx1 = await hub.provideLPKey(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpCommitment, { nonce });
     console.log(`[Chain] provideLPKey tx: ${tx1.hash}`);
     const receipt1 = await tx1.wait();
     console.log(`[Chain] provideLPKey confirmed in block ${receipt1.blockNumber}`);
@@ -191,7 +240,7 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
   mint.lpPublicViewKey = lpPublicViewKey;
   pendingMints.set(reqIdHex, mint);
 
-  // 2. Compute deposit address so the user knows where to send XMR
+  // 3. Compute deposit address so the user knows where to send XMR
   const userPublicKey = mint.userPublicKey;
   if (userPublicKey) {
     try {
@@ -203,7 +252,7 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
     }
   }
 
-  // 3. Wait for the Monero deposit to arrive
+  // 4. Wait for the Monero deposit to arrive
   const expectedAmount = BigInt(mint.xmrAmount || '0');
   if (expectedAmount > 0n && moneroWallet.isWalletConfigured()) {
     // Fetch current height before pollForDeposit closes the main wallet
@@ -220,7 +269,7 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
       const depositTx = await moneroWallet.pollForDeposit(expectedAmount, {
         depositAddress: mint.depositAddress,
         restoreHeight: scanHeight,
-        toleranceBps: 200,   // 2% tolerance for fees / rounding
+        toleranceBps: 300,   // 3% tolerance for fees / rounding
         intervalMs: 15000,   // 15s
         maxWaitMs: 600000,   // 10 min
       });
@@ -237,7 +286,7 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
     console.warn(`         To enable real scanning, set MONERO_WALLET_RPC_URL in .env`);
   }
 
-  // 4. Update oracle prices before setMintReady (contract requires fresh price for collateral check)
+  // 5. Update oracle prices before setMintReady (contract requires fresh price for collateral check)
   try {
     await updateOraclePricesManual();
   } catch (priceErr) {
@@ -245,15 +294,7 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
     console.warn(`[Chain] Proceeding with setMintReady anyway (may revert with StalePrice)...`);
   }
 
-  // 5. Generate LP secret + commitment for the mint PTLC
-  const lpSecret = crypto.randomBytes(32);
-  const { secretHash: lpCommitment } = await computeSecretHash(lpSecret);
-  mint.lpSecret = '0x' + lpSecret.toString('hex');
-  mint.lpCommitment = lpCommitment;
-  pendingMints.set(reqIdHex, mint);
-  console.log(`[Mint] LP commitment for ${reqIdHex}: ${lpCommitment}`);
-
-  // Persist lpSecret to disk so we can sweep XMR after finalization even if server restarts
+  // 6. Persist lpSecret to disk so we can sweep XMR after finalization even if server restarts
   try {
     const secretsFile = path.join(__dirname, 'lp-secrets.json');
     let secrets = {};
@@ -265,23 +306,24 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
       lpCommitment: lpCommitment,
       initiatedAtBlock: mint.initiatedAtBlock || 0,
       xmrAmount: mint.xmrAmount,
+      depositTxHash: mint.depositTx ? mint.depositTx.txid : undefined,
+      depositHeight: mint.depositTx ? mint.depositTx.height : undefined,
     };
     fs.writeFileSync(secretsFile, JSON.stringify(secrets, null, 2));
   } catch (err) {
     console.warn(`[Mint] Could not persist lpSecret for ${reqIdHex}:`, err.message);
   }
 
-  // 6. Call setMintReady (non-payable — bond is tracked in vault config, not sent as ETH)
-  // Force refresh nonce — oracle price update tx may have used the cached nonce
-  const mintNonce = await provider.getTransactionCount(wallet.address, 'latest');
-  console.log(`[Chain] Calling setMintReady(${reqIdHex}, ${lpCommitment})... nonce: ${mintNonce}`);
+  // 7. Call setMintReady (non-payable — bond is tracked in vault config, not sent as ETH)
+  const mintNonce = await getNextNonce();
+  console.log(`[Chain] Calling setMintReady(${reqIdHex})... nonce: ${mintNonce}`);
   let tx2;
   try {
-    tx2 = await hub.setMintReady(reqIdHex, lpCommitment, { gasLimit: 500000n, nonce: mintNonce });
+    tx2 = await hub.setMintReady(reqIdHex, { gasLimit: 500000n, nonce: mintNonce });
   } catch (gasErr) {
     console.warn(`[Chain] setMintReady with manual gas failed: ${gasErr.message}`);
-    const retryNonce = await provider.getTransactionCount(wallet.address, 'latest');
-    tx2 = await hub.setMintReady(reqIdHex, lpCommitment, { nonce: retryNonce });
+    const retryNonce = await getNextNonce();
+    tx2 = await hub.setMintReady(reqIdHex, { nonce: retryNonce });
   }
   console.log(`[Chain] setMintReady tx: ${tx2.hash}`);
   const receipt2 = await tx2.wait();
@@ -292,8 +334,9 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey) {
 async function startupRecoverMints() {
   console.log('[Recovery] Scanning for active mints needing setMintReady...');
   const currentBlock = await provider.getBlockNumber();
-  // Scan last 10000 blocks (~3.5 days on Gnosis at 5s blocks)
-  const fromBlock = Math.max(0, currentBlock - 10000);
+  // Scan last ~10000 blocks (~3.5 days on Gnosis at 5s blocks)
+  // Use 9999 to stay within RPC's 10000-block max range
+  const fromBlock = Math.max(0, currentBlock - 9999);
 
   let events;
   try {
@@ -327,6 +370,26 @@ async function startupRecoverMints() {
         continue; // completed or cancelled
       }
 
+      if (status === 3) {
+        // READY — mint is waiting for user to reveal secret. If timeout passed, cancel it.
+        const timeout = Number(mintReq.timeout);
+        const currentBlock = await provider.getBlockNumber();
+        if (currentBlock >= timeout) {
+          console.log(`[Recovery] Mint ${reqIdHex} is READY but timed out (timeout=${timeout}, current=${currentBlock}), cancelling...`);
+          try {
+            const cancelNonce = await getNextNonce();
+            const tx = await hub.cancelMint(reqIdHex, '0x0000000000000000000000000000000000000000000000000000000000000000', { nonce: cancelNonce });
+            await tx.wait();
+            console.log(`[Recovery] Mint ${reqIdHex} cancelled (tx: ${tx.hash})`);
+          } catch (err) {
+            console.warn(`[Recovery] Failed to cancel timed-out READY mint ${reqIdHex}:`, err.shortMessage || err.message);
+          }
+        } else {
+          console.log(`[Recovery] Mint ${reqIdHex} is READY, waiting for user to reveal secret (timeout=${timeout}, current=${currentBlock})`);
+        }
+        continue;
+      }
+
       if (status === 2) {
         // KEY_PROVIDED — deposit may have arrived, need to update oracle + setMintReady
         console.log(`[Recovery] Mint ${reqIdHex} is KEY_PROVIDED, attempting setMintReady...`);
@@ -344,12 +407,13 @@ async function startupRecoverMints() {
           lpPublicSpendKey: lpSpendKey,
           lpPublicViewKey: lpViewKey,
           keyPostedAt: Date.now(),
+          initiatedAtBlock: event.blockNumber || 0,
           processing: true,
         });
 
         (async () => {
           try {
-            await serializeMint(() => processMint(reqIdHex, lpSpendKey, lpViewKey));
+            await processMint(reqIdHex, lpSpendKey, lpViewKey);
           } catch (err) {
             console.error(`[Recovery] Failed to process mint ${reqIdHex}:`, err.message || err);
             const m = pendingMints.get(reqIdHex) || {};
@@ -370,6 +434,7 @@ async function startupRecoverMints() {
           userPublicKey: ethers.hexlify(mintReq.userPublicKey),
           timeoutBlock: Number(mintReq.timeout),
           initiatedAt: Date.now(),
+          initiatedAtBlock: event.blockNumber || 0,
           processing: true,
         });
 
@@ -377,7 +442,7 @@ async function startupRecoverMints() {
           try {
             const keys = await generateEd25519Keys();
             console.log(`[Recovery] Generated Ed25519 keys for ${reqIdHex}`);
-            await serializeMint(() => processMint(reqIdHex, keys.lpPublicSpendKey, keys.lpPublicViewKey));
+            await processMint(reqIdHex, keys.lpPublicSpendKey, keys.lpPublicViewKey, keys.lpSpendPriv);
           } catch (err) {
             console.error(`[Recovery] Failed to process mint ${reqIdHex}:`, err.message || err);
             const m = pendingMints.get(reqIdHex) || {};
@@ -449,10 +514,13 @@ async function startupSweepFinalizedMints() {
 
       // Status is COMPLETED — need to find the SecretRevealed event to get user's secret
       console.log(`[Sweep] ${reqIdHex} is COMPLETED — looking for SecretRevealed event...`);
+      if (entry.depositTxHash) {
+        console.log(`[Sweep]   deposit tx: ${entry.depositTxHash}, height: ${entry.depositHeight || 'N/A'}`);
+      }
 
       // Scan recent blocks for the SecretRevealed event
       const currentBlock = await provider.getBlockNumber();
-      const fromBlock = Math.max(0, currentBlock - 10000);
+      const fromBlock = Math.max(0, currentBlock - 100000);
       const filter = hub.filters.SecretRevealed(reqIdHex);
       const events = await hub.queryFilter(filter, fromBlock, currentBlock);
 
@@ -478,6 +546,7 @@ async function startupSweepFinalizedMints() {
         lpViewKeyHex: process.env.MONERO_VIEW_KEY,
         lpMainAddress: lpMoneroAddress,
         restoreHeight: entry.initiatedAtBlock || 0,
+        depositHeight: entry.depositHeight || 0,
       });
 
       if (result.swept) {
@@ -486,12 +555,13 @@ async function startupSweepFinalizedMints() {
         entry.sweepAmount = result.amount.toString();
         console.log(`[Sweep] Successfully swept ${result.amount} atomic units for ${reqIdHex}`);
       } else {
-        console.log(`[Sweep] Could not sweep ${reqIdHex} yet — funds may be confirming. Will retry on next poll.`);
+        console.log(`[Sweep] Not yet sweepable for ${reqIdHex} — see Monero log for details. Will retry on next poll.`);
         // Load into pendingMints so the event poller can retry
         pendingMints.set(reqIdHex, {
           requestId: reqIdHex,
           lpSecret: entry.lpSecret,
           initiatedAtBlock: entry.initiatedAtBlock || 0,
+          depositHeight: entry.depositHeight || 0,
           sweepAttempted: false,
           processing: false,
         });
@@ -503,6 +573,7 @@ async function startupSweepFinalizedMints() {
         requestId: reqIdHex,
         lpSecret: entry.lpSecret,
         initiatedAtBlock: entry.initiatedAtBlock || 0,
+        depositHeight: entry.depositHeight || 0,
         sweepAttempted: false,
         processing: false,
       });
@@ -520,7 +591,7 @@ async function startupSweepFinalizedMints() {
 // ─── Startup Resolution: Cancel stale mints & resolve stale burns ───────────
 async function startupResolveStale() {
   const currentBlock = await provider.getBlockNumber();
-  const fromBlock = Math.max(0, currentBlock - 10000);
+  const fromBlock = Math.max(0, currentBlock - 9999);
   console.log('[Resolve] Checking for stale mints and burns...');
 
   // ── Stale Mints: cancel if timeout passed ──
@@ -547,7 +618,8 @@ async function startupResolveStale() {
       if ((status === 1 || status === 2 || status === 3) && currentBlock >= timeout) {
         console.log(`[Resolve] Mint ${reqIdHex} is stale (status=${status}, timeout=${timeout}, current=${currentBlock}), cancelling...`);
         try {
-          const tx = await hub.cancelMint(reqIdHex);
+          const cancelNonce = await getNextNonce();
+          const tx = await hub.cancelMint(reqIdHex, '0x0000000000000000000000000000000000000000000000000000000000000000', { nonce: cancelNonce });
           await tx.wait();
           console.log(`[Resolve] Mint ${reqIdHex} cancelled (tx: ${tx.hash})`);
         } catch (err) {
@@ -559,7 +631,12 @@ async function startupResolveStale() {
     }
   }
 
-  // ── Stale Burns: resolve declined proposals ──
+  // ── Stale Burns: log and wait for user to resolve ──
+  // The LP cannot call resolveDeclinedProposal anymore because it requires the
+  // user's private spend key (userSecret) which only the user knows.
+  // Instead, we just log stale burns and wait for the user to resolve.
+  // When the user resolves, BurnProposalDeclined is emitted and the LP's
+  // burnHandler will sweep the shared XMR.
   let burnEvents;
   try {
     burnEvents = await hub.queryFilter(hub.filters.BurnRequested(), fromBlock, currentBlock);
@@ -579,16 +656,9 @@ async function startupResolveStale() {
       const state = Number(burnReq.status);
       const deadline = Number(burnReq.deadline);
 
-      // State 2=PROPOSED — resolve if deadline passed (LP didn't commit or user didn't confirm)
+      // State 2=PROPOSED — log if deadline passed, waiting for user to resolve
       if (state === 2 && currentBlock >= deadline) {
-        console.log(`[Resolve] Burn ${reqIdHex} is stale (PROPOSED, deadline=${deadline}, current=${currentBlock}), resolving...`);
-        try {
-          const tx = await hub.resolveDeclinedProposal(reqIdHex);
-          await tx.wait();
-          console.log(`[Resolve] Burn ${reqIdHex} resolved (tx: ${tx.hash})`);
-        } catch (err) {
-          console.warn(`[Resolve] Failed to resolve burn ${reqIdHex}:`, err.shortMessage || err.message);
-        }
+        console.log(`[Resolve] Burn ${reqIdHex} is stale (PROPOSED, deadline=${deadline}, current=${currentBlock}) — waiting for user to call resolveDeclinedProposal with their userSecret`);
       }
     } catch (err) {
       console.warn(`[Resolve] Could not check burn ${reqIdHex}:`, err.message);
@@ -618,6 +688,8 @@ async function startEventListener() {
     try {
       const currentBlock = await provider.getBlockNumber();
       if (currentBlock <= lastCheckedBlock) return;
+      const fromBlock = lastCheckedBlock + 1;
+      if (fromBlock > currentBlock) return;
 
       // Retry on rate limit
       let retries = 3;
@@ -625,7 +697,7 @@ async function startEventListener() {
       while (retries > 0) {
         try {
           const filter = hub.filters.MintInitiated();
-          events = await hub.queryFilter(filter, lastCheckedBlock + 1, currentBlock);
+          events = await hub.queryFilter(filter, fromBlock, currentBlock);
           break;
         } catch (err) {
           if (err.message?.includes('rate limit') || err.code === 'UNKNOWN_ERROR') {
@@ -674,7 +746,7 @@ async function startEventListener() {
           try {
             const keys = await generateEd25519Keys();
             console.log(`[Mint] Generated Ed25519 keys for ${reqIdHex}`);
-            await serializeMint(() => processMint(reqIdHex, keys.lpPublicSpendKey, keys.lpPublicViewKey));
+            await processMint(reqIdHex, keys.lpPublicSpendKey, keys.lpPublicViewKey, keys.lpSpendPriv);
           } catch (err) {
             console.error(`[Mint] Auto-process failed for ${reqIdHex}:`, err.message || err);
             const mint = pendingMints.get(reqIdHex) || {};
@@ -689,7 +761,7 @@ async function startEventListener() {
       let finalizedEvents = [];
       try {
         const finalizedFilter = hub.filters.MintFinalized();
-        finalizedEvents = await hub.queryFilter(finalizedFilter, lastCheckedBlock + 1, currentBlock);
+        finalizedEvents = await hub.queryFilter(finalizedFilter, fromBlock, currentBlock);
       } catch (err) {
         console.warn('[Event] Could not query MintFinalized events:', err.message);
       }
@@ -719,12 +791,16 @@ async function startEventListener() {
             // Use the block number from the MintInitiated event as restore height
             const restoreHeight = mint.initiatedAtBlock || 0;
             console.log(`[Sweep] Sweeping XMR for ${reqIdHex}...`);
+            if (mint.depositTx) {
+              console.log(`[Sweep]   deposit tx: ${mint.depositTx.txid}, height: ${mint.depositTx.height}`);
+            }
             const result = await moneroWallet.sweepMintDeposit({
               userSecretHex: ethers.hexlify(secret),
               lpSecretHex: mint.lpSecret,
               lpViewKeyHex: process.env.MONERO_VIEW_KEY,
               lpMainAddress: lpMoneroAddress,
               restoreHeight,
+              depositHeight: mint.depositTx ? mint.depositTx.height : 0,
             });
 
             if (result.swept) {
@@ -749,7 +825,7 @@ async function startEventListener() {
                 console.warn(`[Sweep] Could not persist swept state for ${reqIdHex}:`, persistErr.message);
               }
             } else {
-              console.log(`[Sweep] Could not sweep yet for ${reqIdHex} — funds may be confirming. Will retry on next poll.`);
+              console.log(`[Sweep] Not yet sweepable for ${reqIdHex} — see Monero log for details. Will retry on next poll.`);
               mint.sweepAttempted = false; // allow retry
               pendingMints.set(reqIdHex, mint);
             }
@@ -765,7 +841,7 @@ async function startEventListener() {
       let cancelledEvents = [];
       try {
         const cancelledFilter = hub.filters.MintCancelled();
-        cancelledEvents = await hub.queryFilter(cancelledFilter, lastCheckedBlock + 1, currentBlock);
+        cancelledEvents = await hub.queryFilter(cancelledFilter, fromBlock, currentBlock);
       } catch (err) {
         // Non-critical
       }
@@ -785,6 +861,35 @@ async function startEventListener() {
     }
   }, 15000);
 }
+
+// ─── Periodic Stale Burn Check ──────────────────────────────────────────────
+// Checks tracked burns every 60s for PROPOSED burns with expired deadlines.
+// The LP cannot call resolveDeclinedProposal (requires userSecret which only the user knows).
+// Instead, we just log stale burns and wait for the user to resolve.
+// When the user resolves, BurnProposalDeclined is emitted and the LP's burnHandler
+// will sweep the shared XMR back to the LP's wallet.
+setInterval(async () => {
+  try {
+    const currentBlock = await provider.getBlockNumber();
+    const { pendingBurns } = await import('./burnHandler.js');
+    for (const [reqIdHex, burn] of pendingBurns.entries()) {
+      if (burn.state !== 'proposed') continue;
+      try {
+        const burnReq = await hub.getBurnRequest(reqIdHex);
+        const status = Number(burnReq.status);
+        const deadline = Number(burnReq.deadline);
+        if (status === 2 && currentBlock >= deadline) {
+          console.log(`[Resolve] Burn ${reqIdHex} is stale (PROPOSED, deadline=${deadline}, current=${currentBlock}) — waiting for user to resolve`);
+          burn.state = 'stale';
+        }
+      } catch (err) {
+        console.warn(`[Resolve] Periodic check failed for ${reqIdHex}:`, err.shortMessage || err.message);
+      }
+    }
+  } catch (err) {
+    console.warn('[Resolve] Periodic stale burn check failed:', err.message);
+  }
+}, 60000);
 
 // ─── Mint Deposit Scan Auto-Retry ───────────────────────────────────────────
 // Periodically retry mints that failed auto-processing (e.g. deposit scan timeout).
@@ -818,7 +923,7 @@ setInterval(async () => {
       const lpSpendKey = await hub.lpPublicKeys(reqIdHex);
       const lpViewKey = await hub.lpPublicViewKeys(reqIdHex);
 
-      serializeMint(async () => {
+      (async () => {
         try {
           await processMint(reqIdHex, lpSpendKey, lpViewKey);
         } catch (err) {
@@ -828,7 +933,7 @@ setInterval(async () => {
           m.processing = false;
           pendingMints.set(reqIdHex, m);
         }
-      });
+      })();
     } catch (err) {
       console.warn(`[Retry] Could not check mint ${reqIdHex} for retry:`, err.message);
     }
@@ -840,6 +945,70 @@ setInterval(async () => {
 // Health check
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', wallet: wallet.address, hub: HUB_ADDRESS });
+});
+
+// Monero tx checker — queries public daemon for tx status
+app.get('/monero/tx/:txHash', async (req, res) => {
+  const txHash = req.params.txHash;
+  if (!txHash || !/^[0-9a-fA-F]{64}$/.test(txHash)) {
+    return res.status(400).json({ error: 'Invalid tx hash — must be 64 hex chars' });
+  }
+
+  const DAEMON_URLS = (process.env.MONERO_DAEMON_URLS
+    ? process.env.MONERO_DAEMON_URLS.split(',').map(s => s.trim()).filter(Boolean)
+    : [
+      'https://xmr-node.cakewallet.com:18081',
+      'https://node.moneroworld.com:18081',
+      'https://node.xmr.rocks:18081',
+    ]
+  );
+
+  for (const daemonUrl of DAEMON_URLS) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const resp = await fetch(`${daemonUrl}/get_transactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          txs_hashes: [txHash],
+          decode_as_json: false,
+          prune: true,
+        }),
+        signal: controller.signal,
+      });
+      const data = await resp.json();
+      clearTimeout(timeout);
+
+      if (data.error) throw new Error(`daemon error: ${JSON.stringify(data.error)}`);
+
+      const txs = data.txs || [];
+      if (txs.length === 0 || txs[0].in_pool === undefined && !txs[0].block_height) {
+        return res.json({ found: false, inPool: false, confirmations: 0 });
+      }
+
+      const tx = txs[0];
+      const currentHeight = data.height || 0;
+      const inPool = tx.in_pool || false;
+      const blockHeight = inPool ? 0 : (tx.block_height || 0);
+      const confirmations = inPool ? 0 : Math.max(0, currentHeight - blockHeight);
+
+      return res.json({
+        found: true,
+        inPool,
+        blockHeight,
+        currentHeight,
+        confirmations,
+        requiredConfirmations: 10,
+        txHash: tx.tx_hash || txHash,
+      });
+    } catch (err) {
+      clearTimeout(timeout);
+      console.warn(`[Monero] Tx checker daemon ${daemonUrl} failed: ${err.message}`);
+    }
+  }
+
+  res.status(503).json({ error: 'All Monero daemons failed' });
 });
 
 // Post LP key for a mint request manually (auto-processing is the default)
@@ -864,7 +1033,7 @@ app.post('/mint/key', async (req, res) => {
       message: 'Processing started. provideLPKey then setMintReady will follow.',
     });
 
-    await serializeMint(() => processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey));
+    await processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey);
   } catch (err) {
     console.error(`[Error] Failed processing /mint/key for ${reqIdHex}:`, err.message || err);
     if (!res.headersSent) {
@@ -924,7 +1093,7 @@ app.post('/mint/scan', async (req, res) => {
     });
 
     // Run processMint async (it will skip provideLPKey since status >= 2)
-    serializeMint(() => processMint(reqIdHex, lpSpendKey, lpViewKey)).catch(err => {
+    processMint(reqIdHex, lpSpendKey, lpViewKey).catch(err => {
       console.error(`[Mint] Manual scan failed for ${reqIdHex}:`, err.message);
     });
   } catch (err) {
@@ -995,16 +1164,29 @@ app.listen(PORT, async () => {
     console.log('[Startup] Ensuring Monero wallet is open...');
     await moneroWallet.ensureWalletOpen();
     if (moneroWallet.isWalletRpcHealthy()) {
-      console.log('[Startup] Monero wallet ready');
+      console.log('[Startup] Monero wallet ready — syncing wallet to chain tip...');
+      try {
+        const refreshRes = await moneroWallet.refreshWallet();
+        console.log(`[Startup] Wallet sync complete: blocks_fetched=${refreshRes?.blocks_fetched || 0}`);
+      } catch (err) {
+        console.warn('[Startup] Initial wallet sync failed (will continue):', err.message);
+      }
       // Fetch LP's main Monero address for sweeping
-      if (!lpMoneroAddress) {
-        try {
-          const addrInfo = await moneroWallet.getAddresses(0);
-          lpMoneroAddress = addrInfo.primary;
+      // Always re-fetch — a leftover view-only wallet from a previous operation
+      // may have been open when we first called getAddresses, giving us the wrong address.
+      try {
+        const addrInfo = await moneroWallet.getAddresses(0);
+        const fetchedAddr = addrInfo.primary;
+        // Sanity check: LP main address must start with '4' (mainnet primary)
+        // and differ from any known deposit address
+        if (fetchedAddr && fetchedAddr.startsWith('4')) {
+          lpMoneroAddress = fetchedAddr;
           console.log(`[Startup] LP Monero address: ${lpMoneroAddress}`);
-        } catch (err) {
-          console.warn('[Startup] Could not fetch LP Monero address:', err.message);
+        } else {
+          console.warn(`[Startup] Unexpected address format: ${fetchedAddr} — not setting as LP address`);
         }
+      } catch (err) {
+        console.warn('[Startup] Could not fetch LP Monero address:', err.message);
       }
     } else {
       console.error('[Startup] Monero wallet RPC unreachable — mint scanning will fail until monero-wallet-rpc is started');

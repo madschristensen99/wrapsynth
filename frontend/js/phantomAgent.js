@@ -128,7 +128,7 @@ class PhantomAgent {
 
         toast.innerHTML = `
             <div style="display: flex; align-items: flex-start; gap: 10px;">
-                <span style="font-size: 20px; flex-shrink: 0;">🔐</span>
+                <span style="flex-shrink: 0; display: inline-flex; align-items: center; color: var(--text-2, #b0b0c0);"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg></span>
                 <div>
                     <strong style="color: var(--fg, #e0e0f0); display: block; margin-bottom: 4px;">Wallet seed auto-saved</strong>
                     <span>A recovery seed was generated and saved in your browser. Back it up for safety — you'll need it to recover funds if your browser data is cleared.</span>

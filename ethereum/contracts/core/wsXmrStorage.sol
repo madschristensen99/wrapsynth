@@ -50,6 +50,9 @@ contract wsXmrStorage {
     // Par is fixed at request via xmrPriceAtRequest, so this only needs to cover DAI depeg
     // between request and settlement (sDAI yield only improves coverage).
     uint256 public constant BURN_LOCK_RATIO = 110;
+    // Collateral reserved per mint at setMintReady time as a buffer OVER PAR.
+    // Same rationale as BURN_LOCK_RATIO: covers sDAI depeg between ready and slash.
+    uint256 public constant MINT_LOCK_RATIO = 110;
     
     uint256 public constant XMR_TO_WSXMR_DIVISOR = 1e4;
     uint256 public constant WSXMR_DECIMALS = 1e8;
@@ -132,9 +135,11 @@ contract wsXmrStorage {
         uint256 griefingDeposit;
         uint256 normalizedDebtAmount;
         uint256 vaultMintNonce;
-        bytes32 lpCommitment;   // keccak256(Ed25519.scalarMultBase(lpSecret)) — set in setMintReady
+        bytes32 lpCommitment;   // keccak256(Ed25519.scalarMultBase(lpSecret)) — set in provideLPKey
         bytes32 revealedSecret;  // User's Ed25519 secret, stored after revealSecret() succeeds
         MintStatus status;
+        uint256 lockedCollateral;   // sDAI shares locked from vault at provideLPKey — slashed if LP ghosts
+        uint256 xmrPriceAtReady;    // XMR price at provideLPKey time (18 decimals) for par settlement
     }
     
     struct BurnRequest {

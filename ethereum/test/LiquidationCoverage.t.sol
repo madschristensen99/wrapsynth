@@ -247,12 +247,12 @@ contract LiquidationCoverageTest is Test {
 
     function _provideLPKey(address _lp, bytes32 reqId) internal {
         vm.prank(_lp);
-        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
     }
 
     function _setMintReady(address _lp, bytes32 reqId) internal {
         vm.prank(_lp);
-        MintFacet(address(hub)).setMintReady(reqId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(reqId);
     }
 
     function _mintForUser(address _user, address _lp) internal returns (uint256) {

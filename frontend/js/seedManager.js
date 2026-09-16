@@ -167,3 +167,41 @@ export function createKeySet(seedPhrase) {
         secret: '0x' + keys.privateSpendKey.toString(16).padStart(64, '0')
     };
 }
+
+/**
+ * Derive a per-burn key set from a seed phrase and a burn nonce.
+ * Each burn gets a unique private spend key: user_priv_i = H(seed || nonce) mod L
+ * This ensures revealing userSecret on-chain in resolveDeclinedProposal
+ * only compromises the key for that specific burn, not all burns.
+ *
+ * @param {string} seedPhrase - BIP-39 seed phrase
+ * @param {number} burnNonce - Unique nonce for this burn (local counter)
+ * @returns {Object} Key set with privateSpendKey, publicSpendKey, privateViewKey, publicViewKey, commitment, secret
+ */
+export function derivePerBurnKeySet(seedPhrase, burnNonce) {
+    // Derive unique private spend key: H(seed || nonce) mod L
+    const hashInput = toHex(seedPhrase + ':' + burnNonce);
+    const hash = keccak256(hashInput);
+    const privateSpendKey = bytesToBigInt(hexToBytes(hash)) % ED25519_L;
+
+    // Derive private view key from private spend key (Monero style)
+    const privateSpendKeyHex = '0x' + privateSpendKey.toString(16).padStart(64, '0');
+    let bytes = hexToBytes(privateSpendKeyHex);
+    bytes.reverse(); // Little endian
+    const privateViewKey = bytesToBigInt(hexToBytes(keccak256(bytes)).reverse()) % ED25519_L;
+
+    // Generate public keys via Ed25519 scalar multiplication
+    const publicSpendKey = Point.BASE.multiply(privateSpendKey, true);
+    const publicViewKey = Point.BASE.multiply(privateViewKey, true);
+
+    const commitment = generateCommitment(privateSpendKey);
+
+    return {
+        privateSpendKey,
+        publicSpendKey: publicSpendKey.toRawBytes(),
+        privateViewKey,
+        publicViewKey: publicViewKey.toRawBytes(),
+        commitment,
+        secret: '0x' + privateSpendKey.toString(16).padStart(64, '0')
+    };
+}

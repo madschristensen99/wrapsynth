@@ -100,7 +100,7 @@ contract SecurityGuardTest is Test {
 
         vm.prank(attacker);
         vm.expectRevert(IErrors.Unauthorized.selector);
-        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdead)), bytes32(uint256(0xbeef)));
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdead)), bytes32(uint256(0xbeef)), bytes32(uint256(0xdeadbeef)));
     }
 
     /// @notice Non-LP cannot call setMintReady
@@ -110,7 +110,7 @@ contract SecurityGuardTest is Test {
 
         vm.prank(attacker);
         vm.expectRevert(IErrors.Unauthorized.selector);
-        MintFacet(address(hub)).setMintReady(reqId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(reqId);
     }
 
     /// @notice Non-LP cannot claim griefing deposit on expired ready mint
@@ -121,7 +121,7 @@ contract SecurityGuardTest is Test {
 
         // Warp past READY timeout, then cancelMint to reach EXPIRED_READY
         vm.roll(block.number + 10000);
-        MintFacet(address(hub)).cancelMint(reqId);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
         vm.prank(attacker);
         vm.expectRevert(IErrors.Unauthorized.selector);
@@ -157,7 +157,7 @@ contract SecurityGuardTest is Test {
 
         vm.prank(lp);
         vm.expectRevert(IErrors.InvalidStatus.selector);
-        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdead)), bytes32(uint256(0xbeef)));
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdead)), bytes32(uint256(0xbeef)), bytes32(uint256(0xdeadbeef)));
     }
 
     // ========== MINT: DEADLINE ENFORCEMENT ==========
@@ -168,7 +168,7 @@ contract SecurityGuardTest is Test {
 
         vm.prank(user);
         vm.expectRevert(IMintOperations.TimeoutNotReached.selector);
-        MintFacet(address(hub)).cancelMint(reqId);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
     }
 
     /// @notice provideLPKey after deadline must revert
@@ -180,7 +180,7 @@ contract SecurityGuardTest is Test {
 
         vm.prank(lp);
         vm.expectRevert(IErrors.DeadlineExpired.selector);
-        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdead)), bytes32(uint256(0xbeef)));
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdead)), bytes32(uint256(0xbeef)), bytes32(uint256(0xdeadbeef)));
     }
 
     /// @notice setMintReady after deadline must revert
@@ -193,7 +193,7 @@ contract SecurityGuardTest is Test {
 
         vm.prank(lp);
         vm.expectRevert(IErrors.DeadlineExpired.selector);
-        MintFacet(address(hub)).setMintReady(reqId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(reqId);
     }
 
     // ========== BURN: AUTHORIZATION ==========
@@ -377,7 +377,33 @@ contract SecurityGuardTest is Test {
 
         vm.prank(lp);
         vm.expectRevert(IBurnOperations.DeadlineNotExpired.selector);
-        BurnFacet(address(hub)).resolveDeclinedProposal(burnId);
+        BurnFacet(address(hub)).resolveDeclinedProposal(burnId, bytes32(uint256(1)));
+    }
+
+    /// @notice resolveDeclinedProposal with zero userSecret must revert
+    function test_Burn_ResolveDeclined_ZeroSecret_Reverts() public {
+        uint256 minted = _mintForUser(user, lp);
+        bytes32 burnId = _requestBurn(user, lp, minted);
+        _proposeHash(lp, burnId);
+
+        vm.roll(block.number + 34561);
+
+        vm.prank(lp);
+        vm.expectRevert(IErrors.InvalidUserSecret.selector);
+        BurnFacet(address(hub)).resolveDeclinedProposal(burnId, bytes32(0));
+    }
+
+    /// @notice resolveDeclinedProposal with wrong userSecret must revert
+    function test_Burn_ResolveDeclined_WrongSecret_Reverts() public {
+        uint256 minted = _mintForUser(user, lp);
+        bytes32 burnId = _requestBurn(user, lp, minted);
+        _proposeHash(lp, burnId);
+
+        vm.roll(block.number + 34561);
+
+        vm.prank(lp);
+        vm.expectRevert(IErrors.InvalidUserSecret.selector);
+        BurnFacet(address(hub)).resolveDeclinedProposal(burnId, bytes32(uint256(0xbadc0ffee)));
     }
 
     // ========== LIQUIDATION: GUARDS ==========
@@ -606,12 +632,12 @@ contract SecurityGuardTest is Test {
 
     function _provideLPKey(address _lp, bytes32 reqId) internal {
         vm.prank(_lp);
-        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
     }
 
     function _setMintReady(address _lp, bytes32 reqId) internal {
         vm.prank(_lp);
-        MintFacet(address(hub)).setMintReady(reqId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(reqId);
     }
 
     function _mintForUser(address _user, address _lp) internal returns (uint256) {

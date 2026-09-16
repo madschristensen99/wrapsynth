@@ -50,7 +50,7 @@ if ('serviceWorker' in navigator) {
     });
 }
 </script>
-<link rel="stylesheet" href="app-styles.css?v=2.2">
+<link rel="stylesheet" href="app-styles.css?v=2.3">
 </head>
 <body class="app-page">
 <!-- Animated Background -->
@@ -305,7 +305,7 @@ if ('serviceWorker' in navigator) {
               <span class="verification-value" id="burn-view-key">—</span>
               <button class="btn-copy-sm" id="copy-burn-viewkey" title="Copy view key">Copy</button>
             </div>
-            <div class="verification-hint">Use the address + view key in a Monero block explorer (e.g. explorer.monero.com) to verify incoming XMR</div>
+            <div class="verification-hint">Verifying XMR on-chain using your view key. The auto-scan checks the Monero blockchain for incoming transactions to this shared address.</div>
           </div>
 
           <!-- Burn verification: loading state -->
@@ -321,8 +321,9 @@ if ('serviceWorker' in navigator) {
               <span class="verification-value" id="burn-verify-address">—</span>
             </div>
             <div class="verification-row">
-              <span class="verification-label">Tx ref</span>
+              <span class="verification-label">Monero tx</span>
               <span class="verification-value" id="burn-verify-tx-hash">—</span>
+              <a id="burn-verify-tx-link" href="#" target="_blank" rel="noopener" style="font-size:0.75rem;color:var(--accent-blue);text-decoration:none;margin-left:6px;display:none;">View ↗</a>
             </div>
             <div class="verification-row">
               <span class="verification-label">Status</span>
@@ -337,16 +338,16 @@ if ('serviceWorker' in navigator) {
           <!-- Burn verification: manual confirm -->
           <div id="burn-verification-manual" class="hidden">
             <p style="font-size:0.85rem;color:var(--text-2);margin:0.5rem 0;">
-              If you've verified XMR at the shared address (via Monero explorer or your wallet), confirm to proceed. The auto-scan will continue in the background.
+              The auto-scan is verifying XMR on-chain using your view key. If you've already verified independently, you can confirm to proceed.
             </p>
             <div class="action-buttons">
               <button class="cta" id="burn-confirm-receipt">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:4px"><polyline points="20 6 9 17 4 12"/></svg>
-                I received the XMR — Confirm
+                I received the XMR — Confirm & wait for LP
               </button>
               <button class="cta ghost" id="burn-confirm-receipt-manual">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:4px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                Verify on explorer
+                <span id="burn-verify-explorer-label">View on xmrchain.net</span>
               </button>
             </div>
           </div>
@@ -430,10 +431,10 @@ if ('serviceWorker' in navigator) {
       <div class="g"><div class="n" id="vaults-stat">--</div><div class="k">Active Vaults</div></div>
       <div class="g"><div class="n" id="volume-stat">$--</div><div class="k">24h Volume</div></div>
     </div>
-    <div class="addrs">
-      <span class="lab">wsXMR</span> &nbsp;<a href="https://gnosisscan.io/token/0x8197d472823CC8BB5ae4077619bC85cAD19C4A5f" target="_blank">0x8197…4A5f</a><br>
-      <span class="lab">wsXmrHub</span> &nbsp;<a href="https://gnosisscan.io/address/0x29BF76f72694A99e5C1483871aD62f87501fC99E" target="_blank">0x29BF…C99E</a><br>
-      <span class="lab">Router</span> &nbsp;<a href="https://gnosisscan.io/address/0x52EcC68d3E38c86778e940A9fCeAB1e19f92F59e" target="_blank">0x52Ec…59e</a>
+    <div class="addrs" id="app-addrs">
+      <span class="lab">wsXMR</span> &nbsp;<a id="addr-link-wsxmr" href="#" target="_blank">Loading…</a><br>
+      <span class="lab">wsXmrHub</span> &nbsp;<a id="addr-link-hub" href="#" target="_blank">Loading…</a><br>
+      <span class="lab">Router</span> &nbsp;<a id="addr-link-router" href="#" target="_blank">Loading…</a>
     </div>
   </div>
 </div>
@@ -465,9 +466,19 @@ if ('serviceWorker' in navigator) {
   const res = await fetch('./deployment.json?t=' + Date.now());
   if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status);
   window.DEPLOYMENT = await res.json();
+
+  // Populate footer address links from deployment.json
+  const D = window.DEPLOYMENT, DC = D.contracts || {};
+  const short = a => a ? `${a.slice(0,6)}…${a.slice(-4)}` : '';
+  const wsxmr = document.getElementById('addr-link-wsxmr');
+  const hub = document.getElementById('addr-link-hub');
+  const router = document.getElementById('addr-link-router');
+  if (wsxmr) { wsxmr.textContent = short(DC.wsXMR); wsxmr.href = `https://gnosisscan.io/token/${DC.wsXMR}`; }
+  if (hub) { hub.textContent = short(DC.wsXmrHub); hub.href = `https://gnosisscan.io/address/${DC.wsXmrHub}`; }
+  if (router) { router.textContent = short(DC.liquidityRouter); router.href = `https://gnosisscan.io/address/${DC.liquidityRouter}`; }
 </script>
 <!-- Monero WASM wallet (loaded as classic script, exposes window.monero_ts) -->
 <script src="./js/monero-ts.js"></script>
-<script type="module" src="./js/main.js?v=3.8"></script>
+<script type="module" src="./js/main.js?v=3.10"></script>
 </body>
 </html>

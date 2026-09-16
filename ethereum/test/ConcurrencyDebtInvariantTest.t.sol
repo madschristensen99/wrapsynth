@@ -115,8 +115,8 @@ contract ConcurrencyDebtInvariantTest is Test {
         VaultFacet(address(hub)).withdrawCollateral(1 ether);
     }
 
-    /// @notice LP requests burn mid-mint (READY state) → must revert with PendingMintLock
-    function test_PendingMintLock_RequestBurnMidMint_Reverts() public {
+    /// @notice Burn succeeds mid-mint (READY state) when vault has sufficient collateral
+    function test_BurnSucceedsMidMint_WithSufficientCollateral() public {
         // First, mint some wsXMR to user so they have tokens to burn
         _mintForUser(user, lp);
 
@@ -125,12 +125,14 @@ contract ConcurrencyDebtInvariantTest is Test {
         _provideLPKey(lp, reqId);
         _setMintReady(lp, reqId);
 
-        // User tries to request burn while mint is READY
+        // User requests burn while mint is READY — should succeed with enough collateral
         vm.startPrank(user);
         wsxmr.approve(address(hub), 100_000);
-        vm.expectRevert(wsXmrStorage.PendingMintLock.selector);
-        BurnFacet(address(hub)).requestBurn(100_000, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(100_000, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
         vm.stopPrank();
+
+        // Verify burn was created
+        assertEq(uint256(burnId) != 0, true, "Burn should be created successfully");
     }
 
     /// @notice triggerBuyAndBurn mid-mint → must revert with PendingMintLock
@@ -185,7 +187,7 @@ contract ConcurrencyDebtInvariantTest is Test {
 
         // Warp past timeout
         vm.roll(block.number + 10000);
-        MintFacet(address(hub)).cancelMint(reqId);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
         // Should still be locked (EXPIRED_READY, not yet claimed/swept)
         assertEq(_getTotalPendingMints(), 1, "EXPIRED_READY should still hold lock");
@@ -264,7 +266,7 @@ contract ConcurrencyDebtInvariantTest is Test {
 
         // User resolves declined proposal
         vm.prank(user);
-        BurnFacet(address(hub)).resolveDeclinedProposal(burnId);
+        BurnFacet(address(hub)).resolveDeclinedProposal(burnId, TEST_USER_SECRET);
 
         assertEq(_getVaultNormalizedDebt(lp), vaultDebtBefore, "Vault debt must not change on resolveDeclined");
         assertEq(_getGlobalTotalDebt(), globalDebtBefore, "globalTotalDebt must not change on resolveDeclined");
@@ -474,7 +476,7 @@ contract ConcurrencyDebtInvariantTest is Test {
         uint256 lpBalanceBefore = lp.balance;
 
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(reqId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(reqId);
 
         assertEq(lp.balance, lpBalanceBefore, "LP should not spend ETH on setMintReady");
 
@@ -552,12 +554,12 @@ contract ConcurrencyDebtInvariantTest is Test {
 
     function _provideLPKey(address _lp, bytes32 reqId) internal {
         vm.prank(_lp);
-        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
     }
 
     function _setMintReady(address _lp, bytes32 reqId) internal {
         vm.prank(_lp);
-        MintFacet(address(hub)).setMintReady(reqId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(reqId);
     }
 
     function _mintForUser(address _user, address _lp) internal returns (uint256) {
@@ -572,10 +574,13 @@ contract ConcurrencyDebtInvariantTest is Test {
         return wsxmr.balanceOf(_user);
     }
 
+    bytes32 constant TEST_USER_SECRET = bytes32(uint256(0xdeadbeef));
+
     function _requestBurn(address _user, address _lp, uint256 amount) internal returns (bytes32) {
+        (uint256 upkx, ) = Ed25519.scalarMultBase(uint256(TEST_USER_SECRET));
         vm.startPrank(_user);
         wsxmr.approve(address(hub), amount);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(amount, _lp, _user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(amount, _lp, _user, bytes32(uint256(1)), bytes32(upkx), bytes32(uint256(3)));
         vm.stopPrank();
         return burnId;
     }

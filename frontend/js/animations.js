@@ -219,10 +219,7 @@ export function launchMintCelebration() {
     { delay: 1700, x: w * 0.2, y: h * 0.35 },
     { delay: 2200, x: w * 0.8, y: h * 0.4 },
     { delay: 3000, x: w * 0.4, y: h * 0.2 },
-    { delay: 3800, x: w * 0.65, y: h * 0.35 },
-    { delay: 4800, x: w * 0.15, y: h * 0.25 },
-    { delay: 5600, x: w * 0.85, y: h * 0.3 },
-    { delay: 6800, x: w * 0.5, y: h * 0.15 },
+    { delay: 3400, x: w * 0.65, y: h * 0.35 },
   ];
 
   function spawnFirework(fx, fy) {
@@ -635,7 +632,7 @@ export function launchMintCelebration() {
       active++;
     }
 
-    if (active > 0 && elapsed < 15000) {
+    if (active > 0 && elapsed < 7500) {
       animationId = requestAnimationFrame(animate);
     } else {
       teardownAnimation();

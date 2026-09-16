@@ -262,6 +262,30 @@ export async function loadSeed(publicSpendKey) {
 }
 
 /**
+ * Find any stored seed for the current user by scanning localStorage.
+ * Returns the first publicSpendKey that has a stored seed, or null.
+ */
+export function findStoredSeedKey() {
+    const userAddress = getUserAddress();
+    if (!userAddress) return null;
+
+    const prefix = `wrapsynth/`;
+    const suffix = `/${userAddress.toLowerCase()}`;
+
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(prefix) && key.endsWith(suffix)) {
+            // Extract publicSpendKey from key format: wrapsynth/${publicSpendKey}/${userAddress}
+            const parts = key.split('/');
+            if (parts.length === 3) {
+                return parts[1];
+            }
+        }
+    }
+    return null;
+}
+
+/**
  * Delete stored seed
  * 
  * @param {string} publicSpendKey - Public key to identify the seed

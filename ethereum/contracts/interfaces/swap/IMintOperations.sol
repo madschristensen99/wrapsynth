@@ -41,13 +41,16 @@ interface IMintOperations is IErrors {
     );
     
     event LPKeyProvided(bytes32 indexed requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey);
+    event MintCollateralLocked(bytes32 indexed requestId, uint256 lockedCollateral);
     event MintReady(bytes32 indexed requestId, bytes32 lpCommitment);
     event SecretRevealed(bytes32 indexed requestId, bytes32 secret);
     event MintFinalized(bytes32 indexed requestId, bytes32 secret);
     event MintCancelled(bytes32 indexed requestId);
+    event MintCancelledWithSecret(bytes32 indexed requestId, bytes32 userSecret);
     event MintExpiredReady(bytes32 indexed requestId);
     event GriefingDepositClaimed(bytes32 indexed requestId, bytes32 lpSecret);
     event MintGriefingUnclaimed(bytes32 indexed requestId);
+    event MintCollateralSlashed(bytes32 indexed requestId, uint256 slashedCollateral);
     
     // ========== ERRORS ==========
     
@@ -72,15 +75,16 @@ interface IMintOperations is IErrors {
         bytes32 userPublicKey
     ) external payable returns (bytes32 requestId);
     
-    /// @notice LP provides their Ed25519 public keys for atomic swap
+    /// @notice LP provides their Ed25519 public keys and commits their secret for atomic swap
     /// @param requestId The mint request ID
     /// @param lpPublicSpendKey LP's Ed25519 public spend key (x-coordinate)
     /// @param lpPublicViewKey LP's Ed25519 public view key (x-coordinate)
-    function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external;
+    /// @param lpCommitment keccak256(lpSecret·G) — LP's Ed25519 point commitment
+    function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey, bytes32 lpCommitment) external;
     
     /// @notice LP confirms XMR has been locked on Monero
     /// @param requestId The mint request ID
-    function setMintReady(bytes32 requestId, bytes32 lpCommitment) external;
+    function setMintReady(bytes32 requestId) external;
     
     /// @notice User reveals the Ed25519 secret — verifies commitment and stores secret on-chain
     /// @dev Only reverts on InvalidSecret (user's own error) or InvalidStatus (not READY).
@@ -97,9 +101,11 @@ interface IMintOperations is IErrors {
     function finalizeMint(bytes32 requestId) external;
     
     /// @notice Cancel a timed-out mint request (permissionless)
-    /// @dev For PENDING/KEY_PROVIDED: refunds deposit to user. For READY: transitions to EXPIRED_READY.
+    /// @dev For PENDING: refunds deposit to user. For KEY_PROVIDED: requires userSecret, slashes collateral to user, emits userSecret.
+    ///      For READY: transitions to EXPIRED_READY.
     /// @param requestId The mint request ID
-    function cancelMint(bytes32 requestId) external;
+    /// @param userSecret The user's Ed25519 secret scalar (required for KEY_PROVIDED cancellation)
+    function cancelMint(bytes32 requestId, bytes32 userSecret) external;
 
     /// @notice LP claims griefing deposit after mint expired in READY state
     /// @dev LP must reveal lpSecret matching lpCommitment set during setMintReady

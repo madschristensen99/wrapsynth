@@ -117,10 +117,10 @@ contract E2EAdvancedScenariosTest is Test {
         
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey, bytes32(uint256(0xdeadbeef)));
         
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(requestId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(requestId);
         
         vm.prank(user);
         MintFacet(address(hub)).revealSecret(requestId, testSecret);
@@ -204,7 +204,7 @@ contract E2EAdvancedScenariosTest is Test {
         
         // LP can now cancel and claim griefing deposit
         vm.prank(lp1);
-        MintFacet(address(hub)).cancelMint(requestId);
+        MintFacet(address(hub)).cancelMint(requestId, bytes32(0));
         console.log("[4] LP1 cancelled mint and claimed griefing deposit");
         
         uint256 lpReturns = VaultFacet(address(hub)).pendingReturns(lp1, address(0));

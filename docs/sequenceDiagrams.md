@@ -420,13 +420,15 @@ sequenceDiagram
     VM-->>User: MintInitiated event, requestId
     deactivate VM
 
-    Note over User,Monero: Step 2: LP provides public key for atomic swap
-    LP->>VM: provideLPKey(requestId, lpPublicKey, lpPublicViewKey)
+    Note over User,Monero: Step 2: LP provides public key + locks collateral
+    LP->>VM: provideLPKey(requestId, lpPublicKey, lpPublicViewKey, lpCommitment)
     alt Wrong status or unauthorized
         VM-->>LP: Revert: InvalidStatus / Unauthorized
     end
-    VM->>VM: Store lpPublicKeys[requestId]
-    VM-->>LP: LPKeyProvided event
+    VM->>VM: Store lpPublicKeys[requestId] and lpCommitment
+    VM->>VM: Lock collateral (MINT_LOCK_RATIO * par value in sDAI)
+    VM->>VM: Store xmrPriceAtReady for par settlement
+    VM-->>LP: LPKeyProvided + MintCollateralLocked events
 
     Note over User,Monero: Step 3: User locks XMR on Monero with PTLC
     User->>Monero: Lock XMR with PTLC
@@ -493,12 +495,21 @@ sequenceDiagram
     participant User
     participant LP as Liquidity Provider
 
-    Note over Anyone,LP: Scenario A: LP never responded (PENDING or KEY_PROVIDED timeout)
-    Anyone->>VM: cancelMint(requestId)
-    VM->>VM: Verify PENDING/KEY_PROVIDED and timeout reached
+    Note over Anyone,LP: Scenario A: LP never responded (PENDING timeout)
+    Anyone->>VM: cancelMint(requestId, userSecret)
+    VM->>VM: Verify PENDING and timeout reached
     VM->>VM: Release pendingDebt
-    VM->>VM: Queue refund to User (LP didn't act)
+    VM->>VM: Queue griefing deposit refund to User
     VM-->>Anyone: MintCancelled event
+
+    Note over Anyone,LP: Scenario A2: LP provided key but never set ready (KEY_PROVIDED timeout)
+    User->>VM: cancelMint(requestId, userSecret)
+    VM->>VM: Verify KEY_PROVIDED and timeout reached
+    VM->>VM: Verify userSecret matches claimCommitment (Ed25519)
+    VM->>VM: Slash locked collateral (par value) to User via pendingReturns
+    VM->>VM: Queue griefing deposit refund to User
+    VM->>VM: Emit userSecret on-chain (LP can recover XMR)
+    VM-->>User: MintCancelledWithSecret event
 
     Note over Anyone,LP: Scenario B: User didn't finalize (READY timeout → EXPIRED_READY)
     Anyone->>VM: cancelMint(requestId)
@@ -540,6 +551,7 @@ sequenceDiagram
 
     Note over User,Monero: Step 1: User requests burn
     User->>VM: requestBurn(wsxmrAmount, lpVault, userAddress, claimCommitment, userPublicKey, userViewKey)
+    Note right of User: Per-burn keys: user_priv_i = H(seed || nonce)
     activate VM
     VM->>VM: Validate amount >= MIN_BURN_AMOUNT
     VM->>VM: Validate vault has sufficient debt & capacity
@@ -649,13 +661,16 @@ sequenceDiagram
     VM-->>User: BurnForceSettled event
 
     Note over User,VM: Scenario C: LP proposed but didn't follow through (PROPOSED timeout)
-    Anyone->>VM: resolveDeclinedProposal(requestId)
+    User->>VM: resolveDeclinedProposal(requestId, userSecret)
     VM->>VM: Verify PROPOSED and deadline passed
+    VM->>VM: Verify userSecret·G = userPublicKey (Ed25519)
     VM->>VM: Unlock collateral back to vault
     VM->>VM: Restore vault normalizedDebt (capped at current index)
     VM->>Token: mint(user, wsxmrAmount) — restore burned tokens
     VM->>VM: Mark CANCELLED
-    VM-->>Anyone: BurnProposalDeclined event
+    VM-->>Anyone: BurnProposalDeclined(requestId, userSecret)
+    Note over User,VM: LP watches BurnProposalDeclined event, extracts userSecret
+    LP->>Monero: Sweep shared XMR (userSecret + lpSecret → full spend key)
 
     Note over User,VM: Scenario D: Vault liquidated during active burn
     Note right of VM: Liquidation handles in-flight burns automatically
@@ -968,11 +983,13 @@ sequenceDiagram
     Mint-->>Hub: emit MintInitiated(requestId, ...)
     Hub-->>User: return requestId
 
-    Note over User,LP: 2. LP Provides Keys
-    LP->>Hub: provideLPKey(requestId, lpPublicSpendKey, lpPublicViewKey)
+    Note over User,LP: 2. LP Provides Keys + Locks Collateral
+    LP->>Hub: provideLPKey(requestId, lpPublicSpendKey, lpPublicViewKey, lpCommitment)
     Hub->>Mint: delegateCall provideLPKey(...)
+    Mint->>Mint: Store lpCommitment, lock collateral (MINT_LOCK_RATIO * par)
+    Mint->>Mint: Store xmrPriceAtReady for par settlement
     Mint->>Mint: status = KEY_PROVIDED
-    Mint-->>Hub: emit LPKeyProvided(requestId, ...)
+    Mint-->>Hub: emit LPKeyProvided + MintCollateralLocked
 
     Note over User,LP: 3. User Sends XMR to Shared Address
     User->>XMR: Send XMR to shared deposit address (userPubKey + LP keys)
@@ -983,11 +1000,11 @@ sequenceDiagram
     XMR-->>LP: Deposit confirmed (amount matches)
 
     Note over User,LP: 4. LP Confirms Receipt
-    LP->>Hub: setMintReady(requestId, lpCommitment)
+    LP->>Hub: setMintReady(requestId)
     Hub->>Mint: delegateCall setMintReady(...)
     Mint->>Mint: Re-check collateral ratio after yield sync
     Mint->>Mint: status = READY, pendingMintCount++
-    Mint-->>Hub: emit MintReady(requestId, lpCommitment)
+    Mint-->>Hub: emit MintReady(requestId)
 
     Note over User,LP: 5. User Reveals Secret → Mint Finalized (two-step)
     User->>Hub: revealSecret(requestId, secret)
@@ -1018,17 +1035,19 @@ sequenceDiagram
     participant LP
 
     alt LP never provides keys (PENDING timeout)
-        User->>Mint: cancelMint(requestId) [after timeout]
+        User->>Mint: cancelMint(requestId, userSecret) [after timeout]
         Mint->>Mint: status = CANCELLED
         Mint->>Mint: Return griefing deposit to user
         Mint-->>User: emit MintCancelled
     end
 
     alt LP provides keys but never sets ready (KEY_PROVIDED timeout)
-        User->>Mint: cancelMint(requestId) [after timeout]
-        Mint->>Mint: status = CANCELLED
+        User->>Mint: cancelMint(requestId, userSecret) [after timeout]
+        Mint->>Mint: Verify userSecret matches claimCommitment (Ed25519)
+        Mint->>Mint: Slash locked collateral (par value) to user via pendingReturns
         Mint->>Mint: Return griefing deposit to user
-        Mint-->>User: emit MintCancelled
+        Mint->>Mint: Emit userSecret on-chain (LP can recover XMR)
+        Mint-->>User: emit MintCancelledWithSecret(requestId, userSecret)
     end
 
     alt LP sets ready but user never finalizes (READY timeout)

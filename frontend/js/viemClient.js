@@ -32,7 +32,8 @@ let userAddress = null;
  * Initialize viem clients
  */
 function getTransport() {
-    const retryOpts = { retryCount: 2, retryDelay: 800 };
+    const timeout = 10000; // 10s — prevent slow RPC from blocking UI
+    const retryOpts = { retryCount: 1, retryDelay: 200, timeout };
     const httpTransports = NETWORKS.gnosis.rpcUrls.map(url => http(url, retryOpts));
     // HTTP RPCs first for reads — MetaMask's internal RPC can be slow/unreliable on Gnosis.
     // MetaMask is still used for writes via walletClient.
@@ -149,6 +150,8 @@ export async function ensureConnected() {
                 chain: gnosis,
                 transport: custom(window.ethereum)
             });
+            // Ensure wallet is on Gnosis chain after silent reconnect
+            await switchToGnosisChain();
             return userAddress;
         }
     } catch (e) {
@@ -225,28 +228,52 @@ export async function readHub(functionName, args = []) {
  * @param {bigint} gas - Optional gas limit override
  */
 export async function writeHub(functionName, args = [], value = 0n, gas = undefined) {
-    const client = getWalletClient();
+    const account = getUserAddress();
+    const { encodeFunctionData } = await import('https://esm.sh/viem@2.7.0');
 
-    const simOpts = {
-        address: CONTRACTS.hub,
+    const data = encodeFunctionData({
         abi: parsedABIs.hub,
         functionName,
         args,
-        value,
-        account: userAddress
-    };
-    if (gas !== undefined) {
-        simOpts.gas = gas;
+    });
+
+    const gasHex = gas ? '0x' + gas.toString(16) : undefined;
+
+    // Send directly via wallet provider to bypass viem transport InternalRpcError
+    try {
+        const txParams = {
+            from: account,
+            to: CONTRACTS.hub,
+            data,
+        };
+        if (gasHex) txParams.gas = gasHex;
+        if (value > 0n) txParams.value = '0x' + value.toString(16);
+
+        const hash = await window.ethereum.request({
+            method: 'eth_sendTransaction',
+            params: [txParams]
+        });
+
+        const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
+        return receipt;
+    } catch (directErr) {
+        // Fall back to viem simulate + writeContract
+        console.warn('[writeHub] Direct send failed, falling back to simulate:', directErr.message);
+        const client = getWalletClient();
+        const simOpts = {
+            address: CONTRACTS.hub,
+            abi: parsedABIs.hub,
+            functionName,
+            args,
+            value,
+            account: userAddress
+        };
+        if (gas !== undefined) simOpts.gas = gas;
+        const { request } = await getPublicClient().simulateContract(simOpts);
+        const hash = await client.writeContract({ ...request, account: userAddress });
+        const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
+        return receipt;
     }
-
-    const { request } = await getPublicClient().simulateContract(simOpts);
-
-    const hash = await client.writeContract({ ...request, account: userAddress });
-
-    // Wait for transaction confirmation
-    const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
-
-    return receipt;
 }
 
 /**

@@ -107,10 +107,10 @@ contract E2EComprehensiveTest is Test {
         
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey, bytes32(uint256(0xdeadbeef)));
         
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(requestId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(requestId);
         
         vm.prank(user);
         MintFacet(address(hub)).revealSecret(requestId, testSecret);
@@ -167,7 +167,7 @@ contract E2EComprehensiveTest is Test {
         
         // Anyone can cancel now
         vm.prank(user2);
-        MintFacet(address(hub)).cancelMint(requestId);
+        MintFacet(address(hub)).cancelMint(requestId, bytes32(0));
         console.log("  User2 cancelled the timed-out mint");
         
         // User should get griefing deposit back
@@ -188,10 +188,10 @@ contract E2EComprehensiveTest is Test {
         
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey, bytes32(uint256(0xdeadbeef)));
         
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(requestId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(requestId);
         console.log("  LP set mint ready (extends timeout)");
         
         // Jump past extended timeout (MINT_READY_EXTENSION = 24 hours)
@@ -199,7 +199,7 @@ contract E2EComprehensiveTest is Test {
         console.log("  Jumped 24 hours + 1 second");
         
         vm.prank(user2);
-        MintFacet(address(hub)).cancelMint(requestId);
+        MintFacet(address(hub)).cancelMint(requestId, bytes32(0));
         console.log("  Cancelled after extended timeout");
         console.log("  PASS - Extended timeout handled\n");
     }
@@ -218,17 +218,17 @@ contract E2EComprehensiveTest is Test {
         
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey, bytes32(uint256(0xdeadbeef)));
         
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(requestId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(requestId);
         
         // Jump past timeout
         vm.roll(block.number + 17281);
         
         // Cancel it first
         vm.prank(user2);
-        MintFacet(address(hub)).cancelMint(requestId);
+        MintFacet(address(hub)).cancelMint(requestId, bytes32(0));
         
         // Try to finalize - should fail
         vm.prank(user);
@@ -256,7 +256,7 @@ contract E2EComprehensiveTest is Test {
         // LP tries to set ready - should fail
         vm.prank(lp);
         vm.expectRevert();
-        MintFacet(address(hub)).setMintReady(requestId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(requestId);
         
         console.log("  PASS - LP cannot set ready after timeout\n");
     }
@@ -290,8 +290,12 @@ contract E2EComprehensiveTest is Test {
         
         uint256 balance = _mintTokensForUser(user);
         
+        bytes32 userSecret = bytes32(uint256(0xdeadbeef));
+        (uint256 upkx, ) = Ed25519.scalarMultBase(uint256(userSecret));
+        bytes32 userPubKey = bytes32(upkx);
+
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(balance / 2, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(balance / 2, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
         
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -309,7 +313,7 @@ contract E2EComprehensiveTest is Test {
         
         // Anyone can resolve the declined proposal after timeout
         vm.prank(lp);
-        BurnFacet(address(hub)).resolveDeclinedProposal(burnId);
+        BurnFacet(address(hub)).resolveDeclinedProposal(burnId, userSecret);
         console.log("  LP resolved declined proposal");
         console.log("  PASS\n");
     }
@@ -408,10 +412,10 @@ contract E2EComprehensiveTest is Test {
         bytes32 lpPublicKey1 = bytes32(uint256(0xdeadbeef));
         bytes32 lpPublicKey2 = bytes32(uint256(0xdeadbeef));
         vm.startPrank(lp);
-        MintFacet(address(hub)).provideLPKey(requestId1, lpPublicKey1, lpPublicKey1);
-        MintFacet(address(hub)).provideLPKey(requestId2, lpPublicKey2, lpPublicKey2);
-        MintFacet(address(hub)).setMintReady(requestId1, bytes32(uint256(0xdeadbeef)));
-        MintFacet(address(hub)).setMintReady(requestId2, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).provideLPKey(requestId1, lpPublicKey1, lpPublicKey1, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).provideLPKey(requestId2, lpPublicKey2, lpPublicKey2, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(requestId1);
+        MintFacet(address(hub)).setMintReady(requestId2);
         vm.stopPrank();
         
         // Both users finalize
@@ -464,8 +468,8 @@ contract E2EComprehensiveTest is Test {
         bytes32 lpPublicViewKey = bytes32(uint256(0x2222222222222222222222222222222222222222222222222222222222222222));
         vm.startPrank(lp);
         BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash, lpPublicSpendKey, lpPublicViewKey);
-        MintFacet(address(hub)).provideLPKey(mintId, lpPublicKey, lpPublicKey);
-        MintFacet(address(hub)).setMintReady(mintId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).provideLPKey(mintId, lpPublicKey, lpPublicKey, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(mintId);
         vm.stopPrank();
         
         vm.prank(user);
@@ -497,10 +501,10 @@ contract E2EComprehensiveTest is Test {
         
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey, bytes32(uint256(0xdeadbeef)));
         
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(requestId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(requestId);
         
         vm.prank(_user);
         MintFacet(address(hub)).revealSecret(requestId, secret);

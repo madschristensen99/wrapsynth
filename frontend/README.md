@@ -100,7 +100,7 @@ User Browser
 
 **Mint Flow** (XMR → wsXMR) — 4-step atomic swap:
 1. `initiateMint` — user posts Ed25519 commitment + griefing deposit
-2. LP provides keys → user sends XMR to shared deposit address
+2. LP provides keys + locks collateral → user sends XMR to shared deposit address
 3. LP confirms receipt → `setMintReady`
 4. User reveals secret → `finalizeMint` → wsXMR minted
 

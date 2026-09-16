@@ -6,6 +6,7 @@ import {IBurnFacet} from "../interfaces/facets/IBurnFacet.sol";
 import {IwsXmrHub} from "../interfaces/core/IwsXmrHub.sol";
 import {Ed25519} from "../Ed25519.sol";
 import {YieldLogic} from "../libraries/YieldLogic.sol";
+import {CollateralLogic} from "../libraries/CollateralLogic.sol";
 import {GnosisAddresses} from "../GnosisAddresses.sol";
 
 contract BurnFacet is wsXmrStorage, IBurnFacet {
@@ -77,7 +78,6 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         if (wsxmrAmount < MIN_BURN_AMOUNT) revert BelowMinimumBurn();
         
         Vault storage vault = _vaults[lpVault];
-        if (vault.pendingMintCount > 0) revert PendingMintLock();
         
         if (vault.minBurnAmount > 0 && wsxmrAmount < vault.minBurnAmount) revert BelowMinimumBurn();
         
@@ -104,6 +104,19 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
             : 0;
         if (availableCollateral < totalLock) revert InsufficientCollateral();
         
+        // Ensure remaining free collateral can back pending mints at COLLATERAL_RATIO
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
+        if (vault.pendingDebt > 0) {
+            uint256 remainingFree = availableCollateral > totalLock
+                ? availableCollateral - totalLock
+                : 0;
+            uint256 pendingRatio = CollateralLogic.calculateRatioFromShares(
+                remainingFree, vault.pendingDebt, GnosisAddresses.SDAI, collateralPrice, xmrPrice
+            );
+            if (pendingRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
+        }
+        
         if (!fromRouter) {
             IwsXmrHub(address(this)).burnTokens(user, wsxmrAmount);
         } else {
@@ -122,7 +135,6 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         bytes32 requestId = keccak256(abi.encodePacked(user, lpVault, wsxmrAmount, ++_requestNonce));
         if (burnRequests[requestId].status != BurnStatus.INVALID) revert BurnAlreadyExists();
         
-        uint256 xmrPrice = _getXmrPriceFromStorage();
         
         BurnRequest storage req = burnRequests[requestId];
         req.requestId = requestId;
@@ -420,15 +432,26 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     /// @notice Resolve a burn where the LP proposed a hash but the user never confirmed (status must be PROPOSED, deadline expired)
     /// @dev Permissionless — anyone can call after the commit deadline expires.
     ///      Restores wsXMR to the user and releases the locked LP collateral.
+    ///      The caller MUST provide the user's Monero spend key half (userSecret), which is verified
+    ///      on-chain via Ed25519.scalarMultBase against the stored userPublicKey. The revealed
+    ///      userSecret is emitted in the BurnProposalDeclined event so the LP can combine it with
+    ///      their own key half to sweep the shared XMR back to their wallet — ensuring atomicity.
     ///      If the vault was liquidated since the burn was requested, the locked collateral is not released.
     /// @param requestId The burn request ID
-    function resolveDeclinedProposal(bytes32 requestId) external {
+    /// @param userSecret The user's Ed25519 private spend key half (revealed on-chain for LP recovery)
+    function resolveDeclinedProposal(bytes32 requestId, bytes32 userSecret) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
+        
+        if (userSecret == bytes32(0)) revert InvalidUserSecret();
         
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.PROPOSED) revert InvalidStatus();
         if (block.number < request.deadline) revert DeadlineNotExpired();
+        
+        // Verify userSecret corresponds to the stored userPublicKey
+        (uint256 px, ) = Ed25519.scalarMultBase(uint256(userSecret));
+        if (bytes32(px) != request.userPublicKey) revert InvalidUserSecret();
         
         Vault storage vault = _vaults[request.lpVault];
         
@@ -445,7 +468,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         IwsXmrHub(address(this)).mintTokens(request.user, request.wsxmrAmount);
         
         request.status = BurnStatus.CANCELLED;
-        emit BurnProposalDeclined(requestId);
+        emit BurnProposalDeclined(requestId, userSecret);
         
         _reentrancyStatus = _NOT_ENTERED;
     }
@@ -541,6 +564,9 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         // Early return if no debt (skip expensive oracle calls)
         uint256 actualDebt = (vault.normalizedDebt * globalDebtIndex) / 1e18;
         if (actualDebt == 0 && vault.pendingDebt == 0) return;
+        
+        // Skip yield extraction if oracle price is stale — don't block burn operations
+        if (block.timestamp > lastXmrPriceTimestamp + 120 || block.timestamp > lastCollateralPriceTimestamp + 120) return;
         
         uint256 xmrPrice = _getXmrPriceFromStorage();
         uint256 collateralPrice = _getCollateralPriceFromStorage();

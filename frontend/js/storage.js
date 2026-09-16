@@ -63,7 +63,7 @@ export function addOrUpdateActiveSwap(swap) {
                 // New swap with requestId: replace any temporary entry of same type
                 const tempIdx = swaps.findIndex(s => !s.requestId && s.type === swap.type);
                 if (tempIdx >= 0) {
-                    swaps[tempIdx] = enriched;
+                    swaps[tempIdx] = { ...swaps[tempIdx], ...enriched };
                 } else {
                     swaps.push(enriched);
                 }

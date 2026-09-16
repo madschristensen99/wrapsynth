@@ -42,7 +42,7 @@ export function combineSpendKeys(userSecretHex, lpSecretHex) {
  * @param {string} hex - 0x-prefixed hex (big-endian)
  * @returns {string} little-endian hex (no 0x prefix)
  */
-function toLeHex(hex) {
+export function toLeHex(hex) {
     const clean = hex.replace(/^0x/, '').padStart(64, '0');
     const bytes = new Uint8Array(32);
     for (let i = 0; i < 32; i++) {
@@ -85,6 +85,10 @@ export async function sweepBurnOutput({ userSecretHex, lpSecretHex, userViewKeyH
         throw new Error('Monero WASM module not loaded. Ensure monero-ts.js is included in the page.');
     }
 
+    if (typeof moneroTs.createWalletFull !== 'function') {
+        throw new Error('Monero WASM bundle does not include createWalletFull. Rebuild monero-ts.js with: node build-monero-ts.mjs');
+    }
+
     // MoneroNetworkType.MAINNET = 0; fall back to numeric if enum not yet initialized
     const mainnetType = (moneroTs.MoneroNetworkType && moneroTs.MoneroNetworkType.MAINNET !== undefined)
         ? moneroTs.MoneroNetworkType.MAINNET
@@ -92,13 +96,23 @@ export async function sweepBurnOutput({ userSecretHex, lpSecretHex, userViewKeyH
 
     // Create wallet from keys
     log('Creating wallet from keys...');
+
+    // Use connected daemon URL from moneroRpc for consistency
+    let serverUri = MONERO_CONFIG.rpcUrl;
+    try {
+        const { getMoneroRpc } = await import('./moneroRpc.js');
+        const rpc = getMoneroRpc();
+        serverUri = await rpc.getConnectedUrl();
+    } catch {}
+
     const wallet = await moneroTs.createWalletFull({
         password: 'burn-sweep-tmp',
         networkType: mainnetType,
         privateSpendKey: combinedSpendLe,
         privateViewKey: viewKeyLe,
-        serverUri: MONERO_CONFIG.rpcUrl,
+        server: serverUri,
         restoreHeight: restoreHeight,
+        proxyToWorker: false,
     });
 
     try {
@@ -198,4 +212,41 @@ export function getCombinedKeysForImport(userSecretHex, lpSecretHex, userViewKey
         spendKey: combinedSpendLe,
         viewKey: viewKeyLe,
     };
+}
+
+/**
+ * Derive the Monero address from combined keys for verification.
+ * Uses @noble/ed25519 to compute the public spend key (user_pub + LP_pub)
+ * and pairs it with the user's public view key.
+ *
+ * @param {string} userSecretHex - User's private spend key (0x hex)
+ * @param {string} lpSecretHex - LP's revealed secret (0x hex)
+ * @param {string} userViewKeyHex - User's private view key (0x hex)
+ * @returns {Promise<string>} Expected Monero address
+ */
+export async function deriveExpectedAddress(userSecretHex, lpSecretHex, userViewKeyHex) {
+    const ed = await import('https://esm.sh/@noble/ed25519@2.1.0');
+    const Point = ed.ExtendedPoint || ed.Point;
+    const ED25519_L = 2n ** 252n + 27742317777372353535851937790883648493n;
+
+    const userSecret = BigInt(userSecretHex) % ED25519_L;
+    const lpSecret = BigInt(lpSecretHex) % ED25519_L;
+    const combined = (userSecret + lpSecret) % ED25519_L;
+
+    const combinedPubSpend = Point.BASE.multiply(combined).toRawBytes();
+
+    // Derive public view key from private view key
+    const viewKeyClean = userViewKeyHex.replace(/^0x/, '').padStart(64, '0');
+    const viewKeyBytes = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) {
+        viewKeyBytes[i] = parseInt(viewKeyClean.substr(i * 2, 2), 16);
+    }
+    // View key is stored big-endian in the agent, convert to scalar
+    const viewKeyBe = BigInt('0x' + viewKeyClean);
+    const viewKeyLe = viewKeyBe % ED25519_L;
+    const combinedPubView = Point.BASE.multiply(viewKeyLe).toRawBytes();
+
+    // Use moneroCrypto to derive address
+    const { deriveMoneroAddress } = await import('./moneroCrypto.js');
+    return deriveMoneroAddress(combinedPubSpend, combinedPubView, true);
 }

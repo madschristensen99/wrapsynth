@@ -61,8 +61,8 @@ async function main() {
         'function getPendingReturns(address user, address token) external view returns (uint256)',
         'function withdrawReturns(address token) external',
         'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment, bytes32 userPublicKey) external payable returns (bytes32)',
-        'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
-        'function setMintReady(bytes32 requestId, bytes32 lpCommitment) external payable',
+        'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey, bytes32 lpCommitment) external',
+        'function setMintReady(bytes32 requestId) external',
         'function revealSecret(bytes32 requestId, bytes32 secret) external',
         'function finalizeMint(bytes32 requestId) external',
         'function updateOraclePrices(bytes[] calldata updateData) external payable',
@@ -129,18 +129,32 @@ async function main() {
     console.log('  Prices updated');
     console.log('');
 
-    // Ensure sufficient collateral (always top up to avoid InsufficientCollateral)
+    // Ensure sufficient collateral — only top up if vault idle collateral is low
     const vault = await hub.getVault(wallet.address);
-    const collateralAmount = ethers.utils.parseEther('0.5');
-    const wxdaiBalance = await wxdai.balanceOf(wallet.address);
-    if (wxdaiBalance.lt(collateralAmount)) {
-        const toWrap = collateralAmount.sub(wxdaiBalance);
-        await (await wxdai.deposit({ value: toWrap })).wait();
-        console.log('Wrapped', ethers.utils.formatEther(toWrap), 'xDAI to wxDAI');
+    const idleCollateral = vault.collateralShares > vault.lockedCollateral
+        ? vault.collateralShares.sub(vault.lockedCollateral) : ethers.BigNumber.from(0);
+    console.log('Vault idle collateral shares:', idleCollateral.toString());
+    if (idleCollateral.lt(ethers.utils.parseEther('0.2'))) {
+        const collateralAmount = ethers.utils.parseEther('0.2');
+        const wxdaiBalance = await wxdai.balanceOf(wallet.address);
+        if (wxdaiBalance.lt(collateralAmount)) {
+            const toWrap = collateralAmount.sub(wxdaiBalance);
+            const xdaBalance = await wallet.getBalance();
+            if (xdaBalance.gte(toWrap)) {
+                await (await wxdai.deposit({ value: toWrap })).wait();
+                console.log('Wrapped', ethers.utils.formatEther(toWrap), 'xDAI to wxDAI');
+            } else {
+                console.log('⚠️  Insufficient xDAI to wrap, using existing collateral only');
+            }
+        }
+        if (wxdaiBalance.gte(collateralAmount) || (await wxdai.balanceOf(wallet.address)).gte(collateralAmount)) {
+            await (await wxdai.approve(HUB_ADDRESS, collateralAmount)).wait();
+            await (await hub.depositCollateral(collateralAmount, { gasLimit: 300000 })).wait();
+            console.log('Deposited', ethers.utils.formatEther(collateralAmount), 'collateral');
+        }
+    } else {
+        console.log('Vault has sufficient idle collateral, skipping deposit');
     }
-    await (await wxdai.approve(HUB_ADDRESS, collateralAmount)).wait();
-    await (await hub.depositCollateral(collateralAmount, { gasLimit: 300000 })).wait();
-    console.log('Deposited', ethers.utils.formatEther(collateralAmount), 'collateral');
     console.log('');
 
     // --- STEP 2: Mint some wsXMR if needed ---
@@ -157,13 +171,18 @@ async function main() {
         const compressed = await ed25519Helper.compressPublicKey(userPubX, userPubY);
         const userPublicKey = ethers.utils.hexZeroPad(compressed.toHexString(), 32);
 
+        // Refresh prices immediately before mint to avoid StalePrice (120s window)
+        console.log('  Refreshing prices before mint...');
+        await retryRedStone(() => wrappedHub.updateOraclePrices([], { gasLimit: 500000 }));
+        console.log('  Prices refreshed');
+
         const mintTx = await hub.initiateMint(
             wallet.address,
             wallet.address,
             xmrAmount,
             commitment,
             userPublicKey,
-            { value: griefingDeposit, gasLimit: 500000 }
+            { value: griefingDeposit, gasLimit: 1000000 }
         );
         const mintReceipt = await mintTx.wait();
         console.log('  Mint initiated:', mintTx.hash);
@@ -180,14 +199,14 @@ async function main() {
         const lpSecret = ethers.utils.randomBytes(32);
         const [lpPubX, lpPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(lpSecret));
         const lpPublicKey = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['uint256', 'uint256'], [lpPubX, lpPubY]));
+        const lpCommitment = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['uint256', 'uint256'], [lpPubX, lpPubY]));
         console.log('  LP Public Key:', lpPublicKey);
         
-        const provideTx = await hub.provideLPKey(requestId, lpPublicKey, lpPublicKey, { gasLimit: 200000 });
+        const provideTx = await hub.provideLPKey(requestId, lpPublicKey, lpPublicKey, lpCommitment, { gasLimit: 500000 });
         await provideTx.wait();
         console.log('  LP key provided:', provideTx.hash);
 
-        const lpCommitment = ethers.utils.id('lp-commitment');
-        const readyTx = await hub.setMintReady(requestId, lpCommitment, { gasLimit: 200000 });
+        const readyTx = await hub.setMintReady(requestId, { gasLimit: 500000 });
         await readyTx.wait();
         console.log('  Mint ready:', readyTx.hash);
 

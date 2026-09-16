@@ -185,10 +185,6 @@ export async function getIncomingTransfers(opts = {}) {
  * Retries every `intervalMs` up to `maxWaitMs`.
  */
 export async function pollForDeposit(expectedAmountAtomic, opts = {}) {
-  return withWalletLock(() => _pollForDeposit(expectedAmountAtomic, opts));
-}
-
-async function _pollForDeposit(expectedAmountAtomic, opts = {}) {
   const {
     depositAddress = null,
     restoreHeight = 0,
@@ -206,69 +202,102 @@ async function _pollForDeposit(expectedAmountAtomic, opts = {}) {
     throw new Error('MONERO_VIEW_KEY not configured — needed to scan deposit address');
   }
 
-  // Create a unique view-only wallet name for this deposit address
   const walletName = 'deposit-' + depositAddress.slice(0, 12).replace(/[^a-zA-Z0-9]/g, '');
   const walletPass = 'deposit-scan-password';
   const mainWalletName = process.env.MONERO_WALLET_NAME || 'lp-wallet';
   const mainWalletPass = process.env.MONERO_WALLET_PASSWORD || 'lp-wallet-password';
   const walletDir = process.env.MONERO_WALLET_DIR || '/home/remsee/wsFrontendOverhaul/lp-server-js/monero-wallets';
 
-  console.log(`[Monero] Creating view-only wallet for deposit address: ${depositAddress.slice(0, 16)}...`);
-
-  // Create or open a view-only wallet for this specific deposit address
-  try {
-    await walletRpc('close_wallet', {});
-    // Clean up stale deposit wallet files from previous runs
-    try {
-      const fs = await import('fs');
-      for (const ext of ['', '.keys', '.address.txt']) {
-        const p = `${walletDir}/${walletName}${ext}`;
-        if (fs.existsSync(p)) fs.unlinkSync(p);
-      }
-    } catch {}
-    try {
-      await walletRpc('generate_from_keys', {
-        filename: walletName,
-        password: walletPass,
-        address: depositAddress,
-        viewkey: lpViewKey,
-        restore_height: restoreHeight,
-      });
-      console.log('[Monero] View-only wallet created for deposit address');
-    } catch (genErr) {
-      // Wallet might already exist in the RPC's memory, try opening it
-      if (genErr.message.includes('already exists') || genErr.message.includes('file_exists')) {
-        await walletRpc('open_wallet', { filename: walletName, password: walletPass });
-        console.log('[Monero] Opened existing view-only wallet for deposit address');
-      } else {
-        throw genErr;
-      }
-    }
-  } catch (err) {
-    console.error('[Monero] Failed to create/open view-only wallet:', err.message);
-    // Try to reopen main wallet before throwing
-    try { await walletRpc('open_wallet', { filename: mainWalletName, password: mainWalletPass }); } catch {}
-    throw err;
-  }
-
-  // Refresh the view-only wallet to scan the blockchain
-  try {
-    console.log('[Monero] Refreshing view-only wallet (scanning blockchain)...');
-    const refreshRes = await walletRpc('refresh', {}, 3, 300000);
-    console.log(`[Monero] Refresh complete: blocks_fetched=${refreshRes.blocks_fetched || 0}`);
-  } catch (err) {
-    console.warn('[Monero] Refresh failed (continuing anyway):', err.message);
-  }
-
+  let walletInitialized = false;
   const start = Date.now();
   let found = null;
 
-  try {
-    while (Date.now() - start < maxWaitMs) {
-      try {
+  while (Date.now() - start < maxWaitMs) {
+    try {
+      found = await withWalletLock(async () => {
+        if (!walletInitialized) {
+          console.log(`[Monero] Creating view-only wallet for deposit address: ${depositAddress.slice(0, 16)}...`);
+          try {
+            await walletRpc('close_wallet', {});
+            try {
+              const fs = await import('fs');
+              for (const ext of ['', '.keys', '.address.txt']) {
+                const p = `${walletDir}/${walletName}${ext}`;
+                if (fs.existsSync(p)) fs.unlinkSync(p);
+              }
+            } catch {}
+            try {
+              await walletRpc('generate_from_keys', {
+                filename: walletName,
+                password: walletPass,
+                address: depositAddress,
+                viewkey: lpViewKey,
+                restore_height: restoreHeight,
+              });
+              console.log('[Monero] View-only wallet created for deposit address');
+            } catch (genErr) {
+              if (genErr.message.includes('already exists') || genErr.message.includes('file_exists')) {
+                await walletRpc('open_wallet', { filename: walletName, password: walletPass });
+                console.log('[Monero] Opened existing view-only wallet for deposit address');
+              } else {
+                throw genErr;
+              }
+            }
+          } catch (err) {
+            console.error('[Monero] Failed to create/open view-only wallet:', err.message);
+            try { await walletRpc('open_wallet', { filename: mainWalletName, password: mainWalletPass }); } catch {}
+            throw err;
+          }
+
+          console.log(`[Monero] Refreshing view-only wallet (scanning from height ${restoreHeight})...`);
+          try {
+            const refreshRes = await walletRpc('refresh', { start_height: restoreHeight }, 3, 300000);
+            console.log(`[Monero] Refresh complete: blocks_fetched=${refreshRes.blocks_fetched || 0}`);
+          } catch (err) {
+            console.warn('[Monero] Refresh failed (continuing anyway):', err.message);
+          }
+          walletInitialized = true;
+        } else {
+          // Re-open the deposit wallet (another mint's poll may have swapped it)
+          try {
+            await walletRpc('close_wallet', {});
+            await walletRpc('open_wallet', { filename: walletName, password: walletPass });
+          } catch (openErr) {
+            console.warn(`[Monero] Failed to re-open deposit wallet ${walletName}: ${openErr.message}, recreating from keys...`);
+            try {
+              const fs = await import('fs');
+              for (const ext of ['', '.keys', '.address.txt']) {
+                const p = `${walletDir}/${walletName}${ext}`;
+                if (fs.existsSync(p)) fs.unlinkSync(p);
+              }
+            } catch {}
+            try {
+              await walletRpc('generate_from_keys', {
+                filename: walletName,
+                password: walletPass,
+                address: depositAddress,
+                viewkey: lpViewKey,
+                restore_height: restoreHeight,
+              });
+              console.log('[Monero] View-only wallet recreated for deposit address');
+            } catch (genErr) {
+              console.warn('[Monero] Failed to recreate wallet:', genErr.message);
+            }
+          }
+          // Refresh to pick up new blocks
+          try {
+            const refreshRes = await walletRpc('refresh', { start_height: restoreHeight }, 3, 300000);
+            console.log(`[Monero] Refresh complete: blocks_fetched=${refreshRes.blocks_fetched || 0}`);
+          } catch (refreshErr) {
+            console.warn('[Monero] Refresh failed:', refreshErr.message);
+          }
+        }
+
         const txs = await getIncomingTransfers({ minHeight: restoreHeight });
+        console.log(`[Monero] pollForDeposit: found ${txs.length} transfer(s), expected ${expectedAmountAtomic} atomic units`);
 
         for (const tx of txs) {
+          console.log(`[Monero]   transfer: txid=${tx.txid} amount=${tx.amount} height=${tx.height}`);
           const diff = tx.amount > expectedAmountAtomic
             ? tx.amount - expectedAmountAtomic
             : expectedAmountAtomic - tx.amount;
@@ -276,33 +305,30 @@ async function _pollForDeposit(expectedAmountAtomic, opts = {}) {
 
           if (diffBps <= toleranceBps) {
             console.log(`[Monero] Deposit found: txid=${tx.txid} amount=${tx.amount} height=${tx.height}`);
-            found = tx;
-            break;
+            return tx;
           }
         }
-
-        if (found) break;
-
-        // Refresh again to pick up any new blocks
-        if (txs.length === 0) {
-          await walletRpc('refresh', {}, 3, 300000);
-        }
-      } catch (err) {
-        console.warn('[Monero] pollForDeposit error:', err.message);
-      }
-
-      await new Promise(r => setTimeout(r, intervalMs));
-    }
-  } finally {
-    // Always restore the main wallet
-    console.log('[Monero] Restoring main LP wallet...');
-    try {
-      await walletRpc('close_wallet', {});
-      walletOpened = false; // Reset so ensureWalletOpen actually reopens
-      await ensureWalletOpen();
+        return null;
+      });
     } catch (err) {
-      console.warn('[Monero] Failed to restore main wallet:', err.message);
+      console.warn('[Monero] pollForDeposit error:', err.message);
     }
+
+    if (found) break;
+
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+
+  // Restore main wallet
+  console.log('[Monero] Restoring main LP wallet...');
+  try {
+    await withWalletLock(async () => {
+      await walletRpc('close_wallet', {});
+      walletOpened = false;
+      await ensureWalletOpen();
+    });
+  } catch (err) {
+    console.warn('[Monero] Failed to restore main wallet:', err.message);
   }
 
   if (found) return found;
@@ -383,26 +409,26 @@ async function _sendXmr({ destination, amountAtomic, priority = 1, accountIndex 
  * Sweep XMR from a mint deposit address to the LP's main wallet.
  * After MintFinalized, both secrets are known:
  *   - userSecret (revealed in MintFinalized event)
- *   - lpSecret (stored by LP server during setMintReady)
+ *   - lpSecret (stored by LP server during provideLPKey)
  * The full private spend key = (userSecret + lpSecret) mod l
  * The view key = LP's private view key (from env)
  *
  * @param {string} userSecretHex - user's secret from MintFinalized (0x-prefixed hex)
- * @param {string} lpSecretHex - LP's secret stored during setMintReady (0x-prefixed hex)
+ * @param {string} lpSecretHex - LP's secret stored during provideLPKey (0x-prefixed hex)
  * @param {string} lpViewKeyHex - LP's private view key (hex, no prefix)
  * @param {string} lpMainAddress - LP's main Monero address to sweep to
  * @param {number} restoreHeight - block height to start scanning from
  * @returns {Promise<{swept: boolean, txHashes: string[], amount: bigint}>}
  */
-export async function sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpMainAddress, restoreHeight = 0 }) {
+export async function sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpMainAddress, restoreHeight = 0, depositHeight = 0 }) {
   if (!WALLET_RPC_URL) {
     console.warn('[Monero] MONERO_WALLET_RPC_URL not set — skipping sweep');
     return { swept: false, txHashes: [], amount: 0n };
   }
-  return withWalletLock(() => _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpMainAddress, restoreHeight }));
+  return withWalletLock(() => _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpMainAddress, restoreHeight, depositHeight }));
 }
 
-async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpMainAddress, restoreHeight }) {
+async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpMainAddress, restoreHeight, depositHeight }) {
   const ed = await import('@noble/ed25519');
   const { createHash } = await import('crypto');
   if (!ed.etc.sha512Sync) {
@@ -413,7 +439,10 @@ async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpM
 
   // Combine secrets: full_spend = (userSecret + lpSecret) mod l
   const userSecretBigInt = BigInt(userSecretHex) % ED25519_L;
-  const lpSecretBigInt = BigInt(lpSecretHex) % ED25519_L;
+  // LP secret is stored as raw bytes (big-endian hex), but scalarToPubKey in server.js
+  // treats them as little-endian (reverses before BigInt). Reverse here to match.
+  const lpSecretBytes = Buffer.from(lpSecretHex.replace(/^0x/, ''), 'hex');
+  const lpSecretBigInt = BigInt('0x' + lpSecretBytes.reverse().toString('hex')) % ED25519_L;
   const combinedSpendScalar = (userSecretBigInt + lpSecretBigInt) % ED25519_L;
 
   // Convert scalar to little-endian hex for Monero
@@ -466,13 +495,20 @@ async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpM
   const fs = await import('fs');
   const walletDir = process.env.MONERO_WALLET_DIR || '/home/remsee/wsFrontendOverhaul/lp-server-js/monero-wallets';
 
-  // Fetch Monero daemon height for restore_height — the EVM block number
-  // passed as restoreHeight is NOT a Monero block height.
+  // Compute restore height for wallet scanning.
+  // depositHeight is the Monero block height where the deposit was found — use it
+  // directly (with a small buffer) so we scan from before the deposit.
+  // Fallback to daemonHeight - 1000 if no deposit height is known.
   let moneroRestoreHeight = 0;
   try {
     const daemonHeight = await getDaemonHeight();
-    moneroRestoreHeight = Math.max(0, daemonHeight - 200);
-    console.log(`[Monero] generate_from_keys restore_height=${moneroRestoreHeight} (daemon: ${daemonHeight}, ignored EVM height: ${restoreHeight})`);
+    if (depositHeight && depositHeight > 0) {
+      moneroRestoreHeight = Math.max(0, depositHeight - 10);
+      console.log(`[Monero] generate_from_keys restore_height=${moneroRestoreHeight} (deposit height: ${depositHeight}, daemon: ${daemonHeight})`);
+    } else {
+      moneroRestoreHeight = Math.max(0, daemonHeight - 1000);
+      console.log(`[Monero] generate_from_keys restore_height=${moneroRestoreHeight} (daemon: ${daemonHeight}, no deposit height — scanning 1000 blocks back)`);
+    }
   } catch (e) {
     console.warn('[Monero] Could not fetch daemon height for wallet creation:', e.message);
   }
@@ -507,7 +543,8 @@ async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpM
     // Refresh to scan for incoming transactions using the Monero height
     console.log('[Monero] Refreshing sweep wallet...');
     try {
-      await walletRpc('refresh', { start_height: moneroRestoreHeight });
+      const refreshRes = await walletRpc('refresh', { start_height: moneroRestoreHeight }, 3, 300000);
+      console.log(`[Monero] Refresh complete: blocks_fetched=${refreshRes.blocks_fetched || 0}, transactions=${refreshRes.transactions_transferred || 0}, received_money=${refreshRes.received_money || false}`);
     } catch (err) {
       console.warn('[Monero] Refresh error during sweep:', err.message);
     }
@@ -516,10 +553,36 @@ async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpM
     const balanceRes = await walletRpc('get_balance', { account_index: 0 });
     const balance = BigInt(balanceRes.balance);
     const unlockedBalance = BigInt(balanceRes.unlocked_balance || 0);
-    console.log(`[Monero] Sweep wallet balance: ${balance} atomic (${unlockedBalance} unlocked)`);
+
+    // Get current Monero height
+    const heightRes = await walletRpc('get_height', {});
+    const currentHeight = heightRes.height || 0;
+
+    // Get incoming transfers to find the deposit tx
+    const txs = await getIncomingTransfers({ minHeight: 0 });
+
+    console.log(`[Monero] Sweep wallet: address=${depositAddress}, balance=${balance} atomic (${unlockedBalance} unlocked), transfers=${txs.length}, height=${currentHeight}, restore_height=${moneroRestoreHeight}`);
+
+    if (txs.length === 0) {
+      console.log(`[Monero] No deposit found in sweep wallet (current height: ${currentHeight}, restore height: ${moneroRestoreHeight})`);
+      console.log(`[Monero]   Watching address: ${depositAddress}`);
+      console.log(`[Monero]   Combined spend key (LE): ${combinedSpendHex}`);
+      console.log(`[Monero]   View key: ${lpViewKeyHex.slice(0, 16)}...`);
+      return { swept: false, txHashes: [], amount: 0n, balance };
+    }
+
+    const depositTx = txs[0];
+    const confirmations = currentHeight - (depositTx.height || 0);
+    const REQUIRED_CONFIRMATIONS = 10;
+
+    console.log(`[Monero] Deposit: tx=${depositTx.txid}, block=${depositTx.height}, confirmations=${confirmations}/${REQUIRED_CONFIRMATIONS}, balance=${balance} atomic (${unlockedBalance} unlocked), current height=${currentHeight}`);
 
     if (unlockedBalance === 0n) {
-      console.log('[Monero] No unlocked balance to sweep — funds may still be confirming');
+      if (confirmations < REQUIRED_CONFIRMATIONS) {
+        console.log(`[Monero] Cannot sweep — ${confirmations}/${REQUIRED_CONFIRMATIONS} confirmations. Need ${REQUIRED_CONFIRMATIONS - confirmations} more block(s).`);
+      } else {
+        console.log(`[Monero] Cannot sweep — balance is locked despite ${confirmations} confirmations. Locked: ${balance - unlockedBalance} atomic.`);
+      }
       return { swept: false, txHashes: [], amount: 0n, balance };
     }
 
@@ -543,9 +606,209 @@ async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpM
     try {
       await walletRpc('close_wallet', {});
       walletOpened = false;
+      // Clean up temp sweep wallet files to avoid corruption on next run
+      const fs2 = await import('fs');
+      for (const ext of ['', '.keys', '.address.txt']) {
+        const p = `${walletDir}/sweep-tmp${ext}`;
+        if (fs2.existsSync(p)) {
+          try { fs2.unlinkSync(p); } catch {}
+        }
+      }
       await ensureWalletOpen();
     } catch (err) {
       console.warn('[Monero] Failed to restore main wallet after sweep:', err.message);
+    }
+  }
+}
+
+/**
+ * Sweep XMR from a burn shared address back to the LP's main wallet.
+ * Called when a BurnProposalDeclined event is seen on-chain — the user has
+ * revealed their private spend key (userSecret) to recover their wsXMR,
+ * and the LP can now combine it with their own secret to sweep the shared XMR.
+ *
+ * The shared burn address uses the USER's view key (not the LP's), so we
+ * derive the user's private view key from their revealed spend key using
+ * the same keccak256 derivation as the frontend (seedManager.js).
+ *
+ * @param {string} userSecretHex - user's private spend key from BurnProposalDeclined (0x-prefixed hex)
+ * @param {string} lpSecretHex - LP's secret stored during proposeHash (0x-prefixed hex)
+ * @param {string} lpMainAddress - LP's main Monero address to sweep to
+ * @param {number} restoreHeight - Monero block height to start scanning from
+ * @returns {Promise<{swept: boolean, txHashes: string[], amount: bigint}>}
+ */
+export async function sweepBurnShared({ userSecretHex, lpSecretHex, lpMainAddress, restoreHeight = 0 }) {
+  if (!WALLET_RPC_URL) {
+    console.warn('[Monero] MONERO_WALLET_RPC_URL not set — skipping burn sweep');
+    return { swept: false, txHashes: [], amount: 0n };
+  }
+  return withWalletLock(() => _sweepBurnShared({ userSecretHex, lpSecretHex, lpMainAddress, restoreHeight }));
+}
+
+async function _sweepBurnShared({ userSecretHex, lpSecretHex, lpMainAddress, restoreHeight }) {
+  const ed = await import('@noble/ed25519');
+  const { createHash } = await import('crypto');
+  if (!ed.etc.sha512Sync) {
+    ed.etc.sha512Sync = (...m) => createHash('sha512').update(Buffer.concat(m)).digest();
+  }
+  const { ethers } = await import('ethers');
+
+  const ED25519_L = 2n ** 252n + 27742317777372353535851937790883648493n;
+  const G = ed.ExtendedPoint.BASE;
+
+  // Combine secrets: full_spend = (userSecret + lpSecret) mod l
+  const userSecretBigInt = BigInt(userSecretHex) % ED25519_L;
+  const lpSecretBytes = Buffer.from(lpSecretHex.replace(/^0x/, ''), 'hex');
+  const lpSecretBigInt = BigInt('0x' + lpSecretBytes.reverse().toString('hex')) % ED25519_L;
+  const combinedSpendScalar = (userSecretBigInt + lpSecretBigInt) % ED25519_L;
+
+  // Convert scalar to little-endian hex for Monero
+  const combinedSpendLe = combinedSpendScalar.toString(16).padStart(64, '0');
+  const combinedSpendBytes = Buffer.from(combinedSpendLe, 'hex').reverse();
+  const combinedSpendHex = combinedSpendBytes.toString('hex');
+
+  // Derive the user's private view key from their revealed spend key
+  // (same derivation as seedManager.js: keccak256(LE(spendKey)) reversed, mod L)
+  const userSpendHex = userSecretBigInt.toString(16).padStart(64, '0');
+  const userSpendBytesBE = Buffer.from(userSpendHex, 'hex');
+  const userSpendBytesLE = Buffer.from(userSpendBytesBE).reverse();
+  const userViewHash = ethers.keccak256(userSpendBytesLE);
+  const userViewBytesLE = Buffer.from(userViewHash.slice(2), 'hex').reverse();
+  const userPrivateViewKey = BigInt('0x' + userViewBytesLE.toString('hex')) % ED25519_L;
+
+  // Derive public keys
+  const pubSpendBytes = Buffer.from(G.multiply(combinedSpendScalar).toRawBytes());
+  const pubViewBytes = Buffer.from(G.multiply(userPrivateViewKey).toRawBytes());
+
+  // Compute Monero address
+  const netByte = 0x12;
+  const addrData = Buffer.concat([Buffer.from([netByte]), pubSpendBytes, pubViewBytes]);
+  const checksum = Buffer.from(ethers.keccak256(addrData).slice(2), 'hex').slice(0, 4);
+
+  // Base58 encode
+  const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  function base58Encode(data) {
+    const ENCODED_BLOCK_SIZES = [0, 2, 3, 5, 6, 7, 9, 10, 11];
+    function encodeBlock(block) {
+      let num = 0n;
+      for (let i = 0; i < block.length; i++) num = num * 256n + BigInt(block[i]);
+      let encoded = '';
+      while (num > 0n) { encoded = ALPHABET[Number(num % 58n)] + encoded; num /= 58n; }
+      while (encoded.length < ENCODED_BLOCK_SIZES[block.length]) encoded = '1' + encoded;
+      return encoded;
+    }
+    let result = '';
+    for (let i = 0; i < data.length; i += 8) result += encodeBlock(data.slice(i, i + 8));
+    return result;
+  }
+  const sharedAddress = base58Encode(Buffer.concat([addrData, checksum]));
+
+  // User's private view key in LE hex for wallet creation
+  const userViewKeyLeHex = userPrivateViewKey.toString(16).padStart(64, '0');
+
+  console.log(`[Monero] Burn Sweep: shared address ${sharedAddress}`);
+  console.log(`[Monero] Burn Sweep: combined spend key (LE) = ${combinedSpendHex}`);
+  console.log(`[Monero] Burn Sweep: user view key (LE) = ${userViewKeyLeHex}`);
+
+  // Create wallet from keys
+  const walletName = 'burn-sweep-tmp';
+  const walletPass = 'sweep';
+  const fs = await import('fs');
+  const walletDir = process.env.MONERO_WALLET_DIR || '/home/remsee/wsFrontendOverhaul/lp-server-js/monero-wallets';
+
+  // Compute restore height
+  let moneroRestoreHeight = 0;
+  if (restoreHeight && restoreHeight > 0) {
+    moneroRestoreHeight = Math.max(0, restoreHeight - 10);
+  } else {
+    try {
+      const daemonHeight = await getDaemonHeight();
+      moneroRestoreHeight = Math.max(0, daemonHeight - 1000);
+    } catch (e) {
+      console.warn('[Monero] Could not fetch daemon height for burn sweep:', e.message);
+    }
+  }
+
+  // Delete old temp wallet files
+  for (const ext of ['', '.keys', '.address.txt']) {
+    const p = `${walletDir}/${walletName}${ext}`;
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+  }
+
+  let walletOpened = false;
+  try {
+    try {
+      await walletRpc('generate_from_keys', {
+        filename: walletName,
+        password: walletPass,
+        address: sharedAddress,
+        spendkey: combinedSpendHex,
+        viewkey: userViewKeyLeHex,
+        restore_height: moneroRestoreHeight,
+      });
+      walletOpened = true;
+      console.log('[Monero] Burn sweep wallet created from keys');
+    } catch (err) {
+      if (err.message.includes('already exists') || err.message.includes('file_exists')) {
+        await walletRpc('open_wallet', { filename: walletName, password: walletPass });
+        walletOpened = true;
+      } else {
+        throw err;
+      }
+    }
+
+    // Refresh to scan for incoming transactions
+    console.log('[Monero] Refreshing burn sweep wallet...');
+    try {
+      const refreshRes = await walletRpc('refresh', { start_height: moneroRestoreHeight }, 3, 300000);
+      console.log(`[Monero] Burn sweep refresh: blocks_fetched=${refreshRes.blocks_fetched || 0}`);
+    } catch (err) {
+      console.warn('[Monero] Refresh error during burn sweep:', err.message);
+    }
+
+    // Check balance
+    const balanceRes = await walletRpc('get_balance', { account_index: 0 });
+    const balance = BigInt(balanceRes.balance || 0);
+    const unlockedBalance = BigInt(balanceRes.unlocked_balance || 0);
+
+    console.log(`[Monero] Burn sweep: balance=${balance} atomic (${unlockedBalance} unlocked)`);
+
+    if (balance === 0n) {
+      console.log('[Monero] Burn sweep: no balance found — XMR may not have been sent or is still confirming');
+      return { swept: false, txHashes: [], amount: 0n, balance };
+    }
+
+    if (unlockedBalance === 0n) {
+      console.log('[Monero] Burn sweep: balance is locked — waiting for confirmations');
+      return { swept: false, txHashes: [], amount: 0n, balance };
+    }
+
+    // Sweep all funds to LP main address
+    console.log(`[Monero] Burn sweeping ${unlockedBalance} atomic units to ${lpMainAddress}`);
+    const sweepRes = await walletRpc('sweep_all', {
+      address: lpMainAddress,
+      account_index: 0,
+      priority: 1,
+      get_tx_keys: true,
+    });
+
+    const txHashes = Array.isArray(sweepRes.tx_hash_list) ? sweepRes.tx_hash_list : [sweepRes.tx_hash];
+    const amount = BigInt(sweepRes.amount_list?.[0] || 0);
+    console.log(`[Monero] Burn sweep complete: ${txHashes.length} tx(s), total ${amount} atomic units`);
+
+    return { swept: true, txHashes, amount };
+  } finally {
+    console.log('[Monero] Restoring main LP wallet after burn sweep...');
+    try {
+      if (walletOpened) await walletRpc('close_wallet', {});
+      // Clean up temp wallet files
+      for (const ext of ['', '.keys', '.address.txt']) {
+        const p = `${walletDir}/${walletName}${ext}`;
+        if (fs.existsSync(p)) { try { fs.unlinkSync(p); } catch {} }
+      }
+      await ensureWalletOpen();
+    } catch (err) {
+      console.warn('[Monero] Failed to restore main wallet after burn sweep:', err.message);
     }
   }
 }
@@ -734,13 +997,64 @@ async function _ensureWalletOpen() {
     }
   }
 
-  // First check if a wallet is already open
+  // First check if a wallet is already open — but verify it's the CORRECT wallet
+  // (a leftover view-only wallet from a previous mint scan could be open)
   try {
-    await walletRpc('get_balance', {});
-    walletOpened = true;
-    console.log('[Monero] Wallet already open');
-    return;
+    const addrRes = await walletRpc('get_address', { account_index: 0 });
+    const openAddr = addrRes.address;
+    // Compute expected LP address from spend key to verify
+    const expectedSpendKey = process.env.MONERO_SPEND_KEY;
+    if (expectedSpendKey) {
+      const ed = await import('@noble/ed25519');
+      const { createHash } = await import('crypto');
+      if (!ed.etc.sha512Sync) {
+        ed.etc.sha512Sync = (...m) => createHash('sha512').update(Buffer.concat(m)).digest();
+      }
+      const ED25519_L = 2n ** 252n + 27742317777372353535851937790883648493n;
+      const spendBytes = Buffer.from(expectedSpendKey.replace(/^0x/, ''), 'hex').reverse();
+      const spendScalar = BigInt('0x' + spendBytes.toString('hex')) % ED25519_L;
+      const pubSpend = ed.ExtendedPoint.BASE.multiply(spendScalar);
+      const pubSpendBytes = Buffer.from(pubSpend.toRawBytes());
+      const viewKey = process.env.MONERO_VIEW_KEY;
+      const viewBytes = Buffer.from(viewKey, 'hex').reverse();
+      const viewLe = BigInt('0x' + viewBytes.toString('hex')) % ED25519_L;
+      const pubView = ed.ExtendedPoint.BASE.multiply(viewLe);
+      const pubViewBytes = Buffer.from(pubView.toRawBytes());
+      const { ethers } = await import('ethers');
+      const netByte = 0x12;
+      const addrData = Buffer.concat([Buffer.from([netByte]), pubSpendBytes, pubViewBytes]);
+      const checksum = Buffer.from(ethers.keccak256(addrData).slice(2), 'hex').slice(0, 4);
+      const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+      function base58Encode(data) {
+        const ENCODED_BLOCK_SIZES = [0, 2, 3, 5, 6, 7, 9, 10, 11];
+        function encodeBlock(block) {
+          let num = 0n;
+          for (let i = 0; i < block.length; i++) num = num * 256n + BigInt(block[i]);
+          let encoded = '';
+          while (num > 0n) { encoded = ALPHABET[Number(num % 58n)] + encoded; num /= 58n; }
+          while (encoded.length < ENCODED_BLOCK_SIZES[block.length]) encoded = '1' + encoded;
+          return encoded;
+        }
+        let result = '';
+        for (let i = 0; i < data.length; i += 8) result += encodeBlock(data.slice(i, i + 8));
+        return result;
+      }
+      const expectedAddr = base58Encode(Buffer.concat([addrData, checksum]));
+      if (openAddr === expectedAddr) {
+        walletOpened = true;
+        console.log('[Monero] Correct LP wallet already open');
+        return;
+      }
+      console.log('[Monero] Wrong wallet open, closing and opening LP wallet...');
+      await walletRpc('close_wallet', {});
+    } else {
+      // No spend key to verify — assume the open wallet is correct
+      walletOpened = true;
+      console.log('[Monero] Wallet already open');
+      return;
+    }
   } catch (e) {
+    // get_address failed — no wallet open, proceed to open one
     // No wallet open, proceed to open one
   }
 

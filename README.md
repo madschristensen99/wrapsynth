@@ -2,7 +2,7 @@
 
 **A trustless cross-chain ferry for Monero. wsXMR is live in beta on Gnosis Chain, backed by overcollateralized LP vaults and Ed25519 atomic swap commitments. Mainnet launch on Arc scheduled for September 18th.**
 
-🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/sDAI Pool on Gnosis](https://www.geckoterminal.com/gnosis-chain/pools/0x4e610940e0febc109fc7c9ba6d453ee99ea53f07)**
+🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/sDAI Pool on Gnosis](https://www.geckoterminal.com/gnosis-chain/pools/0xaf51b4f37096c21ff977284985209404679704a7)**
 
 WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Users swap XMR for wsXMR through atomic-swap mechanics enforced on-chain: LPs post sDAI collateral, mint/burn settlement is gated by Ed25519 secret reveals verified on-chain, and timeout-based slashing protects both sides. No custodian, no federation, no trusted intermediary — every swap settles peer-to-peer between a user and an LP vault.
 
@@ -22,22 +22,22 @@ WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Us
 
 | Contract | Address |
 |---|---|
-| wsXMR Token | [`0x8197d472823CC8BB5ae4077619bC85cAD19C4A5f`](https://gnosisscan.io/token/0x8197d472823CC8BB5ae4077619bC85cAD19C4A5f) |
-| wsXmrHub | [`0x29BF76f72694A99e5C1483871aD62f87501fC99E`](https://gnosisscan.io/address/0x29BF76f72694A99e5C1483871aD62f87501fC99E) |
-| Liquidity Router | [`0x52EcC68d3E38c86778e940A9fCeAB1e19f92F59e`](https://gnosisscan.io/address/0x52EcC68d3E38c86778e940A9fCeAB1e19f92F59e) |
-| wsXMR/sDAI UniV3 Pool | [`0x4e610940E0feBC109Fc7C9ba6d453eE99ea53F07`](https://gnosisscan.io/address/0x4e610940E0feBC109Fc7C9ba6d453eE99ea53F07) |
+| wsXMR Token | [`0x66A7e0e70113fE6A293287A5Cc0903E5C08067E4`](https://gnosisscan.io/token/0x66A7e0e70113fE6A293287A5Cc0903E5C08067E4) |
+| wsXmrHub | [`0x2F6Ede34d2FC01209b104E74A3d657f71125b364`](https://gnosisscan.io/address/0x2F6Ede34d2FC01209b104E74A3d657f71125b364) |
+| Liquidity Router | [`0xF44081dBE8C153cCfa1A74c157bd571F2d0f779D`](https://gnosisscan.io/address/0xF44081dBE8C153cCfa1A74c157bd571F2d0f779D) |
+| wsXMR/sDAI UniV3 Pool | [`0xAf51b4f37096c21ff977284985209404679704a7`](https://gnosisscan.io/address/0xAf51b4f37096c21ff977284985209404679704a7) |
 
 <details>
 <summary>Facet addresses</summary>
 
 | Facet | Address |
 |---|---|
-| RedStoneOracleFacet | [`0x6fE6e9CE3e385541FBAe77E47c10e2948939c6a2`](https://gnosisscan.io/address/0x6fE6e9CE3e385541FBAe77E47c10e2948939c6a2) |
-| VaultFacet | [`0xfb7E1d0B239E8B1C02b20CCEA283927C293B0519`](https://gnosisscan.io/address/0xfb7E1d0B239E8B1C02b20CCEA283927C293B0519) |
-| MintFacet | [`0x9a0c5bD186Fe4dbb673C2bc3df41b40329D0aCeC`](https://gnosisscan.io/address/0x9a0c5bD186Fe4dbb673C2bc3df41b40329D0aCeC) |
-| BurnFacet | [`0x2ca92dce1223B47088198F9AB7e505a097e8E6cC`](https://gnosisscan.io/address/0x2ca92dce1223B47088198F9AB7e505a097e8E6cC) |
-| LiquidationFacet | [`0x4d8dB172f94b49f99332e0E956dd26796c55Ee7D`](https://gnosisscan.io/address/0x4d8dB172f94b49f99332e0E956dd26796c55Ee7D) |
-| YieldFacet | [`0x73aa804A2fEc43f79eC66a8daF36a806e83Ce1BD`](https://gnosisscan.io/address/0x73aa804A2fEc43f79eC66a8daF36a806e83Ce1BD) |
+| RedStoneOracleFacet | [`0x891B682279940F0d03b1414A24c2964c0cB02c20`](https://gnosisscan.io/address/0x891B682279940F0d03b1414A24c2964c0cB02c20) |
+| VaultFacet | [`0x000C0c89599483839bec0C77894E401F309e969d`](https://gnosisscan.io/address/0x000C0c89599483839bec0C77894E401F309e969d) |
+| MintFacet | [`0xF8a6Df73E9f9B0A434356FCdf1EB9Fd3d24d3f61`](https://gnosisscan.io/address/0xF8a6Df73E9f9B0A434356FCdf1EB9Fd3d24d3f61) |
+| BurnFacet | [`0x3c2b3515130AddF7aA17f577DAcc7339C802326E`](https://gnosisscan.io/address/0x3c2b3515130AddF7aA17f577DAcc7339C802326E) |
+| LiquidationFacet | [`0xffc3Cc0C07B71F2DeF118FAa4758AbaEf79D48A7`](https://gnosisscan.io/address/0xffc3Cc0C07B71F2DeF118FAa4758AbaEf79D48A7) |
+| YieldFacet | [`0xD6305b138406A7F7a72cD9Ac9525DD0ead349A9D`](https://gnosisscan.io/address/0xD6305b138406A7F7a72cD9Ac9525DD0ead349A9D) |
 
 Full deployment manifest (external contracts, pool config, LP defaults): [`deployment.json`](./deployment.json)
 </details>

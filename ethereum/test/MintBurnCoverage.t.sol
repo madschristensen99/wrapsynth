@@ -229,7 +229,7 @@ contract MintBurnCoverageTest is Test {
         _setMintReady(lp, reqId);
 
         vm.roll(block.number + 10000);
-        MintFacet(address(hub)).cancelMint(reqId);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
         vm.roll(block.number + 500);
 
@@ -241,6 +241,75 @@ contract MintBurnCoverageTest is Test {
 
         wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
         assertEq(uint256(req.status), uint256(wsXmrStorage.MintStatus.CANCELLED), "should be CANCELLED");
+    }
+
+    function test_SweepUnclaimedExpiredMint_SlashesCollateral() public {
+        bytes32 reqId = _initiateMint(user, lp);
+        _provideLPKey(lp, reqId);
+        _setMintReady(lp, reqId);
+
+        // Verify collateral was locked at provideLPKey
+        wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
+        assertGt(req.lockedCollateral, 0, "collateral should be locked at provideLPKey");
+        assertGt(req.xmrPriceAtReady, 0, "xmrPriceAtReady should be set");
+
+        vm.roll(block.number + 10000);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
+
+        vm.roll(block.number + 500);
+
+        uint256 sDAIPendingBefore = _getPendingReturns(user, GnosisAddresses.SDAI);
+        MintFacet(address(hub)).sweepUnclaimedExpiredMint(reqId);
+        uint256 sDAIPendingAfter = _getPendingReturns(user, GnosisAddresses.SDAI);
+
+        assertGt(sDAIPendingAfter, sDAIPendingBefore, "user should get slashed sDAI collateral");
+        assertEq(sDAIPendingAfter - sDAIPendingBefore, req.lockedCollateral, "slashed amount should equal locked collateral");
+    }
+
+    function test_ClaimGriefingDeposit_ReleasesLockedCollateral() public {
+        bytes32 reqId = _initiateMint(user, lp);
+
+        // Generate real LP secret and commitment
+        bytes32 lpSecret = bytes32(uint256(0xcafe));
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(lpSecret));
+        bytes32 lpCommitment = keccak256(abi.encodePacked(px, py));
+
+        vm.prank(lp);
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)), lpCommitment);
+
+        vm.prank(lp);
+        MintFacet(address(hub)).setMintReady(reqId);
+
+        wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
+        uint256 lockedBefore = req.lockedCollateral;
+        assertGt(lockedBefore, 0, "collateral should be locked");
+
+        vm.roll(block.number + 10000);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
+
+        // LP claims griefing deposit by revealing their secret
+        vm.prank(lp);
+        MintFacet(address(hub)).claimGriefingDeposit(reqId, lpSecret);
+
+        assertEq(uint256(_getMintRequest(reqId).status), uint256(wsXmrStorage.MintStatus.CANCELLED), "should be CANCELLED");
+    }
+
+    function test_FinalizeMint_ReleasesLockedCollateral() public {
+        bytes32 reqId = _initiateMint(user, lp);
+        _provideLPKey(lp, reqId);
+        _setMintReady(lp, reqId);
+
+        wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
+        assertGt(req.lockedCollateral, 0, "collateral should be locked at provideLPKey");
+
+        // User reveals secret and finalize
+        vm.prank(user);
+        MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
+        MintFacet(address(hub)).finalizeMint(reqId);
+
+        wsXmrStorage.MintRequest memory reqAfter = _getMintRequest(reqId);
+        assertEq(uint256(reqAfter.status), uint256(wsXmrStorage.MintStatus.COMPLETED), "should be COMPLETED");
+        // Locked collateral should have been released (vault.lockedCollateral decreased)
     }
 
     function test_SweepUnclaimedExpiredMint_NotExpiredReady_Reverts() public {
@@ -255,7 +324,7 @@ contract MintBurnCoverageTest is Test {
         _setMintReady(lp, reqId);
 
         vm.roll(block.number + 10000);
-        MintFacet(address(hub)).cancelMint(reqId);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
         vm.expectRevert(IMintOperations.TimeoutNotReached.selector);
         MintFacet(address(hub)).sweepUnclaimedExpiredMint(reqId);
@@ -386,12 +455,12 @@ contract MintBurnCoverageTest is Test {
 
     function _provideLPKey(address _lp, bytes32 reqId) internal {
         vm.prank(_lp);
-        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
     }
 
     function _setMintReady(address _lp, bytes32 reqId) internal {
         vm.prank(_lp);
-        MintFacet(address(hub)).setMintReady(reqId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(reqId);
     }
 
     function _mintForUser(address _user, address _lp) internal returns (uint256) {

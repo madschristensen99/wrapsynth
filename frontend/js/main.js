@@ -40,6 +40,7 @@ import {
     showError,
     showResumeError,
     showResumeSuccess,
+    showResumeCountdown,
     disableInputs,
     enableInputs,
     resetMintUI,
@@ -53,7 +54,7 @@ import {
     renderLPDetailCard,
     initLPDetailToggles,
     initVaultPickers
-} from './ui.js?v=3.3';
+} from './ui.js?v=3.4';
 
 import { MintFlow } from './mintFlow.js';
 import { stopTimers } from './mintFlowTimers.js';
@@ -301,13 +302,15 @@ async function init() {
     onAccountsChanged(handleAccountChange);
     onChainChanged(handleChainChange);
 
-    // Start fire-and-forget fetches immediately after clients are ready
-    // (these don't depend on wallet connection)
-    fetchXmrPrice();
-    fetch24hVolume();
-    loadRecentActivity();
-    startActivityFeedWatcher();
-    updateProtocolStats();
+    // Start fire-and-forget fetches after a short delay to avoid RPC contention
+    // with the critical-path reads (loadVaults, checkForActiveSwap, etc.)
+    setTimeout(() => {
+        fetchXmrPrice();
+        fetch24hVolume();
+        loadRecentActivity();
+        startActivityFeedWatcher();
+        updateProtocolStats();
+    }, 2000);
 
     // Wire up LP detail card toggles and vault pickers
     initLPDetailToggles();
@@ -551,7 +554,7 @@ async function handleUpdatePrices() {
         }, 2000);
         
         console.log('✅ Oracle prices updated successfully');
-        const { showSuccessNotification } = await import('./ui.js?v=3.3');
+        const { showSuccessNotification } = await import('./ui.js?v=3.4');
         showSuccessNotification('Prices Updated', '<p>Oracle prices have been updated with latest RedStone data.</p>');
         
     } catch (error) {
@@ -562,7 +565,7 @@ async function handleUpdatePrices() {
             btn.disabled = false;
         }, 2000);
         
-        const { showErrorNotification } = await import('./ui.js?v=3.3');
+        const { showErrorNotification } = await import('./ui.js?v=3.4');
         showErrorNotification('Update Failed', `<p>Could not update oracle prices: ${error.message}</p>`);
     }
 }
@@ -688,9 +691,11 @@ async function handleAccountChange(newAddress) {
         }
         showWalletConnected(newAddress, balance);
 
-        // Run all independent async operations in parallel
+        // Fire vault loading without blocking — UI shows immediately, vaults populate when ready
+        loadVaults().catch(e => console.warn('loadVaults failed:', e.message));
+
+        // Run remaining independent async operations in parallel
         await Promise.all([
-            loadVaults(),
             refreshCoLPBalance(balance),
             handleRefreshCoLPPositions(),
             checkForActiveSwapOnChain(newAddress),
@@ -1445,10 +1450,14 @@ async function handleResumeSwap(specificSwap) {
         const isStuck = swap.type === 'mint' && (swap.state === 'lp-ready' || swap.state === 'finalize');
         if (isStuck) {
             showResumeError(swap.requestId, 'Swap secret is missing. The LP has verified your deposit but you cannot claim wsXMR without this secret. Click Resolve to see your options.');
-        } else {
-            showResumeError(swap.requestId, 'This swap was created before auto-save. Click Resolve to cancel it on-chain and recover your deposit.');
+            return;
         }
-        return;
+        // Burns can resume without publicSpendKey — burnFlow.resume() will try
+        // to restore the agent from seed storage, or reinitialize if needed.
+        if (swap.type !== 'burn') {
+            showResumeError(swap.requestId, 'This swap was created before auto-save. Click Resolve to cancel it on-chain and recover your deposit.');
+            return;
+        }
     }
 
     currentResumingSwapId = swap.requestId;
@@ -1758,9 +1767,25 @@ async function handleResolveSwap(swap) {
                     showResumeError(swap.requestId, `Mint timeout has not been reached. Please wait ~${mins}m ${secs}s more (${blocksRemaining} blocks) before you can cancel.`);
                     return;
                 }
-                const receipt = await writeHub('cancelMint', [swap.requestId]);
-                console.log('cancelMint tx:', receipt.transactionHash);
-                showResumeSuccess(swap.requestId, 'Mint cancelled. Your griefing deposit has been refunded.');
+                // For KEY_PROVIDED (status 2), userSecret must match claimCommitment.
+                // We don't have the PhantomAgent here, so pass zero hash.
+                // Contract will revert with InvalidSecret if it doesn't match.
+                const userSecret = '0x0000000000000000000000000000000000000000000000000000000000000000';
+                try {
+                    const receipt = await writeHub('cancelMint', [swap.requestId, userSecret]);
+                    console.log('cancelMint tx:', receipt.transactionHash);
+                    let msg = 'Mint cancelled. Your griefing deposit has been refunded.';
+                    if (status === 2) {
+                        msg = 'Mint cancelled. LP collateral was slashed and you received sDAI compensation. Claim it via Pending Returns.';
+                    }
+                    showResumeSuccess(swap.requestId, msg);
+                } catch (cancelErr) {
+                    if (status === 2 && cancelErr.message && (cancelErr.message.includes('InvalidSecret') || cancelErr.message.includes('0x'))) {
+                        showResumeError(swap.requestId, 'This mint is in KEY_PROVIDED state and requires your swap secret to cancel. Please use the active mint flow cancel button (which has access to your secret) or reconnect with the same browser profile used to start this mint.');
+                        return;
+                    }
+                    throw cancelErr;
+                }
             } else if (status === 5) {
                 showResumeSuccess(swap.requestId, 'This mint has already completed on-chain.');
             } else {
@@ -1769,7 +1794,7 @@ async function handleResolveSwap(swap) {
             }
         }
         // REQUESTED burn: abort on-chain to recover wsXMR
-        else if (swap.type === 'burn' && swap.state === 'evm-request') {
+        else if (swap.type === 'burn' && (swap.state === 'evm-request' || swap.state === 'lp-propose')) {
             console.log('Resolving stale burn on-chain:', swap.requestId);
             const { getPublicClient, getWalletClient, getUserAddress } = await import('./viemClient.js');
             const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
@@ -1811,11 +1836,7 @@ async function handleResolveSwap(swap) {
                     console.log('abortBurn tx:', receipt.transactionHash);
                     showResumeSuccess(swap.requestId, 'Burn aborted. Your wsXMR has been restored.');
                 } else {
-                    const blocksRemaining = Number(deadline - currentBlock);
-                    const estSeconds = blocksRemaining * 5;
-                    const mins = Math.floor(estSeconds / 60);
-                    const secs = estSeconds % 60;
-                    showResumeError(swap.requestId, `Deadline has not expired. Please wait ~${mins}m ${secs}s more (${blocksRemaining} blocks) before you can abort this burn.`);
+                    showResumeCountdown(swap.requestId, Number(deadline), Number(currentBlock), () => handleResumeSwap(swap));
                     return; // Don't clear from storage
                 }
             } else if (status === 2) {
@@ -1833,13 +1854,13 @@ async function handleResolveSwap(swap) {
                     console.log('resolveDeclinedProposal tx:', receipt.transactionHash);
                     showResumeSuccess(swap.requestId, 'Burn proposal declined. Your wsXMR has been restored.');
                 } else {
-                    const blocksRemaining = Number(deadline - currentBlock);
-                    const estSeconds = blocksRemaining * 5;
-                    const mins = Math.floor(estSeconds / 60);
-                    const secs = estSeconds % 60;
-                    showResumeError(swap.requestId, `Deadline has not expired. Please wait ~${mins}m ${secs}s more (${blocksRemaining} blocks) before you can resolve this burn.`);
+                    showResumeCountdown(swap.requestId, Number(deadline), Number(currentBlock), () => handleResumeSwap(swap));
                     return; // Don't clear from storage
                 }
+            } else if (status === 3) {
+                // COMMITTED: user already confirmed lock, can't resolve — must wait for finalize or slash
+                showResumeError(swap.requestId, 'Burn is committed. Wait for LP to finalize or slash the LP collateral after deadline.');
+                return; // Don't clear from storage
             } else {
                 showResumeError(swap.requestId, 'This burn request has an unexpected status. Please check the block explorer.');
                 return;
@@ -1850,7 +1871,7 @@ async function handleResolveSwap(swap) {
             console.log('Mint is READY but secret is missing, trying cancel anyway:', swap.requestId);
             try {
                 const { writeHub } = await import('./viemClient.js');
-                const receipt = await writeHub('cancelMint', [swap.requestId]);
+                const receipt = await writeHub('cancelMint', [swap.requestId, '0x0000000000000000000000000000000000000000000000000000000000000000']);
                 console.log('cancelMint tx:', receipt.transactionHash);
                 showResumeSuccess(swap.requestId, 'Mint cancelled. Your griefing deposit has been refunded.');
             } catch (e) {
@@ -1890,79 +1911,79 @@ async function handleResolveSwap(swap) {
  */
 export async function loadVaults() {
     try {
-        // Hardcoded list of known LP vaults
-        // In production, this would query events or use a registry
-        const knownVaults = [
-            '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB', // Your LP vault
-        ];
+        // Known LP vaults from deployment.json (lpConfig.defaultLpVault)
+        const knownVaults = CONTRACTS.defaultLpVault ? [CONTRACTS.defaultLpVault] : [];
         
         const activeVaults = [];
         let totalCollateralWei = 0n;
 
-        // Fetch oracle prices and globalDebtIndex for capacity calculation
-        let xmrPrice = 0;
-        let collPrice = 0;
-        let globalDebtIndex = 1e18;
-        let pricesFresh = false;
-        try {
-            // Fetch all three in parallel
-            const [xmrPriceWei, collPriceWei, gdiResult] = await Promise.all([
-                readHub('getXmrPrice'),
-                readHub('getCollateralPrice'),
-                readHub('globalDebtIndex'),
-            ]);
-            xmrPrice = Number(xmrPriceWei) / 1e18;
-            collPrice = Number(collPriceWei) / 1e18;
-            globalDebtIndex = gdiResult;
-            pricesFresh = true;
-            console.log('Oracle prices (fresh):', { xmrPrice, collPrice, globalDebtIndex: globalDebtIndex.toString() });
-        } catch (e) {
-            console.warn('Oracle prices stale, using off-chain fallback:', e.message);
-            // Immediately use off-chain fallback — don't block vault loading
-            xmrPrice = priceCache.value || 0;
-            collPrice = 1.0; // sDAI ≈ $1
-            // Still fetch globalDebtIndex (separate from price oracle)
-            try {
-                globalDebtIndex = await readHub('globalDebtIndex');
-            } catch (e2) {
-                console.warn('Could not fetch globalDebtIndex:', e2.message);
-            }
-            console.log('Using off-chain fallback prices:', { xmrPrice, collPrice, source: 'CoinGecko cache' });
-            // Kick off oracle price update in background — don't await
-            import('./redstoneWrapper.js').then(({ updateOraclePrices }) => {
-                updateOraclePrices().then(() => {
-                    console.log('Background oracle price update succeeded — reloading vaults with fresh prices');
-                    loadVaults().catch(err => console.warn('Vault reload after oracle update failed:', err.message));
-                }).catch(err => {
-                    console.warn('Background oracle price update failed:', err.message);
-                });
-            }).catch(() => {});
-        }
-
-        // Get sDAI contract for convertToAssets
+        // Fire ALL independent reads in a single Promise.all — no sequential round-trips
         const { getPublicClient } = await import('./viemClient.js');
         const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
         const publicClient = getPublicClient();
         const sDAIAbi = parseAbi(['function convertToAssets(uint256 shares) view returns (uint256)']);
         const sDAIAddress = CONTRACTS.sDAI;
 
-        for (const vaultAddress of knownVaults) {
+        let xmrPrice = 0;
+        let collPrice = 0;
+        let globalDebtIndex = 1e18;
+        let pricesFresh = false;
+
+        // Single round-trip: all oracle reads + vault data + burn IDs in parallel
+        const oracleResults = await Promise.all([
+            readHub('getXmrPrice').catch(e => {
+                console.warn('getXmrPrice reverted:', e.message);
+                return null;
+            }),
+            readHub('getCollateralPrice').catch(e => {
+                console.warn('getCollateralPrice reverted:', e.message);
+                return null;
+            }),
+            readHub('globalDebtIndex').catch(e => {
+                console.warn('globalDebtIndex failed:', e.message);
+                return null;
+            }),
+        ]);
+
+        if (oracleResults[0] !== null && oracleResults[1] !== null) {
+            xmrPrice = Number(oracleResults[0]) / 1e18;
+            collPrice = Number(oracleResults[1]) / 1e18;
+            pricesFresh = true;
+            console.log('Oracle prices (fresh):', { xmrPrice, collPrice });
+        } else {
+            xmrPrice = priceCache.value || 0;
+            collPrice = 1.0;
+            console.log('Using off-chain fallback prices:', { xmrPrice, collPrice, source: 'CoinGecko cache' });
+        }
+        if (oracleResults[2] !== null) {
+            globalDebtIndex = oracleResults[2];
+        }
+
+        // Only attempt getMintCapacity if oracle prices are fresh (it reverts otherwise)
+        const vaultReads = knownVaults.map(vaultAddress => {
+            const mintCapacityPromise = pricesFresh
+                ? readHub('getMintCapacity', [vaultAddress]).catch(e => {
+                    console.warn('getMintCapacity failed:', e.message);
+                    return null;
+                })
+                : Promise.resolve(null);
+
+            return Promise.all([
+                readHub('getVault', [vaultAddress]),
+                readHub('getVaultBurnRequests', [vaultAddress]).catch(e => {
+                    console.warn('[Capacity] Could not query vault burn requests:', e.message);
+                    return [];
+                }),
+                mintCapacityPromise,
+            ]).then(([vaultData, burnIdsResult, mintCapacityResult]) => ({
+                vaultAddress, vaultData, burnIdsResult, mintCapacityResult,
+            }));
+        });
+
+        const vaultResults = await Promise.all(vaultReads);
+
+        for (const { vaultAddress, vaultData, burnIdsResult, mintCapacityResult } of vaultResults) {
             try {
-                console.log('Fetching vault data for:', vaultAddress);
-
-                // Fetch vault data, burn request IDs, and mint capacity in parallel
-                const [vaultData, burnIdsResult, mintCapacityResult] = await Promise.all([
-                    readHub('getVault', [vaultAddress]),
-                    readHub('getVaultBurnRequests', [vaultAddress]).catch(e => {
-                        console.warn('[Capacity] Could not query vault burn requests:', e.message);
-                        return [];
-                    }),
-                    readHub('getMintCapacity', [vaultAddress]).catch(e => {
-                        console.warn('getMintCapacity failed (prices may be stale):', e.message);
-                        return null;
-                    }),
-                ]);
-
                 console.log('Raw vault data:', vaultData);
                 console.log('Collateral shares:', vaultData.collateralShares?.toString());
                 console.log('Debt:', vaultData.normalizedDebt?.toString());
@@ -1971,12 +1992,11 @@ export async function loadVaults() {
                 const hasCollateral = vaultData && vaultData.collateralShares && BigInt(vaultData.collateralShares.toString()) > 0n;
 
                 if (hasCollateral || vaultData.active) {
-                    // Convert sDAI shares to underlying DAI assets (like the contract does)
                     const collShares = BigInt(vaultData.collateralShares.toString());
                     const lockedShares = BigInt(vaultData.lockedCollateral.toString());
                     const availableShares = collShares > lockedShares ? collShares - lockedShares : 0n;
 
-                    // Fetch both convertToAssets calls and all burn request details in parallel
+                    // Fetch convertToAssets calls and all burn request details in parallel
                     const [assetsWeiResult, totalAssetsWeiResult, ...burnReqResults] = await Promise.all([
                         publicClient.readContract({
                             address: sDAIAddress,
@@ -2180,11 +2200,12 @@ export async function loadVaults() {
             tvlStatEl.textContent = '$0';
         }
         
-        if (activeVaults.length === 0) {
+        if (activeVaults.length === 0 && CONTRACTS.defaultLpVault) {
             // Fallback to showing the known vault even if query failed
+            const addr = CONTRACTS.defaultLpVault;
             activeVaults.push({
-                address: '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB',
-                name: 'LP Vault 0x492c...72FB'
+                address: addr,
+                name: `LP Vault ${addr.slice(0,6)}...${addr.slice(-4)}`
             });
         }
         
@@ -2749,7 +2770,7 @@ function trackMintProgress(flow) {
             case 'initiated':
             case 'awaiting-lp-key':
                 completeMintStep('evm-init');
-                updateMintProgress('deposit', 'Waiting for LP to provide deposit address...');
+                updateMintProgress('deposit', 'Waiting for LP to provide XMR deposit address...');
                 break;
             case 'deposit':
                 completeMintStep('evm-init');
@@ -2951,43 +2972,36 @@ async function handleStartBurn() {
  * Track burn flow progress
  */
 function trackBurnProgress(flow) {
-    // Monitor state changes
+    // Only handle the visual step indicator (cur/done classes).
+    // Status text is owned by burnFlow.js via direct updateBurnProgress calls.
+    let lastState = null;
     const checkState = setInterval(() => {
+        if (flow.state === lastState) return;
+        lastState = flow.state;
+
         switch (flow.state) {
             case 'init':
-                updateBurnProgress('init', 'Requesting signature...');
+                updateBurnProgress('init');
                 break;
             case 'evm-request':
                 completeBurnStep('init');
-                updateBurnProgress('evm-request', 'Submitting burn request...');
+                updateBurnProgress('evm-request');
                 break;
             case 'lp-propose':
                 completeBurnStep('evm-request');
-                let lpStatus = 'Waiting for LP to lock XMR...';
-                if (flow.lpProposeStartTime) {
-                    const elapsed = Date.now() - flow.lpProposeStartTime;
-                    const remaining = Math.max(0, flow.lpProposeTimeout - elapsed);
-                    const mins = Math.floor(remaining / 60000);
-                    const secs = Math.floor((remaining % 60000) / 1000);
-                    if (remaining > 0) {
-                        lpStatus = `Waiting for LP to send XMR... ${mins}:${secs.toString().padStart(2, '0')} remaining`;
-                    } else {
-                        lpStatus = 'LP response overdue — still waiting...';
-                    }
-                }
-                updateBurnProgress('lp-propose', lpStatus);
+                updateBurnProgress('lp-propose');
                 break;
             case 'confirm-lock':
                 completeBurnStep('lp-propose');
-                updateBurnProgress('confirm-lock', 'Verifying XMR receipt...');
+                updateBurnProgress('confirm-lock');
                 break;
             case 'lp-finalize':
                 completeBurnStep('confirm-lock');
-                updateBurnProgress('lp-finalize', 'Waiting for LP to finalize...');
+                updateBurnProgress('lp-finalize');
                 break;
             case 'completed':
                 completeBurnStep('lp-finalize');
-                updateBurnProgress('completed', 'Burn complete!');
+                updateBurnProgress('completed');
                 clearInterval(checkState);
                 break;
         }

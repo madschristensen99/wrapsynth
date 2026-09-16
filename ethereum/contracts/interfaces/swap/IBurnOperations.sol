@@ -49,7 +49,7 @@ interface IBurnOperations is IErrors {
     event BurnCancelled(bytes32 indexed requestId);
     event BurnAborted(bytes32 indexed requestId);
     event BurnForceSettled(bytes32 indexed requestId, uint256 sDAIPayout);
-    event BurnProposalDeclined(bytes32 indexed requestId);
+    event BurnProposalDeclined(bytes32 indexed requestId, bytes32 userSecret);
     
     // ========== ERRORS ==========
     
@@ -121,9 +121,13 @@ interface IBurnOperations is IErrors {
     function forceSettleBurn(bytes32 requestId) external;
     
     /// @notice Resolve a declined proposal after timeout (permissionless).
-    /// @dev wsXMR restored to holder.
+    /// @dev wsXMR restored to holder. The caller must provide the user's Monero spend key half
+    ///      (userSecret) which is verified against the stored userPublicKey via Ed25519.scalarMultBase.
+    ///      The revealed userSecret is emitted in the BurnProposalDeclined event so the LP can
+    ///      combine it with their own key half to sweep the shared XMR back to their wallet.
     /// @param requestId The burn request ID
-    function resolveDeclinedProposal(bytes32 requestId) external;
+    /// @param userSecret The user's Ed25519 private spend key half (revealed on-chain for LP recovery)
+    function resolveDeclinedProposal(bytes32 requestId, bytes32 userSecret) external;
     
     // ========== VIEW FUNCTIONS ==========
     

@@ -121,9 +121,9 @@ contract YieldKeeperTest is Test {
 
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(userMints[0], lpPublicKey, lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(userMints[0], lpPublicKey, lpPublicKey, bytes32(uint256(0xdeadbeef)));
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(userMints[0], bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(userMints[0]);
         vm.prank(user);
         MintFacet(address(hub)).revealSecret(userMints[0], testSecret);
         MintFacet(address(hub)).finalizeMint(userMints[0]);

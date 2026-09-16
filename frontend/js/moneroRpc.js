@@ -5,45 +5,86 @@ import { MONERO_CONFIG } from './config.js';
 
 /**
  * Monero RPC Client for daemon and wallet operations
+ * Supports multi-daemon fallback for resilience.
  */
 class MoneroRpcClient {
-    constructor(rpcUrl = MONERO_CONFIG.rpcUrl) {
-        this.rpcUrl = rpcUrl;
+    constructor(rpcUrl = null) {
+        this.daemonUrls = rpcUrl
+            ? [rpcUrl]
+            : [...(MONERO_CONFIG.publicNodes?.mainnet || [MONERO_CONFIG.rpcUrl])];
+        this.rpcUrl = rpcUrl || MONERO_CONFIG.rpcUrl;
         this.walletRpcUrl = null; // Set when wallet RPC is available
+        this._connectedUrl = null;
     }
 
     /**
-     * Make RPC call to Monero daemon
+     * Try to find a responsive daemon from the configured list.
+     * Returns the first URL that responds to a simple RPC call.
+     */
+    async _findWorkingDaemon() {
+        for (const url of this.daemonUrls) {
+            try {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 8000);
+                const res = await fetch(url + '/json_rpc', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jsonrpc: '2.0', id: '0', method: 'get_block_count', params: {} }),
+                    signal: controller.signal,
+                });
+                clearTimeout(timeout);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (!data.error && data.result) {
+                        this._connectedUrl = url;
+                        this.rpcUrl = url;
+                        console.log(`[Monero RPC] Connected to ${url}`);
+                        return url;
+                    }
+                }
+            } catch {
+                console.warn(`[Monero RPC] ${url} unreachable, trying next...`);
+            }
+        }
+        throw new Error('All Monero daemons unreachable');
+    }
+
+    /**
+     * Get the currently connected daemon URL (or find one if not yet connected).
+     */
+    async getConnectedUrl() {
+        if (this._connectedUrl) return this._connectedUrl;
+        return await this._findWorkingDaemon();
+    }
+
+    /**
+     * Make RPC call to Monero daemon, with multi-daemon fallback.
      */
     async daemonRpc(method, params = {}) {
-        try {
-            const response = await fetch(this.rpcUrl + '/json_rpc', {
+        // Ensure we have a connected daemon
+        if (!this._connectedUrl) {
+            await this._findWorkingDaemon();
+        }
+
+        const tryRpc = async (url) => {
+            const response = await fetch(url + '/json_rpc', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    jsonrpc: '2.0',
-                    id: '0',
-                    method: method,
-                    params: params
-                })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: '0', method, params }),
             });
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             const data = await response.json();
-            
-            if (data.error) {
-                throw new Error(`RPC error: ${data.error.message}`);
-            }
-
+            if (data.error) throw new Error(`RPC error: ${data.error.message}`);
             return data.result;
-        } catch (error) {
-            console.error(`Monero RPC error (${method}):`, error);
-            throw error;
+        };
+
+        try {
+            return await tryRpc(this._connectedUrl);
+        } catch (err) {
+            console.warn(`[Monero RPC] ${this._connectedUrl} failed (${method}): ${err.message}, trying fallback...`);
+            this._connectedUrl = null;
+            await this._findWorkingDaemon();
+            return await tryRpc(this._connectedUrl);
         }
     }
 
@@ -68,7 +109,9 @@ class MoneroRpcClient {
      */
     async getTransaction(txHash) {
         try {
-            const response = await fetch(this.rpcUrl + '/get_transactions', {
+            if (!this._connectedUrl) await this._findWorkingDaemon();
+            const url = this._connectedUrl;
+            const response = await fetch(url + '/get_transactions', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

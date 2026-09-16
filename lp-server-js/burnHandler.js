@@ -8,8 +8,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { computeSecretHash } from './commitment.js';
 import * as moneroWallet from './moneroWallet.js';
+import { sweepBurnShared } from './moneroWallet.js';
 import * as moneroCrypto from './moneroCrypto.js';
 import { updateOraclePricesManual } from './oracleUpdate.js';
+import { getNextNonce, resetNonceCache } from './nonceManager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BURN_SECRETS_FILE = path.join(__dirname, 'lp-burn-secrets.json');
@@ -290,7 +292,8 @@ async function processPropose(reqIdHex, customKeys = {}) {
   // ─── 5. Call proposeHash on-chain FIRST (before sending XMR) ───────────────
   // This ensures if the tx reverts, no XMR is sent to an unproposed shared address.
   console.log(`[Burn] Calling proposeHash(${reqIdHex}, ${secretHash}, ...)`);
-  const tx = await hubContract.proposeHash(reqIdHex, secretHash, lpPublicSpendKey, lpPublicViewKey);
+  const proposeNonce = await getNextNonce();
+  const tx = await hubContract.proposeHash(reqIdHex, secretHash, lpPublicSpendKey, lpPublicViewKey, { nonce: proposeNonce });
   console.log(`[Burn] proposeHash tx: ${tx.hash}`);
   const receipt = await tx.wait();
   console.log(`[Burn] proposeHash confirmed in block ${receipt.blockNumber}`);
@@ -391,9 +394,9 @@ async function processFinalize(reqIdHex) {
     console.log('[Burn] Proceeding with finalizeBurn anyway (may revert with StalePrice)...');
   }
 
-  // Force refresh nonce — oracle price update tx may have used the cached nonce
-  const freshNonce = await provider.getTransactionCount(wallet.address, 'latest');
-  console.log(`[Burn] Using fresh nonce: ${freshNonce}`);
+  // Use nonce manager for consistent nonce across concurrent operations
+  const freshNonce = await getNextNonce();
+  console.log(`[Burn] Using nonce: ${freshNonce}`);
 
   console.log(`[Burn] Calling finalizeBurn(${reqIdHex}, ...) secret: ${burn.secret.slice(0, 10)}...`);
 
@@ -405,7 +408,7 @@ async function processFinalize(reqIdHex) {
     if (err.message && (err.message.includes('0x19abf40e') || err.message.includes('StalePrice'))) {
       console.warn('[Burn] StalePrice on finalizeBurn, updating prices and retrying...');
       await updateOraclePricesManual();
-      const retryNonce = await provider.getTransactionCount(wallet.address, 'latest');
+      const retryNonce = await getNextNonce();
       tx = await hubContract.finalizeBurn(reqIdHex, burn.secret, { nonce: retryNonce });
     } else {
       throw err;
@@ -449,6 +452,99 @@ async function handleBurnCancelled(requestId) {
   updateBurnSecretState(reqIdHex, 'cancelled');
 }
 
+/**
+ * Handle BurnProposalDeclined event.
+ * The user has called resolveDeclinedProposal with their userSecret (private spend key)
+ * to recover their wsXMR. The userSecret is emitted in the event.
+ * The LP can now combine userSecret with their own lpSecret to sweep the shared XMR.
+ */
+async function handleBurnProposalDeclined(requestId, userSecret) {
+  const reqIdHex = ethers.hexlify(requestId);
+  console.log(`[Burn] BurnProposalDeclined ${reqIdHex}`);
+  console.log(`  userSecret: ${userSecret.slice(0, 10)}...`);
+
+  // Look up the burn in pendingBurns or persisted secrets
+  let burn = pendingBurns.get(reqIdHex);
+  if (!burn) {
+    // Try to load from persisted secrets
+    const secrets = loadBurnSecrets();
+    const saved = secrets[reqIdHex];
+    if (saved) {
+      burn = saved;
+      console.log(`[Burn] Found persisted burn secret for ${reqIdHex}`);
+    }
+  }
+
+  if (!burn || !burn.secret) {
+    console.warn(`[Burn] No LP secret found for ${reqIdHex} — cannot sweep shared XMR`);
+    return;
+  }
+
+  // Mark as cancelled in state
+  if (pendingBurns.has(reqIdHex)) {
+    pendingBurns.get(reqIdHex).state = 'cancelled';
+  }
+  updateBurnSecretState(reqIdHex, 'declined', { userSecret: userSecret });
+
+  // Sweep the shared XMR back to the LP's main wallet
+  if (!moneroWallet.isWalletConfigured()) {
+    console.warn(`[Burn] MONERO_WALLET_RPC_URL not configured — cannot sweep shared XMR for ${reqIdHex}`);
+    return;
+  }
+
+  try {
+    const lpMainAddress = process.env.MONERO_LP_ADDRESS || (await moneroWallet.getAddresses()).primary;
+    if (!lpMainAddress) {
+      console.error(`[Burn] Could not determine LP main address for sweep`);
+      return;
+    }
+
+    console.log(`[Burn] Sweeping shared XMR for ${reqIdHex} to ${lpMainAddress}...`);
+    const result = await sweepBurnShared({
+      userSecretHex: userSecret,
+      lpSecretHex: burn.secret,
+      lpMainAddress,
+      restoreHeight: 0, // Will scan from 1000 blocks back
+    });
+
+    if (result.swept) {
+      console.log(`[Burn] XMR sweep succeeded for ${reqIdHex}: ${result.txHashes.length} tx(s), ${result.amount} atomic units`);
+      updateBurnSecretState(reqIdHex, 'swept', {
+        sweepTxHashes: result.txHashes,
+        sweepAmount: result.amount.toString(),
+      });
+    } else {
+      console.warn(`[Burn] XMR sweep not completed for ${reqIdHex} — may need manual sweep later`);
+      // Retry after 2 minutes (XMR may need more confirmations)
+      setTimeout(async () => {
+        console.log(`[Burn] Retrying XMR sweep for ${reqIdHex}...`);
+        try {
+          const retryResult = await sweepBurnShared({
+            userSecretHex: userSecret,
+            lpSecretHex: burn.secret,
+            lpMainAddress,
+            restoreHeight: 0,
+          });
+          if (retryResult.swept) {
+            console.log(`[Burn] XMR retry sweep succeeded for ${reqIdHex}`);
+            updateBurnSecretState(reqIdHex, 'swept', {
+              sweepTxHashes: retryResult.txHashes,
+              sweepAmount: retryResult.amount.toString(),
+            });
+          } else {
+            console.warn(`[Burn] XMR retry sweep still not ready for ${reqIdHex}`);
+          }
+        } catch (retryErr) {
+          console.error(`[Burn] XMR retry sweep failed for ${reqIdHex}:`, retryErr.message);
+        }
+      }, 120000);
+    }
+  } catch (err) {
+    console.error(`[Burn] XMR sweep failed for ${reqIdHex}:`, err.message);
+    updateBurnSecretState(reqIdHex, 'declined', { sweepError: err.message });
+  }
+}
+
 // ─── Event Listener Setup ───────────────────────────────────────────────────
 
 function attachEventListeners(hub, _wallet, _provider) {
@@ -465,10 +561,11 @@ function attachEventListeners(hub, _wallet, _provider) {
     'event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 rewardPaid)',
     'event BurnCancelled(bytes32 indexed requestId)',
     'event BurnAborted(bytes32 indexed requestId)',
+    'event BurnProposalDeclined(bytes32 indexed requestId, bytes32 userSecret)',
     'function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
     'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
     'function claimSlashedCollateral(bytes32 requestId) external',
-    'function resolveDeclinedProposal(bytes32 requestId) external',
+    'function resolveDeclinedProposal(bytes32 requestId, bytes32 userSecret) external',
     'function getBurnRequest(bytes32 requestId) external view returns (tuple(address user, address lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 feeAmount, uint256 collateralLocked, uint256 rewardCollateral, bytes32 claimCommitment, bytes32 secretHash, uint256 timeout, uint256 commitDeadline, uint256 state))',
   ];
 
@@ -485,6 +582,8 @@ function attachEventListeners(hub, _wallet, _provider) {
     try {
       const currentBlock = await provider.getBlockNumber();
       if (currentBlock <= lastCheckedBlock) return;
+      const fromBlock = lastCheckedBlock + 1;
+      if (fromBlock > currentBlock) return;
 
       // Helper to query with retry on rate limit
       async function safeQuery(filter, from, to) {
@@ -506,32 +605,38 @@ function attachEventListeners(hub, _wallet, _provider) {
       }
 
       // Poll for BurnRequested
-      const requested = await safeQuery(hubContract.filters.BurnRequested(), lastCheckedBlock + 1, currentBlock);
+      const requested = await safeQuery(hubContract.filters.BurnRequested(), fromBlock, currentBlock);
       for (const event of requested) {
         const { requestId, user, lpVault, wsxmrAmount, xmrAmount, rewardCollateral, claimCommitment, userPublicKey, userViewKey } = event.args;
         handleBurnRequest(requestId, user, lpVault, wsxmrAmount, xmrAmount, claimCommitment, userPublicKey, userViewKey);
       }
 
       // Poll for BurnCommitted
-      const committed = await safeQuery(hubContract.filters.BurnCommitted(), lastCheckedBlock + 1, currentBlock);
+      const committed = await safeQuery(hubContract.filters.BurnCommitted(), fromBlock, currentBlock);
       for (const event of committed) {
         handleBurnCommitted(event.args.requestId);
       }
 
       // Poll for BurnFinalized
-      const finalized = await safeQuery(hubContract.filters.BurnFinalized(), lastCheckedBlock + 1, currentBlock);
+      const finalized = await safeQuery(hubContract.filters.BurnFinalized(), fromBlock, currentBlock);
       for (const event of finalized) {
         handleBurnFinalized(event.args.requestId, event.args.secret, event.args.rewardPaid);
       }
 
       // Poll for BurnCancelled / BurnAborted
-      const cancelled = await safeQuery(hubContract.filters.BurnCancelled(), lastCheckedBlock + 1, currentBlock);
+      const cancelled = await safeQuery(hubContract.filters.BurnCancelled(), fromBlock, currentBlock);
       for (const event of cancelled) {
         handleBurnCancelled(event.args.requestId);
       }
-      const aborted = await safeQuery(hubContract.filters.BurnAborted(), lastCheckedBlock + 1, currentBlock);
+      const aborted = await safeQuery(hubContract.filters.BurnAborted(), fromBlock, currentBlock);
       for (const event of aborted) {
         handleBurnCancelled(event.args.requestId);
+      }
+
+      // Poll for BurnProposalDeclined (user resolved — LP should sweep shared XMR)
+      const declined = await safeQuery(hubContract.filters.BurnProposalDeclined(), fromBlock, currentBlock);
+      for (const event of declined) {
+        handleBurnProposalDeclined(event.args.requestId, event.args.userSecret);
       }
 
       lastCheckedBlock = currentBlock;
@@ -617,7 +722,8 @@ function registerRoutes(app) {
 
     try {
       console.log(`[Burn] Calling claimSlashedCollateral(${reqIdHex})`);
-      const tx = await hubContract.claimSlashedCollateral(reqIdHex);
+      const slashNonce = await getNextNonce();
+      const tx = await hubContract.claimSlashedCollateral(reqIdHex, { nonce: slashNonce });
       console.log(`[Burn] claimSlashedCollateral tx: ${tx.hash}`);
       const receipt = await tx.wait();
 
@@ -637,16 +743,18 @@ function registerRoutes(app) {
     }
   });
 
-  // Resolve a declined proposal (permissionless)
+  // Resolve a declined proposal (requires userSecret — the user's private spend key)
   app.post('/burn/resolve-declined', async (req, res) => {
-    const { requestId } = req.body;
+    const { requestId, userSecret } = req.body;
     if (!requestId) return res.status(400).json({ error: 'requestId required' });
+    if (!userSecret) return res.status(400).json({ error: 'userSecret required (user\'s private spend key)' });
 
     const reqIdHex = ethers.hexlify(requestId);
 
     try {
-      console.log(`[Burn] Calling resolveDeclinedProposal(${reqIdHex})`);
-      const tx = await hubContract.resolveDeclinedProposal(reqIdHex);
+      console.log(`[Burn] Calling resolveDeclinedProposal(${reqIdHex}, userSecret...)`);
+      const resolveNonce = await getNextNonce();
+      const tx = await hubContract.resolveDeclinedProposal(reqIdHex, userSecret, { nonce: resolveNonce });
       console.log(`[Burn] resolveDeclinedProposal tx: ${tx.hash}`);
       const receipt = await tx.wait();
 

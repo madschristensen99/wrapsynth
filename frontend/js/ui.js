@@ -269,7 +269,11 @@ export function showResumeBanner(swaps, onResume, onResolve) {
         const hasValidKey = swap.publicSpendKey != null
             && swap.publicSpendKey !== ''
             && swap.publicSpendKey !== '0x0000000000000000000000000000000000000000000000000000000000000000';
-        const canResume = hasValidKey;
+        // Burns in active states can always resume — burnFlow.resume() will try to
+        // restore the agent from seed storage even without the saved publicSpendKey.
+        const activeBurnStates = ['evm-request', 'lp-propose', 'confirm-lock', 'lp-finalize', 'sweeping', 'sweep-failed'];
+        const isActiveBurn = swap.type === 'burn' && activeBurnStates.includes(swap.state);
+        const canResume = hasValidKey || isActiveBurn;
         // A mint is only truly claimable if the LP has verified it AND we still have the secret.
         // Without the secret we cannot generate the view key to verify the LP's proof.
         const isClaimableMint = swap.type === 'mint' && (swap.state === 'lp-ready' || swap.state === 'finalize') && canResume;
@@ -326,8 +330,8 @@ function formatSwapState(state) {
         'finalize': 'Finalizing',
         'evm-request': 'Requesting',
         'lp-propose': 'LP Proposing',
-        'confirm-lock': 'Claiming XMR',
-        'lp-finalize': 'Finalizing',
+        'confirm-lock': 'Verifying XMR',
+        'lp-finalize': 'LP Finalizing',
         'committed': 'Committed',
         'completed': 'Complete',
         'expired': 'Expired'
@@ -346,6 +350,12 @@ export function showResumeError(requestId, message) {
         `.resume-swap-item[data-request-id="${requestId}"]`
     );
     if (!item) return;
+
+    // Clean up any existing countdown interval
+    const existingCountdown = item.querySelector('.resume-countdown');
+    if (existingCountdown && existingCountdown.dataset.intervalId) {
+        clearInterval(Number(existingCountdown.dataset.intervalId));
+    }
 
     // Remove any existing error
     const existing = item.querySelector('.resume-error');
@@ -370,13 +380,84 @@ export function showResumeSuccess(requestId, message) {
     if (!item) return;
 
     // Remove any existing success/error
-    const existing = item.querySelector('.resume-success, .resume-error');
+    const existing = item.querySelector('.resume-success, .resume-error, .resume-countdown');
     if (existing) existing.remove();
 
     const succDiv = document.createElement('div');
     succDiv.className = 'resume-success';
     succDiv.textContent = message;
     item.appendChild(succDiv);
+}
+
+/**
+ * Show a live countdown with a Resume button for a burn waiting on deadline expiry.
+ * @param {string} requestId - The swap's requestId
+ * @param {number} deadlineBlock - On-chain deadline block number
+ * @param {number} currentBlock - Current block number
+ * {Function} onResume - Callback when user clicks Resume
+ */
+export function showResumeCountdown(requestId, deadlineBlock, currentBlock, onResume) {
+    if (!elements.resumeSwapList) return;
+    const item = elements.resumeSwapList.querySelector(
+        `.resume-swap-item[data-request-id="${requestId}"]`
+    );
+    if (!item) return;
+
+    // Remove any existing error/countdown
+    const existing = item.querySelector('.resume-error, .resume-countdown');
+    if (existing) existing.remove();
+
+    const container = document.createElement('div');
+    container.className = 'resume-countdown';
+    container.style.cssText = 'margin-top:4px;display:flex;flex-direction:column;gap:4px;';
+
+    const msgSpan = document.createElement('span');
+    msgSpan.style.cssText = 'font-size:0.85rem;color:var(--text-muted);';
+    container.appendChild(msgSpan);
+
+    const resumeBtn = document.createElement('button');
+    resumeBtn.className = 'btn-small';
+    resumeBtn.textContent = 'Resume';
+    resumeBtn.style.cssText = 'padding:0.25rem 0.75rem;font-size:0.8rem;align-self:flex-start;margin-top:2px;';
+    resumeBtn.addEventListener('click', () => { if (onResume) onResume(); });
+    container.appendChild(resumeBtn);
+
+    item.appendChild(container);
+
+    // Update countdown every 5s (approximate block time on Gnosis)
+    let cachedDeadline = deadlineBlock;
+    let cachedCurrent = currentBlock;
+    function updateMsg() {
+        const blocksRemaining = Math.max(0, cachedDeadline - cachedCurrent);
+        const estSeconds = blocksRemaining * 5;
+        const mins = Math.floor(estSeconds / 60);
+        const secs = estSeconds % 60;
+        if (blocksRemaining > 0) {
+            msgSpan.textContent = `Deadline has not expired. ~${mins}m ${secs}s remaining (${blocksRemaining} blocks) before you can resolve.`;
+        } else {
+            msgSpan.textContent = 'Deadline has expired. Click Resolve to cancel this burn and recover your wsXMR.';
+            resumeBtn.remove();
+        }
+    }
+    updateMsg();
+
+    // Poll block number every 5s to update countdown
+    const intervalId = setInterval(async () => {
+        try {
+            const { getPublicClient } = await import('./viemClient.js');
+            const client = getPublicClient();
+            cachedCurrent = Number(await client.getBlockNumber());
+            updateMsg();
+            if (cachedCurrent >= cachedDeadline) {
+                clearInterval(intervalId);
+            }
+        } catch (e) {
+            // Ignore polling errors — keep showing last known countdown
+        }
+    }, 5000);
+
+    // Store interval ID so it can be cleaned up
+    container.dataset.intervalId = intervalId;
 }
 
 /**
@@ -1066,7 +1147,76 @@ export function showLPVerificationStatus() {
             <span style="font-size:0.8rem;color:var(--text-muted);margin-left:20px;display:block;margin-top:4px;">
                 The LP waits for 10+ Monero blockchain confirmations before marking your deposit as verified (~15–30 min).
             </span>
+            <div class="xmr-tx-checker" style="margin-left:20px;margin-top:10px;">
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <input id="xmr-tx-input" type="text" placeholder="Paste your Monero tx hash to track confirmations" spellcheck="false" autocomplete="off"
+                        style="flex:1;background:var(--bg);border:1px solid var(--line-2);border-radius:8px;padding:7px 10px;font-family:'JetBrains Mono';font-size:11px;color:var(--text);" />
+                    <button class="mini" id="xmr-tx-check-btn" style="white-space:nowrap;font-size:11px;">Track</button>
+                </div>
+                <div id="xmr-tx-result" style="margin-top:8px;font-family:'JetBrains Mono';font-size:11px;line-height:1.6;"></div>
+            </div>
         `;
+
+        // Wire up the tx checker
+        const txInput = document.getElementById('xmr-tx-input');
+        const txBtn = document.getElementById('xmr-tx-check-btn');
+        const txResult = document.getElementById('xmr-tx-result');
+        let pollInterval = null;
+
+        async function checkMoneroTx() {
+            const txHash = txInput.value.trim();
+            if (!txHash || !/^[0-9a-fA-F]{64}$/.test(txHash)) {
+                txResult.innerHTML = '<span style="color:#f87171;">Invalid hash — Monero tx hashes are 64 hex chars (no 0x)</span>';
+                return;
+            }
+
+            txResult.innerHTML = '<span style="color:var(--text-muted);">Checking...</span>';
+
+            try {
+                const resp = await fetch(`https://xmrchain.net/api/transaction/${txHash}`);
+                const data = await resp.json();
+
+                if (!data || data.status !== 'success' || !data.data) {
+                    txResult.innerHTML = '<span style="color:#f87171;"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>Transaction not found. It may not be relayed yet.</span>';
+                    return;
+                }
+
+                const tx = data.data;
+                const REQUIRED = 10;
+                const confirmations = tx.confirmations || 0;
+                const inPool = confirmations === 0 && !tx.block_height;
+                const confirmed = confirmations >= REQUIRED;
+
+                const iconSvg = confirmed
+                    ? `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;color:var(--teal);"><path d="M20 6 9 17l-5-5"/></svg>`
+                    : `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;color:var(--accent-orange);"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
+
+                const status = inPool ? `${iconSvg}In mempool (0 confirmations)` :
+                    (confirmed ? `${iconSvg}Confirmed` : `${iconSvg}${confirmations}/${REQUIRED} confirmations`);
+                const statusColor = inPool ? 'var(--text-muted)' : (confirmed ? 'var(--teal)' : 'var(--accent-orange)');
+
+                txResult.innerHTML = `
+                    <div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--text-muted);">Status</span><span style="color:${statusColor};">${status}</span></div>
+                    ${tx.block_height ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--text-muted);">Block</span><span>${tx.block_height}</span></div>` : ''}
+                    <div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--text-muted);">Confirmations</span><span>${confirmations} / ${REQUIRED}</span></div>
+                    ${tx.current_height ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--text-muted);">Chain Height</span><span>${tx.current_height}</span></div>` : ''}
+                    <div style="margin-top:6px;"><a href="https://xmrchain.net/tx/${txHash}" target="_blank" style="color:var(--teal);text-decoration:none;font-size:11px;">View on xmrchain.net ↗</a></div>
+                `;
+            } catch (err) {
+                txResult.innerHTML = `<span style="color:#f87171;">Error: ${err.message}</span>`;
+            }
+        }
+
+        function startPolling() {
+            if (pollInterval) clearInterval(pollInterval);
+            checkMoneroTx();
+            pollInterval = setInterval(checkMoneroTx, 30000); // refresh every 30s
+        }
+
+        if (txBtn) txBtn.addEventListener('click', startPolling);
+        if (txInput) txInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') startPolling();
+        });
     }
 
 }
@@ -1178,7 +1328,7 @@ export function updateBurnProgress(step, status = null) {
     if (loadingEl) {
         if (status) {
             loadingEl.classList.remove('hidden');
-            const isWaiting = status.includes('Waiting') || status.includes('Scanning') || status.includes('Submitting');
+            const isWaiting = status.includes('Waiting') || status.includes('Scanning') || status.includes('Submitting') || status.includes('Approving') || status.includes('Updating') || status.includes('Verifying') || status.includes('Checking') || status.includes('Syncing') || status.includes('Polling');
             const spinnerSvg = `<svg class="spin" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>`;
             let detail = '';
             if (step === 'lp-propose') {
@@ -1191,9 +1341,8 @@ export function updateBurnProgress(step, status = null) {
                 detail = '<span class="burn-status-detail">Submitting the burn transaction to the EVM chain. Your wsXMR is burned and the LP is notified.</span>';
             }
             loadingEl.innerHTML = `${isWaiting ? spinnerSvg : '<span style="font-size:16px;">✓</span>'} <span>${status}${detail}</span>`;
-        } else {
-            loadingEl.classList.add('hidden');
         }
+        // When status is null, leave the loading indicator as-is (burnFlow.js owns it)
     }
 
     elements.burnProgress.classList.remove('hidden');
@@ -1401,7 +1550,6 @@ export function showBurnVerificationDetails(details) {
     const manual = document.getElementById('burn-verification-manual');
 
     if (loading) loading.classList.add('hidden');
-    if (manual) manual.classList.add('hidden');
     if (detailsEl) {
         detailsEl.classList.remove('hidden');
 
@@ -1412,19 +1560,22 @@ export function showBurnVerificationDetails(details) {
         const amountEl = document.getElementById('burn-verify-amount');
 
         if (addrEl) addrEl.textContent = details.destination || '';
-        if (txHashEl) txHashEl.textContent = details.txHash || '';
+        if (txHashEl) txHashEl.textContent = details.txHash || '—';
         if (txLinkEl) {
-            txLinkEl.href = details.txHash
-                ? `https://xmrchain.net/tx/${details.txHash}`
-                : '#';
+            if (details.txHash) {
+                txLinkEl.href = `https://xmrchain.net/tx/${details.txHash}`;
+                txLinkEl.style.display = 'inline';
+            } else {
+                txLinkEl.style.display = 'none';
+            }
         }
         if (confsEl) {
             confsEl.textContent = details.confirmations !== undefined
-                ? `${details.confirmations} confirmation${details.confirmations !== 1 ? 's' : ''}`
+                ? String(details.confirmations)
                 : 'Unknown';
         }
         if (amountEl) {
-            amountEl.textContent = details.amount !== undefined ? `${details.amount} XMR` : 'Unknown';
+            amountEl.textContent = details.amount !== undefined ? String(details.amount) : 'Unknown';
         }
     }
 }
@@ -1434,10 +1585,8 @@ export function showBurnVerificationDetails(details) {
  */
 export function showBurnVerificationManual() {
     const loading = document.getElementById('burn-verification-loading');
-    const details = document.getElementById('burn-verification-details');
     const manual = document.getElementById('burn-verification-manual');
     if (loading) loading.classList.add('hidden');
-    if (details) details.classList.add('hidden');
     if (manual) manual.classList.remove('hidden');
 }
 
@@ -1448,7 +1597,6 @@ export function showBurnVerificationManual() {
  */
 export function showBurnScanProgress(message, foundAmount = null) {
     const loading = document.getElementById('burn-verification-loading');
-    const details = document.getElementById('burn-verification-details');
     const manual = document.getElementById('burn-verification-manual');
 
     if (loading) {
@@ -1458,7 +1606,6 @@ export function showBurnScanProgress(message, foundAmount = null) {
             <span>${message}</span>
         `;
     }
-    if (details) details.classList.add('hidden');
     // Keep manual buttons visible so user can confirm manually while scan runs
     if (manual) manual.classList.remove('hidden');
 }
@@ -1467,8 +1614,9 @@ export function showBurnScanProgress(message, foundAmount = null) {
  * Show burn XMR found state (auto-verified)
  * @param {string} amount - Amount in XMR (human readable)
  * @param {number} confirmations - Number of confirmations
+ * @param {string} [txHash] - Monero transaction hash (optional)
  */
-export function showBurnXmrFound(amount, confirmations) {
+export function showBurnXmrFound(amount, confirmations, txHash = null) {
     const loading = document.getElementById('burn-verification-loading');
     const details = document.getElementById('burn-verification-details');
     const manual = document.getElementById('burn-verification-manual');
@@ -1479,8 +1627,23 @@ export function showBurnXmrFound(amount, confirmations) {
         details.classList.remove('hidden');
         const amountEl = document.getElementById('burn-verify-amount');
         const confsEl = document.getElementById('burn-verify-confirmations');
+        const txHashEl = document.getElementById('burn-verify-tx-hash');
+        const txLinkEl = document.getElementById('burn-verify-tx-link');
         if (amountEl) amountEl.textContent = `${amount} XMR ✓`;
         if (confsEl) confsEl.textContent = `${confirmations} confirmation${confirmations !== 1 ? 's' : ''}`;
+        if (txHash && txHashEl) {
+            txHashEl.textContent = txHash;
+            if (txLinkEl) {
+                txLinkEl.href = `https://xmrchain.net/tx/${txHash}`;
+                txLinkEl.style.display = 'inline';
+            }
+        }
+    }
+
+    // Update explorer button label now that we have the tx hash
+    const explorerLabel = document.getElementById('burn-verify-explorer-label');
+    if (explorerLabel && txHash) {
+        explorerLabel.textContent = 'View tx on xmrchain.net';
     }
 }
 
@@ -1661,7 +1824,7 @@ export function showBurnSweepError(errorMsg) {
  * @param {Object} keys - { spendKey, viewKey } (little-endian hex, no 0x)
  * @param {string} destination - User's destination address
  */
-export function showBurnKeysOption(keys, destination) {
+export function showBurnKeysOption(keys, destination, restoreHeight = 0) {
     const burnPanel = document.getElementById('burn-panel');
     if (!burnPanel) return;
 
@@ -1680,7 +1843,7 @@ export function showBurnKeysOption(keys, destination) {
     const btn = document.getElementById('burn-copy-keys-btn');
     if (btn) {
         btn.addEventListener('click', () => {
-            showBurnKeysFallback(keys, destination);
+            showBurnKeysFallback(keys, destination, restoreHeight);
         });
     }
 }
@@ -1699,7 +1862,7 @@ export function hideBurnKeysOption() {
  * @param {Object} keys - { spendKey, viewKey } (little-endian hex, no 0x)
  * @param {string} destination - User's destination address
  */
-export function showBurnKeysFallback(keys, destination) {
+export function showBurnKeysFallback(keys, destination, restoreHeight = 0) {
     const burnPanel = document.getElementById('burn-panel');
     if (!burnPanel) return;
 
@@ -1715,6 +1878,8 @@ export function showBurnKeysFallback(keys, destination) {
         burnPanel.appendChild(el);
     }
 
+    const restoreHeightStr = restoreHeight > 0 ? restoreHeight.toString() : '(use block height when burn was initiated)';
+
     el.innerHTML = `
         <div class="burn-keys-fallback-header">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;color:var(--amber)"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
@@ -1724,7 +1889,7 @@ export function showBurnKeysFallback(keys, destination) {
         <div class="burn-keys-fallback-steps">
             <span>1. Copy the private spend key and view key below</span>
             <span>2. Open Monero GUI Wallet → Restore from keys</span>
-            <span>3. Paste the keys and set restore height</span>
+            <span>3. Paste the keys and set restore height to <strong>${restoreHeightStr}</strong></span>
             <span>4. Wait for sync, then sweep all to your destination</span>
         </div>
         <div class="burn-keys-fallback-keys">
@@ -1746,6 +1911,13 @@ export function showBurnKeysFallback(keys, destination) {
                 <label>Destination Address</label>
                 <p class="burn-key-dest">${destination}</p>
             </div>
+            <div class="burn-key-row">
+                <label>Restore Height</label>
+                <div class="burn-key-copy">
+                    <input type="text" id="fallback-restore-height" value="${restoreHeight > 0 ? restoreHeight : ''}" readonly>
+                    <button class="btn-copy-sm" id="fallback-copy-height">Copy</button>
+                </div>
+            </div>
         </div>
     `;
     el.classList.remove('hidden');
@@ -1766,6 +1938,16 @@ export function showBurnKeysFallback(keys, destination) {
             await navigator.clipboard.writeText(keys.viewKey);
             copyView.textContent = 'Copied!';
             setTimeout(() => copyView.textContent = 'Copy', 2000);
+        });
+    }
+
+    const copyHeight = document.getElementById('fallback-copy-height');
+    if (copyHeight) {
+        copyHeight.addEventListener('click', async () => {
+            const heightVal = document.getElementById('fallback-restore-height')?.value || '';
+            await navigator.clipboard.writeText(heightVal);
+            copyHeight.textContent = 'Copied!';
+            setTimeout(() => copyHeight.textContent = 'Copy', 2000);
         });
     }
 }
@@ -2077,8 +2259,25 @@ export function hidePreviousMintBanner() {
  */
 export function resetBurnUI() {
     elements.burnProgress.classList.add('hidden');
-    if (elements.cancelBurn) elements.cancelBurn.classList.remove('hidden');
+    if (elements.cancelBurn) {
+        elements.cancelBurn.classList.remove('hidden');
+        elements.cancelBurn.textContent = '↺ Cancel & reset';
+        elements.cancelBurn.disabled = false;
+    }
     enableInputs(false);
+}
+
+/**
+ * Update cancel button label during burn flow.
+ * @param {string} label - New button text
+ * @param {boolean} [disabled] - Whether to disable the button
+ */
+export function updateCancelBurnButton(label, disabled = false) {
+    const btn = document.getElementById('cancel-burn');
+    if (btn) {
+        btn.textContent = label;
+        btn.disabled = disabled;
+    }
 }
 
 /**

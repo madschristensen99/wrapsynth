@@ -1,22 +1,22 @@
 {
   "network": "Gnosis Chain Mainnet",
   "chainId": 100,
-  "deploymentDate": "2026-06-28",
-  "note": "v2.0: Fresh deployment with RedStone oracle integration",
+  "deploymentDate": "2026-09-12T15:05:01.907Z",
+  "note": "v5.0: Mint refundability (collateral locking) + liquidation globalTotalDebt underflow fix",
   "deployer": "0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB",
   "contracts": {
-    "wsXMR": "0xB59AC6A4443ACBc22dCd5F4Fb0db485ADDDd7bB8",
-    "wsXmrHub": "0x2147f47829014B0b32531124d45A30352e721F75",
-    "liquidityRouter": "0x161d50B1D4bb196C5ECeDA82dd7dD708887F1546",
-    "swapHelper": "0x32E52ec15bF409B3a8AC3270b5d9CB1757872825",
-    "uniswapV3Pool": "0xf993E42DE700abE5Aa2027987Ab6874319f00d70",
+    "wsXMR": "0x3c9b23eF2fdECeD1992BBcEB76947934b1Bd361B",
+    "wsXmrHub": "0xB433b47fd3e6A5921b0ff0Bb36C345936EF0740E",
+    "liquidityRouter": "0x073C6354C8A0E962a010e0A3ECC3c34E11E493D0",
+    "swapHelper": "0x0a276e2E5399fEb333488964a115cd650d58452A",
+    "uniswapV3Pool": "0x5E51EC1C697fEEe4aF9234F15cB3f79A2Fd10ce2",
     "facets": {
-      "RedStoneOracleFacet": "0x83Db30253df3222C04df76043A5a54F9D3453aa4",
-      "VaultFacet": "0xE64fD58133D0be05e42B292643C6f3355f25d62B",
-      "MintFacet": "0xBA24b4ae92236D00eA80Bc7CB5990D497770E82c",
-      "BurnFacet": "0x1Ee6f2aA087D65Ba2A6DB11925D94367012ce259",
-      "LiquidationFacet": "0xc78b13dd3C0EDE7257972d145eab890560F1F0AE",
-      "YieldFacet": "0xe1b8E2d96F3C0baD925c9543919601Fe22C33a75"
+      "RedStoneOracleFacet": "0xb6768F8Bc18766DccbFBbA8cfdEBb08536D6366F",
+      "VaultFacet": "0x55A5bb15d190fbed42c31dEeCb0266c92a187789",
+      "MintFacet": "0x5ca3d3b56a68239a9724D00cb8f052f26aD47077",
+      "BurnFacet": "0x437eEbB9458fD34421123b214b7C1572E0f4E3f0",
+      "LiquidationFacet": "0xadC365f6cFdBC8Bc2f1FFa887f92f79c125ad7b6",
+      "YieldFacet": "0x3d937ABfd45C60fA6f4c7fffAFF6Cc4F72e360b7"
     }
   },
   "externalContracts": {

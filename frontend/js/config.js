@@ -27,13 +27,15 @@ export const NETWORKS = {
 
 // Contract addresses - source of truth: ../../deployment.json
 export const CONTRACTS = {
-    hub: DC.wsXmrHub || '0x29BF76f72694A99e5C1483871aD62f87501fC99E',
-    wsxmrToken: DC.wsXMR || '0x8197d472823CC8BB5ae4077619bC85cAD19C4A5f',
-    liquidityRouter: DC.liquidityRouter || '0x52EcC68d3E38c86778e940A9fCeAB1e19f92F59e',
-    sDAI: DE.sDAI || '0xaf204776c7245bF4147c2612BF6e5972Ee483701',
-    uniswapV3Pool: DP.uniswapV3Pool || '0x4e610940E0feBC109Fc7C9ba6d453eE99ea53F07',
+    hub: DC.wsXmrHub,
+    wsxmrToken: DC.wsXMR,
+    liquidityRouter: DC.liquidityRouter,
+    sDAI: DE.sDAI,
+    uniswapV3Pool: DP.uniswapV3Pool,
     // Default LP vault to use for mints (the active LP running the LP node)
-    defaultLpVault: DLC.defaultLpVault || '0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB'
+    defaultLpVault: DLC.defaultLpVault,
+    // Event topic hashes for log parsing
+    MintCancelledWithSecretSig: '0xabfd3b3a7e454869f42e528d99f9f2c2c1ad4aa49c0927059dda28aa4e99093d'
 };
 
 // LP Server Configuration
@@ -159,7 +161,9 @@ export const RAW_ABIS = {
                 { name: 'vaultMintNonce', type: 'uint256' },
                 { name: 'lpCommitment', type: 'bytes32' },
                 { name: 'revealedSecret', type: 'bytes32' },
-                { name: 'status', type: 'uint8' }
+                { name: 'status', type: 'uint8' },
+                { name: 'lockedCollateral', type: 'uint256' },
+                { name: 'xmrPriceAtReady', type: 'uint256' }
             ],
             name: '',
             type: 'tuple'
@@ -202,13 +206,17 @@ export const ABIS = {
     hub: [
         // Mint flow
         'function initiateMint(address lpVault, address recipient, uint256 xmrAmount, bytes32 claimCommitment, bytes32 userPublicKey) external payable returns (bytes32 requestId)',
-        'function provideLPKey(bytes32 requestId, bytes32 lpPublicKey) external',
-        'function setMintReady(bytes32 requestId, bytes32 lpCommitment) external payable',
+        'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey, bytes32 lpCommitment) external',
+        'function setMintReady(bytes32 requestId) external',
         'function revealSecret(bytes32 requestId, bytes32 secret) external',
         'function finalizeMint(bytes32 requestId) external',
-        'function cancelMint(bytes32 requestId) external',
+        'function cancelMint(bytes32 requestId, bytes32 userSecret) external',
+        'function claimGriefingDeposit(bytes32 requestId, bytes32 lpSecret) external',
+        'function sweepUnclaimedExpiredMint(bytes32 requestId) external',
         'function lpPublicKeys(bytes32 requestId) external view returns (bytes32)',
         'function lpPublicViewKeys(bytes32 requestId) external view returns (bytes32)',
+        'function burnLpPublicKeys(bytes32 requestId) external view returns (bytes32)',
+        'function burnLpPublicViewKeys(bytes32 requestId) external view returns (bytes32)',
         'function getUserMintRequests(address user) external view returns (bytes32[])',
         'function getVaultPendingMints(address lpVault) external view returns (bytes32[])',
         'function calculateWsxmrAmount(uint256 xmrAmount) external pure returns (uint256)',
@@ -317,6 +325,11 @@ export const ABIS = {
         'event MintReady(bytes32 indexed requestId, bytes32 lpCommitment)',
         'event MintFinalized(bytes32 indexed requestId, bytes32 secret)',
         'event MintCancelled(bytes32 indexed requestId)',
+        'event MintCancelledWithSecret(bytes32 indexed requestId, bytes32 userSecret)',
+        'event MintExpiredReady(bytes32 indexed requestId)',
+        'event MintCollateralLocked(bytes32 indexed requestId, uint256 lockedCollateral)',
+        'event GriefingDepositClaimed(bytes32 indexed requestId, bytes32 lpSecret)',
+        'event MintCollateralSlashed(bytes32 indexed requestId, uint256 slashedCollateral)',
         'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey)',
         'event HashProposed(bytes32 indexed requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey)',
         'event BurnCommitted(bytes32 indexed requestId, uint256 deadline)',

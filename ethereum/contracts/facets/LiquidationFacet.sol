@@ -191,6 +191,9 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         
         vault.normalizedDebt -= normalizedDebtCleared;
         vault.collateralShares -= collateralToSeize;
+        if (debtToClear > globalTotalDebt) {
+            debtToClear = globalTotalDebt;
+        }
         globalTotalDebt -= debtToClear;
         
         // H2: Write off bad debt from global totals. Do NOT scale globalDebtIndex

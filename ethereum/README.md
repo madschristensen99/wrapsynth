@@ -4,23 +4,35 @@ A decentralized protocol for wrapping Monero (XMR) on Gnosis Chain using a diamo
 
 ## 🚀 Gnosis Mainnet Deployment
 
-**Deployed:** August 18, 2026 (v3.0 — bug-fix redeployment)
+**Deployed:** September 16, 2026 (v6.0 — mint ghosting gap fix: collateral lock moved to provideLPKey, cancelMint slashes on KEY_PROVIDED timeout)
 
-- **wsXmrHub (Diamond Proxy):** `0xbed307ef521a0a3c3663858f53acfeacfe0ab4eb`
-- **wsXMR Token:** `0x35e3672b4f6bcb0c8bde814aa467f335b50bdd4f`
-- **LiquidityRouter:** `0x54572f3867c52f4178594787ed1956f695fcba09`
-- **SwapHelper:** `0x5ba4f79e01f46508cdb734e053d3db354c27d2c1`
-- **Uniswap V3 Pool:** `0x99dadF0B6A12eb4387662C74eB9710d0772091b8`
-- **RedStoneOracleFacet:** `0x4f2243dcb00f03225f902ee775e7175326a5debc`
-- **VaultFacet:** `0xf471401ff59a242b08f230113987aa3a6207c167`
-- **MintFacet:** `0x07ff8a45fdcc3e1b6d0905905ae0704cd8adf6f8`
-- **BurnFacet:** `0x4337f0fedbd4113447f176847cefb1ba33be0136`
-- **LiquidationFacet:** `0xacff85d2ef6f12ddecbb7623869c5a7394867097`
-- **YieldFacet:** `0xff4c4baa041205a39c010e67a6fb8a583c98769e`
+- **wsXmrHub (Diamond Proxy):** `0x2F6Ede34d2FC01209b104E74A3d657f71125b364`
+- **wsXMR Token:** `0x66A7e0e70113fE6A293287A5Cc0903E5C08067E4`
+- **LiquidityRouter:** `0xF44081dBE8C153cCfa1A74c157bd571F2d0f779D`
+- **SwapHelper:** `0xA31215E4352846F4D55211e4C5115daaF379f641`
+- **Uniswap V3 Pool:** `0xAf51b4f37096c21ff977284985209404679704a7`
+- **RedStoneOracleFacet:** `0x891B682279940F0d03b1414A24c2964c0cB02c20`
+- **VaultFacet:** `0x000C0c89599483839bec0C77894E401F309e969d`
+- **MintFacet:** `0xF8a6Df73E9f9B0A434356FCdf1EB9Fd3d24d3f61`
+- **BurnFacet:** `0x3c2b3515130AddF7aA17f577DAcc7339C802326E`
+- **LiquidationFacet:** `0xffc3Cc0C07B71F2DeF118FAa4758AbaEf79D48A7`
+- **YieldFacet:** `0xD6305b138406A7F7a72cD9Ac9525DD0ead349A9D`
 - **Network:** Gnosis Chain (ChainID: 100)
 - **Explorer:** https://gnosisscan.io
 
-### Recent Fixes (v1.3)
+### Recent Changes (v5.0)
+
+✅ **Mint Refundability — Collateral Locking**
+- `setMintReady` now locks par-value collateral (110% of par) from the vault
+- If LP ghosts and mint expires, user can `sweepUnclaimedExpiredMint` to slash locked collateral
+- If LP was ready but user abandoned, LP calls `claimGriefingDeposit` to claim griefing deposit and release locked collateral
+- `finalizeMint` releases the lock immediately upon successful mint
+
+✅ **Liquidation `globalTotalDebt` Underflow Fix**
+- Fixed arithmetic underflow when `debtToClear` exceeds `globalTotalDebt` after burn settlement
+- Added cap: `if (debtToClear > globalTotalDebt) debtToClear = globalTotalDebt`
+
+### Previous Fixes (v1.3)
 
 ✅ **Configurable LP Vault Timeouts**
 - LPs can now set per-vault `mintTimeoutBlocks` and `burnTimeoutBlocks`

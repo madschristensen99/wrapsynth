@@ -110,11 +110,16 @@ export async function startDeadlineTimer(mintFlow) {
                                 const pubClient = getPublicClient();
                                 const currentBlock = await pubClient.getBlockNumber();
                                 if (currentBlock >= claimWindowEnd) {
-                                    // LP claim window expired — sweep to recover deposit
+                                    // LP claim window expired — sweep to recover deposit + slashed collateral
                                     refundBtn.textContent = 'Sweeping expired mint...';
                                     await writeHub('sweepUnclaimedExpiredMint', [mintFlow.requestId]);
                                     await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
-                                    timerElement.innerHTML = '<strong style="color:var(--success-color);">Deposit Recovered</strong>';
+                                    // Also withdraw sDAI slashed collateral
+                                    try {
+                                        const { CONTRACTS } = await import('./config.js');
+                                        await writeHub('withdrawReturns', [CONTRACTS.sDAI]);
+                                    } catch (e) { /* may have no sDAI returns */ }
+                                    timerElement.innerHTML = '<strong style="color:var(--success-color);">Deposit + Collateral Recovered</strong>';
                                     refundBtn.remove();
                                     const { clearActiveSwap } = await import('./storage.js');
                                     clearActiveSwap();
@@ -131,9 +136,33 @@ export async function startDeadlineTimer(mintFlow) {
                             } else if (status === 1 || status === 2 || status === 3) {
                                 // Still cancellable; call cancelMint
                                 refundBtn.textContent = 'Cancelling...';
-                                const receipt = await writeHub('cancelMint', [mintFlow.requestId]);
-                                console.log('cancelMint tx:', receipt.transactionHash);
-                                timerElement.innerHTML = '<strong style="color:var(--success-color);">Cancelled & Refunded</strong>';
+                                const userSecret = mintFlow.agent ? mintFlow.agent.getSecret() : '0x0000000000000000000000000000000000000000000000000000000000000000';
+                                const cancelReceipt = await writeHub('cancelMint', [mintFlow.requestId, userSecret]);
+                                console.log('cancelMint tx:', cancelReceipt.transactionHash);
+                                // Check if collateral was slashed (KEY_PROVIDED cancel emits MintCancelledWithSecret)
+                                let slashedMsg = '';
+                                try {
+                                    const { getPublicClient } = await import('./viemClient.js');
+                                    const pubClient = getPublicClient();
+                                    const fullReceipt = await pubClient.waitForTransactionReceipt({ hash: cancelReceipt.transactionHash });
+                                    const { CONTRACTS } = await import('./config.js');
+                                    const hasSecretEvent = fullReceipt.logs.some(log => {
+                                        const sig = '0x' + log.topics[0].slice(2);
+                                        return sig === CONTRACTS.MintCancelledWithSecretSig;
+                                    });
+                                    if (hasSecretEvent || status === 2) {
+                                        slashedMsg = ' + slashed sDAI collateral';
+                                        // Withdraw slashed sDAI
+                                        try {
+                                            await writeHub('withdrawReturns', [CONTRACTS.sDAI]);
+                                        } catch (e) { /* may have no sDAI returns yet */ }
+                                    }
+                                } catch (e) { /* event parsing is best-effort */ }
+                                // Withdraw griefing deposit
+                                try {
+                                    await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
+                                } catch (e) { /* may have none */ }
+                                timerElement.innerHTML = `<strong style="color:var(--success-color);">Cancelled & Refunded${slashedMsg}</strong>`;
                                 refundBtn.remove();
                                 const { clearActiveSwap } = await import('./storage.js');
                                 clearActiveSwap();

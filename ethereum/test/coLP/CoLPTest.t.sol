@@ -141,10 +141,10 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         // LP provides public key
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(userMints[0], lpPublicKey, lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(userMints[0], lpPublicKey, lpPublicKey, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(userMints[0], bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(userMints[0]);
 
         vm.prank(user);
         MintFacet(address(hub)).revealSecret(userMints[0], testSecret);
@@ -325,10 +325,10 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         
         bytes32 lpPublicKey2 = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(user2Mints[0], lpPublicKey2, lpPublicKey2);
+        MintFacet(address(hub)).provideLPKey(user2Mints[0], lpPublicKey2, lpPublicKey2, bytes32(uint256(0xdeadbeef)));
         
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(user2Mints[0], bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(user2Mints[0]);
 
         vm.prank(user2);
         MintFacet(address(hub)).revealSecret(user2Mints[0], secret2);
@@ -538,10 +538,10 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
 
         bytes32 lpPublicKey3 = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey3, lpPublicKey3);
+        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey3, lpPublicKey3, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(requestId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(requestId);
 
         vm.prank(user3);
         MintFacet(address(hub)).revealSecret(requestId, secret3);
@@ -644,7 +644,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
 
         // LP should be able to cancel
         vm.prank(lp);
-        MintFacet(address(hub)).cancelMint(requestId);
+        MintFacet(address(hub)).cancelMint(requestId, bytes32(0));
 
         console.log("PASS: custom mint timeout affects cancel");
     }
@@ -948,11 +948,11 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         // LP provides public key
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(largeMints[0], lpPublicKey, lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(largeMints[0], lpPublicKey, lpPublicKey, bytes32(uint256(0xdeadbeef)));
 
         // LP sets mint ready
         vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(largeMints[0], bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(largeMints[0]);
 
         // User finalizes mint
         vm.prank(largeUser);

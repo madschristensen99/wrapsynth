@@ -251,8 +251,12 @@ contract BurnSolvencyInvariantTest is Test {
 
         uint256 minted = _mintForUser(user, lp);
 
+        bytes32 userSecret = bytes32(uint256(0xdeadbeef));
+        (uint256 upkx, ) = Ed25519.scalarMultBase(uint256(userSecret));
+        bytes32 userPubKey = bytes32(upkx);
+
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
 
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -271,7 +275,7 @@ contract BurnSolvencyInvariantTest is Test {
         vm.roll(block.number + 34561);
 
         vm.prank(lp);
-        BurnFacet(address(hub)).resolveDeclinedProposal(burnId);
+        BurnFacet(address(hub)).resolveDeclinedProposal(burnId, userSecret);
 
         wsXmrStorage.Vault memory vaultAfter = _getVault(lp);
         uint256 sharesAfter = vaultAfter.collateralShares;
@@ -360,7 +364,7 @@ contract BurnSolvencyInvariantTest is Test {
 
     /// @notice Liquidation of a vault with a COMMITTED burn must settle it and reduce collateralShares.
     function test_F1_Liquidation_SettlesCommittedBurn_ReducesCollateralShares() public {
-        _createVaultAndDeposit(lp, 100 ether);
+        _createVaultAndDeposit(lp, 150 ether);
         _updatePrices();
         _configureVault(lp);
 
@@ -385,8 +389,8 @@ contract BurnSolvencyInvariantTest is Test {
         BurnFacet(address(hub)).confirmMoneroLock(burnId);
 
         // Liquidator needs wsXMR - mint BEFORE depegging so initiateMint sees normal prices
-        // Must be enough to cover the debt being liquidated (~3.6M+ wsXMR after burn settles)
-        _performMint(lp, liquidator, 50_000000000);
+        // Must be enough to cover the debt being liquidated (increased collateral means more debt to clear)
+        _performMint(lp, liquidator, 100_000000000);
 
         // Depeg DAI to $0.20 to make vault liquidatable (burn reduced debt but collateral still matters)
         SimpleOracleFacet(address(hub)).updatePrices(XMR_PRICE_8DEC, 20000000); // $0.20 DAI (8 decimals)
@@ -593,10 +597,10 @@ contract BurnSolvencyInvariantTest is Test {
 
         bytes32 lpPublicKey = bytes32(uint256(0xdeadbeef));
         vm.prank(_lp);
-        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey);
+        MintFacet(address(hub)).provideLPKey(requestId, lpPublicKey, lpPublicKey, bytes32(uint256(0xdeadbeef)));
 
         vm.prank(_lp);
-        MintFacet(address(hub)).setMintReady(requestId, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).setMintReady(requestId);
 
         vm.prank(_user);
         MintFacet(address(hub)).revealSecret(requestId, secret);

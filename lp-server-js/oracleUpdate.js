@@ -1,6 +1,8 @@
 // oracleUpdate.js — Shared RedStone oracle price update logic
 // Used by both server.js (mint flow) and burnHandler.js (burn finalize)
 
+import { getNextNonce } from './nonceManager.js';
+
 let _hub = null;
 let _wallet = null;
 let _hubAddress = null;
@@ -36,15 +38,19 @@ export async function updateOraclePricesManual() {
       const baseData = _hub.interface.encodeFunctionData('updateOraclePrices', [[]]);
       const fullData = baseData + redstonePayload.slice(2);
 
+      const oracleNonce = await getNextNonce();
       const updateTx = await _wallet.sendTransaction({
         to: _hubAddress,
         data: fullData,
+        nonce: oracleNonce,
       });
       await updateTx.wait();
       console.log(`[Oracle] Prices updated (tx: ${updateTx.hash})`);
       return;
     } catch (err) {
       lastErr = err;
+      console.warn(`[Oracle] Attempt ${attempt + 1}/3 failed: ${err.shortMessage || err.message}`);
+      if (err.data) console.warn(`[Oracle] Revert data: ${err.data}`);
       if (attempt < 2) {
         const delay = 2000 * Math.pow(2, attempt);
         console.log(`[Oracle] Retry in ${delay / 1000}s... (${attempt + 2}/3)`);

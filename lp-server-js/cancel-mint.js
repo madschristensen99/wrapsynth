@@ -19,7 +19,7 @@ const HUB_ADDRESS = deployment.contracts.wsXmrHub;
 const CHAIN_ID = deployment.chainId || 100;
 
 const HUB_ABI = [
-  'function cancelMint(bytes32 requestId) external',
+  'function cancelMint(bytes32 requestId, bytes32 userSecret) external',
   'function getMintRequest(bytes32 requestId) external view returns (tuple(address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout, uint256 state))',
 ];
 
@@ -45,7 +45,7 @@ try {
   // Skip state check due to ABI issues - just try to cancel
   console.log('\n1. Attempting to cancel mint...');
   console.log('   (Contract will revert if not cancellable)');
-  const tx = await hub.cancelMint(requestId);
+  const tx = await hub.cancelMint(requestId, '0x0000000000000000000000000000000000000000000000000000000000000000');
   console.log(`   Transaction hash: ${tx.hash}`);
   
   console.log('   Waiting for confirmation...');

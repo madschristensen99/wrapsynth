@@ -74,8 +74,8 @@ async function main() {
         'function withdrawReturns(address token) external',
         'function withdrawCollateral(uint256 amount) external',
         'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment, bytes32 userPublicKey) external payable returns (bytes32)',
-        'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
-        'function setMintReady(bytes32 requestId, bytes32 lpCommitment) external payable',
+        'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey, bytes32 lpCommitment) external',
+        'function setMintReady(bytes32 requestId) external',
         'function revealSecret(bytes32 requestId, bytes32 secret) external',
         'function finalizeMint(bytes32 requestId) external',
         'function requestBurn(uint256 wsxmrAmount, address lpVault, address burnRecipient, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey) external returns (bytes32)',
@@ -299,14 +299,20 @@ async function main() {
     console.log('Secret:', ethers.utils.hexlify(secret));
     console.log('Commitment:', claimCommitment);
     console.log('User Public Key:', userPublicKey);
-    
+
+    // Refresh prices immediately before mint to avoid StalePrice (120s window)
+    console.log('Refreshing prices before mint...');
+    const preMintPriceTx = await retryRedStone(() => wrapWithRedStone(hub).updateOraclePrices([]));
+    await preMintPriceTx.wait();
+    console.log('✅ Prices refreshed');
+
     const mintTx = await hub.initiateMint(
         wallet.address,
         wallet.address,
         xmrAmount,
         claimCommitment,
         userPublicKey,
-        { value: griefingDeposit, gasLimit: 500000 }
+        { value: griefingDeposit, gasLimit: 1000000 }
     );
     const mintReceipt = await mintTx.wait();
     
@@ -343,15 +349,15 @@ async function main() {
     console.log('LP Public Key (x, y):', lpPubX.toString(), lpPubY.toString());
     console.log('LP Public Key (hash):', lpPublicKey);
     
-    const provideTx = await hub.provideLPKey(requestId, lpPublicKey, lpPublicKey);
+    const lpCommitment = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['uint256', 'uint256'], [lpPubX, lpPubY]));
+    const provideTx = await hub.provideLPKey(requestId, lpPublicKey, lpPublicKey, lpCommitment);
     await provideTx.wait();
     console.log('✅ LP provided public key');
     console.log('');
-    
+
     console.log('📊 Step 5: MINT - LP Sets Ready');
     console.log('================================');
-    const lpCommitment = ethers.utils.id('lp-commitment');
-    const readyTx = await hub.setMintReady(requestId, lpCommitment);
+    const readyTx = await hub.setMintReady(requestId);
     await readyTx.wait();
     console.log('✅ LP marked ready');
     console.log('');

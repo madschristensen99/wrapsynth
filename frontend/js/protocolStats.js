@@ -70,13 +70,14 @@ async function fetchVaultAggregates() {
     const vaultAddresses = [];
     try {
         const vaultCount = await readHub('getVaultCount');
-        for (let i = 0n; i < vaultCount; i++) {
-            try {
-                const addr = await readHub('vaultList', [i]);
-                if (addr) vaultAddresses.push(addr);
-            } catch (e) {
-                break;
-            }
+        // Fetch all vault addresses in parallel
+        const addrResults = await Promise.all(
+            Array.from({ length: Number(vaultCount) }, (_, i) =>
+                readHub('vaultList', [BigInt(i)]).catch(() => null)
+            )
+        );
+        for (const addr of addrResults) {
+            if (addr) vaultAddresses.push(addr);
         }
     } catch (e) {
         console.warn('[Protocol Stats] getVaultCount failed, using fallback');
@@ -90,13 +91,31 @@ async function fetchVaultAggregates() {
     let xmrPrice = 150;
     let collateralPrice = 1.0;
     try {
-        const xmrPriceWei = await readHub('getXmrPrice');
-        const collPriceWei = await readHub('getCollateralPrice');
-        xmrPrice = Number(xmrPriceWei) / 1e18;
-        collateralPrice = Number(collPriceWei) / 1e18;
+        const [xmrPriceWei, collPriceWei] = await Promise.all([
+            readHub('getXmrPrice').catch(() => null),
+            readHub('getCollateralPrice').catch(() => null),
+        ]);
+        if (xmrPriceWei !== null) xmrPrice = Number(xmrPriceWei) / 1e18;
+        if (collPriceWei !== null) collateralPrice = Number(collPriceWei) / 1e18;
     } catch (e) {
         console.warn('[Protocol Stats] Price fetch failed, using defaults');
     }
+
+    // Fetch all vault data + debts in parallel
+    const vaultResults = await Promise.all(
+        vaultAddresses.map(lpAddress =>
+            Promise.all([
+                readHub('getVault', [lpAddress]).catch(e => {
+                    console.warn(`[Protocol Stats] Failed to fetch vault ${lpAddress}:`, e);
+                    return null;
+                }),
+                readHub('getVaultDebt', [lpAddress]).catch(e => {
+                    console.warn(`[Protocol Stats] Failed to fetch debt ${lpAddress}:`, e);
+                    return null;
+                }),
+            ])
+        )
+    );
 
     // Sum across all active vaults
     let totalCollateral = 0n;
@@ -105,21 +124,13 @@ async function fetchVaultAggregates() {
     let totalBurnRewardBps = 0;
     let activeCount = 0;
 
-    for (const lpAddress of vaultAddresses) {
-        try {
-            const vault = await readHub('getVault', [lpAddress]);
-            if (vault.active) {
-                totalCollateral += BigInt(vault.collateralShares.toString());
-                // Use actual denormalized debt
-                const vaultDebt = await readHub('getVaultDebt', [lpAddress]);
-                totalDebt += BigInt(vaultDebt.toString());
-                totalMintFeeBps += Number(vault.mintFeeBps);
-                totalBurnRewardBps += Number(vault.burnRewardBps);
-                activeCount++;
-            }
-        } catch (e) {
-            console.warn(`[Protocol Stats] Failed to fetch vault ${lpAddress}:`, e);
-        }
+    for (const [vault, vaultDebt] of vaultResults) {
+        if (!vault || !vault.active) continue;
+        totalCollateral += BigInt(vault.collateralShares.toString());
+        if (vaultDebt !== null) totalDebt += BigInt(vaultDebt.toString());
+        totalMintFeeBps += Number(vault.mintFeeBps);
+        totalBurnRewardBps += Number(vault.burnRewardBps);
+        activeCount++;
     }
 
     // Collateral ratio

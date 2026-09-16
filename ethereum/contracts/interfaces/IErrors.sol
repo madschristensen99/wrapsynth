@@ -17,4 +17,5 @@ interface IErrors {
     error OnlyHub();
     error InvalidCommitment();
     error BurnExceedsVaultDebt();
+    error InvalidUserSecret();
 }

@@ -98,47 +98,28 @@ export async function sendPriceUpdate({ functionData, redstonePayload }) {
 
     const data = functionData + redstonePayload;
 
-    // Get nonce from public client
-    const nonce = await publicClient.getTransactionCount({ address: account });
-
-    // Sign the transaction with MetaMask
-    const serializedTx = await walletClient.signTransaction({
-        account,
-        chain: gnosis,
-        to: CONTRACTS.hub,
-        data,
-        gas: 2000000n,
-        gasPrice: 1000000000n,
-        nonce,
-    });
-
-    // Send raw tx through alternative RPCs (some Gnosis RPCs can't handle large RedStone calldata)
-    const rpcUrls = [
-        'https://gnosis-rpc.publicnode.com',
-        'https://rpc.gnosis.gateway.fm',
-        'https://rpc.gnosischain.com',
-    ];
-    let hash;
-    let lastErr;
-    for (const rpcUrl of rpcUrls) {
-        try {
-            console.log(`Trying RPC: ${rpcUrl}...`);
-            const altClient = createPublicClient({
-                chain: gnosis,
-                transport: http(rpcUrl, { retryCount: 1, timeout: 15000 })
-            });
-            hash = await altClient.sendRawTransaction({ serializedTransaction: serializedTx });
-            console.log(`✅ Accepted by ${rpcUrl}`);
-            break;
-        } catch (err) {
-            console.warn(`RPC ${rpcUrl} failed:`, err.message);
-            lastErr = err;
-        }
+    // Verify wallet is on Gnosis chain before signing
+    const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+    if (currentChainId !== '0x64') {
+        throw new Error('Please switch your wallet to Gnosis Chain (Chain ID 100) to continue.');
     }
-    if (!hash) throw lastErr;
 
-    // Wait for receipt using the normal public client
-    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    // Send directly via the wallet provider — bypasses viem transport entirely
+    // The wallet handles signing + broadcasting through its own RPC
+    console.log('Sending oracle update tx via wallet provider...');
+    const txHash = await window.ethereum.request({
+        method: 'eth_sendTransaction',
+        params: [{
+            from: account,
+            to: CONTRACTS.hub,
+            data,
+            gas: '0x1e8480', // 2000000
+        }]
+    });
+    console.log(`✅ Tx sent: ${txHash}`);
+
+    // Wait for receipt using the public client
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
 
     console.log('✅ Oracle prices updated successfully');
     console.log('TX:', receipt.transactionHash);

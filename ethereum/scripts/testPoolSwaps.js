@@ -109,8 +109,8 @@ async function main() {
             const ed25519Helper = new ethers.Contract('0xaECa36374039EAb9e267B5daa48bAb9Ab0e50F00', ed25519HelperAbi, provider);
             const hubMintAbi = [
                 'function initiateMint(address lpVault, address initiator, uint256 wsxmrAmount, bytes32 claimCommitment, bytes32 userPublicKey) external payable returns (bytes32)',
-                'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
-                'function setMintReady(bytes32 requestId, bytes32 lpCommitment) external payable',
+                'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey, bytes32 lpCommitment) external',
+                'function setMintReady(bytes32 requestId) external',
                 'function revealSecret(bytes32 requestId, bytes32 secret) external',
                 'function finalizeMint(bytes32 requestId) external',
                 'function updateOraclePrices(bytes[]) external',
@@ -164,7 +164,11 @@ async function main() {
             const xmrAmount = ethers.BigNumber.from('200000000'); // 0.002 XMR -> 0.0002 wsXMR
             const griefingDeposit = ethers.utils.parseEther('0.001');
 
-            const mintTx = await hubForMint.initiateMint(wallet.address, wallet.address, xmrAmount, commitment, userPublicKey, { value: griefingDeposit, gasLimit: 500000 });
+            // Refresh prices immediately before mint to avoid StalePrice (120s window)
+            await (await wrappedHubForMint.updateOraclePrices([], { gasLimit: 500000 })).wait();
+            console.log('  Prices refreshed before mint');
+
+            const mintTx = await hubForMint.initiateMint(wallet.address, wallet.address, xmrAmount, commitment, userPublicKey, { value: griefingDeposit, gasLimit: 1000000 });
             const mintReceipt = await mintTx.wait();
             const requestId = mintReceipt.logs[0].topics[1];
             console.log('  Mint initiated:', requestId);
@@ -176,9 +180,9 @@ async function main() {
             const lpSecret = ethers.utils.randomBytes(32);
             const [lpPubX, lpPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(lpSecret));
             const lpPublicKey = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['uint256', 'uint256'], [lpPubX, lpPubY]));
-            await (await hubForMint.provideLPKey(requestId, lpPublicKey, lpPublicKey, { gasLimit: 200000 })).wait();
-            const lpCommitment = ethers.utils.id('lp-commitment');
-            await (await hubForMint.setMintReady(requestId, lpCommitment, { gasLimit: 200000 })).wait();
+            const lpCommitment = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['uint256', 'uint256'], [lpPubX, lpPubY]));
+            await (await hubForMint.provideLPKey(requestId, lpPublicKey, lpPublicKey, lpCommitment, { gasLimit: 500000 })).wait();
+            await (await hubForMint.setMintReady(requestId, { gasLimit: 500000 })).wait();
             await (await hubForMint.revealSecret(requestId, secret, { gasLimit: 1000000 })).wait();
             await (await hubForMint.finalizeMint(requestId, { gasLimit: 1000000 })).wait();
             wsxmrBal = await wsxmr.balanceOf(wallet.address);
@@ -351,25 +355,27 @@ async function main() {
 
     // Check if we have an existing Co-LP position from previous tests
     const positionMgr = positionManager; // reuse the one already created above
+    const routerAddr = await hub.liquidityRouter();
     
-    const numPositions = await positionMgr.balanceOf(wallet.address);
-    console.log('Existing NFT positions:', numPositions.toString());
+    const numPositions = await positionMgr.balanceOf(routerAddr);
+    console.log('Existing NFT positions (router):', numPositions.toString());
 
     let coLPTokenId = null;
     
-    // Check if we have existing positions
+    // Check if the router has existing positions for our pool
     if (numPositions.gt(0)) {
-        // Get the last position
-        const lastTokenId = await positionMgr.tokenOfOwnerByIndex(wallet.address, numPositions.sub(1));
-        const position = await positionMgr.positions(lastTokenId);
-        
-        // Check if it's our pool
-        if ((position.token0.toLowerCase() === SDAI_ADDRESS.toLowerCase() && position.token1.toLowerCase() === WSXMR_ADDRESS.toLowerCase()) ||
-            (position.token0.toLowerCase() === WSXMR_ADDRESS.toLowerCase() && position.token1.toLowerCase() === SDAI_ADDRESS.toLowerCase())) {
-            coLPTokenId = lastTokenId;
-            console.log('Found existing Co-LP position, tokenId:', coLPTokenId.toString());
-            console.log('  Liquidity:', position.liquidity.toString());
-            console.log('  Fees owed - token0:', position.tokensOwed0.toString(), 'token1:', position.tokensOwed1.toString());
+        for (let i = numPositions.toNumber() - 1; i >= 0 && !coLPTokenId; i--) {
+            const tid = await positionMgr.tokenOfOwnerByIndex(routerAddr, i);
+            const position = await positionMgr.positions(tid);
+            if ((position.token0.toLowerCase() === SDAI_ADDRESS.toLowerCase() && position.token1.toLowerCase() === WSXMR_ADDRESS.toLowerCase()) ||
+                (position.token0.toLowerCase() === WSXMR_ADDRESS.toLowerCase() && position.token1.toLowerCase() === SDAI_ADDRESS.toLowerCase())) {
+                if (position.liquidity.gt(0)) {
+                    coLPTokenId = tid;
+                    console.log('Found existing Co-LP position, tokenId:', coLPTokenId.toString());
+                    console.log('  Liquidity:', position.liquidity.toString());
+                    console.log('  Fees owed - token0:', position.tokensOwed0.toString(), 'token1:', position.tokensOwed1.toString());
+                }
+            }
         }
     }
 
@@ -427,10 +433,30 @@ async function main() {
                     const coLPReceipt = await coLPTx.wait();
                     console.log('  Co-LP TX:', coLPTx.hash);
 
-                    // Get the new token ID from the receipt
-                    const numPositionsAfter = await positionMgr.balanceOf(wallet.address);
-                    coLPTokenId = await positionMgr.tokenOfOwnerByIndex(wallet.address, numPositionsAfter.sub(1));
-                    console.log('  Created Co-LP position, tokenId:', coLPTokenId.toString());
+                    // Get the token ID from the CoLPDeployed event (NFT is held by router, not user)
+                    const coLPDeployedTopic = ethers.utils.id('CoLPDeployed(address,address,uint256,uint256,uint256,uint16)');
+                    for (const log of coLPReceipt.logs) {
+                        if (log.topics[0] === coLPDeployedTopic) {
+                            coLPTokenId = ethers.BigNumber.from(log.topics[3]);
+                            break;
+                        }
+                    }
+                    if (!coLPTokenId) {
+                        // Fallback: try parsing with hub interface
+                        const hubWithEvents = new ethers.Contract(HUB_ADDRESS, [
+                            'event CoLPDeployed(address indexed lpVault, address indexed user, uint256 indexed tokenId, uint256 sDAIShares, uint256 wsxmrAmount, uint16 rangeBps)'
+                        ], wallet);
+                        for (const log of coLPReceipt.logs) {
+                            try {
+                                const parsed = hubWithEvents.interface.parseLog(log);
+                                if (parsed.name === 'CoLPDeployed') {
+                                    coLPTokenId = parsed.args.tokenId;
+                                    break;
+                                }
+                            } catch (e) {}
+                        }
+                    }
+                    console.log('  Created Co-LP position, tokenId:', coLPTokenId ? coLPTokenId.toString() : 'unknown');
                 } catch (e) {
                     console.log('  ⚠️  Co-LP creation failed:', e.message.split('\n')[0]);
                 }
@@ -443,34 +469,29 @@ async function main() {
         console.log('');
         console.log('Doing swaps to generate fees...');
         
-        // Swap 1: Tiny wsXMR -> sDAI to generate fees
+        // Swap 1: wsXMR -> sDAI to generate fees (via SwapHelper)
         const wsxmrForSwap = await wsxmr.balanceOf(wallet.address);
-        if (wsxmrForSwap.gt(5)) {
-            const swapAmount = ethers.BigNumber.from('5'); // 0.00000005 wsXMR
-            const approveSwap = await wsxmr.approve(SWAP_ROUTER, swapAmount, {
+        if (wsxmrForSwap.gt(1000)) {
+            const swapAmount = ethers.BigNumber.from('1000'); // 0.00001 wsXMR
+            const approveSwap = await wsxmr.approve(SWAP_HELPER, swapAmount, {
                 maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
                 maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
             });
             await approveSwap.wait();
 
-            const deadline = Math.floor(Date.now() / 1000) + 600;
-            const swapParams = {
-                tokenIn: WSXMR_ADDRESS,
-                tokenOut: SDAI_ADDRESS,
-                fee: POOL_FEE,
-                recipient: wallet.address,
-                deadline: deadline,
-                amountIn: swapAmount,
-                amountOutMinimum: 0,
-                sqrtPriceLimitX96: 0
-            };
-
             try {
-                const swapTx = await swapRouter.exactInputSingle(swapParams, {
-                    gasLimit: 800000,
-                    maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
-                    maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
-                });
+                const swapTx = await swapHelper.swap(
+                    poolAddr,
+                    wallet.address,
+                    wsxmrIsToken0, // zeroForOne if wsXMR is token0
+                    swapAmount,
+                    0,
+                    {
+                        gasLimit: 800000,
+                        maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+                        maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+                    }
+                );
                 await swapTx.wait();
                 console.log('  Swap 1 TX:', swapTx.hash);
             } catch (e) {
@@ -478,34 +499,29 @@ async function main() {
             }
         }
 
-        // Swap 2: Tiny sDAI -> wsXMR to generate fees
+        // Swap 2: sDAI -> wsXMR to generate fees (via SwapHelper)
         const sdaiForSwap = await sdai.balanceOf(wallet.address);
-        if (sdaiForSwap.gt(ethers.utils.parseUnits('0.00001', 18))) {
-            const swapAmount = ethers.utils.parseUnits('0.00001', 18); // 0.00001 sDAI
-            const approveSwap = await sdai.approve(SWAP_ROUTER, swapAmount, {
+        if (sdaiForSwap.gt(ethers.utils.parseUnits('0.001', 18))) {
+            const swapAmount = ethers.utils.parseUnits('0.001', 18); // 0.001 sDAI
+            const approveSwap = await sdai.approve(SWAP_HELPER, swapAmount, {
                 maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
                 maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
             });
             await approveSwap.wait();
 
-            const deadline = Math.floor(Date.now() / 1000) + 600;
-            const swapParams = {
-                tokenIn: SDAI_ADDRESS,
-                tokenOut: WSXMR_ADDRESS,
-                fee: POOL_FEE,
-                recipient: wallet.address,
-                deadline: deadline,
-                amountIn: swapAmount,
-                amountOutMinimum: 0,
-                sqrtPriceLimitX96: 0
-            };
-
             try {
-                const swapTx = await swapRouter.exactInputSingle(swapParams, {
-                    gasLimit: 800000,
-                    maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
-                    maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
-                });
+                const swapTx = await swapHelper.swap(
+                    poolAddr,
+                    wallet.address,
+                    !wsxmrIsToken0, // zeroForOne if sDAI is token0
+                    swapAmount,
+                    0,
+                    {
+                        gasLimit: 800000,
+                        maxPriorityFeePerGas: ethers.utils.parseUnits('10', 'gwei'),
+                        maxFeePerGas: ethers.utils.parseUnits('20', 'gwei')
+                    }
+                );
                 await swapTx.wait();
                 console.log('  Swap 2 TX:', swapTx.hash);
             } catch (e) {
