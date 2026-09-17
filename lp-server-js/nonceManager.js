@@ -8,6 +8,15 @@ let _walletAddress = null;
 let _nonceLock = Promise.resolve();
 let _cachedNonce = null;
 
+// Rejects `p` after `ms` so a hung RPC/fetch call can't stall the caller forever.
+// The underlying promise keeps running in the background; we just stop awaiting it.
+export function withTimeout(p, ms, label = 'operation') {
+  return Promise.race([
+    p,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
+  ]);
+}
+
 export function initNonceManager(provider, walletAddress) {
   _provider = provider;
   _walletAddress = walletAddress;
@@ -17,7 +26,13 @@ export function initNonceManager(provider, walletAddress) {
 export async function getNextNonce() {
   const run = _nonceLock.then(async () => {
     if (_cachedNonce === null) {
-      _cachedNonce = await _provider.getTransactionCount(_walletAddress, 'latest');
+      // Timeout prevents a hung getTransactionCount from deadlocking the shared
+      // _nonceLock chain (which would stall every subsequent transaction).
+      _cachedNonce = await withTimeout(
+        _provider.getTransactionCount(_walletAddress, 'latest'),
+        15000,
+        'getTransactionCount'
+      );
     }
     const nonce = _cachedNonce;
     _cachedNonce++;

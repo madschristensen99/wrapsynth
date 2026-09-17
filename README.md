@@ -2,7 +2,7 @@
 
 **A trustless cross-chain ferry for Monero. wsXMR is live in beta on Gnosis Chain, backed by overcollateralized LP vaults and Ed25519 atomic swap commitments. Mainnet launch on Arc scheduled for September 18th.**
 
-🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/sDAI Pool on Gnosis](https://www.geckoterminal.com/gnosis-chain/pools/0xaf51b4f37096c21ff977284985209404679704a7)**
+🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/sDAI Pool on Gnosis](https://www.geckoterminal.com/gnosis-chain/pools/0x73ffab40a766c0c6dc557ee53059be11c256bf65)**
 
 WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Users swap XMR for wsXMR through atomic-swap mechanics enforced on-chain: LPs post sDAI collateral, mint/burn settlement is gated by Ed25519 secret reveals verified on-chain, and timeout-based slashing protects both sides. No custodian, no federation, no trusted intermediary — every swap settles peer-to-peer between a user and an LP vault.
 
@@ -22,22 +22,22 @@ WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Us
 
 | Contract | Address |
 |---|---|
-| wsXMR Token | [`0x66A7e0e70113fE6A293287A5Cc0903E5C08067E4`](https://gnosisscan.io/token/0x66A7e0e70113fE6A293287A5Cc0903E5C08067E4) |
-| wsXmrHub | [`0x2F6Ede34d2FC01209b104E74A3d657f71125b364`](https://gnosisscan.io/address/0x2F6Ede34d2FC01209b104E74A3d657f71125b364) |
-| Liquidity Router | [`0xF44081dBE8C153cCfa1A74c157bd571F2d0f779D`](https://gnosisscan.io/address/0xF44081dBE8C153cCfa1A74c157bd571F2d0f779D) |
-| wsXMR/sDAI UniV3 Pool | [`0xAf51b4f37096c21ff977284985209404679704a7`](https://gnosisscan.io/address/0xAf51b4f37096c21ff977284985209404679704a7) |
+| wsXMR Token | [`0xe23d7210fe278b188144b7708e462c7dd721c436`](https://gnosisscan.io/token/0xe23d7210fe278b188144b7708e462c7dd721c436) |
+| wsXmrHub | [`0xd3dac8cf69c2d321bdc1e479d92a1b79cd2228a9`](https://gnosisscan.io/address/0xd3dac8cf69c2d321bdc1e479d92a1b79cd2228a9) |
+| Liquidity Router | [`0x9fF795A27567367277B7f6bB0E1b073f89a0C29c`](https://gnosisscan.io/address/0x9fF795A27567367277B7f6bB0E1b073f89a0C29c) |
+| wsXMR/sDAI UniV3 Pool | [`0x73ffab40a766c0c6dc557ee53059be11c256bf65`](https://gnosisscan.io/address/0x73ffab40a766c0c6dc557ee53059be11c256bf65) |
 
 <details>
 <summary>Facet addresses</summary>
 
 | Facet | Address |
 |---|---|
-| RedStoneOracleFacet | [`0x891B682279940F0d03b1414A24c2964c0cB02c20`](https://gnosisscan.io/address/0x891B682279940F0d03b1414A24c2964c0cB02c20) |
-| VaultFacet | [`0x000C0c89599483839bec0C77894E401F309e969d`](https://gnosisscan.io/address/0x000C0c89599483839bec0C77894E401F309e969d) |
-| MintFacet | [`0xF8a6Df73E9f9B0A434356FCdf1EB9Fd3d24d3f61`](https://gnosisscan.io/address/0xF8a6Df73E9f9B0A434356FCdf1EB9Fd3d24d3f61) |
-| BurnFacet | [`0x3c2b3515130AddF7aA17f577DAcc7339C802326E`](https://gnosisscan.io/address/0x3c2b3515130AddF7aA17f577DAcc7339C802326E) |
-| LiquidationFacet | [`0xffc3Cc0C07B71F2DeF118FAa4758AbaEf79D48A7`](https://gnosisscan.io/address/0xffc3Cc0C07B71F2DeF118FAa4758AbaEf79D48A7) |
-| YieldFacet | [`0xD6305b138406A7F7a72cD9Ac9525DD0ead349A9D`](https://gnosisscan.io/address/0xD6305b138406A7F7a72cD9Ac9525DD0ead349A9D) |
+| RedStoneOracleFacet | [`0x584124026dabdc729b9dad408881da36a67057d0`](https://gnosisscan.io/address/0x584124026dabdc729b9dad408881da36a67057d0) |
+| VaultFacet | [`0x20fca74c4690c6a09ee0a071d4d38dac8c5bd08a`](https://gnosisscan.io/address/0x20fca74c4690c6a09ee0a071d4d38dac8c5bd08a) |
+| MintFacet | [`0x2f6773d8ea59a3e7f2d00fc71fabee3e65ec21c8`](https://gnosisscan.io/address/0x2f6773d8ea59a3e7f2d00fc71fabee3e65ec21c8) |
+| BurnFacet | [`0xfe7519758c6caf0db057b8427e5b371a908651d2`](https://gnosisscan.io/address/0xfe7519758c6caf0db057b8427e5b371a908651d2) |
+| LiquidationFacet | [`0x45de14afc6c17df6fdc1e67ce1da66cc7222735f`](https://gnosisscan.io/address/0x45de14afc6c17df6fdc1e67ce1da66cc7222735f) |
+| YieldFacet | [`0x54b3e8b84643d84825acf8092fb261992e484991`](https://gnosisscan.io/address/0x54b3e8b84643d84825acf8092fb261992e484991) |
 
 Full deployment manifest (external contracts, pool config, LP defaults): [`deployment.json`](./deployment.json)
 </details>
@@ -112,6 +112,26 @@ The protocol has been through **two rounds of security review**, with all critic
 - **Yield harvesting unit mismatch** between sDAI shares and DAI amounts in vault accounting
 - **Inverted bad-debt socialization** logic in liquidation flow
 - **Burn flow redesign** — the original single-path burn was replaced with the `requestBurn` / `abortBurn` / `forceSettleBurn` state machine to remove griefing and stuck-funds paths
+- **Open-ended deployer privileges** — the hub/token deployer held two permanent admin hooks
+  (`wsXMR.replaceHub()`, `wsXmrHub.addSelectors()` / `removeSelectors()`) that could repoint the
+  token at an arbitrary minter or add/brick facet routes at any time after launch. Both are now
+  closed by a **one-way `lockHub()` / `lockDeployer()`** pair that the deployment script calls as
+  its final step, so the admin key is permanently powerless once setup completes.
+
+### Admin surface
+
+| Power | Holder | Reachable after `lockDeployer()` / `lockHub()` |
+|---|---|---|
+| `registerFacets` | hub `deployer` | ❌ no (and already one-time) |
+| `addSelectors` / `removeSelectors` | hub `deployer` | ❌ no |
+| `setLiquidityRouter` | hub `deployer` | ❌ no |
+| `setPriceUpdater` (oracle) | hub `deployer` | ❌ no |
+| `wsXMR.replaceHub` / `setHub` | token `_deployer` | ❌ no |
+| `updatePrices` | `priceUpdater` only | ✅ yes (required for oracle liveness) |
+
+✅ **The live v6.1 Gnosis deployment has executed `lockHub()` / `lockDeployer()`** — the
+deployer key can no longer repoint the minter or alter facet routes. Verified on-chain at
+deploy time (`hubLocked() == true`, `deployerOperationsLocked() == true`).
 
 ### Testing
 

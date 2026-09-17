@@ -15,7 +15,7 @@
 import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG } from './config.js';
 import { readHub, writeHub, watchContractEvent, getUserAddress } from './viemClient.js';
 import { getPhantomAgent } from './phantomAgent.js';
-import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
+import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory, getActiveSwapByRequestId } from './storage.js';
 import { keccak256, toHex, parseEther } from 'https://esm.sh/viem@2.7.0';
 import { startDeadlineTimer, startStatusPolling, stopTimers } from './mintFlowTimers.js';
 import { showLPVerificationStatus, updateMintProgress, showSuccess, showConfirmModal, showSuccessNotification, showMintComplete } from './ui.js?v=3.4';
@@ -93,6 +93,23 @@ export class MintFlow {
     }
 
     /**
+     * Resolve the user's Ed25519 secret for cancelMint. Prefers the live agent's
+     * secret; falls back to the claimSecret persisted in the active-swap record
+     * (saved at initiateMint) so cancel still works after a page reload where the
+     * agent was never restored. Returns null if no secret is available.
+     */
+    _resolveUserSecret() {
+        if (this.agent && this.agent.secret) {
+            return this.agent.getSecret();
+        }
+        const saved = this.requestId ? getActiveSwapByRequestId(this.requestId) : null;
+        if (saved && saved.claimSecret && saved.claimSecret !== '0x' + '0'.repeat(64)) {
+            return saved.claimSecret;
+        }
+        return null;
+    }
+
+    /**
      * Cancel the mint on-chain (cancelMint). Requires the timeout block to have passed.
      * Saves to history, clears active swap, stops timers, and resets UI.
      */
@@ -117,12 +134,23 @@ export class MintFlow {
             
             const walletClient = await getWalletClient();
             const publicClient = await getPublicClient();
-            
+
+            const userSecret = this._resolveUserSecret();
+            if (!userSecret) {
+                const { showError } = await import('./ui.js?v=3.4');
+                showError(
+                    'Cannot Cancel Mint',
+                    'Your swap secret could not be recovered from browser storage. ' +
+                    'Restore your seed phrase to cancel this mint and reclaim your deposit.'
+                );
+                return;
+            }
+
             const hash = await walletClient.writeContract({
                 address: CONTRACTS.hub,
                 abi: ABIS.hub,
                 functionName: 'cancelMint',
-                args: [this.requestId, this.agent ? this.agent.getSecret() : '0x0000000000000000000000000000000000000000000000000000000000000000']
+                args: [this.requestId, userSecret]
             });
             
             console.log('Cancel transaction sent:', hash);
@@ -132,26 +160,10 @@ export class MintFlow {
             
             console.log('Mint cancelled successfully');
             
-            // Check if this was a KEY_PROVIDED cancel (collateral slashed + secret emitted)
-            let wasKeyProvidedCancel = false;
-            try {
-                const { CONTRACTS } = await import('./config.js');
-                wasKeyProvidedCancel = receipt.logs.some(log => {
-                    const sig = log.topics[0];
-                    return sig === CONTRACTS.MintCancelledWithSecretSig;
-                });
-            } catch (e) { /* best-effort event check */ }
-            
-            // If collateral was slashed, withdraw sDAI returns
-            if (wasKeyProvidedCancel) {
-                try {
-                    const { writeHub } = await import('./viemClient.js');
-                    const { CONTRACTS } = await import('./config.js');
-                    await writeHub('withdrawReturns', [CONTRACTS.sDAI]);
-                    console.log('Slashed sDAI collateral claimed');
-                } catch (e) { /* may have no sDAI returns yet */ }
-            }
-            // Withdraw griefing deposit (ETH)
+            // Note: KEY_PROVIDED cancels park the griefing deposit on-chain
+            // (KEY_CANCELLED) — nothing is slashed. The deposit is reclaimable via
+            // reclaimParkedDeposit if the LP doesn't claim it within the window.
+            // Withdraw griefing deposit (ETH) — covers PENDING cancels which refund immediately
             try {
                 const { writeHub } = await import('./viemClient.js');
                 await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
@@ -1019,7 +1031,16 @@ export class MintFlow {
                         console.warn(`Cannot cancel yet: timeout not reached (${blocksRemaining} blocks, ~${minutes} min remaining)`);
                         return;
                     }
-                    const userSecret = this.agent ? this.agent.getSecret() : '0x0000000000000000000000000000000000000000000000000000000000000000';
+                    const userSecret = this._resolveUserSecret();
+                    if (!userSecret) {
+                        const { showError } = await import('./ui.js?v=3.4');
+                        showError(
+                            'Cannot Cancel Mint',
+                            'Your swap secret could not be recovered from browser storage. ' +
+                            'Restore your seed phrase to cancel this mint and reclaim your deposit.'
+                        );
+                        return;
+                    }
                     const cancelReceipt = await writeHub('cancelMint', [this.requestId, userSecret]);
                     console.log('Mint request canceled on EVM');
                     // If KEY_PROVIDED, collateral was slashed — withdraw sDAI returns

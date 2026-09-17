@@ -248,9 +248,9 @@ contract MintBurnCoverageTest is Test {
         _provideLPKey(lp, reqId);
         _setMintReady(lp, reqId);
 
-        // Verify collateral was locked at provideLPKey
+        // Verify collateral was locked at setMintReady
         wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
-        assertGt(req.lockedCollateral, 0, "collateral should be locked at provideLPKey");
+        assertGt(req.lockedCollateral, 0, "collateral should be locked at setMintReady");
         assertGt(req.xmrPriceAtReady, 0, "xmrPriceAtReady should be set");
 
         vm.roll(block.number + 10000);
@@ -264,6 +264,257 @@ contract MintBurnCoverageTest is Test {
 
         assertGt(sDAIPendingAfter, sDAIPendingBefore, "user should get slashed sDAI collateral");
         assertEq(sDAIPendingAfter - sDAIPendingBefore, req.lockedCollateral, "slashed amount should equal locked collateral");
+    }
+
+    // ========== cancelMint at KEY_PROVIDED (no slash — nothing locked) ==========
+
+    /// @notice REGRESSION: previously a user could initiate, let the LP lock collateral,
+    ///         send NO XMR, then cancel with their secret and steal the locked collateral.
+    ///         Collateral now locks at setMintReady (the LP's deposit attestation), so a
+    ///         KEY_PROVIDED cancel has nothing to slash — the deposit is parked instead.
+    function test_CancelMint_KeyProvided_NoSlash_DepositParked() public {
+        bytes32 userSecret = bytes32(uint256(0x1234));
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(userSecret));
+        bytes32 commitment = keccak256(abi.encodePacked(px, py));
+        bytes32 userPublicKey = bytes32(Ed25519.compressPoint(px, py));
+
+        uint256 xmrAmount = 20000000000;
+        vm.prank(user);
+        bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
+            lp, user, xmrAmount, commitment, userPublicKey
+        );
+
+        _provideLPKey(lp, reqId); // -> KEY_PROVIDED, reserves pendingDebt, NO lock
+
+        wsXmrStorage.Vault memory vaultBefore = _getVault(lp);
+        uint256 userSdaiBefore = _getPendingReturns(user, GnosisAddresses.SDAI);
+        uint256 userEthBefore = _getPendingReturns(user, address(0));
+
+        // Expire the mint, then cancel — user never sent XMR.
+        vm.roll(block.number + 10000);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
+
+        wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
+        assertEq(uint256(req.status), uint256(wsXmrStorage.MintStatus.KEY_CANCELLED), "should be KEY_CANCELLED");
+
+        // No collateral slashed, deposit parked (not yet returned to anyone)
+        wsXmrStorage.Vault memory vaultAfter = _getVault(lp);
+        assertEq(vaultAfter.collateralShares, vaultBefore.collateralShares, "vault collateral must be untouched");
+        assertEq(vaultAfter.lockedCollateral, vaultBefore.lockedCollateral, "no collateral was locked");
+        assertEq(_getPendingReturns(user, GnosisAddresses.SDAI), userSdaiBefore, "no sDAI slash payout");
+        assertEq(_getPendingReturns(user, address(0)), userEthBefore, "deposit parked, not returned");
+        assertEq(vaultAfter.pendingDebt, vaultBefore.pendingDebt - req.wsxmrAmount, "reserved debt released");
+    }
+
+    /// @notice The userSecret parameter is deprecated — cancel is permissionless and requires
+    ///         no secret since nothing is slashable at KEY_PROVIDED.
+    function test_CancelMint_KeyProvided_AnySecretAccepted() public {
+        bytes32 reqId = _initiateMint(user, lp);
+        _provideLPKey(lp, reqId);
+        vm.roll(block.number + 10000);
+
+        // A garbage secret no longer reverts — it is ignored entirely.
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(uint256(0x9999)));
+        assertEq(uint256(_getMintRequest(reqId).status), uint256(wsXmrStorage.MintStatus.KEY_CANCELLED));
+    }
+
+    // ========== abandonKeyProvidedMint ==========
+
+    function test_AbandonKeyProvidedMint_LPClaimsDepositAndRevealsSecret() public {
+        bytes32 reqId = _initiateMint(user, lp);
+
+        // Real lpSecret + commitment
+        bytes32 lpSecret = bytes32(uint256(0xcafe));
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(lpSecret));
+        bytes32 lpCommitment = keccak256(abi.encodePacked(px, py));
+        vm.prank(lp);
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdead)), bytes32(uint256(0xbeef)), lpCommitment);
+
+        // Pre-timeout abandon must revert (prevents key-then-instant-abandon farming)
+        vm.prank(lp);
+        vm.expectRevert(IMintOperations.TimeoutNotReached.selector);
+        MintFacet(address(hub)).abandonKeyProvidedMint(reqId, lpSecret);
+
+        vm.roll(block.number + 10000);
+
+        // Wrong secret reverts
+        vm.prank(lp);
+        vm.expectRevert(IErrors.InvalidSecret.selector);
+        MintFacet(address(hub)).abandonKeyProvidedMint(reqId, bytes32(uint256(0x9999)));
+
+        // Non-LP cannot abandon
+        vm.prank(user);
+        vm.expectRevert(IErrors.Unauthorized.selector);
+        MintFacet(address(hub)).abandonKeyProvidedMint(reqId, lpSecret);
+
+        // LP abandons: deposit -> LP, lpSecret emitted, CANCELLED
+        vm.prank(lp);
+        MintFacet(address(hub)).abandonKeyProvidedMint(reqId, lpSecret);
+
+        assertEq(uint256(_getMintRequest(reqId).status), uint256(wsXmrStorage.MintStatus.CANCELLED));
+        assertEq(_getPendingReturns(lp, address(0)), 0.001 ether, "LP should receive griefing deposit");
+        assertEq(_getPendingReturns(user, address(0)), 0, "user gets nothing back");
+    }
+
+    function test_AbandonKeyProvidedMint_FromKeyCancelled() public {
+        bytes32 reqId = _initiateMint(user, lp);
+        bytes32 lpSecret = bytes32(uint256(0xcafe));
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(lpSecret));
+        bytes32 lpCommitment = keccak256(abi.encodePacked(px, py));
+        vm.prank(lp);
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdead)), bytes32(uint256(0xbeef)), lpCommitment);
+
+        // Timeout -> permissionless cancel -> KEY_CANCELLED (deposit parked)
+        vm.roll(block.number + 10000);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
+
+        // LP claims within the window
+        vm.prank(lp);
+        MintFacet(address(hub)).abandonKeyProvidedMint(reqId, lpSecret);
+        assertEq(_getPendingReturns(lp, address(0)), 0.001 ether, "LP claims parked deposit");
+        assertEq(uint256(_getMintRequest(reqId).status), uint256(wsXmrStorage.MintStatus.CANCELLED));
+    }
+
+    function test_AbandonKeyProvidedMint_AfterWindowReverts() public {
+        bytes32 reqId = _initiateMint(user, lp);
+        bytes32 lpSecret = bytes32(uint256(0xcafe));
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(lpSecret));
+        bytes32 lpCommitment = keccak256(abi.encodePacked(px, py));
+        vm.prank(lp);
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdead)), bytes32(uint256(0xbeef)), lpCommitment);
+
+        vm.roll(block.number + 10000);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
+
+        // Past the claim window — LP can no longer claim
+        vm.roll(block.number + 361);
+        vm.prank(lp);
+        vm.expectRevert(IErrors.DeadlineExpired.selector);
+        MintFacet(address(hub)).abandonKeyProvidedMint(reqId, lpSecret);
+    }
+
+    // ========== reclaimParkedDeposit ==========
+
+    function test_ReclaimParkedDeposit_AfterWindow() public {
+        bytes32 reqId = _initiateMint(user, lp);
+        _provideLPKey(lp, reqId);
+
+        vm.roll(block.number + 10000);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
+
+        // Too early — LP claim window still open
+        vm.expectRevert(IMintOperations.TimeoutNotReached.selector);
+        MintFacet(address(hub)).reclaimParkedDeposit(reqId);
+
+        // Past window — user reclaims (dead-LP case)
+        vm.roll(block.number + 361);
+        MintFacet(address(hub)).reclaimParkedDeposit(reqId);
+        assertEq(_getPendingReturns(user, address(0)), 0.001 ether, "user reclaims parked deposit");
+        assertEq(uint256(_getMintRequest(reqId).status), uint256(wsXmrStorage.MintStatus.CANCELLED));
+    }
+
+    // ========== SECRET_REVEALED cancel must mint, not cancel ==========
+
+    function test_CancelMint_SecretRevealed_MintsAnyway() public {
+        bytes32 reqId = _initiateMint(user, lp);
+        _provideLPKey(lp, reqId);
+        _setMintReady(lp, reqId);
+        vm.prank(user);
+        MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
+
+        // Timeout passes with no finalize — cancelMint must MINT, not cancel,
+        // because the secret is public and the LP could otherwise take the XMR.
+        vm.roll(block.number + 10000);
+        uint256 balBefore = wsxmr.balanceOf(user);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
+
+        assertEq(uint256(_getMintRequest(reqId).status), uint256(wsXmrStorage.MintStatus.COMPLETED), "should COMPLETE not cancel");
+        assertGt(wsxmr.balanceOf(user), balBefore, "wsXMR minted to recipient");
+    }
+
+    // ========== abandonProposedBurn ==========
+
+    function test_AbandonProposedBurn_LPReleasesCollateral() public {
+        uint256 minted = _mintForUser(user, lp);
+        bytes32 burnId = _requestBurn(user, lp, minted);
+
+        // LP proposes
+        bytes32 burnSecret = bytes32(uint256(0xcafebabe));
+        (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
+        bytes32 secretHash = keccak256(abi.encodePacked(bpx, bpy));
+        vm.prank(lp);
+        BurnFacet(address(hub)).proposeHash(burnId, secretHash, bytes32(uint256(0x1111)), bytes32(uint256(0x2222)));
+
+        wsXmrStorage.Vault memory vaultBefore = _getVault(lp);
+        uint256 balBefore = wsxmr.balanceOf(user);
+
+        // Pre-deadline abandon must revert (user might still confirm)
+        vm.prank(lp);
+        vm.expectRevert(IBurnOperations.DeadlineNotExpired.selector);
+        BurnFacet(address(hub)).abandonProposedBurn(burnId);
+
+        vm.roll(block.number + 34561);
+
+        // Non-LP cannot abandon
+        vm.prank(user);
+        vm.expectRevert(IErrors.Unauthorized.selector);
+        BurnFacet(address(hub)).abandonProposedBurn(burnId);
+
+        // LP abandons: collateral released, wsXMR restored, CANCELLED
+        vm.prank(lp);
+        BurnFacet(address(hub)).abandonProposedBurn(burnId);
+
+        wsXmrStorage.Vault memory vaultAfter = _getVault(lp);
+        assertLt(vaultAfter.lockedCollateral, vaultBefore.lockedCollateral, "lock released");
+        assertEq(wsxmr.balanceOf(user), balBefore + minted, "wsXMR restored");
+        assertEq(uint256(_getBurnRequest(burnId).status), uint256(wsXmrStorage.BurnStatus.CANCELLED), "should be CANCELLED");
+    }
+
+    /// @notice REGRESSION: userPublicKey is a compressed Ed25519 point (the frontend passes
+    ///         publicSpendKey.toRawBytes()). The old check compared the raw x-coordinate and
+    ///         could never match — every declined proposal was unresolvable on mainnet.
+    function test_ResolveDeclinedProposal_CompressedUserKey() public {
+        uint256 minted = _mintForUser(user, lp);
+
+        bytes32 userSecret = bytes32(uint256(0xdeadbeef));
+        (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(userSecret));
+        bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
+
+        vm.startPrank(user);
+        wsxmr.approve(address(hub), minted);
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
+        vm.stopPrank();
+
+        // LP proposes
+        bytes32 burnSecret = bytes32(uint256(0xcafebabe));
+        (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
+        bytes32 secretHash = keccak256(abi.encodePacked(bpx, bpy));
+        vm.prank(lp);
+        BurnFacet(address(hub)).proposeHash(burnId, secretHash, bytes32(uint256(0x1111)), bytes32(uint256(0x2222)));
+
+        vm.roll(block.number + 34561);
+
+        uint256 balBefore = wsxmr.balanceOf(user);
+        BurnFacet(address(hub)).resolveDeclinedProposal(burnId, userSecret);
+        assertEq(wsxmr.balanceOf(user), balBefore + minted, "wsXMR restored");
+        assertEq(uint256(_getBurnRequest(burnId).status), uint256(wsXmrStorage.BurnStatus.CANCELLED), "should be CANCELLED");
+    }
+
+    // ========== pendingDebt reservation timing ==========
+
+    function test_PendingDebt_ReservedAtKeyNotInitiate() public {
+        bytes32 reqId = _initiateMint(user, lp);
+        wsXmrStorage.Vault memory v = _getVault(lp);
+        assertEq(v.pendingDebt, 0, "PENDING mint must not reserve debt");
+
+        _provideLPKey(lp, reqId);
+        v = _getVault(lp);
+        assertEq(v.pendingDebt, 2000000, "KEY_PROVIDED reserves debt"); // 20000000000 / 1e4
+
+        vm.roll(block.number + 10000);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
+        v = _getVault(lp);
+        assertEq(v.pendingDebt, 0, "cancel releases reservation");
     }
 
     function test_ClaimGriefingDeposit_ReleasesLockedCollateral() public {
@@ -300,7 +551,7 @@ contract MintBurnCoverageTest is Test {
         _setMintReady(lp, reqId);
 
         wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
-        assertGt(req.lockedCollateral, 0, "collateral should be locked at provideLPKey");
+        assertGt(req.lockedCollateral, 0, "collateral should be locked at setMintReady");
 
         // User reveals secret and finalize
         vm.prank(user);
@@ -417,6 +668,11 @@ contract MintBurnCoverageTest is Test {
     function _getPendingReturns(address who, address token) internal returns (uint256) {
         bytes memory r = _hubView(abi.encodeWithSelector(VaultFacet.getPendingReturns.selector, who, token));
         return abi.decode(r, (uint256));
+    }
+
+    function _getVault(address vaultAddr) internal returns (wsXmrStorage.Vault memory) {
+        bytes memory r = _hubView(abi.encodeWithSelector(VaultFacet.getVault.selector, vaultAddr));
+        return abi.decode(r, (wsXmrStorage.Vault));
     }
 
     // ========== SETUP HELPERS ==========

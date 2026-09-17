@@ -59,6 +59,9 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     
     modifier onlyDeployer() {
         if (msg.sender != deployer) revert Unauthorized();
+        // One-way kill switch: once the deployer has locked its own powers,
+        // no privileged configuration call can ever be made again.
+        if (deployerOperationsLocked) revert Unauthorized();
         _;
     }
     
@@ -75,7 +78,19 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     }
     
     // ========== INITIALIZATION ==========
-    
+
+    /// @notice Permanently disable every `onlyDeployer` action. Irreversible.
+    /// @dev Removes the deployer's ability to register/route facets or configure the
+    ///      liquidity router. Must be the final step of the deployment script.
+    ///      Deliberately does NOT use `onlyDeployer` so it stays callable after locking
+    ///      is triggered; it re-checks the deployer address inline.
+    function lockDeployer() external {
+        if (msg.sender != deployer) revert Unauthorized();
+        if (deployerOperationsLocked) revert AlreadyInitialized();
+        deployerOperationsLocked = true;
+        emit DeployerOperationsLocked(deployer);
+    }
+
     /// @inheritdoc IwsXmrHub
     function registerFacets(
         address _vaultFacet,

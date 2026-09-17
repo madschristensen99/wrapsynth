@@ -882,7 +882,8 @@ async function checkForActiveSwapOnChain(userAddress) {
         const activeMintEntries = [];
         for (const { requestId, mintReq } of mintReqResults) {
             if (!mintReq) continue;
-            // Status: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED
+            // Status: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED,
+            // 5=COMPLETED, 6=CANCELLED, 7=EXPIRED_READY, 8=KEY_CANCELLED (deposit parked)
             if (mintReq.status === 1 || mintReq.status === 2 || mintReq.status === 3 || mintReq.status === 4) {
                 const timeout = Number(mintReq.timeout);
                 if (currentBlock >= timeout) {

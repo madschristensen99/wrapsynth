@@ -1065,8 +1065,8 @@ function copyAddr(btn){
 (function(){
   var diagrams=[
     {
-      desc:"User swaps XMR for wsXMR through an atomic swap. The on-chain collateralization requirement is 150%, but LPs effectively post >200% because they hold XMR alongside their sDAI vault collateral. The LP provides Ed25519 public keys for a 2-of-2 PTLC (Point Time-Locked Contract), and claims XMR by revealing the secret. The contract verifies the secret on-chain with Ed25519 \u2014 the same curve Monero uses \u2014 then mints wsXMR minus a configurable fee to the user and the fee to the LP. The user posts a griefing deposit in ETH; the LP posts a bond when marking the mint ready. If the LP never responds, anyone can cancel after timeout and the user gets their deposit back. If the user doesn't finalize after READY, the mint enters EXPIRED_READY \u2014 the LP can claim the deposit by revealing their secret, or if they don't, anyone can sweep the deposit back to the user.",
-      tags:[">150% on-chain CR","2-of-2 PTLC (Point Time-Locked Contract)","Ed25519 verify","Griefing deposit","LP bond","~1h timeout","EXPIRED_READY lifecycle"],
+      desc:"User swaps XMR for wsXMR through an atomic swap. The on-chain collateralization requirement is 150%, but LPs effectively post >200% because they hold XMR alongside their sDAI vault collateral. The LP provides Ed25519 public keys for a 2-of-2 PTLC (Point Time-Locked Contract), and claims XMR by revealing the secret. The contract verifies the secret on-chain with Ed25519 \u2014 the same curve Monero uses \u2014 then mints wsXMR minus a configurable fee to the user and the fee to the LP. The user posts a griefing deposit in ETH; LP collateral is only locked when the LP attests the XMR deposit exists (setMintReady) \u2014 never before. If the LP keys but never sets ready, the mint times out to KEY_CANCELLED: the deposit is parked, the LP can claim it by revealing their lpSecret (which also lets the user sweep their XMR back), or the user reclaims it after the claim window. If the user doesn't finalize after READY, the mint enters EXPIRED_READY \u2014 the LP can claim the deposit by revealing their secret, or if they don't, anyone can sweep the deposit back to the user.",
+      tags:[">150% on-chain CR","2-of-2 PTLC (Point Time-Locked Contract)","Ed25519 verify","Griefing deposit","Collateral locks at setMintReady","~1h timeout","KEY_CANCELLED / EXPIRED_READY lifecycle"],
       actors:[
         {name:"User",color:"xmr"},
         {name:"Monero",color:"gray"},
@@ -1078,13 +1078,13 @@ function copyAddr(btn){
         {from:0,to:2,label:"initiateMint(amt, commitment, pubkey) + ETH deposit",type:"call"},
         {from:2,to:4,label:"read XMR price (storage)",type:"call"},
         {from:4,to:2,label:"XMR price",type:"return"},
-        {from:2,to:2,label:"check CR \u2265 150%, reserve pendingDebt",type:"note"},
-        {from:3,to:2,label:"provideLPKey(spendKey, viewKey, commitment) + lock collateral",type:"call"},
-        {from:2,to:2,label:"status: KEY_PROVIDED",type:"note"},
+        {from:2,to:2,label:"check CR \u2265 150% (no debt reserved)",type:"note"},
+        {from:3,to:2,label:"provideLPKey(spendKey, viewKey, commitment)",type:"call"},
+        {from:2,to:2,label:"reserve pendingDebt, status: KEY_PROVIDED (no collateral locked)",type:"note"},
         {from:0,to:1,label:"lock XMR (PTLC 2-of-2)",type:"call"},
         {from:3,to:1,label:"verify XMR locked",type:"call"},
-        {from:3,to:2,label:"setMintReady()",type:"call"},
-        {from:2,to:2,label:"re-check CR, status: READY",type:"note"},
+        {from:3,to:2,label:"setMintReady() \u2014 LP attests deposit",type:"call"},
+        {from:2,to:2,label:"re-check CR, lock 110% collateral, status: READY",type:"note"},
         {from:0,to:2,label:"revealSecret(secret) \u2014 user reveals",type:"call"},
         {from:2,to:2,label:"Ed25519: verify secret\u00b7G = commitment, status: SECRET_REVEALED",type:"note"},
         {from:2,to:2,label:"finalizeMint() \u2014 anyone calls",type:"call"},
@@ -1092,9 +1092,9 @@ function copyAddr(btn){
         {from:2,to:3,label:"mint fee wsXMR to LP",type:"return"},
         {from:3,to:1,label:"claim XMR (using revealed secret)",type:"call"},
         {from:2,to:0,label:"refund griefing deposit (pendingReturns)",type:"effect"},
-        {from:2,to:3,label:"refund LP bond (pendingReturns)",type:"effect"},
-        {from:2,to:2,label:"⚠ If LP never responds: cancelMint(userSecret) after timeout → refund deposit to user, slash collateral to user, emit userSecret",type:"note"},
-        {from:2,to:2,label:"⚠ If user doesn't finalize: EXPIRED_READY → LP claims deposit or sweep to user",type:"note"}
+        {from:2,to:2,label:"release locked collateral to vault",type:"note"},
+        {from:2,to:2,label:"\u26a0 LP keys but never sets ready: cancelMint \u2192 KEY_CANCELLED, deposit parked \u2192 LP claims via abandonKeyProvidedMint (reveals lpSecret) or user reclaims via reclaimParkedDeposit",type:"note"},
+        {from:2,to:2,label:"\u26a0 If user doesn't finalize: EXPIRED_READY \u2192 LP claims deposit or sweep to user",type:"note"}
       ]
     },
     {
@@ -1124,12 +1124,14 @@ function copyAddr(btn){
         {from:2,to:2,label:"⚠ LP doesn't finalize (COMMITTED timeout): claimSlashedCollateral → par + reward to user",type:"note"},
         {from:2,to:2,label:"⚠ LP never proposes (REQUESTED timeout): abortBurn → restore wsXMR, or forceSettleBurn → par in sDAI",type:"note"},
         {from:2,to:2,label:"⚠ LP proposes but doesn't lock (PROPOSED timeout): user calls resolveDeclinedProposal(requestId, userSecret)",type:"note"},
-        {from:2,to:2,label:"VM verifies userSecret·G = userPublicKey, emits BurnProposalDeclined(requestId, userSecret)",type:"note"},
+        {from:2,to:2,label:"VM verifies compressPoint(userSecret·G) = userPublicKey, emits BurnProposalDeclined(requestId, userSecret)",type:"note"},
+        {from:2,to:2,label:"⚠ User gone entirely: LP calls abandonProposedBurn → collateral released, wsXMR restored (LP's XMR not recovered)",type:"note"},
         {from:3,to:1,label:"LP sweeps shared XMR (userSecret + lpSecret → full spend key)",type:"call"}
       ]
     },
     {
       desc:"Excess sDAI yield from vaults accrues in an on-chain war chest. When XMR dips below its Exponential Moving Average (EMA), anyone can trigger a buy-and-burn \u2014 the chest redeems sDAI to xDAI, swaps xDAI for wsXMR on Uniswap V3, and burns it. This reduces outstanding debt and frees up collateral across all vaults. The keeper earns a 2% reward (queued in sDAI shares) for calling the function. A 24-hour cooldown prevents over-triggering. Reverts if pending READY mints exist, war chest is empty, or swap slippage exceeds 1%.",
+      tags:["sDAI yield","Redeem → xDAI → wsXMR","Dip-triggered","2% keeper reward","24h cooldown","PendingMintLock guard","1% slippage cap"],
       tags:["sDAI yield","Redeem \u2192 xDAI \u2192 wsXMR","Dip-triggered","2% keeper reward","24h cooldown","PendingMintLock guard","1% slippage cap"],
       actors:[
         {name:"Keeper",color:"xmr"},

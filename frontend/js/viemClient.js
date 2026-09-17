@@ -10,7 +10,7 @@ import { NETWORKS, CONTRACTS, ABIS, RAW_ABIS } from './config.js';
 const _extraHubAbi = parseAbi([
     'function abortBurn(bytes32 requestId) external',
     'function forceSettleBurn(bytes32 requestId) external',
-    'function resolveDeclinedProposal(bytes32 requestId) external',
+    'function resolveDeclinedProposal(bytes32 requestId, bytes32 userSecret) external',
     'function getVaultBurnRequests(address vault) external view returns (bytes32[])'
 ]);
 export const parsedABIs = {

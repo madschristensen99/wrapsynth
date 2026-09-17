@@ -101,11 +101,23 @@ interface IMintOperations is IErrors {
     function finalizeMint(bytes32 requestId) external;
     
     /// @notice Cancel a timed-out mint request (permissionless)
-    /// @dev For PENDING: refunds deposit to user. For KEY_PROVIDED: requires userSecret, slashes collateral to user, emits userSecret.
-    ///      For READY: transitions to EXPIRED_READY.
+    /// @dev For PENDING: refunds deposit to user. For KEY_PROVIDED: transitions to KEY_CANCELLED
+    ///      and parks the deposit (LP claims it by revealing lpSecret; user reclaims after the window).
+    ///      For READY: transitions to EXPIRED_READY. For SECRET_REVEALED: executes the mint.
     /// @param requestId The mint request ID
-    /// @param userSecret The user's Ed25519 secret scalar (required for KEY_PROVIDED cancellation)
+    /// @param userSecret DEPRECATED — ignored, kept for ABI compatibility
     function cancelMint(bytes32 requestId, bytes32 userSecret) external;
+
+    /// @notice LP abandons a keyed mint that never became ready — reveals lpSecret, claims the deposit
+    /// @dev Callable from KEY_PROVIDED after the mint timeout, or from KEY_CANCELLED within the
+    ///      claim window. Emits lpSecret so the user can recover XMR from the shared address.
+    /// @param requestId The mint request ID
+    /// @param lpSecret The LP's secret scalar matching lpCommitment
+    function abandonKeyProvidedMint(bytes32 requestId, bytes32 lpSecret) external;
+
+    /// @notice Reclaim a parked griefing deposit after the LP's claim window lapses (permissionless)
+    /// @param requestId The mint request ID
+    function reclaimParkedDeposit(bytes32 requestId) external;
 
     /// @notice LP claims griefing deposit after mint expired in READY state
     /// @dev LP must reveal lpSecret matching lpCommitment set during setMintReady

@@ -139,25 +139,13 @@ export async function startDeadlineTimer(mintFlow) {
                                 const userSecret = mintFlow.agent ? mintFlow.agent.getSecret() : '0x0000000000000000000000000000000000000000000000000000000000000000';
                                 const cancelReceipt = await writeHub('cancelMint', [mintFlow.requestId, userSecret]);
                                 console.log('cancelMint tx:', cancelReceipt.transactionHash);
-                                // Check if collateral was slashed (KEY_PROVIDED cancel emits MintCancelledWithSecret)
+                                // KEY_PROVIDED cancels park the griefing deposit (KEY_CANCELLED) —
+                                // no collateral is slashed. The LP may claim it via
+                                // abandonKeyProvidedMint; otherwise it is reclaimable after the window.
                                 let slashedMsg = '';
-                                try {
-                                    const { getPublicClient } = await import('./viemClient.js');
-                                    const pubClient = getPublicClient();
-                                    const fullReceipt = await pubClient.waitForTransactionReceipt({ hash: cancelReceipt.transactionHash });
-                                    const { CONTRACTS } = await import('./config.js');
-                                    const hasSecretEvent = fullReceipt.logs.some(log => {
-                                        const sig = '0x' + log.topics[0].slice(2);
-                                        return sig === CONTRACTS.MintCancelledWithSecretSig;
-                                    });
-                                    if (hasSecretEvent || status === 2) {
-                                        slashedMsg = ' + slashed sDAI collateral';
-                                        // Withdraw slashed sDAI
-                                        try {
-                                            await writeHub('withdrawReturns', [CONTRACTS.sDAI]);
-                                        } catch (e) { /* may have no sDAI returns yet */ }
-                                    }
-                                } catch (e) { /* event parsing is best-effort */ }
+                                if (status === 2) {
+                                    slashedMsg = ' — deposit parked (reclaimable if LP doesn\'t claim)';
+                                }
                                 // Withdraw griefing deposit
                                 try {
                                     await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);

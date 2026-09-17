@@ -305,5 +305,11 @@ lp-server-js/monero-wallet-rpc.log*
 
 # LP secrets (contains private keys, commitments)
 lp-server-js/lp-secrets.json
+lp-server-js/lp-burn-secrets.json
+lp-server-js/*secrets*.json
+lp-server-js/*.json.bak
+lp-server-js/*.json.bak.*
+wallet-rpc.out
+*.out
 
 test-ledger/

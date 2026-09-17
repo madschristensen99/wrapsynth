@@ -449,9 +449,12 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         if (request.status != BurnStatus.PROPOSED) revert InvalidStatus();
         if (block.number < request.deadline) revert DeadlineNotExpired();
         
-        // Verify userSecret corresponds to the stored userPublicKey
-        (uint256 px, ) = Ed25519.scalarMultBase(uint256(userSecret));
-        if (bytes32(px) != request.userPublicKey) revert InvalidUserSecret();
+        // Verify userSecret corresponds to the stored userPublicKey.
+        // userPublicKey stores the *compressed* Ed25519 point (what the frontend
+        // passes via publicSpendKey.toRawBytes()), so compare against
+        // compressPoint(px,py), not the raw x-coordinate.
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(userSecret));
+        if (bytes32(Ed25519.compressPoint(px, py)) != request.userPublicKey) revert InvalidUserSecret();
         
         Vault storage vault = _vaults[request.lpVault];
         
@@ -469,6 +472,43 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         request.status = BurnStatus.CANCELLED;
         emit BurnProposalDeclined(requestId, userSecret);
+        
+        _reentrancyStatus = _NOT_ENTERED;
+    }
+    
+    /// @notice LP abandons a proposed burn the user never confirmed — releases collateral, restores wsXMR
+    /// @dev LP-only escape for the PROPOSED deadlock: resolveDeclinedProposal requires the
+    ///      user's secret, so if the user is gone the LP's collateral would be locked forever.
+    ///      Post-deadline only, so the LP cannot abandon while the user might still confirm.
+    ///      NOTE: the LP's locked XMR is NOT recovered — sweeping the shared output needs the
+    ///      user's secret half, which is never revealed on this path. The LP prefers
+    ///      resolveDeclinedProposal (which emits userSecret); this is the dead-user fallback.
+    /// @param requestId The burn request ID
+    function abandonProposedBurn(bytes32 requestId) external {
+        if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
+        _reentrancyStatus = _ENTERED;
+        
+        BurnRequest storage request = burnRequests[requestId];
+        if (request.status != BurnStatus.PROPOSED) revert InvalidStatus();
+        if (block.number < request.deadline) revert DeadlineNotExpired();
+        
+        Vault storage vault = _vaults[request.lpVault];
+        if (msg.sender != vault.lpAddress) revert Unauthorized();
+        
+        if (request.vaultLiquidationNonce == vault.liquidationNonce) {
+            uint256 totalLock = request.lockedCollateral + request.rewardCollateral;
+            if (vault.lockedCollateral < totalLock) revert InsufficientCollateral();
+            vault.lockedCollateral -= totalLock;
+        }
+        
+        if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
+        else globalPendingBurnDebt -= request.wsxmrAmount;
+        
+        // Restore wsXMR to holder
+        IwsXmrHub(address(this)).mintTokens(request.user, request.wsxmrAmount);
+        
+        request.status = BurnStatus.CANCELLED;
+        emit BurnAborted(requestId);
         
         _reentrancyStatus = _NOT_ENTERED;
     }
@@ -629,7 +669,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     
     /// @notice Returns all function selectors implemented by this facet
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](16);
+        bytes4[] memory sels = new bytes4[](17);
         sels[0] = this.requestBurn.selector;
         sels[1] = this.requestBurnFromRouter.selector;
         sels[2] = this.proposeHash.selector;
@@ -639,13 +679,14 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         sels[6] = this.abortBurn.selector;
         sels[7] = this.forceSettleBurn.selector;
         sels[8] = this.resolveDeclinedProposal.selector;
-        sels[9] = this.getBurnRequest.selector;
-        sels[10] = this.getUserBurnRequests.selector;
-        sels[11] = this.getVaultBurnRequests.selector;
-        sels[12] = this.calculateBurnCollateral.selector;
-        sels[13] = this.meetsMinimumBurn.selector;
-        sels[14] = this.getActiveBurnCount.selector;
-        sels[15] = this.cleanupVaultBurnRequests.selector;
+        sels[9] = this.abandonProposedBurn.selector;
+        sels[10] = this.getBurnRequest.selector;
+        sels[11] = this.getUserBurnRequests.selector;
+        sels[12] = this.getVaultBurnRequests.selector;
+        sels[13] = this.calculateBurnCollateral.selector;
+        sels[14] = this.meetsMinimumBurn.selector;
+        sels[15] = this.getActiveBurnCount.selector;
+        sels[16] = this.cleanupVaultBurnRequests.selector;
         return sels;
     }
 }

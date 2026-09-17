@@ -129,6 +129,13 @@ interface IBurnOperations is IErrors {
     /// @param userSecret The user's Ed25519 private spend key half (revealed on-chain for LP recovery)
     function resolveDeclinedProposal(bytes32 requestId, bytes32 userSecret) external;
     
+    /// @notice LP abandons a PROPOSED burn the user never confirmed (post-deadline).
+    /// @dev LP-only escape for the PROPOSED deadlock when the user is gone and
+    ///      resolveDeclinedProposal can't be called. Releases locked collateral and
+    ///      restores wsXMR to the holder. The LP's locked XMR is NOT recovered.
+    /// @param requestId The burn request ID
+    function abandonProposedBurn(bytes32 requestId) external;
+    
     // ========== VIEW FUNCTIONS ==========
     
     /// @notice Get burn request details

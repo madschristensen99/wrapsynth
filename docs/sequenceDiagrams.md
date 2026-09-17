@@ -415,26 +415,25 @@ sequenceDiagram
     else Vault inactive or zero amount
         VM-->>User: Revert: VaultDoesNotExist / InvalidValue
     end
-    VM->>VM: Reserve pendingDebt
     VM->>VM: Store mint request (PENDING)
+    Note right of VM: No debt reserved yet — PENDING mints cost nothing
     VM-->>User: MintInitiated event, requestId
     deactivate VM
 
-    Note over User,Monero: Step 2: LP provides public key + locks collateral
+    Note over User,Monero: Step 2: LP provides public key (no collateral locked)
     LP->>VM: provideLPKey(requestId, lpPublicKey, lpPublicViewKey, lpCommitment)
     alt Wrong status or unauthorized
         VM-->>LP: Revert: InvalidStatus / Unauthorized
     end
     VM->>VM: Store lpPublicKeys[requestId] and lpCommitment
-    VM->>VM: Lock collateral (MINT_LOCK_RATIO * par value in sDAI)
-    VM->>VM: Store xmrPriceAtReady for par settlement
-    VM-->>LP: LPKeyProvided + MintCollateralLocked events
+    VM->>VM: Reserve pendingDebt (capacity held, NO collateral locked)
+    VM-->>LP: LPKeyProvided event
 
     Note over User,Monero: Step 3: User locks XMR on Monero with PTLC
     User->>Monero: Lock XMR with PTLC
     Note right of User: Uses LP's public key + own secret
 
-    Note over User,Monero: Step 4: LP verifies Monero lock and confirms
+    Note over User,Monero: Step 4: LP verifies Monero lock and confirms (locks collateral)
     LP->>Monero: Verify XMR lock exists
     LP->>VM: setMintReady(requestId)
     activate VM
@@ -442,9 +441,11 @@ sequenceDiagram
     alt CR < 150% after yield sync
         VM-->>LP: Revert: InsufficientCollateral
     end
+    VM->>VM: Lock collateral (MINT_LOCK_RATIO * par value in sDAI)
+    VM->>VM: Store xmrPriceAtReady for par settlement
     VM->>VM: Update status to READY
     VM->>VM: Extend timeout for user (MINT_READY_EXTENSION_BLOCKS)
-    VM-->>LP: MintReady event
+    VM-->>LP: MintReady + MintCollateralLocked events
     deactivate VM
 
     Note over User,Monero: Step 5: LP claims XMR (reveals secret on Monero)
@@ -471,7 +472,8 @@ sequenceDiagram
         VM-->>User: Revert: InsufficientCollateral
     end
     alt Vault mintNonce changed (liquidation occurred)
-        VM->>VM: Auto-cancel: queue deposit + LP bond to pendingReturns
+        VM->>VM: Slash locked collateral to user (compensation — secret is public)
+        VM->>VM: Queue griefing deposit refund to pendingReturns
         VM-->>User: MintCancelled event
     end
     VM->>VM: Convert pendingDebt to normalizedDebt
@@ -496,20 +498,42 @@ sequenceDiagram
     participant LP as Liquidity Provider
 
     Note over Anyone,LP: Scenario A: LP never responded (PENDING timeout)
-    Anyone->>VM: cancelMint(requestId, userSecret)
+    Anyone->>VM: cancelMint(requestId, _)
     VM->>VM: Verify PENDING and timeout reached
-    VM->>VM: Release pendingDebt
     VM->>VM: Queue griefing deposit refund to User
     VM-->>Anyone: MintCancelled event
 
     Note over Anyone,LP: Scenario A2: LP provided key but never set ready (KEY_PROVIDED timeout)
-    User->>VM: cancelMint(requestId, userSecret)
+    Anyone->>VM: cancelMint(requestId, _)
     VM->>VM: Verify KEY_PROVIDED and timeout reached
-    VM->>VM: Verify userSecret matches claimCommitment (Ed25519)
-    VM->>VM: Slash locked collateral (par value) to User via pendingReturns
-    VM->>VM: Queue griefing deposit refund to User
-    VM->>VM: Emit userSecret on-chain (LP can recover XMR)
-    VM-->>User: MintCancelledWithSecret event
+    VM->>VM: Release pendingDebt reservation
+    Note right of VM: Nothing locked → nothing to slash.
+    VM->>VM: Park griefing deposit, status = KEY_CANCELLED
+    VM->>VM: Set claim window = block + LP_CLAIM_WINDOW_BLOCKS
+    VM-->>Anyone: MintCancelled event
+
+    Note over Anyone,LP: Scenario A2a: LP abandons (claims parked deposit + reveals lpSecret)
+    LP->>VM: abandonKeyProvidedMint(requestId, lpSecret)
+    VM->>VM: Verify KEY_PROVIDED (post-timeout) or KEY_CANCELLED (in window)
+    VM->>VM: Verify lpSecret matches lpCommitment (Ed25519)
+    VM->>VM: Queue parked griefing deposit to LP
+    VM->>VM: Mark CANCELLED
+    VM-->>LP: GriefingDepositClaimed(requestId, lpSecret)
+    Note right of LP: lpSecret on-chain → User can sweep their own XMR back
+
+    Note over Anyone,LP: Scenario A2b: LP never claims (dead LP — user reclaims deposit)
+    Anyone->>VM: reclaimParkedDeposit(requestId)
+    VM->>VM: Verify KEY_CANCELLED and claim window expired
+    VM->>VM: Queue parked griefing deposit to User
+    VM->>VM: Mark CANCELLED
+    VM-->>Anyone: MintCancelled event
+
+    Note over Anyone,LP: Scenario A3: Secret revealed but never finalized (SECRET_REVEALED timeout)
+    Anyone->>VM: cancelMint(requestId, _)
+    VM->>VM: Verify SECRET_REVEALED and timeout reached
+    VM->>VM: Execute finalizeMint path — MINTS wsXMR (secret is public;
+    Note right of VM: cancelling would let LP take XMR and keep collateral)
+    VM-->>Anyone: MintFinalized event
 
     Note over Anyone,LP: Scenario B: User didn't finalize (READY timeout → EXPIRED_READY)
     Anyone->>VM: cancelMint(requestId)
@@ -660,17 +684,26 @@ sequenceDiagram
     VM->>VM: Mark SLASHED
     VM-->>User: BurnForceSettled event
 
-    Note over User,VM: Scenario C: LP proposed but didn't follow through (PROPOSED timeout)
+    Note over User,VM: Scenario C: LP proposed but user never confirmed (PROPOSED timeout)
     User->>VM: resolveDeclinedProposal(requestId, userSecret)
     VM->>VM: Verify PROPOSED and deadline passed
-    VM->>VM: Verify userSecret·G = userPublicKey (Ed25519)
+    VM->>VM: Verify compressPoint(userSecret·G) = userPublicKey (Ed25519)
     VM->>VM: Unlock collateral back to vault
-    VM->>VM: Restore vault normalizedDebt (capped at current index)
     VM->>Token: mint(user, wsxmrAmount) — restore burned tokens
     VM->>VM: Mark CANCELLED
     VM-->>Anyone: BurnProposalDeclined(requestId, userSecret)
     Note over User,VM: LP watches BurnProposalDeclined event, extracts userSecret
     LP->>Monero: Sweep shared XMR (userSecret + lpSecret → full spend key)
+
+    Note over User,VM: Scenario C2: User gone entirely — LP abandons (dead-user fallback)
+    LP->>VM: abandonProposedBurn(requestId)
+    VM->>VM: Verify PROPOSED, deadline passed, caller is LP
+    VM->>VM: Unlock collateral back to vault
+    VM->>Token: mint(user, wsxmrAmount) — restore burned tokens
+    VM->>VM: Mark CANCELLED
+    VM-->>Anyone: BurnAborted event
+    Note right of VM: LP's locked XMR is NOT recovered — needs userSecret
+    Note right of VM: which is only revealed via resolveDeclinedProposal
 
     Note over User,VM: Scenario D: Vault liquidated during active burn
     Note right of VM: Liquidation handles in-flight burns automatically
@@ -1144,11 +1177,13 @@ sequenceDiagram
     end
 
     alt LP proposes but user never confirms (PROPOSED timeout)
-        User->>Burn: resolveDeclinedProposal(requestId) [permissionless]
+        User->>Burn: resolveDeclinedProposal(requestId, userSecret) [needs userSecret]
         Burn->>Burn: Release locked collateral
         Burn->>Burn: mintTokens(user, wsxmrAmount) — restore wsXMR
         Burn->>Burn: status = CANCELLED
-        Burn-->>User: emit BurnProposalDeclined
+        Burn-->>User: emit BurnProposalDeclined(requestId, userSecret)
+        Note over User,Burn: OR if user is gone: LP calls abandonProposedBurn(requestId)
+        Note over User,Burn: same unwind but no userSecret → LP's XMR not recovered
     end
 
     alt User confirms but LP never finalizes (COMMITTED timeout + grace)

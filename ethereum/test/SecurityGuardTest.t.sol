@@ -15,6 +15,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {GnosisAddresses} from "../contracts/GnosisAddresses.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
 import {IErrors} from "../contracts/interfaces/IErrors.sol";
+import {IwsXmrHub} from "../contracts/interfaces/core/IwsXmrHub.sol";
 import {IBurnOperations} from "../contracts/interfaces/swap/IBurnOperations.sol";
 import {IMintOperations} from "../contracts/interfaces/swap/IMintOperations.sol";
 
@@ -594,6 +595,103 @@ contract SecurityGuardTest is Test {
         VaultFacet(address(hub)).deactivateVault();
 
         assertEq(VaultFacet(address(hub)).getVaultCount(), countBefore);
+    }
+
+    // ========== DEPLOYER LOCK: ONE-WAY PRIVILEGE REMOVAL ==========
+
+    /// @notice Only the deployer may lock its own powers
+    function test_LockDeployer_NonDeployer_Reverts() public {
+        vm.prank(attacker);
+        vm.expectRevert(IErrors.Unauthorized.selector);
+        hub.lockDeployer();
+    }
+
+    /// @notice Locking is a one-way switch — a second call reverts
+    function test_LockDeployer_SecondCall_Reverts() public {
+        hub.lockDeployer();
+        assertTrue(hub.deployerOperationsLocked(), "lock not set");
+
+        vm.expectRevert(IwsXmrHub.AlreadyInitialized.selector);
+        hub.lockDeployer();
+    }
+
+    /// @notice After locking, the deployer can no longer add selector routes
+    function test_LockDeployer_PreventsAddSelectors() public {
+        hub.lockDeployer();
+
+        bytes4[] memory sels = new bytes4[](1);
+        sels[0] = bytes4(keccak256("somePostLaunchSelector()"));
+
+        vm.expectRevert(IErrors.Unauthorized.selector);
+        hub.addSelectors(address(vaultFacet), sels);
+    }
+
+    /// @notice After locking, the deployer can no longer brick the hub by removing routes
+    function test_LockDeployer_PreventsRemoveSelectors() public {
+        hub.lockDeployer();
+
+        bytes4[] memory sels = new bytes4[](1);
+        sels[0] = bytes4(keccak256("someSelector()"));
+
+        vm.expectRevert(IErrors.Unauthorized.selector);
+        hub.removeSelectors(sels);
+    }
+
+    /// @notice After locking, the liquidity router cannot be reconfigured
+    function test_LockDeployer_PreventsSetLiquidityRouter() public {
+        hub.lockDeployer();
+
+        vm.expectRevert(IErrors.Unauthorized.selector);
+        hub.setLiquidityRouter(address(0xBEEF));
+    }
+
+    /// @notice After locking, facet registration can never be replayed
+    function test_LockDeployer_PreventsRegisterFacets() public {
+        hub.lockDeployer();
+
+        vm.expectRevert(IErrors.Unauthorized.selector);
+        hub.registerFacets(
+            address(vaultFacet),
+            address(mintFacet),
+            address(burnFacet),
+            address(liquidationFacet),
+            address(yieldFacet),
+            address(oracleFacet)
+        );
+    }
+
+    /// @notice Locking the hub deployer also freezes the oracle's updater admin hook
+    function test_LockDeployer_PreventsSetPriceUpdater() public {
+        hub.lockDeployer();
+
+        vm.expectRevert(bytes("Deployer locked"));
+        SimpleOracleFacet(address(hub)).setPriceUpdater(attacker);
+    }
+
+    // ========== wsXMR HUB LOCK: NO POST-LAUNCH MINTER SWAP ==========
+
+    /// @notice Only the token deployer can lock the hub pointer
+    function test_LockHub_NonDeployer_Reverts() public {
+        vm.prank(attacker);
+        vm.expectRevert(bytes("Only deployer"));
+        wsxmr.lockHub();
+    }
+
+    /// @notice After lockHub, replaceHub can never repoint the token at a new minter
+    function test_LockHub_PreventsReplaceHub() public {
+        wsxmr.lockHub();
+        assertTrue(wsxmr.hubLocked(), "hub not locked");
+
+        vm.expectRevert(bytes("Hub locked"));
+        wsxmr.replaceHub(address(0xBEEF));
+    }
+
+    /// @notice After lockHub, setHub can never repoint the token at a new minter
+    function test_LockHub_PreventsSetHub() public {
+        wsxmr.lockHub();
+
+        vm.expectRevert(bytes("Hub locked"));
+        wsxmr.setHub(address(0xBEEF));
     }
 
     // ========== HELPERS ==========

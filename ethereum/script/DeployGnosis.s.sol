@@ -167,6 +167,22 @@ contract DeployGnosis is Script {
         console.log("SwapHelper deployed to:", address(swapHelper));
         console.log("");
 
+        console.log("============================================================");
+        console.log("STEP 10: Locking Deployer Powers (IRREVERSIBLE)");
+        console.log("============================================================");
+        // Removes the two admin backdoors from the live system:
+        //  - wsXMR.replaceHub(): deployer could repoint the token at an arbitrary
+        //    contract which could then mint/burn wsXMR without limit.
+        //  - wsXmrHub.addSelectors()/removeSelectors(): deployer could add or brick
+        //    facet routes after launch.
+        // Both locks are one-way and must be the final configuration action.
+        wsxmr.lockHub();
+        hub.lockDeployer();
+        console.log("wsXMR.hubLocked():", wsxmr.hubLocked());
+        console.log("wsXmrHub.deployerOperationsLocked():", hub.deployerOperationsLocked());
+        console.log("Deployer powers permanently locked.");
+        console.log("");
+
         vm.stopBroadcast();
 
         console.log("============================================================");

@@ -205,7 +205,12 @@ export async function pollForDeposit(expectedAmountAtomic, opts = {}) {
   const walletName = 'deposit-' + depositAddress.slice(0, 12).replace(/[^a-zA-Z0-9]/g, '');
   const walletPass = 'deposit-scan-password';
   const mainWalletName = process.env.MONERO_WALLET_NAME || 'lp-wallet';
-  const mainWalletPass = process.env.MONERO_WALLET_PASSWORD || 'lp-wallet-password';
+  // SECURITY: no hardcoded fallback — the previous default ('lp-wallet-password') was
+  // committed to a public repo and is the only protection on the wallet's .keys file.
+  const mainWalletPass = process.env.MONERO_WALLET_PASSWORD;
+  if (!mainWalletPass) {
+    throw new Error('MONERO_WALLET_PASSWORD not configured — refusing to use the old public default');
+  }
   const walletDir = process.env.MONERO_WALLET_DIR || '/home/remsee/wsFrontendOverhaul/lp-server-js/monero-wallets';
 
   let walletInitialized = false;
@@ -984,7 +989,11 @@ export async function ensureWalletOpen() {
 async function _ensureWalletOpen() {
   if (walletOpened) return;
   const walletName = process.env.MONERO_WALLET_NAME || 'lp-wallet';
-  const walletPass = process.env.MONERO_WALLET_PASSWORD || 'lp-wallet-password';
+  // SECURITY: no hardcoded fallback — see note in scanDepositAddress().
+  const walletPass = process.env.MONERO_WALLET_PASSWORD;
+  if (!walletPass) {
+    throw new Error('MONERO_WALLET_PASSWORD not configured — refusing to use the old public default');
+  }
   const walletDir = process.env.MONERO_WALLET_DIR || '/home/remsee/wsFrontendOverhaul/lp-server-js/monero-wallets';
 
   // If wallet RPC is not reachable, try to start it automatically

@@ -4,21 +4,45 @@ A decentralized protocol for wrapping Monero (XMR) on Gnosis Chain using a diamo
 
 ## 🚀 Gnosis Mainnet Deployment
 
-**Deployed:** September 16, 2026 (v6.0 — mint ghosting gap fix: collateral lock moved to provideLPKey, cancelMint slashes on KEY_PROVIDED timeout)
+**Deployed:** September 16, 2026 (v6.1 — admin privilege lock: `lockHub()` / `lockDeployer()` executed as final deploy step, permanently disabling deployer hooks)
 
-- **wsXmrHub (Diamond Proxy):** `0x2F6Ede34d2FC01209b104E74A3d657f71125b364`
-- **wsXMR Token:** `0x66A7e0e70113fE6A293287A5Cc0903E5C08067E4`
-- **LiquidityRouter:** `0xF44081dBE8C153cCfa1A74c157bd571F2d0f779D`
-- **SwapHelper:** `0xA31215E4352846F4D55211e4C5115daaF379f641`
-- **Uniswap V3 Pool:** `0xAf51b4f37096c21ff977284985209404679704a7`
-- **RedStoneOracleFacet:** `0x891B682279940F0d03b1414A24c2964c0cB02c20`
-- **VaultFacet:** `0x000C0c89599483839bec0C77894E401F309e969d`
-- **MintFacet:** `0xF8a6Df73E9f9B0A434356FCdf1EB9Fd3d24d3f61`
-- **BurnFacet:** `0x3c2b3515130AddF7aA17f577DAcc7339C802326E`
-- **LiquidationFacet:** `0xffc3Cc0C07B71F2DeF118FAa4758AbaEf79D48A7`
-- **YieldFacet:** `0xD6305b138406A7F7a72cD9Ac9525DD0ead349A9D`
+- **wsXmrHub (Diamond Proxy):** `0xd3dac8cf69c2d321bdc1e479d92a1b79cd2228a9`
+- **wsXMR Token:** `0xe23d7210fe278b188144b7708e462c7dd721c436`
+- **LiquidityRouter:** `0x9fF795A27567367277B7f6bB0E1b073f89a0C29c`
+- **SwapHelper:** `0x14aa282e8a68305ea386c3cb7c254590f7b34310`
+- **Uniswap V3 Pool:** `0x73ffab40a766c0c6dc557ee53059be11c256bf65`
+- **RedStoneOracleFacet:** `0x584124026dabdc729b9dad408881da36a67057d0`
+- **VaultFacet:** `0x20fca74c4690c6a09ee0a071d4d38dac8c5bd08a`
+- **MintFacet:** `0x2f6773d8ea59a3e7f2d00fc71fabee3e65ec21c8`
+- **BurnFacet:** `0xfe7519758c6caf0db057b8427e5b371a908651d2`
+- **LiquidationFacet:** `0x45de14afc6c17df6fdc1e67ce1da66cc7222735f`
+- **YieldFacet:** `0x54b3e8b84643d84825acf8092fb261992e484991`
 - **Network:** Gnosis Chain (ChainID: 100)
 - **Explorer:** https://gnosisscan.io
+
+### Admin Privilege Lock (v6.1 — deployed)
+
+The original design left two **permanent** admin hooks on the deployer key:
+
+- `wsXMR.replaceHub(address)` — the token deployer could repoint the token at an arbitrary
+  contract, which could then `mint`/`burn` wsXMR without limit (no timelock, no expiry).
+- `wsXmrHub.addSelectors()` / `removeSelectors()` — the hub deployer could add new facet routes
+  or remove existing ones, bricking or extending protocol functionality after launch.
+
+Neither was renounceable. This is now fixed with a one-way lock:
+
+- `wsXMR.lockHub()` — permanently disables `setHub` / `replaceHub`.
+- `wsXmrHub.lockDeployer()` — permanently disables every `onlyDeployer` action
+  (`registerFacets`, `addSelectors`, `removeSelectors`, `setLiquidityRouter`) and the
+  oracle's `setPriceUpdater` hook.
+
+`script/DeployGnosis.s.sol` calls both as **STEP 10**, the final configuration action.
+Behaviour is regression-tested in `test/SecurityGuardTest.t.sol` (10 tests covering
+authorization, one-way semantics, and every disabled entry point).
+
+> ✅ The live v6.1 deployment executed `lockHub()` / `lockDeployer()` as the final deploy
+> step — verified on-chain (`hubLocked() == true`, `deployerOperationsLocked() == true`).
+> The deployer key can no longer repoint the minter or alter facet routes.
 
 ### Recent Changes (v5.0)
 

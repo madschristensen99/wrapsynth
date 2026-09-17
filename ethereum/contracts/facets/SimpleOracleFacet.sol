@@ -75,6 +75,8 @@ contract SimpleOracleFacet is wsXmrStorage, IOracleFacet {
     
     function setPriceUpdater(address newUpdater) external {
         require(msg.sender == deployer, "Only deployer");
+        // Respect the one-way deployer lock so this admin hook cannot be used after setup.
+        require(!deployerOperationsLocked, "Deployer locked");
         address oldUpdater = priceUpdater;
         priceUpdater = newUpdater;
         emit UpdaterChanged(oldUpdater, newUpdater);

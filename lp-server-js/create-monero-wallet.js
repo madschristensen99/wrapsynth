@@ -6,11 +6,29 @@ import { randomBytes, createHash } from 'crypto';
 import { spawn, execSync } from 'child_process';
 import { setTimeout } from 'timers/promises';
 import * as ethers from 'ethers';
+import 'dotenv/config';
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 const WALLET_DIR = '/home/remsee/wsFrontendOverhaul/lp-server-js/monero-wallets';
 const WALLET_NAME = 'lp-wallet';
-const WALLET_PASSWORD = 'lp-wallet-password';
+
+// SECURITY: never hardcode a wallet password in a tracked file. A previous revision
+// of this script shipped `WALLET_PASSWORD = 'lp-wallet-password'` inside a public
+// repository. That password is the only thing protecting the wallet's `.keys` file,
+// which holds the Monero spend key — so a public default is equivalent to publishing
+// the key material of anyone who ran this script unchanged.
+// The password now comes from the environment (.env is gitignored) and a weak value
+// is rejected outright.
+const WALLET_PASSWORD = process.env.MONERO_WALLET_PASSWORD;
+if (!WALLET_PASSWORD || WALLET_PASSWORD.length < 16) {
+  console.error(
+    '\nRefusing to create a wallet with a weak or hardcoded password.\n' +
+    '  Set MONERO_WALLET_PASSWORD in lp-server-js/.env (>= 16 chars).\n' +
+    '  Generate one with:  openssl rand -hex 24\n'
+  );
+  process.exit(1);
+}
+
 const RPC_PORT = 18082;
 const DAEMON_URL = 'xmr-node.cakewallet.com:18081'; // no https:// prefix!
 

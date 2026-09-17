@@ -15,21 +15,43 @@ contract wsXMR is ERC20, ERC20Permit, IwsXMR {
     address public hub;
     address private immutable _deployer;
 
+    /// @notice One-way switch that permanently disables setHub / replaceHub.
+    bool public hubLocked;
+
+    /// @notice Emitted when the deployer permanently gives up hub-replacement power.
+    event HubLocked();
+
     constructor() ERC20("Wrapsynth Monero", "wsXMR") ERC20Permit("Wrapsynth Monero") {
         _deployer = msg.sender;
     }
 
     function setHub(address _hub) external {
         require(msg.sender == _deployer, "Only deployer");
+        require(!hubLocked, "Hub locked");
         require(hub == address(0), "Hub already set");
         require(_hub != address(0), "Zero address");
         hub = _hub;
     }
 
+    /// @notice Point the token at a different hub contract.
+    /// @dev This is a privileged migration hook. Until `lockHub()` is called the
+    ///      deployer can repoint `hub`, and the new hub can mint/burn wsXMR freely.
+    ///      Deployments MUST call `lockHub()` once configuration is complete; the
+    ///      Gnosis deploy script does this automatically as its final step.
     function replaceHub(address _hub) external {
         require(msg.sender == _deployer, "Only deployer");
+        require(!hubLocked, "Hub locked");
         require(_hub != address(0), "Zero address");
         hub = _hub;
+    }
+
+    /// @notice Permanently disable setHub / replaceHub. Irreversible.
+    /// @dev Once called, the hub address is immutable for the lifetime of the token,
+    ///      removing the deployer's ability to swap in a malicious minter.
+    function lockHub() external {
+        require(msg.sender == _deployer, "Only deployer");
+        hubLocked = true;
+        emit HubLocked();
     }
 
     function mint(address _to, uint256 _amount) external {

@@ -9,7 +9,7 @@ import * as burnHandler from './burnHandler.js';
 import * as moneroWallet from './moneroWallet.js';
 import * as moneroCrypto from './moneroCrypto.js';
 import { computeSecretHash } from './commitment.js';
-import { setHubWallet, updateOraclePricesManual } from './oracleUpdate.js';
+import { setHubWallet, updateOraclePricesManual, broadcastOracleUpdate } from './oracleUpdate.js';
 import crypto from 'crypto';
 
 // ─── Global Error Handlers ──────────────────────────────────────────────────
@@ -90,16 +90,21 @@ const HUB_ABI = [
   'function lpPublicViewKeys(bytes32 requestId) external view returns (bytes32)',
   'function updateOraclePrices(bytes[] calldata updateData) external payable',
   'function cancelMint(bytes32 requestId, bytes32 userSecret) external',
+  'function abandonKeyProvidedMint(bytes32 requestId, bytes32 lpSecret) external',
 ];
 
 // ─── Ethers Setup ───────────────────────────────────────────────────────────
 const gnosisNetwork = new ethers.Network('gnosis', CHAIN_ID);
-const provider = new ethers.JsonRpcProvider(RPC_URL, gnosisNetwork, { staticNetwork: true, batchMaxCount: 0, timeout: 30000 });
+// batchMaxCount: 1 disables JSON-RPC batching (each request sent individually).
+// NOTE: batchMaxCount: 0 would mean *unlimited* batching — every request in the
+// 10ms stall window gets bundled into one batch, and if the endpoint stalls on
+// the batch they all hang together. `timeout` is not a valid provider option.
+const provider = new ethers.JsonRpcProvider(RPC_URL, gnosisNetwork, { staticNetwork: true, batchMaxCount: 1 });
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 const hub = new ethers.Contract(HUB_ADDRESS, HUB_ABI, wallet);
 
 // ─── Nonce Manager ──────────────────────────────────────────────────────────
-import { initNonceManager, getNextNonce, withNonceLock, resetNonceCache } from './nonceManager.js';
+import { initNonceManager, getNextNonce, withNonceLock, resetNonceCache, withTimeout } from './nonceManager.js';
 initNonceManager(provider, wallet.address);
 
 console.log(`LP Server starting...`);
@@ -227,11 +232,36 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpSpendP
 
   // 2. Provide LP key on-chain (skip if already provided)
   if (onChainStatus < 2) {
+    // provideLPKey reads XMR + collateral prices from storage and reverts with
+    // StalePrice if they're older than ~120s. Pipeline the oracle update and
+    // provideLPKey with consecutive nonces: same-account txs execute in nonce
+    // order, so provideLPKey always sees the fresh price no matter how slow
+    // confirmation is — this avoids the StalePrice race that a confirmation
+    // wait between the two txs would introduce.
+    const oracleNonce = await getNextNonce();
+    try {
+      const otx = await broadcastOracleUpdate(oracleNonce);
+      otx.wait()
+        .then(r => console.log(`[Oracle] Update confirmed in block ${r.blockNumber}`))
+        .catch(e => console.warn(`[Oracle] Update confirmation failed: ${e.shortMessage || e.message}`));
+    } catch (priceErr) {
+      console.warn(`[Chain] Oracle broadcast failed before provideLPKey: ${priceErr.message}`);
+      // Oracle tx didn't broadcast — its reserved nonce went unused, so resync
+      // to avoid leaving a gap that would stall the next transaction.
+      resetNonceCache();
+    }
     console.log(`[Chain] Calling provideLPKey(${reqIdHex})...`);
-    const nonce = await getNextNonce();
-    const tx1 = await hub.provideLPKey(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpCommitment, { nonce });
+    const nonce = await getNextNonce(); // oracleNonce+1 if the update broadcast, else resynced
+    // Explicit gasLimit skips estimateGas — estimation runs against the latest
+    // (pre-oracle-update) block and would revert with StalePrice before the
+    // pipelined oracle tx has a chance to mine. ~64k gas is actually used.
+    const tx1 = await withTimeout(
+      hub.provideLPKey(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpCommitment, { nonce, gasLimit: 500000n }),
+      60000,
+      'provideLPKey broadcast'
+    );
     console.log(`[Chain] provideLPKey tx: ${tx1.hash}`);
-    const receipt1 = await tx1.wait();
+    const receipt1 = await withTimeout(tx1.wait(), 120000, 'provideLPKey confirmation');
     console.log(`[Chain] provideLPKey confirmed in block ${receipt1.blockNumber}`);
   }
 
@@ -370,6 +400,27 @@ async function startupRecoverMints() {
         continue; // completed or cancelled
       }
 
+      if (status === 8) {
+        // KEY_CANCELLED — deposit parked. If still inside the LP claim window,
+        // claim it via abandonKeyProvidedMint (publishes lpSecret for user sweep).
+        const timeout = Number(mintReq.timeout);
+        const entry = secrets[reqIdHex];
+        if (currentBlock < timeout && entry && entry.lpSecret) {
+          console.log(`[Recovery] Mint ${reqIdHex} is KEY_CANCELLED within claim window, claiming parked deposit...`);
+          try {
+            const abandonNonce = await getNextNonce();
+            const tx = await hub.abandonKeyProvidedMint(reqIdHex, entry.lpSecret, { nonce: abandonNonce });
+            await tx.wait();
+            console.log(`[Recovery] Mint ${reqIdHex} parked deposit claimed (tx: ${tx.hash})`);
+          } catch (err) {
+            console.warn(`[Recovery] abandonKeyProvidedMint failed for ${reqIdHex}:`, err.shortMessage || err.message);
+          }
+        } else {
+          console.log(`[Recovery] Mint ${reqIdHex} is KEY_CANCELLED — claim window expired or no lpSecret; user may reclaimParkedDeposit`);
+        }
+        continue;
+      }
+
       if (status === 3) {
         // READY — mint is waiting for user to reveal secret. If timeout passed, cancel it.
         const timeout = Number(mintReq.timeout);
@@ -391,7 +442,28 @@ async function startupRecoverMints() {
       }
 
       if (status === 2) {
-        // KEY_PROVIDED — deposit may have arrived, need to update oracle + setMintReady
+        // KEY_PROVIDED — if the mint timed out, abandon it: claim the parked
+        // griefing deposit and publish lpSecret on-chain so the user can sweep
+        // their XMR back. Otherwise re-process (deposit may have arrived).
+        const timeout = Number(mintReq.timeout);
+        if (currentBlock >= timeout) {
+          const entry = secrets[reqIdHex];
+          if (entry && entry.lpSecret) {
+            console.log(`[Recovery] Mint ${reqIdHex} timed out at KEY_PROVIDED, abandoning (claim parked deposit + publish lpSecret)...`);
+            try {
+              const abandonNonce = await getNextNonce();
+              const tx = await hub.abandonKeyProvidedMint(reqIdHex, entry.lpSecret, { nonce: abandonNonce });
+              await tx.wait();
+              console.log(`[Recovery] Mint ${reqIdHex} abandoned — deposit claimed, lpSecret published (tx: ${tx.hash})`);
+            } catch (err) {
+              console.warn(`[Recovery] abandonKeyProvidedMint failed for ${reqIdHex}:`, err.shortMessage || err.message);
+            }
+          } else {
+            console.warn(`[Recovery] Mint ${reqIdHex} timed out at KEY_PROVIDED but no lpSecret persisted — cannot abandon`);
+          }
+          continue;
+        }
+
         console.log(`[Recovery] Mint ${reqIdHex} is KEY_PROVIDED, attempting setMintReady...`);
 
         const lpSpendKey = await hub.lpPublicKeys(reqIdHex);

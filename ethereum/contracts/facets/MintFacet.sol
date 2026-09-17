@@ -96,7 +96,9 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         
         if (mintRequests[requestId].status != MintStatus.INVALID) revert MintAlreadyExists();
         
-        vault.pendingDebt += wsxmrAmount;
+        // NOTE: pendingDebt is NOT reserved here — it is reserved at provideLPKey
+        // when the LP actually engages. PENDING mints consume no vault capacity,
+        // so spamming initiateMint cannot DoS the vault's minting ability.
         
         uint256 timeoutBlock = block.number + vault.mintTimeoutBlocks;
         mintRequests[requestId] = MintRequest({
@@ -140,9 +142,11 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     /**
      * @notice LP provides their Ed25519 public keys and commits their secret for atomic swap coordination
      * @dev User combines LP's public keys with their secret to derive shared Monero address.
-     *      LP also posts their secret commitment (keccak256(lpSecret·G)) and locks par-value collateral.
-     *      This ensures that if the LP ghosts after this point, the user can cancel with their secret
-     *      to slash the collateral for par value, and the LP can recover XMR using the revealed userSecret.
+     *      LP also posts their secret commitment (keccak256(lpSecret·G)) and reserves pendingDebt.
+     *      NO collateral is locked here — the lock happens at setMintReady, when the LP attests
+     *      on-chain that the XMR deposit exists. This ordering is load-bearing: collateral may
+     *      only be escrowed once the LP has attested the deposit, otherwise a user who never
+     *      sent XMR could cancel and steal the locked collateral.
      * @param requestId The mint request ID
      * @param lpPublicSpendKey LP's Ed25519 public spend key (32 bytes, x-coordinate only)
      * @param lpPublicViewKey LP's Ed25519 public view key (32 bytes, x-coordinate only)
@@ -160,6 +164,51 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         if (lpPublicViewKey == bytes32(0)) revert InvalidCommitment();
         if (lpCommitment == bytes32(0)) revert InvalidCommitment();
         if (lpPublicKeys[requestId] != bytes32(0)) revert InvalidStatus(); // Already provided
+        
+        Vault storage vault = _vaults[request.lpVault];
+        if (request.vaultMintNonce != vault.mintNonce) revert InvalidStatus();
+        
+        _syncVaultYield(request.lpVault);
+        
+        // Reserve debt capacity now that the LP has engaged. Reverts if the vault
+        // cannot plausibly serve this mint — prevents over-reservation.
+        vault.pendingDebt += request.wsxmrAmount;
+        uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
+        uint256 projectedDebt = actualDebt + vault.pendingDebt;
+        uint256 availableCollateral = vault.collateralShares > vault.lockedCollateral
+            ? vault.collateralShares - vault.lockedCollateral
+            : 0;
+
+        uint256 currentRatio = _calculateCollateralRatio(availableCollateral, projectedDebt);
+        if (currentRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
+
+        lpPublicKeys[requestId] = lpPublicSpendKey;
+        lpPublicViewKeys[requestId] = lpPublicViewKey;
+        request.lpCommitment = lpCommitment;
+        request.status = MintStatus.KEY_PROVIDED;
+        
+        emit LPKeyProvided(requestId, lpPublicSpendKey, lpPublicViewKey);
+        
+        _reentrancyStatus = _NOT_ENTERED;
+    }
+    
+    /// @notice LP confirms XMR has been locked on Monero and signals the mint is ready for finalization
+    /// @dev Transitions from KEY_PROVIDED to READY. This is the LP's deposit attestation: par-value
+    ///      collateral is locked HERE, not at provideLPKey, so collateral is only escrowed once the
+    ///      LP claims the XMR exists. An LP that attests without a real deposit locks collateral for
+    ///      a mint that will mint unbacked wsXMR against its own vault — self-policing.
+    ///      Extends timeout by MINT_READY_EXTENSION_BLOCKS.
+    ///      Increments vault pendingMintCount and totalPendingMints, which blocks other state-changing
+    ///      vault operations until the mint is finalized or cancelled.
+    /// @param requestId The mint request ID
+    function setMintReady(bytes32 requestId) external {
+        if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
+        _reentrancyStatus = _ENTERED;
+        
+        MintRequest storage request = mintRequests[requestId];
+        if (request.status != MintStatus.KEY_PROVIDED) revert InvalidStatus();
+        if (msg.sender != request.lpVault) revert Unauthorized();
+        if (block.number >= request.timeout) revert DeadlineExpired();
         
         Vault storage vault = _vaults[request.lpVault];
         if (request.vaultMintNonce != vault.mintNonce) revert InvalidStatus();
@@ -191,38 +240,15 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         vault.lockedCollateral += lockShares;
         request.lockedCollateral = lockShares;
         request.xmrPriceAtReady = xmrPrice;
-
-        lpPublicKeys[requestId] = lpPublicSpendKey;
-        lpPublicViewKeys[requestId] = lpPublicViewKey;
-        request.lpCommitment = lpCommitment;
-        request.status = MintStatus.KEY_PROVIDED;
-        
-        emit LPKeyProvided(requestId, lpPublicSpendKey, lpPublicViewKey);
-        emit MintCollateralLocked(requestId, lockShares);
-        
-        _reentrancyStatus = _NOT_ENTERED;
-    }
-    
-    /// @notice LP confirms XMR has been locked on Monero and signals the mint is ready for finalization
-    /// @dev Transitions from KEY_PROVIDED to READY. Collateral and lpCommitment were already locked
-    ///      in provideLPKey. Extends timeout by MINT_READY_EXTENSION_BLOCKS.
-    ///      Increments vault pendingMintCount and totalPendingMints, which blocks other state-changing
-    ///      vault operations until the mint is finalized or cancelled.
-    /// @param requestId The mint request ID
-    function setMintReady(bytes32 requestId) external {
-        MintRequest storage request = mintRequests[requestId];
-        if (request.status != MintStatus.KEY_PROVIDED) revert InvalidStatus();
-        if (msg.sender != request.lpVault) revert Unauthorized();
-        if (block.number >= request.timeout) revert DeadlineExpired();
-        
-        Vault storage vault = _vaults[request.lpVault];
-        if (request.vaultMintNonce != vault.mintNonce) revert InvalidStatus();
         
         request.status = MintStatus.READY;
         request.timeout = block.number + MINT_READY_EXTENSION_BLOCKS;
         vault.pendingMintCount++;
         totalPendingMints++;
+        emit MintCollateralLocked(requestId, lockShares);
         emit MintReady(requestId, request.lpCommitment);
+        
+        _reentrancyStatus = _NOT_ENTERED;
     }
     
     /// @notice User reveals the Ed25519 secret — verifies commitment and stores secret on-chain
@@ -253,7 +279,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     ///      Mints wsXMR (minus fee) to recipient and fee to LP. Returns griefing deposit via pendingReturns.
     ///      Reduces vault.pendingDebt, increases vault.normalizedDebt and globalTotalDebt.
     ///      If the vault was liquidated since the mint was set ready (mintNonce changed), the mint is cancelled
-    ///      and the griefing deposit is returned instead.
+    ///      and the locked collateral is slashed to the user (their secret is public — the LP can take the XMR).
     ///      No oracle or CR checks — the collateral was validated at setMintReady time.
     /// @param requestId The mint request ID
     function finalizeMint(bytes32 requestId) external {
@@ -262,23 +288,37 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         
         MintRequest storage request = mintRequests[requestId];
         if (request.status != MintStatus.SECRET_REVEALED) revert InvalidStatus();
+        _finalizeMint(requestId);
         
+        _reentrancyStatus = _NOT_ENTERED;
+    }
+    
+    /// @dev Shared finalize logic used by finalizeMint and by cancelMint's SECRET_REVEALED branch.
+    ///      Caller must have verified status == SECRET_REVEALED and hold the reentrancy guard.
+    function _finalizeMint(bytes32 requestId) internal {
+        MintRequest storage request = mintRequests[requestId];
         Vault storage vault = _vaults[request.lpVault];
         
         if (request.vaultMintNonce != vault.mintNonce) {
             request.status = MintStatus.CANCELLED;
             vault.pendingMintCount--;
             totalPendingMints--;
-            // Release locked collateral back to vault (vault was liquidated, collateral already handled)
-            if (request.lockedCollateral > 0 && vault.lockedCollateral >= request.lockedCollateral) {
+            // Vault was liquidated post-reveal — the user's secret is public, so the LP can
+            // sweep the XMR. Compensate the user with the locked collateral if still held.
+            if (request.lockedCollateral > 0 && vault.lockedCollateral >= request.lockedCollateral
+                && vault.collateralShares >= request.lockedCollateral) {
                 vault.lockedCollateral -= request.lockedCollateral;
+                vault.collateralShares -= request.lockedCollateral;
+                pendingReturns[request.initiator][GnosisAddresses.SDAI] += request.lockedCollateral;
+                globalPendingSDAI += request.lockedCollateral;
+                emit ReturnQueued(request.initiator, GnosisAddresses.SDAI, request.lockedCollateral);
+                emit MintCollateralSlashed(requestId, request.lockedCollateral);
             }
             if (request.griefingDeposit > 0) {
                 pendingReturns[request.initiator][address(0)] += request.griefingDeposit;
                 emit ReturnQueued(request.initiator, address(0), request.griefingDeposit);
             }
             emit MintCancelled(request.requestId);
-            _reentrancyStatus = _NOT_ENTERED;
             return;
         }
 
@@ -307,23 +347,28 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         totalPendingMints--;
         request.status = MintStatus.COMPLETED;
         emit MintFinalized(requestId, request.revealedSecret);
-        
-        _reentrancyStatus = _NOT_ENTERED;
     }
     
     /// @notice Cancel a timed-out mint request — permissionless after the deadline expires
-    /// @dev For PENDING status: cancels and returns griefing deposit to the user. No collateral was locked.
-    ///      For KEY_PROVIDED status: requires userSecret. Verifies userSecret·G = userPublicKey,
-    ///      slashes locked collateral to user (par value in sDAI), returns griefing deposit,
-    ///      and emits userSecret on-chain so the LP can combine with lpSecret to sweep XMR.
+    /// @dev For PENDING status: cancels and returns griefing deposit to the user. No debt was
+    ///      reserved and no collateral was locked — the LP never engaged.
+    ///      For KEY_PROVIDED status: transitions to KEY_CANCELLED and parks the griefing deposit.
+    ///      No collateral was locked at this stage, so there is nothing to slash — the LP can
+    ///      claim the deposit by publishing lpSecret via abandonKeyProvidedMint (which lets the
+    ///      user recover any XMR at the shared address); after LP_CLAIM_WINDOW_BLOCKS the user
+    ///      reclaims it via reclaimParkedDeposit.
     ///      For READY status: transitions to EXPIRED_READY — the LP may claim the griefing deposit
     ///      by revealing their secret within LP_CLAIM_WINDOW_BLOCKS.
-    ///      Reduces vault.pendingDebt if the vault has not been liquidated (mintNonce unchanged).
+    ///      For SECRET_REVEALED status: the secret is already public, so the mint MUST complete —
+    ///      cancelling would let the LP sweep the XMR while paying nothing. Executes finalize.
+    ///      Reduces vault.pendingDebt (if reserved and the vault was not liquidated).
     /// @param requestId The mint request ID
-    /// @param userSecret The user's Ed25519 secret scalar (required for KEY_PROVIDED cancellation)
+    /// @param userSecret DEPRECATED — ignored. Retained in the signature for ABI compatibility
+    ///        with existing callers; no secret is required for any cancel path.
     function cancelMint(bytes32 requestId, bytes32 userSecret) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
+        (userSecret); // silence unused-parameter warning — no path requires it anymore
         
         MintRequest storage request = mintRequests[requestId];
         if (request.status != MintStatus.PENDING && request.status != MintStatus.KEY_PROVIDED && request.status != MintStatus.READY && request.status != MintStatus.SECRET_REVEALED) {
@@ -333,12 +378,15 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         if (block.number < request.timeout) revert TimeoutNotReached();
         
         Vault storage vault = _vaults[request.lpVault];
-        if (request.vaultMintNonce == vault.mintNonce) {
-            vault.pendingDebt -= request.wsxmrAmount;
-        }
-        
         MintStatus originalStatus = request.status;
         uint256 depositToTransfer = request.griefingDeposit;
+        
+        // Release reserved debt for mints that engaged the LP (KEY_PROVIDED/READY).
+        // SECRET_REVEALED is excluded — _finalizeMint handles its own debt accounting.
+        if (originalStatus != MintStatus.PENDING && originalStatus != MintStatus.SECRET_REVEALED
+            && request.vaultMintNonce == vault.mintNonce) {
+            vault.pendingDebt -= request.wsxmrAmount;
+        }
         
         if (originalStatus == MintStatus.PENDING) {
             request.status = MintStatus.CANCELLED;
@@ -348,49 +396,15 @@ contract MintFacet is wsXmrStorage, IMintFacet {
                 emit ReturnQueued(request.initiator, address(0), depositToTransfer);
             }
         } else if (originalStatus == MintStatus.KEY_PROVIDED) {
-            // LP provided keys and locked collateral but ghosted before setMintReady.
-            // User must reveal their secret to prove ownership and trigger collateral slash.
-            // The userSecret is emitted on-chain so the LP can combine with lpSecret to sweep XMR.
-            if (userSecret == bytes32(0)) revert InvalidSecret();
-            (uint256 px, ) = Ed25519.scalarMultBase(uint256(userSecret));
-            if (bytes32(px) != request.userPublicKey) revert InvalidSecret();
-            
-            request.status = MintStatus.CANCELLED;
-            
-            // Slash locked collateral to user — par value in sDAI
-            if (request.lockedCollateral > 0 && request.vaultMintNonce == vault.mintNonce) {
-                if (vault.lockedCollateral >= request.lockedCollateral) {
-                    vault.lockedCollateral -= request.lockedCollateral;
-                }
-                if (vault.collateralShares >= request.lockedCollateral) {
-                    vault.collateralShares -= request.lockedCollateral;
-                    pendingReturns[request.initiator][GnosisAddresses.SDAI] += request.lockedCollateral;
-                    globalPendingSDAI += request.lockedCollateral;
-                    emit ReturnQueued(request.initiator, GnosisAddresses.SDAI, request.lockedCollateral);
-                }
-            }
-            
-            if (depositToTransfer > 0) {
-                pendingReturns[request.initiator][address(0)] += depositToTransfer;
-                emit ReturnQueued(request.initiator, address(0), depositToTransfer);
-            }
-            emit MintCancelledWithSecret(requestId, userSecret);
-        } else if (originalStatus == MintStatus.SECRET_REVEALED) {
-            // User revealed secret but finalizeMint never happened (shouldn't normally occur
-            // since finalizeMint is permissionless, but handle it for safety).
-            // The secret is already public via SecretRevealed event — mint anyway.
-            request.status = MintStatus.CANCELLED;
-            vault.pendingMintCount--;
-            totalPendingMints--;
-            // Release locked collateral back to vault
-            if (request.lockedCollateral > 0 && vault.lockedCollateral >= request.lockedCollateral) {
-                vault.lockedCollateral -= request.lockedCollateral;
-            }
+            // LP keyed but the mint never became READY — either no deposit arrived or the LP
+            // ghosted. Nothing was locked, so nothing is slashed. Park the deposit: it becomes
+            // a bounty for the LP's lpSecret, which is what lets the user recover any XMR sent.
+            request.status = MintStatus.KEY_CANCELLED;
+            request.timeout = block.number + LP_CLAIM_WINDOW_BLOCKS;
             emit MintCancelled(requestId);
-            if (depositToTransfer > 0) {
-                pendingReturns[request.initiator][address(0)] += depositToTransfer;
-                emit ReturnQueued(request.initiator, address(0), depositToTransfer);
-            }
+        } else if (originalStatus == MintStatus.SECRET_REVEALED) {
+            // Secret already public via SecretRevealed — mint anyway (see _finalizeMint).
+            _finalizeMint(requestId);
         } else {
             // READY, timed out, user never finalized.
             // Move to EXPIRED_READY — LP must claim with secret reveal.
@@ -398,6 +412,78 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             request.timeout = block.number + LP_CLAIM_WINDOW_BLOCKS;
             emit MintExpiredReady(requestId);
         }
+        
+        _reentrancyStatus = _NOT_ENTERED;
+    }
+    
+    /// @notice LP abandons a keyed mint that never became ready — reveals lpSecret and claims the deposit
+    /// @dev Callable from KEY_PROVIDED after the mint timeout, or from KEY_CANCELLED within the
+    ///      LP claim window. Verifies scalarMultBase(lpSecret) == lpCommitment, pays the griefing
+    ///      deposit to the LP, and emits lpSecret on-chain — the user combines it with their own
+    ///      userSecret to sweep any XMR they sent to the shared Monero address. This prices the
+    ///      lpSecret at the deposit amount: the LP is paid to publish the key that makes the user
+    ///      whole, and a user who never sent XMR forfeits the deposit for wasting LP engagement.
+    /// @param requestId The mint request ID
+    /// @param lpSecret The LP's Ed25519 scalar matching their lpCommitment
+    function abandonKeyProvidedMint(bytes32 requestId, bytes32 lpSecret) external {
+        if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
+        _reentrancyStatus = _ENTERED;
+        
+        MintRequest storage request = mintRequests[requestId];
+        if (request.status != MintStatus.KEY_PROVIDED && request.status != MintStatus.KEY_CANCELLED) {
+            revert InvalidStatus();
+        }
+        if (msg.sender != request.lpVault) revert Unauthorized();
+        
+        Vault storage vault = _vaults[request.lpVault];
+        
+        if (request.status == MintStatus.KEY_PROVIDED) {
+            // Direct abandon — only after the mint timeout so the LP cannot key-then-instant-
+            // abandon to farm griefing deposits from users who were about to send XMR.
+            if (block.number < request.timeout) revert TimeoutNotReached();
+            if (request.vaultMintNonce == vault.mintNonce) {
+                vault.pendingDebt -= request.wsxmrAmount;
+            }
+        } else {
+            // KEY_CANCELLED — must claim within the parked-deposit window.
+            if (block.number >= request.timeout) revert DeadlineExpired();
+        }
+        
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(lpSecret));
+        bytes32 computed = keccak256(abi.encodePacked(px, py));
+        if (computed != request.lpCommitment) revert InvalidSecret();
+        
+        request.status = MintStatus.CANCELLED;
+        
+        if (request.griefingDeposit > 0) {
+            pendingReturns[request.lpVault][address(0)] += request.griefingDeposit;
+            emit ReturnQueued(request.lpVault, address(0), request.griefingDeposit);
+        }
+        // lpSecret is revealed on-chain — user reads it and combines with userSecret to sweep XMR
+        emit MintCancelled(requestId);
+        emit GriefingDepositClaimed(requestId, lpSecret);
+        
+        _reentrancyStatus = _NOT_ENTERED;
+    }
+    
+    /// @notice Reclaim a parked griefing deposit after the LP's claim window lapses
+    /// @dev Permissionless — the deposit always goes to the initiator. Covers the dead-LP case:
+    ///      the mint was cancelled from KEY_PROVIDED and the LP never published lpSecret.
+    /// @param requestId The mint request ID
+    function reclaimParkedDeposit(bytes32 requestId) external {
+        if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
+        _reentrancyStatus = _ENTERED;
+        
+        MintRequest storage request = mintRequests[requestId];
+        if (request.status != MintStatus.KEY_CANCELLED) revert InvalidStatus();
+        if (block.number < request.timeout) revert TimeoutNotReached();
+        
+        request.status = MintStatus.CANCELLED;
+        if (request.griefingDeposit > 0) {
+            pendingReturns[request.initiator][address(0)] += request.griefingDeposit;
+            emit ReturnQueued(request.initiator, address(0), request.griefingDeposit);
+        }
+        emit MintCancelled(requestId);
         
         _reentrancyStatus = _NOT_ENTERED;
     }
@@ -509,7 +595,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         // Count pending/ready requests
         for (uint256 i = 0; i < vaultReqs.length; i++) {
             MintRequest storage req = mintRequests[vaultReqs[i]];
-            if (req.status == MintStatus.PENDING || req.status == MintStatus.KEY_PROVIDED || req.status == MintStatus.READY || req.status == MintStatus.SECRET_REVEALED || req.status == MintStatus.EXPIRED_READY) {
+            if (req.status == MintStatus.PENDING || req.status == MintStatus.KEY_PROVIDED || req.status == MintStatus.READY || req.status == MintStatus.SECRET_REVEALED || req.status == MintStatus.EXPIRED_READY || req.status == MintStatus.KEY_CANCELLED) {
                 count++;
             }
         }
@@ -519,7 +605,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         uint256 index = 0;
         for (uint256 i = 0; i < vaultReqs.length; i++) {
             MintRequest storage req = mintRequests[vaultReqs[i]];
-            if (req.status == MintStatus.PENDING || req.status == MintStatus.KEY_PROVIDED || req.status == MintStatus.READY || req.status == MintStatus.SECRET_REVEALED || req.status == MintStatus.EXPIRED_READY) {
+            if (req.status == MintStatus.PENDING || req.status == MintStatus.KEY_PROVIDED || req.status == MintStatus.READY || req.status == MintStatus.SECRET_REVEALED || req.status == MintStatus.EXPIRED_READY || req.status == MintStatus.KEY_CANCELLED) {
                 result[index++] = vaultReqs[i];
             }
         }
@@ -609,7 +695,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     
     /// @notice Returns all function selectors implemented by this facet
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](13);
+        bytes4[] memory sels = new bytes4[](15);
         sels[0] = this.initiateMint.selector;
         sels[1] = this.provideLPKey.selector;
         sels[2] = this.setMintReady.selector;
@@ -618,11 +704,13 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         sels[5] = this.cancelMint.selector;
         sels[6] = this.claimGriefingDeposit.selector;
         sels[7] = this.sweepUnclaimedExpiredMint.selector;
-        sels[8] = this.getMintRequest.selector;
-        sels[9] = this.getUserMintRequests.selector;
-        sels[10] = this.getVaultPendingMints.selector;
-        sels[11] = this.calculateWsxmrAmount.selector;
-        sels[12] = this.calculateMintFee.selector;
+        sels[8] = this.abandonKeyProvidedMint.selector;
+        sels[9] = this.reclaimParkedDeposit.selector;
+        sels[10] = this.getMintRequest.selector;
+        sels[11] = this.getUserMintRequests.selector;
+        sels[12] = this.getVaultPendingMints.selector;
+        sels[13] = this.calculateWsxmrAmount.selector;
+        sels[14] = this.calculateMintFee.selector;
         return sels;
     }
 }

@@ -317,16 +317,19 @@ contract VaultFacetCoverageTest is Test {
     }
 
     function test_GetMintCapacity_WithExistingDebt() public {
-        // First, create a mint to add pending debt
+        // First, create a mint and have the LP key it — pendingDebt is reserved
+        // at provideLPKey (LP engagement), not at initiateMint.
         bytes32 secret = bytes32(uint256(0x5678));
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
         bytes32 commitment = keccak256(abi.encodePacked(px, py));
 
         uint256 firstMintXmr = 1e10; // 0.01 XMR (12 decimals)
         vm.prank(user);
-        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
+        bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
             lp, user, firstMintXmr, commitment, bytes32(uint256(0xcafe))
         );
+        vm.prank(lp);
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdead)), bytes32(uint256(0xbeef)), bytes32(uint256(0xdeadbeef)));
 
         // Now capacity should be reduced
         uint256 capacity = VaultFacet(address(hub)).getMintCapacity(lp);

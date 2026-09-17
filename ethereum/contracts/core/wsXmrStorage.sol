@@ -69,6 +69,10 @@ contract wsXmrStorage {
     // ========== EVENTS ==========
     
     event ReturnQueued(address indexed user, address indexed token, uint256 amount);
+
+    /// @notice Emitted exactly once when the deployer permanently gives up its
+    ///         facet-registration / selector-table / router-configuration powers.
+    event DeployerOperationsLocked(address indexed deployer);
     
     // ========== ERRORS ==========
     
@@ -85,7 +89,8 @@ contract wsXmrStorage {
         SECRET_REVEALED,
         COMPLETED,
         CANCELLED,
-        EXPIRED_READY
+        EXPIRED_READY,
+        KEY_CANCELLED   // KEY_PROVIDED mint timed out — deposit parked awaiting LP claim via lpSecret reveal
     }
     
     enum BurnStatus {
@@ -313,7 +318,14 @@ contract wsXmrStorage {
      * Example: If adding 3 new uint256 variables, change to:
      * uint256[47] private __gap;
      */
-    uint256[36] private __gap;
+    /// @notice One-way switch that permanently disables every `onlyDeployer` action.
+    /// @dev Defaults to false so a fresh deployment can be configured; the deploy
+    ///      script calls `wsXmrHub.lockDeployer()` as its final setup step.
+    ///      Once true, registerFacets / addSelectors / removeSelectors /
+    ///      setLiquidityRouter can never be called again by anyone.
+    bool public deployerOperationsLocked;
+
+    uint256[35] private __gap;
     
     // ========== CONSTRUCTOR ==========
     

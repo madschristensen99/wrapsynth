@@ -291,8 +291,9 @@ contract E2EComprehensiveTest is Test {
         uint256 balance = _mintTokensForUser(user);
         
         bytes32 userSecret = bytes32(uint256(0xdeadbeef));
-        (uint256 upkx, ) = Ed25519.scalarMultBase(uint256(userSecret));
-        bytes32 userPubKey = bytes32(upkx);
+        (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(userSecret));
+        // Compressed point — matches the frontend's publicSpendKey.toRawBytes()
+        bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
 
         vm.prank(user);
         bytes32 burnId = BurnFacet(address(hub)).requestBurn(balance / 2, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
