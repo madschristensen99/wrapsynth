@@ -266,12 +266,13 @@ contract MintBurnCoverageTest is Test {
         assertEq(sDAIPendingAfter - sDAIPendingBefore, req.lockedCollateral, "slashed amount should equal locked collateral");
     }
 
-    // ========== cancelMint at KEY_PROVIDED (no slash — nothing locked) ==========
+    // ========== cancelMint at KEY_PROVIDED (no slash on cancel — bond stays locked) ==========
 
     /// @notice REGRESSION: previously a user could initiate, let the LP lock collateral,
     ///         send NO XMR, then cancel with their secret and steal the locked collateral.
-    ///         Collateral now locks at setMintReady (the LP's deposit attestation), so a
-    ///         KEY_PROVIDED cancel has nothing to slash — the deposit is parked instead.
+    ///         The key bond locked at provideLPKey is NOT slashable on cancel — it stays
+    ///         locked through KEY_CANCELLED and is only released on lpSecret reveal or
+    ///         slashed to the user if the LP never reveals.
     function test_CancelMint_KeyProvided_NoSlash_DepositParked() public {
         bytes32 userSecret = bytes32(uint256(0x1234));
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(userSecret));
@@ -284,7 +285,7 @@ contract MintBurnCoverageTest is Test {
             lp, user, xmrAmount, commitment, userPublicKey
         );
 
-        _provideLPKey(lp, reqId); // -> KEY_PROVIDED, reserves pendingDebt, NO lock
+        _provideLPKey(lp, reqId); // -> KEY_PROVIDED, reserves pendingDebt + locks key bond
 
         wsXmrStorage.Vault memory vaultBefore = _getVault(lp);
         uint256 userSdaiBefore = _getPendingReturns(user, GnosisAddresses.SDAI);
@@ -297,10 +298,11 @@ contract MintBurnCoverageTest is Test {
         wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
         assertEq(uint256(req.status), uint256(wsXmrStorage.MintStatus.KEY_CANCELLED), "should be KEY_CANCELLED");
 
-        // No collateral slashed, deposit parked (not yet returned to anyone)
+        // No collateral slashed, deposit parked (not yet returned to anyone),
+        // key bond stays locked awaiting the LP's lpSecret reveal
         wsXmrStorage.Vault memory vaultAfter = _getVault(lp);
         assertEq(vaultAfter.collateralShares, vaultBefore.collateralShares, "vault collateral must be untouched");
-        assertEq(vaultAfter.lockedCollateral, vaultBefore.lockedCollateral, "no collateral was locked");
+        assertEq(vaultAfter.lockedCollateral, vaultBefore.lockedCollateral, "bond stays locked through cancel");
         assertEq(_getPendingReturns(user, GnosisAddresses.SDAI), userSdaiBefore, "no sDAI slash payout");
         assertEq(_getPendingReturns(user, address(0)), userEthBefore, "deposit parked, not returned");
         assertEq(vaultAfter.pendingDebt, vaultBefore.pendingDebt - req.wsxmrAmount, "reserved debt released");
@@ -411,6 +413,140 @@ contract MintBurnCoverageTest is Test {
         MintFacet(address(hub)).reclaimParkedDeposit(reqId);
         assertEq(_getPendingReturns(user, address(0)), 0.001 ether, "user reclaims parked deposit");
         assertEq(uint256(_getMintRequest(reqId).status), uint256(wsXmrStorage.MintStatus.CANCELLED));
+    }
+
+    // ========== keyBond: par-value collateral locked at provideLPKey ==========
+
+    function test_ProvideLPKey_LocksKeyBond() public {
+        bytes32 reqId = _initiateMint(user, lp);
+        wsXmrStorage.Vault memory vBefore = _getVault(lp);
+
+        _provideLPKey(lp, reqId);
+
+        wsXmrStorage.Vault memory vAfter = _getVault(lp);
+        wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
+        assertGt(req.lockedCollateral, 0, "key bond should be locked at KEY_PROVIDED");
+        assertEq(
+            vAfter.lockedCollateral,
+            vBefore.lockedCollateral + req.lockedCollateral,
+            "vault lock should increase by the bond"
+        );
+    }
+
+    /// @notice Drain regression: user keys a mint, never sends XMR. The LP abandons
+    ///         post-timeout, reveals lpSecret, and gets the bond back + the deposit.
+    ///         The user cannot farm the bond — it is only slashed on LP non-reveal.
+    function test_KeyBond_NoDrain_LPAbandonsNoDeposit() public {
+        bytes32 reqId = _initiateMint(user, lp);
+        bytes32 lpSecret = bytes32(uint256(0xcafe));
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(lpSecret));
+        bytes32 lpCommitment = keccak256(abi.encodePacked(px, py));
+        vm.prank(lp);
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdead)), bytes32(uint256(0xbeef)), lpCommitment);
+
+        wsXmrStorage.Vault memory vKeyed = _getVault(lp);
+        wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
+        assertGt(req.lockedCollateral, 0, "bond locked");
+
+        vm.roll(block.number + 10000);
+        vm.prank(lp);
+        MintFacet(address(hub)).abandonKeyProvidedMint(reqId, lpSecret);
+
+        wsXmrStorage.Vault memory vAfter = _getVault(lp);
+        assertEq(vAfter.lockedCollateral, vKeyed.lockedCollateral - req.lockedCollateral, "bond released to LP");
+        assertEq(vAfter.collateralShares, vKeyed.collateralShares, "no collateral slashed");
+        assertEq(_getPendingReturns(user, GnosisAddresses.SDAI), 0, "user cannot farm the bond");
+        assertEq(_getPendingReturns(lp, address(0)), 0.001 ether, "LP collects the deposit bounty");
+    }
+
+    /// @notice Bond release also works when the LP claims from KEY_CANCELLED in-window.
+    function test_KeyBond_ReleasedOnAbandonFromKeyCancelled() public {
+        bytes32 reqId = _initiateMint(user, lp);
+        bytes32 lpSecret = bytes32(uint256(0xcafe));
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(lpSecret));
+        bytes32 lpCommitment = keccak256(abi.encodePacked(px, py));
+        vm.prank(lp);
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdead)), bytes32(uint256(0xbeef)), lpCommitment);
+
+        wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
+        uint256 bond = req.lockedCollateral;
+
+        vm.roll(block.number + 10000);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
+
+        wsXmrStorage.Vault memory vParked = _getVault(lp);
+        assertGt(vParked.lockedCollateral, 0, "bond still locked while parked");
+
+        vm.prank(lp);
+        MintFacet(address(hub)).abandonKeyProvidedMint(reqId, lpSecret);
+
+        wsXmrStorage.Vault memory vAfter = _getVault(lp);
+        assertEq(vAfter.lockedCollateral, vParked.lockedCollateral - bond, "bond released on reveal");
+        assertEq(_getPendingReturns(user, GnosisAddresses.SDAI), 0, "no slash when LP reveals");
+    }
+
+    /// @notice Dead-LP case: bond is slashed to the user when the LP never reveals.
+    function test_KeyBond_SlashedOnReclaimParkedDeposit() public {
+        bytes32 reqId = _initiateMint(user, lp);
+        _provideLPKey(lp, reqId);
+
+        wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
+        uint256 bond = req.lockedCollateral;
+        assertGt(bond, 0, "bond locked");
+
+        vm.roll(block.number + 10000);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
+        vm.roll(block.number + 361);
+
+        uint256 sdaiBefore = _getPendingReturns(user, GnosisAddresses.SDAI);
+        MintFacet(address(hub)).reclaimParkedDeposit(reqId);
+
+        assertEq(
+            _getPendingReturns(user, GnosisAddresses.SDAI) - sdaiBefore,
+            bond,
+            "bond slashed to user at par"
+        );
+        assertEq(_getPendingReturns(user, address(0)), 0.001 ether, "deposit also returned");
+
+        wsXmrStorage.Vault memory vAfter = _getVault(lp);
+        assertEq(vAfter.lockedCollateral, 0, "bond fully consumed by slash");
+    }
+
+    /// @notice setMintReady re-prices the bond to par at the ready-time price and
+    ///         adjusts by the delta — at unchanged prices the lock is ~unchanged.
+    function test_SetMintReady_AdjustsBondDelta() public {
+        bytes32 reqId = _initiateMint(user, lp);
+        _provideLPKey(lp, reqId);
+
+        wsXmrStorage.MintRequest memory reqKeyed = _getMintRequest(reqId);
+        wsXmrStorage.Vault memory vKeyed = _getVault(lp);
+
+        _setMintReady(lp, reqId);
+
+        wsXmrStorage.MintRequest memory reqReady = _getMintRequest(reqId);
+        wsXmrStorage.Vault memory vReady = _getVault(lp);
+
+        // Vault-level lock delta must equal request-level lock delta (top-up or release)
+        assertEq(
+            vReady.lockedCollateral,
+            vKeyed.lockedCollateral - reqKeyed.lockedCollateral + reqReady.lockedCollateral,
+            "vault lock tracks request lock through re-price"
+        );
+        assertGt(reqReady.xmrPriceAtReady, 0, "ready price recorded");
+    }
+
+    /// @notice The bond is withdrawal-safe during KEY_PROVIDED even though
+    ///         pendingMintCount is still 0 — lockedCollateral is netted out.
+    function test_KeyBond_WithdrawalCannotTouchBond() public {
+        bytes32 reqId = _initiateMint(user, lp);
+        _provideLPKey(lp, reqId);
+
+        wsXmrStorage.Vault memory v = _getVault(lp);
+        uint256 free = v.collateralShares - v.lockedCollateral;
+
+        vm.prank(lp);
+        vm.expectRevert(IErrors.InsufficientCollateral.selector);
+        VaultFacet(address(hub)).withdrawCollateral(free + 1);
     }
 
     // ========== SECRET_REVEALED cancel must mint, not cancel ==========

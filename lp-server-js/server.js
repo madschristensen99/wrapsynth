@@ -165,6 +165,31 @@ async function generateEd25519Keys() {
   };
 }
 
+// ─── Commitment Binding Check ─────────────────────────────────────────────
+// Verifies claimCommitment == keccak256(affine(decompress(userPublicKey))).
+// The deposit address embeds userPublicKey, but revealSecret verifies against
+// claimCommitment. If they bind different secrets, the revealed secret cannot
+// complete the spend key — the LP would lock a bond for XMR it can never sweep.
+async function verifyCommitmentBinding(claimCommitment, userPublicKey) {
+  try {
+    const ed = await import('@noble/ed25519');
+    const { createHash } = await import('crypto');
+    if (!ed.etc.sha512Sync) {
+      ed.etc.sha512Sync = (...m) => createHash('sha512').update(Buffer.concat(m)).digest();
+    }
+    const point = ed.ExtendedPoint.fromHex(userPublicKey.replace(/^0x/, ''));
+    const affine = point.toAffine();
+    const computed = ethers.keccak256(ethers.solidityPacked(
+      ['uint256', 'uint256'],
+      [affine.x, affine.y]
+    ));
+    return computed.toLowerCase() === claimCommitment.toLowerCase();
+  } catch (e) {
+    console.warn(`[Mint] Commitment binding check could not compute: ${e.message}`);
+    return false;
+  }
+}
+
 // ─── Oracle Price Update: imported from oracleUpdate.js ────────────────────
 // Initialize with hub and wallet instances
 setHubWallet(hub, wallet, HUB_ADDRESS);
@@ -196,6 +221,20 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpSpendP
         console.log(`[Chain] LP keys already provided on-chain, skipping provideLPKey`);
         lpPublicSpendKey = existingSpendKey;
         lpPublicViewKey = existingViewKey;
+      }
+    }
+
+    // Refuse to key a mint whose claimCommitment doesn't bind to userPublicKey —
+    // the revealed secret would not complete the deposit spend key, so the XMR
+    // could never be swept while wsXMR still mints against our vault.
+    if (onChainStatus === 1) {
+      const bound = await verifyCommitmentBinding(mintReq.claimCommitment, mintReq.userPublicKey);
+      if (!bound) {
+        console.error(`[Mint] ${reqIdHex}: claimCommitment does not match userPublicKey — refusing to key (deposit would be unspendable)`);
+        mint.autoProcessError = 'commitment-pubkey mismatch';
+        mint.processing = false;
+        pendingMints.set(reqIdHex, mint);
+        return;
       }
     }
   } catch (err) {

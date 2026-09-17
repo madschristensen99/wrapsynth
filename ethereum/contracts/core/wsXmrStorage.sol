@@ -143,8 +143,8 @@ contract wsXmrStorage {
         bytes32 lpCommitment;   // keccak256(Ed25519.scalarMultBase(lpSecret)) — set in provideLPKey
         bytes32 revealedSecret;  // User's Ed25519 secret, stored after revealSecret() succeeds
         MintStatus status;
-        uint256 lockedCollateral;   // sDAI shares locked from vault at provideLPKey — slashed if LP ghosts
-        uint256 xmrPriceAtReady;    // XMR price at provideLPKey time (18 decimals) for par settlement
+        uint256 lockedCollateral;   // sDAI key bond locked at provideLPKey, re-priced to par at setMintReady — slashed to user if LP ghosts
+        uint256 xmrPriceAtReady;    // XMR price at setMintReady time (18 decimals) for par settlement
     }
     
     struct BurnRequest {

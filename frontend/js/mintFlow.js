@@ -81,8 +81,25 @@ export class MintFlow {
             confirmDiv.removeEventListener('click', this._confirmClickHandler);
         }
         // Use event delegation so the handler survives innerHTML overwrites
-        this._confirmClickHandler = (e) => {
+        this._confirmClickHandler = async (e) => {
             if (e.target.closest('button')) {
+                // Guard: never let a user confirm on a dead mint. Statuses >= 6 are
+                // terminal (6=CANCELLED, 7=EXPIRED_READY, 8=KEY_CANCELLED) — the
+                // deposit address is unwatched and XMR sent now is unrecoverable.
+                try {
+                    const req = await readHub('getMintRequest', [this.requestId]);
+                    if (Number(req.status) >= 6) {
+                        const { showError } = await import('./ui.js?v=3.4');
+                        showError(
+                            'Mint No Longer Active',
+                            'This mint was cancelled or expired. Do NOT send XMR to the deposit address — it cannot be recovered automatically. If you already sent, wait for the LP to publish their key or reclaim via Pending Returns.'
+                        );
+                        if (this.userConfirmResolve) this.userConfirmResolve();
+                        return;
+                    }
+                } catch (err) {
+                    console.warn('[Mint] Status check before confirm failed, proceeding:', err.message);
+                }
                 showLPVerificationStatus();
                 if (this.userConfirmResolve) {
                     this.userConfirmResolve();
@@ -134,6 +151,14 @@ export class MintFlow {
             
             const walletClient = await getWalletClient();
             const publicClient = await getPublicClient();
+
+            // Capture pre-cancel status for the result message — KEY_PROVIDED/READY
+            // cancels park the deposit on-chain rather than refunding it immediately.
+            let statusBefore = 1;
+            try {
+                const mintReqBefore = await readHub('getMintRequest', [this.requestId]);
+                statusBefore = Number(mintReqBefore.status);
+            } catch (e) { /* default to refunded message */ }
 
             const userSecret = this._resolveUserSecret();
             if (!userSecret) {
@@ -191,8 +216,8 @@ export class MintFlow {
 
             // Show success with appropriate message
             const { showSuccess, resetMintUI } = await import('./ui.js?v=3.4');
-            if (wasKeyProvidedCancel) {
-                showSuccess('Mint Cancelled — Collateral Slashed', 'The mint has been cancelled. LP collateral was slashed and you received sDAI compensation (par value). Both your griefing deposit and slashed sDAI have been claimed via Pending Returns.');
+            if (statusBefore === 2 || statusBefore === 3) {
+                showSuccess('Mint Cancelled', 'The mint has been cancelled. Your griefing deposit is parked on-chain — if the LP does not claim it within the claim window, you can reclaim it (plus any slashed collateral) via Pending Returns.');
             } else {
                 showSuccess('Mint Cancelled', 'The mint has been cancelled. Your griefing deposit has been refunded.');
             }
@@ -617,14 +642,20 @@ export class MintFlow {
                 try {
                     const req = await readHub('getMintRequest', [this.requestId]);
                     const status = Number(req.status);
-                    console.log(`[Mint Poll] Status: ${status} (1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED, 7=EXPIRED_READY)`);
+                    console.log(`[Mint Poll] Status: ${status} (1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED, 7=EXPIRED_READY, 8=KEY_CANCELLED)`);
                     if (status === 3) {
                         console.log('Mint became READY while waiting for user confirmation');
                         clearInterval(statusPollInterval);
                         if (this.userConfirmResolve) this.userConfirmResolve();
-                    } else if (status === 6 || status === 7) {
+                    } else if (status >= 6) {
                         console.log('Mint was cancelled/expired while waiting for user confirmation');
                         clearInterval(statusPollInterval);
+                        // Mint is dead — replace the confirm button with a do-not-send
+                        // warning so the user doesn't burn XMR into an unwatched address.
+                        const confirmDiv = document.getElementById('confirm-sent-xmr');
+                        if (confirmDiv) {
+                            confirmDiv.innerHTML = '<div style="margin-top:12px;padding:12px;border:1px solid #e53e3e;border-radius:8px;color:#e53e3e;"><strong>Do not send XMR</strong> — this mint was cancelled or expired and the deposit address is no longer being watched.</div>';
+                        }
                         if (this.userConfirmResolve) this.userConfirmResolve();
                     }
                 } catch (e) {
@@ -720,9 +751,9 @@ export class MintFlow {
             try {
                 currentMintRequest = await readHub('getMintRequest', [this.requestId]);
                 const status = Number(currentMintRequest.status);
-                // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED
+                // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED, 7=EXPIRED_READY, 8=KEY_CANCELLED
                 
-                if (status === 6) {
+                if (status >= 6) {
                     console.log('Mint was cancelled by LP after MintReady event');
                     this.state = 'expired';
                     updateSwapState({ requestId: this.requestId, state: this.state });
@@ -825,7 +856,7 @@ export class MintFlow {
             const mintReq = await readHub('getMintRequest', [this.requestId]);
             const status = Number(mintReq.status);
 
-            if (status === 6) {
+            if (status >= 6) {
                 const { showError } = await import('./ui.js?v=3.4');
                 showError('Mint Cancelled', 'This mint was cancelled by the LP. If you had a griefing deposit, you can withdraw it via Pending Returns.');
                 throw new Error('Mint was cancelled');
@@ -876,7 +907,7 @@ export class MintFlow {
                 console.log('Mint already completed');
                 this.complete();
                 return;
-            } else if (status === 6) {
+            } else if (status >= 6) {
                 const { showError } = await import('./ui.js?v=3.4');
                 showError('Mint Cancelled', 'This mint was cancelled. If you had a griefing deposit, you can withdraw it via Pending Returns.');
                 throw new Error('Mint was cancelled');
@@ -894,7 +925,7 @@ export class MintFlow {
                         this.complete();
                         return;
                     }
-                    if (status === 6) {
+                    if (status >= 6) {
                         this.state = 'expired';
                         updateSwapState({ requestId: this.requestId, state: 'expired', message: 'Mint was cancelled on-chain.' });
                         const { showError } = await import('./ui.js?v=3.4');
@@ -937,7 +968,7 @@ export class MintFlow {
                         this.complete();
                         return;
                     }
-                    if (status === 6) {
+                    if (status >= 6) {
                         this.state = 'expired';
                         updateSwapState({ requestId: this.requestId, state: 'expired', message: 'Mint was cancelled on-chain.' });
                         const { showError } = await import('./ui.js?v=3.4');
@@ -986,10 +1017,40 @@ export class MintFlow {
             try {
                 const mintReq = await readHub('getMintRequest', [this.requestId]);
                 const status = Number(mintReq.status);
-                // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED, 7=EXPIRED_READY
+                // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED, 7=EXPIRED_READY, 8=KEY_CANCELLED
                 if (status === 6) {
                     await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
                     console.log('Mint already cancelled; claimed refund via withdrawReturns');
+                } else if (status === 8) {
+                    // KEY_CANCELLED — LP has a claim window to reveal lpSecret and take the
+                    // parked deposit. If they reveal, the user can recover any XMR sent.
+                    // If the window expires, reclaimParkedDeposit returns the deposit and
+                    // slashes the LP's key bond to the user.
+                    const { getPublicClient } = await import('./viemClient.js');
+                    const publicClient = getPublicClient();
+                    const currentBlock = await publicClient.getBlockNumber();
+                    const claimWindowEnd = Number(mintReq.timeout);
+                    if (currentBlock >= claimWindowEnd) {
+                        await writeHub('reclaimParkedDeposit', [this.requestId]);
+                        console.log('Parked deposit reclaimed — deposit + slashed key bond returned');
+                        await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
+                        try {
+                            const { CONTRACTS } = await import('./config.js');
+                            await writeHub('withdrawReturns', [CONTRACTS.sDAI]);
+                            console.log('Slashed sDAI key bond claimed via withdrawReturns');
+                        } catch (sDaiErr) {
+                            console.warn('Could not withdraw sDAI returns (may have none):', sDaiErr.message);
+                        }
+                    } else {
+                        const blocksRemaining = claimWindowEnd - Number(currentBlock);
+                        const minutes = Math.ceil(blocksRemaining * 5 / 60);
+                        const { showError } = await import('./ui.js?v=3.4');
+                        showError(
+                            'Waiting for LP Claim Window',
+                            `This mint was cancelled. The LP has ~${minutes} minutes (${blocksRemaining} blocks) to claim the griefing deposit by revealing their key — which also lets you recover any XMR sent. If the LP does not claim, you can reclaim your deposit plus slashed collateral after the window expires.`
+                        );
+                        return;
+                    }
                 } else if (status === 7) {
                     // EXPIRED_READY — LP has a claim window to reveal secret and take deposit.
                     // If LP reveals, user can read lpSecret from the event and recover XMR from shared address.
@@ -1043,7 +1104,9 @@ export class MintFlow {
                     }
                     const cancelReceipt = await writeHub('cancelMint', [this.requestId, userSecret]);
                     console.log('Mint request canceled on EVM');
-                    // If KEY_PROVIDED, collateral was slashed — withdraw sDAI returns
+                    // KEY_PROVIDED cancel parks the deposit (KEY_CANCELLED) — the key bond
+                    // is only slashed later via reclaimParkedDeposit if the LP never reveals.
+                    // Try withdrawing sDAI returns anyway in case a slash already landed.
                     if (status === 2) {
                         try {
                             const { CONTRACTS } = await import('./config.js');
@@ -1103,8 +1166,8 @@ export class MintFlow {
                 throw new Error('getMintRequest returned null — ABI may be mismatched or mint does not exist');
             }
             const status = Number(mintReq.status);
-            // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED, 7=EXPIRED_READY
-            if (status === 6) {
+            // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED, 7=EXPIRED_READY, 8=KEY_CANCELLED
+            if (status === 6 || status === 8) {
                 console.log('Mint was cancelled on-chain; aborting resume');
                 const { removeActiveSwap, saveToHistory } = await import('./storage.js');
                 const { showError, resetMintUI } = await import('./ui.js?v=3.4');

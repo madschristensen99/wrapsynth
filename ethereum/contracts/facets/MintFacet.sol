@@ -142,11 +142,12 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     /**
      * @notice LP provides their Ed25519 public keys and commits their secret for atomic swap coordination
      * @dev User combines LP's public keys with their secret to derive shared Monero address.
-     *      LP also posts their secret commitment (keccak256(lpSecret·G)) and reserves pendingDebt.
-     *      NO collateral is locked here — the lock happens at setMintReady, when the LP attests
-     *      on-chain that the XMR deposit exists. This ordering is load-bearing: collateral may
-     *      only be escrowed once the LP has attested the deposit, otherwise a user who never
-     *      sent XMR could cancel and steal the locked collateral.
+     *      LP also posts their secret commitment (keccak256(lpSecret·G)), reserves pendingDebt,
+     *      and locks a par-value key bond. The bond is NOT slashable on cancel — it is released
+     *      when the LP attests the deposit (setMintReady converts it to the par lock) or publishes
+     *      lpSecret (abandonKeyProvidedMint), and slashed to the user only if the LP never reveals.
+     *      Since non-reveal is a verifiable on-chain fact, a user who never sent XMR cannot farm
+     *      the bond — the LP always reveals to collect the parked griefing deposit.
      * @param requestId The mint request ID
      * @param lpPublicSpendKey LP's Ed25519 public spend key (32 bytes, x-coordinate only)
      * @param lpPublicViewKey LP's Ed25519 public view key (32 bytes, x-coordinate only)
@@ -179,24 +180,41 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             ? vault.collateralShares - vault.lockedCollateral
             : 0;
 
-        uint256 currentRatio = _calculateCollateralRatio(availableCollateral, projectedDebt);
+        // Compute the par-value key bond — same sizing as the setMintReady lock
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
+        uint256 parValueUsd = (request.wsxmrAmount * xmrPrice) / WSXMR_DECIMALS;
+        uint256 parDaiAmount = (parValueUsd * SDAI_DECIMALS) / collateralPrice;
+        uint256 lockDaiAmount = (parDaiAmount * MINT_LOCK_RATIO) / RATIO_PRECISION;
+        uint256 bondShares = _daiToShares(lockDaiAmount);
+
+        if (availableCollateral < bondShares) revert InsufficientCollateral();
+
+        // Re-check CR with the remaining free collateral after locking the bond
+        uint256 remainingFree = availableCollateral - bondShares;
+        uint256 currentRatio = _calculateCollateralRatio(remainingFree, projectedDebt);
         if (currentRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
+
+        // Lock the key bond (total model: only increment lockedCollateral)
+        vault.lockedCollateral += bondShares;
+        request.lockedCollateral = bondShares;
 
         lpPublicKeys[requestId] = lpPublicSpendKey;
         lpPublicViewKeys[requestId] = lpPublicViewKey;
         request.lpCommitment = lpCommitment;
         request.status = MintStatus.KEY_PROVIDED;
         
+        emit MintCollateralLocked(requestId, bondShares);
         emit LPKeyProvided(requestId, lpPublicSpendKey, lpPublicViewKey);
         
         _reentrancyStatus = _NOT_ENTERED;
     }
     
     /// @notice LP confirms XMR has been locked on Monero and signals the mint is ready for finalization
-    /// @dev Transitions from KEY_PROVIDED to READY. This is the LP's deposit attestation: par-value
-    ///      collateral is locked HERE, not at provideLPKey, so collateral is only escrowed once the
-    ///      LP claims the XMR exists. An LP that attests without a real deposit locks collateral for
-    ///      a mint that will mint unbacked wsXMR against its own vault — self-policing.
+    /// @dev Transitions from KEY_PROVIDED to READY. This is the LP's deposit attestation: the key
+    ///      bond locked at provideLPKey is re-priced to par value here and adjusted by the delta.
+    ///      An LP that attests without a real deposit keeps collateral locked for a mint that will
+    ///      mint unbacked wsXMR against its own vault — self-policing.
     ///      Extends timeout by MINT_READY_EXTENSION_BLOCKS.
     ///      Increments vault pendingMintCount and totalPendingMints, which blocks other state-changing
     ///      vault operations until the mint is finalized or cancelled.
@@ -221,7 +239,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             ? vault.collateralShares - vault.lockedCollateral
             : 0;
 
-        // Compute par-value collateral to lock for mint refundability
+        // Re-price the par-value lock at ready time
         uint256 xmrPrice = _getXmrPriceFromStorage();
         uint256 collateralPrice = _getCollateralPriceFromStorage();
         uint256 parValueUsd = (request.wsxmrAmount * xmrPrice) / WSXMR_DECIMALS;
@@ -229,15 +247,23 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         uint256 lockDaiAmount = (parDaiAmount * MINT_LOCK_RATIO) / RATIO_PRECISION;
         uint256 lockShares = _daiToShares(lockDaiAmount);
 
-        if (availableCollateral < lockShares) revert InsufficientCollateral();
+        // availableCollateral already excludes the key bond; adding it back gives the
+        // free collateral the new lock must fit within
+        uint256 currentLocked = request.lockedCollateral;
+        uint256 remainingFree = availableCollateral + currentLocked;
+        if (remainingFree < lockShares) revert InsufficientCollateral();
+        remainingFree -= lockShares;
 
-        // Re-check CR with the remaining free collateral after locking
-        uint256 remainingFree = availableCollateral - lockShares;
+        // Re-check CR with the remaining free collateral after adjustment
         uint256 currentRatio = _calculateCollateralRatio(remainingFree, projectedDebt);
         if (currentRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
 
-        // Lock collateral (total model: only increment lockedCollateral, never decrement collateralShares)
-        vault.lockedCollateral += lockShares;
+        // Adjust the bond to the re-priced lock (top up or release the excess)
+        if (lockShares > currentLocked) {
+            vault.lockedCollateral += lockShares - currentLocked;
+        } else if (lockShares < currentLocked) {
+            vault.lockedCollateral -= currentLocked - lockShares;
+        }
         request.lockedCollateral = lockShares;
         request.xmrPriceAtReady = xmrPrice;
         
@@ -353,10 +379,10 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     /// @dev For PENDING status: cancels and returns griefing deposit to the user. No debt was
     ///      reserved and no collateral was locked — the LP never engaged.
     ///      For KEY_PROVIDED status: transitions to KEY_CANCELLED and parks the griefing deposit.
-    ///      No collateral was locked at this stage, so there is nothing to slash — the LP can
-    ///      claim the deposit by publishing lpSecret via abandonKeyProvidedMint (which lets the
-    ///      user recover any XMR at the shared address); after LP_CLAIM_WINDOW_BLOCKS the user
-    ///      reclaims it via reclaimParkedDeposit.
+    ///      The key bond stays locked — it backs the LP's obligation to publish lpSecret via
+    ///      abandonKeyProvidedMint (which lets the user recover any XMR at the shared address).
+    ///      If the LP never reveals within LP_CLAIM_WINDOW_BLOCKS, reclaimParkedDeposit slashes
+    ///      the bond to the user and returns the deposit.
     ///      For READY status: transitions to EXPIRED_READY — the LP may claim the griefing deposit
     ///      by revealing their secret within LP_CLAIM_WINDOW_BLOCKS.
     ///      For SECRET_REVEALED status: the secret is already public, so the mint MUST complete —
@@ -397,8 +423,8 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             }
         } else if (originalStatus == MintStatus.KEY_PROVIDED) {
             // LP keyed but the mint never became READY — either no deposit arrived or the LP
-            // ghosted. Nothing was locked, so nothing is slashed. Park the deposit: it becomes
-            // a bounty for the LP's lpSecret, which is what lets the user recover any XMR sent.
+            // ghosted. The key bond stays locked: it is released if the LP publishes lpSecret,
+            // slashed to the user if they don't. Park the deposit as the reveal bounty.
             request.status = MintStatus.KEY_CANCELLED;
             request.timeout = block.number + LP_CLAIM_WINDOW_BLOCKS;
             emit MintCancelled(requestId);
@@ -455,6 +481,13 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         
         request.status = MintStatus.CANCELLED;
         
+        // Release the key bond — the LP fulfilled their obligation by publishing lpSecret.
+        // Guard covers the liquidation-takeover case where lockedCollateral was zeroed.
+        if (request.lockedCollateral > 0 && vault.lockedCollateral >= request.lockedCollateral) {
+            vault.lockedCollateral -= request.lockedCollateral;
+            request.lockedCollateral = 0;
+        }
+        
         if (request.griefingDeposit > 0) {
             pendingReturns[request.lpVault][address(0)] += request.griefingDeposit;
             emit ReturnQueued(request.lpVault, address(0), request.griefingDeposit);
@@ -468,7 +501,10 @@ contract MintFacet is wsXmrStorage, IMintFacet {
     
     /// @notice Reclaim a parked griefing deposit after the LP's claim window lapses
     /// @dev Permissionless — the deposit always goes to the initiator. Covers the dead-LP case:
-    ///      the mint was cancelled from KEY_PROVIDED and the LP never published lpSecret.
+    ///      the mint was cancelled from KEY_PROVIDED and the LP never published lpSecret, so the
+    ///      key bond is slashed to the user as compensation for any XMR stuck at the shared
+    ///      address. If the vault was liquidated mid-window (mintNonce changed), the bond is not
+    ///      slashed — it was already handled by liquidation.
     /// @param requestId The mint request ID
     function reclaimParkedDeposit(bytes32 requestId) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
@@ -479,6 +515,22 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         if (block.number < request.timeout) revert TimeoutNotReached();
         
         request.status = MintStatus.CANCELLED;
+        
+        // Slash the key bond to the user — LP never revealed lpSecret
+        Vault storage vault = _vaults[request.lpVault];
+        if (request.lockedCollateral > 0 && request.vaultMintNonce == vault.mintNonce) {
+            if (vault.lockedCollateral >= request.lockedCollateral) {
+                vault.lockedCollateral -= request.lockedCollateral;
+            }
+            if (vault.collateralShares >= request.lockedCollateral) {
+                vault.collateralShares -= request.lockedCollateral;
+                pendingReturns[request.initiator][GnosisAddresses.SDAI] += request.lockedCollateral;
+                globalPendingSDAI += request.lockedCollateral;
+                emit ReturnQueued(request.initiator, GnosisAddresses.SDAI, request.lockedCollateral);
+            }
+            emit MintCollateralSlashed(requestId, request.lockedCollateral);
+        }
+        
         if (request.griefingDeposit > 0) {
             pendingReturns[request.initiator][address(0)] += request.griefingDeposit;
             emit ReturnQueued(request.initiator, address(0), request.griefingDeposit);
