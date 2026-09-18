@@ -155,6 +155,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         userBurnRequests[user].push(requestId);
         vaultBurnRequests[lpVault].push(requestId);
+        burnRequestIndexPlusOne[requestId] = vaultBurnRequests[lpVault].length;
         
         emit BurnRequested(requestId, user, lpVault, wsxmrAmount, wsxmrAmount * XMR_TO_WSXMR_DIVISOR, rewardCollateral, claimCommitment, userPublicKey, userViewKey);
         return requestId;
@@ -218,6 +219,9 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.PROPOSED) revert InvalidStatus();
         if (msg.sender != request.user) revert Unauthorized();
+        // Enforce the proposal deadline — after it lapses the burn resolves via
+        // resolveDeclinedProposal/abandonProposedBurn, not a late commit.
+        if (block.number >= request.deadline) revert DeadlineExpired();
         
         request.deadline = block.number + BURN_COMMIT_TIMEOUT_BLOCKS;
         request.status = BurnStatus.COMMITTED;
@@ -227,10 +231,55 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         _reentrancyStatus = _NOT_ENTERED;
     }
     
+    /// @notice LP reveals the Ed25519 secret for a committed burn — pure reveal, no settlement
+    /// @dev Splits reveal from settlement so the secret only appears in calldata of a tx that
+    ///      cannot revert on vault state (mirrors the mint side's revealSecret/finalizeMint split).
+    ///      After revealing, anyone can call settleBurn to complete the burn.
+    /// @param requestId The burn request ID
+    /// @param secret The Ed25519 scalar that unlocks the Monero output
+    function revealBurnSecret(bytes32 requestId, bytes32 secret) external {
+        if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
+        _reentrancyStatus = _ENTERED;
+        
+        if (secret == 0) revert InvalidSecret();
+        
+        BurnRequest storage request = burnRequests[requestId];
+        if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
+        if (request.revealedSecret != bytes32(0)) revert InvalidStatus();
+        if (block.number >= request.deadline + BURN_FINALIZE_GRACE_BLOCKS) revert DeadlineExpired();
+        
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
+        bytes32 computedHash = keccak256(abi.encodePacked(px, py));
+        if (computedHash != request.secretHash) revert InvalidSecret();
+        
+        request.revealedSecret = secret;
+        emit BurnSecretRevealed(requestId, secret);
+        
+        _reentrancyStatus = _NOT_ENTERED;
+    }
+    
+    /// @notice Settles a burn whose secret was revealed via revealBurnSecret — permissionless
+    /// @dev Contains no secret in calldata, so a revert cannot leak key material.
+    ///      Once the secret is stored, settlement only touches vault accounting.
+    /// @param requestId The burn request ID
+    function settleBurn(bytes32 requestId) external {
+        if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
+        _reentrancyStatus = _ENTERED;
+        
+        BurnRequest storage request = burnRequests[requestId];
+        if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
+        if (request.revealedSecret == bytes32(0)) revert InvalidStatus();
+        
+        _settleBurn(request, requestId);
+        
+        _reentrancyStatus = _NOT_ENTERED;
+    }
+    
     /// @notice LP finalizes the burn by revealing the Ed25519 secret — settles the burn and releases collateral
     /// @dev Verifies that scalarMultBase(secret) matches the committed secretHash from proposeHash.
     ///      Releases locked collateral, pays burn reward to user via pendingReturns, and reduces vault debt.
     ///      Can be called by anyone holding the secret (typically the LP after sending XMR).
+    ///      Prefer revealBurnSecret + settleBurn: a revert here still leaks the secret in calldata.
     /// @param requestId The burn request ID
     /// @param secret The Ed25519 scalar that unlocks the Monero output
     function finalizeBurn(bytes32 requestId, bytes32 secret) external {
@@ -247,6 +296,17 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         bytes32 computedHash = keccak256(abi.encodePacked(px, py));
         if (computedHash != request.secretHash) revert InvalidSecret();
         
+        request.revealedSecret = secret;
+        _settleBurn(request, requestId);
+        
+        _reentrancyStatus = _NOT_ENTERED;
+    }
+    
+    /// @dev Shared settlement for finalizeBurn and settleBurn — releases the collateral
+    ///      reservation, pays the burn reward to the user, and reduces vault debt.
+    ///      Caller must have verified status == COMMITTED and revealedSecret != 0,
+    ///      and must hold the reentrancy guard.
+    function _settleBurn(BurnRequest storage request, bytes32 requestId) internal {
         _syncVaultYield(request.lpVault);
         
         Vault storage vault = _vaults[request.lpVault];
@@ -281,9 +341,8 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         }
         
         request.status = BurnStatus.COMPLETED;
-        emit BurnFinalized(requestId, secret, safeReward);
-        
-        _reentrancyStatus = _NOT_ENTERED;
+        _removeVaultBurnRequest(request.lpVault, requestId);
+        emit BurnFinalized(requestId, request.revealedSecret, safeReward);
     }
     
     /// @notice User claims slashed collateral when LP fails to finalize after the commit deadline
@@ -297,6 +356,9 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
+        // If the LP already revealed, the burn is settleable — slashing would double-pay
+        // the user (XMR via the public secret + sDAI). Route to settleBurn instead.
+        if (request.revealedSecret != bytes32(0)) revert InvalidStatus();
         if (block.number < request.deadline + BURN_FINALIZE_GRACE_BLOCKS) revert DeadlineNotExpired();
         if (msg.sender != request.user) revert Unauthorized();
         
@@ -337,6 +399,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         emit ReturnQueued(request.user, GnosisAddresses.SDAI, userPayout);
         
         request.status = BurnStatus.SLASHED;
+        _removeVaultBurnRequest(request.lpVault, requestId);
         emit BurnSlashed(requestId, request.user, userPayout);
         
         _reentrancyStatus = _NOT_ENTERED;
@@ -372,6 +435,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         IwsXmrHub(address(this)).mintTokens(request.user, request.wsxmrAmount);
         
         request.status = BurnStatus.CANCELLED;
+        _removeVaultBurnRequest(request.lpVault, requestId);
         emit BurnAborted(requestId);
         
         _reentrancyStatus = _NOT_ENTERED;
@@ -424,92 +488,119 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         emit ReturnQueued(request.user, GnosisAddresses.SDAI, userBase);
         
         request.status = BurnStatus.SLASHED;
+        _removeVaultBurnRequest(request.lpVault, requestId);
         emit BurnForceSettled(requestId, userBase);
         
         _reentrancyStatus = _NOT_ENTERED;
     }
     
-    /// @notice Resolve a burn where the LP proposed a hash but the user never confirmed (status must be PROPOSED, deadline expired)
+    /// @notice Resolve a burn where the LP proposed a hash but the user never confirmed
     /// @dev Permissionless — anyone can call after the commit deadline expires.
-    ///      Restores wsXMR to the user and releases the locked LP collateral.
-    ///      The caller MUST provide the user's Monero spend key half (userSecret), which is verified
-    ///      on-chain via Ed25519.scalarMultBase against the stored userPublicKey. The revealed
-    ///      userSecret is emitted in the BurnProposalDeclined event so the LP can combine it with
-    ///      their own key half to sweep the shared XMR back to their wallet — ensuring atomicity.
-    ///      If the vault was liquidated since the burn was requested, the locked collateral is not released.
+    ///      Two accepted states:
+    ///      - PROPOSED (normal path): restores wsXMR to the user and releases the locked
+    ///        LP collateral.
+    ///      - CANCELLED with abandonedBurns[requestId] set (late claim): the LP already
+    ///        abandoned via abandonProposedBurn, so collateral and pending debt were
+    ///        settled there — this path ONLY mints the user's wsXMR back.
+    ///      Either way the caller MUST provide the user's Monero spend key half
+    ///      (userSecret), verified on-chain via Ed25519.scalarMultBase against the stored
+    ///      userPublicKey. The revealed userSecret is emitted in BurnProposalDeclined so
+    ///      the LP can combine it with their own key half to sweep the shared XMR back —
+    ///      ensuring atomicity. The user's wsXMR refund ALWAYS costs this reveal.
+    ///      If the vault was liquidated since the burn was requested, the locked collateral
+    ///      is not released.
     /// @param requestId The burn request ID
     /// @param userSecret The user's Ed25519 private spend key half (revealed on-chain for LP recovery)
     function resolveDeclinedProposal(bytes32 requestId, bytes32 userSecret) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
-        
+
         if (userSecret == bytes32(0)) revert InvalidUserSecret();
-        
+
         BurnRequest storage request = burnRequests[requestId];
-        if (request.status != BurnStatus.PROPOSED) revert InvalidStatus();
+        bool lateClaim = abandonedBurns[requestId];
+        if (lateClaim) {
+            // LP already abandoned — collateral/debt settled, only the wsXMR claim remains.
+            if (request.status != BurnStatus.CANCELLED) revert InvalidStatus();
+        } else {
+            if (request.status != BurnStatus.PROPOSED) revert InvalidStatus();
+        }
         if (block.number < request.deadline) revert DeadlineNotExpired();
-        
+
         // Verify userSecret corresponds to the stored userPublicKey.
         // userPublicKey stores the *compressed* Ed25519 point (what the frontend
         // passes via publicSpendKey.toRawBytes()), so compare against
         // compressPoint(px,py), not the raw x-coordinate.
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(userSecret));
         if (bytes32(Ed25519.compressPoint(px, py)) != request.userPublicKey) revert InvalidUserSecret();
-        
-        Vault storage vault = _vaults[request.lpVault];
-        
-        if (request.vaultLiquidationNonce == vault.liquidationNonce) {
-            uint256 totalLock = request.lockedCollateral + request.rewardCollateral;
-            if (vault.lockedCollateral < totalLock) revert InsufficientCollateral();
-            vault.lockedCollateral -= totalLock;
+
+        if (!lateClaim) {
+            Vault storage vault = _vaults[request.lpVault];
+
+            if (request.vaultLiquidationNonce == vault.liquidationNonce) {
+                uint256 totalLock = request.lockedCollateral + request.rewardCollateral;
+                if (vault.lockedCollateral < totalLock) revert InsufficientCollateral();
+                vault.lockedCollateral -= totalLock;
+            }
+
+            if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
+            else globalPendingBurnDebt -= request.wsxmrAmount;
+
+            request.status = BurnStatus.CANCELLED;
+            _removeVaultBurnRequest(request.lpVault, requestId);
+        } else {
+            // Clear the flag so the late claim cannot execute twice.
+            abandonedBurns[requestId] = false;
         }
-        
-        if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
-        else globalPendingBurnDebt -= request.wsxmrAmount;
-        
+
         // Restore wsXMR to holder
         IwsXmrHub(address(this)).mintTokens(request.user, request.wsxmrAmount);
-        
-        request.status = BurnStatus.CANCELLED;
+
         emit BurnProposalDeclined(requestId, userSecret);
-        
+
         _reentrancyStatus = _NOT_ENTERED;
     }
     
-    /// @notice LP abandons a proposed burn the user never confirmed — releases collateral, restores wsXMR
+    /// @notice LP abandons a proposed burn the user never confirmed — releases collateral only
     /// @dev LP-only escape for the PROPOSED deadlock: resolveDeclinedProposal requires the
     ///      user's secret, so if the user is gone the LP's collateral would be locked forever.
     ///      Post-deadline only, so the LP cannot abandon while the user might still confirm.
-    ///      NOTE: the LP's locked XMR is NOT recovered — sweeping the shared output needs the
-    ///      user's secret half, which is never revealed on this path. The LP prefers
-    ///      resolveDeclinedProposal (which emits userSecret); this is the dead-user fallback.
+    ///      The user's wsXMR is intentionally NOT restored here — it remains claimable via
+    ///      resolveDeclinedProposal, which requires revealing userSecret (emitted on-chain so
+    ///      the LP can sweep the shared XMR). This keeps the protocol invariant that a refund
+    ///      always costs a key-half reveal: without it, a user could let the LP lock XMR,
+    ///      ghost, wait for the abandon, and be refunded wsXMR while the LP's XMR burned —
+    ///      griefing at zero cost. If the user never returns, the wsXMR stays burned and the
+    ///      LP's XMR stays locked — a symmetric loss, not a free attack.
     /// @param requestId The burn request ID
     function abandonProposedBurn(bytes32 requestId) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
-        
+
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.PROPOSED) revert InvalidStatus();
         if (block.number < request.deadline) revert DeadlineNotExpired();
-        
+
         Vault storage vault = _vaults[request.lpVault];
         if (msg.sender != vault.lpAddress) revert Unauthorized();
-        
+
         if (request.vaultLiquidationNonce == vault.liquidationNonce) {
             uint256 totalLock = request.lockedCollateral + request.rewardCollateral;
             if (vault.lockedCollateral < totalLock) revert InsufficientCollateral();
             vault.lockedCollateral -= totalLock;
         }
-        
+
         if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
         else globalPendingBurnDebt -= request.wsxmrAmount;
-        
-        // Restore wsXMR to holder
-        IwsXmrHub(address(this)).mintTokens(request.user, request.wsxmrAmount);
-        
+
+        // Do NOT restore wsXMR — the user must reveal userSecret via
+        // resolveDeclinedProposal to reclaim it, which also gives the LP the key
+        // material to sweep the shared XMR output.
+        abandonedBurns[requestId] = true;
         request.status = BurnStatus.CANCELLED;
+        _removeVaultBurnRequest(request.lpVault, requestId);
         emit BurnAborted(requestId);
-        
+
         _reentrancyStatus = _NOT_ENTERED;
     }
     
@@ -645,16 +736,20 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         activeCount = 0;
         
         for (uint256 i = 0; i < vaultBurns.length; i++) {
-            BurnStatus status = burnRequests[vaultBurns[i]].status;
+            bytes32 reqId = vaultBurns[i];
+            BurnStatus status = burnRequests[reqId].status;
             
             if (status == BurnStatus.REQUESTED || 
                 status == BurnStatus.PROPOSED || 
                 status == BurnStatus.COMMITTED) {
                 if (writeIndex != i) {
-                    vaultBurns[writeIndex] = vaultBurns[i];
+                    vaultBurns[writeIndex] = reqId;
                 }
+                burnRequestIndexPlusOne[reqId] = writeIndex + 1;
                 writeIndex++;
                 activeCount++;
+            } else {
+                delete burnRequestIndexPlusOne[reqId];
             }
         }
         
@@ -669,7 +764,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     
     /// @notice Returns all function selectors implemented by this facet
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](17);
+        bytes4[] memory sels = new bytes4[](19);
         sels[0] = this.requestBurn.selector;
         sels[1] = this.requestBurnFromRouter.selector;
         sels[2] = this.proposeHash.selector;
@@ -687,6 +782,8 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         sels[14] = this.meetsMinimumBurn.selector;
         sels[15] = this.getActiveBurnCount.selector;
         sels[16] = this.cleanupVaultBurnRequests.selector;
+        sels[17] = this.revealBurnSecret.selector;
+        sels[18] = this.settleBurn.selector;
         return sels;
     }
 }

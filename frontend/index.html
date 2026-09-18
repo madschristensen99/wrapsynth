@@ -1065,8 +1065,8 @@ function copyAddr(btn){
 (function(){
   var diagrams=[
     {
-      desc:"User swaps XMR for wsXMR through an atomic swap. The on-chain collateralization requirement is 150%, but LPs effectively post >200% because they hold XMR alongside their sDAI vault collateral. The LP provides Ed25519 public keys for a 2-of-2 PTLC (Point Time-Locked Contract), and claims XMR by revealing the secret. The contract verifies the secret on-chain with Ed25519 \u2014 the same curve Monero uses \u2014 then mints wsXMR minus a configurable fee to the user and the fee to the LP. The user posts a griefing deposit in ETH; LP collateral is only locked when the LP attests the XMR deposit exists (setMintReady) \u2014 never before. If the LP keys but never sets ready, the mint times out to KEY_CANCELLED: the deposit is parked, the LP can claim it by revealing their lpSecret (which also lets the user sweep their XMR back), or the user reclaims it after the claim window. If the user doesn't finalize after READY, the mint enters EXPIRED_READY \u2014 the LP can claim the deposit by revealing their secret, or if they don't, anyone can sweep the deposit back to the user.",
-      tags:[">150% on-chain CR","2-of-2 PTLC (Point Time-Locked Contract)","Ed25519 verify","Griefing deposit","Collateral locks at setMintReady","~1h timeout","KEY_CANCELLED / EXPIRED_READY lifecycle"],
+      desc:"User swaps XMR for wsXMR through an atomic swap. The on-chain collateralization requirement is 150%, but LPs effectively post >200% because they hold XMR alongside their sDAI vault collateral. The LP provides Ed25519 public keys for a 2-of-2 shared Monero address (view = user's key, spend = user + LP). The user sends XMR there, then proves the deposit by submitting the txid and tx secret key — the LP verifies it trustlessly with check_tx_key and calls setMintReady, locking collateral. The user then reveals their secret on-chain (verified with Ed25519 — the same curve Monero uses) to mint wsXMR minus a configurable fee to the user and the fee to the LP; that reveal also gives the LP the full spend key to sweep the deposit. The user posts a griefing deposit in ETH; LP collateral is only locked at setMintReady — never before. If the LP keys but never sets ready, the mint times out to KEY_CANCELLED: the deposit is parked, the LP can claim it by revealing their lpSecret (which also lets the user sweep their XMR back), or the user reclaims it after the claim window. If the user doesn't finalize after READY, the mint enters EXPIRED_READY — the LP can claim the deposit by revealing their secret, or if they don't, anyone can sweep the deposit back to the user.",
+      tags:[">150% on-chain CR","2-of-2 shared-key model","Ed25519 verify","Griefing deposit","Collateral locks at setMintReady","~1h timeout","KEY_CANCELLED / EXPIRED_READY lifecycle"],
       actors:[
         {name:"User",color:"xmr"},
         {name:"Monero",color:"gray"},
@@ -1081,8 +1081,9 @@ function copyAddr(btn){
         {from:2,to:2,label:"check CR \u2265 150% (no debt reserved)",type:"note"},
         {from:3,to:2,label:"provideLPKey(spendKey, viewKey, commitment)",type:"call"},
         {from:2,to:2,label:"reserve pendingDebt, status: KEY_PROVIDED (no collateral locked)",type:"note"},
-        {from:0,to:1,label:"lock XMR (PTLC 2-of-2)",type:"call"},
-        {from:3,to:1,label:"verify XMR locked",type:"call"},
+        {from:0,to:1,label:"send XMR to 2-of-2 deposit (view=userPub)",type:"call"},
+        {from:0,to:3,label:"submit txid + txKey (/mint/deposit)",type:"call"},
+        {from:3,to:1,label:"check_tx_key(txid, txKey, deposit)",type:"call"},
         {from:3,to:2,label:"setMintReady() \u2014 LP attests deposit",type:"call"},
         {from:2,to:2,label:"re-check CR, lock 110% collateral, status: READY",type:"note"},
         {from:0,to:2,label:"revealSecret(secret) \u2014 user reveals",type:"call"},
@@ -1090,7 +1091,7 @@ function copyAddr(btn){
         {from:2,to:2,label:"finalizeMint() \u2014 anyone calls",type:"call"},
         {from:2,to:0,label:"mint wsXMR (amt \u2212 fee)",type:"return"},
         {from:2,to:3,label:"mint fee wsXMR to LP",type:"return"},
-        {from:3,to:1,label:"claim XMR (using revealed secret)",type:"call"},
+        {from:3,to:1,label:"sweep deposit (userSecret + lpSecret)",type:"call"},
         {from:2,to:0,label:"refund griefing deposit (pendingReturns)",type:"effect"},
         {from:2,to:2,label:"release locked collateral to vault",type:"note"},
         {from:2,to:2,label:"\u26a0 LP keys but never sets ready: cancelMint \u2192 KEY_CANCELLED, deposit parked \u2192 LP claims via abandonKeyProvidedMint (reveals lpSecret) or user reclaims via reclaimParkedDeposit",type:"note"},
@@ -1098,8 +1099,8 @@ function copyAddr(btn){
       ]
     },
     {
-      desc:"User burns wsXMR to receive XMR through the reverse atomic swap. Each burn derives a unique Ed25519 keypair from the user's seed (per-burn key derivation) so revealing one burn's secret doesn't compromise others. The contract locks 110% collateral over par and burns wsXMR. The LP locks XMR on Monero with a secret hash; the user confirms the lock on-chain, binding both parties. The user claims XMR (revealing the secret), the LP finalizes with the secret, and locked collateral is unlocked back in the vault while the burn reward is queued to the user in sDAI. If the LP fails to reveal after COMMITTED, the user can claim slashed collateral (par + reward) after a grace period. If the LP never proposes (REQUESTED timeout), the user can abort to recover wsXMR or force-settle for par value in sDAI. If the LP proposed but didn't follow through (PROPOSED timeout), the user calls resolveDeclinedProposal with their per-burn userSecret (private spend key) to restore wsXMR — the userSecret is emitted on-chain, allowing the LP to combine it with their own secret to sweep the shared XMR back to their wallet.",
-      tags:["110% collateral lock","2-of-2 PTLC (Point Time-Locked Contract)","Ed25519 verify","Per-burn key derivation","Burn reward","Slashing","Abort/force-settle","On-chain secret reveal for recovery"],
+      desc:"User burns wsXMR to receive XMR through the reverse atomic swap. Each burn derives a unique Ed25519 keypair from the user's seed (per-burn key derivation) so revealing one burn's secret doesn't compromise others. The contract locks 110% collateral over par and burns wsXMR. The LP sends XMR to a shared 2-of-2 burn address (view = user's key, spend = user + LP) and commits a secret hash; the user scans the address with their own view key and confirms the lock on-chain, binding both parties. The LP then reveals their secret on-chain via finalizeBurn — verified with Ed25519 — which settles the burn, releases the locked collateral, and queues the burn reward to the user in sDAI; that reveal also gives the user the full spend key to sweep the shared XMR. If the LP fails to reveal after COMMITTED, the user can claim slashed collateral (par + reward) after a grace period. If the LP never proposes (REQUESTED timeout), the user can abort to recover wsXMR or force-settle for par value in sDAI. If the LP proposed but didn't follow through (PROPOSED timeout), the user calls resolveDeclinedProposal with their per-burn userSecret (private spend key) to restore wsXMR — the userSecret is emitted on-chain, allowing the LP to combine it with their own secret to sweep the shared XMR back to their wallet.",
+      tags:["110% collateral lock","2-of-2 shared-key model","Ed25519 verify","Per-burn key derivation","Burn reward","Slashing","Abort/force-settle","On-chain secret reveal for recovery"],
       actors:[
         {name:"User",color:"xmr"},
         {name:"Monero",color:"gray"},
@@ -1110,22 +1111,22 @@ function copyAddr(btn){
         {from:0,to:2,label:"requestBurn(amt, vault, commitment, per-burn keys)",type:"call"},
         {from:2,to:2,label:"keys derived: user_priv_i = H(seed || nonce)",type:"note"},
         {from:2,to:2,label:"lock 110% collateral, burn wsXMR, reduce debt",type:"note"},
-        {from:3,to:1,label:"lock XMR (PTLC with secret\u00b7G hash)",type:"call"},
+        {from:3,to:1,label:"send XMR to 2-of-2 burn address (view=userView)",type:"call"},
         {from:3,to:2,label:"proposeHash(secretHash, LP keys)",type:"call"},
-        {from:0,to:1,label:"verify XMR lock off-chain",type:"call"},
+        {from:0,to:1,label:"scan burn address (own view key)",type:"call"},
         {from:0,to:2,label:"confirmMoneroLock()",type:"call"},
         {from:2,to:2,label:"start slashing timer (COMMITTED)",type:"note"},
-        {from:0,to:1,label:"claim XMR (reveals secret)",type:"call"},
-        {from:3,to:2,label:"finalizeBurn(secret)",type:"call"},
+        {from:3,to:2,label:"finalizeBurn(secret) \u2014 LP reveals lpSecret",type:"call"},
         {from:2,to:2,label:"Ed25519: verify secret\u00b7G = secretHash",type:"note"},
         {from:2,to:2,label:"unlock collateral in vault, deduct reward",type:"note"},
         {from:2,to:3,label:"collateral stays in vault",type:"effect"},
         {from:2,to:0,label:"burn reward queued (sDAI, pendingReturns)",type:"effect"},
+        {from:0,to:1,label:"sweep shared XMR (userSecret + lpSecret)",type:"call"},
         {from:2,to:2,label:"⚠ LP doesn't finalize (COMMITTED timeout): claimSlashedCollateral → par + reward to user",type:"note"},
         {from:2,to:2,label:"⚠ LP never proposes (REQUESTED timeout): abortBurn → restore wsXMR, or forceSettleBurn → par in sDAI",type:"note"},
         {from:2,to:2,label:"⚠ LP proposes but doesn't lock (PROPOSED timeout): user calls resolveDeclinedProposal(requestId, userSecret)",type:"note"},
         {from:2,to:2,label:"VM verifies compressPoint(userSecret·G) = userPublicKey, emits BurnProposalDeclined(requestId, userSecret)",type:"note"},
-        {from:2,to:2,label:"⚠ User gone entirely: LP calls abandonProposedBurn → collateral released, wsXMR restored (LP's XMR not recovered)",type:"note"},
+        {from:2,to:2,label:"⚠ User gone entirely: LP calls abandonProposedBurn → collateral released; wsXMR stays claimable only via resolveDeclinedProposal (user reveal → LP sweeps XMR)",type:"note"},
         {from:3,to:1,label:"LP sweeps shared XMR (userSecret + lpSecret → full spend key)",type:"call"}
       ]
     },

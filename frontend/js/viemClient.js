@@ -11,6 +11,7 @@ const _extraHubAbi = parseAbi([
     'function abortBurn(bytes32 requestId) external',
     'function forceSettleBurn(bytes32 requestId) external',
     'function resolveDeclinedProposal(bytes32 requestId, bytes32 userSecret) external',
+    'function abandonedBurns(bytes32 requestId) external view returns (bool)',
     'function getVaultBurnRequests(address vault) external view returns (bytes32[])'
 ]);
 export const parsedABIs = {

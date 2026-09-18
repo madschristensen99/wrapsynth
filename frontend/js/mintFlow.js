@@ -19,6 +19,7 @@ import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory, getAct
 import { keccak256, toHex, parseEther } from 'https://esm.sh/viem@2.7.0';
 import { startDeadlineTimer, startStatusPolling, stopTimers } from './mintFlowTimers.js';
 import { showLPVerificationStatus, updateMintProgress, showSuccess, showConfirmModal, showSuccessNotification, showMintComplete } from './ui.js?v=3.4';
+import { getLPClient } from './lpClient.js';
 
 export class MintFlow {
     constructor() {
@@ -80,33 +81,106 @@ export class MintFlow {
         if (this._confirmClickHandler) {
             confirmDiv.removeEventListener('click', this._confirmClickHandler);
         }
-        // Use event delegation so the handler survives innerHTML overwrites
+        // Use event delegation so the handler survives innerHTML overwrites.
+        // Dispatch by button id: the "I've sent XMR" button renders the deposit-proof
+        // form; the form's submit button posts the proof to the LP.
         this._confirmClickHandler = async (e) => {
-            if (e.target.closest('button')) {
-                // Guard: never let a user confirm on a dead mint. Statuses >= 6 are
-                // terminal (6=CANCELLED, 7=EXPIRED_READY, 8=KEY_CANCELLED) — the
-                // deposit address is unwatched and XMR sent now is unrecoverable.
-                try {
-                    const req = await readHub('getMintRequest', [this.requestId]);
-                    if (Number(req.status) >= 6) {
-                        const { showError } = await import('./ui.js?v=3.4');
-                        showError(
-                            'Mint No Longer Active',
-                            'This mint was cancelled or expired. Do NOT send XMR to the deposit address — it cannot be recovered automatically. If you already sent, wait for the LP to publish their key or reclaim via Pending Returns.'
-                        );
-                        if (this.userConfirmResolve) this.userConfirmResolve();
-                        return;
-                    }
-                } catch (err) {
-                    console.warn('[Mint] Status check before confirm failed, proceeding:', err.message);
-                }
-                showLPVerificationStatus();
-                if (this.userConfirmResolve) {
-                    this.userConfirmResolve();
-                }
+            const btn = e.target.closest('button');
+            if (!btn) return;
+
+            if (btn.id === 'submit-deposit-proof-btn') {
+                await this.submitDepositProof();
+                return;
             }
+            if (btn.id !== 'confirm-sent-xmr-btn') return;
+
+            // Guard: never let a user confirm on a dead mint. Statuses >= 6 are
+            // terminal (6=CANCELLED, 7=EXPIRED_READY, 8=KEY_CANCELLED) — the
+            // deposit address is unwatched and XMR sent now is unrecoverable.
+            try {
+                const req = await readHub('getMintRequest', [this.requestId]);
+                if (Number(req.status) >= 6) {
+                    const { showError } = await import('./ui.js?v=3.4');
+                    showError(
+                        'Mint No Longer Active',
+                        'This mint was cancelled or expired. Do NOT send XMR to the deposit address — it cannot be recovered automatically. If you already sent, wait for the LP to publish their key or reclaim via Pending Returns.'
+                    );
+                    if (this.userConfirmResolve) this.userConfirmResolve();
+                    return;
+                }
+            } catch (err) {
+                console.warn('[Mint] Status check before confirm failed, proceeding:', err.message);
+            }
+
+            // Deposit is user-viewable — the LP can't scan it, so the user proves the
+            // send with the txid + tx secret key (check_tx_key). Render the proof form.
+            this.showDepositProofForm();
         };
         confirmDiv.addEventListener('click', this._confirmClickHandler);
+    }
+
+    /**
+     * Render the deposit-proof form (txid + tx key) in place of the confirm button.
+     * The user pastes these from their Monero wallet after sending the deposit.
+     */
+    showDepositProofForm() {
+        const confirmDiv = document.getElementById('confirm-sent-xmr');
+        if (!confirmDiv) return;
+        confirmDiv.innerHTML = `
+            <div class="deposit-proof-form" style="margin-top:12px;text-align:left;">
+                <p style="font-size:0.9em;margin:0 0 8px;">
+                    Prove your deposit: paste the <strong>transaction id</strong> and
+                    <strong>transaction key</strong> from your Monero wallet
+                    (<code>get_tx_key &lt;txid&gt;</code>). The LP verifies it via
+                    <code>check_tx_key</code> — your deposit stays recoverable by you.
+                </p>
+                <input id="deposit-txid" type="text" placeholder="Transaction ID (txid)"
+                    style="width:100%;margin-bottom:8px;padding:8px;font-family:monospace;" />
+                <input id="deposit-txkey" type="text" placeholder="Transaction key (r)"
+                    style="width:100%;margin-bottom:8px;padding:8px;font-family:monospace;" />
+                <button id="submit-deposit-proof-btn" class="cta" style="width:100%;">Verify Deposit</button>
+                <div id="deposit-proof-status" style="margin-top:8px;font-size:0.85em;"></div>
+            </div>
+        `;
+    }
+
+    /**
+     * Validate + submit the deposit proof (txid + tx key) to the LP via /mint/deposit.
+     * On success the LP runs check_tx_key and proceeds to setMintReady; we then resolve
+     * the user-confirm gate so waitForLPReady watches for the MintReady event.
+     */
+    async submitDepositProof() {
+        const txidEl = document.getElementById('deposit-txid');
+        const txkeyEl = document.getElementById('deposit-txkey');
+        const statusEl = document.getElementById('deposit-proof-status');
+        const txid = (txidEl?.value || '').trim();
+        const txKey = (txkeyEl?.value || '').trim();
+        const setStatus = (msg, color) => { if (statusEl) { statusEl.style.color = color || ''; statusEl.textContent = msg; } };
+
+        if (!/^[0-9a-fA-F]{64}$/.test(txid)) {
+            setStatus('Invalid txid — expected 64 hex characters.', '#e53e3e');
+            return;
+        }
+        if (!/^[0-9a-fA-F]{64}$/.test(txKey)) {
+            setStatus('Invalid transaction key — expected 64 hex characters.', '#e53e3e');
+            return;
+        }
+
+        setStatus('Submitting deposit proof to LP…');
+        try {
+            const lp = getLPClient();
+            const res = await lp.submitDeposit({ requestId: this.requestId, txid, txKey });
+            if (res && res.verified) {
+                setStatus(`Deposit verified (${res.received} atomic units). Waiting for LP to finalize…`, '#38a169');
+                showLPVerificationStatus();
+                if (this.userConfirmResolve) this.userConfirmResolve();
+            } else {
+                setStatus(res?.error || 'LP could not verify the deposit. Check txid/txKey and retry.', '#e53e3e');
+            }
+        } catch (err) {
+            console.error('[Mint] submitDeposit failed:', err);
+            setStatus(`Deposit proof failed: ${err.message}. The LP may not have computed the address yet — retry shortly.`, '#e53e3e');
+        }
     }
 
     /**
@@ -124,6 +198,110 @@ export class MintFlow {
             return saved.claimSecret;
         }
         return null;
+    }
+
+    /**
+     * Check whether this mint's deposit is recoverable: the mint is dead and the LP
+     * has revealed lpSecret on-chain by claiming the parked griefing deposit.
+     * lpSecret is emitted in the GriefingDepositClaimed event (abandonKeyProvidedMint
+     * / claimGriefingDeposit) — it is NOT stored in mintReq.revealedSecret (that's
+     * the user's own secret). Returns the lpSecret if recovery is possible, else null.
+     */
+    async getRecoverableLpSecret() {
+        try {
+            const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
+            const currentBlock = await getBlockNumber();
+            // Scan a wide window — the reveal may be many blocks back on a dead mint.
+            const fromBlock = currentBlock > 200000n ? currentBlock - 200000n : 0n;
+            const events = await getPastEvents(
+                CONTRACTS.hub,
+                ABIS.hub,
+                'GriefingDepositClaimed',
+                fromBlock,
+                'latest',
+                { requestId: this.requestId }
+            );
+            if (events && events.length > 0) {
+                const lpSecret = events[events.length - 1].args.lpSecret;
+                if (lpSecret && lpSecret !== '0x' + '0'.repeat(64)) {
+                    return lpSecret;
+                }
+            }
+        } catch (e) {
+            console.warn('[Mint Recovery] Could not read GriefingDepositClaimed:', e.message);
+        }
+        return null;
+    }
+
+    /**
+     * Recover XMR from a user-viewable mint deposit after the LP revealed lpSecret.
+     * The deposit's view key is the user's own secret, so the user can scan + spend
+     * it with a normal MoneroWalletFull once they also have lpSecret.
+     *
+     * @param {string} destination - Monero address to sweep the recovered XMR to
+     * @param {Function} onProgress - optional progress callback (message: string)
+     * @returns {Promise<{swept: boolean, txHashes: string[], amount: string}>}
+     */
+    async recoverMintDeposit(destination, onProgress) {
+        const lpSecret = await this.getRecoverableLpSecret();
+        if (!lpSecret) {
+            throw new Error('LP secret not revealed on-chain yet — the deposit is not recoverable until the LP claims the parked deposit or abandons the key.');
+        }
+        const userSecret = this._resolveUserSecret();
+        if (!userSecret) {
+            throw new Error('Your swap secret could not be recovered from browser storage. Restore your seed phrase to recover this deposit.');
+        }
+
+        // Scan from around when the mint was initiated so the deposit output is found.
+        let restoreHeight = 0;
+        try {
+            const { getMoneroRpc } = await import('./moneroRpc.js');
+            const rpc = getMoneroRpc();
+            restoreHeight = Math.max(0, (await rpc.getHeight()) - 2000);
+        } catch (e) {
+            console.warn('[Mint Recovery] Could not get Monero height, scanning from 0:', e.message);
+        }
+
+        const { sweepMintDeposit } = await import('./mintRecovery.js');
+        return sweepMintDeposit({
+            userSecretHex: userSecret,
+            lpSecretHex: lpSecret,
+            destination,
+            restoreHeight,
+            onProgress,
+        });
+    }
+
+    /**
+     * Offer the "Recover XMR" UI if this mint's deposit is recoverable (LP revealed
+     * lpSecret on-chain). Renders the destination-input panel; returns true if the
+     * panel was shown, false if the deposit isn't recoverable yet.
+     */
+    async showRecoveryOption() {
+        const lpSecret = await this.getRecoverableLpSecret();
+        if (!lpSecret) return false;
+        const { showMintRecoveryPanel } = await import('./ui.js?v=3.4');
+        showMintRecoveryPanel((destination) => this._runRecovery(destination));
+        return true;
+    }
+
+    /** Drive the dead-mint XMR sweep with progress/complete/error UI. */
+    async _runRecovery(destination) {
+        const { hideMintRecoveryPanel, showMintSweepProgress, showMintSweepComplete, showMintSweepError } = await import('./ui.js?v=3.4');
+        hideMintRecoveryPanel();
+        showMintSweepProgress('Preparing recovery — scanning the deposit address...');
+        try {
+            const result = await this.recoverMintDeposit(destination, (msg) => showMintSweepProgress(msg));
+            if (result && result.swept && result.txHashes && result.txHashes.length > 0) {
+                const amountXmr = Number(result.amount) / 1e12;
+                showMintSweepComplete(result.txHashes[0], amountXmr);
+            } else {
+                showMintSweepError('No spendable XMR was found at the deposit address.', () => this.showRecoveryOption());
+            }
+        } catch (e) {
+            console.error('[Mint Recovery] sweep failed:', e);
+            showMintSweepError(e.message || 'Recovery failed', () => this.showRecoveryOption());
+        }
     }
 
     /**
@@ -1018,6 +1196,18 @@ export class MintFlow {
                 const mintReq = await readHub('getMintRequest', [this.requestId]);
                 const status = Number(mintReq.status);
                 // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED, 7=EXPIRED_READY, 8=KEY_CANCELLED
+
+                // If the mint is dead and the LP revealed lpSecret (claimed the griefing
+                // deposit via abandonKeyProvidedMint/claimGriefingDeposit → status 6), the
+                // user can sweep their XMR back. Offer recovery first — when lpSecret is
+                // revealed the LP already took the griefing deposit, so XMR recovery is
+                // the only remaining action.
+                if (status === 6 || status === 7 || status === 8) {
+                    if (await this.showRecoveryOption()) {
+                        return; // Recovery panel shown — let the user sweep their XMR.
+                    }
+                }
+
                 if (status === 6) {
                     await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
                     console.log('Mint already cancelled; claimed refund via withdrawReturns');

@@ -429,12 +429,14 @@ sequenceDiagram
     VM->>VM: Reserve pendingDebt (capacity held, NO collateral locked)
     VM-->>LP: LPKeyProvided event
 
-    Note over User,Monero: Step 3: User locks XMR on Monero with PTLC
-    User->>Monero: Lock XMR with PTLC
-    Note right of User: Uses LP's public key + own secret
+    Note over User,Monero: Step 3: User sends XMR to the shared 2-of-2 deposit address
+    User->>Monero: Send XMR to deposit address
+    Note right of User: view = userPub, spend = userPub + lpSpendPub.<br/>User-viewable — the LP cannot scan it.
 
-    Note over User,Monero: Step 4: LP verifies Monero lock and confirms (locks collateral)
-    LP->>Monero: Verify XMR lock exists
+    Note over User,Monero: Step 4: User proves the deposit; LP verifies via check_tx_key
+    User->>LP: Submit txid + txKey (tx secret key) via /mint/deposit
+    LP->>Monero: check_tx_key(txid, txKey, depositAddress)
+    Monero-->>LP: received amount
     LP->>VM: setMintReady(requestId)
     activate VM
     VM->>VM: Sync vault yield & re-check CR
@@ -448,11 +450,7 @@ sequenceDiagram
     VM-->>LP: MintReady + MintCollateralLocked events
     deactivate VM
 
-    Note over User,Monero: Step 5: LP claims XMR (reveals secret on Monero)
-    LP->>Monero: Claim XMR with secret
-    Note right of LP: Secret visible on Monero chain
-
-    Note over User,Monero: Step 6: User reveals secret, then finalizeMint
+    Note over User,Monero: Step 5: User reveals secret on EVM → finalizeMint mints wsXMR
     User->>VM: revealSecret(requestId, secret)
     activate VM
     VM->>VM: Verify status is READY
@@ -466,11 +464,7 @@ sequenceDiagram
 
     User->>VM: finalizeMint(requestId)
     activate VM
-    VM->>VM: Verify status is SECRET_REVEALED
-    VM->>VM: Sync vault yield & re-check CR
-    alt CR < 150% after yield sync
-        VM-->>User: Revert: InsufficientCollateral
-    end
+    VM->>VM: Verify status is SECRET_REVEALED (no oracle/CR check — validated at setMintReady)
     alt Vault mintNonce changed (liquidation occurred)
         VM->>VM: Slash locked collateral to user (compensation — secret is public)
         VM->>VM: Queue griefing deposit refund to pendingReturns
@@ -484,8 +478,12 @@ sequenceDiagram
     Token-->>VM: Fee minted
     VM->>VM: Queue griefing deposit refund
     VM->>VM: Mark COMPLETED, pendingMintCount--
-    VM-->>User: MintFinalized event
+    VM-->>User: MintFinalized event (emits userSecret)
     deactivate VM
+
+    Note over User,Monero: Step 6: LP sweeps the deposit off-chain
+    LP->>Monero: Sweep deposit (userSecret + lpSecret → full spend key)
+    Note right of LP: LP learned userSecret from MintFinalized;<br/>deposit view key = userSecret (user-viewable)
 ```
 
 ### Mint Cancellation Scenarios
@@ -598,9 +596,9 @@ sequenceDiagram
     VM-->>User: BurnRequested event, requestId
     deactivate VM
 
-    Note over User,Monero: Step 2: LP locks XMR on Monero and proposes hash
-    LP->>Monero: Lock XMR with PTLC
-    Note right of LP: Generates secret, uses hash in PTLC
+    Note over User,Monero: Step 2: LP sends XMR to the shared 2-of-2 burn address and proposes hash
+    LP->>Monero: Send XMR to burn address
+    Note right of LP: view = userView, spend = userSpend + lpSpend.<br/>User-viewable — the LP cannot scan it.
     LP->>VM: proposeHash(requestId, secretHash, lpPublicSpendKey, lpPublicViewKey)
     activate VM
     alt Wrong status or deadline expired
@@ -622,14 +620,10 @@ sequenceDiagram
     VM-->>User: BurnCommitted event
     deactivate VM
 
-    Note over User,Monero: Step 4: User claims XMR (LP sees secret)
-    User->>Monero: Claim XMR with secret
-    Note right of User: Secret now visible on Monero
-
-    Note over User,Monero: Step 5: LP finalizes burn with secret
+    Note over User,Monero: Step 4: LP reveals secret on EVM → finalizeBurn settles the burn
     LP->>VM: finalizeBurn(requestId, secret)
     activate VM
-    VM->>VM: Verify secret matches hash (Ed25519)
+    VM->>VM: Verify scalarMultBase(secret) == secretHash (Ed25519)
     VM->>VM: Calculate safe reward (maintain vault health)
     alt Vault collateral insufficient for reward
         VM-->>LP: Revert: InsufficientCollateral
@@ -637,8 +631,12 @@ sequenceDiagram
     VM->>VM: Unlock collateral back to vault
     VM->>VM: Queue reward to user
     VM->>VM: Mark COMPLETED
-    VM-->>LP: BurnFinalized event
+    VM-->>LP: BurnFinalized event (emits lpSecret)
     deactivate VM
+
+    Note over User,Monero: Step 5: User sweeps the shared XMR off-chain
+    User->>Monero: Sweep output (userSecret + lpSecret → full spend key)
+    Note right of User: User learned lpSecret from BurnFinalized;<br/>burn view key = user's privateViewKey
 ```
 
 ### Burn Failure Scenarios

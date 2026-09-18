@@ -65,6 +65,25 @@ export class LPClient {
         });
     }
 
+    /**
+     * Submit a mint deposit proof (txid + transaction secret key) so the LP can
+     * verify the payment via check_tx_key. Mint deposits are user-viewable, so the
+     * LP cannot scan them — the user proves the send with the tx key instead.
+     * @param {string} requestId - mint request id (0x-prefixed bytes32)
+     * @param {string} txid - Monero transaction hash (64-char hex)
+     * @param {string} txKey - transaction secret key r (64-char hex)
+     */
+    async submitDeposit({ requestId, txid, txKey }) {
+        return this.request(LP_SERVER_CONFIG.endpoints.submitDeposit, {
+            method: 'POST',
+            body: JSON.stringify({
+                requestId,
+                txid,
+                txKey
+            })
+        });
+    }
+
     async getMintStatus(requestId) {
         // Strip 0x prefix if present
         const cleanId = requestId.startsWith('0x') ? requestId.slice(2) : requestId;

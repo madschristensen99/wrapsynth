@@ -1056,8 +1056,31 @@ export class BurnFlow {
                         // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=COMPLETED, 5=SLASHED, 6=CANCELLED
 
                         if (status === 3) {
-                            // COMMITTED — LP didn't finalize, user can claim slashed collateral
                             const { showError, showConfirmModal } = await import('./ui.js?v=3.4');
+                            const revealed = burnReq.revealedSecret && burnReq.revealedSecret !== '0x0000000000000000000000000000000000000000000000000000000000000000';
+                            if (revealed) {
+                                // LP revealed the secret but never settled — the burn is settleable
+                                // by anyone. Slashing is blocked (the XMR claim is already public);
+                                // settleBurn pays out the burn reward instead.
+                                const confirmed = await showConfirmModal(
+                                    'LP Revealed but Did Not Settle',
+                                    '<p>The LP revealed the burn secret but did not settle on-chain. You can settle the burn yourself to claim your reward.</p><p>Would you like to settle now?</p>'
+                                );
+                                if (confirmed) {
+                                    try {
+                                        await writeHub('settleBurn', [this.requestId]);
+                                        const { showSuccess } = await import('./ui.js?v=3.4');
+                                        showSuccess('Burn Settled', 'Your reward has been queued. Withdraw it via Pending Returns.');
+                                        resolve(burnReq.revealedSecret);
+                                        return;
+                                    } catch (settleErr) {
+                                        showError('Settle Failed', settleErr.message || 'Failed to settle burn');
+                                    }
+                                }
+                                reject(new Error('LP finalize timeout — burn can be settled'));
+                                return;
+                            }
+                            // COMMITTED, not revealed — LP didn't finalize, user can claim slashed collateral
                             const confirmed = await showConfirmModal(
                                 'LP Failed to Finalize',
                                 '<p>The LP did not finalize the burn in time. You can claim slashed collateral (par value + reward) from the LP\'s vault.</p><p>Would you like to claim now?</p>'
@@ -1357,10 +1380,31 @@ export class BurnFlow {
                 } else if (status === 4) {
                     // COMPLETED — nothing to cancel
                     console.log('Burn already completed');
-                } else if (status === 5 || status === 6) {
-                    // SLASHED or CANCELLED — claim any pending returns
+                } else if (status === 5) {
+                    // SLASHED — claim any pending returns
                     await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
                     console.log('Pending returns withdrawn');
+                } else if (status === 6) {
+                    // CANCELLED — if the LP abandoned a PROPOSED burn, the wsXMR is still
+                    // claimable via resolveDeclinedProposal (revealing userSecret also lets
+                    // the LP sweep the shared XMR). Otherwise just withdraw any returns.
+                    let abandoned = false;
+                    try {
+                        abandoned = await readHub('abandonedBurns', [this.requestId]);
+                    } catch (e) {
+                        console.warn('[Cancel] Could not read abandonedBurns:', e.message);
+                    }
+                    if (abandoned && this.perBurnKeySet && this.perBurnKeySet.secret) {
+                        await writeHub('resolveDeclinedProposal', [this.requestId, this.perBurnKeySet.secret]);
+                        console.log('Late claim: wsXMR restored via resolveDeclinedProposal (userSecret revealed for LP sweep)');
+                    } else if (abandoned) {
+                        const { showError } = await import('./ui.js?v=3.4');
+                        showError('Claim Available', 'This burn was abandoned by the LP. Your wsXMR is still claimable, but your burn secret is unavailable — restore your seed phrase and retry.');
+                        return;
+                    } else {
+                        await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
+                        console.log('Pending returns withdrawn');
+                    }
                 } else {
                     console.warn(`Burn status is ${status}; no cancel action possible`);
                 }

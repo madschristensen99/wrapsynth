@@ -329,6 +329,14 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             request.status = MintStatus.CANCELLED;
             vault.pendingMintCount--;
             totalPendingMints--;
+            // Release the debt reservation — liquidation never touches pendingDebt, so the
+            // reservation is still held and must be freed here. The nonce guard applies to
+            // collateral only, never to debt.
+            if (vault.pendingDebt < request.wsxmrAmount) {
+                vault.pendingDebt = 0;
+            } else {
+                vault.pendingDebt -= request.wsxmrAmount;
+            }
             // Vault was liquidated post-reveal — the user's secret is public, so the LP can
             // sweep the XMR. Compensate the user with the locked collateral if still held.
             if (request.lockedCollateral > 0 && vault.lockedCollateral >= request.lockedCollateral
@@ -409,9 +417,14 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         
         // Release reserved debt for mints that engaged the LP (KEY_PROVIDED/READY).
         // SECRET_REVEALED is excluded — _finalizeMint handles its own debt accounting.
-        if (originalStatus != MintStatus.PENDING && originalStatus != MintStatus.SECRET_REVEALED
-            && request.vaultMintNonce == vault.mintNonce) {
-            vault.pendingDebt -= request.wsxmrAmount;
+        // Unconditional: liquidation never touches pendingDebt, so the reservation is
+        // still held even when the nonce no longer matches.
+        if (originalStatus != MintStatus.PENDING && originalStatus != MintStatus.SECRET_REVEALED) {
+            if (vault.pendingDebt < request.wsxmrAmount) {
+                vault.pendingDebt = 0;
+            } else {
+                vault.pendingDebt -= request.wsxmrAmount;
+            }
         }
         
         if (originalStatus == MintStatus.PENDING) {
@@ -427,7 +440,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             // slashed to the user if they don't. Park the deposit as the reveal bounty.
             request.status = MintStatus.KEY_CANCELLED;
             request.timeout = block.number + LP_CLAIM_WINDOW_BLOCKS;
-            emit MintCancelled(requestId);
+            emit MintKeyCancelled(requestId);
         } else if (originalStatus == MintStatus.SECRET_REVEALED) {
             // Secret already public via SecretRevealed — mint anyway (see _finalizeMint).
             _finalizeMint(requestId);
@@ -467,7 +480,11 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             // Direct abandon — only after the mint timeout so the LP cannot key-then-instant-
             // abandon to farm griefing deposits from users who were about to send XMR.
             if (block.number < request.timeout) revert TimeoutNotReached();
-            if (request.vaultMintNonce == vault.mintNonce) {
+            // Release the debt reservation unconditionally — liquidation never touches
+            // pendingDebt, so it is still held even when the nonce no longer matches.
+            if (vault.pendingDebt < request.wsxmrAmount) {
+                vault.pendingDebt = 0;
+            } else {
                 vault.pendingDebt -= request.wsxmrAmount;
             }
         } else {
@@ -516,19 +533,25 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         
         request.status = MintStatus.CANCELLED;
         
-        // Slash the key bond to the user — LP never revealed lpSecret
+        // Release the key bond reservation. If the vault was not liquidated, slash it to
+        // the user — LP never revealed lpSecret. If liquidated (nonce changed), release it
+        // back to the vault's free balance instead of leaving it locked forever.
         Vault storage vault = _vaults[request.lpVault];
-        if (request.lockedCollateral > 0 && request.vaultMintNonce == vault.mintNonce) {
-            if (vault.lockedCollateral >= request.lockedCollateral) {
+        if (request.lockedCollateral > 0) {
+            if (request.vaultMintNonce == vault.mintNonce) {
+                if (vault.lockedCollateral >= request.lockedCollateral) {
+                    vault.lockedCollateral -= request.lockedCollateral;
+                }
+                if (vault.collateralShares >= request.lockedCollateral) {
+                    vault.collateralShares -= request.lockedCollateral;
+                    pendingReturns[request.initiator][GnosisAddresses.SDAI] += request.lockedCollateral;
+                    globalPendingSDAI += request.lockedCollateral;
+                    emit ReturnQueued(request.initiator, GnosisAddresses.SDAI, request.lockedCollateral);
+                }
+                emit MintCollateralSlashed(requestId, request.lockedCollateral);
+            } else if (vault.lockedCollateral >= request.lockedCollateral) {
                 vault.lockedCollateral -= request.lockedCollateral;
             }
-            if (vault.collateralShares >= request.lockedCollateral) {
-                vault.collateralShares -= request.lockedCollateral;
-                pendingReturns[request.initiator][GnosisAddresses.SDAI] += request.lockedCollateral;
-                globalPendingSDAI += request.lockedCollateral;
-                emit ReturnQueued(request.initiator, GnosisAddresses.SDAI, request.lockedCollateral);
-            }
-            emit MintCollateralSlashed(requestId, request.lockedCollateral);
         }
         
         if (request.griefingDeposit > 0) {
@@ -555,6 +578,8 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         MintRequest storage request = mintRequests[requestId];
         if (request.status != MintStatus.EXPIRED_READY) revert InvalidStatus();
         if (msg.sender != request.lpVault) revert Unauthorized();
+        // Enforce the LP claim window — after it lapses the deposit belongs to the sweep.
+        if (block.number >= request.timeout) revert DeadlineExpired();
         
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(lpSecret));
         bytes32 computed = keccak256(abi.encodePacked(px, py));
@@ -600,16 +625,23 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         vault.pendingMintCount--;
         totalPendingMints--;
         
-        // Slash par-value collateral to user — LP ghosted, user compensated in sDAI
-        if (request.lockedCollateral > 0 && request.vaultMintNonce == vault.mintNonce) {
-            if (vault.lockedCollateral >= request.lockedCollateral) {
+        // Release the par-value lock. If the vault was not liquidated, slash it to the
+        // user — LP ghosted. If liquidated (nonce changed), release it back to the
+        // vault's free balance instead of leaving it locked forever.
+        if (request.lockedCollateral > 0) {
+            if (request.vaultMintNonce == vault.mintNonce) {
+                if (vault.lockedCollateral >= request.lockedCollateral) {
+                    vault.lockedCollateral -= request.lockedCollateral;
+                }
+                if (vault.collateralShares >= request.lockedCollateral) {
+                    vault.collateralShares -= request.lockedCollateral;
+                    pendingReturns[request.initiator][GnosisAddresses.SDAI] += request.lockedCollateral;
+                    globalPendingSDAI += request.lockedCollateral;
+                    emit ReturnQueued(request.initiator, GnosisAddresses.SDAI, request.lockedCollateral);
+                }
+                emit MintCollateralSlashed(requestId, request.lockedCollateral);
+            } else if (vault.lockedCollateral >= request.lockedCollateral) {
                 vault.lockedCollateral -= request.lockedCollateral;
-            }
-            if (vault.collateralShares >= request.lockedCollateral) {
-                vault.collateralShares -= request.lockedCollateral;
-                pendingReturns[request.initiator][GnosisAddresses.SDAI] += request.lockedCollateral;
-                globalPendingSDAI += request.lockedCollateral;
-                emit ReturnQueued(request.initiator, GnosisAddresses.SDAI, request.lockedCollateral);
             }
         }
         
@@ -618,7 +650,6 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             pendingReturns[request.initiator][address(0)] += request.griefingDeposit;
             emit ReturnQueued(request.initiator, address(0), request.griefingDeposit);
         }
-        emit MintCollateralSlashed(requestId, request.lockedCollateral);
         
         _reentrancyStatus = _NOT_ENTERED;
     }

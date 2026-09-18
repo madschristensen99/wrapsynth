@@ -48,6 +48,9 @@ interface IMintOperations is IErrors {
     event MintCancelled(bytes32 indexed requestId);
     event MintCancelledWithSecret(bytes32 indexed requestId, bytes32 userSecret);
     event MintExpiredReady(bytes32 indexed requestId);
+    /// @notice Emitted when a KEY_PROVIDED mint times out into KEY_CANCELLED — non-terminal;
+    ///         the parked deposit still awaits LP claim (abandonKeyProvidedMint) or user reclaim.
+    event MintKeyCancelled(bytes32 indexed requestId);
     event GriefingDepositClaimed(bytes32 indexed requestId, bytes32 lpSecret);
     event MintGriefingUnclaimed(bytes32 indexed requestId);
     event MintCollateralSlashed(bytes32 indexed requestId, uint256 slashedCollateral);

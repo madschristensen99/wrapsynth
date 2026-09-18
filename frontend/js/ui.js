@@ -1103,7 +1103,7 @@ export async function showMintDepositInfo(address, amount) {
     // Show button, hide verification status initially
     if (elements.confirmSentXmr) {
         elements.confirmSentXmr.classList.remove('hidden');
-        elements.confirmSentXmr.innerHTML = `<button class="cta" style="width:100%;margin-top:12px;">I've sent the XMR</button>`;
+        elements.confirmSentXmr.innerHTML = `<button id="confirm-sent-xmr-btn" class="cta" style="width:100%;margin-top:12px;">I've sent the XMR</button>`;
     }
     if (elements.waitingLpVerification) {
         elements.waitingLpVerification.classList.add('hidden');
@@ -1854,6 +1854,150 @@ export function showBurnKeysOption(keys, destination, restoreHeight = 0) {
 export function hideBurnKeysOption() {
     const el = document.getElementById('burn-keys-option');
     if (el) el.classList.add('hidden');
+}
+
+// ─── Mint Recovery (dead-mint XMR sweep) ────────────────────────────────────
+// Shown when a mint died and the LP revealed lpSecret on-chain — the user can
+// sweep the user-viewable deposit back to their own Monero address.
+
+/**
+ * Render the "Recover XMR" panel: explains the situation and collects the
+ * destination Monero address. Calls onRecover(destination) on submit.
+ * @param {Function} onRecover - async (destinationAddress) => void
+ */
+export function showMintRecoveryPanel(onRecover) {
+    const mintPanel = document.getElementById('mint-panel');
+    if (!mintPanel) return;
+
+    let el = document.getElementById('mint-recovery-panel');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'mint-recovery-panel';
+        el.className = 'mint-recovery-panel';
+        mintPanel.appendChild(el);
+    }
+
+    el.innerHTML = `
+        <div class="mint-recovery-inner">
+            <h3>Recover your XMR</h3>
+            <p>This mint did not complete, but the LP revealed their key — you can sweep the XMR you sent back to your own Monero address.</p>
+            <label for="mint-recovery-dest" class="mint-recovery-label">Destination Monero address</label>
+            <input type="text" id="mint-recovery-dest" class="mint-recovery-dest" placeholder="4... / 8... (your Monero address)" spellcheck="false" autocomplete="off">
+            <button class="cta" id="mint-recovery-btn">Recover XMR</button>
+            <p class="mint-recovery-err hidden" id="mint-recovery-err"></p>
+        </div>
+    `;
+    el.classList.remove('hidden');
+
+    const btn = document.getElementById('mint-recovery-btn');
+    const destInput = document.getElementById('mint-recovery-dest');
+    const errEl = document.getElementById('mint-recovery-err');
+    if (btn) {
+        btn.addEventListener('click', async () => {
+            const dest = (destInput?.value || '').trim();
+            if (!dest || dest.length < 90) {
+                if (errEl) { errEl.textContent = 'Enter a valid Monero address.'; errEl.classList.remove('hidden'); }
+                return;
+            }
+            if (errEl) errEl.classList.add('hidden');
+            btn.disabled = true;
+            try {
+                await onRecover(dest);
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    }
+}
+
+/** Hide the recovery panel (e.g. once the sweep starts). */
+export function hideMintRecoveryPanel() {
+    const el = document.getElementById('mint-recovery-panel');
+    if (el) el.classList.add('hidden');
+}
+
+/** Show mint recovery sweep progress. */
+export function showMintSweepProgress(message) {
+    const mintPanel = document.getElementById('mint-panel');
+    if (!mintPanel) return;
+    let el = document.getElementById('mint-sweep-progress');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'mint-sweep-progress';
+        el.className = 'burn-sweep-progress';
+        mintPanel.appendChild(el);
+    }
+    el.innerHTML = `<div class="sweep-spinner"></div><p>${message}</p>`;
+    el.classList.remove('hidden');
+}
+
+/** Show mint recovery sweep complete. */
+export function showMintSweepComplete(txHash, amount) {
+    const mintPanel = document.getElementById('mint-panel');
+    if (!mintPanel) return;
+    const progressEl = document.getElementById('mint-sweep-progress');
+    if (progressEl) progressEl.classList.add('hidden');
+    let el = document.getElementById('mint-sweep-complete');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'mint-sweep-complete';
+        el.className = 'burn-sweep-complete';
+        mintPanel.appendChild(el);
+    }
+    el.innerHTML = `
+        <div class="burn-complete-inner">
+            <h3>XMR Recovered!</h3>
+            <p>Swept ${amount.toFixed(8)} XMR to your destination address</p>
+            <p class="text-muted">Tx: ${txHash.slice(0, 16)}...${txHash.slice(-16)}</p>
+        </div>
+    `;
+    el.classList.remove('hidden');
+}
+
+/** Show mint recovery sweep error. onBack (optional) re-shows the recovery panel. */
+export function showMintSweepError(errorMsg, onBack) {
+    const mintPanel = document.getElementById('mint-panel');
+    if (!mintPanel) return;
+    const progressEl = document.getElementById('mint-sweep-progress');
+    if (progressEl) progressEl.classList.add('hidden');
+
+    let friendly = 'An unexpected error occurred while recovering your XMR.';
+    if (errorMsg.includes('No unlocked balance') || errorMsg.includes('balance is 0')) {
+        friendly = 'The XMR at the deposit address is not yet unlocked. Monero requires ~10 confirmations before funds can be spent. Please wait and try again.';
+    } else if (errorMsg.includes('No balance') || errorMsg.includes('no funds')) {
+        friendly = 'No XMR found at the deposit address. You may not have sent a deposit, or it has already been swept.';
+    } else if (errorMsg.includes('daemon') || errorMsg.includes('connection') || errorMsg.includes('fetch')) {
+        friendly = 'Could not connect to the Monero network. Please check your internet connection and try again.';
+    } else if (errorMsg.includes('WASM') || errorMsg.includes('wasm')) {
+        friendly = 'The Monero WASM module failed to load. Please refresh the page and try again.';
+    }
+
+    let el = document.getElementById('mint-sweep-error');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'mint-sweep-error';
+        el.className = 'burn-sweep-error';
+        mintPanel.appendChild(el);
+    }
+    el.innerHTML = `
+        <div class="burn-sweep-error-inner">
+            <h3>Recovery Failed</h3>
+            <p class="burn-sweep-error-friendly">${friendly}</p>
+            <details class="burn-sweep-error-details"><summary>Technical details</summary><p>${errorMsg}</p></details>
+        </div>
+        <div class="burn-sweep-error-actions">
+            <button class="cta" id="mint-sweep-back">Back</button>
+        </div>
+    `;
+    el.classList.remove('hidden');
+
+    const backBtn = document.getElementById('mint-sweep-back');
+    if (backBtn) {
+        backBtn.addEventListener('click', () => {
+            el.classList.add('hidden');
+            if (typeof onBack === 'function') onBack();
+        });
+    }
 }
 
 /**

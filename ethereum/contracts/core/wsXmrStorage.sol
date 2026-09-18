@@ -164,6 +164,7 @@ contract wsXmrStorage {
         bytes32 userPublicKey;          // User's Ed25519 public spend key (compressed point) for shared address derivation
         bytes32 userViewKey;            // User's Ed25519 public view key (compressed point) so user can scan the shared address
         uint256 xmrPriceAtRequest;      // XMR price locked at request time (18 decimals) for fair settlement
+        bytes32 revealedSecret;         // LP's revealed Ed25519 secret (set by revealBurnSecret/finalizeBurn); 0 = not revealed
     }
     
     struct PositionMetadata {
@@ -301,6 +302,46 @@ contract wsXmrStorage {
     function _denormalizeDebt(uint256 normalizedDebt) internal view returns (uint256) {
         return (normalizedDebt * globalDebtIndex) / 1e18;
     }
+
+    /// @dev Removes a burn request from its vault's vaultBurnRequests array via swap-and-pop.
+    ///      Uses burnRequestIndexPlusOne for O(1) lookup; falls back to a linear scan for
+    ///      entries created before the index existed. No-ops if the entry is not present
+    ///      (e.g. already removed by abandonProposedBurn before a late claim).
+    ///      Keeps the array holding only active burns so liquidation loops stay bounded.
+    function _removeVaultBurnRequest(address lpVault, bytes32 requestId) internal {
+        bytes32[] storage vaultBurns = vaultBurnRequests[lpVault];
+        uint256 idxPlusOne = burnRequestIndexPlusOne[requestId];
+        uint256 idx;
+        bool found = false;
+
+        if (idxPlusOne > 0) {
+            idx = idxPlusOne - 1;
+            // Defensive: verify the slot actually holds this request
+            if (idx < vaultBurns.length && vaultBurns[idx] == requestId) {
+                found = true;
+            }
+        }
+        if (!found) {
+            // Linear scan fallback — legacy entries or a stale index
+            for (uint256 i = 0; i < vaultBurns.length; i++) {
+                if (vaultBurns[i] == requestId) {
+                    idx = i;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return;
+        }
+
+        uint256 lastIdx = vaultBurns.length - 1;
+        if (idx != lastIdx) {
+            bytes32 swapped = vaultBurns[lastIdx];
+            vaultBurns[idx] = swapped;
+            burnRequestIndexPlusOne[swapped] = idx + 1;
+        }
+        vaultBurns.pop();
+        delete burnRequestIndexPlusOne[requestId];
+    }
     
     // ========== STORAGE GAPS ==========
     
@@ -325,7 +366,19 @@ contract wsXmrStorage {
     ///      setLiquidityRouter can never be called again by anyone.
     bool public deployerOperationsLocked;
 
-    uint256[35] private __gap;
+    /// @notice Marks a PROPOSED burn the LP abandoned via abandonProposedBurn.
+    /// @dev The burn is CANCELLED and collateral released, but the user's wsXMR is
+    ///      NOT restored — it stays claimable only via resolveDeclinedProposal, which
+    ///      requires the user to reveal userSecret (emitted for the LP to sweep the
+    ///      shared XMR). Cleared when the late claim executes.
+    mapping(bytes32 => bool) public abandonedBurns;
+
+    /// @notice 1-indexed position of each burn request in vaultBurnRequests[lpVault].
+    /// @dev 0 = untracked (pre-upgrade entries). Enables O(1) swap-and-pop removal at
+    ///      settlement so the array holds only active burns and liquidation loops stay bounded.
+    mapping(bytes32 => uint256) public burnRequestIndexPlusOne;
+
+    uint256[33] private __gap;
     
     // ========== CONSTRUCTOR ==========
     

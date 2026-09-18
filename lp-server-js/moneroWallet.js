@@ -179,6 +179,32 @@ export async function getIncomingTransfers(opts = {}) {
 }
 
 /**
+ * Verify a payment to an address using the transaction secret key (check_tx_key).
+ *
+ * Mint deposits are USER-VIEWABLE (view pub = user's key), so the LP cannot scan
+ * them. Instead the user submits txid + txKey after sending, and the LP calls
+ * check_tx_key to learn how much that transaction paid to the deposit address.
+ * Works on any address — the open wallet only supplies the daemon connection.
+ *
+ * @param {string} txid - transaction hash (64-char hex)
+ * @param {string} txKey - transaction secret key r (64-char hex)
+ * @param {string} address - deposit address to check
+ * @returns {Promise<{received: bigint, confirmations: number, inPool: boolean}>}
+ */
+export async function checkTxKey(txid, txKey, address) {
+  const res = await walletRpc('check_tx_key', {
+    txid,
+    tx_key: txKey,
+    address,
+  });
+  return {
+    received: BigInt(res.received || 0),
+    confirmations: res.confirmations ?? 0,
+    inPool: !!res.in_pool,
+  };
+}
+
+/**
  * Poll for an incoming transfer matching expected amount (within tolerance).
  * Creates a view-only wallet for the deposit address (combined address using LP's view key)
  * so the wallet can detect outputs sent to that address.
@@ -416,11 +442,11 @@ async function _sendXmr({ destination, amountAtomic, priority = 1, accountIndex 
  *   - userSecret (revealed in MintFinalized event)
  *   - lpSecret (stored by LP server during provideLPKey)
  * The full private spend key = (userSecret + lpSecret) mod l
- * The view key = LP's private view key (from env)
+ * The view key = userSecret (deposit is user-viewable: view pub = userPub)
  *
  * @param {string} userSecretHex - user's secret from MintFinalized (0x-prefixed hex)
  * @param {string} lpSecretHex - LP's secret stored during provideLPKey (0x-prefixed hex)
- * @param {string} lpViewKeyHex - LP's private view key (hex, no prefix)
+ * @param {string} lpViewKeyHex - LP's private view key (hex, no prefix) — UNUSED for user-viewable deposits, kept for signature compatibility
  * @param {string} lpMainAddress - LP's main Monero address to sweep to
  * @param {number} restoreHeight - block height to start scanning from
  * @returns {Promise<{swept: boolean, txHashes: string[], amount: bigint}>}
@@ -461,11 +487,15 @@ async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpM
   const pubSpend = G.multiply(combinedSpendScalar);
   const pubSpendBytes = Buffer.from(pubSpend.toRawBytes());
 
-  // Derive public view key from private view key
-  const viewPrivBytes = Buffer.from(lpViewKeyHex, 'hex');
-  const viewLe = BigInt('0x' + viewPrivBytes.reverse().toString('hex')) % ED25519_L;
+  // Derive public view key. Mint deposits are USER-VIEWABLE: view pub = userPub
+  // (= userSecret·G), NOT the LP's view key. The LP learns userSecret when it's
+  // revealed at MintFinalized, so it scans the deposit with userSecret as the
+  // private view key.
+  const viewLe = userSecretBigInt;
   const pubView = G.multiply(viewLe);
   const pubViewBytes = Buffer.from(pubView.toRawBytes());
+  // Private view key (little-endian hex) for generate_from_keys = userSecret mod l
+  const userViewKeyLe = Buffer.from(userSecretBigInt.toString(16).padStart(64, '0'), 'hex').reverse().toString('hex');
 
   // Compute Monero address
   const { ethers } = await import('ethers');
@@ -531,7 +561,7 @@ async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpM
         password: walletPass,
         address: depositAddress,
         spendkey: combinedSpendHex,
-        viewkey: lpViewKeyHex,
+        viewkey: userViewKeyLe,
         restore_height: moneroRestoreHeight,
       });
       walletOpened = true;
@@ -572,7 +602,7 @@ async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpM
       console.log(`[Monero] No deposit found in sweep wallet (current height: ${currentHeight}, restore height: ${moneroRestoreHeight})`);
       console.log(`[Monero]   Watching address: ${depositAddress}`);
       console.log(`[Monero]   Combined spend key (LE): ${combinedSpendHex}`);
-      console.log(`[Monero]   View key: ${lpViewKeyHex.slice(0, 16)}...`);
+      console.log(`[Monero]   View key (userSecret): ${userViewKeyLe.slice(0, 16)}...`);
       return { swept: false, txHashes: [], amount: 0n, balance };
     }
 

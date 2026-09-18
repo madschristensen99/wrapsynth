@@ -596,14 +596,61 @@ contract MintBurnCoverageTest is Test {
         vm.expectRevert(IErrors.Unauthorized.selector);
         BurnFacet(address(hub)).abandonProposedBurn(burnId);
 
-        // LP abandons: collateral released, wsXMR restored, CANCELLED
+        // LP abandons: collateral released, CANCELLED — but wsXMR is NOT
+        // restored. The user must reveal userSecret via resolveDeclinedProposal
+        // to reclaim it (which also gives the LP the key to sweep the shared XMR).
         vm.prank(lp);
         BurnFacet(address(hub)).abandonProposedBurn(burnId);
 
         wsXmrStorage.Vault memory vaultAfter = _getVault(lp);
         assertLt(vaultAfter.lockedCollateral, vaultBefore.lockedCollateral, "lock released");
-        assertEq(wsxmr.balanceOf(user), balBefore + minted, "wsXMR restored");
+        assertEq(wsxmr.balanceOf(user), balBefore, "wsXMR NOT restored on abandon");
         assertEq(uint256(_getBurnRequest(burnId).status), uint256(wsXmrStorage.BurnStatus.CANCELLED), "should be CANCELLED");
+        assertTrue(hub.abandonedBurns(burnId), "abandoned flag set");
+    }
+
+    /// @notice Late claim: after the LP abandons, the user can still reclaim wsXMR
+    ///         via resolveDeclinedProposal — which emits userSecret so the LP can
+    ///         sweep the shared XMR. Collateral must not be released twice.
+    function test_ResolveDeclinedProposal_LateClaimAfterAbandon() public {
+        uint256 minted = _mintForUser(user, lp);
+
+        bytes32 userSecret = bytes32(uint256(0xdeadbeef));
+        (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(userSecret));
+        bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
+
+        vm.startPrank(user);
+        wsxmr.approve(address(hub), minted);
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
+        vm.stopPrank();
+
+        // LP proposes
+        bytes32 burnSecret = bytes32(uint256(0xcafebabe));
+        (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
+        bytes32 secretHash = keccak256(abi.encodePacked(bpx, bpy));
+        vm.prank(lp);
+        BurnFacet(address(hub)).proposeHash(burnId, secretHash, bytes32(uint256(0x1111)), bytes32(uint256(0x2222)));
+
+        vm.roll(block.number + 34561);
+
+        // LP abandons — collateral released, wsXMR NOT restored
+        vm.prank(lp);
+        BurnFacet(address(hub)).abandonProposedBurn(burnId);
+        wsXmrStorage.Vault memory vaultAfterAbandon = _getVault(lp);
+        uint256 balAfterAbandon = wsxmr.balanceOf(user);
+
+        // Late claim: user reveals userSecret → wsXMR restored, secret emitted for LP
+        BurnFacet(address(hub)).resolveDeclinedProposal(burnId, userSecret);
+        assertEq(wsxmr.balanceOf(user), balAfterAbandon + minted, "wsXMR restored on late claim");
+        assertFalse(hub.abandonedBurns(burnId), "abandoned flag cleared");
+
+        // No double collateral release
+        wsXmrStorage.Vault memory vaultAfterClaim = _getVault(lp);
+        assertEq(vaultAfterClaim.lockedCollateral, vaultAfterAbandon.lockedCollateral, "no double collateral release");
+
+        // Second claim reverts — flag cleared, status CANCELLED
+        vm.expectRevert(IErrors.InvalidStatus.selector);
+        BurnFacet(address(hub)).resolveDeclinedProposal(burnId, userSecret);
     }
 
     /// @notice REGRESSION: userPublicKey is a compressed Ed25519 point (the frontend passes
@@ -719,7 +766,7 @@ contract MintBurnCoverageTest is Test {
 
     // ========== cleanupVaultBurnRequests ==========
 
-    function test_CleanupVaultBurnRequests_RemovesCancelled() public {
+    function test_VaultBurnRequests_RemovedEagerlyOnTerminal() public {
         uint256 minted = _mintForUser(user, lp);
         bytes32 burnId = _requestBurn(user, lp, minted);
 
@@ -727,14 +774,12 @@ contract MintBurnCoverageTest is Test {
         vm.prank(user);
         BurnFacet(address(hub)).abortBurn(burnId);
 
+        // Terminal burns are removed eagerly at transition — nothing left to clean.
         uint256 beforeCount = _getVaultBurnRequests(lp).length;
-        assertGt(beforeCount, 0, "should have burn requests before cleanup");
+        assertEq(beforeCount, 0, "terminal burn should be removed eagerly");
 
         uint256 removed = BurnFacet(address(hub)).cleanupVaultBurnRequests(lp);
-        assertGt(removed, 0, "should have removed some");
-
-        uint256 afterCount = _getVaultBurnRequests(lp).length;
-        assertLt(afterCount, beforeCount, "count should decrease after cleanup");
+        assertEq(removed, 0, "cleanup is a no-op when array holds only active burns");
     }
 
     function test_CleanupVaultBurnRequests_KeepsActive() public {
@@ -746,6 +791,195 @@ contract MintBurnCoverageTest is Test {
         assertEq(removed, 0, "should remove 0 active burns");
         uint256 afterCount = _getVaultBurnRequests(lp).length;
         assertEq(afterCount, beforeCount, "count should stay same");
+    }
+
+    // ========== Liquidation-invalidation accounting (regression) ==========
+
+    function test_CancelMint_KeyProvided_PostLiquidation_ReleasesPendingDebt() public {
+        // Create real debt so the vault is liquidatable
+        _mintForUser(user, lp);
+
+        // Second mint: LP engages, reserves pendingDebt + locks bond
+        bytes32 reqId = _initiateMint(user, lp);
+        _provideLPKey(lp, reqId);
+        assertGt(_getVault(lp).pendingDebt, 0, "pendingDebt should be reserved");
+
+        // Pump XMR price so the vault is underwater, then liquidate (mintNonce++)
+        SimpleOracleFacet(address(hub)).updatePrices(50000_00000000, DAI_PRICE_8DEC);
+        deal(address(wsxmr), attacker, 1_000_000_000);
+        vm.prank(attacker);
+        LiquidationFacet(address(hub)).liquidate(lp, type(uint256).max);
+
+        // Mint is nonce-invalidated — cancel after timeout must still release pendingDebt
+        vm.roll(block.number + 10000);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
+
+        assertEq(_getVault(lp).pendingDebt, 0, "pendingDebt must be released on invalidated mint");
+    }
+
+    function test_FinalizeMint_Liquidated_ReleasesPendingDebtAndSlashes() public {
+        _mintForUser(user, lp);
+
+        bytes32 reqId = _initiateMint(user, lp);
+        _provideLPKey(lp, reqId);
+        _setMintReady(lp, reqId);
+        vm.prank(user);
+        MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
+
+        SimpleOracleFacet(address(hub)).updatePrices(50000_00000000, DAI_PRICE_8DEC);
+        deal(address(wsxmr), attacker, 1_000_000_000);
+        vm.prank(attacker);
+        LiquidationFacet(address(hub)).liquidate(lp, type(uint256).max);
+
+        // Secret is public — finalize cancels on nonce mismatch and slashes bond to user
+        MintFacet(address(hub)).finalizeMint(reqId);
+
+        wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
+        assertEq(uint256(req.status), uint256(wsXmrStorage.MintStatus.CANCELLED), "should be cancelled");
+        assertEq(_getVault(lp).pendingDebt, 0, "pendingDebt must be released");
+        assertEq(_getPendingReturns(user, GnosisAddresses.SDAI), req.lockedCollateral, "bond slashed to user");
+    }
+
+    function test_SweepExpiredReady_PostLiquidation_ReleasesBondToVault() public {
+        _mintForUser(user, lp);
+
+        bytes32 reqId = _initiateMint(user, lp);
+        _provideLPKey(lp, reqId);
+        _setMintReady(lp, reqId);
+
+        // Expire the mint into EXPIRED_READY
+        uint256 baseBlock = block.number;
+        vm.roll(baseBlock + 10000);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
+
+        // Liquidate — the bond stays locked (liquidation never seizes locked collateral)
+        SimpleOracleFacet(address(hub)).updatePrices(50000_00000000, DAI_PRICE_8DEC);
+        deal(address(wsxmr), attacker, 1_000_000_000);
+        vm.prank(attacker);
+        LiquidationFacet(address(hub)).liquidate(lp, type(uint256).max);
+
+        assertGt(_getVault(lp).lockedCollateral, 0, "bond should still be locked");
+
+        // Sweep after the claim window — bond must release to free balance, not slash
+        vm.roll(baseBlock + 20000);
+        MintFacet(address(hub)).sweepUnclaimedExpiredMint(reqId);
+
+        assertEq(_getVault(lp).lockedCollateral, 0, "bond must be released post-liquidation");
+        assertEq(_getPendingReturns(user, GnosisAddresses.SDAI), 0, "no slash on invalidated mint");
+    }
+
+    function test_ClaimGriefingDeposit_AfterWindow_Reverts() public {
+        bytes32 reqId = _initiateMint(user, lp);
+
+        // Real lpSecret/commitment pair so the secret check would pass if reached
+        bytes32 lpSecret = bytes32(uint256(0xbeef));
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(lpSecret));
+        bytes32 lpCommitment = keccak256(abi.encodePacked(px, py));
+        vm.prank(lp);
+        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(1)), bytes32(uint256(2)), lpCommitment);
+        _setMintReady(lp, reqId);
+
+        // Expire into EXPIRED_READY, then roll past the LP claim window
+        uint256 baseBlock = block.number;
+        vm.roll(baseBlock + 10000);
+        MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
+        vm.roll(baseBlock + 20000);
+
+        vm.expectRevert(IErrors.DeadlineExpired.selector);
+        vm.prank(lp);
+        MintFacet(address(hub)).claimGriefingDeposit(reqId, lpSecret);
+    }
+
+    function test_VaultBurnRequests_BoundedAcrossCycles() public {
+        uint256 minted = _mintForUser(user, lp);
+        uint256 rollTarget = block.number;
+        for (uint256 i = 0; i < 10; i++) {
+            bytes32 burnId = _requestBurn(user, lp, minted);
+            rollTarget += 10000;
+            vm.roll(rollTarget);
+            vm.prank(user);
+            BurnFacet(address(hub)).abortBurn(burnId);
+            assertEq(_getVaultBurnRequests(lp).length, 0, "array must stay empty after terminal transition");
+        }
+    }
+
+    // ========== Burn reveal/settle split + confirm deadline (regression) ==========
+
+    function _committedBurn() internal returns (bytes32 burnId, bytes32 burnSecret) {
+        uint256 minted = _mintForUser(user, lp);
+        burnId = _requestBurn(user, lp, minted);
+
+        burnSecret = bytes32(uint256(0xcafebabe));
+        (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
+        bytes32 secretHash = keccak256(abi.encodePacked(bpx, bpy));
+        vm.prank(lp);
+        BurnFacet(address(hub)).proposeHash(burnId, secretHash, bytes32(uint256(0x1111)), bytes32(uint256(0x2222)));
+        vm.prank(user);
+        BurnFacet(address(hub)).confirmMoneroLock(burnId);
+    }
+
+    function test_RevealBurnSecret_ThenSettle_Completes() public {
+        (bytes32 burnId, bytes32 burnSecret) = _committedBurn();
+
+        vm.prank(lp);
+        BurnFacet(address(hub)).revealBurnSecret(burnId, burnSecret);
+        assertEq(_getBurnRequest(burnId).revealedSecret, burnSecret, "secret stored");
+
+        // Permissionless settle — anyone can call
+        BurnFacet(address(hub)).settleBurn(burnId);
+
+        wsXmrStorage.BurnRequest memory req = _getBurnRequest(burnId);
+        assertEq(uint256(req.status), uint256(wsXmrStorage.BurnStatus.COMPLETED), "should be COMPLETED");
+        assertGt(_getPendingReturns(user, GnosisAddresses.SDAI), 0, "reward paid to user");
+        assertEq(_getVaultBurnRequests(lp).length, 0, "removed from vault array");
+    }
+
+    function test_SettleBurn_BeforeReveal_Reverts() public {
+        (bytes32 burnId, ) = _committedBurn();
+        vm.expectRevert(IErrors.InvalidStatus.selector);
+        BurnFacet(address(hub)).settleBurn(burnId);
+    }
+
+    function test_RevealBurnSecret_Twice_Reverts() public {
+        (bytes32 burnId, bytes32 burnSecret) = _committedBurn();
+        vm.prank(lp);
+        BurnFacet(address(hub)).revealBurnSecret(burnId, burnSecret);
+        vm.expectRevert(IErrors.InvalidStatus.selector);
+        vm.prank(lp);
+        BurnFacet(address(hub)).revealBurnSecret(burnId, burnSecret);
+    }
+
+    function test_ClaimSlashedCollateral_RevealedBurn_Reverts() public {
+        (bytes32 burnId, bytes32 burnSecret) = _committedBurn();
+        vm.prank(lp);
+        BurnFacet(address(hub)).revealBurnSecret(burnId, burnSecret);
+
+        // Past the grace window — slash must NOT fire on a revealed burn (would double-pay)
+        vm.roll(block.number + 10000);
+        vm.expectRevert(IErrors.InvalidStatus.selector);
+        vm.prank(user);
+        BurnFacet(address(hub)).claimSlashedCollateral(burnId);
+
+        // settleBurn still resolves it correctly
+        BurnFacet(address(hub)).settleBurn(burnId);
+        assertEq(uint256(_getBurnRequest(burnId).status), uint256(wsXmrStorage.BurnStatus.COMPLETED), "settled");
+    }
+
+    function test_ConfirmMoneroLock_AfterDeadline_Reverts() public {
+        uint256 minted = _mintForUser(user, lp);
+        bytes32 burnId = _requestBurn(user, lp, minted);
+
+        bytes32 burnSecret = bytes32(uint256(0xcafebabe));
+        (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
+        bytes32 secretHash = keccak256(abi.encodePacked(bpx, bpy));
+        vm.prank(lp);
+        BurnFacet(address(hub)).proposeHash(burnId, secretHash, bytes32(uint256(0x1111)), bytes32(uint256(0x2222)));
+
+        // Roll past the proposal deadline — late commit must revert
+        vm.roll(block.number + 10000);
+        vm.expectRevert(IErrors.DeadlineExpired.selector);
+        vm.prank(user);
+        BurnFacet(address(hub)).confirmMoneroLock(burnId);
     }
 
     // ========== HUB VIEW HELPERS ==========

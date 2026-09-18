@@ -31,6 +31,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
     
     event BurnCancelled(bytes32 indexed requestId);
     event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 collateralSeized);
+    event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 rewardPaid);
     
     constructor(address _wsxmrToken, address _verifierProxy) 
         wsXmrStorage(_wsxmrToken, _verifierProxy) 
@@ -54,9 +55,13 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             : burnReq.lockedCollateral;
         uint256 userPayout = userBase + burnReq.rewardCollateral;
 
-        v.lockedCollateral -= (burnReq.lockedCollateral + burnReq.rewardCollateral);
-        v.collateralShares -= userPayout;
-        globalPendingBurnDebt -= burnReq.wsxmrAmount;
+        uint256 totalLockSlash = burnReq.lockedCollateral + burnReq.rewardCollateral;
+        if (v.lockedCollateral < totalLockSlash) v.lockedCollateral = 0;
+        else v.lockedCollateral -= totalLockSlash;
+        if (v.collateralShares < userPayout) v.collateralShares = 0;
+        else v.collateralShares -= userPayout;
+        if (globalPendingBurnDebt < burnReq.wsxmrAmount) globalPendingBurnDebt = 0;
+        else globalPendingBurnDebt -= burnReq.wsxmrAmount;
 
         // Debt reduction happens here at settlement
         uint256 normalizedBurnAmount = (burnReq.wsxmrAmount * 1e18 + globalDebtIndex - 1) / globalDebtIndex;
@@ -72,6 +77,42 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
 
         burnReq.status = BurnStatus.SLASHED;
         emit BurnSlashed(burnReq.requestId, burnReq.user, userPayout);
+    }
+
+    /// @dev Settles a COMMITTED burn whose secret was already revealed, during liquidation.
+    ///      The user can claim the XMR with the public secret, so they receive only the burn
+    ///      reward — the locked collateral is released to the vault (and becomes seizable),
+    ///      unlike _settleCommittedBurnSlash which would pay out par + reward.
+    function _settleRevealedBurnLiquidation(
+        BurnRequest storage burnReq,
+        Vault storage v
+    ) internal {
+        uint256 totalLock = burnReq.lockedCollateral + burnReq.rewardCollateral;
+        if (v.lockedCollateral < totalLock) v.lockedCollateral = 0;
+        else v.lockedCollateral -= totalLock;
+
+        uint256 reward = burnReq.rewardCollateral;
+        if (v.collateralShares < reward) reward = v.collateralShares;
+        v.collateralShares -= reward;
+
+        uint256 normalizedBurnAmount = (burnReq.wsxmrAmount * 1e18 + globalDebtIndex - 1) / globalDebtIndex;
+        if (normalizedBurnAmount > v.normalizedDebt) {
+            normalizedBurnAmount = v.normalizedDebt;
+        }
+        v.normalizedDebt -= normalizedBurnAmount;
+        globalTotalDebt -= _denormalizeDebt(normalizedBurnAmount);
+
+        if (globalPendingBurnDebt < burnReq.wsxmrAmount) globalPendingBurnDebt = 0;
+        else globalPendingBurnDebt -= burnReq.wsxmrAmount;
+
+        if (reward > 0) {
+            pendingReturns[burnReq.user][GnosisAddresses.SDAI] += reward;
+            globalPendingSDAI += reward;
+            emit ReturnQueued(burnReq.user, GnosisAddresses.SDAI, reward);
+        }
+
+        burnReq.status = BurnStatus.COMPLETED;
+        emit BurnFinalized(burnReq.requestId, burnReq.revealedSecret, reward);
     }
     
     /// @notice Liquidate an undercollateralized vault — burns wsXMR from caller and seizes sDAI collateral at a bonus
@@ -135,13 +176,17 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         bytes32[] storage vaultBurns = vaultBurnRequests[lpVault];
         for (uint256 i = 0; i < vaultBurns.length; i++) {
             BurnRequest storage burnReq = burnRequests[vaultBurns[i]];
+            delete burnRequestIndexPlusOne[vaultBurns[i]];
             
             if (burnReq.status == BurnStatus.REQUESTED || burnReq.status == BurnStatus.PROPOSED) {
                 // Force-cancel: unwind burn to free collateral for liquidation
                 if (burnReq.vaultLiquidationNonce == vault.liquidationNonce) {
-                    vault.lockedCollateral -= (burnReq.lockedCollateral + burnReq.rewardCollateral);
+                    uint256 totalLock = burnReq.lockedCollateral + burnReq.rewardCollateral;
+                    if (vault.lockedCollateral < totalLock) vault.lockedCollateral = 0;
+                    else vault.lockedCollateral -= totalLock;
                 }
-                globalPendingBurnDebt -= burnReq.wsxmrAmount;
+                if (globalPendingBurnDebt < burnReq.wsxmrAmount) globalPendingBurnDebt = 0;
+                else globalPendingBurnDebt -= burnReq.wsxmrAmount;
                 
                 // Re-mint wsXMR to user
                 IwsXmrHub(address(this)).mintTokens(burnReq.user, burnReq.wsxmrAmount);
@@ -150,10 +195,18 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
                 emit BurnCancelled(burnReq.requestId);
                 
             } else if (burnReq.status == BurnStatus.COMMITTED) {
-                // Settle committed burn: par-capped slash (user gets par + reward, excess to vault)
-                _settleCommittedBurnSlash(burnReq, vault, collateralPrice);
+                if (burnReq.revealedSecret != bytes32(0)) {
+                    // LP already revealed — the user can claim the XMR. Settle rather than
+                    // slash: release the lock to the vault (seizable) and pay only the reward.
+                    _settleRevealedBurnLiquidation(burnReq, vault);
+                } else {
+                    // Settle committed burn: par-capped slash (user gets par + reward, excess to vault)
+                    _settleCommittedBurnSlash(burnReq, vault, collateralPrice);
+                }
             }
         }
+        // Every entry was transitioned to terminal above — clear the array outright.
+        delete vaultBurnRequests[lpVault];
         
         // Atomic unwind all deployed positions before seizure
         if (_vaultPositions[lpVault].length > 0) {
@@ -288,22 +341,34 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         bytes32[] storage vaultBurns = vaultBurnRequests[oldVault];
         for (uint256 i = 0; i < vaultBurns.length; i++) {
             BurnRequest storage burnReq = burnRequests[vaultBurns[i]];
+            delete burnRequestIndexPlusOne[vaultBurns[i]];
             
             if (burnReq.status == BurnStatus.REQUESTED || burnReq.status == BurnStatus.PROPOSED) {
                 if (burnReq.vaultLiquidationNonce == oldV.liquidationNonce) {
-                    oldV.lockedCollateral -= (burnReq.lockedCollateral + burnReq.rewardCollateral);
+                    uint256 totalLock = burnReq.lockedCollateral + burnReq.rewardCollateral;
+                    if (oldV.lockedCollateral < totalLock) oldV.lockedCollateral = 0;
+                    else oldV.lockedCollateral -= totalLock;
                 }
-                globalPendingBurnDebt -= burnReq.wsxmrAmount;
+                if (globalPendingBurnDebt < burnReq.wsxmrAmount) globalPendingBurnDebt = 0;
+                else globalPendingBurnDebt -= burnReq.wsxmrAmount;
                 IwsXmrHub(address(this)).mintTokens(burnReq.user, burnReq.wsxmrAmount);
                 
                 burnReq.status = BurnStatus.CANCELLED;
                 emit BurnCancelled(burnReq.requestId);
                 
             } else if (burnReq.status == BurnStatus.COMMITTED) {
-                // Settle committed burn: par-capped slash (user gets par + reward, excess to vault)
-                _settleCommittedBurnSlash(burnReq, oldV, collateralPrice);
+                if (burnReq.revealedSecret != bytes32(0)) {
+                    // LP already revealed — the user can claim the XMR. Settle rather than
+                    // slash: release the lock to the vault (seizable) and pay only the reward.
+                    _settleRevealedBurnLiquidation(burnReq, oldV);
+                } else {
+                    // Settle committed burn: par-capped slash (user gets par + reward, excess to vault)
+                    _settleCommittedBurnSlash(burnReq, oldV, collateralPrice);
+                }
             }
         }
+        // Every entry was transitioned to terminal above — clear the array outright.
+        delete vaultBurnRequests[oldVault];
         
         // Unwind old vault positions
         if (_vaultPositions[oldVault].length > 0) {

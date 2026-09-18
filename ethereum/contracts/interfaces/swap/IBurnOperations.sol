@@ -50,6 +50,8 @@ interface IBurnOperations is IErrors {
     event BurnAborted(bytes32 indexed requestId);
     event BurnForceSettled(bytes32 indexed requestId, uint256 sDAIPayout);
     event BurnProposalDeclined(bytes32 indexed requestId, bytes32 userSecret);
+    /// @notice Emitted when the LP reveals the burn secret via revealBurnSecret (pre-settlement).
+    event BurnSecretRevealed(bytes32 indexed requestId, bytes32 secret);
     
     // ========== ERRORS ==========
     
@@ -105,6 +107,16 @@ interface IBurnOperations is IErrors {
     /// @param requestId The burn request ID
     /// @param secret The secret to reveal
     function finalizeBurn(bytes32 requestId, bytes32 secret) external;
+
+    /// @notice LP reveals the Ed25519 secret for a committed burn — pure reveal, no settlement.
+    /// @dev Splits reveal from settlement so the secret only appears in calldata of a tx that
+    ///      cannot revert on vault state (mirrors the mint side's revealSecret/finalizeMint split).
+    ///      After revealing, anyone can call settleBurn to complete the burn.
+    function revealBurnSecret(bytes32 requestId, bytes32 secret) external;
+
+    /// @notice Permissionless settlement of a burn whose secret was revealed via revealBurnSecret.
+    /// @dev Contains no secret in calldata, so a revert cannot leak key material.
+    function settleBurn(bytes32 requestId) external;
     
     /// @notice Claim slashed collateral after LP commits but fails to reveal
     /// @dev Holder receives par sDAI at locked price + reward

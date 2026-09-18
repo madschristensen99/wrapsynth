@@ -48,6 +48,7 @@ export const LP_SERVER_CONFIG = {
         quoteMint: '/quote/mint',
         quoteBurn: '/quote/burn',
         notifyMint: '/mint/notify',
+        submitDeposit: '/mint/deposit',
         getMintStatus: '/mint/:id/status',
         getBurnStatus: '/burn/:id/status'
     }
@@ -191,7 +192,8 @@ export const RAW_ABIS = {
                 { name: 'userClaimCommitment', type: 'bytes32' },
                 { name: 'userPublicKey', type: 'bytes32' },
                 { name: 'userViewKey', type: 'bytes32' },
-                { name: 'xmrPriceAtRequest', type: 'uint256' }
+                { name: 'xmrPriceAtRequest', type: 'uint256' },
+                { name: 'revealedSecret', type: 'bytes32' }
             ],
             name: '',
             type: 'tuple'
@@ -231,6 +233,8 @@ export const ABIS = {
         'function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
         'function confirmMoneroLock(bytes32 requestId) external',
         'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
+        'function revealBurnSecret(bytes32 requestId, bytes32 secret) external',
+        'function settleBurn(bytes32 requestId) external',
         'function claimSlashedCollateral(bytes32 requestId) external',
         'function cancelBurn(bytes32 requestId) external',
         'function getUserBurnRequests(address user) external view returns (bytes32[])',

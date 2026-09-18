@@ -376,48 +376,76 @@ async function handleBurnCommitted(requestId) {
 }
 
 /**
- * Execute finalizeBurn for a tracked burn.
+ * Execute the burn reveal+settle for a tracked burn.
+ *
+ * Uses the two-transaction split (revealBurnSecret → settleBurn) instead of the
+ * combined finalizeBurn: the secret only appears in calldata of a tx that cannot
+ * revert on vault accounting, so a settlement failure can never leak it. If the
+ * secret was already revealed on-chain (e.g. restart between the two txs), the
+ * reveal step is skipped and we go straight to settleBurn.
  */
 async function processFinalize(reqIdHex) {
   const burn = pendingBurns.get(reqIdHex);
   if (!burn) throw new Error(`Unknown burn request: ${reqIdHex}`);
-  if (burn.state !== 'proposed' && burn.state !== 'committed') {
-    throw new Error(`Burn ${reqIdHex} must be in 'proposed' or 'committed' state`);
+  if (burn.state !== 'proposed' && burn.state !== 'committed' && burn.state !== 'revealed') {
+    throw new Error(`Burn ${reqIdHex} must be in 'proposed', 'committed' or 'revealed' state`);
   }
   if (!burn.secret) throw new Error(`Secret not available for ${reqIdHex}`);
 
-  // Update oracle prices before finalizeBurn (contract requires fresh price)
+  // Check on-chain state — skip the reveal if the secret is already stored.
+  let alreadyRevealed = false;
+  try {
+    const burnReq = await hubContract.getBurnRequest(reqIdHex);
+    alreadyRevealed = burnReq.revealedSecret && burnReq.revealedSecret !== ethers.ZeroHash;
+  } catch (err) {
+    console.warn(`[Burn] Could not read burn state for ${reqIdHex}: ${err.shortMessage || err.message}`);
+  }
+
+  if (!alreadyRevealed) {
+    // Step 1: reveal the secret. This tx only checks status/deadline/secret — it
+    // cannot revert on vault accounting, so the secret is never stranded in a
+    // failed settlement tx.
+    const revealNonce = await getNextNonce();
+    console.log(`[Burn] Calling revealBurnSecret(${reqIdHex}, ...) nonce: ${revealNonce}`);
+    const revealTx = await hubContract.revealBurnSecret(reqIdHex, burn.secret, { nonce: revealNonce });
+    console.log(`[Burn] revealBurnSecret tx: ${revealTx.hash}`);
+    const revealReceipt = await revealTx.wait();
+    console.log(`[Burn] revealBurnSecret confirmed in block ${revealReceipt.blockNumber}`);
+    burn.state = 'revealed';
+  } else {
+    console.log(`[Burn] ${reqIdHex} already revealed on-chain — skipping to settleBurn`);
+  }
+
+  // Step 2: update oracle prices, then settle (settlement touches vault
+  // accounting and requires a fresh price).
   try {
     await updateOraclePricesManual();
   } catch (priceErr) {
-    console.warn(`[Burn] Oracle price update failed before finalize: ${priceErr.message}`);
-    console.log('[Burn] Proceeding with finalizeBurn anyway (may revert with StalePrice)...');
+    console.warn(`[Burn] Oracle price update failed before settle: ${priceErr.message}`);
+    console.log('[Burn] Proceeding with settleBurn anyway (may revert with StalePrice)...');
   }
 
-  // Use nonce manager for consistent nonce across concurrent operations
-  const freshNonce = await getNextNonce();
-  console.log(`[Burn] Using nonce: ${freshNonce}`);
-
-  console.log(`[Burn] Calling finalizeBurn(${reqIdHex}, ...) secret: ${burn.secret.slice(0, 10)}...`);
+  const settleNonce = await getNextNonce();
+  console.log(`[Burn] Calling settleBurn(${reqIdHex}) nonce: ${settleNonce}`);
 
   let tx;
   try {
-    tx = await hubContract.finalizeBurn(reqIdHex, burn.secret, { nonce: freshNonce });
+    tx = await hubContract.settleBurn(reqIdHex, { nonce: settleNonce });
   } catch (err) {
     // If StalePrice, retry once more after price update
     if (err.message && (err.message.includes('0x19abf40e') || err.message.includes('StalePrice'))) {
-      console.warn('[Burn] StalePrice on finalizeBurn, updating prices and retrying...');
+      console.warn('[Burn] StalePrice on settleBurn, updating prices and retrying...');
       await updateOraclePricesManual();
       const retryNonce = await getNextNonce();
-      tx = await hubContract.finalizeBurn(reqIdHex, burn.secret, { nonce: retryNonce });
+      tx = await hubContract.settleBurn(reqIdHex, { nonce: retryNonce });
     } else {
       throw err;
     }
   }
 
-  console.log(`[Burn] finalizeBurn tx: ${tx.hash}`);
+  console.log(`[Burn] settleBurn tx: ${tx.hash}`);
   const receipt = await tx.wait();
-  console.log(`[Burn] finalizeBurn confirmed in block ${receipt.blockNumber}`);
+  console.log(`[Burn] settleBurn confirmed in block ${receipt.blockNumber}`);
 
   burn.state = 'finalized';
   burn.finalizeTxHash = tx.hash;
@@ -559,14 +587,17 @@ function attachEventListeners(hub, _wallet, _provider) {
     'event HashProposed(bytes32 indexed requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey)',
     'event BurnCommitted(bytes32 indexed requestId, uint256 deadline)',
     'event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 rewardPaid)',
+    'event BurnSecretRevealed(bytes32 indexed requestId, bytes32 secret)',
     'event BurnCancelled(bytes32 indexed requestId)',
     'event BurnAborted(bytes32 indexed requestId)',
     'event BurnProposalDeclined(bytes32 indexed requestId, bytes32 userSecret)',
     'function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
     'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
+    'function revealBurnSecret(bytes32 requestId, bytes32 secret) external',
+    'function settleBurn(bytes32 requestId) external',
     'function claimSlashedCollateral(bytes32 requestId) external',
     'function resolveDeclinedProposal(bytes32 requestId, bytes32 userSecret) external',
-    'function getBurnRequest(bytes32 requestId) external view returns (tuple(address user, address lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 feeAmount, uint256 collateralLocked, uint256 rewardCollateral, bytes32 claimCommitment, bytes32 secretHash, uint256 timeout, uint256 commitDeadline, uint256 state))',
+    'function getBurnRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address user, address lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 lockedCollateral, uint256 rewardCollateral, bytes32 secretHash, uint256 deadline, uint256 vaultLiquidationNonce, uint256 normalizedDebtAmount, uint8 status, bytes32 userClaimCommitment, bytes32 userPublicKey, bytes32 userViewKey, uint256 xmrPriceAtRequest, bytes32 revealedSecret))',
   ];
 
   const existingAbi = hub.interface.fragments.map(f => f.format('full'));

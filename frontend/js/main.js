@@ -1726,6 +1726,31 @@ function addSignToUnlockButton(requestId, publicSpendKey) {
 }
 
 /**
+ * Derive the per-burn userSecret for a saved burn swap from the stored seed and
+ * burn nonce. The nonce comes from the swap state or the requestId→nonce map
+ * written by burnFlow. Returns the 0x-prefixed secret, or null if unavailable.
+ */
+async function _deriveBurnUserSecret(swap) {
+    try {
+        const { loadSeed } = await import('./seedStorage.js');
+        const { derivePerBurnKeySet } = await import('./seedManager.js');
+        const seed = await loadSeed(swap.publicSpendKey);
+        let burnNonce = swap.burnNonce;
+        if (burnNonce == null) {
+            try {
+                const map = JSON.parse(localStorage.getItem('wrapsynth_burn_nonce_map') || '{}');
+                burnNonce = map[swap.requestId] ?? null;
+            } catch (e) { /* ignore */ }
+        }
+        if (!seed || burnNonce == null) return null;
+        return derivePerBurnKeySet(seed, burnNonce).secret;
+    } catch (e) {
+        console.warn('Could not derive burn userSecret:', e.message);
+        return null;
+    }
+}
+
+/**
  * Handle resolve swap (called when user clicks Resolve on an unresumable swap).
  * Attempts to cancel PENDING swaps on-chain to recover deposits/tokens.
  */
@@ -1806,22 +1831,53 @@ async function handleResolveSwap(swap) {
             // Inline ABIs to bypass cached viemClient.js parsedABIs
             const burnResolveAbi = parseAbi([
                 'function abortBurn(bytes32 requestId) external',
-                'function resolveDeclinedProposal(bytes32 requestId) external'
+                'function resolveDeclinedProposal(bytes32 requestId, bytes32 userSecret) external',
+                'function abandonedBurns(bytes32 requestId) view returns (bool)'
             ]);
             
             // Check burn request status and deadline before cancelling
             const burnReq = await readHub('getBurnRequest', [swap.requestId]);
             const currentBlock = await publicClient.getBlockNumber();
             
-            // BurnStatus: 0=INVALID,1=REQUESTED,2=PROPOSED,3=COMMITTED,4=CANCELLED,5=COMPLETED,6=SLASHED
+            // BurnStatus: 0=INVALID,1=REQUESTED,2=PROPOSED,3=COMMITTED,4=COMPLETED,5=SLASHED,6=CANCELLED
             const status = Number(burnReq.status);
             const deadline = burnReq.deadline;
             
             console.log('Burn status:', status, 'deadline:', deadline, 'current block:', currentBlock);
             
-            if (status === 4 || status === 5 || status === 6) {
-                // Already resolved on-chain, just clear locally
-                showResumeSuccess(swap.requestId, 'This burn has already been cancelled, completed, or slashed on-chain.');
+            if (status === 4 || status === 5) {
+                // Completed or slashed — nothing left to recover
+                showResumeSuccess(swap.requestId, 'This burn has already been completed or slashed on-chain.');
+            } else if (status === 6) {
+                // CANCELLED — if the LP abandoned a PROPOSED burn, the user's wsXMR is
+                // still claimable via resolveDeclinedProposal (revealing userSecret also
+                // lets the LP sweep the shared XMR). Otherwise it's fully resolved.
+                const abandoned = await publicClient.readContract({
+                    address: CONTRACTS.hub,
+                    abi: burnResolveAbi,
+                    functionName: 'abandonedBurns',
+                    args: [swap.requestId]
+                });
+                if (!abandoned) {
+                    showResumeSuccess(swap.requestId, 'This burn has already been cancelled on-chain.');
+                } else {
+                    const userSecret = await _deriveBurnUserSecret(swap);
+                    if (!userSecret) {
+                        showResumeError(swap.requestId, 'This burn was abandoned by the LP. Your wsXMR is still claimable, but your burn secret could not be derived — restore your seed phrase to reclaim it.');
+                        return;
+                    }
+                    const { request } = await publicClient.simulateContract({
+                        address: CONTRACTS.hub,
+                        abi: burnResolveAbi,
+                        functionName: 'resolveDeclinedProposal',
+                        args: [swap.requestId, userSecret],
+                        account: userAddr
+                    });
+                    const hash = await walletClient.writeContract({ ...request, account: userAddr });
+                    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+                    console.log('late resolveDeclinedProposal tx:', receipt.transactionHash);
+                    showResumeSuccess(swap.requestId, 'wsXMR reclaimed. Your key reveal also lets the LP recover their XMR.');
+                }
             } else if (status === 1) {
                 // REQUESTED: call abortBurn to restore wsXMR
                 if (currentBlock >= deadline) {
@@ -1841,13 +1897,19 @@ async function handleResolveSwap(swap) {
                     return; // Don't clear from storage
                 }
             } else if (status === 2) {
-                // PROPOSED: call resolveDeclinedProposal to restore wsXMR
+                // PROPOSED: call resolveDeclinedProposal to restore wsXMR — requires
+                // the user's per-burn secret (verified on-chain, emitted for the LP).
                 if (currentBlock >= deadline) {
+                    const userSecret = await _deriveBurnUserSecret(swap);
+                    if (!userSecret) {
+                        showResumeError(swap.requestId, 'Your burn secret could not be derived (seed or burn nonce missing). Restore your seed phrase to reclaim wsXMR.');
+                        return;
+                    }
                     const { request } = await publicClient.simulateContract({
                         address: CONTRACTS.hub,
                         abi: burnResolveAbi,
                         functionName: 'resolveDeclinedProposal',
-                        args: [swap.requestId],
+                        args: [swap.requestId, userSecret],
                         account: userAddr
                     });
                     const hash = await walletClient.writeContract({ ...request, account: userAddr });
