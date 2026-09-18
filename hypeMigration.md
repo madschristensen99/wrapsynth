@@ -377,51 +377,49 @@ The LP server (`lp-server-js/`, JavaScript — the Rust node lives in a separate
 
 ### 8.2 Deploy sequence
 
+Foundry scripts, same convention as `deploy.sh` / `script/DeployGnosis.s.sol` — granular `.s.sol` scripts, `forge script … --broadcast --legacy`:
+
 ```bash
-# 1. Deploy wsXMR ERC-20 (8 decimals)
-npx hardhat run scripts/deploy-wsxmr.ts --network hyperevm
+export HYPEREVM_RPC=https://rpc.hyperliquid.xyz/evm
 
-# 2. Deploy wsXmrHub (Diamond hub, no facets yet)
-npx hardhat run scripts/deploy-hub.ts --network hyperevm --wsxmr <WSXMR_ADDR>
+# 1. Deploy wsXMR ERC-20 (8 decimals) + wsXmrHub + all facets + register
+forge script script/DeployHyperEVM.s.sol:DeployHyperEVM \
+    --rpc-url $HYPEREVM_RPC --broadcast --legacy
+#    Deploys: wsXMR, wsXmrHub, VaultFacet, MintFacet, BurnFacet,
+#             LiquidationFacet, YieldFacet, HyperCoreOracleFacet;
+#    registers facets on hub (mirrors DeployGnosis.s.sol structure)
 
-# 3. Deploy facets
-npx hardhat run scripts/deploy-facets.ts --network hyperevm --hub <HUB_ADDR>
-#    Deploys: VaultFacet, MintFacet, BurnFacet, LiquidationFacet,
-#             YieldFacet, HyperCoreOracleFacet
+# 2. Deploy liquidity router (Phase A: ported UniV3 router → HyperSwap V3)
+forge script script/DeployRouter.s.sol:DeployRouter \
+    --rpc-url $HYPEREVM_RPC --broadcast --legacy
+#    Reads factory/router/quoter/NFPM from deploymentConfig:
+#    0xB1c0fa0B… / 0x6D99e7f6… / 0x03A91802… / 0x6eDA2062…
 
-# 4. Register facets on hub (one-time, deployer-only)
-npx hardhat run scripts/register-facets.ts --network hyperevm --hub <HUB_ADDR>
+# 3. Configure oracle — set the native XMR perp index (224 mainnet)
+forge script script/SetupOracle.s.sol:SetupOracle \
+    --rpc-url $HYPEREVM_RPC --broadcast --legacy
 
-# 5. Deploy liquidity router (Phase A: ported UniV3 router → HyperSwap V3)
-npx hardhat run scripts/deploy-router.ts --network hyperevm --hub <HUB_ADDR> \
-    --factory 0xB1c0fa0B789320044A6F623cFe5eBda9562602E3 \
-    --swap-router 0x6D99e7f6747AF2cDbB5164b6DD50e40D4fDe1e77 \
-    --quoter 0x03A918028f22D9E1473B7959C927AD7425A45C7C \
-    --position-manager 0x6eDA206207c09e5428F281761DdC0D300851fBC8
+# 4. Configure collateral (HyperLend pool + USDe aToken)
+forge script script/SetupCollateral.s.sol:SetupCollateral \
+    --rpc-url $HYPEREVM_RPC --broadcast --legacy
+#    USDe 0x5d3a1Ff2… · Pool 0x00A89d7a… · aToken 0x333819c0…
 
-# 6. Configure oracle — set the native XMR perp index
-npx hardhat run scripts/configure-oracle.ts --network hyperevm \
-    --hub <HUB_ADDR> --xmr-perp-index <XMR_PERP_INDEX>
+# 5. Create wsXMR/USDe pool on HyperSwap V3 + seed initial LP position
+forge script script/InitPool.s.sol:InitPool \
+    --rpc-url $HYPEREVM_RPC --broadcast --legacy
 
-# 7. Configure collateral (HyperLend pool + USDe aToken)
-npx hardhat run scripts/configure-collateral.ts --network hyperevm \
-    --hub <HUB_ADDR> \
-    --usde 0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34 \
-    --hyperlend-pool 0x00A89d7a5A02160f20150EbEA7a2b5E4879A1A8b \
-    --receipt-token 0x333819c04975554260AaC119948562a0E24C2bd6
+# 6. Lock deployer (irreversible — same as Gnosis v6.1)
+forge script script/LockDeployer.s.sol:LockDeployer \
+    --rpc-url $HYPEREVM_RPC --broadcast --legacy
 
-# 8. Lock deployer (irreversible — same as Gnosis v6.1)
-npx hardhat run scripts/lock-deployer.ts --network hyperevm --hub <HUB_ADDR>
-npx hardhat run scripts/lock-hub.ts --network hyperevm --wsxmr <WSXMR_ADDR>
-
-# 9. [Phase B, when treasury allows] HIP-1 auction → link ERC-20 →
+# 7. [Phase B, when treasury allows] HIP-1 auction → link ERC-20 →
 #    deploy HyperCoreLiquidityRouter → migrate liquidation venue to CLOB.
 #    [Post-launch, off critical path] wsXMR/USD perp via partner HIP-3
 #    deployer — no stake or oracle infra needed from WrapSynth.
 
-# 10. Final verification
-npx hardhat run scripts/verify-deployment.ts --network hyperevm \
-    --hub <HUB_ADDR> --wsxmr <WSXMR_ADDR>
+# 8. Final verification (read-only, no --broadcast)
+forge script script/VerifyDeployment.s.sol:VerifyDeployment \
+    --rpc-url $HYPEREVM_RPC
 ```
 
 ### 8.3 Post-deploy verification
