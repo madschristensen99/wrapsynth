@@ -275,7 +275,7 @@ The Gnosis deployment's `wsXMRLiquidityRouter` deploys vault collateral as Unisw
 
 ### 5.2 Liquidity router — two variants
 
-**Phase A: `wsXMRLiquidityRouter` ports almost unchanged.** The existing UniV3 concentrated-liquidity router targets a V3-fork pool (Kittenswap/HyperSwap V3) on HyperEVM — same tick math, same position management, only the pool factory address and quoter/swap-router addresses change. This is the cheapest possible port: the contract is already written and audited.
+**Phase A: `wsXMRLiquidityRouter` ports almost unchanged.** The existing UniV3 concentrated-liquidity router targets the HyperSwap V3 pool on HyperEVM — same tick math, same position management, only the pool factory address and quoter/swap-router addresses change (§6.2). This is the cheapest possible port: the contract is already written and audited.
 
 **Phase B: `HyperCoreLiquidityRouter` (replaces it).** The new router does not manage AMM positions. Instead, it:
 
