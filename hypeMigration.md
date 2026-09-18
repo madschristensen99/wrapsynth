@@ -24,7 +24,7 @@ This document specifies the port of WrapSynth from Gnosis Chain (sDAI collateral
 | Collateral | sDAI (Savings DAI, MakerDAO DSR) | USDe supplied to HyperLend (Aave v3.6 fork — largest lending market on HyperEVM) |
 | YieldFacet yield source | DSR harvested from MakerDAO pot | HyperLend USDe supply APY (~7.6% as of Sep 2026, accrued via rebasing aToken) |
 | Oracle | `SimpleOracleFacet` — push oracle, off-chain updater posts RedStone-derived prices | `HyperCoreOracleFacet` reads the **existing native XMR perp's** `oraclePx` via L1-read precompile `0x0807` — validator-maintained, no pusher at all (§4) |
-| Trading venue | Uniswap V3 wsXMR/sDAI spot pool | **Phase A:** wsXMR/USDe pool on HyperEVM DEX (Kittenswap/HyperSwap V3 — free, collateral asset doubles as quote like sDAI did). **Phase B:** HIP-1 wsXMR/USDC on HyperCore CLOB (CLOB mandates USDC quote). HIP-3 wsXMR/USD perp via partner, off critical path |
+| Trading venue | Uniswap V3 wsXMR/sDAI spot pool | **Phase A:** wsXMR/USDe pool on HyperSwap V3 (free, collateral asset doubles as quote like sDAI did). **Phase B:** HIP-1 wsXMR/USDC on HyperCore CLOB (CLOB mandates USDC quote). HIP-3 wsXMR/USD perp via partner, off critical path |
 | Co-LP liquidity router | `wsXMRLiquidityRouter` (UniV3 concentrated liquidity) | **Phase A:** same router ported to a V3-fork pool (near-zero changes). **Phase B:** `HyperCoreLiquidityRouter` posts laddered orders via CoreWriter |
 | Liquidation path | seize sDAI → sell on UniV3 wsXMR/sDAI | **Phase A:** seize aToken → redeem USDe → buy back wsXMR directly on the wsXMR/USDe pool — single swap, same-tx atomic (identical shape to Gnosis). **Phase B:** USDe→USDC→wsXMR via CoreWriter on the CLOB (next-L1-block) |
 | Settlement finality | ~5s blocks (Gnosis) | sub-second (HyperBFT) |
@@ -33,7 +33,7 @@ This document specifies the port of WrapSynth from Gnosis Chain (sDAI collateral
 ### 1.3 What this unlocks
 1. **XMR/USD perp exposure via HIP-3 — through a partner deployer.** An existing HIP-3 deployer (already staked, already running oracle infrastructure) can list a wsXMR/USD perp on their DEX — no 500k HYPE stake and no 24/7 `setOracle` duty for WrapSynth. wsXMR graduates from a wrapped spot token to a leverage-bearing derivative. Self-deploying remains an option later (500k HYPE stake + deployer-operated oracle).
 2. **Native oracle with genuinely no off-chain pusher.** A native validator-run XMR perp already exists on HyperCore (XMR-USDC, live since Jan 2026). Its `oraclePx` — maintained by the validator set from external CEX feeds — is readable from HyperEVM via the `0x0807` precompile in every block, for free. This retires the "oracle liveness depends on the off-chain price pusher" risk outright; WrapSynth operates no price infrastructure.
-3. **Free launch venue, paid upgrade path.** Phase A trades on a HyperEVM DEX pool (Kittenswap/HyperSwap V3 — free pool creation, existing router ports directly). Phase B upgrades to the HyperCore CLOB via HIP-1 when treasury allows — HyperCore and HyperEVM share HyperBFT consensus and global state, so the linked wsXMR is the same asset on both layers, no third-party bridge (§5.1).
+3. **Free launch venue, paid upgrade path.** Phase A trades on a HyperSwap V3 pool (free pool creation, existing UniV3 router ports directly). Phase B upgrades to the HyperCore CLOB via HIP-1 when treasury allows — HyperCore and HyperEVM share HyperBFT consensus and global state, so the linked wsXMR is the same asset on both layers, no third-party bridge (§5.1).
 4. **Phase B: CLOB liquidations instead of AMM dumps.** In Phase B, `LiquidationFacet` uses CoreWriter to buy back wsXMR on the HyperCore spot book — no AMM slippage, smaller MEV surface. Phase A liquidations use the DEX pool, which is actually *simpler* mechanically (same-tx atomic vs. CoreWriter's next-block delay) — the CLOB's advantage is depth, not mechanics.
 5. **Finance-native user base.** Hyperliquid's traders are the target audience for a synthetic-XMR product. The HIP-3 wave (gold, silver, TSLA, NVDA perps) demonstrates active demand for non-ETH/BTC asset classes on the platform.
 
@@ -70,8 +70,8 @@ This document specifies the port of WrapSynth from Gnosis Chain (sDAI collateral
    ▼
    ┌──────────────────────────────────────────────────┐
    │ Trading venue                                    │
-   │  · Phase A: HyperEVM DEX pool (Kittenswap/       │
-   │    HyperSwap V3) — free, existing router ports   │
+   │  · Phase A: HyperSwap V3 wsXMR/USDe pool —       │
+   │    free, existing UniV3 router ports directly    │
    │  · Phase B: HIP-1 wsXMR/USDC on HyperCore CLOB   │
    │  · HIP-3 wsXMR/USD perp (partner, off crit path) │
    └──────────────────────────────────────────────────┘
@@ -242,7 +242,7 @@ contract HyperCoreOracleFacet {
 
 The original plan assumed HIP-1 (HyperCore CLOB listing) at launch. That costs a Dutch auction (floor 500 HYPE, realistically more) — capital the treasury doesn't have. **Revised plan:**
 
-- **Phase A (launch):** wsXMR/**USDe** pool on a HyperEVM-native DEX — **Kittenswap** (UniV3 fork) or **HyperSwap V3**. Free pool creation, same architecture as Gnosis (where the collateral asset sDAI doubled as the quote), and the existing `wsXMRLiquidityRouter` ports almost directly (it's already a UniV3 concentrated-liquidity router). Liquidations are a **single swap** — seize → redeem USDe → buy wsXMR — same-tx atomic, no USDC leg at all. USDC only enters the design in Phase B, where the CLOB mandates it as the quote asset.
+- **Phase A (launch):** wsXMR/**USDe** pool on **HyperSwap V3** — the largest DEX on HyperEVM, a UniV3 fork with verified contracts (§6.2). Free pool creation, same architecture as Gnosis (where the collateral asset sDAI doubled as the quote), and the existing `wsXMRLiquidityRouter` ports almost directly (it's already a UniV3 concentrated-liquidity router). Liquidations are a **single swap** — seize → redeem USDe → buy wsXMR — same-tx atomic, no USDC leg at all. USDC only enters the design in Phase B, where the CLOB mandates it as the quote asset.
 - **Phase B (when treasury allows):** win the HIP-1 auction, link the ERC-20, migrate the trading venue and liquidation path to the HyperCore CLOB per §5.1–5.3. The contract stack is unchanged — only the router and liquidation venue swap.
 - **HIP-3 perp:** unchanged — partner-deployed, off the critical path entirely.
 
@@ -339,6 +339,10 @@ Note: USDC's EVM→Core path is special — its linked contract is Circle's `Cor
 | USDC (native Circle) | `0xb88339CB7199b77E23DB6E890353E22632Ba630f` | Transient quote asset for liquidations (testnet: `0x2B3370eE501B4a559b57D449569354196457D8Ab`) |
 | USDC CoreDepositWallet | `0x6b9e773128f453f5c2c60935ee2de2cbc5390a24` | USDC EVM→Core deposits use `deposit()`, not system-address transfer |
 | Euler/Mewler eVaultFactory | `0xcF5552580fD364cdBBFcB5Ae345f75674c59273A` | Fallback yield venue — permissionless EVK vault creation (§3.5) |
+| HyperSwap V3 Factory | `0xB1c0fa0B789320044A6F623cFe5eBda9562602E3` | Phase A venue — `createPool` permissionless, verified on-chain |
+| HyperSwap SwapRouter02 | `0x6D99e7f6747AF2cDbB5164b6DD50e40D4fDe1e77` | Phase A swaps + liquidation path |
+| HyperSwap NFPM | `0x6eDA206207c09e5428F281761DdC0D300851fBC8` | Phase A LP positions (concentrated liquidity NFTs) |
+| HyperSwap QuoterV2 | `0x03A918028f22D9E1473B7959C927AD7425A45C7C` | Off-chain quote simulation for liquidation sizing |
 | L1-read precompiles | `0x…0806` (markPx), `0x…0807` (oraclePx), `0x…0808` (spotPx) | XMR/USD reads — raw ABI args, no selector |
 | wsXMR system address | `0x20` + HIP-1 token index (big-endian), set post-auction | wsXMR ERC-20 ↔ Core spot transfers. NOTE: `0x2222…2222` is HYPE's address only |
 | CoreWriter | `0x3333333333333333333333333333333333333333` | Order writes to HyperCore |
@@ -368,7 +372,7 @@ The LP server (`lp-server-js/`, JavaScript — the Rust node lives in a separate
 1. **Acquire HYPE for gas** (treasury operational reserve — Phase A needs only gas, ~10–50 HYPE; no auction cost).
 2. **Confirm HyperLend USDe reserve** is live and has sufficient supply cap for expected LP collateral volume (Pool `0x00A89d7a5A02160f20150EbEA7a2b5E4879A1A8b`, aToken `0x333819c04975554260AaC119948562a0E24C2bd6` — verified Sep 2026).
 3. **Record the native XMR perp index** for `HyperCoreOracleFacet` — **mainnet `224`, testnet `202`** (verified via `meta` API + live `0x0807` precompile read, Sep 2026; re-verify at deploy since indices are per-network and can change). No dependency on any wsXMR listing.
-4. **Pick the Phase A DEX** — Kittenswap (UniV3 fork) vs HyperSwap V3; confirm factory/router/quoter addresses and that a wsXMR/USDe pool can be created permissionlessly.
+4. **Phase A DEX confirmed: HyperSwap V3** — factory `0xB1c0fa0B789320044A6F623cFe5eBda9562602E3`, SwapRouter02 `0x6D99e7f6747AF2cDbB5164b6DD50e40D4fDe1e77`, NFPM `0x6eDA206207c09e5428F281761DdC0D300851fBC8`, QuoterV2 `0x03A918028f22D9E1473B7959C927AD7425A45C7C` (all verified on-chain Sep 2026: `feeAmountTickSpacing(3000)=60`, router+NFPM `factory()` back-reference confirmed). `createPool` is permissionless.
 5. **Phase B items (deferred, not blockers):** HIP-1 Dutch auction for the wsXMR slot (test the deploy+link flow on testnet first — `app.hyperliquid-testnet.xyz/deploySpot`); HIP-3 partner-deployer conversation.
 
 ### 8.2 Deploy sequence
@@ -388,9 +392,12 @@ npx hardhat run scripts/deploy-facets.ts --network hyperevm --hub <HUB_ADDR>
 # 4. Register facets on hub (one-time, deployer-only)
 npx hardhat run scripts/register-facets.ts --network hyperevm --hub <HUB_ADDR>
 
-# 5. Deploy liquidity router (Phase A: ported UniV3 router → V3-fork pool)
+# 5. Deploy liquidity router (Phase A: ported UniV3 router → HyperSwap V3)
 npx hardhat run scripts/deploy-router.ts --network hyperevm --hub <HUB_ADDR> \
-    --factory <V3_FACTORY> --swap-router <V3_SWAP_ROUTER> --quoter <V3_QUOTER>
+    --factory 0xB1c0fa0B789320044A6F623cFe5eBda9562602E3 \
+    --swap-router 0x6D99e7f6747AF2cDbB5164b6DD50e40D4fDe1e77 \
+    --quoter 0x03A918028f22D9E1473B7959C927AD7425A45C7C \
+    --position-manager 0x6eDA206207c09e5428F281761DdC0D300851fBC8
 
 # 6. Configure oracle — set the native XMR perp index
 npx hardhat run scripts/configure-oracle.ts --network hyperevm \
@@ -426,7 +433,7 @@ npx hardhat run scripts/verify-deployment.ts --network hyperevm \
 - [ ] `HyperCoreOracleFacet.collateralPrice()` returns non-zero matching the native XMR perp's `oraclePx`
 - [ ] `VaultFacet.deposit(USDe, amount)` succeeds and issues HyperLend aTokens to the hub
 - [ ] `YieldFacet.yieldAccrued(vaultId)` returns non-zero after ≥1 block
-- [ ] wsXMR/USDe pool live on the Phase A DEX; router LP position seeded
+- [ ] wsXMR/USDe pool live on HyperSwap V3; router LP position seeded
 - [ ] [Phase B] HIP-1 slot won; ERC-20 → system address → Core spot transfer verified end-to-end; `HyperCoreLiquidityRouter` live
 - [ ] [Post-launch] wsXMR/USD HIP-3 perp live on partner DEX
 - [ ] End-to-end mint → trade → burn cycle executed on mainnet with a small test amount
@@ -523,7 +530,7 @@ HyperEVM is supported by Foundry as a standard EVM chain. No special configurati
 ## 12. Roadmap sequencing
 
 1. **Q4 2026:** HyperEVM testnet deployment of hub + facets (incl. `HyperCoreOracleFacet` against the native XMR perp); port test suites; security review of HyperEVM-specific changes (HyperLend integration, precompile oracle, V3-fork router port); open partner-deployer conversations.
-2. **Q1 2027 — Phase A launch:** HyperEVM mainnet deployment (gas-only cost); wsXMR/USDe pool on Kittenswap/HyperSwap V3; first LP vault onboarded; live mint/burn cycle verified; router-seeded DEX liquidity.
+2. **Q1 2027 — Phase A launch:** HyperEVM mainnet deployment (gas-only cost); wsXMR/USDe pool on HyperSwap V3; first LP vault onboarded; live mint/burn cycle verified; router-seeded DEX liquidity.
 3. **Q2 2027:** wsXMR/USD perp live on partner HIP-3 DEX; additional LP onboarding; accumulate treasury toward the HIP-1 auction.
 4. **Q3 2027 — Phase B:** win HIP-1 auction; link ERC-20; deploy `HyperCoreLiquidityRouter`; migrate liquidation venue to CLOB; third-party audit; bug bounty program.
 5. **Q4 2027:** Evaluate sunsetting the Gnosis deployment or maintaining it as a secondary venue based on HyperEVM TVL and operational stability.
