@@ -7,9 +7,9 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>Wrapsynth — Atomic Liquidity for Monero</title>
-<meta name="description" content="Mint and burn wsXMR. Bridge your Monero to Gnosis Chain with trustless atomic swaps backed by >200% collateral.">
+<meta name="description" content="Mint and burn wsXMR. Bridge your Monero to HyperEVM with trustless atomic swaps backed by >200% collateral.">
 <meta property="og:title" content="Wrapsynth | Atomic Liquidity for Monero">
-<meta property="og:description" content="Mint and burn wsXMR. Bridge your Monero to Gnosis Chain with trustless atomic swaps backed by >200% collateral.">
+<meta property="og:description" content="Mint and burn wsXMR. Bridge your Monero to HyperEVM with trustless atomic swaps backed by >200% collateral.">
 <meta property="og:image" content="https://wrapsynth.com/frontend/og-image.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -17,7 +17,7 @@
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Wrapsynth | Atomic Liquidity for Monero">
-<meta name="twitter:description" content="Mint and burn wsXMR. Bridge your Monero to Gnosis Chain with trustless atomic swaps backed by >200% collateral.">
+<meta name="twitter:description" content="Mint and burn wsXMR. Bridge your Monero to HyperEVM with trustless atomic swaps backed by >200% collateral.">
 <meta name="twitter:image" content="https://wrapsynth.com/frontend/og-image.png">
 <link rel="icon" type="image/x-icon" href="./favicon_monero/favicon.ico">
 <link rel="icon" type="image/png" sizes="32x32" href="./favicon_monero/favicon-32x32.png">
@@ -96,7 +96,7 @@ if ('serviceWorker' in navigator) {
   <nav>
     <a href="index.html" class="brand" style="text-decoration:none"><img src="./wrapsynth-symbol.png" alt="Wrapsynth" style="width:22px;height:22px;border-radius:6px">Wrapsynth</a>
     <div class="nav-right">
-      <span class="pill"><img src="./gnosis-logo.svg" alt="Gnosis" style="width:14px;height:14px;margin-right:4px;filter:brightness(0) invert(1)">Gnosis</span>
+      <span class="pill">HyperEVM</span>
       <a id="gecko-terminal-link" class="pill" href="#" target="_blank" rel="noopener noreferrer" style="text-decoration:none"><img src="https://www.geckoterminal.com/favicon.ico" alt="Pool" style="width:14px;height:14px;margin-right:4px">Trade</a>
       <span class="pill price">XMR <b id="xmrPx">$--</b></span>
       <button class="connect" id="connect-wallet">Connect wallet</button>
@@ -178,7 +178,7 @@ if ('serviceWorker' in navigator) {
                 <div class="lp-stat-row"><span>Total debt</span><b id="mint-lp-debt">—</b></div>
                 <div class="lp-stat-row"><span>Mint capacity</span><b id="mint-lp-capacity">—</b></div>
                 <div class="lp-stat-row"><span>Griefing deposit</span><b id="mint-lp-griefing">—</b></div>
-                <div class="lp-stat-row"><span>LP address</span><a id="mint-lp-scan-link" href="#" target="_blank" rel="noopener">GnosisScan ↗</a></div>
+                <div class="lp-stat-row"><span>LP address</span><a id="mint-lp-scan-link" href="#" target="_blank" rel="noopener">HyperEVM Scan ↗</a></div>
               </div>
             </div>
             <div class="lp-detail-breakdown" id="mint-lp-breakdown"></div>
@@ -271,7 +271,7 @@ if ('serviceWorker' in navigator) {
                 <div class="lp-stat-row"><span>Total debt</span><b id="burn-lp-debt">—</b></div>
                 <div class="lp-stat-row"><span>Burn reward</span><b id="burn-lp-reward">—</b></div>
                 <div class="lp-stat-row"><span>Min burn amount</span><b id="burn-lp-min">—</b></div>
-                <div class="lp-stat-row"><span>LP address</span><a id="burn-lp-scan-link" href="#" target="_blank" rel="noopener">GnosisScan ↗</a></div>
+                <div class="lp-stat-row"><span>LP address</span><a id="burn-lp-scan-link" href="#" target="_blank" rel="noopener">HyperEVM Scan ↗</a></div>
               </div>
             </div>
             <div class="lp-detail-breakdown" id="burn-lp-breakdown"></div>
@@ -473,9 +473,9 @@ if ('serviceWorker' in navigator) {
   const wsxmr = document.getElementById('addr-link-wsxmr');
   const hub = document.getElementById('addr-link-hub');
   const router = document.getElementById('addr-link-router');
-  if (wsxmr) { wsxmr.textContent = short(DC.wsXMR); wsxmr.href = `https://gnosisscan.io/token/${DC.wsXMR}`; }
-  if (hub) { hub.textContent = short(DC.wsXmrHub); hub.href = `https://gnosisscan.io/address/${DC.wsXmrHub}`; }
-  if (router) { router.textContent = short(DC.liquidityRouter); router.href = `https://gnosisscan.io/address/${DC.liquidityRouter}`; }
+  if (wsxmr) { wsxmr.textContent = short(DC.wsXMR); wsxmr.href = `https://hyperevmscan.io/token/${DC.wsXMR}`; }
+  if (hub) { hub.textContent = short(DC.wsXmrHub); hub.href = `https://hyperevmscan.io/address/${DC.wsXmrHub}`; }
+  if (router) { router.textContent = short(DC.liquidityRouter); router.href = `https://hyperevmscan.io/address/${DC.liquidityRouter}`; }
 </script>
 <!-- Monero WASM wallet (loaded as classic script, exposes window.monero_ts) -->
 <script src="./js/monero-ts.js"></script>

@@ -10,35 +10,27 @@ const DE = D.externalContracts || {};
 
 // Network configurations
 export const NETWORKS = {
-    GNOSIS: {
-        id: 100,
-        name: 'Gnosis Chain',
-        network: 'gnosis',
+    HYPEREVM: {
+        id: 999,
+        name: 'HyperEVM',
+        network: 'hyperevm',
         nativeCurrency: {
             decimals: 18,
-            name: 'xDAI',
-            symbol: 'xDAI',
+            name: 'HYPE',
+            symbol: 'HYPE',
         },
         rpcUrls: {
             default: {
-                http: [
-                    'https://rpc.gnosischain.com',
-                    'https://gnosis-rpc.publicnode.com',
-                    'https://rpc.gnosis.gateway.fm'
-                ],
+                http: ['https://rpc.hyperliquid.xyz/evm'],
             },
             public: {
-                http: [
-                    'https://rpc.gnosischain.com',
-                    'https://gnosis-rpc.publicnode.com',
-                    'https://rpc.gnosis.gateway.fm'
-                ],
+                http: ['https://rpc.hyperliquid.xyz/evm'],
             },
         },
         blockExplorers: {
             default: {
-                name: 'Gnosisscan',
-                url: 'https://gnosisscan.io',
+                name: 'HyperEVM Scan',
+                url: 'https://hyperevmscan.io',
             },
         },
     },
@@ -70,11 +62,11 @@ export const NETWORKS = {
 
 // Contract deployments per network
 export const DEPLOYMENTS = {
-    GNOSIS: {
-        chainId: 100,
+    HYPEREVM: {
+        chainId: 999,
         wrappedMonero: DC.wsXMR,
         wsXmrHub: DC.wsXmrHub,
-        oracleFacet: DF.RedStoneOracleFacet,
+        oracleFacet: DF.HyperCoreOracleFacet,
         vaultFacet: DF.VaultFacet,
         mintFacet: DF.MintFacet,
         burnFacet: DF.BurnFacet,
@@ -96,8 +88,8 @@ export const DEPLOYMENTS = {
     },
 };
 
-// Default network (Gnosis mainnet)
-export const DEFAULT_NETWORK = 'GNOSIS';
+// Default network (HyperEVM mainnet)
+export const DEFAULT_NETWORK = 'HYPEREVM';
 
 // Get configuration for a specific network
 export function getNetworkConfig(networkKey = DEFAULT_NETWORK) {

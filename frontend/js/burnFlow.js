@@ -298,7 +298,7 @@ export class BurnFlow {
             this.deadlineBlock = Number(burnReq.deadline);
             const currentBlock = Number(await getPublicClient().getBlockNumber());
             const blocksRemaining = Math.max(0, this.deadlineBlock - currentBlock);
-            this.lpProposeTimeout = blocksRemaining * 5000; // 5s per block on Gnosis
+            this.lpProposeTimeout = blocksRemaining * 1000; // ~1s per block on HyperEVM
             console.log(`[Burn] On-chain deadline: block ${this.deadlineBlock}, current: ${currentBlock}, ${blocksRemaining} blocks remaining (~${Math.ceil(this.lpProposeTimeout / 60000)} min)`);
         } catch (err) {
             console.warn('[Burn] Could not fetch on-chain deadline, using fallback:', err.message);

@@ -56,7 +56,7 @@ export const LP_SERVER_CONFIG = {
 export const DECIMALS = {
     wsXMR: 8,      // EVM wsXMR token decimals
     XMR: 12,       // Monero atomic units decimals
-    ETH: 18,       // ETH/xDAI decimals
+    ETH: 18,       // ETH/HYPE decimals
     USD: 18        // Pyth price decimals
 };
 

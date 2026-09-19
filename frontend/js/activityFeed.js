@@ -32,7 +32,7 @@ export async function loadRecentActivity() {
         const publicClient = getPublicClient();
         const currentBlock = await publicClient.getBlockNumber();
 
-        // Look back ~13.9 hours (~10000 blocks at 5s/block on Gnosis)
+        // Look back ~2.8 hours (~10000 blocks at ~1s/block on HyperEVM)
         // Must stay under RPC provider limits (typically 10k-50k blocks)
         const lookbackBlocks = 10000n;
         let fromBlock = currentBlock > lookbackBlocks ? currentBlock - lookbackBlocks : 0n;

@@ -120,7 +120,7 @@
   <nav>
     <a href="index.html" class="brand" style="text-decoration:none"><img src="./wrapsynth-symbol.png" alt="Wrapsynth" style="width:22px;height:22px;border-radius:6px">Wrapsynth</a>
     <div class="nav-right">
-      <span class="pill"><img src="./gnosis-logo.svg" alt="Gnosis" style="width:14px;height:14px;margin-right:4px;filter:brightness(0) invert(1)">Gnosis</span>
+      <span class="pill">HyperEVM</span>
       <a href="app.html" style="padding:8px 16px;background:linear-gradient(135deg,var(--teal),#2a8a7a);color:#000;font-weight:600;border-radius:10px;text-decoration:none;font-size:14px;transition:all .2s ease;display:inline-block" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 12px rgba(61,155,138,.3)'" onmouseout="this.style.transform='';this.style.boxShadow=''">Back to App</a>
     </div>
   </nav>
@@ -139,7 +139,7 @@
         <div>
           <div class="stat-label">Total Collateral</div>
           <div class="stat-value" id="total-collateral">--</div>
-          <div class="stat-sub">sDAI</div>
+          <div class="stat-sub">USDe</div>
         </div>
         <div>
           <div class="stat-label">Total Debt</div>
@@ -202,7 +202,7 @@
 
 <script type="module">
 import { createPublicClient, http, formatUnits, parseAbi } from 'https://esm.sh/viem@2.21.54';
-import { gnosis } from 'https://esm.sh/viem@2.21.54/chains';
+const hyperevm = { id: 999, name: 'HyperEVM', nativeCurrency: { name: 'HYPE', symbol: 'HYPE', decimals: 18 }, rpcUrls: { default: { http: ['https://rpc.hyperliquid.xyz/evm'] } } };
 
 // Load deployment.json
 const depRes = await fetch('./deployment.json?t=' + Date.now());
@@ -221,8 +221,8 @@ if (!vaultAddress) {
 
 async function loadVaultDetails(address) {
   const client = createPublicClient({
-    chain: gnosis,
-    transport: http('https://rpc.gnosischain.com')
+    chain: hyperevm,
+    transport: http('https://rpc.hyperliquid.xyz/evm')
   });
 
   const shortAddr = `${address.slice(0, 6)}...${address.slice(-4)}`;
@@ -275,9 +275,9 @@ async function loadVaultDetails(address) {
     });
 
     // Calculate health manually (collateral / debt ratio in USD terms)
-    const sDAI = DEPLOYMENT.externalContracts.sDAI;
+    const USDe = DEPLOYMENT.externalContracts.sDAI;
     const totalAssets = await client.readContract({
-      address: sDAI,
+      address: USDe,
       abi: parseAbi(['function convertToAssets(uint256 shares) external view returns (uint256)']),
       functionName: 'convertToAssets',
       args: [vault.collateralShares]
@@ -296,7 +296,7 @@ async function loadVaultDetails(address) {
       console.warn('Failed to fetch XMR price');
     }
     
-    const collateralUSD = collateral * 1.0; // sDAI ≈ $1
+    const collateralUSD = collateral * 1.0; // USDe ≈ $1
     const debtUSD = debtAmount * xmrPrice;
     const healthPct = debtUSD > 0 ? (collateralUSD / debtUSD) * 100 : 200;
 

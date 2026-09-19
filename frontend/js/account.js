@@ -101,7 +101,7 @@ function formatToken(value, decimals = 8) {
   return frac ? `${whole}.${frac}` : whole;
 }
 
-function formatXDai(value) {
+function formatHype(value) {
   if (!value) return '0';
   return parseFloat(formatUnits(value, 18)).toFixed(4);
 }
@@ -156,7 +156,7 @@ async function loadAccount(address) {
 
   try {
     const xdai = await getNativeBalance(address);
-    document.getElementById('acct-xdai').textContent = formatXDai(xdai) + ' xDAI';
+    document.getElementById('acct-xdai').textContent = formatHype(xdai) + ' HYPE';
   } catch (e) {
     document.getElementById('acct-xdai').textContent = '--';
   }

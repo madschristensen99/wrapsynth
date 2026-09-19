@@ -252,7 +252,7 @@ async function init() {
     // Set Gecko Terminal pool link from config
     const geckoLink = document.getElementById('gecko-terminal-link');
     if (geckoLink && CONTRACTS.uniswapV3Pool) {
-        geckoLink.href = `https://www.geckoterminal.com/xdai/pools/${CONTRACTS.uniswapV3Pool}`;
+        geckoLink.href = `https://www.geckoterminal.com/hyperevm/pools/${CONTRACTS.uniswapV3Pool}`;
     }
 
     // Restore previously active tab IMMEDIATELY to prevent flash
@@ -1421,7 +1421,7 @@ async function loadLpStats(address, vaultData) {
         document.getElementById('lp-griefing').value = (Number(vault.mintGriefingDeposit) / 1e18).toFixed(3);
         
         // TODO: Fetch fees earned from events
-        document.getElementById('lp-fees').textContent = '0 xDAI';
+        document.getElementById('lp-fees').textContent = '0 HYPE';
         
         console.log('LP stats loaded for', address);
     } catch (error) {
@@ -2643,7 +2643,7 @@ async function handleVaultSelect(isMint) {
         const burnRewardBps = vault.burnRewardBps || 0;
         updateSwapRateDisplay(isMint, mintFeeBps, burnRewardBps);
 
-        // Update timeout window display (Gnosis ≈ 5s block time)
+        // Update timeout window display (HyperEVM ≈ 1s block time)
         const timeoutBlocks = isMint ? (vault.mintTimeoutBlocks || 0) : (vault.burnTimeoutBlocks || 0);
         if (timeoutBlocks > 0) {
             const timeoutHours = (timeoutBlocks * 5) / 3600;

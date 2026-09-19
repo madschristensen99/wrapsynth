@@ -424,7 +424,7 @@ export function showResumeCountdown(requestId, deadlineBlock, currentBlock, onRe
 
     item.appendChild(container);
 
-    // Update countdown every 5s (approximate block time on Gnosis)
+    // Update countdown every 1s (approximate block time on HyperEVM)
     let cachedDeadline = deadlineBlock;
     let cachedCurrent = currentBlock;
     function updateMsg() {
@@ -793,11 +793,11 @@ export function showVaultInfo(vaultData, isMint = true) {
     
     const html = `
         <p><strong>Total XMR Locked:</strong> ${formatBalance(vaultData.totalXmrLocked, DECIMALS.wsXMR)} XMR</p>
-        <p><strong>Collateral:</strong> ${formatBalance(vaultData.totalCollateral, DECIMALS.ETH)} ${vaultData.collateralToken === '0x0000000000000000000000000000000000000000' ? 'xDAI' : 'Token'}</p>
+        <p><strong>Collateral:</strong> ${formatBalance(vaultData.totalCollateral, DECIMALS.ETH)} ${vaultData.collateralToken === '0x0000000000000000000000000000000000000000' ? 'USDe' : 'Token'}</p>
         <p><strong>Collateralization:</strong> ${vaultData.collateralizationRatio / 100}%</p>
-        <p><strong>Griefing Deposit:</strong> ${formatBalance(vaultData.mintGriefingDeposit, DECIMALS.ETH)} xDAI</p>
+        <p><strong>Griefing Deposit:</strong> ${formatBalance(vaultData.mintGriefingDeposit, DECIMALS.ETH)} USDe</p>
         <p><strong>Status:</strong> ${vaultData.isActive ? '✅ Active' : '❌ Inactive'}</p>
-        <p class="vault-info-link"><a href="https://gnosisscan.io/address/${vaultData.lpVault || ''}" target="_blank" rel="noopener">${getIconSVG('externalLink')}<span>View on GnosisScan</span></a></p>
+        <p class="vault-info-link"><a href="https://hyperevmscan.io/address/${vaultData.lpVault || ''}" target="_blank" rel="noopener">${getIconSVG('externalLink')}<span>View on HyperEVM Scan</span></a></p>
     `;
     
     infoElement.innerHTML = html;
@@ -865,7 +865,7 @@ export function renderLPDetailCard(isMint, vault) {
             set('capacity', `${estPrefix}${capStr} XMR${vault.capacityEstimated ? ' <span style="color:var(--muted);font-size:10px">(est.)</span>' : ''}`);
         }
         const griefing = vault.mintGriefingDeposit ? Number(vault.mintGriefingDeposit) / 1e18 : 0;
-        set('griefing', `${griefing.toFixed(3)} xDAI`);
+        set('griefing', `${griefing.toFixed(3)} USDe`);
     } else {
         const rewardPct = (vault.burnRewardBps || 0) / 100;
         set('reward', `${rewardPct.toFixed(2)}%`);
@@ -875,7 +875,7 @@ export function renderLPDetailCard(isMint, vault) {
 
     // Scan link
     const scanLink = document.getElementById(`${prefix}-lp-scan-link`);
-    if (scanLink) scanLink.href = `https://gnosisscan.io/address/${vault.address}`;
+    if (scanLink) scanLink.href = `https://hyperevmscan.io/address/${vault.address}`;
 
     // Breakdown bars
     const breakdownEl = document.getElementById(`${prefix}-lp-breakdown`);

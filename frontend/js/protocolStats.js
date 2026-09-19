@@ -23,7 +23,7 @@ const MINT_INITIATED_EVENT = {
     type: 'event'
 };
 
-const DEPLOYMENT_BLOCK = 46580000n; // Approximate deployment block on Gnosis
+const DEPLOYMENT_BLOCK = 46200000n; // HyperEVM hub deployment block
 const MAX_BLOCK_RANGE = 10000n; // Conservative limit to avoid RPC errors
 
 export async function updateProtocolStats() {

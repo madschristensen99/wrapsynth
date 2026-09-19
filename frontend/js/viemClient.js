@@ -44,7 +44,7 @@ function getTransport() {
     const timeout = 10000; // 10s — prevent slow RPC from blocking UI
     const retryOpts = { retryCount: 1, retryDelay: 200, timeout };
     const httpTransports = NETWORKS.hyperevm.rpcUrls.map(url => http(url, retryOpts));
-    // HTTP RPCs first for reads — MetaMask's internal RPC can be slow/unreliable on Gnosis.
+    // HTTP RPCs first for reads — MetaMask's internal RPC can be slow/unreliable.
     // MetaMask is still used for writes via walletClient.
     if (typeof window !== 'undefined' && window.ethereum) {
         return fallback([
@@ -94,7 +94,7 @@ export async function connectWallet() {
     });
 
     // Ensure we're on the correct network
-    await switchToGnosisChain();
+    await switchToHyperEvmChain();
 
     // Mark that the user has explicitly connected so we can auto-reconnect next visit
     localStorage.setItem('wrapsynth-wallet-connected', 'true');
@@ -103,9 +103,9 @@ export async function connectWallet() {
 }
 
 /**
- * Switch to Gnosis Chain if not already connected
+ * Switch to HyperEVM if not already connected
  */
-async function switchToGnosisChain() {
+async function switchToHyperEvmChain() {
     try {
         await window.ethereum.request({
             method: 'wallet_switchEthereumChain',
@@ -159,8 +159,8 @@ export async function ensureConnected() {
                 chain: hyperevm,
                 transport: custom(window.ethereum)
             });
-            // Ensure wallet is on Gnosis chain after silent reconnect
-            await switchToGnosisChain();
+            // Ensure wallet is on HyperEVM after silent reconnect
+            await switchToHyperEvmChain();
             return userAddress;
         }
     } catch (e) {
@@ -441,7 +441,7 @@ export async function getWsXmrBalance(address = null) {
 }
 
 /**
- * Get user's native balance (xDAI)
+ * Get user's native balance (HYPE)
  */
 export async function getNativeBalance(address = null) {
     const targetAddress = address || userAddress;

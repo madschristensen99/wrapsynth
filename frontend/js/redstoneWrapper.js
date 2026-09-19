@@ -52,8 +52,8 @@ export async function fetchRedStonePrices() {
 export async function buildRedStonePayload() {
     const { getWalletClientRs } = await import('https://esm.sh/@kreskolabs/viem-redstone-connector@latest');
     const { custom } = await import('https://esm.sh/viem@2.7.0');
-    const { gnosis } = await import('https://esm.sh/viem@2.7.0/chains');
     const { parseAbi, encodeFunctionData } = await import('https://esm.sh/viem@2.7.0');
+    const hyperevm = { id: 999, name: 'HyperEVM', nativeCurrency: { name: 'HYPE', symbol: 'HYPE', decimals: 18 }, rpcUrls: { default: { http: ['https://rpc.hyperliquid.xyz/evm'] } } };
 
     const account = getUserAddress();
 
@@ -65,7 +65,7 @@ export async function buildRedStonePayload() {
     const dataFeeds = ['XMR', 'DAI'];
 
     const rsWalletClient = getWalletClientRs(
-        { chain: gnosis, transport: custom(window.ethereum), account },
+        { chain: hyperevm, transport: custom(window.ethereum), account },
         dataServiceConfig,
         dataFeeds
     );
@@ -85,7 +85,7 @@ export async function buildRedStonePayload() {
 /**
  * Send an updateOraclePrices transaction directly from the user's wallet.
  * Signs with MetaMask, then sends raw tx through an alternative RPC endpoint
- * because the default Gnosis RPC fails with InternalRpcError on large RedStone calldata.
+ * because the default RPC may fail with InternalRpcError on large RedStone calldata.
  */
 export async function sendPriceUpdate({ functionData, redstonePayload }) {
     console.log('Sending price update transaction...');
@@ -93,15 +93,14 @@ export async function sendPriceUpdate({ functionData, redstonePayload }) {
     const walletClient = getWalletClient();
     const publicClient = getPublicClient();
     const account = getUserAddress();
-    const { gnosis } = await import('https://esm.sh/viem@2.7.0/chains');
     const { createPublicClient, http } = await import('https://esm.sh/viem@2.7.0');
 
     const data = functionData + redstonePayload;
 
-    // Verify wallet is on Gnosis chain before signing
+    // Verify wallet is on HyperEVM before signing
     const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
-    if (currentChainId !== '0x64') {
-        throw new Error('Please switch your wallet to Gnosis Chain (Chain ID 100) to continue.');
+    if (currentChainId !== '0x3e7') {
+        throw new Error('Please switch your wallet to HyperEVM (Chain ID 999) to continue.');
     }
 
     // Send directly via the wallet provider — bypasses viem transport entirely
