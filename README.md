@@ -1,46 +1,47 @@
 # ⛴️ WrapSynth
 
-**A trustless cross-chain ferry for Monero. wsXMR is live in beta on Gnosis Chain, backed by overcollateralized LP vaults and Ed25519 atomic swap commitments. Mainnet launch on Arc scheduled for September 18th.**
+**A trustless cross-chain ferry for Monero. wsXMR is live on HyperEVM (Hyperliquid L1), backed by overcollateralized LP vaults and Ed25519 atomic swap commitments.**
 
-🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/sDAI Pool on Gnosis](https://www.geckoterminal.com/gnosis-chain/pools/0x73ffab40a766c0c6dc557ee53059be11c256bf65)**
+🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/USDe Pool on DexScreener](https://dexscreener.com/hyperevm/0xda136ba625b33489eaabf0ec6bad58954214f63c)**
 
-WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Users swap XMR for wsXMR through atomic-swap mechanics enforced on-chain: LPs post sDAI collateral, mint/burn settlement is gated by Ed25519 secret reveals verified on-chain, and timeout-based slashing protects both sides. No custodian, no federation, no trusted intermediary — every swap settles peer-to-peer between a user and an LP vault.
+WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Users swap XMR for wsXMR through atomic-swap mechanics enforced on-chain: LPs post USDe collateral (supplied to HyperLend), mint/burn settlement is gated by Ed25519 secret reveals verified on-chain, and timeout-based slashing protects both sides. No custodian, no federation, no trusted intermediary — every swap settles peer-to-peer between a user and an LP vault.
 
 ---
 
-## 🚀 Status: Beta on Gnosis Chain — Arc launch September 18th
+## 🚀 Status: Live on HyperEVM
 
-- ✅ Full hub + facet system deployed and **verified on Gnosisscan** (beta)
-- ✅ **wsXMR/sDAI Uniswap V3 pool live** (0.3% fee tier)
+- ✅ Full hub + facet system deployed and **verified on hyperevmscan**
+- ✅ **wsXMR/USDe HyperSwap V3 pool live**
 - ✅ Complete mint → trade → burn cycle executed end-to-end on mainnet
 - ✅ Two rounds of security review completed; all critical findings resolved (see [Security](#-security))
 - ✅ 633-line solvency invariant test suite + audit regression suite
-- 📅 **Arc mainnet launch: September 18th, 2026**
-- 🔄 Solana port in development (`solana/`)
+-  Solana port in development (`solana/`)
 
-### Deployed Contracts (Gnosis Chain, ChainID 100)
+### Deployed Contracts (HyperEVM, ChainID 999)
 
 | Contract | Address |
 |---|---|
-| wsXMR Token | [`0xe23d7210fe278b188144b7708e462c7dd721c436`](https://gnosisscan.io/token/0xe23d7210fe278b188144b7708e462c7dd721c436) |
-| wsXmrHub | [`0xd3dac8cf69c2d321bdc1e479d92a1b79cd2228a9`](https://gnosisscan.io/address/0xd3dac8cf69c2d321bdc1e479d92a1b79cd2228a9) |
-| Liquidity Router | [`0x9fF795A27567367277B7f6bB0E1b073f89a0C29c`](https://gnosisscan.io/address/0x9fF795A27567367277B7f6bB0E1b073f89a0C29c) |
-| wsXMR/sDAI UniV3 Pool | [`0x73ffab40a766c0c6dc557ee53059be11c256bf65`](https://gnosisscan.io/address/0x73ffab40a766c0c6dc557ee53059be11c256bf65) |
+| wsXMR Token | [`0x75b85bbC8779B9cDe77cc9DD0335C27410455A53`](https://hyperevmscan.io/address/0x75b85bbC8779B9cDe77cc9DD0335C27410455A53) |
+| wsXmrHub | [`0xd821A7D919e007b6b39925f672f1219dB4865Fba`](https://hyperevmscan.io/address/0xd821A7D919e007b6b39925f672f1219dB4865Fba) |
+| Liquidity Router | [`0x39C669cE84c694f25f4dBe1b11d5aBF4A490911f`](https://hyperevmscan.io/address/0x39C669cE84c694f25f4dBe1b11d5aBF4A490911f) |
+| wsXMR/USDe HyperSwap Pool | [`0xDa136BA625b33489eAABf0EC6baD58954214F63c`](https://hyperevmscan.io/address/0xDa136BA625b33489eAABf0EC6baD58954214F63c) |
 
 <details>
 <summary>Facet addresses</summary>
 
 | Facet | Address |
 |---|---|
-| RedStoneOracleFacet | [`0x584124026dabdc729b9dad408881da36a67057d0`](https://gnosisscan.io/address/0x584124026dabdc729b9dad408881da36a67057d0) |
-| VaultFacet | [`0x20fca74c4690c6a09ee0a071d4d38dac8c5bd08a`](https://gnosisscan.io/address/0x20fca74c4690c6a09ee0a071d4d38dac8c5bd08a) |
-| MintFacet | [`0x2f6773d8ea59a3e7f2d00fc71fabee3e65ec21c8`](https://gnosisscan.io/address/0x2f6773d8ea59a3e7f2d00fc71fabee3e65ec21c8) |
-| BurnFacet | [`0xfe7519758c6caf0db057b8427e5b371a908651d2`](https://gnosisscan.io/address/0xfe7519758c6caf0db057b8427e5b371a908651d2) |
-| LiquidationFacet | [`0x45de14afc6c17df6fdc1e67ce1da66cc7222735f`](https://gnosisscan.io/address/0x45de14afc6c17df6fdc1e67ce1da66cc7222735f) |
-| YieldFacet | [`0x54b3e8b84643d84825acf8092fb261992e484991`](https://gnosisscan.io/address/0x54b3e8b84643d84825acf8092fb261992e484991) |
+| HyperCoreOracleFacet | [`0xE91A4B01632a7D281fb3eB0E83Ad9D5F0305d48f`](https://hyperevmscan.io/address/0xE91A4B01632a7D281fb3eB0E83Ad9D5F0305d48f) |
+| VaultFacet | [`0x5F8b8a6ccA1aa4266fAC32efc729527BC0F333d1`](https://hyperevmscan.io/address/0x5F8b8a6ccA1aa4266fAC32efc729527BC0F333d1) |
+| MintFacet | [`0x463F0C28e8E9328DB7ab220Dd4133131c9f053dB`](https://hyperevmscan.io/address/0x463F0C28e8E9328DB7ab220Dd4133131c9f053dB) |
+| BurnFacet | [`0x36fe621680dA06a1CA80B52769c6413A212081bC`](https://hyperevmscan.io/address/0x36fe621680dA06a1CA80B52769c6413A212081bC) |
+| LiquidationFacet | [`0x97e2F14C2533a5f678A9596cF5f05bE955FA19fB`](https://hyperevmscan.io/address/0x97e2F14C2533a5f678A9596cF5f05bE955FA19fB) |
+| YieldFacet | [`0x917a2Afc28BE633B0BDE1aeE4923C4A97F0ab250`](https://hyperevmscan.io/address/0x917a2Afc28BE633B0BDE1aeE4923C4A97F0ab250) |
 
-Full deployment manifest (external contracts, pool config, LP defaults): [`deployment.json`](./deployment.json)
+Full deployment manifest (external contracts, pool config, LP defaults): [`deployment.json`](./deployment.json) · HyperEVM manifest: [`ethereum/deployments/hyperevm-deployment.json`](./ethereum/deployments/hyperevm-deployment.json)
 </details>
+
+> Prior beta deployment on Gnosis Chain (ChainID 100) is preserved in [`frontend/deployment.gnosis.json`](./frontend/deployment.gnosis.json).
 
 ---
 
@@ -62,15 +63,15 @@ All protocol state and collateral live in a single contract, **wsXmrHub**, which
                       └──────────┬─────────────────┘
         ┌──────────┬─────────┬──┴──────┬───────────┬──────────┐
    VaultFacet  MintFacet  BurnFacet  Liquidation  YieldFacet  OracleFacet
-   (LP vaults) (XMR→wsXMR)(wsXMR→XMR)  Facet     (sDAI yield) (RedStone)
+   (LP vaults) (XMR→wsXMR)(wsXMR→XMR)  Facet   (USDe yield)(HyperCore)
 ```
 
 ### Key components
 
 - **Ed25519 on-chain verification** — atomic swap secrets are Ed25519 scalars; the contract computes `scalarMultBase(secret)` and checks it against the user's commitment, binding settlement to the same key material used on the Monero side
-- **sDAI collateral** — LP vaults are denominated in Savings DAI, so idle collateral earns the DSR; **YieldFacet** harvests and accounts for vault yield
-- **Co-LP liquidity router** — `wsXMRLiquidityRouter` deploys vault collateral as Uniswap V3 concentrated liquidity paired against user-supplied wsXMR, putting backing capital to work instead of letting it sit idle
-- **Oracle facet** — RedStone-style oracle with an off-chain price pusher keeping XMR/USD fresh on-chain
+- **USDe collateral** — LP vaults are denominated in USDe supplied to HyperLend (Aave v3.6 fork), so idle collateral earns supply APY; **YieldFacet** harvests and accounts for vault yield
+- **Co-LP liquidity router** — `wsXMRLiquidityRouter` deploys vault collateral as HyperSwap V3 concentrated liquidity paired against user-supplied wsXMR, putting backing capital to work instead of letting it sit idle
+- **Oracle facet** — `HyperCoreOracleFacet` reads the native XMR perp's `oraclePx` via the L1-read precompile — validator-maintained, no off-chain price pusher
 - **LP node** (`ethereum/lp-node/`, Rust) — monitors events, manages Monero RPC, prices quotes, runs arbitrage, and exposes a REST API for the frontend
 
 ---
@@ -95,10 +96,10 @@ All protocol state and collateral live in a single contract, **wsXmrHub**, which
 
 ### For Liquidity Providers
 
-1. Create a vault and deposit sDAI via **VaultFacet** (minimum 150% collateral ratio; 180% target)
-2. Optionally deploy collateral into the co-LP Uniswap V3 position via the router
+1. Create a vault and deposit USDe via **VaultFacet** (minimum 150% collateral ratio; 180% target)
+2. Optionally deploy collateral into the co-LP HyperSwap V3 position via the router
 3. Run the LP node to serve mint/burn flow automatically
-4. Earn mint/burn fees + sDAI yield + LP fees; keep ratio above the 120% liquidation threshold
+4. Earn mint/burn fees + USDe yield + LP fees; keep ratio above the 120% liquidation threshold
 
 ---
 
@@ -109,7 +110,7 @@ All protocol state and collateral live in a single contract, **wsXmrHub**, which
 The protocol has been through **two rounds of security review**, with all critical and high-severity findings resolved and locked in by regression tests ([`AuditRegressionTest.t.sol`](./ethereum/test/AuditRegressionTest.t.sol)). Notable findings fixed:
 
 - **Delegate-context reentrancy** in the hub dispatch path — closed using EIP-1153 transient-storage context flags
-- **Yield harvesting unit mismatch** between sDAI shares and DAI amounts in vault accounting
+- **Yield harvesting unit mismatch** between collateral shares and underlying amounts in vault accounting
 - **Inverted bad-debt socialization** logic in liquidation flow
 - **Burn flow redesign** — the original single-path burn was replaced with the `requestBurn` / `abortBurn` / `forceSettleBurn` state machine to remove griefing and stuck-funds paths
 - **Open-ended deployer privileges** — the hub/token deployer held two permanent admin hooks
@@ -129,7 +130,7 @@ The protocol has been through **two rounds of security review**, with all critic
 | `wsXMR.replaceHub` / `setHub` | token `_deployer` | ❌ no |
 | `updatePrices` | `priceUpdater` only | ✅ yes (required for oracle liveness) |
 
-✅ **The live v6.1 Gnosis deployment has executed `lockHub()` / `lockDeployer()`** — the
+✅ **The live HyperEVM deployment has executed `lockHub()` / `lockDeployer()`** — the
 deployer key can no longer repoint the minter or alter facet routes. Verified on-chain at
 deploy time (`hubLocked() == true`, `deployerOperationsLocked() == true`).
 
@@ -137,7 +138,7 @@ deploy time (`hubLocked() == true`, `deployerOperationsLocked() == true`).
 
 - [`BurnSolvencyInvariantTest.t.sol`](./ethereum/test/BurnSolvencyInvariantTest.t.sol) — 633-line Foundry invariant suite asserting system solvency across randomized mint/burn/liquidation sequences
 - Full lifecycle E2E suites (`E2EFullCycle`, `E2EComprehensive`, `E2EAdvancedScenarios`) plus Hardhat unit suites per facet
-- Co-LP fork tests against Gnosis mainnet state (`test/coLP/`)
+- Co-LP fork tests against HyperEVM mainnet state (`test/coLP/`)
 - Ed25519 compatibility tests against reference vectors
 
 ### Honest risk disclosure
@@ -145,7 +146,7 @@ deploy time (`hubLocked() == true`, `deployerOperationsLocked() == true`).
 ⚠️ This is early-stage protocol software. Reviews to date do not eliminate risk:
 
 - No formal verification yet
-- Oracle liveness depends on the off-chain price pusher
+- Oracle reads the native XMR perp via L1-read precompile (validator-maintained; no off-chain pusher)
 - LP-side Monero payment confirmation is an off-chain step; the protocol's protection is economic (collateral slashing), not cryptographic proof of XMR transfer
 - Use amounts you can afford to lose
 
@@ -161,7 +162,7 @@ Node.js v18+, Foundry, Rust (for the LP node), Hardhat (via npm).
 git clone https://github.com/madschristensen99/wrapsynth.git
 cd wrapsynth/ethereum
 npm install
-cp .env.example .env   # add PRIVATE_KEY and GNOSIS_RPC_URL
+cp .env.example .env   # add PRIVATE_KEY and RPC_URL (HyperEVM: https://rpc.hyperliquid.xyz/evm)
 
 # Compile + test
 npx hardhat compile
@@ -190,12 +191,12 @@ anchor build && anchor test
 
 ```
 wrapsynth/
-├── deployment.json           # Live Gnosis mainnet deployment manifest
+├── deployment.json           # Live HyperEVM mainnet deployment manifest
 ├── ethereum/
 │   ├── contracts/
 │   │   ├── core/             # wsXmrHub, wsXmrStorage
 │   │   ├── facets/           # Vault, Mint, Burn, Liquidation, Yield, Oracle
-│   │   ├── router/           # wsXMRLiquidityRouter (co-LP UniV3)
+│   │   ├── router/           # wsXMRLiquidityRouter (co-LP HyperSwap V3)
 │   │   ├── Ed25519.sol       # On-chain Ed25519 scalar mult
 │   │   └── wsXMR.sol         # ERC-20 (8 decimals, matching XMR)
 │   ├── test/                 # Foundry invariant/E2E + Hardhat suites
@@ -209,12 +210,13 @@ wrapsynth/
 
 ## 🔮 Roadmap
 
-- ✅ Gnosis mainnet deployment + verified contracts
-- ✅ Live wsXMR/sDAI Uniswap V3 pool
+- ✅ HyperEVM mainnet deployment + verified contracts
+- ✅ Live wsXMR/USDe HyperSwap V3 pool
 - ✅ Co-LP concentrated liquidity router
+- ✅ Gnosis beta deployment (superseded)
 - 🔄 Solana port (Meteora DLMM liquidity, JitoSOL collateral, Pyth oracle)
 - 🔄 Additional LP onboarding + deeper liquidity
-- ⏳ Hyperliquid wsXMR/USD market (HIP-3 proposal drafted)
+- ⏳ HIP-1 wsXMR/USDC on HyperCore CLOB + HIP-3 wsXMR/USD perp
 - ⏳ Third-party audit + bug bounty ahead of broader scaling
 - ⏳ Multi-chain expansion
 

@@ -1,6 +1,6 @@
-# wsXMR - Wrapped Monero on Gnosis Chain
+# wsXMR - Wrapped Monero on HyperEVM
 
-A decentralized protocol for wrapping Monero (XMR) on Gnosis Chain using a diamond proxy pattern with LP-backed minting and burning.
+A decentralized protocol for wrapping Monero (XMR) on HyperEVM (Hyperliquid L1) using a diamond proxy pattern with LP-backed minting and burning. Originally deployed to Gnosis Chain (beta); now live on HyperEVM.
 
 ## 🚀 HyperEVM Mainnet Deployment (primary venue)
 
@@ -24,9 +24,9 @@ A decentralized protocol for wrapping Monero (XMR) on Gnosis Chain using a diamo
 
 **Mainnet validation (all passing):** `testFullCycleNow.hyperevm.js` (deposit → mint → Co-LP open/unwind → burn + reward), `testCoLPNow.hyperevm.js` (Co-LP open + unwind), `testPoolSwaps.hyperevm.js` (seeded pool + both-direction swaps + fee collection). All contracts verified on hyperevmscan via Etherscan V2.
 
-## 🚀 Gnosis Mainnet Deployment
+## 🚀 Gnosis Mainnet Deployment (beta — superseded)
 
-**Deployed:** September 16, 2026 (v6.1 — admin privilege lock: `lockHub()` / `lockDeployer()` executed as final deploy step, permanently disabling deployer hooks)
+**Deployed:** September 16, 2026 (v6.1 — admin privilege lock: `lockHub()` / `lockDeployer()` executed as final deploy step, permanently disabling deployer hooks). Superseded by the HyperEVM deployment above.
 
 - **wsXmrHub (Diamond Proxy):** `0xd3dac8cf69c2d321bdc1e479d92a1b79cd2228a9`
 - **wsXMR Token:** `0xe23d7210fe278b188144b7708e462c7dd721c436`
@@ -120,11 +120,11 @@ All contracts verified on Gnosisscan:
 
 ## 🧪 Testing
 
-The protocol has two testing layers: a comprehensive **Foundry (Anvil) test suite** that forks Gnosis mainnet for unit and integration testing, and a set of **mainnet JavaScript scripts** that verify live deployment behavior.
+The protocol has two testing layers: a comprehensive **Foundry (Anvil) test suite** that forks mainnet for unit and integration testing, and a set of **mainnet JavaScript scripts** that verify live deployment behavior.
 
 ### Foundry Test Suite
 
-16 test files (~5,800 lines) covering happy paths, error paths, security reverts, invariants, timeouts, slashing, liquidation, oracle manipulation, yield, and multi-party scenarios. All tests fork Gnosis mainnet via `vm.createSelectFork`.
+16 test files (~5,800 lines) covering happy paths, error paths, security reverts, invariants, timeouts, slashing, liquidation, oracle manipulation, yield, and multi-party scenarios. Tests fork mainnet via `vm.createSelectFork`.
 
 **Key Foundry capabilities used:**
 - `SimpleOracleFacet` mock — set arbitrary prices to trigger liquidations, test staleness
@@ -160,10 +160,10 @@ The protocol has two testing layers: a comprehensive **Foundry (Anvil) test suit
 forge test
 
 # Specific E2E test with verbose output
-forge test --match-path test/E2EComprehensive.t.sol --fork-url $GNOSIS_RPC_URL -vv
+forge test --match-path test/E2EComprehensive.t.sol --fork-url $RPC_URL -vv
 
 # Run only co-LP tests
-forge test --match-path test/coLP/*.t.sol --fork-url $GNOSIS_RPC_URL -vv
+forge test --match-path test/coLP/*.t.sol --fork-url $RPC_URL -vv
 
 # Gas snapshots
 forge snapshot
@@ -176,31 +176,26 @@ See `test/README.md` for detailed per-test descriptions of the legacy Hardhat te
 
 ### Mainnet JavaScript Scripts
 
-Operational scripts in `scripts/` that interact with deployed contracts on Gnosis mainnet. These are **smoke tests** — they verify transactions broadcast successfully but lack automated pass/fail assertions.
+Operational scripts in `scripts/` that interact with deployed contracts on HyperEVM mainnet. These are **smoke tests** — they verify transactions broadcast successfully but lack automated pass/fail assertions. The `.hyperevm.js` variants use `hyperevmLib.js` helpers (`send`/`sendRetry`) to tolerate HyperEVM's state-propagation lag.
 
-| Script | Lines | What It Does |
-|--------|-------|--------------|
-| `deployAndTestAll.js` | 216 | Orchestrator: deploy → parse addresses → write `deployment.json` → run 3 test scripts in sequence |
-| `testFullCycleNow.js` | 581 | Vault setup → price update → mint (4 steps) → collateral withdraw → co-LP open/unwind → burn (4 steps) → claim rewards |
-| `testCoLPNow.js` | 286 | Vault setup → price update → mint if needed → co-LP open → co-LP unwind → withdraw returns |
-| `testPoolSwaps.js` | 434 | Pool state check → wsXMR→sDAI swap → sDAI→wsXMR swap → co-LP creation → fee-generating swaps → fee collection |
-| `testDeploymentSimple.js` | 126 | Read-only deployment verification (checks contract code exists, token metadata, pool state) |
+| Script | What It Does |
+|--------|--------------|
+| `deployHyperEVM.js` | Deploy the full wsXMR stack to HyperEVM and write `deployments/hyperevm-deployment.json` |
+| `testFullCycleNow.hyperevm.js` | Vault setup → mint → collateral withdraw → co-LP open/unwind → burn → claim rewards |
+| `testCoLPNow.hyperevm.js` | Vault setup → mint if needed → co-LP open → co-LP unwind → withdraw returns |
+| `testPoolSwaps.hyperevm.js` | Pool state check → wsXMR→USDe swap → USDe→wsXMR swap → co-LP creation → fee-generating swaps → fee collection |
 
 **Run mainnet scripts:**
 ```shell
-# Full deploy + test cycle
-npm run deploy
-
-# Individual scripts (requires PRIVATE_KEY and GNOSIS_RPC_URL in .env)
-node scripts/testFullCycleNow.js
-node scripts/testCoLPNow.js
-node scripts/testPoolSwaps.js
-node scripts/testDeploymentSimple.js
+# Individual scripts (requires PRIVATE_KEY and RPC_URL in .env)
+node scripts/testFullCycleNow.hyperevm.js
+node scripts/testCoLPNow.hyperevm.js
+node scripts/testPoolSwaps.hyperevm.js
 ```
 
 **Environment variables required:**
-- `PRIVATE_KEY` — wallet with xDAI for gas
-- `GNOSIS_RPC_URL` — Gnosis Chain RPC endpoint
+- `PRIVATE_KEY` — wallet with HYPE for gas
+- `RPC_URL` — HyperEVM RPC endpoint (`https://rpc.hyperliquid.xyz/evm`)
 - `MONERO_RPC_URL` — Monero node for LP operations (optional for basic tests)
 
 ### Coverage Gap Analysis

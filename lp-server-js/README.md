@@ -19,9 +19,9 @@ The server starts on `http://localhost:3001` (configurable via `PORT`).
 ### Prerequisites
 
 - Node.js v18+
-- A Gnosis Chain wallet with xDAI for gas (this is the LP vault wallet)
+- A HyperEVM wallet with HYPE for gas (this is the LP vault wallet)
 - `monero-wallet-rpc` running locally (for XMR deposit scanning and burn sends)
-- The wallet must have an active vault on wsXmrHub with deposited sDAI collateral
+- The wallet must have an active vault on wsXmrHub with deposited USDe collateral
 
 ### Starting monero-wallet-rpc
 
@@ -44,7 +44,7 @@ All configuration is via environment variables (`.env` file). See `.env.example`
 | Variable | Description |
 |----------|-------------|
 | `PRIVATE_KEY` | LP vault wallet private key (0x-prefixed) |
-| `RPC_URL` | Gnosis Chain RPC endpoint (default: `https://rpc.gnosischain.com`) |
+| `RPC_URL` | HyperEVM RPC endpoint (default: `https://rpc.hyperliquid.xyz/evm`) |
 
 ### Monero
 

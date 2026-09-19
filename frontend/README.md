@@ -1,6 +1,6 @@
 # WrapSynth Frontend
 
-The web application for trustless XMR ⇄ wsXMR atomic swaps on Gnosis Chain. Live at [wrapsynth.com](https://wrapsynth.com).
+The web application for trustless XMR ⇄ wsXMR atomic swaps on HyperEVM. Live at [wrapsynth.com](https://wrapsynth.com).
 
 ---
 
@@ -15,7 +15,7 @@ npx serve .
 python3 -m http.server 8000
 ```
 
-Open `http://localhost:8000` and connect a Gnosis-compatible wallet (MetaMask, Rabby, etc.).
+Open `http://localhost:8000` and connect a HyperEVM-compatible wallet (MetaMask, Rabby, etc.).
 
 No build step is required. The app uses native ES modules with CDN imports for `viem`.
 
@@ -23,7 +23,7 @@ No build step is required. The app uses native ES modules with CDN imports for `
 
 - Node.js v18+ (for `npm install` of local dependencies)
 - A browser with EIP-1193 wallet support (MetaMask, Rabby, etc.)
-- Network: Gnosis Chain (ChainID 100)
+- Network: HyperEVM (ChainID 999)
 
 ---
 
@@ -57,7 +57,7 @@ frontend/
     ├── monero-ts.js        # Bundled monero-ts WASM wallet library
     ├── redstoneWrapper.js  # RedStone oracle price fetch + on-chain update helper
     ├── coLPFlow.js         # Co-LP position manager (open/unwind/fees via hub)
-    ├── poolFlow.js         # Uniswap V3 pool swap helper
+    ├── poolFlow.js         # HyperSwap V3 pool swap helper
     ├── lpPanel.js          # LP vault panel UI (deposit, withdraw, configure)
     ├── lpClient.js         # LP server REST client
     ├── storage.js          # LocalStorage swap state persistence (multi-swap)
@@ -76,7 +76,7 @@ frontend/
 ```
 User Browser
   │
-  ├── viemClient.js ──→ Gnosis Chain (wsXmrHub via diamond proxy)
+  ├── viemClient.js ──→ HyperEVM (wsXmrHub via diamond proxy)
   │                      ├── readHub()  → view calls (balances, vaults, requests)
   │                      └── writeHub() → state-changing txs (mint, burn, co-LP)
   │
@@ -111,7 +111,7 @@ User Browser
 4. LP reveals secret → `finalizeBurn` → wsXMR burned, collateral released
 5. User sweeps XMR from shared address using combined private keys
 
-**Co-LP** — Users can pair wsXMR with LP vault collateral to create Uniswap V3 positions. The `coLPFlow.js` module handles capacity checks, position opening, fee collection, and unwinding.
+**Co-LP** — Users can pair wsXMR with LP vault collateral to create HyperSwap V3 positions. The `coLPFlow.js` module handles capacity checks, position opening, fee collection, and unwinding.
 
 ---
 
