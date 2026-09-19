@@ -286,7 +286,7 @@ const embeddedProvider = {
     switch (method) {
       case 'eth_requestAccounts': /* return stored address */
       case 'eth_accounts': /* return stored address */
-      case 'eth_chainId': /* return '0x64' (Gnosis) */
+      case 'eth_chainId': /* return the configured chain ID */
       case 'personal_sign': /* ensureUnlocked → sessionSign */
       case 'eth_signTypedData_v4': /* ensureUnlocked → sessionSignTypedData */
       case 'eth_sendTransaction': /* ensureUnlocked → fetch nonce/gas → sessionSignTransaction → eth_sendRawTransaction */
@@ -303,7 +303,7 @@ const embeddedProvider = {
 ```
 
 **RPC routing for WrapSynth:**
-- Primary: public Gnosis RPCs (Ankr, OnFinality, Gateway.fm — already configured in `config.js`)
+- Primary: public RPCs (already configured in `config.js`)
 - No same-origin proxy needed (WrapSynth uses public RPCs, no private endpoint)
 
 #### 3.3 UI Modals (~200 lines)
@@ -342,7 +342,7 @@ return fallback(httpTransports, { rank: false });
 | Aspect | FOID | WrapSynth |
 |---|---|---|
 | Framework | Next.js + wagmi + RainbowKit | Vanilla JS + viem (no build step) |
-| Chain | Fluent L2 (Chain 25363) | Gnosis Chain (Chain 100) |
+| Chain | Fluent L2 (Chain 25363) | EVM chain (HyperEVM, Chain 999) |
 | Wallet connector | wagmi `createConnector` | Direct `createWalletClient({ transport: custom() })` |
 | RPC strategy | Same-origin proxy + public fallback | Public RPCs only (Ankr, OnFinality, Gateway.fm) |
 | Existing crypto | None | `seedStorage.js` (IndexedDB + AES-GCM, two-layer) |
@@ -358,7 +358,7 @@ return fallback(httpTransports, { rank: false });
 {
   "name": "WrapSynth — Atomic Liquidity for Monero",
   "short_name": "WrapSynth",
-  "description": "Mint and burn wsXMR. Bridge Monero to Gnosis Chain with trustless atomic swaps.",
+  "description": "Mint and burn wsXMR. Bridge Monero to an EVM chain with trustless atomic swaps.",
   "start_url": "/app.html",
   "display": "standalone",
   "background_color": "#0c0c14",
@@ -501,7 +501,7 @@ User wants to mint but has no MetaMask
   → Embedded wallet modal: "Create wallet with Face ID + PIN"
   → Passkey created, EVM keypair generated, encrypted in localStorage
   → viemClient.js uses embedded wallet as custom transport
-  → User initiates mint → signs tx via Web Worker → broadcasts to Gnosis
+  → User initiates mint → signs tx via Web Worker → broadcasts to the EVM chain
   
 LP activity happens (deposit confirmed, burn committed, etc.)
   → SSE stream from LP server pushes event to frontend

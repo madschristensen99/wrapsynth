@@ -21,7 +21,7 @@ This document provides chain-agnostic sequence diagrams for the wsXMR Liquidity 
 
 ## Pool Initialization
 
-Before any liquidity positions can be created, the Uniswap V3 pool must be initialized with an oracle-derived price.
+Before any liquidity positions can be created, the V3 DEX pool must be initialized with an oracle-derived price.
 
 ```mermaid
 sequenceDiagram
@@ -39,7 +39,7 @@ sequenceDiagram
     Oracle-->>Router: Prices updated
     
     Router->>Oracle: getCollateralPrice(30s staleness)
-    Oracle-->>Router: sDAI price (USD)
+    Oracle-->>Router: collateral price (USD)
     
     Router->>Oracle: getXmrPrice(30s staleness)
     Oracle-->>Router: XMR price (USD)
@@ -174,7 +174,7 @@ sequenceDiagram
     participant VM as VaultManager
     participant Collateral as Collateral Token
 
-    LP->>Router: allocateLiquidity(sDAIAmount)
+    LP->>Router: allocateLiquidity(collateralAmount)
     activate Router
     
     Router->>Router: Validate amount >= minimum
@@ -205,8 +205,8 @@ sequenceDiagram
     participant User
     participant Router as LiquidityRouter
 
-    Note over LP,Router: LP approves User for specific sDAI amount
-    LP->>Router: increaseUserApproval(user, sDAIAmount)
+    Note over LP,Router: LP approves User for specific collateral amount
+    LP->>Router: increaseUserApproval(user, collateralAmount)
     Router->>Router: lpApprovalAmount[LP][User] += amount
     Router->>Router: Increment approvalNonce[LP]
     Router-->>LP: LpApprovedUser event
@@ -237,7 +237,7 @@ sequenceDiagram
     participant DEX as DEX Position Manager
     participant Pool as DEX Pool
 
-    Caller->>Router: createPositionWithPriceUpdate(lp, user, sDAI, wsxmr, deadline, priceData)
+    Caller->>Router: createPositionWithPriceUpdate(lp, user, collateral, wsxmr, deadline, priceData)
     activate Router
     
     Router->>Oracle: Update price feeds (with fee)
@@ -247,7 +247,7 @@ sequenceDiagram
     Router->>Router: Validate deadline (not expired, not too far)
     Router->>Router: Verify caller is LP or User
     
-    Router->>Router: Check lpApprovalAmount[LP][User] >= sDAI
+    Router->>Router: Check lpApprovalAmount[LP][User] >= collateral
     Router->>Router: Check userApprovalAmount[User][LP] >= wsxmr
     Router->>Router: Decrement both approval amounts
     
@@ -257,10 +257,10 @@ sequenceDiagram
     Router->>Router: Deduct from lpLiquidityAllocation[LP]
     Router->>Router: Deduct from userWsxmrDeposits[User]
     
-    Router->>DEX: approve(sDAI + wsxmr amounts)
+    Router->>DEX: approve(collateral + wsxmr amounts)
     
     Router->>Oracle: getCollateralPrice(30s)
-    Oracle-->>Router: sDAI price
+    Oracle-->>Router: collateral price
     Router->>Oracle: getXmrPrice(30s)
     Oracle-->>Router: wsXMR price
     
@@ -304,7 +304,7 @@ sequenceDiagram
     Router->>Router: Check MIN_POSITION_DURATION elapsed
     
     Router->>Oracle: getCollateralPrice(30s)
-    Oracle-->>Router: Current sDAI price
+    Oracle-->>Router: Current collateral price
     Router->>Oracle: getXmrPrice(30s)
     Oracle-->>Router: Current XMR price
     
@@ -328,12 +328,12 @@ sequenceDiagram
     Router->>Router: Verify minTotalValueUSD >= 50% initial
     
     Note over Router: Token-first return logic
-    Router->>Router: LP gets sDAI (up to original amount)
+    Router->>Router: LP gets collateral (up to original amount)
     Router->>Router: User gets wsXMR (up to original amount)
     
-    alt Surplus sDAI (IL shifted to sDAI)
-        Router->>Router: Credit excess sDAI to User
-        Router-->>Caller: ILSDAICredited event
+    alt Surplus collateral (IL shifted to collateral)
+        Router->>Router: Credit excess collateral to User
+        Router-->>Caller: ILCollateralCredited event
     end
     
     alt Surplus wsXMR (IL shifted to wsXMR)
@@ -376,9 +376,9 @@ sequenceDiagram
     DEX-->>Router: collected0, collected1
     
     alt Fees collected
-        Router->>Router: Map fees to sDAI and wsXMR
+        Router->>Router: Map fees to collateral and wsXMR
         Router->>Router: Split fees by initial value contribution
-        Router->>Router: Credit to pendingSDAIFees and pendingWsxmrFees
+        Router->>Router: Credit to pendingCollateralFees and pendingWsxmrFees
         Router-->>Caller: FeesCollected event
     end
     
@@ -386,7 +386,7 @@ sequenceDiagram
 
     Note over Caller,Router: Later: withdraw accumulated fees
     Caller->>Router: withdrawFees()
-    Router->>Router: Transfer pending sDAI fees
+    Router->>Router: Transfer pending collateral fees
     Router->>Router: Transfer pending wsXMR fees
     Router-->>Caller: FeesWithdrawn event
 ```
@@ -433,7 +433,7 @@ sequenceDiagram
     User->>Monero: Send XMR to deposit address
     Note right of User: view = userPub, spend = userPub + lpSpendPub.<br/>User-viewable — the LP cannot scan it.
 
-    Note over User,Monero: Step 4: User proves the deposit; LP verifies via check_tx_key
+    Note over User,Monero: Step 4: User proves the deposit — LP verifies via check_tx_key
     User->>LP: Submit txid + txKey (tx secret key) via /mint/deposit
     LP->>Monero: check_tx_key(txid, txKey, depositAddress)
     Monero-->>LP: received amount
@@ -443,7 +443,7 @@ sequenceDiagram
     alt CR < 150% after yield sync
         VM-->>LP: Revert: InsufficientCollateral
     end
-    VM->>VM: Lock collateral (MINT_LOCK_RATIO * par value in sDAI)
+    VM->>VM: Lock collateral (MINT_LOCK_RATIO * par value in collateral)
     VM->>VM: Store xmrPriceAtReady for par settlement
     VM->>VM: Update status to READY
     VM->>VM: Extend timeout for user (MINT_READY_EXTENSION_BLOCKS)
@@ -483,7 +483,7 @@ sequenceDiagram
 
     Note over User,Monero: Step 6: LP sweeps the deposit off-chain
     LP->>Monero: Sweep deposit (userSecret + lpSecret → full spend key)
-    Note right of LP: LP learned userSecret from MintFinalized;<br/>deposit view key = userSecret (user-viewable)
+    Note right of LP: LP learned userSecret from MintFinalized.<br/>deposit view key = userSecret (user-viewable)
 ```
 
 ### Mint Cancellation Scenarios
@@ -529,8 +529,8 @@ sequenceDiagram
     Note over Anyone,LP: Scenario A3: Secret revealed but never finalized (SECRET_REVEALED timeout)
     Anyone->>VM: cancelMint(requestId, _)
     VM->>VM: Verify SECRET_REVEALED and timeout reached
-    VM->>VM: Execute finalizeMint path — MINTS wsXMR (secret is public;
-    Note right of VM: cancelling would let LP take XMR and keep collateral)
+    VM->>VM: Execute finalizeMint path — MINTS wsXMR (secret is public)
+    Note right of VM: cancelling would let LP take XMR and keep collateral
     VM-->>Anyone: MintFinalized event
 
     Note over Anyone,LP: Scenario B: User didn't finalize (READY timeout → EXPIRED_READY)
@@ -636,7 +636,7 @@ sequenceDiagram
 
     Note over User,Monero: Step 5: User sweeps the shared XMR off-chain
     User->>Monero: Sweep output (userSecret + lpSecret → full spend key)
-    Note right of User: User learned lpSecret from BurnFinalized;<br/>burn view key = user's privateViewKey
+    Note right of User: User learned lpSecret from BurnFinalized.<br/>burn view key = user's privateViewKey
 ```
 
 ### Burn Failure Scenarios
@@ -676,7 +676,7 @@ sequenceDiagram
     Note over User,VM: Scenario B1: REQUESTED timeout → force settle (alternative to abort)
     User->>VM: forceSettleBurn(requestId)
     VM->>VM: Verify REQUESTED and deadline passed
-    VM->>VM: Calculate par value in sDAI (no reward)
+    VM->>VM: Calculate par value in collateral (no reward)
     VM->>VM: Seize par from locked collateral
     VM->>VM: Queue par to user via pendingReturns
     VM->>VM: Mark SLASHED
@@ -754,7 +754,7 @@ sequenceDiagram
     end
     
     VM->>VM: Unwind all co-LP positions
-    VM->>VM: Return sDAI to vault, queue wsXMR to co-LPs
+    VM->>VM: Return collateral to vault, queue wsXMR to co-LPs
     
     VM->>VM: Calculate collateral to seize (110% of debt value)
     VM->>VM: Cap at available collateral
@@ -881,15 +881,15 @@ sequenceDiagram
     VM->>VM: Deduct chunk from yieldWarChest
     VM->>VM: Update lastBuyTimestamp
     
-    VM->>Keeper: Transfer keeper reward (sDAI)
+    VM->>Keeper: Transfer keeper reward (collateral)
     
-    VM->>Oracle: Get sDAI price
-    Oracle-->>VM: sDAI price
+    VM->>Oracle: Get collateral price
+    Oracle-->>VM: collateral price
     VM->>VM: Calculate expected wsXMR output
     VM->>VM: Apply 1% max slippage (MEV_SLIPPAGE_BPS)
     
     VM->>DEX: approve(spendAmount)
-    VM->>DEX: exactInputSingle(sDAI → wsXMR)
+    VM->>DEX: exactInputSingle(collateral → wsXMR)
     DEX-->>VM: wsXMR bought
     alt Swap returned less than minWsxmr
         VM-->>Keeper: Revert: swap slippage exceeded
@@ -938,7 +938,7 @@ sequenceDiagram
     Router-->>User: UserWithdrewWsxmr event
 ```
 
-### LP sDAI Withdrawal
+### LP collateral Withdrawal
 
 ```mermaid
 sequenceDiagram
@@ -946,7 +946,7 @@ sequenceDiagram
     participant Router as LiquidityRouter
     participant Collateral as Collateral Token
 
-    LP->>Router: withdrawSDAI(amount)
+    LP->>Router: withdrawCollateral(amount)
     Router->>Router: Verify lpLiquidityAllocation[LP] >= amount
     Router->>Router: Deduct from allocation
     Router->>Collateral: transfer(LP, amount)
@@ -992,7 +992,7 @@ sequenceDiagram
 
 # Core Protocol Sequence Diagrams
 
-The diagrams below cover the mint, burn, liquidation, and yield flows for the wsXMR Hub + Facet diamond architecture on Gnosis Chain.
+The diagrams below cover the mint, burn, liquidation, and yield flows for the wsXMR Hub + Facet diamond architecture on the EVM chain.
 
 ## Mint Flow (XMR → wsXMR)
 
@@ -1168,7 +1168,7 @@ sequenceDiagram
         Burn-->>User: emit BurnAborted
 
         User->>Burn: forceSettleBurn(requestId)
-        Burn->>Burn: Pay par value in sDAI (no reward) via pendingReturns
+        Burn->>Burn: Pay par value in collateral (no reward) via pendingReturns
         Burn->>Burn: Release locked collateral, reduce debt
         Burn->>Burn: status = SLASHED
         Burn-->>User: emit BurnForceSettled
@@ -1186,7 +1186,7 @@ sequenceDiagram
 
     alt User confirms but LP never finalizes (COMMITTED timeout + grace)
         User->>Burn: claimSlashedCollateral(requestId)
-        Burn->>Burn: Pay min(par, lockedCollateral) + reward in sDAI
+        Burn->>Burn: Pay min(par, lockedCollateral) + reward in collateral
         Burn->>Burn: Release locked collateral, reduce debt
         Burn->>Burn: status = SLASHED
         Burn-->>User: emit BurnSlashed
@@ -1209,7 +1209,7 @@ sequenceDiagram
     Hub->>Liq: delegateCall liquidate(...)
 
     Note over Liq: Step 1: Harvest yield from vault
-    Liq->>Liq: syncVaultYield — move excess sDAI to yieldWarChest
+    Liq->>Liq: syncVaultYield — move excess collateral to yieldWarChest
 
     Note over Liq: Step 2: Handle in-flight burns
     loop For each burn in vault
@@ -1218,12 +1218,12 @@ sequenceDiagram
             Liq->>Hub: mintTokens(user, wsxmrAmount) — restore wsXMR
             Liq->>Liq: status = CANCELLED
         else COMMITTED
-            Liq->>Liq: _settleCommittedBurnSlash: pay user par + reward in sDAI
+            Liq->>Liq: _settleCommittedBurnSlash: pay user par + reward in collateral
             Liq->>Liq: status = SLASHED
         end
     end
 
-    Note over Liq: Step 3: Unwind all deployed Uniswap V3 positions
+    Note over Liq: Step 3: Unwind all deployed V3 DEX positions
     loop For each position
         Liq->>Router: drainPosition(tokenId, slippage, xmrPrice)
         Router-->>Liq: daiOut, wsxmrOut
@@ -1247,7 +1247,7 @@ sequenceDiagram
     Note over Liq: Step 6: Transfer assets
     Liq->>Liq: vault.liquidationNonce++, vault.mintNonce++
     Liq->>Hub: burnTokens(keeper, debtToClear)
-    Liq->>Keeper: safeTransfer(sDAI, collateralToSeize)
+    Liq->>Keeper: safeTransfer(collateral, collateralToSeize)
     Liq-->>Keeper: emit VaultLiquidated
 ```
 
@@ -1298,8 +1298,8 @@ sequenceDiagram
     participant Hub as wsXmrHub
     participant Yield as YieldFacet
     participant Oracle as OracleFacet
-    participant SDAI as sDAI Contract
-    participant Uni as Uniswap V3 Router
+    participant Collateral as collateral Contract
+    participant Uni as V3 DEX Router
 
     Note over Keeper: Pre-check: canTriggerBuyAndBurn() == true
     Note over Keeper: Conditions: cooldown elapsed, war chest > 0, spot < EMA threshold, no pending mints
@@ -1313,21 +1313,21 @@ sequenceDiagram
     Yield->>Yield: Verify spotPrice < emaPrice * EMA_TRIGGER_THRESHOLD
 
     Note over Yield: Step 2: Carve out chunk + keeper reward
-    Yield->>Yield: sDAIToSpend = warChest * BUY_CHUNK_PERCENT
-    Yield->>Yield: keeperReward = sDAIToSpend * 2%
-    Yield->>Yield: yieldWarChest -= sDAIToSpend
+    Yield->>Yield: collateralToSpend = warChest * BUY_CHUNK_PERCENT
+    Yield->>Yield: keeperReward = collateralToSpend * 2%
+    Yield->>Yield: yieldWarChest -= collateralToSpend
 
-    Note over Yield: Step 3: Redeem sDAI → DAI
-    Yield->>SDAI: redeem(sDAIForSwap, address(this), address(this))
-    SDAI-->>Yield: daiAmount
+    Note over Yield: Step 3: Redeem collateral → DAI
+    Yield->>Collateral: redeem(collateralForSwap, address(this), address(this))
+    Collateral-->>Yield: daiAmount
 
-    Note over Yield: Step 4: Swap DAI → wsXMR on Uniswap V3
-    Yield->>Yield: Approve Uniswap router for DAI
+    Note over Yield: Step 4: Swap DAI → wsXMR on V3 DEX
+    Yield->>Yield: Approve DEX router for DAI
     Yield->>Uni: exactInputSingle(DAI → wsXMR, amountIn, minOut)
     Uni-->>Yield: wsxmrBought
 
     Note over Yield: Step 5: Pay keeper reward
-    Yield->>Yield: pendingReturns[keeper][sDAI] += keeperReward
+    Yield->>Yield: pendingReturns[keeper][collateral] += keeperReward
 
     Note over Yield: Step 6: Burn purchased wsXMR
     Yield->>Hub: burnTokens(address(this), wsxmrBought)
@@ -1345,7 +1345,7 @@ sequenceDiagram
     Note over Yield: Step 8: Migrate debt index if too low
     Yield->>Yield: _migrateDebtIndex (rescale if index < 1e18)
 
-    Yield-->>Keeper: emit BuyAndBurnExecuted(sDAISpent, wsXMRBurned, keeperReward, newIndex)
+    Yield-->>Keeper: emit BuyAndBurnExecuted(collateralSpent, wsXMRBurned, keeperReward, newIndex)
 ```
 
 ## Yield Harvest Flow
