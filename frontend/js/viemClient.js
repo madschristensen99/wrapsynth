@@ -1,9 +1,17 @@
 // Viem client setup for EVM interactions
 // Uses createPublicClient and createWalletClient as required
 
-import { createPublicClient, createWalletClient, custom, http, fallback, parseAbi } from 'https://esm.sh/viem@2.7.0';
-import { gnosis } from 'https://esm.sh/viem@2.7.0/chains';
+import { createPublicClient, createWalletClient, custom, http, fallback, parseAbi, defineChain } from 'https://esm.sh/viem@2.7.0';
 import { NETWORKS, CONTRACTS, ABIS, RAW_ABIS } from './config.js';
+
+// HyperEVM mainnet (chainId 999) — not a built-in viem chain, so define it.
+export const hyperevm = defineChain({
+    id: 999,
+    name: 'HyperEVM',
+    nativeCurrency: { name: 'HYPE', symbol: 'HYPE', decimals: 18 },
+    rpcUrls: { default: { http: ['https://rpc.hyperliquid.xyz/evm'] } },
+    blockExplorers: { default: { name: 'HyperEVM Scan', url: 'https://hyperevmscan.io' } }
+});
 
 // Parse ABIs once at module level
 // Append burn resolution functions that may be missing from cached config.js
@@ -35,7 +43,7 @@ let userAddress = null;
 function getTransport() {
     const timeout = 10000; // 10s — prevent slow RPC from blocking UI
     const retryOpts = { retryCount: 1, retryDelay: 200, timeout };
-    const httpTransports = NETWORKS.gnosis.rpcUrls.map(url => http(url, retryOpts));
+    const httpTransports = NETWORKS.hyperevm.rpcUrls.map(url => http(url, retryOpts));
     // HTTP RPCs first for reads — MetaMask's internal RPC can be slow/unreliable on Gnosis.
     // MetaMask is still used for writes via walletClient.
     if (typeof window !== 'undefined' && window.ethereum) {
@@ -51,14 +59,14 @@ function getTransport() {
 export async function initializeClients() {
     // Create public client with HTTP RPCs first, MetaMask as fallback
     publicClient = createPublicClient({
-        chain: gnosis,
+        chain: hyperevm,
         transport: getTransport()
     });
 
     // Create wallet client using MetaMask if available
     if (typeof window.ethereum !== 'undefined') {
         walletClient = createWalletClient({
-            chain: gnosis,
+            chain: hyperevm,
             transport: custom(window.ethereum)
         });
     }
@@ -81,7 +89,7 @@ export async function connectWallet() {
     // Recreate wallet client with the account so writeContract works reliably
     walletClient = createWalletClient({
         account: address,
-        chain: gnosis,
+        chain: hyperevm,
         transport: custom(window.ethereum)
     });
 
@@ -101,7 +109,7 @@ async function switchToGnosisChain() {
     try {
         await window.ethereum.request({
             method: 'wallet_switchEthereumChain',
-            params: [{ chainId: '0x64' }], // 100 in hex
+            params: [{ chainId: '0x3e7' }], // 999 in hex
         });
     } catch (switchError) {
         // Chain not added, add it
@@ -109,11 +117,11 @@ async function switchToGnosisChain() {
             await window.ethereum.request({
                 method: 'wallet_addEthereumChain',
                 params: [{
-                    chainId: '0x64',
-                    chainName: NETWORKS.gnosis.name,
-                    nativeCurrency: NETWORKS.gnosis.nativeCurrency,
-                    rpcUrls: NETWORKS.gnosis.rpcUrls,
-                    blockExplorerUrls: [NETWORKS.gnosis.blockExplorer]
+                    chainId: '0x3e7',
+                    chainName: NETWORKS.hyperevm.name,
+                    nativeCurrency: NETWORKS.hyperevm.nativeCurrency,
+                    rpcUrls: NETWORKS.hyperevm.rpcUrls,
+                    blockExplorerUrls: [NETWORKS.hyperevm.blockExplorer]
                 }]
             });
         } else {
@@ -148,7 +156,7 @@ export async function ensureConnected() {
             userAddress = accounts[0];
             walletClient = createWalletClient({
                 account: userAddress,
-                chain: gnosis,
+                chain: hyperevm,
                 transport: custom(window.ethereum)
             });
             // Ensure wallet is on Gnosis chain after silent reconnect
@@ -301,7 +309,7 @@ export async function writeHubUnsafe(functionName, args = [], value = 0n, gas = 
 
     const serializedTx = await client.signTransaction({
         account,
-        chain: gnosis,
+        chain: hyperevm,
         to: CONTRACTS.hub,
         data,
         value,
@@ -310,14 +318,14 @@ export async function writeHubUnsafe(functionName, args = [], value = 0n, gas = 
         nonce,
     });
 
-    const rpcUrls = NETWORKS.gnosis.rpcUrls;
+    const rpcUrls = NETWORKS.hyperevm.rpcUrls;
     let hash;
     let lastErr;
     for (const rpcUrl of rpcUrls) {
         try {
             console.log(`[writeHubUnsafe] Trying RPC: ${rpcUrl}...`);
             const altClient = createPublicClient({
-                chain: gnosis,
+                chain: hyperevm,
                 transport: http(rpcUrl, { retryCount: 1, timeout: 15000 })
             });
             hash = await altClient.sendRawTransaction({ serializedTransaction: serializedTx });
@@ -388,7 +396,7 @@ export async function writeWsxmrUnsafe(functionName, args = [], gas = 200000n) {
 
     const serializedTx = await client.signTransaction({
         account,
-        chain: gnosis,
+        chain: hyperevm,
         to: CONTRACTS.wsxmrToken,
         data,
         gas,
@@ -396,14 +404,14 @@ export async function writeWsxmrUnsafe(functionName, args = [], gas = 200000n) {
         nonce,
     });
 
-    const rpcUrls = NETWORKS.gnosis.rpcUrls;
+    const rpcUrls = NETWORKS.hyperevm.rpcUrls;
     let hash;
     let lastErr;
     for (const rpcUrl of rpcUrls) {
         try {
             console.log(`[writeWsxmrUnsafe] Trying RPC: ${rpcUrl}...`);
             const altClient = createPublicClient({
-                chain: gnosis,
+                chain: hyperevm,
                 transport: http(rpcUrl, { retryCount: 1, timeout: 15000 })
             });
             hash = await altClient.sendRawTransaction({ serializedTransaction: serializedTx });

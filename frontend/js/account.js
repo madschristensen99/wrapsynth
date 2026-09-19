@@ -14,7 +14,7 @@ import {
 import { CONTRACTS, DECIMALS, NETWORKS } from './config.js';
 import { parseAbi, formatUnits } from 'https://esm.sh/viem@2.7.0';
 
-const EXPLORER = NETWORKS.gnosis.blockExplorer;
+const EXPLORER = NETWORKS.hyperevm.blockExplorer;
 const TRANSFER_ABI = ['event Transfer(address indexed from, address indexed to, uint256 value)'];
 
 let allHistory = [];

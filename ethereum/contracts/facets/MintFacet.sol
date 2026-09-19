@@ -8,7 +8,6 @@ import {Ed25519} from "../Ed25519.sol";
 import {CollateralLogic} from "../libraries/CollateralLogic.sol";
 import {YieldLogic} from "../libraries/YieldLogic.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
-import {GnosisAddresses} from "../GnosisAddresses.sol";
 
 contract MintFacet is wsXmrStorage, IMintFacet {
     
@@ -44,6 +43,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         if (xmrAmount < 1e4) revert ZeroAmount();
         
         Vault storage vault = _vaults[lpVault];
+        _tryRefreshOracle();
         _syncVaultYield(lpVault);
         
         // P0-2: Check griefing deposit requirement
@@ -63,8 +63,8 @@ contract MintFacet is wsXmrStorage, IMintFacet {
                 ? vault.collateralShares - vault.lockedCollateral
                 : 0;
             
-            // Convert sDAI shares to underlying DAI assets
-            uint256 availableForMint = IERC4626(GnosisAddresses.SDAI).convertToAssets(availableShares);
+            // Convert collateral shares to underlying assets
+            uint256 availableForMint = IERC4626(collateralToken).convertToAssets(availableShares);
             
             uint256 collateralValueUsd = (availableForMint * collateralPrice) / SDAI_DECIMALS;
             uint256 maxTotalDebtCapacity = (collateralValueUsd * RATIO_PRECISION) / COLLATERAL_RATIO;
@@ -231,6 +231,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         Vault storage vault = _vaults[request.lpVault];
         if (request.vaultMintNonce != vault.mintNonce) revert InvalidStatus();
         
+        _tryRefreshOracle();
         _syncVaultYield(request.lpVault);
         
         uint256 actualDebt = _denormalizeDebt(vault.normalizedDebt);
@@ -343,9 +344,9 @@ contract MintFacet is wsXmrStorage, IMintFacet {
                 && vault.collateralShares >= request.lockedCollateral) {
                 vault.lockedCollateral -= request.lockedCollateral;
                 vault.collateralShares -= request.lockedCollateral;
-                pendingReturns[request.initiator][GnosisAddresses.SDAI] += request.lockedCollateral;
+                pendingReturns[request.initiator][collateralToken] += request.lockedCollateral;
                 globalPendingSDAI += request.lockedCollateral;
-                emit ReturnQueued(request.initiator, GnosisAddresses.SDAI, request.lockedCollateral);
+                emit ReturnQueued(request.initiator, collateralToken, request.lockedCollateral);
                 emit MintCollateralSlashed(requestId, request.lockedCollateral);
             }
             if (request.griefingDeposit > 0) {
@@ -544,9 +545,9 @@ contract MintFacet is wsXmrStorage, IMintFacet {
                 }
                 if (vault.collateralShares >= request.lockedCollateral) {
                     vault.collateralShares -= request.lockedCollateral;
-                    pendingReturns[request.initiator][GnosisAddresses.SDAI] += request.lockedCollateral;
+                    pendingReturns[request.initiator][collateralToken] += request.lockedCollateral;
                     globalPendingSDAI += request.lockedCollateral;
-                    emit ReturnQueued(request.initiator, GnosisAddresses.SDAI, request.lockedCollateral);
+                    emit ReturnQueued(request.initiator, collateralToken, request.lockedCollateral);
                 }
                 emit MintCollateralSlashed(requestId, request.lockedCollateral);
             } else if (vault.lockedCollateral >= request.lockedCollateral) {
@@ -635,9 +636,9 @@ contract MintFacet is wsXmrStorage, IMintFacet {
                 }
                 if (vault.collateralShares >= request.lockedCollateral) {
                     vault.collateralShares -= request.lockedCollateral;
-                    pendingReturns[request.initiator][GnosisAddresses.SDAI] += request.lockedCollateral;
+                    pendingReturns[request.initiator][collateralToken] += request.lockedCollateral;
                     globalPendingSDAI += request.lockedCollateral;
-                    emit ReturnQueued(request.initiator, GnosisAddresses.SDAI, request.lockedCollateral);
+                    emit ReturnQueued(request.initiator, collateralToken, request.lockedCollateral);
                 }
                 emit MintCollateralSlashed(requestId, request.lockedCollateral);
             } else if (vault.lockedCollateral >= request.lockedCollateral) {
@@ -740,7 +741,8 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             vault.pendingDebt,
             globalDebtIndex,
             xmrPrice,
-            collateralPrice
+            collateralPrice,
+            collateralToken
         );
         
         if (yieldShares > 0) {
@@ -759,15 +761,15 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         return CollateralLogic.calculateRatioFromShares(
             collateralShares,
             debtAmount,
-            GnosisAddresses.SDAI,
+            collateralToken,
             collateralPrice,
             xmrPrice
         );
     }
 
-    /// @dev Convert DAI amount to sDAI shares via staticcall to the sDAI contract's convertToShares
+    /// @dev Convert underlying amount to collateral shares via the adapter's convertToShares
     function _daiToShares(uint256 daiAmount) internal view returns (uint256) {
-        (bool success, bytes memory data) = GnosisAddresses.SDAI.staticcall(
+        (bool success, bytes memory data) = collateralToken.staticcall(
             abi.encodeWithSignature("convertToShares(uint256)", daiAmount)
         );
         require(success && data.length >= 32, "convertToShares failed");

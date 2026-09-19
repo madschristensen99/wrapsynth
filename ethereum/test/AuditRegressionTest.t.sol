@@ -1,82 +1,32 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
-import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
+import {console} from "forge-std/Test.sol";
+import {HyperEVMTestBase} from "./HyperEVMTestBase.sol";
 import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
-import {SimpleOracleFacet} from "../contracts/facets/SimpleOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
 import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
 import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
-import {wsXMR} from "../contracts/wsXMR.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {GnosisAddresses} from "../contracts/GnosisAddresses.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
 import {YieldLogic} from "../contracts/libraries/YieldLogic.sol";
 import {IErrors} from "../contracts/interfaces/IErrors.sol";
 
-contract MockVerifierProxy {
-    function verify(bytes calldata) external pure returns (bool) {
-        return true;
-    }
-}
-
 /**
  * @title Audit Regression Tests
  * @notice Regression tests for C1 (reentrancy), H1 (decimal mismatch), H2 (debt index context)
- * @dev Forks Gnosis for sDAI / price oracle interactions
+ * @dev Forks HyperEVM for stataUSDe / HyperCore oracle interactions
  */
-contract AuditRegressionTest is Test {
-    wsXmrHub public hub;
-    wsXMR public wsxmr;
-    SimpleOracleFacet public oracleFacet;
-    VaultFacet public vaultFacet;
-    MintFacet public mintFacet;
-    BurnFacet public burnFacet;
-    LiquidationFacet public liquidationFacet;
-    YieldFacet public yieldFacet;
-    MockVerifierProxy public verifier;
-
-    address lp = makeAddr("lp");
-    address user = makeAddr("user");
+contract AuditRegressionTest is HyperEVMTestBase {
     address attacker = makeAddr("attacker");
     address keeper = makeAddr("keeper");
 
-    uint256 constant XMR_PRICE_8DEC = 390_00000000; // $390 in 8 decimals
-    uint256 constant DAI_PRICE_8DEC = 1_00000000;     // $1 in 8 decimals
-
-    function setUp() public {
-        string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
-        vm.createSelectFork(rpcUrl);
-
-        vm.deal(address(this), 1_000_000 ether);
-        vm.deal(lp, 100 ether);
-        vm.deal(user, 100 ether);
+    function setUp() public override {
+        super.setUp();
         vm.deal(attacker, 100 ether);
-
-        verifier = new MockVerifierProxy();
-        wsxmr = new wsXMR();
-        hub = new wsXmrHub(address(wsxmr), address(verifier));
-
-        oracleFacet = new SimpleOracleFacet(address(wsxmr), address(verifier), address(this));
-        vaultFacet = new VaultFacet(address(wsxmr), address(verifier));
-        mintFacet = new MintFacet(address(wsxmr), address(verifier));
-        burnFacet = new BurnFacet(address(wsxmr), address(verifier));
-        liquidationFacet = new LiquidationFacet(address(wsxmr), address(verifier));
-        yieldFacet = new YieldFacet(address(wsxmr), address(verifier));
-
-        hub.registerFacets(
-            address(vaultFacet),
-            address(mintFacet),
-            address(burnFacet),
-            address(liquidationFacet),
-            address(yieldFacet),
-            address(oracleFacet)
-        );
-
-        wsxmr.setHub(address(hub));
+        vm.deal(keeper, 100 ether);
 
         // Seed attacker with wsXMR for potential abuse
         deal(address(wsxmr), attacker, 1_000_000e8);
@@ -97,12 +47,12 @@ contract AuditRegressionTest is Test {
 
     function test_C1_DirectCallToTransferAsset_Reverts() public {
         vm.expectRevert(IwsXmrHub.Unauthorized.selector);
-        hub.transferAsset(GnosisAddresses.SDAI, attacker, 1000);
+        hub.transferAsset(address(stata), attacker, 1000);
     }
 
     function test_C1_DirectCallToApproveAsset_Reverts() public {
         vm.expectRevert(IwsXmrHub.Unauthorized.selector);
-        hub.approveAsset(GnosisAddresses.SDAI, attacker, 1000);
+        hub.approveAsset(address(stata), attacker, 1000);
     }
 
     /// @notice C1-2: Transient flag is restored after delegatecall, preventing persistence
@@ -120,7 +70,7 @@ contract AuditRegressionTest is Test {
 
         // After the call, a direct call to a privileged function must still revert
         vm.expectRevert(IwsXmrHub.Unauthorized.selector);
-        hub.transferAsset(GnosisAddresses.SDAI, attacker, 1);
+        hub.transferAsset(address(stata), attacker, 1);
     }
 
     /// @notice C1-3: cancelMint no longer pushes ETH; it queues to pendingReturns
@@ -139,7 +89,7 @@ contract AuditRegressionTest is Test {
         bytes32 reqId = MintFacet(address(hub)).initiateMint{value: griefingDeposit}(lp, user, 50000000000, commitment, bytes32(uint256(0xdeadbeef)));
 
         // Warp past timeout
-        vm.roll(block.number + 1000);
+        vm.roll(block.number + 5000);
 
         uint256 pendingBefore = _getPendingReturns(user, address(0));
         assertEq(pendingBefore, 0, "No pending returns before cancel");
@@ -389,7 +339,7 @@ contract AuditRegressionTest is Test {
 
         // Raise XMR price so A is underwater (higher XMR price increases debt value)
         // At $390, vault A is at ~160% CR. At $2000, debt USD ≈ 80, CR ≈ 62% < 120%.
-        SimpleOracleFacet(address(hub)).updatePrices(2000_00000000, DAI_PRICE_8DEC);
+        _setXmrPrice8dec(2000_00000000);
 
         // Verify A is liquidatable
         // Use _hubView because hub fallback uses TSTORE which fails in STATICCALL
@@ -501,31 +451,10 @@ contract AuditRegressionTest is Test {
     }
 
     // ========== H-3: Staleness-scaled deviation guard recovery ==========
-
-    function test_H3_DeviationGuard_RevertsWhenFresh_AllowsWhenStale() public {
-        address updater = makeAddr("updater");
-        // Set a non-deployer price updater so deviation guard is not bypassed
-        SimpleOracleFacet(address(hub)).setPriceUpdater(updater);
-
-        // Set initial price (deployer call bypasses guard)
-        SimpleOracleFacet(address(hub)).updatePrices(390_00000000, DAI_PRICE_8DEC);
-
-        // +30% jump to $507 immediately — should revert (fresh price, non-deployer)
-        vm.prank(updater);
-        vm.expectRevert();
-        SimpleOracleFacet(address(hub)).updatePrices(507_00000000, DAI_PRICE_8DEC);
-
-        // Warp 95 seconds (>90s threshold)
-        vm.warp(block.timestamp + 95);
-
-        // Same +30% jump now succeeds because price is stale
-        vm.prank(updater);
-        SimpleOracleFacet(address(hub)).updatePrices(507_00000000, DAI_PRICE_8DEC);
-
-        bytes memory priceResult = _hubView(abi.encodeWithSelector(SimpleOracleFacet.getXmrPrice.selector));
-        uint256 price = abi.decode(priceResult, (uint256));
-        assertEq(price, 507_00000000 * 1e10, "H-3: stale oracle should accept re-anchor price");
-    }
+    // NOTE: the H-3 deviation-guard test was SimpleOracleFacet-specific (a push-oracle
+    // anti-manipulation guard on the updater's price jumps). The HyperCore oracle reads
+    // trustless L1 precompile prices — there is no updater to manipulate, so the guard
+    // and its regression test do not apply on HyperEVM.
 
     /// @notice Regression: maxMintBps must subtract lockedCollateral before computing capacity
     /// @dev Prior fix used total collateralShares for maxMintBps, which could pass while CR check
@@ -642,18 +571,18 @@ contract AuditRegressionTest is Test {
     // ========== Helpers ==========
 
     function _updatePrices() internal {
-        SimpleOracleFacet(address(hub)).updatePrices(XMR_PRICE_8DEC, DAI_PRICE_8DEC);
+        _setXmrPrice8dec(XMR_PRICE_8DEC);
     }
 
     function _createVaultAndDeposit(address who, uint256 amount) internal {
         vm.startPrank(who);
         VaultFacet(address(hub)).createVault();
         vm.stopPrank();
-        // Directly give sDAI and deposit shares (avoids xDAI wrapping issues on fork)
-        deal(GnosisAddresses.SDAI, who, amount);
+        // Deal USDe and deposit as collateral (wraps to stataUSDe shares)
+        deal(USDE, who, amount);
         vm.startPrank(who);
-        IERC20(GnosisAddresses.SDAI).approve(address(hub), amount);
-        VaultFacet(address(hub)).depositShares(amount);
+        IERC20(USDE).approve(address(hub), amount);
+        VaultFacet(address(hub)).depositCollateral(amount);
         vm.stopPrank();
     }
 

@@ -5,7 +5,7 @@ import {Test, console} from "forge-std/Test.sol";
 import {CollateralLogic} from "../contracts/libraries/CollateralLogic.sol";
 import {BurnLogic} from "../contracts/libraries/BurnLogic.sol";
 import {YieldLogic} from "../contracts/libraries/YieldLogic.sol";
-import {GnosisAddresses} from "../contracts/GnosisAddresses.sol";
+import {StataUSDe} from "../contracts/StataUSDe.sol";
 
 contract MockVerifierProxy {
     function verify(bytes calldata) external pure returns (bool) {
@@ -101,25 +101,32 @@ contract LibraryWrapper {
         uint256 collateralShares,
         uint256 debtAmount,
         uint256 collateralPrice,
-        uint256 xmrPrice
+        uint256 xmrPrice,
+        address collateralToken
     ) external view returns (uint256) {
         return YieldLogic.calculateVaultCollateralRatio(
-            collateralShares, debtAmount, collateralPrice, xmrPrice
+            collateralShares, debtAmount, collateralPrice, xmrPrice, collateralToken
         );
     }
 }
 
 contract LibraryCoverageTest is Test {
     LibraryWrapper public wrapper;
+    StataUSDe public stata;
+
+    address constant USDE = 0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34;
+    address constant HYPERLEND_POOL = 0x00A89d7a5A02160f20150EbEA7a2b5E4879A1A8b;
+    address constant HYPERLEND_ATOKEN = 0x333819c04975554260AaC119948562a0E24C2bd6;
 
     uint256 constant XMR_PRICE_18DEC = 390 ether;
     uint256 constant DAI_PRICE_18DEC = 1 ether;
     uint256 constant WSXMR_DECIMALS = 1e8;
 
     function setUp() public {
-        string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
+        string memory rpcUrl = vm.envOr("HYPEREVM_RPC_URL", string("https://rpc.hyperliquid.xyz/evm"));
         vm.createSelectFork(rpcUrl);
         wrapper = new LibraryWrapper();
+        stata = new StataUSDe(HYPERLEND_POOL, HYPERLEND_ATOKEN, USDE);
     }
 
     // ========== CollateralLogic.calculateCollateralRatio (pure) ==========
@@ -183,15 +190,15 @@ contract LibraryCoverageTest is Test {
 
     function test_CalculateRatioFromShares_ZeroDebt() public {
         uint256 ratio = wrapper.calculateRatioFromShares(
-            100 ether, 0, GnosisAddresses.SDAI, DAI_PRICE_18DEC, XMR_PRICE_18DEC
+            100 ether, 0, address(stata), DAI_PRICE_18DEC, XMR_PRICE_18DEC
         );
         assertEq(ratio, type(uint256).max, "zero debt should return max");
     }
 
     function test_CalculateRatioFromShares_WithDebt() public {
-        // 100 sDAI shares (~104.5 DAI at current rate) vs 1 wsXMR debt (1e8)
+        // 100 stataUSDe shares vs 1 wsXMR debt (1e8)
         uint256 ratio = wrapper.calculateRatioFromShares(
-            100 ether, 1e8, GnosisAddresses.SDAI, DAI_PRICE_18DEC, XMR_PRICE_18DEC
+            100 ether, 1e8, address(stata), DAI_PRICE_18DEC, XMR_PRICE_18DEC
         );
         assertGt(ratio, 0, "ratio should be positive");
         assertLt(ratio, type(uint256).max, "ratio should be finite");
@@ -201,14 +208,14 @@ contract LibraryCoverageTest is Test {
 
     function test_CalculateVaultCRWithDeployment_ZeroDebt() public {
         uint256 ratio = wrapper.calculateVaultCRWithDeployment(
-            100 ether, 50 ether, 50 ether, 0, GnosisAddresses.SDAI, DAI_PRICE_18DEC, XMR_PRICE_18DEC
+            100 ether, 50 ether, 50 ether, 0, address(stata), DAI_PRICE_18DEC, XMR_PRICE_18DEC
         );
         assertEq(ratio, type(uint256).max, "zero debt should return max");
     }
 
     function test_CalculateVaultCRWithDeployment_WithDebt() public {
         uint256 ratio = wrapper.calculateVaultCRWithDeployment(
-            100 ether, 50 ether, 50 ether, 1e8, GnosisAddresses.SDAI, DAI_PRICE_18DEC, XMR_PRICE_18DEC
+            100 ether, 50 ether, 50 ether, 1e8, address(stata), DAI_PRICE_18DEC, XMR_PRICE_18DEC
         );
         assertGt(ratio, 0, "ratio should be positive");
         assertLt(ratio, type(uint256).max, "ratio should be finite");
@@ -251,14 +258,14 @@ contract LibraryCoverageTest is Test {
 
     function test_CalculateVaultCollateralRatio_ZeroDebt() public {
         uint256 ratio = wrapper.calculateVaultCollateralRatio(
-            100 ether, 0, DAI_PRICE_18DEC, XMR_PRICE_18DEC
+            100 ether, 0, DAI_PRICE_18DEC, XMR_PRICE_18DEC, address(stata)
         );
         assertEq(ratio, type(uint256).max, "zero debt should return max");
     }
 
     function test_CalculateVaultCollateralRatio_WithDebt() public {
         uint256 ratio = wrapper.calculateVaultCollateralRatio(
-            100 ether, 1e8, DAI_PRICE_18DEC, XMR_PRICE_18DEC
+            100 ether, 1e8, DAI_PRICE_18DEC, XMR_PRICE_18DEC, address(stata)
         );
         assertGt(ratio, 0, "ratio should be positive");
         assertLt(ratio, type(uint256).max, "ratio should be finite");

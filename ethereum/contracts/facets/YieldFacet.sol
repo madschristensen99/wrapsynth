@@ -10,7 +10,6 @@ import {IwsXmrHub} from "../interfaces/core/IwsXmrHub.sol";
 import {ISwapRouter} from "../interfaces/external/ISwapRouter.sol";
 import {ISavingsDAI} from "../interfaces/external/ISavingsDAI.sol";
 import {YieldLogic} from "../libraries/YieldLogic.sol";
-import {GnosisAddresses} from "../GnosisAddresses.sol";
 
 contract YieldFacet is wsXmrStorage, IYieldFacet {
     using SafeERC20 for IERC20;
@@ -34,6 +33,7 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         if (debtWipeBatchStart != 0) revert WipeInProgress();
         if (migrationBatchStart != 0) revert MigrationInProgress();
         
+        _tryRefreshOracle();
         uint256 spotPrice = _getXmrPriceFromStorage();
         uint256 emaPrice = IOracleFacet(address(this)).getXmrEmaPrice();
         
@@ -49,30 +49,29 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         yieldWarChest -= sDAIToSpend;
         lastBuyTimestamp = block.timestamp;
 
-        uint256 daiAmount = ISavingsDAI(GnosisAddresses.SDAI).redeem(sDAIForSwap, address(this), address(this));
+        uint256 daiAmount = ISavingsDAI(collateralToken).redeem(sDAIForSwap, address(this), address(this));
 
-        IERC20(GnosisAddresses.XDAI).forceApprove(GnosisAddresses.UNISWAP_V3_ROUTER, daiAmount);
+        IERC20(underlyingToken).forceApprove(swapRouter, daiAmount);
 
         uint256 minWsxmr = (daiAmount * PRICE_PRECISION * (10000 - MEV_SLIPPAGE_BPS)) / (spotPrice * 10000);
 
         ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
-            tokenIn: GnosisAddresses.XDAI,
+            tokenIn: underlyingToken,
             tokenOut: wsxmrToken,
             fee: poolFeeTier,
             recipient: address(this),
-            deadline: block.timestamp,
             amountIn: daiAmount,
             amountOutMinimum: minWsxmr,
             sqrtPriceLimitX96: 0
         });
 
-        uint256 wsxmrBought = ISwapRouter(GnosisAddresses.UNISWAP_V3_ROUTER).exactInputSingle(params);
+        uint256 wsxmrBought = ISwapRouter(swapRouter).exactInputSingle(params);
 
-        // Queue keeper reward in sDAI shares (still backed, never redeemed to xDAI)
+        // Queue keeper reward in collateral shares (still backed, never redeemed)
         if (keeperReward > 0) {
-            pendingReturns[msg.sender][GnosisAddresses.SDAI] += keeperReward;
+            pendingReturns[msg.sender][collateralToken] += keeperReward;
             globalPendingSDAI += keeperReward;
-            emit ReturnQueued(msg.sender, GnosisAddresses.SDAI, keeperReward);
+            emit ReturnQueued(msg.sender, collateralToken, keeperReward);
         }
         
         IwsXmrHub(address(this)).burnTokens(address(this), wsxmrBought);
@@ -182,7 +181,8 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
             actualDebt,
             vault.pendingDebt,
             xmrPrice,
-            collateralPrice
+            collateralPrice,
+            collateralToken
         );
         
         if (yieldShares > 0) {
@@ -243,7 +243,8 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
             actualDebt,
             pendingDebt,
             xmrPrice,
-            collateralPrice
+            collateralPrice,
+            collateralToken
         );
     }
     

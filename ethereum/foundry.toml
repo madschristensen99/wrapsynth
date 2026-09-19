@@ -15,9 +15,13 @@ via_ir = true
 # Enable FFI for fetching real prices in E2E tests
 ffi = true
 
+# Allow deploy scripts to write the manifest to ./deployments
+fs_permissions = [{ access = "read-write", path = "./deployments" }]
+
 # RPC endpoints
 [rpc_endpoints]
 gnosis = "${GNOSIS_RPC_URL}"
+hyperevm = "${HYPEREVM_RPC_URL}"
 
 # Etherscan API keys for verification
 [etherscan]

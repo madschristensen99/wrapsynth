@@ -8,7 +8,6 @@ import {IwsXmrHub} from "../interfaces/core/IwsXmrHub.sol";
 import {IwsXMR} from "../interfaces/core/IwsXMR.sol";
 import {IwsXmrLiquidityRouter} from "../interfaces/router/IwsXmrLiquidityRouter.sol";
 import {VaultFacet} from "../facets/VaultFacet.sol";
-import {GnosisAddresses} from "../GnosisAddresses.sol";
 import {YieldLogic} from "../libraries/YieldLogic.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
@@ -192,6 +191,29 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         liquidityRouter = router;
         emit LiquidityRouterSet(router);
     }
+
+    /// @notice Configure HyperEVM external dependencies. Callable once per
+    ///         deployment phase by the deployer before lockDeployer().
+    /// @param _collateralToken StataUSDe adapter (ERC-4626 share token over
+    ///        HyperLend USDe aToken) — the asset vault collateral is denominated in
+    /// @param _underlyingToken USDe — the asset users deposit
+    /// @param _swapRouter HyperSwap SwapRouter02 for buy-and-burn swaps
+    /// @param _xmrPerpIndex HyperCore native XMR perp index (224 mainnet / 202 testnet)
+    function setExternalAddresses(
+        address _collateralToken,
+        address _underlyingToken,
+        address _swapRouter,
+        uint32 _xmrPerpIndex
+    ) external onlyDeployer {
+        if (_collateralToken == address(0) || _underlyingToken == address(0)) revert ZeroAddress();
+        collateralToken = _collateralToken;
+        underlyingToken = _underlyingToken;
+        swapRouter = _swapRouter;
+        xmrPerpIndex = _xmrPerpIndex + 1; // stored +1 so 0 means "unset"
+        emit ExternalAddressesSet(_collateralToken, _underlyingToken, _swapRouter, _xmrPerpIndex);
+    }
+
+    event ExternalAddressesSet(address collateralToken, address underlyingToken, address swapRouter, uint32 xmrPerpIndex);
     
     // ========== FACET OPERATIONS ==========
     
@@ -267,8 +289,8 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
             ? vault.collateralShares - vault.lockedCollateral
             : 0;
 
-        // Convert unlocked sDAI shares to DAI
-        (bool success, bytes memory data) = GnosisAddresses.SDAI.staticcall(
+        // Convert unlocked collateral shares to underlying
+        (bool success, bytes memory data) = collateralToken.staticcall(
             abi.encodeWithSignature("convertToAssets(uint256)", availableShares)
         );
         require(success && data.length >= 32, "convertToAssets failed");
@@ -325,7 +347,8 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
                 actualDebt,
                 vault.pendingDebt,
                 xmrPrice,
-                collateralPrice
+                collateralPrice,
+                collateralToken
             );
             collateralShares -= yieldShares;
         }
@@ -336,8 +359,8 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
             : 0;
         if (availableCollateral == 0) return 0;
 
-        // Convert available shares to DAI, then to USD
-        uint256 collateralAmount = IERC4626(GnosisAddresses.SDAI).convertToAssets(availableCollateral);
+        // Convert available shares to underlying, then to USD
+        uint256 collateralAmount = IERC4626(collateralToken).convertToAssets(availableCollateral);
         uint256 collateralValueUsd = (collateralAmount * collateralPrice) / SDAI_DECIMALS;
 
         // Current debt value in USD

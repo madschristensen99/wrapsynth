@@ -1,80 +1,28 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
-import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
+import {console} from "forge-std/Test.sol";
+import {HyperEVMTestBase} from "./HyperEVMTestBase.sol";
 import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
-import {SimpleOracleFacet} from "../contracts/facets/SimpleOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
 import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
-import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
-import {wsXMR} from "../contracts/wsXMR.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {GnosisAddresses} from "../contracts/GnosisAddresses.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
 import {IErrors} from "../contracts/interfaces/IErrors.sol";
-
-contract MockVerifierProxy {
-    function verify(bytes calldata) external pure returns (bool) {
-        return true;
-    }
-}
 
 /**
  * @title Burn Solvency Invariant Tests
  * @notice Regression tests for burn settlement accounting (Fix 1 + Fix 2)
- * @dev Forks Gnosis for sDAI interactions
+ * @dev Forks HyperEVM for stataUSDe (HyperLend aToken) interactions
  */
-contract BurnSolvencyInvariantTest is Test {
-    wsXmrHub public hub;
-    wsXMR public wsxmr;
-    SimpleOracleFacet public oracleFacet;
-    VaultFacet public vaultFacet;
-    MintFacet public mintFacet;
-    BurnFacet public burnFacet;
-    LiquidationFacet public liquidationFacet;
-    YieldFacet public yieldFacet;
-    MockVerifierProxy public verifier;
-
-    address lp = makeAddr("lp");
-    address user = makeAddr("user");
+contract BurnSolvencyInvariantTest is HyperEVMTestBase {
     address liquidator = makeAddr("liquidator");
 
-    uint256 constant XMR_PRICE_8DEC = 390_00000000; // $390 in 8 decimals
-    uint256 constant DAI_PRICE_8DEC = 1_00000000;   // $1 in 8 decimals
-
-    function setUp() public {
-        string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
-        vm.createSelectFork(rpcUrl);
-
-        vm.deal(address(this), 1_000_000 ether);
-        vm.deal(lp, 1000 ether);
-        vm.deal(user, 1000 ether);
+    function setUp() public override {
+        super.setUp();
         vm.deal(liquidator, 1000 ether);
-
-        verifier = new MockVerifierProxy();
-        wsxmr = new wsXMR();
-        hub = new wsXmrHub(address(wsxmr), address(verifier));
-
-        oracleFacet = new SimpleOracleFacet(address(wsxmr), address(verifier), address(this));
-        vaultFacet = new VaultFacet(address(wsxmr), address(verifier));
-        mintFacet = new MintFacet(address(wsxmr), address(verifier));
-        burnFacet = new BurnFacet(address(wsxmr), address(verifier));
-        liquidationFacet = new LiquidationFacet(address(wsxmr), address(verifier));
-        yieldFacet = new YieldFacet(address(wsxmr), address(verifier));
-
-        hub.registerFacets(
-            address(vaultFacet),
-            address(mintFacet),
-            address(burnFacet),
-            address(liquidationFacet),
-            address(yieldFacet),
-            address(oracleFacet)
-        );
-
-        wsxmr.setHub(address(hub));
     }
 
     // ========== FIX 1: SOLVENCY INVARIANTS ==========
@@ -154,7 +102,7 @@ contract BurnSolvencyInvariantTest is Test {
         uint256 lockedBefore = vaultBefore.lockedCollateral;
 
         // Warp past deadline
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
 
         vm.prank(user);
         BurnFacet(address(hub)).claimSlashedCollateral(burnId);
@@ -164,7 +112,7 @@ contract BurnSolvencyInvariantTest is Test {
         uint256 lockedAfter = vaultAfter.lockedCollateral;
 
         wsXmrStorage.BurnRequest memory req = _getBurnRequest(burnId);
-        uint256 userPayout = _getPendingReturns(user, GnosisAddresses.SDAI);
+        uint256 userPayout = _getPendingReturns(user, address(stata));
 
         assertEq(sharesBefore - sharesAfter, userPayout, "collateralShares must drop by userPayout");
         assertEq(lockedBefore - lockedAfter, req.lockedCollateral + req.rewardCollateral, "lockedCollateral must drop by total reservation");
@@ -189,7 +137,7 @@ contract BurnSolvencyInvariantTest is Test {
         uint256 lockedBefore = vaultBefore.lockedCollateral;
 
         // Warp past request timeout
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
 
         vm.prank(user);
         BurnFacet(address(hub)).forceSettleBurn(burnId);
@@ -199,7 +147,7 @@ contract BurnSolvencyInvariantTest is Test {
         uint256 lockedAfter = vaultAfter.lockedCollateral;
 
         wsXmrStorage.BurnRequest memory req = _getBurnRequest(burnId);
-        uint256 userBase = _getPendingReturns(user, GnosisAddresses.SDAI);
+        uint256 userBase = _getPendingReturns(user, address(stata));
 
         assertEq(sharesBefore - sharesAfter, userBase, "collateralShares must drop by userBase");
         assertEq(lockedBefore - lockedAfter, req.lockedCollateral + req.rewardCollateral, "lockedCollateral must drop by total reservation");
@@ -224,7 +172,7 @@ contract BurnSolvencyInvariantTest is Test {
         uint256 lockedBefore = vaultBefore.lockedCollateral;
 
         // Warp past request timeout
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
 
         vm.prank(user);
         BurnFacet(address(hub)).abortBurn(burnId);
@@ -273,7 +221,7 @@ contract BurnSolvencyInvariantTest is Test {
         uint256 lockedBefore = vaultBefore.lockedCollateral;
 
         // Warp past proposal timeout
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
 
         vm.prank(lp);
         BurnFacet(address(hub)).resolveDeclinedProposal(burnId, userSecret);
@@ -316,7 +264,7 @@ contract BurnSolvencyInvariantTest is Test {
         BurnFacet(address(hub)).confirmMoneroLock(burnId);
 
         // Warp past deadline
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
 
         wsXmrStorage.Vault memory vaultBeforeSlash = _getVault(lp);
         uint256 availableBeforeSlash = vaultBeforeSlash.collateralShares - vaultBeforeSlash.lockedCollateral;
@@ -324,7 +272,7 @@ contract BurnSolvencyInvariantTest is Test {
         vm.prank(user);
         BurnFacet(address(hub)).claimSlashedCollateral(burnId);
 
-        uint256 userPayout = _getPendingReturns(user, GnosisAddresses.SDAI);
+        uint256 userPayout = _getPendingReturns(user, address(stata));
         assertGt(userPayout, 0, "User should have received payout");
 
         wsXmrStorage.Vault memory vaultAfterSlash = _getVault(lp);
@@ -365,7 +313,7 @@ contract BurnSolvencyInvariantTest is Test {
 
     /// @notice Liquidation of a vault with a COMMITTED burn must settle it and reduce collateralShares.
     function test_F1_Liquidation_SettlesCommittedBurn_ReducesCollateralShares() public {
-        _createVaultAndDeposit(lp, 150 ether);
+        _createVaultAndDeposit(lp, 300 ether);
         _updatePrices();
         _configureVault(lp);
 
@@ -393,8 +341,9 @@ contract BurnSolvencyInvariantTest is Test {
         // Must be enough to cover the debt being liquidated (increased collateral means more debt to clear)
         _performMint(lp, liquidator, 100_000000000);
 
-        // Depeg DAI to $0.20 to make vault liquidatable (burn reduced debt but collateral still matters)
-        SimpleOracleFacet(address(hub)).updatePrices(XMR_PRICE_8DEC, 20000000); // $0.20 DAI (8 decimals)
+        // Pump XMR to $3000 to make vault liquidatable (collateral price is
+        // fixed at $1 on HyperEVM — debt value rises instead of collateral depeg)
+        _setXmrPrice8dec(3000_00000000);
 
         wsXmrStorage.Vault memory vaultBefore = _getVault(lp);
         uint256 sharesBefore = vaultBefore.collateralShares;
@@ -410,7 +359,7 @@ contract BurnSolvencyInvariantTest is Test {
         wsXmrStorage.BurnRequest memory req = _getBurnRequest(burnId);
         assertEq(uint256(req.status), uint256(wsXmrStorage.BurnStatus.SLASHED), "Burn should be settled as SLASHED");
 
-        uint256 userPayout = _getPendingReturns(user, GnosisAddresses.SDAI);
+        uint256 userPayout = _getPendingReturns(user, address(stata));
         assertGt(userPayout, 0, "User should have received payout from settled burn");
 
         // collateralShares should have decreased by at least userPayout (plus any seizure)
@@ -432,7 +381,7 @@ contract BurnSolvencyInvariantTest is Test {
         bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
 
         // Roll past the request timeout
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
 
         // LP should NOT be able to propose after deadline
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
@@ -452,7 +401,7 @@ contract BurnSolvencyInvariantTest is Test {
         wsXmrStorage.BurnRequest memory req = _getBurnRequest(burnId);
         assertEq(uint256(req.status), uint256(wsXmrStorage.BurnStatus.SLASHED), "Should be SLASHED after force settle");
 
-        uint256 userBase = _getPendingReturns(user, GnosisAddresses.SDAI);
+        uint256 userBase = _getPendingReturns(user, address(stata));
         assertGt(userBase, 0, "User should receive par value");
     }
 
@@ -511,14 +460,14 @@ contract BurnSolvencyInvariantTest is Test {
         vm.prank(user);
         BurnFacet(address(hub)).confirmMoneroLock(burnId);
 
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
 
         wsXmrStorage.Vault memory vaultBefore = _getVault(lp);
 
         vm.prank(user);
         BurnFacet(address(hub)).claimSlashedCollateral(burnId);
 
-        uint256 userPayout = _getPendingReturns(user, GnosisAddresses.SDAI);
+        uint256 userPayout = _getPendingReturns(user, address(stata));
 
         // The userBase portion of payout should not exceed the locked base (it was computed from same par)
         assertLe(userPayout, req.lockedCollateral + req.rewardCollateral, "Payout must not exceed total lock");
@@ -548,29 +497,29 @@ contract BurnSolvencyInvariantTest is Test {
 
         uint256 pendingSDAI = hub.globalPendingSDAI();
         uint256 warChest = hub.yieldWarChest();
-        uint256 hubBalance = IERC20(GnosisAddresses.SDAI).balanceOf(address(hub));
+        uint256 hubBalance = IERC20(address(stata)).balanceOf(address(hub));
 
         assertEq(
             totalVaultShares + pendingSDAI + warChest,
             hubBalance,
-            "Solvency invariant: vault shares + pending + war chest == hub sDAI balance"
+            "Solvency invariant: vault shares + pending + war chest == hub stataUSDe balance"
         );
     }
 
     // ========== HELPERS ==========
 
     function _updatePrices() internal {
-        SimpleOracleFacet(address(hub)).updatePrices(XMR_PRICE_8DEC, DAI_PRICE_8DEC);
+        _setXmrPrice8dec(XMR_PRICE_8DEC);
     }
 
     function _createVaultAndDeposit(address who, uint256 amount) internal {
         vm.startPrank(who);
         VaultFacet(address(hub)).createVault();
         vm.stopPrank();
-        deal(GnosisAddresses.SDAI, who, amount);
+        deal(USDE, who, amount);
         vm.startPrank(who);
-        IERC20(GnosisAddresses.SDAI).approve(address(hub), amount);
-        VaultFacet(address(hub)).depositShares(amount);
+        IERC20(USDE).approve(address(hub), amount);
+        VaultFacet(address(hub)).depositCollateral(amount);
         vm.stopPrank();
     }
 
@@ -643,10 +592,6 @@ contract BurnSolvencyInvariantTest is Test {
     }
 
     function _daiToShares(uint256 daiAmount) internal view returns (uint256) {
-        (bool success, bytes memory data) = GnosisAddresses.SDAI.staticcall(
-            abi.encodeWithSignature("convertToShares(uint256)", daiAmount)
-        );
-        require(success && data.length >= 32, "convertToShares failed");
-        return abi.decode(data, (uint256));
+        return stata.convertToShares(daiAmount);
     }
 }

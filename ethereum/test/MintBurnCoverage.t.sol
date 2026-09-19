@@ -1,81 +1,26 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
-import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
+import {console} from "forge-std/Test.sol";
+import {HyperEVMTestBase} from "./HyperEVMTestBase.sol";
 import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
-import {SimpleOracleFacet} from "../contracts/facets/SimpleOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
 import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
 import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
-import {wsXMR} from "../contracts/wsXMR.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {GnosisAddresses} from "../contracts/GnosisAddresses.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
 import {IErrors} from "../contracts/interfaces/IErrors.sol";
 import {IBurnOperations} from "../contracts/interfaces/swap/IBurnOperations.sol";
 import {IMintOperations} from "../contracts/interfaces/swap/IMintOperations.sol";
 
-contract MockVerifierProxy {
-    function verify(bytes calldata) external pure returns (bool) {
-        return true;
-    }
-}
-
-contract MintBurnCoverageTest is Test {
-    wsXmrHub public hub;
-    wsXMR public wsxmr;
-    SimpleOracleFacet public oracleFacet;
-    VaultFacet public vaultFacet;
-    MintFacet public mintFacet;
-    BurnFacet public burnFacet;
-    LiquidationFacet public liquidationFacet;
-    YieldFacet public yieldFacet;
-    MockVerifierProxy public verifier;
-
-    address lp = makeAddr("lp");
-    address user = makeAddr("user");
+contract MintBurnCoverageTest is HyperEVMTestBase {
     address attacker = makeAddr("attacker");
-    address priceUpdater = makeAddr("priceUpdater");
 
-    uint256 constant XMR_PRICE_8DEC = 390_00000000;
-    uint256 constant DAI_PRICE_8DEC = 1_00000000;
-
-    function setUp() public {
-        string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
-        vm.createSelectFork(rpcUrl);
-
-        vm.deal(address(this), 1_000_000 ether);
-        vm.deal(lp, 1000 ether);
-        vm.deal(user, 1000 ether);
+    function setUp() public override {
+        super.setUp();
         vm.deal(attacker, 1000 ether);
-
-        verifier = new MockVerifierProxy();
-        wsxmr = new wsXMR();
-        hub = new wsXmrHub(address(wsxmr), address(verifier));
-
-        oracleFacet = new SimpleOracleFacet(address(wsxmr), address(verifier), address(this));
-        vaultFacet = new VaultFacet(address(wsxmr), address(verifier));
-        mintFacet = new MintFacet(address(wsxmr), address(verifier));
-        burnFacet = new BurnFacet(address(wsxmr), address(verifier));
-        liquidationFacet = new LiquidationFacet(address(wsxmr), address(verifier));
-        yieldFacet = new YieldFacet(address(wsxmr), address(verifier));
-
-        hub.registerFacets(
-            address(vaultFacet),
-            address(mintFacet),
-            address(burnFacet),
-            address(liquidationFacet),
-            address(yieldFacet),
-            address(oracleFacet)
-        );
-
-        wsxmr.setHub(address(hub));
-
-        SimpleOracleFacet(address(hub)).setPriceUpdater(priceUpdater);
-        SimpleOracleFacet(address(hub)).updatePrices(XMR_PRICE_8DEC, DAI_PRICE_8DEC);
 
         _createVaultAndDeposit(lp, 100 ether);
         _configureVault(lp);
@@ -193,7 +138,7 @@ contract MintBurnCoverageTest is Test {
         uint256 minted = _mintForUser(user, lp);
         bytes32 burnId = _requestBurn(user, lp, minted);
 
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         vm.prank(user);
         BurnFacet(address(hub)).abortBurn(burnId);
 
@@ -228,10 +173,10 @@ contract MintBurnCoverageTest is Test {
         _provideLPKey(lp, reqId);
         _setMintReady(lp, reqId);
 
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
-        vm.roll(block.number + 500);
+        vm.roll(block.number + 2500);
 
         uint256 pendingBefore = _getPendingReturns(user, address(0));
         MintFacet(address(hub)).sweepUnclaimedExpiredMint(reqId);
@@ -253,14 +198,14 @@ contract MintBurnCoverageTest is Test {
         assertGt(req.lockedCollateral, 0, "collateral should be locked at setMintReady");
         assertGt(req.xmrPriceAtReady, 0, "xmrPriceAtReady should be set");
 
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
-        vm.roll(block.number + 500);
+        vm.roll(block.number + 2500);
 
-        uint256 sDAIPendingBefore = _getPendingReturns(user, GnosisAddresses.SDAI);
+        uint256 sDAIPendingBefore = _getPendingReturns(user, address(stata));
         MintFacet(address(hub)).sweepUnclaimedExpiredMint(reqId);
-        uint256 sDAIPendingAfter = _getPendingReturns(user, GnosisAddresses.SDAI);
+        uint256 sDAIPendingAfter = _getPendingReturns(user, address(stata));
 
         assertGt(sDAIPendingAfter, sDAIPendingBefore, "user should get slashed sDAI collateral");
         assertEq(sDAIPendingAfter - sDAIPendingBefore, req.lockedCollateral, "slashed amount should equal locked collateral");
@@ -288,11 +233,11 @@ contract MintBurnCoverageTest is Test {
         _provideLPKey(lp, reqId); // -> KEY_PROVIDED, reserves pendingDebt + locks key bond
 
         wsXmrStorage.Vault memory vaultBefore = _getVault(lp);
-        uint256 userSdaiBefore = _getPendingReturns(user, GnosisAddresses.SDAI);
+        uint256 userSdaiBefore = _getPendingReturns(user, address(stata));
         uint256 userEthBefore = _getPendingReturns(user, address(0));
 
         // Expire the mint, then cancel — user never sent XMR.
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
         wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
@@ -303,7 +248,7 @@ contract MintBurnCoverageTest is Test {
         wsXmrStorage.Vault memory vaultAfter = _getVault(lp);
         assertEq(vaultAfter.collateralShares, vaultBefore.collateralShares, "vault collateral must be untouched");
         assertEq(vaultAfter.lockedCollateral, vaultBefore.lockedCollateral, "bond stays locked through cancel");
-        assertEq(_getPendingReturns(user, GnosisAddresses.SDAI), userSdaiBefore, "no sDAI slash payout");
+        assertEq(_getPendingReturns(user, address(stata)), userSdaiBefore, "no sDAI slash payout");
         assertEq(_getPendingReturns(user, address(0)), userEthBefore, "deposit parked, not returned");
         assertEq(vaultAfter.pendingDebt, vaultBefore.pendingDebt - req.wsxmrAmount, "reserved debt released");
     }
@@ -313,7 +258,7 @@ contract MintBurnCoverageTest is Test {
     function test_CancelMint_KeyProvided_AnySecretAccepted() public {
         bytes32 reqId = _initiateMint(user, lp);
         _provideLPKey(lp, reqId);
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
 
         // A garbage secret no longer reverts — it is ignored entirely.
         MintFacet(address(hub)).cancelMint(reqId, bytes32(uint256(0x9999)));
@@ -337,7 +282,7 @@ contract MintBurnCoverageTest is Test {
         vm.expectRevert(IMintOperations.TimeoutNotReached.selector);
         MintFacet(address(hub)).abandonKeyProvidedMint(reqId, lpSecret);
 
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
 
         // Wrong secret reverts
         vm.prank(lp);
@@ -367,7 +312,7 @@ contract MintBurnCoverageTest is Test {
         MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdead)), bytes32(uint256(0xbeef)), lpCommitment);
 
         // Timeout -> permissionless cancel -> KEY_CANCELLED (deposit parked)
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
         // LP claims within the window
@@ -385,11 +330,11 @@ contract MintBurnCoverageTest is Test {
         vm.prank(lp);
         MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdead)), bytes32(uint256(0xbeef)), lpCommitment);
 
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
         // Past the claim window — LP can no longer claim
-        vm.roll(block.number + 361);
+        vm.roll(block.number + 1805);
         vm.prank(lp);
         vm.expectRevert(IErrors.DeadlineExpired.selector);
         MintFacet(address(hub)).abandonKeyProvidedMint(reqId, lpSecret);
@@ -401,7 +346,7 @@ contract MintBurnCoverageTest is Test {
         bytes32 reqId = _initiateMint(user, lp);
         _provideLPKey(lp, reqId);
 
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
         // Too early — LP claim window still open
@@ -409,7 +354,7 @@ contract MintBurnCoverageTest is Test {
         MintFacet(address(hub)).reclaimParkedDeposit(reqId);
 
         // Past window — user reclaims (dead-LP case)
-        vm.roll(block.number + 361);
+        vm.roll(block.number + 1805);
         MintFacet(address(hub)).reclaimParkedDeposit(reqId);
         assertEq(_getPendingReturns(user, address(0)), 0.001 ether, "user reclaims parked deposit");
         assertEq(uint256(_getMintRequest(reqId).status), uint256(wsXmrStorage.MintStatus.CANCELLED));
@@ -448,14 +393,14 @@ contract MintBurnCoverageTest is Test {
         wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
         assertGt(req.lockedCollateral, 0, "bond locked");
 
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         vm.prank(lp);
         MintFacet(address(hub)).abandonKeyProvidedMint(reqId, lpSecret);
 
         wsXmrStorage.Vault memory vAfter = _getVault(lp);
         assertEq(vAfter.lockedCollateral, vKeyed.lockedCollateral - req.lockedCollateral, "bond released to LP");
         assertEq(vAfter.collateralShares, vKeyed.collateralShares, "no collateral slashed");
-        assertEq(_getPendingReturns(user, GnosisAddresses.SDAI), 0, "user cannot farm the bond");
+        assertEq(_getPendingReturns(user, address(stata)), 0, "user cannot farm the bond");
         assertEq(_getPendingReturns(lp, address(0)), 0.001 ether, "LP collects the deposit bounty");
     }
 
@@ -471,7 +416,7 @@ contract MintBurnCoverageTest is Test {
         wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
         uint256 bond = req.lockedCollateral;
 
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
         wsXmrStorage.Vault memory vParked = _getVault(lp);
@@ -482,7 +427,7 @@ contract MintBurnCoverageTest is Test {
 
         wsXmrStorage.Vault memory vAfter = _getVault(lp);
         assertEq(vAfter.lockedCollateral, vParked.lockedCollateral - bond, "bond released on reveal");
-        assertEq(_getPendingReturns(user, GnosisAddresses.SDAI), 0, "no slash when LP reveals");
+        assertEq(_getPendingReturns(user, address(stata)), 0, "no slash when LP reveals");
     }
 
     /// @notice Dead-LP case: bond is slashed to the user when the LP never reveals.
@@ -494,15 +439,15 @@ contract MintBurnCoverageTest is Test {
         uint256 bond = req.lockedCollateral;
         assertGt(bond, 0, "bond locked");
 
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
-        vm.roll(block.number + 361);
+        vm.roll(block.number + 1805);
 
-        uint256 sdaiBefore = _getPendingReturns(user, GnosisAddresses.SDAI);
+        uint256 sdaiBefore = _getPendingReturns(user, address(stata));
         MintFacet(address(hub)).reclaimParkedDeposit(reqId);
 
         assertEq(
-            _getPendingReturns(user, GnosisAddresses.SDAI) - sdaiBefore,
+            _getPendingReturns(user, address(stata)) - sdaiBefore,
             bond,
             "bond slashed to user at par"
         );
@@ -560,7 +505,7 @@ contract MintBurnCoverageTest is Test {
 
         // Timeout passes with no finalize — cancelMint must MINT, not cancel,
         // because the secret is public and the LP could otherwise take the XMR.
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         uint256 balBefore = wsxmr.balanceOf(user);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
@@ -589,7 +534,7 @@ contract MintBurnCoverageTest is Test {
         vm.expectRevert(IBurnOperations.DeadlineNotExpired.selector);
         BurnFacet(address(hub)).abandonProposedBurn(burnId);
 
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
 
         // Non-LP cannot abandon
         vm.prank(user);
@@ -631,7 +576,7 @@ contract MintBurnCoverageTest is Test {
         vm.prank(lp);
         BurnFacet(address(hub)).proposeHash(burnId, secretHash, bytes32(uint256(0x1111)), bytes32(uint256(0x2222)));
 
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
 
         // LP abandons — collateral released, wsXMR NOT restored
         vm.prank(lp);
@@ -675,7 +620,7 @@ contract MintBurnCoverageTest is Test {
         vm.prank(lp);
         BurnFacet(address(hub)).proposeHash(burnId, secretHash, bytes32(uint256(0x1111)), bytes32(uint256(0x2222)));
 
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
 
         uint256 balBefore = wsxmr.balanceOf(user);
         BurnFacet(address(hub)).resolveDeclinedProposal(burnId, userSecret);
@@ -694,7 +639,7 @@ contract MintBurnCoverageTest is Test {
         v = _getVault(lp);
         assertEq(v.pendingDebt, 2000000, "KEY_PROVIDED reserves debt"); // 20000000000 / 1e4
 
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
         v = _getVault(lp);
         assertEq(v.pendingDebt, 0, "cancel releases reservation");
@@ -718,7 +663,7 @@ contract MintBurnCoverageTest is Test {
         uint256 lockedBefore = req.lockedCollateral;
         assertGt(lockedBefore, 0, "collateral should be locked");
 
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
         // LP claims griefing deposit by revealing their secret
@@ -757,7 +702,7 @@ contract MintBurnCoverageTest is Test {
         _provideLPKey(lp, reqId);
         _setMintReady(lp, reqId);
 
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
         vm.expectRevert(IMintOperations.TimeoutNotReached.selector);
@@ -770,7 +715,7 @@ contract MintBurnCoverageTest is Test {
         uint256 minted = _mintForUser(user, lp);
         bytes32 burnId = _requestBurn(user, lp, minted);
 
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         vm.prank(user);
         BurnFacet(address(hub)).abortBurn(burnId);
 
@@ -805,13 +750,13 @@ contract MintBurnCoverageTest is Test {
         assertGt(_getVault(lp).pendingDebt, 0, "pendingDebt should be reserved");
 
         // Pump XMR price so the vault is underwater, then liquidate (mintNonce++)
-        SimpleOracleFacet(address(hub)).updatePrices(50000_00000000, DAI_PRICE_8DEC);
+        _setXmrPrice8dec(50000_00000000);
         deal(address(wsxmr), attacker, 1_000_000_000);
         vm.prank(attacker);
         LiquidationFacet(address(hub)).liquidate(lp, type(uint256).max);
 
         // Mint is nonce-invalidated — cancel after timeout must still release pendingDebt
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
         assertEq(_getVault(lp).pendingDebt, 0, "pendingDebt must be released on invalidated mint");
@@ -826,7 +771,7 @@ contract MintBurnCoverageTest is Test {
         vm.prank(user);
         MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
 
-        SimpleOracleFacet(address(hub)).updatePrices(50000_00000000, DAI_PRICE_8DEC);
+        _setXmrPrice8dec(50000_00000000);
         deal(address(wsxmr), attacker, 1_000_000_000);
         vm.prank(attacker);
         LiquidationFacet(address(hub)).liquidate(lp, type(uint256).max);
@@ -837,7 +782,7 @@ contract MintBurnCoverageTest is Test {
         wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
         assertEq(uint256(req.status), uint256(wsXmrStorage.MintStatus.CANCELLED), "should be cancelled");
         assertEq(_getVault(lp).pendingDebt, 0, "pendingDebt must be released");
-        assertEq(_getPendingReturns(user, GnosisAddresses.SDAI), req.lockedCollateral, "bond slashed to user");
+        assertEq(_getPendingReturns(user, address(stata)), req.lockedCollateral, "bond slashed to user");
     }
 
     function test_SweepExpiredReady_PostLiquidation_ReleasesBondToVault() public {
@@ -849,11 +794,11 @@ contract MintBurnCoverageTest is Test {
 
         // Expire the mint into EXPIRED_READY
         uint256 baseBlock = block.number;
-        vm.roll(baseBlock + 10000);
+        vm.roll(baseBlock + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
         // Liquidate — the bond stays locked (liquidation never seizes locked collateral)
-        SimpleOracleFacet(address(hub)).updatePrices(50000_00000000, DAI_PRICE_8DEC);
+        _setXmrPrice8dec(50000_00000000);
         deal(address(wsxmr), attacker, 1_000_000_000);
         vm.prank(attacker);
         LiquidationFacet(address(hub)).liquidate(lp, type(uint256).max);
@@ -861,11 +806,11 @@ contract MintBurnCoverageTest is Test {
         assertGt(_getVault(lp).lockedCollateral, 0, "bond should still be locked");
 
         // Sweep after the claim window — bond must release to free balance, not slash
-        vm.roll(baseBlock + 20000);
+        vm.roll(baseBlock + 100000);
         MintFacet(address(hub)).sweepUnclaimedExpiredMint(reqId);
 
         assertEq(_getVault(lp).lockedCollateral, 0, "bond must be released post-liquidation");
-        assertEq(_getPendingReturns(user, GnosisAddresses.SDAI), 0, "no slash on invalidated mint");
+        assertEq(_getPendingReturns(user, address(stata)), 0, "no slash on invalidated mint");
     }
 
     function test_ClaimGriefingDeposit_AfterWindow_Reverts() public {
@@ -881,9 +826,9 @@ contract MintBurnCoverageTest is Test {
 
         // Expire into EXPIRED_READY, then roll past the LP claim window
         uint256 baseBlock = block.number;
-        vm.roll(baseBlock + 10000);
+        vm.roll(baseBlock + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
-        vm.roll(baseBlock + 20000);
+        vm.roll(baseBlock + 100000);
 
         vm.expectRevert(IErrors.DeadlineExpired.selector);
         vm.prank(lp);
@@ -930,7 +875,7 @@ contract MintBurnCoverageTest is Test {
 
         wsXmrStorage.BurnRequest memory req = _getBurnRequest(burnId);
         assertEq(uint256(req.status), uint256(wsXmrStorage.BurnStatus.COMPLETED), "should be COMPLETED");
-        assertGt(_getPendingReturns(user, GnosisAddresses.SDAI), 0, "reward paid to user");
+        assertGt(_getPendingReturns(user, address(stata)), 0, "reward paid to user");
         assertEq(_getVaultBurnRequests(lp).length, 0, "removed from vault array");
     }
 
@@ -955,7 +900,7 @@ contract MintBurnCoverageTest is Test {
         BurnFacet(address(hub)).revealBurnSecret(burnId, burnSecret);
 
         // Past the grace window — slash must NOT fire on a revealed burn (would double-pay)
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         vm.expectRevert(IErrors.InvalidStatus.selector);
         vm.prank(user);
         BurnFacet(address(hub)).claimSlashedCollateral(burnId);
@@ -976,7 +921,7 @@ contract MintBurnCoverageTest is Test {
         BurnFacet(address(hub)).proposeHash(burnId, secretHash, bytes32(uint256(0x1111)), bytes32(uint256(0x2222)));
 
         // Roll past the proposal deadline — late commit must revert
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         vm.expectRevert(IErrors.DeadlineExpired.selector);
         vm.prank(user);
         BurnFacet(address(hub)).confirmMoneroLock(burnId);
@@ -1051,10 +996,10 @@ contract MintBurnCoverageTest is Test {
         vm.startPrank(who);
         VaultFacet(address(hub)).createVault();
         vm.stopPrank();
-        deal(GnosisAddresses.SDAI, who, amount);
+        deal(USDE, who, amount);
         vm.startPrank(who);
-        IERC20(GnosisAddresses.SDAI).approve(address(hub), amount);
-        VaultFacet(address(hub)).depositShares(amount);
+        IERC20(USDE).approve(address(hub), amount);
+        VaultFacet(address(hub)).depositCollateral(amount);
         vm.stopPrank();
     }
 

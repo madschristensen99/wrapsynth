@@ -1,16 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
-import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
-import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
-import {SimpleOracleFacet} from "../contracts/facets/SimpleOracleFacet.sol";
+import {console} from "forge-std/Test.sol";
+import {HyperEVMTestBase} from "./HyperEVMTestBase.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
 import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
-import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
-import {wsXMR} from "../contracts/wsXMR.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
 
@@ -19,21 +15,7 @@ import {Ed25519} from "../contracts/Ed25519.sol";
  * @notice Tests advanced scenarios with oracle manipulation, time warping, and liquidations
  * @dev Demonstrates the power of controlling the oracle and time in tests
  */
-contract E2EAdvancedScenariosTest is Test {
-    address constant WXDAI = 0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d;
-    address constant SDAI = 0xaf204776c7245bF4147c2612BF6e5972Ee483701;
-    
-    wsXmrHub public hub;
-    wsXMR public wsxmr;
-    SimpleOracleFacet public oracleFacet;
-    VaultFacet public vaultFacet;
-    MintFacet public mintFacet;
-    BurnFacet public burnFacet;
-    LiquidationFacet public liquidationFacet;
-    YieldFacet public yieldFacet;
-    MockVerifierProxy public verifier;
-    
-    address public deployer;
+contract E2EAdvancedScenariosTest is HyperEVMTestBase {
     address public lp1;
     address public lp2;
     address public user1;
@@ -41,13 +23,9 @@ contract E2EAdvancedScenariosTest is Test {
     address public liquidator;
     
     uint256 constant INITIAL_XMR_PRICE = 390_00000000; // $390
-    uint256 constant INITIAL_DAI_PRICE = 1_00000000;   // $1
     
-    function setUp() public {
-        string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
-        vm.createSelectFork(rpcUrl);
-        
-        deployer = address(this);
+    function setUp() public override {
+        super.setUp();
         lp1 = makeAddr("lp1");
         lp2 = makeAddr("lp2");
         user1 = makeAddr("user1");
@@ -59,48 +37,17 @@ contract E2EAdvancedScenariosTest is Test {
         vm.deal(user1, 1000 ether);
         vm.deal(user2, 1000 ether);
         vm.deal(liquidator, 1000 ether);
-        
-        _deployContracts();
-    }
-    
-    function _deployContracts() internal {
-        verifier = new MockVerifierProxy();
-        wsxmr = new wsXMR();
-        hub = new wsXmrHub(address(wsxmr), address(verifier));
-        
-        oracleFacet = new SimpleOracleFacet(address(wsxmr), address(verifier), deployer);
-        vaultFacet = new VaultFacet(address(wsxmr), address(verifier));
-        mintFacet = new MintFacet(address(wsxmr), address(verifier));
-        burnFacet = new BurnFacet(address(wsxmr), address(verifier));
-        liquidationFacet = new LiquidationFacet(address(wsxmr), address(verifier));
-        yieldFacet = new YieldFacet(address(wsxmr), address(verifier));
-        
-        hub.registerFacets(
-            address(vaultFacet),
-            address(mintFacet),
-            address(burnFacet),
-            address(liquidationFacet),
-            address(yieldFacet),
-            address(oracleFacet)
-        );
-        
-        wsxmr.setHub(address(hub));
-        
-        // Set initial prices
-        SimpleOracleFacet(address(hub)).updatePrices(INITIAL_XMR_PRICE, INITIAL_DAI_PRICE);
     }
     
     function _setupVault(address lp, uint256 collateralAmount) internal {
+        deal(USDE, lp, collateralAmount);
         vm.startPrank(lp);
-        (bool success,) = WXDAI.call{value: collateralAmount}("");
-        require(success);
-        
         VaultFacet(address(hub)).createVault();
         VaultFacet(address(hub)).setMaxMintBps(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
         
-        IERC20(WXDAI).approve(address(hub), collateralAmount);
+        IERC20(USDE).approve(address(hub), collateralAmount);
         VaultFacet(address(hub)).depositCollateral(collateralAmount);
         vm.stopPrank();
     }
@@ -150,7 +97,7 @@ contract E2EAdvancedScenariosTest is Test {
         // NOTE: When XMR price drops, debt VALUE drops, making vault HEALTHIER!
         // This is correct - wsXMR is the debt asset, not collateral
         console.log("\n[CRASH] XMR price drops from $390 to $200!");
-        SimpleOracleFacet(address(hub)).updatePrices(200_00000000, INITIAL_DAI_PRICE);
+        _setXmrPrice8dec(200_00000000);
         
         // Check vault health after crash - should be HEALTHIER now!
         uint256 healthAfter = hub.getVaultHealth(lp1);
@@ -166,11 +113,11 @@ contract E2EAdvancedScenariosTest is Test {
         _performMint(lp1, liquidator, 20000000); // 0.2 XMR to liquidate
         
         vm.startPrank(liquidator);
-        uint256 collateralBefore = IERC20(SDAI).balanceOf(liquidator);
+        uint256 collateralBefore = IERC20(address(stata)).balanceOf(liquidator);
         
         // Try to liquidate - use a reasonable amount (5M wsXMR)
         try LiquidationFacet(address(hub)).liquidate(lp1, 5000000) {
-            uint256 collateralAfter = IERC20(SDAI).balanceOf(liquidator);
+            uint256 collateralAfter = IERC20(address(stata)).balanceOf(liquidator);
             console.log("[6] Liquidator received collateral:", collateralAfter - collateralBefore);
             console.log("[7] Liquidation bonus earned: 10%");
         } catch {
@@ -200,7 +147,7 @@ contract E2EAdvancedScenariosTest is Test {
         
         // Warp time forward 2 hours (past timeout)
         console.log("[3] Warping time forward 2 hours...");
-        vm.roll(block.number + 1440);
+        vm.roll(block.number + 7200);
         
         // LP can now cancel and claim griefing deposit
         vm.prank(lp1);
@@ -244,13 +191,13 @@ contract E2EAdvancedScenariosTest is Test {
         
         // Warp time forward past finalization deadline (2 hours)
         console.log("[5] Warping time forward 3 hours...");
-        vm.roll(block.number + 2160);
+        vm.roll(block.number + 10800);
         
         // User can now claim slashed collateral
-        uint256 collateralBefore = IERC20(SDAI).balanceOf(user1);
+        uint256 collateralBefore = IERC20(address(stata)).balanceOf(user1);
         vm.prank(user1);
         BurnFacet(address(hub)).claimSlashedCollateral(burnRequestId);
-        uint256 collateralAfter = IERC20(SDAI).balanceOf(user1);
+        uint256 collateralAfter = IERC20(address(stata)).balanceOf(user1);
         
         console.log("[6] User1 claimed slashed collateral:", collateralAfter - collateralBefore);
         console.log("[7] LP1 was slashed for not revealing secret!");
@@ -274,14 +221,14 @@ contract E2EAdvancedScenariosTest is Test {
         
         // Price drops to $250
         console.log("\n[CRASH 1] XMR drops to $250");
-        SimpleOracleFacet(address(hub)).updatePrices(250_00000000, INITIAL_DAI_PRICE);
+        _setXmrPrice8dec(250_00000000);
         
         // Note: Can't call getVaultHealth due to hub staticcall issue
         console.log("[4] Both vaults should be stressed but still above 120%");
         
         // Price drops further to $180
         console.log("\n[CRASH 2] XMR drops to $180");
-        SimpleOracleFacet(address(hub)).updatePrices(180_00000000, INITIAL_DAI_PRICE);
+        _setXmrPrice8dec(180_00000000);
         
         // Both should be liquidatable now
         console.log("[5] Both vaults should now be liquidatable (< 120%)");
@@ -290,7 +237,7 @@ contract E2EAdvancedScenariosTest is Test {
         
         // Price recovers to $300
         console.log("\n[RECOVERY] XMR recovers to $300");
-        SimpleOracleFacet(address(hub)).updatePrices(300_00000000, INITIAL_DAI_PRICE);
+        _setXmrPrice8dec(300_00000000);
         
         console.log("[7] After recovery, vaults should be healthier");
         
@@ -304,7 +251,7 @@ contract E2EAdvancedScenariosTest is Test {
         console.log("[1] LP1 vault created");
         
         // Update prices
-        SimpleOracleFacet(address(hub)).updatePrices(INITIAL_XMR_PRICE, INITIAL_DAI_PRICE);
+        _setXmrPrice8dec(INITIAL_XMR_PRICE);
         console.log("[2] Prices updated at time:", block.timestamp);
         
         // Warp time forward 3 minutes (past 2 minute staleness threshold)
@@ -315,7 +262,7 @@ contract E2EAdvancedScenariosTest is Test {
         console.log("[4] Price would be stale at this point");
         
         // Update prices again
-        SimpleOracleFacet(address(hub)).updatePrices(INITIAL_XMR_PRICE, INITIAL_DAI_PRICE);
+        _setXmrPrice8dec(INITIAL_XMR_PRICE);
         console.log("[5] Prices refreshed");
         console.log("[6] Fresh prices now available");
         
@@ -334,7 +281,7 @@ contract E2EAdvancedScenariosTest is Test {
         
         // Price crashes to $200
         console.log("\n[CRASH] Price drops to $200");
-        SimpleOracleFacet(address(hub)).updatePrices(200_00000000, INITIAL_DAI_PRICE);
+        _setXmrPrice8dec(200_00000000);
         console.log("[3] Vault health should be stressed after crash");
         
         // Time passes - 30 days for yield accumulation
@@ -343,7 +290,7 @@ contract E2EAdvancedScenariosTest is Test {
         
         // Price recovers to $350
         console.log("\n[RECOVERY] Price recovers to $350");
-        SimpleOracleFacet(address(hub)).updatePrices(350_00000000, INITIAL_DAI_PRICE);
+        _setXmrPrice8dec(350_00000000);
         console.log("[5] Vault health should improve after recovery");
         
         // LP withdraws some collateral (now has yield)

@@ -1,95 +1,40 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
-import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
-import {SimpleOracleFacet} from "../contracts/facets/SimpleOracleFacet.sol";
+import {console} from "forge-std/Test.sol";
+import {HyperEVMTestBase} from "./HyperEVMTestBase.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
-import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
-import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
-import {wsXMR} from "../contracts/wsXMR.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
 
-contract MockVerifierProxy {
-    function verify(bytes calldata) external pure returns (bool) {
-        return true;
-    }
-}
-
-contract E2EFinalTest is Test {
-    address constant WXDAI = 0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d;
-    
-    wsXmrHub public hub;
-    wsXMR public wsxmr;
-    SimpleOracleFacet public oracleFacet;
-    VaultFacet public vaultFacet;
-    MintFacet public mintFacet;
-    BurnFacet public burnFacet;
-    LiquidationFacet public liquidationFacet;
-    YieldFacet public yieldFacet;
-    MockVerifierProxy public verifier;
-    
-    address public lp;
-    address public user;
-    
+contract E2EFinalTest is HyperEVMTestBase {
     bytes32 public testSecret = bytes32(uint256(123456789));
     
-    function setUp() public {
-        string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
-        vm.createSelectFork(rpcUrl);
+    function setUp() public override {
+        super.setUp();
         vm.warp(block.timestamp + 1 days);
-        
-        lp = makeAddr("lp");
-        user = makeAddr("user");
-        vm.deal(lp, 1000 ether);
-        vm.deal(user, 1000 ether);
-        
-        verifier = new MockVerifierProxy();
-        wsxmr = new wsXMR();
-        hub = new wsXmrHub(address(wsxmr), address(verifier));
-        
-        oracleFacet = new SimpleOracleFacet(address(wsxmr), address(verifier), address(this));
-        vaultFacet = new VaultFacet(address(wsxmr), address(verifier));
-        mintFacet = new MintFacet(address(wsxmr), address(verifier));
-        burnFacet = new BurnFacet(address(wsxmr), address(verifier));
-        liquidationFacet = new LiquidationFacet(address(wsxmr), address(verifier));
-        yieldFacet = new YieldFacet(address(wsxmr), address(verifier));
-        
-        hub.registerFacets(
-            address(vaultFacet),
-            address(mintFacet),
-            address(burnFacet),
-            address(liquidationFacet),
-            address(yieldFacet),
-            address(oracleFacet)
-        );
-        
-        wsxmr.setHub(address(hub));
+        _setXmrPrice8dec(XMR_PRICE_8DEC); // refresh after warp
     }
     
     function test_FullCycle() public {
         console.log("=== FULL MINT AND BURN CYCLE ===\n");
         
-        // Update prices after warp (before any vault operations)
-        SimpleOracleFacet(address(hub)).updatePrices(390_00000000, 1_00000000);
-        
-        // LP creates vault and deposits
+        // LP creates vault and deposits USDe
         vm.startPrank(lp);
         VaultFacet(address(hub)).createVault();
         VaultFacet(address(hub)).setMaxMintBps(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
+        vm.stopPrank();
         
-        (bool success,) = WXDAI.call{value: 100 ether}("");
-        require(success);
-        IERC20(WXDAI).approve(address(hub), 100 ether);
+        deal(USDE, lp, 100 ether);
+        vm.startPrank(lp);
+        IERC20(USDE).approve(address(hub), 100 ether);
         VaultFacet(address(hub)).depositCollateral(100 ether);
         vm.stopPrank();
-        console.log("[1] LP deposited 100 xDAI\n");
+        console.log("[1] LP deposited 100 USDe\n");
         
         // User initiates mint (need at least 1e6 wsXMR for burn, which is 1e10 XMR atomic units)
         uint256 xmrAmount = 20000000000; // 0.002 XMR = ~$0.78 worth

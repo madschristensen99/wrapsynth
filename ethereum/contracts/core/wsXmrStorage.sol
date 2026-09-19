@@ -20,17 +20,19 @@ contract wsXmrStorage {
     uint256 public constant RATIO_PRECISION = 100;
     uint256 public constant PRICE_PRECISION = 1e18;
     
-    uint256 public constant MIN_MINT_TIMEOUT_BLOCKS = 360; // ~30 min at 5s/block
-    uint256 public constant MAX_MINT_TIMEOUT_BLOCKS = 17280; // ~24 hours at 5s/block
-    uint256 public constant DEFAULT_MINT_TIMEOUT_BLOCKS = 720; // ~1 hour
-    uint256 public constant MINT_READY_EXTENSION_BLOCKS = 1440; // ~2 hours at 5s/block
-    uint256 public constant LP_CLAIM_WINDOW_BLOCKS = 360; // ~30 min for LP to claim after mint expiry
+    // HyperEVM produces ~1s blocks (vs ~5s on Gnosis) — constants rescaled x5
+    // to preserve the same wall-clock timeouts.
+    uint256 public constant MIN_MINT_TIMEOUT_BLOCKS = 1800; // ~30 min at 1s/block
+    uint256 public constant MAX_MINT_TIMEOUT_BLOCKS = 86400; // ~24 hours at 1s/block
+    uint256 public constant DEFAULT_MINT_TIMEOUT_BLOCKS = 3600; // ~1 hour
+    uint256 public constant MINT_READY_EXTENSION_BLOCKS = 7200; // ~2 hours at 1s/block
+    uint256 public constant LP_CLAIM_WINDOW_BLOCKS = 1800; // ~30 min for LP to claim after mint expiry
 
-    uint256 public constant MIN_BURN_TIMEOUT_BLOCKS = 360; // ~30 min at 5s/block
-    uint256 public constant MAX_BURN_TIMEOUT_BLOCKS = 17280; // ~24 hours at 5s/block
-    uint256 public constant DEFAULT_BURN_TIMEOUT_BLOCKS = 720; // ~1 hour
-    uint256 public constant BURN_COMMIT_TIMEOUT_BLOCKS = 1440; // ~2 hours at 5s/block
-    uint256 public constant BURN_FINALIZE_GRACE_BLOCKS = 120; // ~10 min grace for LP finalization
+    uint256 public constant MIN_BURN_TIMEOUT_BLOCKS = 1800; // ~30 min at 1s/block
+    uint256 public constant MAX_BURN_TIMEOUT_BLOCKS = 86400; // ~24 hours at 1s/block
+    uint256 public constant DEFAULT_BURN_TIMEOUT_BLOCKS = 3600; // ~1 hour
+    uint256 public constant BURN_COMMIT_TIMEOUT_BLOCKS = 7200; // ~2 hours at 1s/block
+    uint256 public constant BURN_FINALIZE_GRACE_BLOCKS = 600; // ~10 min grace for LP finalization
     
     uint256 public constant BPS_DENOMINATOR = 10000;
     uint256 public constant MAX_MARGIN_BPS = 1000;
@@ -207,25 +209,25 @@ contract wsXmrStorage {
     uint256 public lastCollateralPriceTimestamp;
     
     // Global state
-    uint256 public lastBuyTimestamp;
+    uint256 internal lastBuyTimestamp;
     uint256 public globalTotalDebt;
     uint256 public globalDebtIndex;
     uint256 public yieldWarChest;
     mapping(address => uint256) public lpPrincipalDeposits;
-    uint256 public globalLpPrincipal;
+    uint256 internal globalLpPrincipal;
     mapping(address => uint256) public lpPrincipalShares;
-    uint256 public globalLpPrincipalShares;
+    uint256 internal globalLpPrincipalShares;
     uint256 public globalPendingSDAI;
     uint256 public globalBadDebt;
     uint256 public globalPendingBurnDebt;
     uint256 internal _requestNonce;
-    mapping(uint24 => bool) public allowedPoolFeeTiers;
+    mapping(uint24 => bool) internal allowedPoolFeeTiers;
     
     // Request tracking
-    mapping(address => bytes32[]) public userMintRequests;
-    mapping(address => bytes32[]) public userBurnRequests;
-    mapping(address => bytes32[]) public vaultBurnRequests;
-    mapping(address => bytes32[]) public vaultMintRequests;
+    mapping(address => bytes32[]) internal userMintRequests;
+    mapping(address => bytes32[]) internal userBurnRequests;
+    mapping(address => bytes32[]) internal vaultBurnRequests;
+    mapping(address => bytes32[]) internal vaultMintRequests;
     
     // Core mappings
     mapping(address => Vault) internal _vaults;
@@ -240,14 +242,14 @@ contract wsXmrStorage {
     
     // Vault list
     address[] public vaultList;
-    uint256 public activeVaultCount;
-    mapping(address => uint256) public vaultListIndex; // address => index in vaultList (O(1) removal)
+    uint256 internal activeVaultCount;
+    mapping(address => uint256) internal vaultListIndex; // address => index in vaultList (O(1) removal)
     
     // Pending returns
     mapping(address => mapping(address => uint256)) public pendingReturns;
     
     // Whitelisted minters (vault => user => whitelisted)
-    mapping(address => mapping(address => bool)) public whitelistedMinters;
+    mapping(address => mapping(address => bool)) internal whitelistedMinters;
     
     // Co-LP state
     mapping(uint256 => PositionMetadata) internal _positionMetadata;
@@ -271,9 +273,35 @@ contract wsXmrStorage {
     address public priceUpdater;
 
     // H2: Batch processing state for debt wipe and index migration (avoids unbounded loops)
-    uint256 public debtWipeBatchStart;   // 0 = idle, 1-indexed start when active
-    uint256 public migrationBatchStart;  // 0 = idle, 1-indexed start when active
-    uint256 public migrationOldIndex;    // old index to apply during lazy migration
+    uint256 internal debtWipeBatchStart;   // 0 = idle, 1-indexed start when active
+    uint256 internal migrationBatchStart;  // 0 = idle, 1-indexed start when active
+    uint256 internal migrationOldIndex;    // old index to apply during lazy migration
+
+    // ========== HYPEREVM EXTERNAL DEPENDENCIES ==========
+    // Set once pre-lock via wsXmrHub.setExternalAddresses (same lifecycle as
+    // liquidityRouter). Storage — not constants — so the same bytecode deploys
+    // to mainnet, testnet, and local forks with different external addresses.
+
+    /// @notice Yield-bearing collateral share token (StataUSDe — ERC-4626 over
+    ///         HyperLend USDe aToken). Plays the role sDAI played on Gnosis:
+    ///         vault collateralShares, lockedCollateral, pendingReturns and the
+    ///         yieldWarChest are all denominated in this token.
+    address public collateralToken;
+
+    /// @notice Underlying collateral asset (USDe). Users deposit this; it is
+    ///         wrapped into collateralToken via the adapter.
+    address public underlyingToken;
+
+    /// @notice DEX swap router for buy-and-burn (HyperSwap SwapRouter02).
+    address public swapRouter;
+
+    /// @notice HyperCore native XMR perp index, stored as index+1 (0 = unset).
+    ///         Mainnet: 224, testnet: 202.
+    uint32 public xmrPerpIndex;
+
+    /// @notice Last time the on-chain EMA was sampled (gates EMA updates to
+    ///         EMA_SAMPLE_INTERVAL so refresh frequency doesn't distort it).
+    uint256 internal lastEmaSampleTime;
 
     // ========== INTERNAL HELPERS ==========
     
@@ -295,6 +323,76 @@ contract wsXmrStorage {
         uint256 normalized = uint256(uint192(price)) * 1e10;
         if (normalized == 0) revert IOracleFacet.PriceNormalizedToZero();
         return normalized;
+    }
+
+    // ========== HYPERCORE ORACLE REFRESH ==========
+
+    /// @dev HyperEVM L1-read precompiles — universal system addresses, same on
+    ///      every HyperEVM network. Raw ABI-encoded args, NO function selector.
+    address internal constant ORACLE_PX_PRECOMPILE = 0x0000000000000000000000000000000000000807;
+    address internal constant MARK_PX_PRECOMPILE   = 0x0000000000000000000000000000000000000806;
+
+    /// @dev XMR perp szDecimals = 3 → precompile returns price * 10^(6-3) = price*1e3.
+    ///      Storage format is RedStone-style 8 decimals → multiply by 1e5.
+    uint256 internal constant PRECOMPILE_TO_8DEC = 1e5;
+    /// @dev EMA samples at most once per interval so refresh cadence doesn't
+    ///      collapse the ~10-period EMA into a spot tracker.
+    uint256 internal constant EMA_SAMPLE_INTERVAL = 30 seconds;
+    /// @dev oraclePx/markPx divergence threshold — beyond this, use the higher
+    ///      price (conservative: makes wsXMR debt look largest).
+    uint256 internal constant ORACLE_MARK_MAX_DIVERGENCE = 1.02e18;
+
+    /// @notice Best-effort oracle refresh from the HyperCore native XMR perp.
+    /// @dev Permissionless and trustless — the data source is the validator-
+    ///      maintained perp oracle, not a WrapSynth pusher. Called at the top of
+    ///      state-changing entry points and by HyperCoreOracleFacet.refreshPrices().
+    ///      Silently no-ops when the precompile read fails or the index is unset,
+    ///      so non-price paths (deposits, withdrawals) aren't blocked by an oracle
+    ///      outage; functions that need a price still fail closed via StalePrice.
+    function _tryRefreshOracle() internal {
+        uint32 idx = xmrPerpIndex;
+        if (idx == 0) return; // unset (stored as index+1)
+        idx -= 1;
+
+        (bool okO, bytes memory outO) = ORACLE_PX_PRECOMPILE.staticcall(abi.encode(idx));
+        if (!okO || outO.length != 32) return;
+        uint256 oraclePx = uint256(abi.decode(outO, (uint64)));
+        if (oraclePx == 0) return;
+
+        uint256 px = oraclePx;
+        (bool okM, bytes memory outM) = MARK_PX_PRECOMPILE.staticcall(abi.encode(idx));
+        if (okM && outM.length == 32) {
+            uint256 markPx = uint256(abi.decode(outM, (uint64)));
+            if (markPx > 0) {
+                uint256 ratio = oraclePx > markPx
+                    ? (oraclePx * 1e18) / markPx
+                    : (markPx * 1e18) / oraclePx;
+                if (ratio > ORACLE_MARK_MAX_DIVERGENCE) {
+                    px = oraclePx > markPx ? oraclePx : markPx; // conservative max
+                }
+            }
+        }
+
+        // Store in the existing 8-decimal format (read helpers multiply by 1e10)
+        lastXmrPrice = int192(int256(px * PRECOMPILE_TO_8DEC));
+        lastXmrPriceTimestamp = block.timestamp;
+
+        // USDe is the unit of account — collateral price fixed at $1.00 (8 dec).
+        // The 150% ratio absorbs depeg tail risk; see migration spec §10.1.
+        lastCollateralPrice = int192(1e8);
+        lastCollateralPriceTimestamp = block.timestamp;
+
+        // EMA update, gated to preserve ~10-period semantics
+        if (block.timestamp >= lastEmaSampleTime + EMA_SAMPLE_INTERVAL) {
+            uint256 newPrice = px * PRECOMPILE_TO_8DEC * 1e10; // 18-dec normalized
+            if (xmrEmaPrice == 0) {
+                xmrEmaPrice = newPrice;
+            } else {
+                xmrEmaPrice = (EMA_ALPHA_NUMERATOR * newPrice
+                    + (EMA_DENOMINATOR - EMA_ALPHA_NUMERATOR) * xmrEmaPrice) / EMA_DENOMINATOR;
+            }
+            lastEmaSampleTime = block.timestamp;
+        }
     }
     
     /// @dev Internal helper to denormalize debt using the hub's live globalDebtIndex
@@ -376,9 +474,9 @@ contract wsXmrStorage {
     /// @notice 1-indexed position of each burn request in vaultBurnRequests[lpVault].
     /// @dev 0 = untracked (pre-upgrade entries). Enables O(1) swap-and-pop removal at
     ///      settlement so the array holds only active burns and liquidation loops stay bounded.
-    mapping(bytes32 => uint256) public burnRequestIndexPlusOne;
+    mapping(bytes32 => uint256) internal burnRequestIndexPlusOne;
 
-    uint256[33] private __gap;
+    uint256[28] private __gap;
     
     // ========== CONSTRUCTOR ==========
     

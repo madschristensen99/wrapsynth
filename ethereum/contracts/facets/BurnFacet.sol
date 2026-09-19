@@ -7,7 +7,6 @@ import {IwsXmrHub} from "../interfaces/core/IwsXmrHub.sol";
 import {Ed25519} from "../Ed25519.sol";
 import {YieldLogic} from "../libraries/YieldLogic.sol";
 import {CollateralLogic} from "../libraries/CollateralLogic.sol";
-import {GnosisAddresses} from "../GnosisAddresses.sol";
 
 contract BurnFacet is wsXmrStorage, IBurnFacet {
     
@@ -73,6 +72,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         if (user == address(0)) revert ZeroAddress();
         if (!_vaults[lpVault].active) revert VaultDoesNotExist();
         
+        _tryRefreshOracle();
         _syncVaultYield(lpVault);
         
         if (wsxmrAmount < MIN_BURN_AMOUNT) revert BelowMinimumBurn();
@@ -112,7 +112,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
                 ? availableCollateral - totalLock
                 : 0;
             uint256 pendingRatio = CollateralLogic.calculateRatioFromShares(
-                remainingFree, vault.pendingDebt, GnosisAddresses.SDAI, collateralPrice, xmrPrice
+                remainingFree, vault.pendingDebt, collateralToken, collateralPrice, xmrPrice
             );
             if (pendingRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
         }
@@ -335,9 +335,9 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         else globalPendingBurnDebt -= request.wsxmrAmount;
         
         if (safeReward > 0) {
-            pendingReturns[request.user][GnosisAddresses.SDAI] += safeReward;
+            pendingReturns[request.user][collateralToken] += safeReward;
             globalPendingSDAI += safeReward;
-            emit ReturnQueued(request.user, GnosisAddresses.SDAI, safeReward);
+            emit ReturnQueued(request.user, collateralToken, safeReward);
         }
         
         request.status = BurnStatus.COMPLETED;
@@ -373,6 +373,13 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
             ? parShares
             : request.lockedCollateral;
         uint256 userPayout = userBase + request.rewardCollateral;
+        if (userPayout > request.lockedCollateral + request.rewardCollateral) {
+            userPayout = request.lockedCollateral + request.rewardCollateral;
+        }
+        if (userPayout > vault.collateralShares) {
+            userPayout = vault.collateralShares;
+        }
+
         uint256 totalLock = request.lockedCollateral + request.rewardCollateral;
 
         // Total collateral model: release the reservation, AND remove the paid-out amount
@@ -385,18 +392,14 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         // Debt reduction happens here at settlement
         uint256 normalizedBurnAmount = (request.wsxmrAmount * 1e18 + globalDebtIndex - 1) / globalDebtIndex;
-        if (normalizedBurnAmount > vault.normalizedDebt) {
-            normalizedBurnAmount = vault.normalizedDebt;
-        }
         vault.normalizedDebt -= normalizedBurnAmount;
-        globalTotalDebt -= _denormalizeDebt(normalizedBurnAmount);
-        
+        globalTotalDebt -= request.wsxmrAmount;
         if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
         else globalPendingBurnDebt -= request.wsxmrAmount;
 
-        pendingReturns[request.user][GnosisAddresses.SDAI] += userPayout;
+        pendingReturns[request.user][collateralToken] += userPayout;
         globalPendingSDAI += userPayout;
-        emit ReturnQueued(request.user, GnosisAddresses.SDAI, userPayout);
+        emit ReturnQueued(request.user, collateralToken, userPayout);
         
         request.status = BurnStatus.SLASHED;
         _removeVaultBurnRequest(request.lpVault, requestId);
@@ -483,9 +486,9 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         else globalPendingBurnDebt -= request.wsxmrAmount;
         
         // Pay par value to holder (no reward for force-settle)
-        pendingReturns[request.user][GnosisAddresses.SDAI] += userBase;
+        pendingReturns[request.user][collateralToken] += userBase;
         globalPendingSDAI += userBase;
-        emit ReturnQueued(request.user, GnosisAddresses.SDAI, userBase);
+        emit ReturnQueued(request.user, collateralToken, userBase);
         
         request.status = BurnStatus.SLASHED;
         _removeVaultBurnRequest(request.lpVault, requestId);
@@ -710,7 +713,8 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
             vault.pendingDebt,
             globalDebtIndex,
             xmrPrice,
-            collateralPrice
+            collateralPrice,
+            collateralToken
         );
         
         if (yieldShares > 0) {
@@ -719,9 +723,9 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         }
     }
     
-    /// @dev Convert DAI amount to sDAI shares via staticcall to the sDAI contract's convertToShares
+    /// @dev Convert underlying amount to collateral shares via the adapter's convertToShares
     function _daiToShares(uint256 daiAmount) internal view returns (uint256) {
-        (bool success, bytes memory data) = GnosisAddresses.SDAI.staticcall(
+        (bool success, bytes memory data) = collateralToken.staticcall(
             abi.encodeWithSignature("convertToShares(uint256)", daiAmount)
         );
         require(success && data.length >= 32, "convertToShares failed");

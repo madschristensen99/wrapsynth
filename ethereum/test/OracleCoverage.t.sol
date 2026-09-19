@@ -1,88 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
-import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
-import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
-import {SimpleOracleFacet} from "../contracts/facets/SimpleOracleFacet.sol";
+import {console} from "forge-std/Test.sol";
+import {HyperEVMTestBase} from "./HyperEVMTestBase.sol";
+import {HyperCoreOracleFacet} from "../contracts/facets/HyperCoreOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
-import {MintFacet} from "../contracts/facets/MintFacet.sol";
-import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
-import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
-import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
-import {wsXMR} from "../contracts/wsXMR.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {GnosisAddresses} from "../contracts/GnosisAddresses.sol";
-
-contract MockVerifierProxy {
-    function verify(bytes calldata) external pure returns (bool) {
-        return true;
-    }
-}
 
 interface IOracleFacetErrors {
     error StalePrice();
     error PriceNormalizedToZero();
 }
 
-contract OracleCoverageTest is Test {
-    wsXmrHub public hub;
-    wsXMR public wsxmr;
-    SimpleOracleFacet public oracleFacet;
-    VaultFacet public vaultFacet;
-    MintFacet public mintFacet;
-    BurnFacet public burnFacet;
-    LiquidationFacet public liquidationFacet;
-    YieldFacet public yieldFacet;
-    MockVerifierProxy public verifier;
-
-    address lp = makeAddr("lp");
-    address user = makeAddr("user");
+contract OracleCoverageTest is HyperEVMTestBase {
     address attacker = makeAddr("attacker");
-    address priceUpdater = makeAddr("priceUpdater");
 
-    uint256 constant XMR_PRICE_8DEC = 390_00000000;
     uint256 constant DAI_PRICE_8DEC = 1_00000000;
 
-    function setUp() public {
-        string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
-        vm.createSelectFork(rpcUrl);
-
-        vm.deal(address(this), 1_000_000 ether);
-        vm.deal(lp, 1000 ether);
-        vm.deal(user, 1000 ether);
+    function setUp() public override {
+        super.setUp();
         vm.deal(attacker, 1000 ether);
-
-        verifier = new MockVerifierProxy();
-        wsxmr = new wsXMR();
-        hub = new wsXmrHub(address(wsxmr), address(verifier));
-
-        oracleFacet = new SimpleOracleFacet(address(wsxmr), address(verifier), address(this));
-        vaultFacet = new VaultFacet(address(wsxmr), address(verifier));
-        mintFacet = new MintFacet(address(wsxmr), address(verifier));
-        burnFacet = new BurnFacet(address(wsxmr), address(verifier));
-        liquidationFacet = new LiquidationFacet(address(wsxmr), address(verifier));
-        yieldFacet = new YieldFacet(address(wsxmr), address(verifier));
-
-        hub.registerFacets(
-            address(vaultFacet),
-            address(mintFacet),
-            address(burnFacet),
-            address(liquidationFacet),
-            address(yieldFacet),
-            address(oracleFacet)
-        );
-
-        wsxmr.setHub(address(hub));
-
-        SimpleOracleFacet(address(hub)).setPriceUpdater(priceUpdater);
-        SimpleOracleFacet(address(hub)).updatePrices(XMR_PRICE_8DEC, DAI_PRICE_8DEC);
-
-        // Register getUpdateFee selector (not in SimpleOracleFacet.selectors())
-        bytes4[] memory feeSelector = new bytes4[](1);
-        feeSelector[0] = SimpleOracleFacet.getUpdateFee.selector;
-        hub.addSelectors(address(oracleFacet), feeSelector);
-
         _createVaultAndDeposit(lp, 100 ether);
         _configureVault(lp);
     }
@@ -165,14 +102,14 @@ contract OracleCoverageTest is Test {
     function test_UpdateOraclePrices_RefundsETH() public {
         bytes[] memory emptyData = new bytes[](0);
         uint256 balanceBefore = address(this).balance;
-        SimpleOracleFacet(address(hub)).updateOraclePrices{value: 0.1 ether}(emptyData);
+        HyperCoreOracleFacet(address(hub)).updateOraclePrices{value: 0.1 ether}(emptyData);
         uint256 balanceAfter = address(this).balance;
         assertEq(balanceAfter, balanceBefore, "ETH should be refunded");
     }
 
     function test_UpdateOraclePrices_NoETH_NoRevert() public {
         bytes[] memory emptyData = new bytes[](0);
-        SimpleOracleFacet(address(hub)).updateOraclePrices(emptyData);
+        HyperCoreOracleFacet(address(hub)).updateOraclePrices(emptyData);
     }
 
     // ========== HUB VIEW HELPERS ==========
@@ -184,36 +121,36 @@ contract OracleCoverageTest is Test {
     }
 
     function _getCollateralPrice() internal returns (uint256) {
-        bytes memory r = _hubView(abi.encodeWithSelector(SimpleOracleFacet.getCollateralPrice.selector));
+        bytes memory r = _hubView(abi.encodeWithSelector(HyperCoreOracleFacet.getCollateralPrice.selector));
         return abi.decode(r, (uint256));
     }
 
     function _getCollateralPriceWithAge(uint256 maxAge) internal returns (uint256) {
         bytes memory r = _hubView(
-            abi.encodeWithSelector(SimpleOracleFacet.getCollateralPriceWithAge.selector, maxAge)
+            abi.encodeWithSelector(HyperCoreOracleFacet.getCollateralPriceWithAge.selector, maxAge)
         );
         return abi.decode(r, (uint256));
     }
 
     function _getXmrPriceWithAge(uint256 maxAge) internal returns (uint256) {
         bytes memory r = _hubView(
-            abi.encodeWithSelector(SimpleOracleFacet.getXmrPriceWithAge.selector, maxAge)
+            abi.encodeWithSelector(HyperCoreOracleFacet.getXmrPriceWithAge.selector, maxAge)
         );
         return abi.decode(r, (uint256));
     }
 
     function _getUpdateFee(bytes[] memory data) internal returns (uint256) {
-        bytes memory r = _hubView(abi.encodeWithSelector(SimpleOracleFacet.getUpdateFee.selector, data));
+        bytes memory r = _hubView(abi.encodeWithSelector(HyperCoreOracleFacet.getUpdateFee.selector, data));
         return abi.decode(r, (uint256));
     }
 
     function _normalizeDebt(uint256 actualDebt) internal returns (uint256) {
-        bytes memory r = _hubView(abi.encodeWithSelector(SimpleOracleFacet.normalizeDebt.selector, actualDebt));
+        bytes memory r = _hubView(abi.encodeWithSelector(HyperCoreOracleFacet.normalizeDebt.selector, actualDebt));
         return abi.decode(r, (uint256));
     }
 
     function _denormalizeDebt(uint256 normalizedDebt) internal returns (uint256) {
-        bytes memory r = _hubView(abi.encodeWithSelector(SimpleOracleFacet.denormalizeDebt.selector, normalizedDebt));
+        bytes memory r = _hubView(abi.encodeWithSelector(HyperCoreOracleFacet.denormalizeDebt.selector, normalizedDebt));
         return abi.decode(r, (uint256));
     }
 
@@ -223,10 +160,10 @@ contract OracleCoverageTest is Test {
         vm.startPrank(who);
         VaultFacet(address(hub)).createVault();
         vm.stopPrank();
-        deal(GnosisAddresses.SDAI, who, amount);
+        deal(USDE, who, amount);
         vm.startPrank(who);
-        IERC20(GnosisAddresses.SDAI).approve(address(hub), amount);
-        VaultFacet(address(hub)).depositShares(amount);
+        IERC20(USDE).approve(address(hub), amount);
+        VaultFacet(address(hub)).depositCollateral(amount);
         vm.stopPrank();
     }
 

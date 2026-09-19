@@ -1,112 +1,43 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import {Test, console} from "forge-std/Test.sol";
-import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
-import {SimpleOracleFacet} from "../contracts/facets/SimpleOracleFacet.sol";
+import {console} from "forge-std/Test.sol";
+import {HyperEVMTestBase} from "./HyperEVMTestBase.sol";
+import {HyperCoreOracleFacet} from "../contracts/facets/HyperCoreOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
-import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
 import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
-import {wsXMR} from "../contracts/wsXMR.sol";
-import {wsXMRLiquidityRouter} from "../contracts/router/wsXMRLiquidityRouter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IUniswapV3Factory} from "../contracts/interfaces/external/IUniswapV3Factory.sol";
-import {GnosisAddresses} from "../contracts/GnosisAddresses.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
 import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
 import {ISwapRouter} from "../contracts/interfaces/external/ISwapRouter.sol";
-import {ISavingsDAI} from "../contracts/interfaces/external/ISavingsDAI.sol";
 
-contract MockVerifierProxy {
-    function verify(bytes calldata) external pure returns (bool) {
-        return true;
-    }
-}
-
-contract YieldKeeperTest is Test {
-    wsXmrHub public hub;
-    wsXMR public wsxmr;
-    SimpleOracleFacet public oracleFacet;
-    VaultFacet public vaultFacet;
-    MintFacet public mintFacet;
-    BurnFacet public burnFacet;
-    LiquidationFacet public liquidationFacet;
-    YieldFacet public yieldFacet;
-    wsXMRLiquidityRouter public router;
-    MockVerifierProxy public verifier;
-
-    address lp = makeAddr("lp");
-    address user = makeAddr("user");
+contract YieldKeeperTest is HyperEVMTestBase {
     address keeper = makeAddr("keeper");
 
     uint256 constant XMR_PRICE = 300 * 1e18;
-    uint256 constant COLLATERAL_PRICE = 1_18000000; // 1.18 in 8 decimals for RedStone
+    uint256 constant TEST_XMR_PRICE_8DEC = 300_00000000; // $300
 
-    function setUp() public {
-        vm.createSelectFork("https://rpc.gnosischain.com");
-
-        vm.deal(lp, 10 ether);
-        vm.deal(user, 10 ether);
+    function setUp() public override {
+        super.setUp();
         vm.deal(keeper, 10 ether);
 
-        verifier = new MockVerifierProxy();
-        wsxmr = new wsXMR();
-        hub = new wsXmrHub(address(wsxmr), address(verifier));
-
-        oracleFacet = new SimpleOracleFacet(address(wsxmr), address(verifier), address(this));
-        vaultFacet = new VaultFacet(address(wsxmr), address(verifier));
-        mintFacet = new MintFacet(address(wsxmr), address(verifier));
-        burnFacet = new BurnFacet(address(wsxmr), address(verifier));
-        liquidationFacet = new LiquidationFacet(address(wsxmr), address(verifier));
-        yieldFacet = new YieldFacet(address(wsxmr), address(verifier));
-
-        hub.registerFacets(
-            address(vaultFacet),
-            address(mintFacet),
-            address(burnFacet),
-            address(liquidationFacet),
-            address(yieldFacet),
-            address(oracleFacet)
-        );
-
-        wsxmr.setHub(address(hub));
-
-        (address token0, address token1) = GnosisAddresses.SDAI < address(wsxmr)
-            ? (GnosisAddresses.SDAI, address(wsxmr))
-            : (address(wsxmr), GnosisAddresses.SDAI);
-
-        address pool = IUniswapV3Factory(GnosisAddresses.UNI_V3_FACTORY).getPool(token0, token1, 3000);
-        if (pool == address(0)) {
-            pool = IUniswapV3Factory(GnosisAddresses.UNI_V3_FACTORY).createPool(token0, token1, 3000);
-        }
-
-        router = new wsXMRLiquidityRouter(
-            address(hub),
-            GnosisAddresses.UNI_V3_POSITION_MANAGER,
-            GnosisAddresses.SDAI,
-            address(wsxmr),
-            pool
-        );
-
-        hub.setLiquidityRouter(address(router));
-
-        SimpleOracleFacet(address(hub)).updatePrices(300_00000000, 118_00000000);
-
+        // Initialize the HyperSwap pool and set the test's XMR price ($300)
         vm.prank(address(hub));
         router.initializePool(XMR_PRICE);
+        _setXmrPrice8dec(TEST_XMR_PRICE_8DEC);
 
-        // Setup LP vault with large collateral (10,000 sDAI)
+        // Setup LP vault with large collateral (10,000 USDe)
         vm.startPrank(lp);
         VaultFacet(address(hub)).createVault();
         VaultFacet(address(hub)).setMaxMintBps(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
 
-        deal(GnosisAddresses.SDAI, lp, 10000 ether);
-        IERC20(GnosisAddresses.SDAI).approve(address(hub), 10000 ether);
-        VaultFacet(address(hub)).depositShares(5000 ether);
+        deal(USDE, lp, 10000 ether);
+        IERC20(USDE).approve(address(hub), 10000 ether);
+        VaultFacet(address(hub)).depositCollateral(5000 ether);
         vm.stopPrank();
 
         // Give user wsXMR via quick mint to create vault debt
@@ -136,7 +67,7 @@ contract YieldKeeperTest is Test {
 
         // Warp 1 year to let sDAI yield accrue
         vm.warp(block.timestamp + 365 days);
-        vm.roll(block.number + 100000);
+        vm.roll(block.number + 500000);
 
         // Refresh oracle prices after warp (prevent StalePrice)
         _updatePrices();
@@ -158,15 +89,15 @@ contract YieldKeeperTest is Test {
         vm.deal(newLp, 10 ether);
         vm.startPrank(newLp);
         VaultFacet(address(hub)).createVault();
-        deal(GnosisAddresses.SDAI, newLp, 1000 ether);
-        IERC20(GnosisAddresses.SDAI).approve(address(hub), 1000 ether);
-        VaultFacet(address(hub)).depositShares(500 ether);
+        deal(USDE, newLp, 1000 ether);
+        IERC20(USDE).approve(address(hub), 1000 ether);
+        VaultFacet(address(hub)).depositCollateral(500 ether);
         vm.stopPrank();
 
         uint256 warChestBefore = _getYieldWarChest();
 
         vm.warp(block.timestamp + 365 days);
-        vm.roll(block.number + 100000);
+        vm.roll(block.number + 500000);
         _updatePrices();
 
         YieldFacet(address(hub)).syncVaultYield(newLp);
@@ -223,7 +154,7 @@ contract YieldKeeperTest is Test {
     function test_TriggerBuyAndBurn_WarChestEmptyReverts() public {
         // Warp and sync to consume any existing yield
         vm.warp(block.timestamp + 365 days);
-        vm.roll(block.number + 100000);
+        vm.roll(block.number + 500000);
         _updatePrices();
         YieldFacet(address(hub)).syncVaultYield(lp);
 
@@ -259,7 +190,7 @@ contract YieldKeeperTest is Test {
     function test_TriggerBuyAndBurn_XMRNotDippedReverts() public {
         // Ensure war chest has yield
         vm.warp(block.timestamp + 365 days);
-        vm.roll(block.number + 100000);
+        vm.roll(block.number + 500000);
         _updatePrices();
         YieldFacet(address(hub)).syncVaultYield(lp);
 
@@ -290,12 +221,12 @@ contract YieldKeeperTest is Test {
         _mockSwapRouter(1_000_000);
         deal(address(wsxmr), address(hub), 1_000_000); // simulate swap output
 
-        uint256 pendingBefore = _getPendingReturns(keeper, GnosisAddresses.SDAI);
+        uint256 pendingBefore = _getPendingReturns(keeper, address(stata));
 
         vm.prank(keeper);
         YieldFacet(address(hub)).triggerBuyAndBurn(3000);
 
-        uint256 pendingAfter = _getPendingReturns(keeper, GnosisAddresses.SDAI);
+        uint256 pendingAfter = _getPendingReturns(keeper, address(stata));
 
         console.log("Keeper reward:", (pendingAfter - pendingBefore) / 1e18, "sDAI");
         assertGt(pendingAfter, pendingBefore, "Keeper should earn reward");
@@ -357,15 +288,15 @@ contract YieldKeeperTest is Test {
         // Mock getXmrEmaPrice on the hub (delegates to oracle facet)
         vm.mockCall(
             address(hub),
-            abi.encodeWithSelector(oracleFacet.getXmrEmaPrice.selector),
+            abi.encodeWithSelector(HyperCoreOracleFacet.getXmrEmaPrice.selector),
             abi.encode(emaPrice)
         );
     }
 
     function _mockSwapRouter(uint256 wsxmrOut) internal {
-        // Mock exactInputSingle on Uniswap V3 router to return wsXMR
+        // Mock exactInputSingle on the HyperSwap router to return wsXMR
         vm.mockCall(
-            GnosisAddresses.UNISWAP_V3_ROUTER,
+            HYPERSWAP_ROUTER,
             abi.encodeWithSelector(ISwapRouter.exactInputSingle.selector),
             abi.encode(wsxmrOut)
         );
@@ -373,13 +304,16 @@ contract YieldKeeperTest is Test {
 
     function _updatePrices() internal {
         // Refresh oracle prices to prevent StalePrice revert
-        SimpleOracleFacet(address(hub)).updatePrices(300_00000000, 118_00000000);
+        _setXmrPrice8dec(TEST_XMR_PRICE_8DEC);
     }
 
-    // H-1 fix: On Gnosis fork, vm.warp does not cause sDAI yield to accrue (rate only updates on interaction).
-    // We inject shares directly so tests can exercise triggerBuyAndBurn without relying on phantom yield.
+    // Inject real aToken-backed shares so triggerBuyAndBurn can redeem them.
+    // deal() on the adapter only fakes the ERC20 balance — redeem needs real backing.
     function _injectWarChestYield(uint256 shares) internal {
-        deal(GnosisAddresses.SDAI, address(hub), shares);
+        uint256 usdeNeeded = stata.convertToAssets(shares);
+        deal(USDE, address(this), usdeNeeded);
+        IERC20(USDE).approve(address(stata), usdeNeeded);
+        stata.deposit(usdeNeeded, address(hub));
         // yieldWarChest is at slot 15 in wsXmrStorage
         vm.store(address(hub), bytes32(uint256(15)), bytes32(shares));
     }

@@ -8,18 +8,16 @@ const DP = D.pool || {};
 const DLC = D.lpConfig || {};
 
 export const NETWORKS = {
-    gnosis: {
-        id: D.chainId || 100,
-        name: 'Gnosis Chain',
+    hyperevm: {
+        id: D.chainId || 999,
+        name: 'HyperEVM',
         rpcUrls: [
-            'https://gnosis-rpc.publicnode.com',
-            'https://rpc.gnosis.gateway.fm',
-            'https://rpc.gnosischain.com'
+            'https://rpc.hyperliquid.xyz/evm'
         ],
-        blockExplorer: D.explorer || 'https://gnosisscan.io',
+        blockExplorer: D.explorer || 'https://hyperevmscan.io',
         nativeCurrency: {
-            name: 'xDAI',
-            symbol: 'xDAI',
+            name: 'HYPE',
+            symbol: 'HYPE',
             decimals: 18
         }
     }

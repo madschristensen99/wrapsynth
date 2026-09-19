@@ -1,95 +1,41 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
-import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
+import {console} from "forge-std/Test.sol";
+import {HyperEVMTestBase} from "./HyperEVMTestBase.sol";
 import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
-import {SimpleOracleFacet} from "../contracts/facets/SimpleOracleFacet.sol";
+import {HyperCoreOracleFacet} from "../contracts/facets/HyperCoreOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
-import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
 import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
-import {wsXMR} from "../contracts/wsXMR.sol";
-import {wsXMRLiquidityRouter} from "../contracts/router/wsXMRLiquidityRouter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IUniswapV3Factory} from "../contracts/interfaces/external/IUniswapV3Factory.sol";
-import {GnosisAddresses} from "../contracts/GnosisAddresses.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
 import {IErrors} from "../contracts/interfaces/IErrors.sol";
 import {IBurnOperations} from "../contracts/interfaces/swap/IBurnOperations.sol";
 import {ISwapRouter} from "../contracts/interfaces/external/ISwapRouter.sol";
 
-contract MockVerifierProxy {
-    function verify(bytes calldata) external pure returns (bool) {
-        return true;
-    }
-}
-
 /**
  * @title Concurrency & Debt Invariant Tests
  * @notice Tests PendingMintLock guards, burn debt deferral, and debt index invariants
  */
-contract ConcurrencyDebtInvariantTest is Test {
-    wsXmrHub public hub;
-    wsXMR public wsxmr;
-    SimpleOracleFacet public oracleFacet;
-    VaultFacet public vaultFacet;
-    MintFacet public mintFacet;
-    BurnFacet public burnFacet;
-    LiquidationFacet public liquidationFacet;
-    YieldFacet public yieldFacet;
-    wsXMRLiquidityRouter public router;
-    MockVerifierProxy public verifier;
-
-    address lp = makeAddr("lp");
+contract ConcurrencyDebtInvariantTest is HyperEVMTestBase {
     address lp2 = makeAddr("lp2");
-    address user = makeAddr("user");
     address user2 = makeAddr("user2");
     address keeper = makeAddr("keeper");
-    address priceUpdater = makeAddr("priceUpdater");
 
-    uint256 constant XMR_PRICE_8DEC = 300_00000000;
-    uint256 constant DAI_PRICE_8DEC = 118_00000000;
+    uint256 constant TEST_XMR_PRICE_8DEC = 300_00000000; // $300
 
-    function setUp() public {
-        string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
-        vm.createSelectFork(rpcUrl);
-
-        vm.deal(address(this), 1_000_000 ether);
-        vm.deal(lp, 1000 ether);
+    function setUp() public override {
+        super.setUp();
         vm.deal(lp2, 1000 ether);
-        vm.deal(user, 1000 ether);
         vm.deal(user2, 1000 ether);
         vm.deal(keeper, 1000 ether);
 
-        verifier = new MockVerifierProxy();
-        wsxmr = new wsXMR();
-        hub = new wsXmrHub(address(wsxmr), address(verifier));
-
-        oracleFacet = new SimpleOracleFacet(address(wsxmr), address(verifier), address(this));
-        vaultFacet = new VaultFacet(address(wsxmr), address(verifier));
-        mintFacet = new MintFacet(address(wsxmr), address(verifier));
-        burnFacet = new BurnFacet(address(wsxmr), address(verifier));
-        liquidationFacet = new LiquidationFacet(address(wsxmr), address(verifier));
-        yieldFacet = new YieldFacet(address(wsxmr), address(verifier));
-
-        hub.registerFacets(
-            address(vaultFacet),
-            address(mintFacet),
-            address(burnFacet),
-            address(liquidationFacet),
-            address(yieldFacet),
-            address(oracleFacet)
-        );
-
-        wsxmr.setHub(address(hub));
-
-        // Set up Uniswap pool for buy-and-burn tests
-        _setupUniswapPool();
-
-        SimpleOracleFacet(address(hub)).setPriceUpdater(priceUpdater);
-        _updatePrices();
+        // Initialize the HyperSwap pool and set the test's XMR price ($300)
+        vm.prank(address(hub));
+        router.initializePool(TEST_XMR_PRICE_8DEC * 1e10);
+        _setXmrPrice8dec(TEST_XMR_PRICE_8DEC);
 
         // Standard vault setup for LP
         _createVaultAndDeposit(lp, 5000 ether);
@@ -186,14 +132,14 @@ contract ConcurrencyDebtInvariantTest is Test {
         assertEq(_getTotalPendingMints(), 1, "Should have 1 pending mint");
 
         // Warp past timeout
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
         // Should still be locked (EXPIRED_READY, not yet claimed/swept)
         assertEq(_getTotalPendingMints(), 1, "EXPIRED_READY should still hold lock");
 
         // Warp past LP claim window, then sweep (no secret needed)
-        vm.roll(block.number + 360);
+        vm.roll(block.number + 1800);
         MintFacet(address(hub)).sweepUnclaimedExpiredMint(reqId);
 
         assertEq(_getTotalPendingMints(), 0, "Should have 0 pending mints after sweep");
@@ -233,7 +179,7 @@ contract ConcurrencyDebtInvariantTest is Test {
         uint256 globalDebtBefore = _getGlobalTotalDebt();
 
         // Warp past burn deadline
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
 
         // User aborts the burn
         vm.prank(user);
@@ -262,7 +208,7 @@ contract ConcurrencyDebtInvariantTest is Test {
         uint256 globalDebtBefore = _getGlobalTotalDebt();
 
         // Warp past proposal deadline
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
 
         // User resolves declined proposal
         vm.prank(user);
@@ -390,7 +336,7 @@ contract ConcurrencyDebtInvariantTest is Test {
         uint256 burnAmount = 100_000;
         bytes32 burnId = _requestBurn(user, lp, burnAmount);
 
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         vm.prank(user);
         BurnFacet(address(hub)).abortBurn(burnId);
 
@@ -496,38 +442,14 @@ contract ConcurrencyDebtInvariantTest is Test {
 
     // ========== HELPERS ==========
 
-    function _setupUniswapPool() internal {
-        (address token0, address token1) = GnosisAddresses.SDAI < address(wsxmr)
-            ? (GnosisAddresses.SDAI, address(wsxmr))
-            : (address(wsxmr), GnosisAddresses.SDAI);
-
-        address pool = IUniswapV3Factory(GnosisAddresses.UNI_V3_FACTORY).getPool(token0, token1, 3000);
-        if (pool == address(0)) {
-            pool = IUniswapV3Factory(GnosisAddresses.UNI_V3_FACTORY).createPool(token0, token1, 3000);
-        }
-
-        router = new wsXMRLiquidityRouter(
-            address(hub),
-            GnosisAddresses.UNI_V3_POSITION_MANAGER,
-            GnosisAddresses.SDAI,
-            address(wsxmr),
-            pool
-        );
-
-        hub.setLiquidityRouter(address(router));
-
-        vm.prank(address(hub));
-        router.initializePool(300 * 1e18);
-    }
-
     function _createVaultAndDeposit(address who, uint256 amount) internal {
         vm.startPrank(who);
         VaultFacet(address(hub)).createVault();
         vm.stopPrank();
-        deal(GnosisAddresses.SDAI, who, amount);
+        deal(USDE, who, amount);
         vm.startPrank(who);
-        IERC20(GnosisAddresses.SDAI).approve(address(hub), amount);
-        VaultFacet(address(hub)).depositShares(amount);
+        IERC20(USDE).approve(address(hub), amount);
+        VaultFacet(address(hub)).depositCollateral(amount);
         vm.stopPrank();
     }
 
@@ -640,26 +562,31 @@ contract ConcurrencyDebtInvariantTest is Test {
     function _mockEmaPrice(uint256 emaPrice) internal {
         vm.mockCall(
             address(hub),
-            abi.encodeWithSelector(oracleFacet.getXmrEmaPrice.selector),
+            abi.encodeWithSelector(HyperCoreOracleFacet.getXmrEmaPrice.selector),
             abi.encode(emaPrice)
         );
     }
 
     function _mockSwapRouter(uint256 wsxmrOut) internal {
         vm.mockCall(
-            GnosisAddresses.UNISWAP_V3_ROUTER,
+            HYPERSWAP_ROUTER,
             abi.encodeWithSelector(ISwapRouter.exactInputSingle.selector),
             abi.encode(wsxmrOut)
         );
     }
 
     function _updatePrices() internal {
-        vm.prank(priceUpdater);
-        SimpleOracleFacet(address(hub)).updatePrices(XMR_PRICE_8DEC, DAI_PRICE_8DEC);
+        _setXmrPrice8dec(TEST_XMR_PRICE_8DEC);
     }
 
     function _injectWarChestYield(uint256 shares) internal {
-        deal(GnosisAddresses.SDAI, address(hub), shares);
-        vm.store(address(hub), bytes32(uint256(15)), bytes32(shares));
+        // deal() on the adapter only fakes the ERC20 balance — redeem() needs real
+        // HyperLend aToken backing. Deposit USDe through the adapter to mint real
+        // shares directly to the hub, then set the yieldWarChest accounting slot.
+        uint256 usdeNeeded = stata.convertToAssets(shares);
+        deal(USDE, address(this), usdeNeeded);
+        IERC20(USDE).approve(address(stata), usdeNeeded);
+        stata.deposit(usdeNeeded, address(hub));
+        vm.store(address(hub), bytes32(uint256(15)), bytes32(shares)); // yieldWarChest slot
     }
 }

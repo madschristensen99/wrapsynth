@@ -1,20 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import {Test, console} from "forge-std/Test.sol";
-import {wsXmrHub} from "../../contracts/core/wsXmrHub.sol";
-import {SimpleOracleFacet} from "../../contracts/facets/SimpleOracleFacet.sol";
+import {console} from "forge-std/Test.sol";
+import {HyperEVMTestBase} from "../HyperEVMTestBase.sol";
 import {VaultFacet} from "../../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../../contracts/facets/BurnFacet.sol";
 import {LiquidationFacet} from "../../contracts/facets/LiquidationFacet.sol";
 import {YieldFacet} from "../../contracts/facets/YieldFacet.sol";
-import {wsXMR} from "../../contracts/wsXMR.sol";
-import {wsXMRLiquidityRouter} from "../../contracts/router/wsXMRLiquidityRouter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IUniswapV3Factory} from "../../contracts/interfaces/external/IUniswapV3Factory.sol";
 import {ISwapRouter} from "../../contracts/interfaces/external/ISwapRouter.sol";
-import {GnosisAddresses} from "../../contracts/GnosisAddresses.sol";
 import {Ed25519} from "../../contracts/Ed25519.sol";
 import {wsXmrStorage} from "../../contracts/core/wsXmrStorage.sol";
 import {TickMath} from "../../contracts/libraries/TickMath.sol";
@@ -26,92 +21,17 @@ interface IUniswapV3SwapCallback {
 
 event CoLPRangePreferenceUpdated(address indexed vault, uint16 maxRangeBps);
 
-contract MockVerifierProxy {
-    function verify(bytes calldata) external pure returns (bool) {
-        return true;
-    }
-}
-
-contract CoLPTest is Test, IUniswapV3SwapCallback {
-    address constant WXDAI = 0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d;
-
-    wsXmrHub public hub;
-    wsXMR public wsxmr;
-    SimpleOracleFacet public oracleFacet;
-    VaultFacet public vaultFacet;
-    MintFacet public mintFacet;
-    BurnFacet public burnFacet;
-    LiquidationFacet public liquidationFacet;
-    YieldFacet public yieldFacet;
-    wsXMRLiquidityRouter public router;
-    MockVerifierProxy public verifier;
-
-    address public lp;
-    address public user;
+contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
     address public keeper;
 
     uint256 constant XMR_PRICE = 390 * 1e18; // $390 XMR (18 decimals)
-    uint256 constant COLLATERAL_PRICE = 1e18; // $1 sDAI
 
-    function setUp() public {
-        string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
-        vm.createSelectFork(rpcUrl);
-
-        lp = makeAddr("lp");
-        user = makeAddr("user");
+    function setUp() public override {
+        super.setUp();
         keeper = makeAddr("keeper");
-        vm.deal(lp, 1000 ether);
-        vm.deal(user, 1000 ether);
         vm.deal(keeper, 10 ether);
 
-        verifier = new MockVerifierProxy();
-        wsxmr = new wsXMR();
-        hub = new wsXmrHub(address(wsxmr), address(verifier));
-
-        oracleFacet = new SimpleOracleFacet(address(wsxmr), address(verifier), address(this));
-        vaultFacet = new VaultFacet(address(wsxmr), address(verifier));
-        mintFacet = new MintFacet(address(wsxmr), address(verifier));
-        burnFacet = new BurnFacet(address(wsxmr), address(verifier));
-        liquidationFacet = new LiquidationFacet(address(wsxmr), address(verifier));
-        yieldFacet = new YieldFacet(address(wsxmr), address(verifier));
-
-        hub.registerFacets(
-            address(vaultFacet),
-            address(mintFacet),
-            address(burnFacet),
-            address(liquidationFacet),
-            address(yieldFacet),
-            address(oracleFacet)
-        );
-
-        wsxmr.setHub(address(hub));
-
-        // Create Uniswap V3 pool for sDAI/wsXMR
-        (address token0, address token1) = GnosisAddresses.SDAI < address(wsxmr)
-            ? (GnosisAddresses.SDAI, address(wsxmr))
-            : (address(wsxmr), GnosisAddresses.SDAI);
-
-        address pool = IUniswapV3Factory(GnosisAddresses.UNI_V3_FACTORY).getPool(token0, token1, 3000);
-        if (pool == address(0)) {
-            pool = IUniswapV3Factory(GnosisAddresses.UNI_V3_FACTORY).createPool(token0, token1, 3000);
-        }
-
-        // Deploy router
-        router = new wsXMRLiquidityRouter(
-            address(hub),
-            GnosisAddresses.UNI_V3_POSITION_MANAGER,
-            GnosisAddresses.SDAI,
-            address(wsxmr),
-            pool
-        );
-
-        // Register router with hub
-        hub.setLiquidityRouter(address(router));
-
-        // Set oracle prices
-        SimpleOracleFacet(address(hub)).updatePrices(390_00000000, 1_00000000);
-
-        // Initialize pool at oracle price (must be called as hub)
+        // Initialize the HyperSwap pool at the oracle price ($390)
         vm.prank(address(hub));
         router.initializePool(XMR_PRICE);
 
@@ -122,10 +42,10 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
 
-        // Get sDAI for LP
-        deal(GnosisAddresses.SDAI, lp, 1000 ether);
-        IERC20(GnosisAddresses.SDAI).approve(address(hub), 1000 ether);
-        VaultFacet(address(hub)).depositShares(100 ether);
+        // Deal USDe and deposit as collateral
+        deal(USDE, lp, 1000 ether);
+        IERC20(USDE).approve(address(hub), 1000 ether);
+        VaultFacet(address(hub)).depositCollateral(200 ether);
         vm.stopPrank();
 
         // Give user some wsXMR (via a quick mint)
@@ -203,6 +123,8 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
 
         uint256 wsxmrToDeposit = wsxmrBalance / 2;
 
+        uint256 sharesBefore = _getVault(lp).collateralShares;
+
         vm.prank(user);
         uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
 
@@ -211,7 +133,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         // Check LP vault accounting
         wsXmrStorage.Vault memory vault = _getVault(lp);
         assertTrue(vault.deployedSDAIShares > 0, "deployedSDAIShares should be > 0");
-        assertTrue(vault.collateralShares < 100 ether, "collateralShares should decrease");
+        assertTrue(vault.collateralShares < sharesBefore, "collateralShares should decrease");
 
         // Check position metadata
         wsXmrStorage.PositionMetadata memory meta = _getPositionMetadata(tokenId);
@@ -319,7 +241,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
 
         // Mint keeping under 150% CR (M-2 fix no longer counts wsXMR as collateral)
         vm.prank(user2);
-        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user2, 85_000_000_000, commitment2, bytes32(uint256(0xdeadbeef)));
+        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user2, 150_000_000_000, commitment2, bytes32(uint256(0xdeadbeef)));
 
         bytes32[] memory user2Mints = _getUserMintRequests(user2);
         
@@ -335,7 +257,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         MintFacet(address(hub)).finalizeMint(user2Mints[0]);
 
         // Raise XMR price to make vault liquidatable (wsXMR debt becomes more valuable in USD)
-        SimpleOracleFacet(address(hub)).updatePrices(2000_00000000, 1_00000000); // $2000 XMR
+        _setXmrPrice8dec(2000_00000000); // $2000 XMR
 
         // M3: Sync pool price to oracle so drainPosition slippage bounds are consistent
         _pushPoolPriceUp(10 ether);
@@ -377,7 +299,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         uint256 crBefore = _getVaultHealth(lp);
 
         // Push XMR price up 50%
-        SimpleOracleFacet(address(hub)).updatePrices(585_00000000, 1_00000000); // $585 XMR
+        _setXmrPrice8dec(585_00000000); // $585 XMR
 
         uint256 crAfter = _getVaultHealth(lp);
 
@@ -399,7 +321,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
 
         // Move price far outside range
-        SimpleOracleFacet(address(hub)).updatePrices(800_00000000, 1_00000000); // $800 XMR
+        _setXmrPrice8dec(800_00000000); // $800 XMR
 
         // M3: Sync pool price to oracle so drainPosition slippage bounds are consistent
         _pushPoolPriceUp(10 ether);
@@ -479,7 +401,7 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         console.log("  Deployed shares:", deployedShares);
 
         // Move price far out of range so position has 0 DAI (all wsXMR)
-        SimpleOracleFacet(address(hub)).updatePrices(150_00000000, 1_00000000); // $150 XMR (price crashed)
+        _setXmrPrice8dec(150_00000000); // $150 XMR (price crashed)
         
         // Now position should have 0 DAI, all wsXMR
         // The bug: contract "loses" the deployedSDAIShares in CR calculation
@@ -557,13 +479,13 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
 
     function test_SetMintTimeoutBlocks_ValidRange() public {
         vm.startPrank(lp);
-        VaultFacet(address(hub)).setMintTimeoutBlocks(360); // min
+        VaultFacet(address(hub)).setMintTimeoutBlocks(1800); // min (~30 min at 1s/block)
         wsXmrStorage.Vault memory vault1 = _getVault(lp);
-        assertEq(vault1.mintTimeoutBlocks, 360);
+        assertEq(vault1.mintTimeoutBlocks, 1800);
 
-        VaultFacet(address(hub)).setMintTimeoutBlocks(17280); // max
+        VaultFacet(address(hub)).setMintTimeoutBlocks(86400); // max (~24h)
         wsXmrStorage.Vault memory vault2 = _getVault(lp);
-        assertEq(vault2.mintTimeoutBlocks, 17280);
+        assertEq(vault2.mintTimeoutBlocks, 86400);
 
         VaultFacet(address(hub)).setMintTimeoutBlocks(7200); // middle
         wsXmrStorage.Vault memory vault3 = _getVault(lp);
@@ -576,14 +498,14 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
     function test_SetMintTimeoutBlocks_BelowMinReverts() public {
         vm.prank(lp);
         vm.expectRevert();
-        VaultFacet(address(hub)).setMintTimeoutBlocks(359);
+        VaultFacet(address(hub)).setMintTimeoutBlocks(1799);
         console.log("PASS: setMintTimeoutBlocks below min reverts");
     }
 
     function test_SetMintTimeoutBlocks_AboveMaxReverts() public {
         vm.prank(lp);
         vm.expectRevert();
-        VaultFacet(address(hub)).setMintTimeoutBlocks(17281);
+        VaultFacet(address(hub)).setMintTimeoutBlocks(86401);
         console.log("PASS: setMintTimeoutBlocks above max reverts");
     }
 
@@ -591,13 +513,13 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
 
     function test_SetBurnTimeoutBlocks_ValidRange() public {
         vm.startPrank(lp);
-        VaultFacet(address(hub)).setBurnTimeoutBlocks(360); // min
+        VaultFacet(address(hub)).setBurnTimeoutBlocks(1800); // min (~30 min at 1s/block)
         wsXmrStorage.Vault memory vault1 = _getVault(lp);
-        assertEq(vault1.burnTimeoutBlocks, 360);
+        assertEq(vault1.burnTimeoutBlocks, 1800);
 
-        VaultFacet(address(hub)).setBurnTimeoutBlocks(17280); // max
+        VaultFacet(address(hub)).setBurnTimeoutBlocks(86400); // max (~24h)
         wsXmrStorage.Vault memory vault2 = _getVault(lp);
-        assertEq(vault2.burnTimeoutBlocks, 17280);
+        assertEq(vault2.burnTimeoutBlocks, 86400);
 
         VaultFacet(address(hub)).setBurnTimeoutBlocks(7200); // middle
         wsXmrStorage.Vault memory vault3 = _getVault(lp);
@@ -610,23 +532,23 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
     function test_SetBurnTimeoutBlocks_BelowMinReverts() public {
         vm.prank(lp);
         vm.expectRevert();
-        VaultFacet(address(hub)).setBurnTimeoutBlocks(359);
+        VaultFacet(address(hub)).setBurnTimeoutBlocks(1799);
         console.log("PASS: setBurnTimeoutBlocks below min reverts");
     }
 
     function test_SetBurnTimeoutBlocks_AboveMaxReverts() public {
         vm.prank(lp);
         vm.expectRevert();
-        VaultFacet(address(hub)).setBurnTimeoutBlocks(17281);
+        VaultFacet(address(hub)).setBurnTimeoutBlocks(86401);
         console.log("PASS: setBurnTimeoutBlocks above max reverts");
     }
 
     // ========== TEST 15: Custom mint timeout affects cancel behavior ==========
 
     function test_CustomMintTimeout_AffectsCancel() public {
-        // Set very short timeout (30 min = 360 blocks)
+        // Set very short timeout (30 min = 1800 blocks at 1s/block)
         vm.prank(lp);
-        VaultFacet(address(hub)).setMintTimeoutBlocks(360);
+        VaultFacet(address(hub)).setMintTimeoutBlocks(1800);
 
         address user4 = makeAddr("user4");
         vm.deal(user4, 100 ether);
@@ -638,9 +560,9 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         vm.prank(user4);
         bytes32 requestId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user4, 20000000000, commitment4, bytes32(uint256(0xdeadbeef)));
 
-        // Warp past timeout (360 blocks at ~5s = 30 min, add buffer)
+        // Warp past timeout (1800 blocks at 1s = 30 min, add buffer)
         vm.warp(block.timestamp + 31 minutes);
-        vm.roll(block.number + 400);
+        vm.roll(block.number + 2000);
 
         // LP should be able to cancel
         vm.prank(lp);
@@ -656,11 +578,11 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
 
         vm.prank(rando);
         vm.expectRevert();
-        VaultFacet(address(hub)).setMintTimeoutBlocks(720);
+        VaultFacet(address(hub)).setMintTimeoutBlocks(3600);
 
         vm.prank(rando);
         vm.expectRevert();
-        VaultFacet(address(hub)).setBurnTimeoutBlocks(720);
+        VaultFacet(address(hub)).setBurnTimeoutBlocks(3600);
 
         console.log("PASS: non-LP cannot set timeout");
     }
@@ -867,6 +789,15 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
 
     // Uniswap V3 swap callback - pool calls this during swap to settle tokens
     function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata) external {
+        _settleSwap(amount0Delta, amount1Delta);
+    }
+
+    // HyperSwap V3 swap callback - same signature, different selector (0xfa85398b)
+    function hyperswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata) external {
+        _settleSwap(amount0Delta, amount1Delta);
+    }
+
+    function _settleSwap(int256 amount0Delta, int256 amount1Delta) internal {
         if (amount0Delta > 0) {
             address token0 = IUniswapV3Pool(msg.sender).token0();
             IERC20(token0).transfer(msg.sender, uint256(amount0Delta));
@@ -877,17 +808,17 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         }
     }
 
-    // Helper: push pool price up by buying wsXMR with sDAI via direct pool.swap
+    // Helper: push pool price up by buying wsXMR with USDe via direct pool.swap
     function _pushPoolPriceUp(uint256 swapAmount) internal {
         address poolAddr = router.pool();
-        bool wsxmrIsToken0 = address(wsxmr) < GnosisAddresses.SDAI;
+        bool wsxmrIsToken0 = address(wsxmr) < USDE;
         deal(address(wsxmr), address(this), 1 * 1e8);
-        deal(GnosisAddresses.SDAI, address(this), swapAmount);
+        deal(USDE, address(this), swapAmount);
         wsxmr.approve(poolAddr, type(uint256).max);
-        IERC20(GnosisAddresses.SDAI).approve(poolAddr, type(uint256).max);
+        IERC20(USDE).approve(poolAddr, type(uint256).max);
         IUniswapV3Pool(poolAddr).swap(
             address(this),
-            !wsxmrIsToken0, // zeroForOne = !wsxmrIsToken0 means token1->token0 (sDAI -> wsXMR if sDAI is token1)
+            !wsxmrIsToken0, // zeroForOne = !wsxmrIsToken0 means token1->token0 (USDe -> wsXMR if USDe is token1)
             int256(swapAmount),
             wsxmrIsToken0 ? TickMath.MAX_SQRT_RATIO - 1 : TickMath.MIN_SQRT_RATIO + 1,
             ""
@@ -902,14 +833,14 @@ contract CoLPTest is Test, IUniswapV3SwapCallback {
         uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
 
         // Track pending returns before
-        uint256 daiBefore = _getPendingReturns(lp, GnosisAddresses.SDAI);
+        uint256 daiBefore = _getPendingReturns(lp, address(stata));
         uint256 wsxmrBefore = _getPendingReturns(user, address(wsxmr));
 
         // Collect fees (no trades yet, so should be 0)
         vm.prank(user);
         VaultFacet(address(hub)).collectCoLPFees(tokenId);
 
-        uint256 daiAfter = _getPendingReturns(lp, GnosisAddresses.SDAI);
+        uint256 daiAfter = _getPendingReturns(lp, address(stata));
         uint256 wsxmrAfter = _getPendingReturns(user, address(wsxmr));
 
         assertEq(daiAfter, daiBefore, "No fees without trading");

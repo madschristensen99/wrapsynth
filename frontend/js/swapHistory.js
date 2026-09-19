@@ -148,7 +148,7 @@ function renderTransferItem(item) {
     const direction = item.type === 'transfer-out' ? 'Sent wsXMR' : 'Received wsXMR';
     const icon = item.type === 'transfer-out' ? getIconSVG('arrowUpRight') : getIconSVG('arrowDownLeft');
     const counterpartyLabel = item.type === 'transfer-out' ? 'To' : 'From';
-    const explorer = NETWORKS.gnosis.blockExplorer;
+    const explorer = NETWORKS.hyperevm.blockExplorer;
     const timestamp = formatTimestamp(item.timestamp);
     const shortAddr = `${item.counterparty.slice(0, 6)}...${item.counterparty.slice(-4)}`;
     const shortTx = `${item.txHash.slice(0, 6)}...${item.txHash.slice(-4)}`;

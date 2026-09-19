@@ -7,7 +7,6 @@ import {IwsXmrLiquidityRouter} from "../interfaces/router/IwsXmrLiquidityRouter.
 import {INonfungiblePositionManager} from "../interfaces/external/INonfungiblePositionManager.sol";
 import {IUniswapV3Pool} from "../interfaces/external/IUniswapV3Pool.sol";
 import {IUniswapV3Factory} from "../interfaces/external/IUniswapV3Factory.sol";
-import {GnosisAddresses} from "../GnosisAddresses.sol";
 import {TickMath} from "../libraries/TickMath.sol";
 import {FullMath} from "../libraries/FullMath.sol";
 

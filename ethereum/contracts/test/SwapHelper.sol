@@ -46,6 +46,19 @@ contract SwapHelper {
         int256 amount1Delta,
         bytes calldata
     ) external {
+        _settle(amount0Delta, amount1Delta);
+    }
+
+    // HyperSwap V3 callback - same settlement, renamed selector on HyperEVM
+    function hyperswapV3SwapCallback(
+        int256 amount0Delta,
+        int256 amount1Delta,
+        bytes calldata
+    ) external {
+        _settle(amount0Delta, amount1Delta);
+    }
+
+    function _settle(int256 amount0Delta, int256 amount1Delta) internal {
         // Pull from payer (who approved this contract) to this contract,
         // then forward to the pool. We cannot transferFrom(payer, pool)
         // because the pool does not have an allowance from payer.

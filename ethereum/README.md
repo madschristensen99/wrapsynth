@@ -2,6 +2,28 @@
 
 A decentralized protocol for wrapping Monero (XMR) on Gnosis Chain using a diamond proxy pattern with LP-backed minting and burning.
 
+## 🚀 HyperEVM Mainnet Deployment (primary venue)
+
+**Deployed:** September 18, 2026 — full stack live, tested end-to-end on mainnet, and verified on the explorer. See `hypeMigration.md` for the port spec and `deployments/hyperevm-deployment.json` for the manifest.
+
+- **wsXmrHub (Diamond Proxy):** `0xd821A7D919e007b6b39925f672f1219dB4865Fba`
+- **wsXMR Token:** `0x75b85bbC8779B9cDe77cc9DD0335C27410455A53`
+- **LiquidityRouter:** `0x39C669cE84c694f25f4dBe1b11d5aBF4A490911f`
+- **SwapHelper:** `0xfb2Ebe73143C5F5aF51Ba7058b8F47702dDA7df8`
+- **Ed25519Helper:** `0xE70694B1E032E022dFb0090b8C5b9cc7Cb0B2640`
+- **StataUSDe (collateral):** `0xba1240B966E20E16ca32BBFc189528787794F2A9`
+- **HyperSwap USDe/wsXMR Pool:** `0xDa136BA625b33489eAABf0EC6baD58954214F63c`
+- **HyperCoreOracleFacet:** `0xE91A4B01632a7D281fb3eB0E83Ad9D5F0305d48f`
+- **VaultFacet:** `0x5F8b8a6ccA1aa4266fAC32efc729527BC0F333d1`
+- **MintFacet:** `0x463F0C28e8E9328DB7ab220Dd4133131c9f053dB`
+- **BurnFacet:** `0x36fe621680dA06a1CA80B52769c6413A212081bC`
+- **LiquidationFacet:** `0x97e2F14C2533a5f678A9596cF5f05bE955FA19fB`
+- **YieldFacet:** `0x917a2Afc28BE633B0BDE1aeE4923C4A97F0ab250`
+- **Network:** HyperEVM (ChainID: 999) · **Collateral:** USDe via HyperLend · **Oracle:** native XMR perp via L1-read precompile
+- **Explorer:** https://hyperevmscan.io
+
+**Mainnet validation (all passing):** `testFullCycleNow.hyperevm.js` (deposit → mint → Co-LP open/unwind → burn + reward), `testCoLPNow.hyperevm.js` (Co-LP open + unwind), `testPoolSwaps.hyperevm.js` (seeded pool + both-direction swaps + fee collection). All contracts verified on hyperevmscan via Etherscan V2.
+
 ## 🚀 Gnosis Mainnet Deployment
 
 **Deployed:** September 16, 2026 (v6.1 — admin privilege lock: `lockHub()` / `lockDeployer()` executed as final deploy step, permanently disabling deployer hooks)

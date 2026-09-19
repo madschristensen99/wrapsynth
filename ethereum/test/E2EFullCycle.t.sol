@@ -1,21 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
+import {console} from "forge-std/Test.sol";
+import {HyperEVMTestBase} from "./HyperEVMTestBase.sol";
 import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
-import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
-import {SimpleOracleFacet} from "../contracts/facets/SimpleOracleFacet.sol";
+import {HyperCoreOracleFacet} from "../contracts/facets/HyperCoreOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
-import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
-import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
 import {wsXMR} from "../contracts/wsXMR.sol";
-import {wsXMRLiquidityRouter} from "../contracts/router/wsXMRLiquidityRouter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
-import {IUniswapV3Factory} from "../contracts/interfaces/external/IUniswapV3Factory.sol";
-import {INonfungiblePositionManager} from "../contracts/interfaces/external/INonfungiblePositionManager.sol";
 
 /**
  * @title E2E Full Cycle Test
@@ -30,119 +25,21 @@ import {INonfungiblePositionManager} from "../contracts/interfaces/external/INon
  *   8. Withdraw co-LP
  *   9. Collect fees from mint/burn/co-LP
  */
-contract E2EFullCycleTest is Test {
-    // Gnosis addresses
-    address constant WXDAI = 0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d;
-    address constant SDAI = 0xaf204776c7245bF4147c2612BF6e5972Ee483701;
-    address constant UNISWAP_V3_FACTORY = 0xf78031CBCA409F2FB6876BDFDBc1b2df24cF9bEf;
-    address constant UNISWAP_V3_POSITION_MANAGER = 0xC36442b4a4522E871399CD717aBDD847Ab11FE88;
+contract E2EFullCycleTest is HyperEVMTestBase {
     
     // Contracts
-    wsXmrHub public hub;
-    wsXMR public wsxmr;
-    SimpleOracleFacet public oracleFacet;
-    VaultFacet public vaultFacet;
-    MintFacet public mintFacet;
-    BurnFacet public burnFacet;
-    LiquidationFacet public liquidationFacet;
-    YieldFacet public yieldFacet;
-    wsXMRLiquidityRouter public router;
-    MockVerifierProxy public verifier;
-    
-    // Test actors
-    address public deployer;
-    address public lp;
-    address public user;
-    
-    // Test state
-    bytes32 public testSecret = bytes32(uint256(0x123456789abcdef));
+    bytes32 public testSecret = bytes32(uint256(0x1234567890abcdef));
     uint256 public mintedAmount;
     bytes32 public mintRequestId;
     bytes32 public burnRequestId;
     
-    // Prices (8 decimals from RedStone)
-    uint256 constant XMR_PRICE = 390_00000000; // $390
-    uint256 constant DAI_PRICE = 1_00000000;   // $1
-    
-    function setUp() public {
-        // Fork Gnosis
-        string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
-        vm.createSelectFork(rpcUrl);
-        
-        deployer = address(this);
-        lp = makeAddr("lp");
-        user = makeAddr("user");
-        
-        vm.deal(lp, 1000 ether);
-        vm.deal(user, 1000 ether);
-        
-        console.log("\n=== DEPLOYMENT ===");
-        _deployContracts();
-        console.log("All contracts deployed successfully!\n");
-    }
-    
-    function _deployContracts() internal {
-        // Deploy mock verifier
-        verifier = new MockVerifierProxy();
-        console.log("MockVerifierProxy:", address(verifier));
-        
-        // Deploy wsXMR token
-        wsxmr = new wsXMR();
-        console.log("wsXMR Token:", address(wsxmr));
-        
-        // Deploy hub
-        hub = new wsXmrHub(address(wsxmr), address(verifier));
+    function setUp() public override {
+        super.setUp(); // fork + precompiles + adapter + stack + price
+        console.log("\n=== DEPLOYMENT (HyperEVM fork) ===");
         console.log("wsXmrHub:", address(hub));
-        
-        // Deploy facets
-        oracleFacet = new SimpleOracleFacet(address(wsxmr), address(verifier), deployer);
-        vaultFacet = new VaultFacet(address(wsxmr), address(verifier));
-        mintFacet = new MintFacet(address(wsxmr), address(verifier));
-        burnFacet = new BurnFacet(address(wsxmr), address(verifier));
-        liquidationFacet = new LiquidationFacet(address(wsxmr), address(verifier));
-        yieldFacet = new YieldFacet(address(wsxmr), address(verifier));
-        
-        console.log("SimpleOracleFacet:", address(oracleFacet));
-        console.log("VaultFacet:", address(vaultFacet));
-        console.log("MintFacet:", address(mintFacet));
-        console.log("BurnFacet:", address(burnFacet));
-        console.log("LiquidationFacet:", address(liquidationFacet));
-        console.log("YieldFacet:", address(yieldFacet));
-        
-        // Register facets
-        hub.registerFacets(
-            address(vaultFacet),
-            address(mintFacet),
-            address(burnFacet),
-            address(liquidationFacet),
-            address(yieldFacet),
-            address(oracleFacet)
-        );
-        
-        // Set hub as wsXMR controller
-        wsxmr.setHub(address(hub));
-        
-        // Create Uniswap V3 pool for co-LP (if not exists)
-        address pool = IUniswapV3Factory(UNISWAP_V3_FACTORY).getPool(SDAI, address(wsxmr), 3000);
-        if (pool == address(0)) {
-            pool = IUniswapV3Factory(UNISWAP_V3_FACTORY).createPool(SDAI, address(wsxmr), 3000);
-            console.log("Created Uniswap V3 Pool:", pool);
-        } else {
-            console.log("Using existing pool:", pool);
-        }
-        
-        // Deploy router
-        router = new wsXMRLiquidityRouter(
-            address(hub),
-            UNISWAP_V3_POSITION_MANAGER,
-            SDAI,
-            address(wsxmr),
-            pool
-        );
-        console.log("wsXMRLiquidityRouter:", address(router));
-        
-        // Set router in hub
-        hub.setLiquidityRouter(address(router));
+        console.log("StataUSDe:", address(stata));
+        console.log("Router:", address(router));
+        console.log("Pool:", pool);
     }
     
     function test_FullEndToEndCycle() public {
@@ -187,34 +84,19 @@ contract E2EFullCycleTest is Test {
     
     function _updatePrices() internal {
         console.log("=== STEP 1: UPDATE PRICES ===");
-        SimpleOracleFacet(address(hub)).updatePrices(XMR_PRICE, DAI_PRICE);
-        console.log("XMR Price: $390");
-        console.log("DAI Price: $1");
+        _setXmrPrice8dec(XMR_PRICE_8DEC);
+        console.log("XMR Price: $390 (HyperCore native perp, mocked)");
+        console.log("Collateral Price: $1 (USDe unit of account)");
         console.log("[OK] Prices updated\n");
     }
     
     function _createVaultAndDeposit() internal {
         console.log("=== STEP 2: CREATE VAULT & DEPOSIT ===");
         
-        vm.startPrank(lp);
-        
-        // Get xDAI by wrapping native
-        (bool success,) = WXDAI.call{value: 100 ether}("");
-        require(success, "WXDAI wrap failed");
-        
-        uint256 xdaiBalance = IERC20(WXDAI).balanceOf(lp);
-        console.log("LP xDAI balance:", xdaiBalance / 1e18, "xDAI");
-        
-        // Create vault
-        VaultFacet(address(hub)).createVault();
+        // LP gets USDe and deposits it (wrapped to stataUSDe shares internally)
+        _lpVaultWithCollateral(lp, 100 ether);
         console.log("[OK] Vault created");
-        
-        // Deposit collateral (xDAI will be converted to sDAI)
-        IERC20(WXDAI).approve(address(hub), 100 ether);
-        VaultFacet(address(hub)).depositCollateral(100 ether);
-        console.log("[OK] Deposited 100 xDAI as collateral");
-        
-        vm.stopPrank();
+        console.log("[OK] Deposited 100 USDe as collateral");
         console.log();
     }
     
@@ -347,22 +229,16 @@ contract E2EFullCycleTest is Test {
         uint256 withdrawAmount = 5 ether;
         console.log("Withdrawing:", withdrawAmount, "shares");
         
-        // Check both xDAI and sDAI balances (contract may return either)
-        uint256 xdaiBalanceBefore = IERC20(WXDAI).balanceOf(lp);
-        uint256 sdaiBalanceBefore = IERC20(SDAI).balanceOf(lp);
+        // Withdrawal redeems shares to USDe
+        uint256 usdeBefore = IERC20(USDE).balanceOf(lp);
         
         VaultFacet(address(hub)).withdrawCollateral(withdrawAmount);
         
-        uint256 xdaiBalanceAfter = IERC20(WXDAI).balanceOf(lp);
-        uint256 sdaiBalanceAfter = IERC20(SDAI).balanceOf(lp);
-        
-        uint256 xdaiReceived = xdaiBalanceAfter - xdaiBalanceBefore;
-        uint256 sdaiReceived = sdaiBalanceAfter - sdaiBalanceBefore;
+        uint256 usdeReceived = IERC20(USDE).balanceOf(lp) - usdeBefore;
         
         console.log("[OK] Withdrawal successful!");
-        console.log("  Received xDAI:", xdaiReceived);
-        console.log("  Received sDAI:", sdaiReceived);
-        assertTrue(xdaiReceived > 0 || sdaiReceived > 0, "Should have received tokens");
+        console.log("  Received USDe:", usdeReceived);
+        assertTrue(usdeReceived > 0, "Should have received USDe");
         console.log();
         
         vm.stopPrank();
@@ -415,15 +291,15 @@ contract E2EFullCycleTest is Test {
             console.log("[OK] Collected native fees:", balanceAfter - balanceBefore);
         }
         
-        // Check sDAI returns
-        uint256 sdaiReturns = VaultFacet(address(hub)).pendingReturns(lp, SDAI);
-        console.log("LP pending sDAI returns:", sdaiReturns);
+        // Collateral-share returns are denominated in stataUSDe
+        uint256 shareReturns = VaultFacet(address(hub)).pendingReturns(lp, address(stata));
+        console.log("LP pending stataUSDe returns:", shareReturns);
         
-        if (sdaiReturns > 0) {
-            uint256 balanceBefore = IERC20(SDAI).balanceOf(lp);
-            VaultFacet(address(hub)).withdrawReturns(SDAI);
-            uint256 balanceAfter = IERC20(SDAI).balanceOf(lp);
-            console.log("[OK] Collected sDAI fees:", balanceAfter - balanceBefore);
+        if (shareReturns > 0) {
+            uint256 balanceBefore = IERC20(address(stata)).balanceOf(lp);
+            VaultFacet(address(hub)).withdrawReturns(address(stata));
+            uint256 balanceAfter = IERC20(address(stata)).balanceOf(lp);
+            console.log("[OK] Collected stataUSDe fees:", balanceAfter - balanceBefore);
         }
         
         vm.stopPrank();
@@ -434,11 +310,5 @@ contract E2EFullCycleTest is Test {
         console.log("Burn fees: Included in burn process");
         console.log("Co-LP fees: Would accumulate from trading activity");
         console.log();
-    }
-}
-
-contract MockVerifierProxy {
-    function verify(bytes calldata) external pure returns (bool) {
-        return true;
     }
 }

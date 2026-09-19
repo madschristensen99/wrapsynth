@@ -117,13 +117,13 @@ User Browser
 
 ## Configuration
 
-Contract addresses and ABIs are loaded from `deployment.json` (injected as `window.DEPLOYMENT` by the HTML). The `config.js` module reads from this and provides fallback hardcoded addresses for the live Gnosis mainnet deployment.
+Contract addresses and ABIs are loaded from `deployment.json` (injected as `window.DEPLOYMENT` by the HTML). The `config.js` module reads from this and provides fallback hardcoded addresses for the live HyperEVM mainnet deployment (chainId 999). The prior Gnosis deployment manifest is preserved as `deployment.gnosis.json`.
 
 To point at a different deployment, replace `deployment.json` with your own manifest. The expected structure:
 
 ```json
 {
-  "chainId": 100,
+  "chainId": 999,
   "contracts": { "wsXmrHub": "0x...", "wsXMR": "0x...", "liquidityRouter": "0x..." },
   "externalContracts": { "sDAI": "0x..." },
   "pool": { "uniswapV3Pool": "0x..." },

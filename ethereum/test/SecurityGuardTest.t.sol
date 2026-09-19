@@ -1,92 +1,37 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
-import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
+import {console} from "forge-std/Test.sol";
+import {HyperEVMTestBase} from "./HyperEVMTestBase.sol";
 import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
-import {SimpleOracleFacet} from "../contracts/facets/SimpleOracleFacet.sol";
+import {HyperCoreOracleFacet} from "../contracts/facets/HyperCoreOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
 import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
 import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
-import {wsXMR} from "../contracts/wsXMR.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {GnosisAddresses} from "../contracts/GnosisAddresses.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
 import {IErrors} from "../contracts/interfaces/IErrors.sol";
 import {IwsXmrHub} from "../contracts/interfaces/core/IwsXmrHub.sol";
 import {IBurnOperations} from "../contracts/interfaces/swap/IBurnOperations.sol";
 import {IMintOperations} from "../contracts/interfaces/swap/IMintOperations.sol";
 
-contract MockVerifierProxy {
-    function verify(bytes calldata) external pure returns (bool) {
-        return true;
-    }
-}
-
 /**
  * @title Security Guard Tests
  * @notice High-value tests for authorization, state ordering, and deadline enforcement
  * @dev These tests target security-critical revert paths, not trivial input validation
  */
-contract SecurityGuardTest is Test {
-    wsXmrHub public hub;
-    wsXMR public wsxmr;
-    SimpleOracleFacet public oracleFacet;
-    VaultFacet public vaultFacet;
-    MintFacet public mintFacet;
-    BurnFacet public burnFacet;
-    LiquidationFacet public liquidationFacet;
-    YieldFacet public yieldFacet;
-    MockVerifierProxy public verifier;
-
-    address lp = makeAddr("lp");
+contract SecurityGuardTest is HyperEVMTestBase {
     address lp2 = makeAddr("lp2");
-    address user = makeAddr("user");
     address attacker = makeAddr("attacker");
     address keeper = makeAddr("keeper");
-    address priceUpdater = makeAddr("priceUpdater");
 
-    uint256 constant XMR_PRICE_8DEC = 390_00000000;
-    uint256 constant DAI_PRICE_8DEC = 1_00000000;
-
-    function setUp() public {
-        string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
-        vm.createSelectFork(rpcUrl);
-
-        vm.deal(address(this), 1_000_000 ether);
-        vm.deal(lp, 1000 ether);
+    function setUp() public override {
+        super.setUp();
         vm.deal(lp2, 1000 ether);
-        vm.deal(user, 1000 ether);
         vm.deal(attacker, 1000 ether);
         vm.deal(keeper, 1000 ether);
-
-        verifier = new MockVerifierProxy();
-        wsxmr = new wsXMR();
-        hub = new wsXmrHub(address(wsxmr), address(verifier));
-
-        oracleFacet = new SimpleOracleFacet(address(wsxmr), address(verifier), address(this));
-        vaultFacet = new VaultFacet(address(wsxmr), address(verifier));
-        mintFacet = new MintFacet(address(wsxmr), address(verifier));
-        burnFacet = new BurnFacet(address(wsxmr), address(verifier));
-        liquidationFacet = new LiquidationFacet(address(wsxmr), address(verifier));
-        yieldFacet = new YieldFacet(address(wsxmr), address(verifier));
-
-        hub.registerFacets(
-            address(vaultFacet),
-            address(mintFacet),
-            address(burnFacet),
-            address(liquidationFacet),
-            address(yieldFacet),
-            address(oracleFacet)
-        );
-
-        wsxmr.setHub(address(hub));
-
-        // Set up price updater (non-deployer) for oracle tests
-        SimpleOracleFacet(address(hub)).setPriceUpdater(priceUpdater);
-        SimpleOracleFacet(address(hub)).updatePrices(XMR_PRICE_8DEC, DAI_PRICE_8DEC);
 
         // Standard vault setup for LP
         _createVaultAndDeposit(lp, 100 ether);
@@ -121,7 +66,7 @@ contract SecurityGuardTest is Test {
         _setMintReady(lp, reqId);
 
         // Warp past READY timeout, then cancelMint to reach EXPIRED_READY
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
         vm.prank(attacker);
@@ -177,7 +122,7 @@ contract SecurityGuardTest is Test {
         bytes32 reqId = _initiateMint(user, lp);
 
         // Warp past timeout
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
 
         vm.prank(lp);
         vm.expectRevert(IErrors.DeadlineExpired.selector);
@@ -190,7 +135,7 @@ contract SecurityGuardTest is Test {
         _provideLPKey(lp, reqId);
 
         // Warp past timeout
-        vm.roll(block.number + 10000);
+        vm.roll(block.number + 50000);
 
         vm.prank(lp);
         vm.expectRevert(IErrors.DeadlineExpired.selector);
@@ -248,7 +193,7 @@ contract SecurityGuardTest is Test {
         bytes32 burnId = _requestBurn(user, lp, minted);
 
         // Warp past deadline
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
 
         vm.prank(attacker);
         vm.expectRevert(IErrors.Unauthorized.selector);
@@ -260,7 +205,7 @@ contract SecurityGuardTest is Test {
         uint256 minted = _mintForUser(user, lp);
         bytes32 burnId = _requestBurn(user, lp, minted);
 
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
 
         vm.prank(attacker);
         vm.expectRevert(IErrors.Unauthorized.selector);
@@ -276,7 +221,7 @@ contract SecurityGuardTest is Test {
         vm.prank(user);
         BurnFacet(address(hub)).confirmMoneroLock(burnId);
 
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
 
         vm.prank(attacker);
         vm.expectRevert(IErrors.Unauthorized.selector);
@@ -387,7 +332,7 @@ contract SecurityGuardTest is Test {
         bytes32 burnId = _requestBurn(user, lp, minted);
         _proposeHash(lp, burnId);
 
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
 
         vm.prank(lp);
         vm.expectRevert(IErrors.InvalidUserSecret.selector);
@@ -400,7 +345,7 @@ contract SecurityGuardTest is Test {
         bytes32 burnId = _requestBurn(user, lp, minted);
         _proposeHash(lp, burnId);
 
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
 
         vm.prank(lp);
         vm.expectRevert(IErrors.InvalidUserSecret.selector);
@@ -468,30 +413,23 @@ contract SecurityGuardTest is Test {
     function test_Vault_WithdrawReturns_NothingPending_Reverts() public {
         vm.prank(lp);
         vm.expectRevert(IErrors.ZeroAmount.selector);
-        VaultFacet(address(hub)).withdrawReturns(GnosisAddresses.SDAI);
+        VaultFacet(address(hub)).withdrawReturns(address(stata));
     }
 
     // ========== ORACLE: GUARDS ==========
+    // The HyperCore oracle is permissionless (refreshPrices is a public poke
+    // reading trustless L1 precompiles) — there is no updater role to guard.
+    // The relevant guard is that invalid precompile data is rejected.
 
-    /// @notice updatePrices by unauthorized caller must revert
-    function test_Oracle_UpdatePrices_Unauthorized_Reverts() public {
-        vm.prank(attacker);
-        vm.expectRevert("Only updater");
-        SimpleOracleFacet(address(hub)).updatePrices(XMR_PRICE_8DEC, DAI_PRICE_8DEC);
-    }
-
-    /// @notice updatePrices with zero price must revert
-    function test_Oracle_UpdatePrices_ZeroPrice_Reverts() public {
-        vm.prank(priceUpdater);
-        vm.expectRevert("Invalid prices");
-        SimpleOracleFacet(address(hub)).updatePrices(0, DAI_PRICE_8DEC);
-    }
-
-    /// @notice setPriceUpdater by non-deployer must revert
-    function test_Oracle_SetUpdater_NonDeployer_Reverts() public {
-        vm.prank(attacker);
-        vm.expectRevert("Only deployer");
-        SimpleOracleFacet(address(hub)).setPriceUpdater(attacker);
+    /// @notice A zero oracle price from the precompile is ignored — the stored
+    ///         price is not updated and goes stale.
+    function test_Oracle_ZeroPrice_Ignored() public {
+        mockOracle.setPrice(XMR_PERP_INDEX, 0);
+        mockMark.setPrice(XMR_PERP_INDEX, 0);
+        vm.warp(block.timestamp + 3 minutes);
+        HyperCoreOracleFacet(address(hub)).refreshPrices(); // skips zero price
+        vm.expectRevert();
+        HyperCoreOracleFacet(address(hub)).getXmrPrice();
     }
 
     /// @notice getXmrPrice when stale must revert
@@ -500,7 +438,7 @@ contract SecurityGuardTest is Test {
         vm.warp(block.timestamp + 3 minutes);
 
         vm.expectRevert();
-        SimpleOracleFacet(address(hub)).getXmrPrice();
+        HyperCoreOracleFacet(address(hub)).getXmrPrice();
     }
 
     // ========== VAULT EVICTION: GRIEFING PREVENTION ==========
@@ -660,14 +598,6 @@ contract SecurityGuardTest is Test {
         );
     }
 
-    /// @notice Locking the hub deployer also freezes the oracle's updater admin hook
-    function test_LockDeployer_PreventsSetPriceUpdater() public {
-        hub.lockDeployer();
-
-        vm.expectRevert(bytes("Deployer locked"));
-        SimpleOracleFacet(address(hub)).setPriceUpdater(attacker);
-    }
-
     // ========== wsXMR HUB LOCK: NO POST-LAUNCH MINTER SWAP ==========
 
     /// @notice Only the token deployer can lock the hub pointer
@@ -700,10 +630,10 @@ contract SecurityGuardTest is Test {
         vm.startPrank(who);
         VaultFacet(address(hub)).createVault();
         vm.stopPrank();
-        deal(GnosisAddresses.SDAI, who, amount);
+        deal(USDE, who, amount);
         vm.startPrank(who);
-        IERC20(GnosisAddresses.SDAI).approve(address(hub), amount);
-        VaultFacet(address(hub)).depositShares(amount);
+        IERC20(USDE).approve(address(hub), amount);
+        VaultFacet(address(hub)).depositCollateral(amount);
         vm.stopPrank();
     }
 

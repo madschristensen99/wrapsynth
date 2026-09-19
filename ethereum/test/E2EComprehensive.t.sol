@@ -1,91 +1,37 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
-import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
-import {SimpleOracleFacet} from "../contracts/facets/SimpleOracleFacet.sol";
+import {console} from "forge-std/Test.sol";
+import {HyperEVMTestBase} from "./HyperEVMTestBase.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
-import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
-import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
-import {wsXMR} from "../contracts/wsXMR.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
 
-contract MockVerifierProxy {
-    function verify(bytes calldata) external pure returns (bool) {
-        return true;
-    }
-}
-
-contract E2EComprehensiveTest is Test {
-    address constant WXDAI = 0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d;
-    
-    wsXmrHub public hub;
-    wsXMR public wsxmr;
-    SimpleOracleFacet public oracleFacet;
-    VaultFacet public vaultFacet;
-    MintFacet public mintFacet;
-    BurnFacet public burnFacet;
-    LiquidationFacet public liquidationFacet;
-    YieldFacet public yieldFacet;
-    MockVerifierProxy public verifier;
-    
-    address public lp;
-    address public user;
+contract E2EComprehensiveTest is HyperEVMTestBase {
     address public user2;
-    
     bytes32 public testSecret = bytes32(uint256(123456789));
     
-    function setUp() public {
-        string memory rpcUrl = vm.envOr("GNOSIS_RPC_URL", string("https://rpc.gnosischain.com"));
-        vm.createSelectFork(rpcUrl);
+    function setUp() public override {
+        super.setUp();
         vm.warp(block.timestamp + 1 days);
+        _setXmrPrice8dec(XMR_PRICE_8DEC); // refresh after warp
         
-        lp = makeAddr("lp");
-        user = makeAddr("user");
         user2 = makeAddr("user2");
-        vm.deal(lp, 1000 ether);
-        vm.deal(user, 1000 ether);
         vm.deal(user2, 1000 ether);
         
-        verifier = new MockVerifierProxy();
-        wsxmr = new wsXMR();
-        hub = new wsXmrHub(address(wsxmr), address(verifier));
-        
-        oracleFacet = new SimpleOracleFacet(address(wsxmr), address(verifier), address(this));
-        vaultFacet = new VaultFacet(address(wsxmr), address(verifier));
-        mintFacet = new MintFacet(address(wsxmr), address(verifier));
-        burnFacet = new BurnFacet(address(wsxmr), address(verifier));
-        liquidationFacet = new LiquidationFacet(address(wsxmr), address(verifier));
-        yieldFacet = new YieldFacet(address(wsxmr), address(verifier));
-        
-        hub.registerFacets(
-            address(vaultFacet),
-            address(mintFacet),
-            address(burnFacet),
-            address(liquidationFacet),
-            address(yieldFacet),
-            address(oracleFacet)
-        );
-        
-        wsxmr.setHub(address(hub));
-        
-        // Update prices after warp (before any vault operations)
-        SimpleOracleFacet(address(hub)).updatePrices(390_00000000, 1_00000000);
-        
-        // Setup LP vault
+        // Setup LP vault with USDe collateral
         vm.startPrank(lp);
         VaultFacet(address(hub)).createVault();
         VaultFacet(address(hub)).setMaxMintBps(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
+        vm.stopPrank();
         
-        (bool success,) = WXDAI.call{value: 100 ether}("");
-        require(success);
-        IERC20(WXDAI).approve(address(hub), 100 ether);
+        deal(USDE, lp, 100 ether);
+        vm.startPrank(lp);
+        IERC20(USDE).approve(address(hub), 100 ether);
         VaultFacet(address(hub)).depositCollateral(100 ether);
         vm.stopPrank();
     }
@@ -162,7 +108,7 @@ contract E2EComprehensiveTest is Test {
         console.log("  Mint initiated with 1 hour timeout");
         
         // Jump past timeout
-        vm.roll(block.number + 721);
+        vm.roll(block.number + 3605);
         console.log("  Jumped 1 hour + 1 second");
         
         // Anyone can cancel now
@@ -195,7 +141,7 @@ contract E2EComprehensiveTest is Test {
         console.log("  LP set mint ready (extends timeout)");
         
         // Jump past extended timeout (MINT_READY_EXTENSION = 24 hours)
-        vm.roll(block.number + 17281);
+        vm.roll(block.number + 86405);
         console.log("  Jumped 24 hours + 1 second");
         
         vm.prank(user2);
@@ -224,7 +170,7 @@ contract E2EComprehensiveTest is Test {
         MintFacet(address(hub)).setMintReady(requestId);
         
         // Jump past timeout
-        vm.roll(block.number + 17281);
+        vm.roll(block.number + 86405);
         
         // Cancel it first
         vm.prank(user2);
@@ -251,7 +197,7 @@ contract E2EComprehensiveTest is Test {
             lp, user, xmrAmount, commitment, userPublicKey);
         
         // Jump past timeout
-        vm.roll(block.number + 721);
+        vm.roll(block.number + 3605);
         
         // LP tries to set ready - should fail
         vm.prank(lp);
@@ -275,7 +221,7 @@ contract E2EComprehensiveTest is Test {
         console.log("  Burn requested");
         
         // Jump past BURN_REQUEST_TIMEOUT (24 hours)
-        vm.roll(block.number + 17281);
+        vm.roll(block.number + 86405);
         console.log("  Jumped 24 hours + 1 second");
         
         // User aborts the abandoned request
@@ -309,7 +255,7 @@ contract E2EComprehensiveTest is Test {
         console.log("  LP proposed hash");
         
         // Jump past BURN_COMMIT_TIMEOUT (48 hours)
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
         console.log("  Jumped 48 hours + 1 second");
         
         // Anyone can resolve the declined proposal after timeout
@@ -342,7 +288,7 @@ contract E2EComprehensiveTest is Test {
         console.log("  User confirmed Monero lock");
         
         // Jump past deadline (48 hours from confirm)
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
         console.log("  Jumped 48 hours + 1 second");
         
         // User claims slashed collateral
@@ -373,7 +319,7 @@ contract E2EComprehensiveTest is Test {
         BurnFacet(address(hub)).confirmMoneroLock(burnId);
         
         // Jump past deadline
-        vm.roll(block.number + 34561);
+        vm.roll(block.number + 172805);
         
         // LP tries to finalize - should fail
         vm.prank(lp);
