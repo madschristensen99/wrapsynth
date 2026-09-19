@@ -249,10 +249,10 @@ async function init() {
     resetMintUI();
     resetBurnUI();
 
-    // Set Gecko Terminal pool link from config
-    const geckoLink = document.getElementById('gecko-terminal-link');
-    if (geckoLink && CONTRACTS.uniswapV3Pool) {
-        geckoLink.href = `https://www.geckoterminal.com/hyperevm/pools/${CONTRACTS.uniswapV3Pool}`;
+    // Set DexScreener pool link from config
+    const dexLink = document.getElementById('dexscreener-link');
+    if (dexLink && CONTRACTS.uniswapV3Pool) {
+        dexLink.href = `https://dexscreener.com/hyperevm/${CONTRACTS.uniswapV3Pool}`;
     }
 
     // Restore previously active tab IMMEDIATELY to prevent flash
