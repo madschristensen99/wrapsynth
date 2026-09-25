@@ -2,7 +2,7 @@
 
 **A trustless cross-chain ferry for Monero. wsXMR is live on HyperEVM (Hyperliquid L1), backed by overcollateralized LP vaults and Ed25519 atomic swap commitments.**
 
-🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/USDe Pool on DexScreener](https://dexscreener.com/hyperevm/0xda136ba625b33489eaabf0ec6bad58954214f63c)**
+🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/USDe Pool on DexScreener](https://dexscreener.com/hyperevm/0xfa529dc1b245b3228a172ceb886f47f2127af401)**
 
 WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Users swap XMR for wsXMR through atomic-swap mechanics enforced on-chain: LPs post USDe collateral (supplied to HyperLend), mint/burn settlement is gated by Ed25519 secret reveals verified on-chain, and timeout-based slashing protects both sides. No custodian, no federation, no trusted intermediary — every swap settles peer-to-peer between a user and an LP vault.
 
@@ -21,22 +21,22 @@ WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Us
 
 | Contract | Address |
 |---|---|
-| wsXMR Token | [`0x75b85bbC8779B9cDe77cc9DD0335C27410455A53`](https://hyperevmscan.io/address/0x75b85bbC8779B9cDe77cc9DD0335C27410455A53) |
-| wsXmrHub | [`0xd821A7D919e007b6b39925f672f1219dB4865Fba`](https://hyperevmscan.io/address/0xd821A7D919e007b6b39925f672f1219dB4865Fba) |
-| Liquidity Router | [`0x39C669cE84c694f25f4dBe1b11d5aBF4A490911f`](https://hyperevmscan.io/address/0x39C669cE84c694f25f4dBe1b11d5aBF4A490911f) |
-| wsXMR/USDe HyperSwap Pool | [`0xDa136BA625b33489eAABf0EC6baD58954214F63c`](https://hyperevmscan.io/address/0xDa136BA625b33489eAABf0EC6baD58954214F63c) |
+| wsXMR Token | [`0x25Ed246C3CB273730235A3184aB63aB4DF4f4CF3`](https://hyperevmscan.io/address/0x25Ed246C3CB273730235A3184aB63aB4DF4f4CF3) |
+| wsXmrHub | [`0xb901C70F2a49d78c32e88ea1F36290d3F5F21f12`](https://hyperevmscan.io/address/0xb901C70F2a49d78c32e88ea1F36290d3F5F21f12) |
+| Liquidity Router | [`0x4619e409c8070042DAC16637F8f883F1C7118aEE`](https://hyperevmscan.io/address/0x4619e409c8070042DAC16637F8f883F1C7118aEE) |
+| wsXMR/USDe HyperSwap Pool | [`0xFA529Dc1B245B3228a172CEb886F47F2127AF401`](https://hyperevmscan.io/address/0xFA529Dc1B245B3228a172CEb886F47F2127AF401) |
 
 <details>
 <summary>Facet addresses</summary>
 
 | Facet | Address |
 |---|---|
-| HyperCoreOracleFacet | [`0xE91A4B01632a7D281fb3eB0E83Ad9D5F0305d48f`](https://hyperevmscan.io/address/0xE91A4B01632a7D281fb3eB0E83Ad9D5F0305d48f) |
-| VaultFacet | [`0x5F8b8a6ccA1aa4266fAC32efc729527BC0F333d1`](https://hyperevmscan.io/address/0x5F8b8a6ccA1aa4266fAC32efc729527BC0F333d1) |
-| MintFacet | [`0x463F0C28e8E9328DB7ab220Dd4133131c9f053dB`](https://hyperevmscan.io/address/0x463F0C28e8E9328DB7ab220Dd4133131c9f053dB) |
-| BurnFacet | [`0x36fe621680dA06a1CA80B52769c6413A212081bC`](https://hyperevmscan.io/address/0x36fe621680dA06a1CA80B52769c6413A212081bC) |
-| LiquidationFacet | [`0x97e2F14C2533a5f678A9596cF5f05bE955FA19fB`](https://hyperevmscan.io/address/0x97e2F14C2533a5f678A9596cF5f05bE955FA19fB) |
-| YieldFacet | [`0x917a2Afc28BE633B0BDE1aeE4923C4A97F0ab250`](https://hyperevmscan.io/address/0x917a2Afc28BE633B0BDE1aeE4923C4A97F0ab250) |
+| HyperCoreOracleFacet | [`0x2a18BCFf642015E363080072F51DaA34A86A14bD`](https://hyperevmscan.io/address/0x2a18BCFf642015E363080072F51DaA34A86A14bD) |
+| VaultFacet | [`0x09444C6Af846b1E9628FDb47ed44185A3f650425`](https://hyperevmscan.io/address/0x09444C6Af846b1E9628FDb47ed44185A3f650425) |
+| MintFacet | [`0xfF9D2c2BBd88Ad92ED2Ee5b0CaF3ddFdc7BC6Fee`](https://hyperevmscan.io/address/0xfF9D2c2BBd88Ad92ED2Ee5b0CaF3ddFdc7BC6Fee) |
+| BurnFacet | [`0x31D33FF29D147dEf74a5F3959F6302b38aB8bD50`](https://hyperevmscan.io/address/0x31D33FF29D147dEf74a5F3959F6302b38aB8bD50) |
+| LiquidationFacet | [`0xfFc6F0F8d5ed6010532EE95646115E0118BAa144`](https://hyperevmscan.io/address/0xfFc6F0F8d5ed6010532EE95646115E0118BAa144) |
+| YieldFacet | [`0x8D7DD0A1FD26A2602837B028afB7A1f1b21DA9E7`](https://hyperevmscan.io/address/0x8D7DD0A1FD26A2602837B028afB7A1f1b21DA9E7) |
 
 Full deployment manifest (external contracts, pool config, LP defaults): [`deployment.json`](./deployment.json) · HyperEVM manifest: [`ethereum/deployments/hyperevm-deployment.json`](./ethereum/deployments/hyperevm-deployment.json)
 </details>

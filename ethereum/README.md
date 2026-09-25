@@ -4,25 +4,102 @@ A decentralized protocol for wrapping Monero (XMR) on HyperEVM (Hyperliquid L1) 
 
 ## 🚀 HyperEVM Mainnet Deployment (primary venue)
 
-**Deployed:** September 18, 2026 — full stack live, tested end-to-end on mainnet, and verified on the explorer. See `hypeMigration.md` for the port spec and `deployments/hyperevm-deployment.json` for the manifest.
+**Deployed:** September 25, 2026 — full stack live, tested end-to-end on mainnet. See `hypeMigration.md` for the port spec and `deployments/hyperevm-deployment.json` for the manifest.
 
-- **wsXmrHub (Diamond Proxy):** `0xd821A7D919e007b6b39925f672f1219dB4865Fba`
-- **wsXMR Token:** `0x75b85bbC8779B9cDe77cc9DD0335C27410455A53`
-- **LiquidityRouter:** `0x39C669cE84c694f25f4dBe1b11d5aBF4A490911f`
-- **SwapHelper:** `0xfb2Ebe73143C5F5aF51Ba7058b8F47702dDA7df8`
-- **Ed25519Helper:** `0xE70694B1E032E022dFb0090b8C5b9cc7Cb0B2640`
-- **StataUSDe (collateral):** `0xba1240B966E20E16ca32BBFc189528787794F2A9`
-- **HyperSwap USDe/wsXMR Pool:** `0xDa136BA625b33489eAABf0EC6baD58954214F63c`
-- **HyperCoreOracleFacet:** `0xE91A4B01632a7D281fb3eB0E83Ad9D5F0305d48f`
-- **VaultFacet:** `0x5F8b8a6ccA1aa4266fAC32efc729527BC0F333d1`
-- **MintFacet:** `0x463F0C28e8E9328DB7ab220Dd4133131c9f053dB`
-- **BurnFacet:** `0x36fe621680dA06a1CA80B52769c6413A212081bC`
-- **LiquidationFacet:** `0x97e2F14C2533a5f678A9596cF5f05bE955FA19fB`
-- **YieldFacet:** `0x917a2Afc28BE633B0BDE1aeE4923C4A97F0ab250`
+- **wsXmrHub (Diamond Proxy):** `0xb901C70F2a49d78c32e88ea1F36290d3F5F21f12`
+- **wsXMR Token:** `0x25Ed246C3CB273730235A3184aB63aB4DF4f4CF3`
+- **LiquidityRouter:** `0x4619e409c8070042DAC16637F8f883F1C7118aEE`
+- **SwapHelper:** `0x6bbB5fE4F82b14Bd29fd8d7B9cC1f45a6e19c3dD`
+- **Ed25519Helper:** `0x52AF4f5CA562793D2018fe6F7817970A30DBC67a`
+- **StataUSDe (collateral):** `0x3BA7C8c0f693703B24AcE1db311e15fd8D2904ED`
+- **HyperSwap USDe/wsXMR Pool:** `0xFA529Dc1B245B3228a172CEb886F47F2127AF401`
+- **HyperCoreOracleFacet:** `0x2a18BCFf642015E363080072F51DaA34A86A14bD`
+- **VaultFacet:** `0x09444C6Af846b1E9628FDb47ed44185A3f650425`
+- **MintFacet:** `0xfF9D2c2BBd88Ad92ED2Ee5b0CaF3ddFdc7BC6Fee`
+- **BurnFacet:** `0x31D33FF29D147dEf74a5F3959F6302b38aB8bD50`
+- **LiquidationFacet:** `0xfFc6F0F8d5ed6010532EE95646115E0118BAa144`
+- **YieldFacet:** `0x8D7DD0A1FD26A2602837B028afB7A1f1b21DA9E7`
 - **Network:** HyperEVM (ChainID: 999) · **Collateral:** USDe via HyperLend · **Oracle:** native XMR perp via L1-read precompile
 - **Explorer:** https://hyperevmscan.io
 
 **Mainnet validation (all passing):** `testFullCycleNow.hyperevm.js` (deposit → mint → Co-LP open/unwind → burn + reward), `testCoLPNow.hyperevm.js` (Co-LP open + unwind), `testPoolSwaps.hyperevm.js` (seeded pool + both-direction swaps + fee collection). All contracts verified on hyperevmscan via Etherscan V2.
+
+### Deploying to HyperEVM (the big-block dance)
+
+HyperEVM uses a **dual-block architecture**: small blocks (~2–3M gas, ~1s) for routine txs and
+**big blocks (30M gas, ~60s)** for heavy operations like contract deployment. The RPC
+**hard-rejects any tx with `gasLimit > 3M`** — even while a 30M block is the latest block —
+unless the sender account is opted into big-block routing.
+
+Four facets exceed 3M gas and cannot deploy without it: `VaultFacet` (5.4M), `MintFacet` (3.9M),
+`BurnFacet` (4.1M), `LiquidationFacet` (3.3M).
+
+**Step 1 — enable big-block routing** (one-time per deployer account):
+
+Submit a HyperCore L1 action via `POST https://api.hyperliquid.xyz/exchange`:
+
+```json
+{ "action": {"type": "evmUserModify", "usingBigBlocks": true},
+  "nonce": 1767949700000,
+  "signature": {"r": "0x...", "s": "0x...", "v": 27} }
+```
+
+The signature is EIP-712 over a **phantom "Agent"** (not the action itself):
+- `actionHash = keccak256(msgpack(action) + nonce(8B BE) + 0x00)`
+- `msgpack({"type":"evmUserModify","usingBigBlocks":true})` =
+  `82 a4 74 79 70 65 ad 65 76 6d 55 73 65 72 4d 6f 64 69 66 79 ae 75 73 69 6e 67 42 69 67 42 6c 6f 63 6b 73 c3`
+  (note: `evmUserModify` is **13 chars** → `0xad`; `usingBigBlocks` is 14 chars → `0xae`; `true` = `0xc3`)
+- EIP-712 domain: `{name: "Exchange", version: "1", chainId: 1337, verifyingContract: 0x0000...0000}`
+- Types: `Agent: [{name: "source", type: "string"}, {name: "connectionId", type: "bytes32"}]`
+- Message: `{source: "a" (mainnet) / "b" (testnet), connectionId: actionHash}`
+
+`scripts/enableBigBlocks.js` does this (edit `usingBigBlocks` to `false` to disable).
+
+**Step 2 — deploy** with `scripts/deployHyperEVM-bigblock.js` (resumable, manifest-driven):
+
+```shell
+set -a; source /home/remsee/wsFrontendOverhaul/.env; set +a   # PRIVATE_KEY lives here
+node scripts/deployHyperEVM-bigblock.js
+```
+
+The script enables big blocks, deploys all contracts (skipping any already in
+`deployments/hyperevm-deployment.json`), creates + initializes the pool, and wires everything.
+
+**Step 3 — disable big blocks** (test txs are fast in small blocks, ~1s each):
+
+```shell
+# same evmUserModify action with usingBigBlocks: false
+```
+
+**Step 4 — run the tests:**
+
+```shell
+set -a; source /home/remsee/wsFrontendOverhaul/.env; set +a
+node scripts/testFullCycleNow.hyperevm.js
+node scripts/testCoLPNow.hyperevm.js
+node scripts/testPoolSwaps.hyperevm.js
+```
+
+### Deployment gotchas (all hit in production, Sep 2026)
+
+1. **CREATE tx address**: `ethers.utils.parseTransaction(signed).to` is `null` for contract
+   creation — compute the target with `ethers.utils.getContractAddress({from, nonce})`. Using
+   `null` makes the code-poll loop spin until timeout and redeploy a duplicate.
+2. **Receipt waits**: ethers `tx.wait()` throws `invalid address or ENS name` on HyperEVM for
+   CREATE receipts. Poll `getTransactionReceipt(hash)` or `getCode(target)` directly.
+3. **Nonce**: re-sign with a fresh nonce on every attempt. A pre-signed tx with a stale nonce
+   fails forever with `nonce has already been used`.
+4. **`createPool` needs 6M gas** — it deploys a ~17KB pool contract via CREATE. 2.9M runs out
+   of gas and reverts with a generic `EvmError: Revert`.
+5. **`replacement fee too low`**: a pending tx at the same nonce (e.g., from a killed run)
+   blocks new txs. Wait ~70s for it to mine (big blocks) before retrying.
+6. **RPC flakiness**: rate limits (`-32005`), socket errors (`-32100`), and
+   `processing response error` are common — retry with backoff. The public RPC
+   (`rpc.hyperliquid.xyz/evm`) is the only one that accepts big-block txs.
+7. **One-shot setters**: `setHub`, `setExternalAddresses`, `registerFacets` revert if called
+   twice — guard them with getter checks (`if (await hub.collateralToken()) === zero`).
+8. **`.env` location**: the deploy/test scripts load `.env` from CWD, but the key lives in
+   `/home/remsee/wsFrontendOverhaul/.env` — source it or symlink it into `ethereum/`.
 
 ## 🚀 Gnosis Mainnet Deployment (beta — superseded)
 
@@ -180,7 +257,9 @@ Operational scripts in `scripts/` that interact with deployed contracts on Hyper
 
 | Script | What It Does |
 |--------|--------------|
-| `deployHyperEVM.js` | Deploy the full wsXMR stack to HyperEVM and write `deployments/hyperevm-deployment.json` |
+| `deployHyperEVM-bigblock.js` | **Recommended.** Resumable full-stack deploy: enables big-block routing, deploys all contracts (skips live ones), creates + initializes the pool, wires everything | 
+| `enableBigBlocks.js` | Toggle big-block routing for the deployer account (`usingBigBlocks: true`/`false`) |
+| `deployHyperEVM.js` | Original deploy script (no big-block handling — large facets will fail) |
 | `testFullCycleNow.hyperevm.js` | Vault setup → mint → collateral withdraw → co-LP open/unwind → burn → claim rewards |
 | `testCoLPNow.hyperevm.js` | Vault setup → mint if needed → co-LP open → co-LP unwind → withdraw returns |
 | `testPoolSwaps.hyperevm.js` | Pool state check → wsXMR→USDe swap → USDe→wsXMR swap → co-LP creation → fee-generating swaps → fee collection |
