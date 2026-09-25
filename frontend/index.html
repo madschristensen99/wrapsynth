@@ -1122,7 +1122,7 @@ function copyAddr(btn){
         {from:2,to:3,label:"collateral stays in vault",type:"effect"},
         {from:2,to:0,label:"burn reward queued (USDe, pendingReturns)",type:"effect"},
         {from:0,to:1,label:"sweep shared XMR (userSecret + lpSecret)",type:"call"},
-        {from:2,to:2,label:"⚠ LP doesn't finalize (COMMITTED timeout): claimSlashedCollateral → par + reward to user",type:"note"},
+        {from:2,to:2,label:"⚠ LP doesn't finalize (COMMITTED timeout): claimSlashedCollateral(requestId, userSecret) → par to user, userSecret revealed → LP sweeps shared XMR",type:"note"},
         {from:2,to:2,label:"⚠ LP never proposes (REQUESTED timeout): abortBurn → restore wsXMR, or forceSettleBurn → par in USDe",type:"note"},
         {from:2,to:2,label:"⚠ LP proposes but doesn't lock (PROPOSED timeout): user calls resolveDeclinedProposal(requestId, userSecret)",type:"note"},
         {from:2,to:2,label:"VM verifies compressPoint(userSecret·G) = userPublicKey, emits BurnProposalDeclined(requestId, userSecret)",type:"note"},

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {console} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {HyperEVMTestBase} from "./HyperEVMTestBase.sol";
 import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
 import {HyperCoreOracleFacet} from "../contracts/facets/HyperCoreOracleFacet.sol";
@@ -26,6 +27,8 @@ contract SecurityGuardTest is HyperEVMTestBase {
     address lp2 = makeAddr("lp2");
     address attacker = makeAddr("attacker");
     address keeper = makeAddr("keeper");
+
+    bytes32 constant TEST_USER_SECRET = bytes32(uint256(0xdeadbeef));
 
     function setUp() public override {
         super.setUp();
@@ -225,7 +228,7 @@ contract SecurityGuardTest is HyperEVMTestBase {
 
         vm.prank(attacker);
         vm.expectRevert(IErrors.Unauthorized.selector);
-        BurnFacet(address(hub)).claimSlashedCollateral(burnId);
+        BurnFacet(address(hub)).claimSlashedCollateral(burnId, TEST_USER_SECRET);
     }
 
     // ========== BURN: STATE ORDERING ==========
@@ -312,7 +315,73 @@ contract SecurityGuardTest is HyperEVMTestBase {
         // Don't warp — deadline not expired yet
         vm.prank(user);
         vm.expectRevert(IBurnOperations.DeadlineNotExpired.selector);
-        BurnFacet(address(hub)).claimSlashedCollateral(burnId);
+        BurnFacet(address(hub)).claimSlashedCollateral(burnId, TEST_USER_SECRET);
+    }
+
+    /// @notice claimSlashedCollateral with zero userSecret must revert
+    function test_Burn_ClaimSlashed_ZeroSecret_Reverts() public {
+        uint256 minted = _mintForUser(user, lp);
+        bytes32 burnId = _requestBurn(user, lp, minted);
+        _proposeHash(lp, burnId);
+
+        vm.prank(user);
+        BurnFacet(address(hub)).confirmMoneroLock(burnId);
+
+        vm.roll(block.number + 172805);
+
+        vm.prank(user);
+        vm.expectRevert(IErrors.InvalidUserSecret.selector);
+        BurnFacet(address(hub)).claimSlashedCollateral(burnId, bytes32(0));
+    }
+
+    /// @notice claimSlashedCollateral with wrong userSecret must revert
+    function test_Burn_ClaimSlashed_WrongSecret_Reverts() public {
+        uint256 minted = _mintForUser(user, lp);
+        bytes32 burnId = _requestBurn(user, lp, minted);
+        _proposeHash(lp, burnId);
+
+        vm.prank(user);
+        BurnFacet(address(hub)).confirmMoneroLock(burnId);
+
+        vm.roll(block.number + 172805);
+
+        vm.prank(user);
+        vm.expectRevert(IErrors.InvalidUserSecret.selector);
+        BurnFacet(address(hub)).claimSlashedCollateral(burnId, bytes32(uint256(0xbadc0ffee)));
+    }
+
+    /// @notice claimSlashedCollateral with correct userSecret succeeds and emits the secret
+    ///         so the LP can sweep the shared XMR (invariant: every exit reveals a secret).
+    function test_Burn_ClaimSlashed_CorrectSecret_EmitsUserSecret() public {
+        uint256 minted = _mintForUser(user, lp);
+        bytes32 burnId = _requestBurn(user, lp, minted);
+        _proposeHash(lp, burnId);
+
+        vm.prank(user);
+        BurnFacet(address(hub)).confirmMoneroLock(burnId);
+
+        vm.roll(block.number + 172805);
+
+        vm.recordLogs();
+        vm.prank(user);
+        BurnFacet(address(hub)).claimSlashedCollateral(burnId, TEST_USER_SECRET);
+
+        // BurnSlashed(requestId, user, collateralSeized, userSecret) — requestId and user
+        // are indexed; the non-indexed data is abi.encode(collateralSeized, userSecret).
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool found = false;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == keccak256("BurnSlashed(bytes32,address,uint256,bytes32)")
+                && logs[i].topics[1] == burnId
+                && logs[i].topics[2] == bytes32(uint256(uint160(user)))) {
+                (uint256 seized, bytes32 emittedSecret) = abi.decode(logs[i].data, (uint256, bytes32));
+                assertEq(emittedSecret, TEST_USER_SECRET, "userSecret must be emitted for LP sweep");
+                assertGt(seized, 0, "user must receive a payout");
+                found = true;
+                break;
+            }
+        }
+        assertTrue(found, "BurnSlashed event must be emitted");
     }
 
     /// @notice resolveDeclinedProposal before deadline must revert
@@ -681,9 +750,12 @@ contract SecurityGuardTest is HyperEVMTestBase {
     }
 
     function _requestBurn(address _user, address _lp, uint256 amount) internal returns (bytes32) {
+        (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(TEST_USER_SECRET));
+        // Compressed point — matches the frontend's publicSpendKey.toRawBytes()
+        bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
         vm.startPrank(_user);
         wsxmr.approve(address(hub), amount);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(amount, _lp, _user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(amount, _lp, _user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
         vm.stopPrank();
         return burnId;
     }

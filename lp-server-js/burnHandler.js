@@ -573,6 +573,106 @@ async function handleBurnProposalDeclined(requestId, userSecret) {
   }
 }
 
+/**
+ * Handle BurnSlashed event.
+ * The user has called claimSlashedCollateral with their userSecret (private spend key)
+ * after the LP failed to finalize a COMMITTED burn. The userSecret is emitted in the
+ * event — the LP combines it with its own lpSecret to sweep the shared XMR back.
+ * A zero userSecret means the slash came from the liquidation path (the liquidator
+ * does not know the user's key half) — nothing to sweep.
+ */
+async function handleBurnSlashed(requestId, userSecret) {
+  const reqIdHex = ethers.hexlify(requestId);
+  console.log(`[Burn] BurnSlashed ${reqIdHex}`);
+  console.log(`  userSecret: ${userSecret.slice(0, 10)}...`);
+
+  if (!userSecret || userSecret === ethers.ZeroHash) {
+    console.log(`[Burn] BurnSlashed ${reqIdHex} has no userSecret (liquidation path) — nothing to sweep`);
+    return;
+  }
+
+  // Look up the burn in pendingBurns or persisted secrets
+  let burn = pendingBurns.get(reqIdHex);
+  if (!burn) {
+    // Try to load from persisted secrets
+    const secrets = loadBurnSecrets();
+    const saved = secrets[reqIdHex];
+    if (saved) {
+      burn = saved;
+      console.log(`[Burn] Found persisted burn secret for ${reqIdHex}`);
+    }
+  }
+
+  if (!burn || !burn.secret) {
+    console.warn(`[Burn] No LP secret found for ${reqIdHex} — cannot sweep shared XMR`);
+    return;
+  }
+
+  // Mark as slashed in state
+  if (pendingBurns.has(reqIdHex)) {
+    pendingBurns.get(reqIdHex).state = 'slashed';
+  }
+  updateBurnSecretState(reqIdHex, 'slashed', { userSecret: userSecret });
+
+  // Sweep the shared XMR back to the LP's main wallet
+  if (!moneroWallet.isWalletConfigured()) {
+    console.warn(`[Burn] MONERO_WALLET_RPC_URL not configured — cannot sweep shared XMR for ${reqIdHex}`);
+    return;
+  }
+
+  try {
+    const lpMainAddress = process.env.MONERO_LP_ADDRESS || (await moneroWallet.getAddresses()).primary;
+    if (!lpMainAddress) {
+      console.error(`[Burn] Could not determine LP main address for sweep`);
+      return;
+    }
+
+    console.log(`[Burn] Sweeping shared XMR for ${reqIdHex} to ${lpMainAddress}...`);
+    const result = await sweepBurnShared({
+      userSecretHex: userSecret,
+      lpSecretHex: burn.secret,
+      lpMainAddress,
+      restoreHeight: 0, // Will scan from 1000 blocks back
+    });
+
+    if (result.swept) {
+      console.log(`[Burn] XMR sweep succeeded for ${reqIdHex}: ${result.txHashes.length} tx(s), ${result.amount} atomic units`);
+      updateBurnSecretState(reqIdHex, 'swept', {
+        sweepTxHashes: result.txHashes,
+        sweepAmount: result.amount.toString(),
+      });
+    } else {
+      console.warn(`[Burn] XMR sweep not completed for ${reqIdHex} — may need manual sweep later`);
+      // Retry after 2 minutes (XMR may need more confirmations)
+      setTimeout(async () => {
+        console.log(`[Burn] Retrying XMR sweep for ${reqIdHex}...`);
+        try {
+          const retryResult = await sweepBurnShared({
+            userSecretHex: userSecret,
+            lpSecretHex: burn.secret,
+            lpMainAddress,
+            restoreHeight: 0,
+          });
+          if (retryResult.swept) {
+            console.log(`[Burn] XMR retry sweep succeeded for ${reqIdHex}`);
+            updateBurnSecretState(reqIdHex, 'swept', {
+              sweepTxHashes: retryResult.txHashes,
+              sweepAmount: retryResult.amount.toString(),
+            });
+          } else {
+            console.warn(`[Burn] XMR retry sweep still not ready for ${reqIdHex}`);
+          }
+        } catch (retryErr) {
+          console.error(`[Burn] XMR retry sweep failed for ${reqIdHex}:`, retryErr.message);
+        }
+      }, 120000);
+    }
+  } catch (err) {
+    console.error(`[Burn] XMR sweep failed for ${reqIdHex}:`, err.message);
+    updateBurnSecretState(reqIdHex, 'slashed', { sweepError: err.message });
+  }
+}
+
 // ─── Event Listener Setup ───────────────────────────────────────────────────
 
 function attachEventListeners(hub, _wallet, _provider) {
@@ -591,11 +691,12 @@ function attachEventListeners(hub, _wallet, _provider) {
     'event BurnCancelled(bytes32 indexed requestId)',
     'event BurnAborted(bytes32 indexed requestId)',
     'event BurnProposalDeclined(bytes32 indexed requestId, bytes32 userSecret)',
+    'event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 collateralSeized, bytes32 userSecret)',
     'function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
     'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
     'function revealBurnSecret(bytes32 requestId, bytes32 secret) external',
     'function settleBurn(bytes32 requestId) external',
-    'function claimSlashedCollateral(bytes32 requestId) external',
+    'function claimSlashedCollateral(bytes32 requestId, bytes32 userSecret) external',
     'function resolveDeclinedProposal(bytes32 requestId, bytes32 userSecret) external',
     'function getBurnRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address user, address lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 lockedCollateral, uint256 rewardCollateral, bytes32 secretHash, uint256 deadline, uint256 vaultLiquidationNonce, uint256 normalizedDebtAmount, uint8 status, bytes32 userClaimCommitment, bytes32 userPublicKey, bytes32 userViewKey, uint256 xmrPriceAtRequest, bytes32 revealedSecret))',
   ];
@@ -668,6 +769,12 @@ function attachEventListeners(hub, _wallet, _provider) {
       const declined = await safeQuery(hubContract.filters.BurnProposalDeclined(), fromBlock, currentBlock);
       for (const event of declined) {
         handleBurnProposalDeclined(event.args.requestId, event.args.userSecret);
+      }
+
+      // Poll for BurnSlashed (user slashed a committed burn — LP should sweep shared XMR)
+      const slashed = await safeQuery(hubContract.filters.BurnSlashed(), fromBlock, currentBlock);
+      for (const event of slashed) {
+        handleBurnSlashed(event.args.requestId, event.args.userSecret);
       }
 
       lastCheckedBlock = currentBlock;
@@ -744,23 +851,25 @@ function registerRoutes(app) {
     }
   });
 
-  // Claim slashed collateral (permissionless, if LP failed to reveal)
+  // Claim slashed collateral (requires the user's secret — only the user knows it;
+  // revealing it on-chain lets the LP sweep the shared XMR)
   app.post('/burn/slash', async (req, res) => {
-    const { requestId } = req.body;
+    const { requestId, userSecret } = req.body;
     if (!requestId) return res.status(400).json({ error: 'requestId required' });
+    if (!userSecret) return res.status(400).json({ error: 'userSecret required (user\'s private spend key)' });
 
     const reqIdHex = ethers.hexlify(requestId);
 
     try {
-      console.log(`[Burn] Calling claimSlashedCollateral(${reqIdHex})`);
+      console.log(`[Burn] Calling claimSlashedCollateral(${reqIdHex}, userSecret...)`);
       const slashNonce = await getNextNonce();
-      const tx = await hubContract.claimSlashedCollateral(reqIdHex, { nonce: slashNonce });
+      const tx = await hubContract.claimSlashedCollateral(reqIdHex, userSecret, { nonce: slashNonce });
       console.log(`[Burn] claimSlashedCollateral tx: ${tx.hash}`);
       const receipt = await tx.wait();
 
       const burn = pendingBurns.get(reqIdHex);
       if (burn) burn.state = 'slashed';
-      updateBurnSecretState(reqIdHex, 'slashed');
+      updateBurnSecretState(reqIdHex, 'slashed', { userSecret: userSecret });
 
       res.json({
         success: true,

@@ -14,7 +14,7 @@ const HUB_EVENTS_ABI = parseAbi([
     'event HashProposed(bytes32 indexed requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey)',
     'event BurnCommitted(bytes32 indexed requestId, uint256 deadline)',
     'event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 reward)',
-    'event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 totalSeized)',
+    'event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 totalSeized, bytes32 userSecret)',
     'event BurnCancelled(bytes32 indexed requestId)',
     'event VaultCreated(address indexed lp)',
     'event CollateralDeposited(address indexed lp, uint256 amount, uint256 shares)',

@@ -29,7 +29,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
     );
     
     event BurnCancelled(bytes32 indexed requestId);
-    event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 collateralSeized);
+    event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 collateralSeized, bytes32 userSecret);
     event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 rewardPaid);
     
     constructor(address _wsxmrToken, address _verifierProxy) 
@@ -75,7 +75,9 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         emit ReturnQueued(burnReq.user, collateralToken, userPayout);
 
         burnReq.status = BurnStatus.SLASHED;
-        emit BurnSlashed(burnReq.requestId, burnReq.user, userPayout);
+        // userSecret unknown to the liquidator — zero signals the LP server there is
+        // nothing to sweep (the user's key half was not revealed on this path).
+        emit BurnSlashed(burnReq.requestId, burnReq.user, userPayout, bytes32(0));
     }
 
     /// @dev Settles a COMMITTED burn whose secret was already revealed, during liquidation.

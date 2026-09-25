@@ -76,6 +76,7 @@ const HUB_ABI = [
   'event BurnCancelled(bytes32 indexed requestId)',
   'event BurnAborted(bytes32 indexed requestId)',
   'event BurnProposalDeclined(bytes32 indexed requestId, bytes32 userSecret)',
+  'event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 collateralSeized, bytes32 userSecret)',
   // Functions
   'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey, bytes32 lpCommitment) external',
   'function setMintReady(bytes32 requestId) external',
@@ -86,7 +87,7 @@ const HUB_ABI = [
   'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
   'function revealBurnSecret(bytes32 requestId, bytes32 secret) external',
   'function settleBurn(bytes32 requestId) external',
-  'function claimSlashedCollateral(bytes32 requestId) external',
+  'function claimSlashedCollateral(bytes32 requestId, bytes32 userSecret) external',
   'function resolveDeclinedProposal(bytes32 requestId, bytes32 userSecret) external',
   'function getBurnRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address user, address lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 lockedCollateral, uint256 rewardCollateral, bytes32 secretHash, uint256 deadline, uint256 vaultLiquidationNonce, uint256 normalizedDebtAmount, uint8 status, bytes32 userClaimCommitment, bytes32 userPublicKey, bytes32 userViewKey, uint256 xmrPriceAtRequest, bytes32 revealedSecret))',
   'function getMintRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout, uint256 griefingDeposit, uint256 normalizedDebtAmount, uint256 vaultMintNonce, bytes32 lpCommitment, bytes32 revealedSecret, uint8 status))',

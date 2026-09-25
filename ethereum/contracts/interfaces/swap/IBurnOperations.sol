@@ -22,7 +22,8 @@ import {IErrors} from "../IErrors.sol";
  * - LP proposes but holder doesn't commit: resolveDeclinedProposal() after timeout
  *   (wsXMR restored to holder)
  * - LP doesn't reveal secret after commit: User calls claimSlashedCollateral()
- *   (holder receives par sDAI at locked price + reward)
+ *   (holder receives par sDAI at locked price; revealing userSecret lets the LP
+ *   sweep the shared XMR)
  */
 interface IBurnOperations is IErrors {
     // Note: BurnRequest struct is defined in wsXmrStorage
@@ -45,7 +46,7 @@ interface IBurnOperations is IErrors {
     event BurnCommitted(bytes32 indexed requestId, uint256 deadline);
     event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 rewardPaid);
     event BurnRewardShortfall(bytes32 indexed requestId, uint256 expected, uint256 actual);
-    event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 collateralSeized);
+    event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 collateralSeized, bytes32 userSecret);
     event BurnCancelled(bytes32 indexed requestId);
     event BurnAborted(bytes32 indexed requestId);
     event BurnForceSettled(bytes32 indexed requestId, uint256 sDAIPayout);
@@ -119,9 +120,15 @@ interface IBurnOperations is IErrors {
     function settleBurn(bytes32 requestId) external;
     
     /// @notice Claim slashed collateral after LP commits but fails to reveal
-    /// @dev Holder receives par sDAI at locked price + reward
+    /// @dev Holder receives par sDAI at locked price (no reward — the LP never
+    ///      completed the burn). The holder MUST reveal their Monero spend key half
+    ///      (userSecret), verified against the stored userPublicKey via Ed25519.
+    ///      The revealed userSecret is emitted in BurnSlashed so the LP can combine
+    ///      it with their own key half to sweep the shared XMR back — preserving the
+    ///      protocol invariant that every exit reveals a secret.
     /// @param requestId The burn request ID
-    function claimSlashedCollateral(bytes32 requestId) external;
+    /// @param userSecret The user's Ed25519 private spend key half (revealed on-chain for LP recovery)
+    function claimSlashedCollateral(bytes32 requestId, bytes32 userSecret) external;
     
     /// @notice Holder aborts a REQUESTED burn after timeout. wsXMR restored.
     /// @param requestId The burn request ID

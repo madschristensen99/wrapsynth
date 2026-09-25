@@ -20,6 +20,8 @@ import {IErrors} from "../contracts/interfaces/IErrors.sol";
 contract BurnSolvencyInvariantTest is HyperEVMTestBase {
     address liquidator = makeAddr("liquidator");
 
+    bytes32 constant TEST_USER_SECRET = bytes32(uint256(0xdeadbeef));
+
     function setUp() public override {
         super.setUp();
         vm.deal(liquidator, 1000 ether);
@@ -74,7 +76,7 @@ contract BurnSolvencyInvariantTest is HyperEVMTestBase {
         _assertSolvencyInvariant();
     }
 
-    /// @notice After claimSlashedCollateral, collateralShares must decrease by exactly userPayout (par + reward).
+    /// @notice After claimSlashedCollateral, collateralShares must decrease by exactly userPayout (par only — no reward on slash).
     function test_F1_ClaimSlashedCollateral_ReducesCollateralShares() public {
         _createVaultAndDeposit(lp, 100 ether);
         _updatePrices();
@@ -82,8 +84,10 @@ contract BurnSolvencyInvariantTest is HyperEVMTestBase {
 
         uint256 minted = _mintForUser(user, lp);
 
+        (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(TEST_USER_SECRET));
+        bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
 
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -105,7 +109,7 @@ contract BurnSolvencyInvariantTest is HyperEVMTestBase {
         vm.roll(block.number + 172805);
 
         vm.prank(user);
-        BurnFacet(address(hub)).claimSlashedCollateral(burnId);
+        BurnFacet(address(hub)).claimSlashedCollateral(burnId, TEST_USER_SECRET);
 
         wsXmrStorage.Vault memory vaultAfter = _getVault(lp);
         uint256 sharesAfter = vaultAfter.collateralShares;
@@ -248,8 +252,10 @@ contract BurnSolvencyInvariantTest is HyperEVMTestBase {
 
         uint256 minted = _mintForUser(user, lp);
 
+        (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(TEST_USER_SECRET));
+        bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
 
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -270,7 +276,7 @@ contract BurnSolvencyInvariantTest is HyperEVMTestBase {
         uint256 availableBeforeSlash = vaultBeforeSlash.collateralShares - vaultBeforeSlash.lockedCollateral;
 
         vm.prank(user);
-        BurnFacet(address(hub)).claimSlashedCollateral(burnId);
+        BurnFacet(address(hub)).claimSlashedCollateral(burnId, TEST_USER_SECRET);
 
         uint256 userPayout = _getPendingReturns(user, address(stata));
         assertGt(userPayout, 0, "User should have received payout");
@@ -442,8 +448,10 @@ contract BurnSolvencyInvariantTest is HyperEVMTestBase {
 
         uint256 minted = _mintForUser(user, lp);
 
+        (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(TEST_USER_SECRET));
+        bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
 
         wsXmrStorage.BurnRequest memory req = _getBurnRequest(burnId);
 
@@ -465,7 +473,7 @@ contract BurnSolvencyInvariantTest is HyperEVMTestBase {
         wsXmrStorage.Vault memory vaultBefore = _getVault(lp);
 
         vm.prank(user);
-        BurnFacet(address(hub)).claimSlashedCollateral(burnId);
+        BurnFacet(address(hub)).claimSlashedCollateral(burnId, TEST_USER_SECRET);
 
         uint256 userPayout = _getPendingReturns(user, address(stata));
 
@@ -482,6 +490,50 @@ contract BurnSolvencyInvariantTest is HyperEVMTestBase {
             availableBefore + (req.lockedCollateral + req.rewardCollateral - userPayout),
             "Unspent buffer should return to available"
         );
+    }
+
+    /// @notice Fix 2: claimSlashedCollateral pays par only — the burn reward is NOT
+    ///         paid when the LP never completed the burn. This removes the incentive
+    ///         to confirm a Monero lock (client-side attestation) and then slash.
+    function test_F2_SlashPaysParOnly_NoReward() public {
+        _createVaultAndDeposit(lp, 100 ether);
+        _updatePrices();
+        _configureVault(lp);
+
+        uint256 minted = _mintForUser(user, lp);
+
+        (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(TEST_USER_SECRET));
+        bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
+        vm.prank(user);
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
+
+        wsXmrStorage.BurnRequest memory req = _getBurnRequest(burnId);
+        assertGt(req.rewardCollateral, 0, "test requires a configured burn reward");
+
+        bytes32 burnSecret = bytes32(uint256(0xcafebabe));
+        (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
+        bytes32 burnSecretHash = keccak256(abi.encodePacked(bpx, bpy));
+        vm.prank(lp);
+        BurnFacet(address(hub)).proposeHash(burnId, burnSecretHash, bytes32(uint256(0x1111)), bytes32(uint256(0x2222)));
+        vm.prank(user);
+        BurnFacet(address(hub)).confirmMoneroLock(burnId);
+
+        vm.roll(block.number + 172805);
+
+        vm.prank(user);
+        BurnFacet(address(hub)).claimSlashedCollateral(burnId, TEST_USER_SECRET);
+
+        uint256 userPayout = _getPendingReturns(user, address(stata));
+
+        // Expected par in shares, mirroring the contract's slash math.
+        // Collateral price is fixed at $1 (1e18 normalized) on HyperEVM.
+        // WSXMR_DECIMALS = 1e8, SDAI_DECIMALS = 1e18 (wsXmrStorage).
+        uint256 parValueUsd = (req.wsxmrAmount * req.xmrPriceAtRequest) / 1e8;
+        uint256 parDaiAmount = (parValueUsd * 1e18) / 1e18;
+        uint256 parShares = stata.convertToShares(parDaiAmount);
+        uint256 expectedPayout = parShares < req.lockedCollateral ? parShares : req.lockedCollateral;
+
+        assertEq(userPayout, expectedPayout, "slash must pay par only - reward excluded");
     }
 
     // ========== INVARIANT HELPERS ==========

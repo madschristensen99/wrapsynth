@@ -346,13 +346,21 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     }
     
     /// @notice User claims slashed collateral when LP fails to finalize after the commit deadline
-    /// @dev User receives min(par, lockedCollateral) + reward in sDAI via pendingReturns.
+    /// @dev User receives min(par, lockedCollateral) in sDAI via pendingReturns — NO reward,
+    ///      since the LP never completed the burn (the reward is only paid on finalize).
     ///      Par is fixed at request time via xmrPriceAtRequest, protecting the user from XMR price appreciation.
     ///      Excess locked collateral above par returns to the vault.
+    ///      The user MUST reveal their Monero spend key half (userSecret), verified against the
+    ///      stored userPublicKey via Ed25519. The revealed userSecret is emitted in BurnSlashed so
+    ///      the LP can combine it with their own key half to sweep the shared XMR back — preserving
+    ///      the invariant that every exit reveals a secret (mirrors resolveDeclinedProposal).
     /// @param requestId The burn request ID
-    function claimSlashedCollateral(bytes32 requestId) external {
+    /// @param userSecret The user's Ed25519 private spend key half (revealed on-chain for LP recovery)
+    function claimSlashedCollateral(bytes32 requestId, bytes32 userSecret) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
+        
+        if (userSecret == bytes32(0)) revert InvalidUserSecret();
         
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
@@ -362,6 +370,11 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         if (block.number < request.deadline + BURN_FINALIZE_GRACE_BLOCKS) revert DeadlineNotExpired();
         if (msg.sender != request.user) revert Unauthorized();
         
+        // Verify userSecret corresponds to the stored userPublicKey (compressed Ed25519 point),
+        // exactly as resolveDeclinedProposal does.
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(userSecret));
+        if (bytes32(Ed25519.compressPoint(px, py)) != request.userPublicKey) revert InvalidUserSecret();
+        
         Vault storage vault = _vaults[request.lpVault];
         
         uint256 collateralPrice = _getCollateralPriceFromStorage();
@@ -369,13 +382,9 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         uint256 parDaiAmount = (parValueUsd * SDAI_DECIMALS) / collateralPrice;
         uint256 parShares = _daiToShares(parDaiAmount);
 
-        uint256 userBase = parShares < request.lockedCollateral
+        uint256 userPayout = parShares < request.lockedCollateral
             ? parShares
             : request.lockedCollateral;
-        uint256 userPayout = userBase + request.rewardCollateral;
-        if (userPayout > request.lockedCollateral + request.rewardCollateral) {
-            userPayout = request.lockedCollateral + request.rewardCollateral;
-        }
         if (userPayout > vault.collateralShares) {
             userPayout = vault.collateralShares;
         }
@@ -383,7 +392,8 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         uint256 totalLock = request.lockedCollateral + request.rewardCollateral;
 
         // Total collateral model: release the reservation, AND remove the paid-out amount
-        // (par + reward) from vault equity.
+        // (par only) from vault equity. The reward stays in the vault — the LP never
+        // completed the burn, so no reward is earned.
         if (vault.lockedCollateral < totalLock) revert InsufficientCollateral();
         vault.lockedCollateral -= totalLock;
         
@@ -403,7 +413,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         request.status = BurnStatus.SLASHED;
         _removeVaultBurnRequest(request.lpVault, requestId);
-        emit BurnSlashed(requestId, request.user, userPayout);
+        emit BurnSlashed(requestId, request.user, userPayout, userSecret);
         
         _reentrancyStatus = _NOT_ENTERED;
     }

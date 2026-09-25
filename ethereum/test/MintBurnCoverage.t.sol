@@ -18,6 +18,8 @@ import {IMintOperations} from "../contracts/interfaces/swap/IMintOperations.sol"
 contract MintBurnCoverageTest is HyperEVMTestBase {
     address attacker = makeAddr("attacker");
 
+    bytes32 constant TEST_USER_SECRET = bytes32(uint256(0xdeadbeef));
+
     function setUp() public override {
         super.setUp();
         vm.deal(attacker, 1000 ether);
@@ -903,7 +905,7 @@ contract MintBurnCoverageTest is HyperEVMTestBase {
         vm.roll(block.number + 50000);
         vm.expectRevert(IErrors.InvalidStatus.selector);
         vm.prank(user);
-        BurnFacet(address(hub)).claimSlashedCollateral(burnId);
+        BurnFacet(address(hub)).claimSlashedCollateral(burnId, TEST_USER_SECRET);
 
         // settleBurn still resolves it correctly
         BurnFacet(address(hub)).settleBurn(burnId);
@@ -1045,9 +1047,12 @@ contract MintBurnCoverageTest is HyperEVMTestBase {
     }
 
     function _requestBurn(address _user, address _lp, uint256 amount) internal returns (bytes32) {
+        (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(TEST_USER_SECRET));
+        // Compressed point — matches the frontend's publicSpendKey.toRawBytes()
+        bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
         vm.startPrank(_user);
         wsxmr.approve(address(hub), amount);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(amount, _lp, _user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(amount, _lp, _user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
         vm.stopPrank();
         return burnId;
     }

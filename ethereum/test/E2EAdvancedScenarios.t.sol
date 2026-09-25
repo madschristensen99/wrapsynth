@@ -23,6 +23,8 @@ contract E2EAdvancedScenariosTest is HyperEVMTestBase {
     address public liquidator;
     
     uint256 constant INITIAL_XMR_PRICE = 390_00000000; // $390
+
+    bytes32 constant TEST_USER_SECRET = bytes32(uint256(0xdeadbeef));
     
     function setUp() public override {
         super.setUp();
@@ -169,8 +171,10 @@ contract E2EAdvancedScenariosTest is HyperEVMTestBase {
         console.log("[1] User1 minted", mintedAmount, "wsXMR");
         
         // User requests burn
+        (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(TEST_USER_SECRET));
+        bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
         vm.prank(user1);
-        bytes32 burnRequestId = BurnFacet(address(hub)).requestBurn(mintedAmount, lp1, user1, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
+        bytes32 burnRequestId = BurnFacet(address(hub)).requestBurn(mintedAmount, lp1, user1, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
         console.log("[2] User1 requested burn");
         
         // LP proposes hash
@@ -193,10 +197,10 @@ contract E2EAdvancedScenariosTest is HyperEVMTestBase {
         console.log("[5] Warping time forward 3 hours...");
         vm.roll(block.number + 10800);
         
-        // User can now claim slashed collateral
+        // User can now claim slashed collateral — revealing userSecret lets the LP sweep the shared XMR
         uint256 collateralBefore = IERC20(address(stata)).balanceOf(user1);
         vm.prank(user1);
-        BurnFacet(address(hub)).claimSlashedCollateral(burnRequestId);
+        BurnFacet(address(hub)).claimSlashedCollateral(burnRequestId, TEST_USER_SECRET);
         uint256 collateralAfter = IERC20(address(stata)).balanceOf(user1);
         
         console.log("[6] User1 claimed slashed collateral:", collateralAfter - collateralBefore);

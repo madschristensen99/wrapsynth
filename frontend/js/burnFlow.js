@@ -1284,12 +1284,19 @@ export class BurnFlow {
     /**
      * Claim slashed collateral on-chain (claimSlashedCollateral). Used when the LP
      * failed to finalize a COMMITTED burn after the grace period.
+     * Requires revealing the per-burn user secret — the LP combines it with its own
+     * secret to sweep the shared XMR (invariant: every exit reveals a secret).
      */
     async claimSlashed() {
         console.log('Claiming slashed collateral...');
 
+        const userSecret = this.perBurnKeySet?.secret;
+        if (!userSecret) {
+            throw new Error('Cannot claim slashed collateral: per-burn secret unavailable. Restore your seed phrase to recover.');
+        }
+
         try {
-            const receipt = await writeHub('claimSlashedCollateral', [this.requestId]);
+            const receipt = await writeHub('claimSlashedCollateral', [this.requestId, userSecret]);
             console.log('Slashed collateral claimed, tx:', receipt.transactionHash);
         } catch (error) {
             console.error('Error claiming slashed collateral:', error);
@@ -1366,9 +1373,14 @@ export class BurnFlow {
                         throw err;
                     }
                 } else if (status === 3) {
-                    // COMMITTED — user can claim slashed collateral after deadline + grace
+                    // COMMITTED — user can claim slashed collateral after deadline + grace.
+                    // Requires revealing the per-burn secret so the LP can sweep the shared XMR.
+                    if (!this.perBurnKeySet?.secret) {
+                        showError('Cannot Claim', 'Your per-burn secret is unavailable. Restore your seed phrase to claim slashed collateral.');
+                        return;
+                    }
                     try {
-                        await writeHub('claimSlashedCollateral', [this.requestId]);
+                        await writeHub('claimSlashedCollateral', [this.requestId, this.perBurnKeySet.secret]);
                         console.log('Slashed collateral claimed on EVM');
                     } catch (err) {
                         if (isDeadlineError(err)) {

@@ -12,6 +12,8 @@ import {Ed25519} from "../contracts/Ed25519.sol";
 contract E2EComprehensiveTest is HyperEVMTestBase {
     address public user2;
     bytes32 public testSecret = bytes32(uint256(123456789));
+
+    bytes32 constant TEST_USER_SECRET = bytes32(uint256(0xdeadbeef));
     
     function setUp() public override {
         super.setUp();
@@ -271,8 +273,10 @@ contract E2EComprehensiveTest is HyperEVMTestBase {
         uint256 balance = _mintTokensForUser(user);
         uint256 burnAmount = balance / 2;
         
+        (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(TEST_USER_SECRET));
+        bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(burnAmount, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(burnAmount, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
         
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -291,9 +295,9 @@ contract E2EComprehensiveTest is HyperEVMTestBase {
         vm.roll(block.number + 172805);
         console.log("  Jumped 48 hours + 1 second");
         
-        // User claims slashed collateral
+        // User claims slashed collateral — revealing userSecret lets the LP sweep the shared XMR
         vm.prank(user);
-        BurnFacet(address(hub)).claimSlashedCollateral(burnId);
+        BurnFacet(address(hub)).claimSlashedCollateral(burnId, TEST_USER_SECRET);
         console.log("  User claimed slashed collateral (LP penalty)");
         console.log("  PASS - LP slashing works\n");
     }

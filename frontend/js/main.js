@@ -1832,6 +1832,7 @@ async function handleResolveSwap(swap) {
             const burnResolveAbi = parseAbi([
                 'function abortBurn(bytes32 requestId) external',
                 'function resolveDeclinedProposal(bytes32 requestId, bytes32 userSecret) external',
+                'function claimSlashedCollateral(bytes32 requestId, bytes32 userSecret) external',
                 'function abandonedBurns(bytes32 requestId) view returns (bool)'
             ]);
             
@@ -1921,9 +1922,38 @@ async function handleResolveSwap(swap) {
                     return; // Don't clear from storage
                 }
             } else if (status === 3) {
-                // COMMITTED: user already confirmed lock, can't resolve — must wait for finalize or slash
-                showResumeError(swap.requestId, 'Burn is committed. Wait for LP to finalize or slash the LP collateral after deadline.');
-                return; // Don't clear from storage
+                // COMMITTED: user already confirmed lock. If the LP never finalizes,
+                // the user can claim slashed collateral after deadline + grace
+                // (BURN_FINALIZE_GRACE_BLOCKS = 600) — which requires revealing the
+                // per-burn secret so the LP can sweep the shared XMR.
+                const slashBlock = deadline + 600n;
+                if (currentBlock >= slashBlock) {
+                    const userSecret = await _deriveBurnUserSecret(swap);
+                    if (!userSecret) {
+                        showResumeError(swap.requestId, 'The LP did not finalize. You can claim slashed collateral, but your burn secret could not be derived — restore your seed phrase to claim.');
+                        return;
+                    }
+                    try {
+                        const { request } = await publicClient.simulateContract({
+                            address: CONTRACTS.hub,
+                            abi: burnResolveAbi,
+                            functionName: 'claimSlashedCollateral',
+                            args: [swap.requestId, userSecret],
+                            account: userAddr
+                        });
+                        const hash = await walletClient.writeContract({ ...request, account: userAddr });
+                        const receipt = await publicClient.waitForTransactionReceipt({ hash });
+                        console.log('claimSlashedCollateral tx:', receipt.transactionHash);
+                        showResumeSuccess(swap.requestId, 'Slashed collateral claimed. Your key reveal also lets the LP recover their XMR.');
+                    } catch (err) {
+                        console.warn('claimSlashedCollateral failed:', err.message);
+                        showResumeError(swap.requestId, 'Slash claim failed: ' + (err.shortMessage || err.message));
+                        return;
+                    }
+                } else {
+                    showResumeCountdown(swap.requestId, Number(slashBlock), Number(currentBlock), () => handleResumeSwap(swap));
+                    return; // Don't clear from storage
+                }
             } else {
                 showResumeError(swap.requestId, 'This burn request has an unexpected status. Please check the block explorer.');
                 return;
