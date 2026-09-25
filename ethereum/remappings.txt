@@ -1,4 +1,3 @@
-@openzeppelin/=lib/openzeppelin-contracts/
-chainlink/=lib/chainlink/
-forge-std/=lib/forge-std/src/
-@redstone-finance/evm-connector/contracts/=lib/redstone-oracles-monorepo/packages/evm-connector/contracts/
+@openzeppelin/=vendor/openzeppelin-contracts/
+forge-std/=vendor/forge-std/src/
+@redstone-finance/evm-connector/contracts/=vendor/redstone/

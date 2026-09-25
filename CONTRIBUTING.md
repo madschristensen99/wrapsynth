@@ -10,7 +10,7 @@ Thanks for your interest in contributing! This guide covers dev setup, code styl
 
 - **Node.js** v18+
 - **Foundry** (`forge`, `cast`, `anvil`) — for Solidity compilation and tests
-- **Git** — with submodule support (`git clone --recursive`)
+- **Git** — for version control
 
 ### Repository Layout
 
@@ -27,13 +27,12 @@ wsFrontendOverhaul/
 ### Getting Started
 
 ```bash
-# Clone with submodules
-git clone --recursive <repo-url>
+# Clone
+ git clone <repo-url>
 cd wsFrontendOverhaul
 
-# Solidity — install deps and build
+# Solidity — build (deps are vendored in ethereum/vendor/)
 cd ethereum
-forge install
 forge build
 
 # Frontend — install deps, serve locally

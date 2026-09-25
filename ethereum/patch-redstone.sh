@@ -2,7 +2,7 @@
 # Patch RedStone EVM connector assembly blocks with memory-safe annotations
 # This fixes the Yul stack-too-deep error when compiling RedStoneOracleFacet
 
-REDBASE="lib/redstone-oracles-monorepo/packages/evm-connector"
+REDBASE="vendor/redstone"
 
 for f in \
   "$REDBASE/contracts/core/CalldataExtractor.sol" \

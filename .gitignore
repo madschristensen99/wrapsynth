@@ -259,6 +259,7 @@ Cargo.lock
 
 # Go (if used for backend)
 vendor/
+!ethereum/vendor/
 *.exe
 *.exe~
 *.dll
