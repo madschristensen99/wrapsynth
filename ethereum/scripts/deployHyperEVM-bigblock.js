@@ -131,6 +131,9 @@ async function main(){
   if((await hub.liquidityRouter())===ethers.constants.AddressZero)await send(hub,'setLiquidityRouter',[router.address],300000,'setLiquidityRouter');
   await deploy(w,p,'Ed25519Helper',[],man,'ed25519Helper');
   await deploy(w,p,'SwapHelper',[],man,'swapHelper');
+  // Final security step: permanently lock deployer powers (one-way, irreversible).
+  if(!(await wsxmr.hubLocked()))await send(wsxmr,'lockHub',[],300000,'lockHub');else console.log('  hub locked');
+  if(!(await hub.deployerOperationsLocked()))await send(hub,'lockDeployer',[],300000,'lockDeployer');else console.log('  deployer locked');
   Object.assign(man,{network:'hyperevm',chainId:999,deployer:w.address,usde:USDE,hyperlendPool:HYPERLEND_POOL,hyperlendAToken:HYPERLEND_ATOKEN,hyperswapFactory:FACTORY,hyperswapRouter:HSROUTER,hyperswapNFPM:NFPM,xmrPerpIndex:XMR_PERP});
   fs.writeFileSync(MANIFEST,JSON.stringify(man,null,2));
   console.log('\n=== DONE ===\n'+JSON.stringify(man,null,2));
