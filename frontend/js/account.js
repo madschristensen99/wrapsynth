@@ -10,8 +10,8 @@ import {
   readHub,
   getPastEvents,
   onAccountsChanged
-} from './viemClient.js';
-import { CONTRACTS, DECIMALS, NETWORKS } from './config.js';
+} from './viemClient.js?v=3.12';
+import { CONTRACTS, DECIMALS, NETWORKS } from './config.js?v=3.12';
 import { parseAbi, formatUnits } from 'https://esm.sh/viem@2.7.0';
 
 const EXPLORER = NETWORKS.hyperevm.blockExplorer;

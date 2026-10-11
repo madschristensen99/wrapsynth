@@ -12,7 +12,7 @@ import {
     writeHub,
     onAccountsChanged,
     onChainChanged
-} from './viemClient.js';
+} from './viemClient.js?v=3.12';
 
 import { 
     initUI,
@@ -38,6 +38,7 @@ import {
     showSuccess,
     showBurnComplete,
     showError,
+    showConfirmModal,
     showResumeError,
     showResumeSuccess,
     showResumeCountdown,
@@ -54,20 +55,20 @@ import {
     renderLPDetailCard,
     initLPDetailToggles,
     initVaultPickers
-} from './ui.js?v=3.4';
+} from './ui.js?v=3.12';
 
-import { MintFlow } from './mintFlow.js';
-import { stopTimers } from './mintFlowTimers.js';
-import { BurnFlow } from './burnFlow.js';
-import { getLPPanel } from './lpPanel.js';
-import { getPoolFlow } from './poolFlow.js';
-import { getCoLPFlow } from './coLPFlow.js';
-import { getDashboard } from './dashboard.js';
-import { hasActiveSwap, loadActiveSwap, loadActiveSwaps, saveActiveSwap, addOrUpdateActiveSwap, removeActiveSwap, clearActiveSwap, setSwapsArray, getActiveSwapByRequestId, saveToHistory } from './storage.js';
-import { CONTRACTS, SWAP_CONFIG } from './config.js';
-import { displaySwapHistory } from './swapHistory.js';
-import { loadRecentActivity, startActivityFeedWatcher } from './activityFeed.js';
-import { updateProtocolStats } from './protocolStats.js';
+import { MintFlow } from './mintFlow.js?v=3.12';
+import { stopTimers } from './mintFlowTimers.js?v=3.12';
+import { BurnFlow } from './burnFlow.js?v=3.12';
+import { getLPPanel } from './lpPanel.js?v=3.12';
+import { getPoolFlow } from './poolFlow.js?v=3.12';
+import { getCoLPFlow } from './coLPFlow.js?v=3.12';
+import { getDashboard } from './dashboard.js?v=3.12';
+import { hasActiveSwap, loadActiveSwap, loadActiveSwaps, saveActiveSwap, addOrUpdateActiveSwap, removeActiveSwap, clearActiveSwap, setSwapsArray, getActiveSwapByRequestId, saveToHistory, getSwapHistory } from './storage.js?v=3.12';
+import { CONTRACTS, SWAP_CONFIG } from './config.js?v=3.12';
+import { displaySwapHistory } from './swapHistory.js?v=3.12';
+import { loadRecentActivity, startActivityFeedWatcher } from './activityFeed.js?v=3.12';
+import { updateProtocolStats } from './protocolStats.js?v=3.12';
 
 // Global state
 let currentMintFlow = null;
@@ -160,49 +161,72 @@ async function fetchXmrPrice(forceRefresh = false) {
     return null;
 }
 
+// Incremental scan cache — avoids rescanning 86k blocks every refresh,
+// which rate-limits the public RPCs (429s) and floods the console.
+const volumeScanCache = { lastBlock: null, mintEvents: [], burnEvents: [] };
+
 /**
  * Fetch 24h volume from mint/burn events
  */
 async function fetch24hVolume() {
     try {
-        const { getPublicClient } = await import('./viemClient.js');
-        const { CONTRACTS } = await import('./config.js');
+        const { getPublicClient, getContractEventsChunked } = await import('./viemClient.js?v=3.12');
+        const { CONTRACTS } = await import('./config.js?v=3.12');
         const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
-        
+
         const publicClient = getPublicClient();
         const currentBlock = await publicClient.getBlockNumber();
-        // Use 10k blocks (~13.9 hours) to stay under RPC limits
-        const lookbackBlocks = 10000n;
-        const fromBlock = currentBlock - lookbackBlocks;
-        
+        // ~24h at ~1s/block — chunked queries keep us under the 1000-block RPC cap
+        const lookbackBlocks = 86400n;
+        const windowStart = currentBlock > lookbackBlocks ? currentBlock - lookbackBlocks : 0n;
+
         const hubAbi = parseAbi([
             'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout)',
             'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey)'
         ]);
-        
-        const [mintEvents, burnEvents] = await Promise.all([
-            publicClient.getContractEvents({
-                address: CONTRACTS.hub,
-                abi: hubAbi,
-                eventName: 'MintInitiated',
-                fromBlock,
-                toBlock: 'latest'
-            }),
-            publicClient.getContractEvents({
-                address: CONTRACTS.hub,
-                abi: hubAbi,
-                eventName: 'BurnRequested',
-                fromBlock,
-                toBlock: 'latest'
-            })
-        ]);
-        
+
+        // Incremental: only scan blocks since the last refresh. On first run
+        // (or if the cache predates the window) do the full 24h scan.
+        let fromBlock = windowStart;
+        if (volumeScanCache.lastBlock !== null && volumeScanCache.lastBlock >= windowStart) {
+            fromBlock = volumeScanCache.lastBlock + 1n;
+        } else {
+            volumeScanCache.mintEvents = [];
+            volumeScanCache.burnEvents = [];
+        }
+
+        if (fromBlock <= currentBlock) {
+            const [newMints, newBurns] = await Promise.all([
+                getContractEventsChunked({
+                    address: CONTRACTS.hub,
+                    abi: hubAbi,
+                    eventName: 'MintInitiated',
+                    fromBlock,
+                    toBlock: currentBlock
+                }),
+                getContractEventsChunked({
+                    address: CONTRACTS.hub,
+                    abi: hubAbi,
+                    eventName: 'BurnRequested',
+                    fromBlock,
+                    toBlock: currentBlock
+                })
+            ]);
+            volumeScanCache.mintEvents.push(...newMints);
+            volumeScanCache.burnEvents.push(...newBurns);
+        }
+        volumeScanCache.lastBlock = currentBlock;
+
+        // Drop events that aged out of the 24h window
+        volumeScanCache.mintEvents = volumeScanCache.mintEvents.filter(e => e.blockNumber >= windowStart);
+        volumeScanCache.burnEvents = volumeScanCache.burnEvents.filter(e => e.blockNumber >= windowStart);
+
         // Sum up wsXMR amounts from both mints and burns
         let totalWsxmr = 0n;
-        for (const event of mintEvents) {
+        for (const event of volumeScanCache.mintEvents) {
             totalWsxmr += event.args.wsxmrAmount;
         }
-        for (const event of burnEvents) {
+        for (const event of volumeScanCache.burnEvents) {
             totalWsxmr += event.args.wsxmrAmount;
         }
         
@@ -339,11 +363,17 @@ async function init() {
     // Check for active swap
     checkForActiveSwap();
 
-    // Update volume / activity / on-chain stats every 60 seconds
+    // Update volume / on-chain stats every 60 seconds (incremental scans —
+    // cheap after the first run). Full activity-feed rescans run every 5 min;
+    // the 4s event watcher in startActivityFeedWatcher covers live updates.
+    let activityRescanCounter = 0;
     setInterval(() => {
         fetch24hVolume();
-        loadRecentActivity();
         updateProtocolStats();
+
+        if (++activityRescanCounter % 5 === 0) {
+            loadRecentActivity();
+        }
 
         // Re-check active swap statuses on chain if wallet is connected
         const connectedAddress = getUserAddress();
@@ -449,7 +479,7 @@ async function handleBurnPercentage(event) {
     const feedback = document.getElementById('burn-percentage-feedback');
     
     // Get actual balance from contract
-    const { readWsxmr, getUserAddress } = await import('./viemClient.js');
+    const { readWsxmr, getUserAddress } = await import('./viemClient.js?v=3.12');
     const userAddress = getUserAddress();
     
     if (!userAddress) {
@@ -554,7 +584,7 @@ async function handleUpdatePrices() {
         }, 2000);
         
         console.log('✅ Oracle prices updated successfully');
-        const { showSuccessNotification } = await import('./ui.js?v=3.4');
+        const { showSuccessNotification } = await import('./ui.js?v=3.12');
         showSuccessNotification('Prices Updated', '<p>Oracle prices have been updated with latest RedStone data.</p>');
         
     } catch (error) {
@@ -565,7 +595,7 @@ async function handleUpdatePrices() {
             btn.disabled = false;
         }, 2000);
         
-        const { showErrorNotification } = await import('./ui.js?v=3.4');
+        const { showErrorNotification } = await import('./ui.js?v=3.12');
         showErrorNotification('Update Failed', `<p>Could not update oracle prices: ${error.message}</p>`);
     }
 }
@@ -635,7 +665,7 @@ function autoResumeSwap(swap) {
         // Pre-check: don't auto-resume if seed is missing
         // publicSpendKey has '0x' prefix (from toHex); keep it for correct lookup
         const pubKeyHex = swap.publicSpendKey;
-        import('./seedStorage.js').then(({ hasStoredSeed }) => {
+        import('./seedStorage.js?v=3.12').then(({ hasStoredSeed }) => {
             if (!hasStoredSeed(pubKeyHex)) {
                 console.log('Auto-resume skipped: seed not found for', swap.requestId.slice(0,10));
                 return;
@@ -713,7 +743,7 @@ async function handleAccountChange(newAddress) {
     } else {
         console.log('Account disconnected');
         // Try to silently reconnect before showing disconnected state
-        const { ensureConnected } = await import('./viemClient.js');
+        const { ensureConnected } = await import('./viemClient.js?v=3.12');
         const reconnected = await ensureConnected();
         if (reconnected) {
             console.log('Silently reconnected:', reconnected);
@@ -840,7 +870,7 @@ async function checkForActiveSwapOnChain(userAddress) {
 
     try {
         // Fetch mint request IDs, burn request IDs, and current block number in parallel
-        const { getPublicClient } = await import('./viemClient.js');
+        const { getPublicClient } = await import('./viemClient.js?v=3.12');
         const publicClient = getPublicClient();
 
         console.log('[CHAIN CHECK] Fetching mint IDs, burn IDs, and block number in parallel for', userAddress);
@@ -965,7 +995,13 @@ async function checkForActiveSwapOnChain(userAddress) {
             if (!burnReq) continue;
 
             // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=FINALIZED, 5=CANCELLED, 6=SLASHED
-            if (burnReq.status === 1 || burnReq.status === 2 || burnReq.status === 3) {
+            if (burnReq.status === 1 || burnReq.status === 2 || burnReq.status === 3 || burnReq.status === 4) {
+                // Finalized burns already resolved locally (swept / dismissed via resume)
+                // live in history — don't resurrect them as 'sweeping' on every refresh.
+                if (burnReq.status === 4 && getSwapHistory().some(h => h.requestId === requestId)) {
+                    console.log('[CHAIN CHECK] Burn already in history, skipping:', requestId.slice(0, 14));
+                    continue;
+                }
                 // Check if burn has expired (only for REQUESTED/PROPOSED status)
                 let isExpired = false;
                 if (burnReq.status === 1 || burnReq.status === 2) {
@@ -978,17 +1014,20 @@ async function checkForActiveSwapOnChain(userAddress) {
 
                 activeRequestIds.add(requestId);
                 let state;
-                if (burnReq.status === 3) state = 'committed';
+                if (burnReq.status === 4) state = 'sweeping';       // finalized on-chain — XMR still claimable
+                else if (burnReq.status === 3) state = 'lp-finalize'; // committed — waiting for LP finalize
                 else if (burnReq.status === 2) state = 'lp-propose';
                 else state = 'evm-request';
 
                 const xmrAmount = Number(burnReq.xmrAmount) / 1e12;
+                const existingSwap = getActiveSwapByRequestId(requestId);
                 let swap = {
                     type: 'burn',
                     state,
                     requestId,
                     lpVault: burnReq.lpVault,
-                    wsxmrAmount: burnReq.wsxmrAmount.toString(),
+                    // Contract may zero wsxmrAmount after finalize — keep local value
+                    wsxmrAmount: Number(burnReq.wsxmrAmount) / 1e8 || existingSwap?.wsxmrAmount || 0,
                     xmrAmount,
                     lastUpdated: Date.now()
                 };
@@ -996,6 +1035,10 @@ async function checkForActiveSwapOnChain(userAddress) {
                 const existing = getActiveSwapByRequestId(requestId);
                 if (existing) {
                     swap = { ...existing, ...swap };
+                    // Don't resurrect a burn the user already finished sweeping
+                    if ((existing.state === 'completed' || existing.state === 'swept') && state === 'sweeping') {
+                        swap.state = existing.state;
+                    }
                     if (existing.dismissed) {
                         console.log('[CHAIN CHECK] Preserving dismissed flag for burn', requestId.slice(0, 14));
                     }
@@ -1144,7 +1187,7 @@ function renderCoLPPositions(positions) {
  */
 async function refreshCoLPBalance(prefetchedBalance) {
     try {
-        const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js');
+        const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js?v=3.12');
         const address = getUserAddress();
         const balanceEl = document.getElementById('co-lp-user-balance');
         if (address && balanceEl) {
@@ -1467,7 +1510,7 @@ async function handleResumeSwap(specificSwap) {
         // Ensure wallet is connected
         let address = getUserAddress();
         if (!address) {
-            const { ensureConnected } = await import('./viemClient.js');
+            const { ensureConnected } = await import('./viemClient.js?v=3.12');
             address = await ensureConnected();
             if (!address) {
                 await handleConnectWallet();
@@ -1543,8 +1586,8 @@ async function handleResumeSwap(specificSwap) {
 
         // Resume appropriate flow
         if (swap.type === 'mint') {
-            const { loadSeed, hasStoredSeed } = await import('./seedStorage.js');
-            const { getPhantomAgent } = await import('./phantomAgent.js');
+            const { loadSeed, hasStoredSeed } = await import('./seedStorage.js?v=3.12');
+            const { getPhantomAgent } = await import('./phantomAgent.js?v=3.12');
 
             // publicSpendKey from storage has '0x' prefix (from toHex in initiateOnEVM).
             // seedStorage.js uses the key as-is, so we must NOT strip the prefix.
@@ -1602,6 +1645,10 @@ async function handleResumeSwap(specificSwap) {
         console.error('Error resuming swap:', error);
         const isStuck = swap.type === 'mint' && (swap.state === 'lp-ready' || swap.state === 'finalize');
         showResumeError(swap.requestId, error.message || 'Could not resume swap.');
+        if (swap.type === 'burn') {
+            // The burn panel keeps stale "waiting" text — surface the failure
+            showError('Resume Failed', error.message || 'Could not resume burn.');
+        }
         if (isStuck) {
             addDismissButtonToSwapItem(swap.requestId);
         } else {
@@ -1628,7 +1675,7 @@ function addClearButtonToSwapItem(requestId) {
     clearBtn.textContent = 'Clear Swap';
     clearBtn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.8rem; background: transparent; color: var(--text-secondary); border: 1px solid var(--border-color); margin-top: 0.25rem; align-self: flex-start;';
     clearBtn.onclick = async () => {
-        const { removeActiveSwap } = await import('./storage.js');
+        const { removeActiveSwap } = await import('./storage.js?v=3.12');
         removeActiveSwap(requestId);
         item.remove();
         const remaining = JSON.parse(localStorage.getItem('activeSwaps') || '[]');
@@ -1699,7 +1746,7 @@ function addSignToUnlockButton(requestId, publicSpendKey) {
         btn.disabled = true;
         btn.textContent = 'Unlocking...';
         try {
-            const { loadSeed } = await import('./seedStorage.js');
+            const { loadSeed } = await import('./seedStorage.js?v=3.12');
             const seed = await loadSeed(publicSpendKey);
             if (!seed) {
                 btn.disabled = false;
@@ -1732,8 +1779,8 @@ function addSignToUnlockButton(requestId, publicSpendKey) {
  */
 async function _deriveBurnUserSecret(swap) {
     try {
-        const { loadSeed } = await import('./seedStorage.js');
-        const { derivePerBurnKeySet } = await import('./seedManager.js');
+        const { loadSeed } = await import('./seedStorage.js?v=3.12');
+        const { derivePerBurnKeySet } = await import('./seedManager.js?v=3.12');
         const seed = await loadSeed(swap.publicSpendKey);
         let burnNonce = swap.burnNonce;
         if (burnNonce == null) {
@@ -1772,7 +1819,7 @@ async function handleResolveSwap(swap) {
         // PENDING mint: cancel on-chain to recover griefing deposit
         if (swap.type === 'mint' && (swap.state === 'awaiting-lp-key' || swap.state === 'evm-init' || swap.state === 'initiated' || swap.state === 'deposit' || swap.state === 'lp-verifying')) {
             console.log('Resolving stale mint on-chain:', swap.requestId);
-            const { readHub, writeHub } = await import('./viemClient.js');
+            const { readHub, writeHub } = await import('./viemClient.js?v=3.12');
             const mintReq = await readHub('getMintRequest', [swap.requestId]);
             const status = Number(mintReq.status);
             // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED
@@ -1781,13 +1828,13 @@ async function handleResolveSwap(swap) {
                 showResumeSuccess(swap.requestId, 'Mint was already cancelled. Your griefing deposit has been claimed.');
             } else if (status === 1 || status === 2 || status === 3 || status === 4) {
                 // Check timeout before calling cancelMint to avoid TimeoutNotReached revert
-                const { getPublicClient } = await import('./viemClient.js');
+                const { getPublicClient } = await import('./viemClient.js?v=3.12');
                 const publicClient = getPublicClient();
                 const currentBlock = await publicClient.getBlockNumber();
                 const timeout = mintReq.timeout;
                 if (currentBlock < timeout) {
                     const blocksRemaining = Number(timeout - currentBlock);
-                    const estSeconds = blocksRemaining * 5;
+                    const estSeconds = blocksRemaining; // ~1s blocks on HyperEVM
                     const mins = Math.floor(estSeconds / 60);
                     const secs = estSeconds % 60;
                     showResumeError(swap.requestId, `Mint timeout has not been reached. Please wait ~${mins}m ${secs}s more (${blocksRemaining} blocks) before you can cancel.`);
@@ -1822,7 +1869,7 @@ async function handleResolveSwap(swap) {
         // REQUESTED burn: abort on-chain to recover wsXMR
         else if (swap.type === 'burn' && (swap.state === 'evm-request' || swap.state === 'lp-propose')) {
             console.log('Resolving stale burn on-chain:', swap.requestId);
-            const { getPublicClient, getWalletClient, getUserAddress } = await import('./viemClient.js');
+            const { getPublicClient, getWalletClient, getUserAddress } = await import('./viemClient.js?v=3.12');
             const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
             const publicClient = getPublicClient();
             const walletClient = getWalletClient();
@@ -1963,7 +2010,7 @@ async function handleResolveSwap(swap) {
         else if (swap.type === 'mint' && (swap.state === 'lp-ready' || swap.state === 'finalize')) {
             console.log('Mint is READY but secret is missing, trying cancel anyway:', swap.requestId);
             try {
-                const { writeHub } = await import('./viemClient.js');
+                const { writeHub } = await import('./viemClient.js?v=3.12');
                 const receipt = await writeHub('cancelMint', [swap.requestId, '0x0000000000000000000000000000000000000000000000000000000000000000']);
                 console.log('cancelMint tx:', receipt.transactionHash);
                 showResumeSuccess(swap.requestId, 'Mint cancelled. Your griefing deposit has been refunded.');
@@ -2011,7 +2058,7 @@ export async function loadVaults() {
         let totalCollateralWei = 0n;
 
         // Fire ALL independent reads in a single Promise.all — no sequential round-trips
-        const { getPublicClient } = await import('./viemClient.js');
+        const { getPublicClient } = await import('./viemClient.js?v=3.12');
         const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
         const publicClient = getPublicClient();
         const sDAIAbi = parseAbi(['function convertToAssets(uint256 shares) view returns (uint256)']);
@@ -2518,7 +2565,7 @@ async function updateMintBackingCollateral() {
         // Fetch fresh XMR price from oracle, fall back to CoinGecko cache, then vault cache
         let xmrPrice = 0;
         try {
-            const { readHub } = await import('./viemClient.js');
+            const { readHub } = await import('./viemClient.js?v=3.12');
             const xmrPriceWei = await readHub('getXmrPrice');
             xmrPrice = Number(xmrPriceWei) / 1e18;
         } catch (e) {
@@ -2603,7 +2650,7 @@ async function _updateBurnRewardDisplay() {
         }
 
         const wsxmrAmount = BigInt(Math.round(amount * 1e8));
-        const { getPublicClient } = await import('./viemClient.js');
+        const { getPublicClient } = await import('./viemClient.js?v=3.12');
         const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
         const publicClient = getPublicClient();
 
@@ -2796,7 +2843,7 @@ async function handleStartMint() {
         trackMintProgress(currentMintFlow);
         
         // Use the default LP vault from config
-        const { CONTRACTS } = await import('./config.js');
+        const { CONTRACTS } = await import('./config.js?v=3.12');
         
         // Start the flow with the LP vault that has the running LP node
         await currentMintFlow.start(CONTRACTS.defaultLpVault, amount);
@@ -2980,12 +3027,40 @@ async function handleCancelMint() {
 async function handleCancelBurn() {
     if (!currentBurnFlow) return;
 
-    const confirmed = confirm('Are you sure you want to cancel this burn? Depending on the current state, your wsXMR will be restored or you will receive slashed collateral.');
+    // Build a state-specific confirmation so the user knows exactly what happens
+    // when they cancel (wsXMR restored vs slashed collateral vs returns).
+    let modalBody = '<p>Are you sure you want to cancel this burn?</p>';
+    if (currentBurnFlow.requestId) {
+        try {
+            const burnReq = await readHub('getBurnRequest', [currentBurnFlow.requestId]);
+            const status = Number(burnReq.status);
+            // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=COMPLETED, 5=SLASHED, 6=CANCELLED
+            if (status === 1) {
+                modalBody = '<p>The LP has not responded yet. Cancelling restores your wsXMR to your wallet.</p>';
+            } else if (status === 2) {
+                modalBody = '<p>The LP did not send XMR. Cancelling restores your wsXMR to your wallet (the LP can still sweep any XMR it sent).</p>';
+            } else if (status === 3) {
+                modalBody = '<p>The LP failed to finalize. Cancelling lets you claim the slashed collateral.</p>';
+            } else if (status === 6) {
+                const abandoned = await readHub('abandonedBurns', [currentBurnFlow.requestId]).catch(() => false);
+                modalBody = abandoned
+                    ? '<p>The LP abandoned this burn. Cancelling restores your wsXMR via late claim.</p>'
+                    : '<p>This burn was cancelled. Cancelling restores your wsXMR.</p>';
+            } else if (status === 5) {
+                modalBody = '<p>This burn was slashed. Cancelling lets you withdraw your returns.</p>';
+            }
+        } catch (e) {
+            // Fall back to generic copy if the status read fails
+        }
+    }
+
+    const confirmed = await showConfirmModal('Cancel Burn?', modalBody);
     if (!confirmed) return;
 
     try {
         stopTimers(currentBurnFlow);
-        await currentBurnFlow.cancel();
+        const cancelled = await currentBurnFlow.cancel();
+        if (cancelled === false) return; // early-exit (e.g. deadline not reached) — error already shown
         resetBurnUI();
         showSuccess('Burn Cancelled', 'Burn cancelled successfully');
     } catch (error) {

@@ -51,7 +51,7 @@ All configuration is via environment variables (`.env` file). See `.env.example`
 | Variable | Description |
 |----------|-------------|
 | `MONERO_WALLET_RPC_URL` | URL of running `monero-wallet-rpc` instance (e.g. `http://localhost:18082`) |
-| `MONERO_VIEW_KEY` | LP's Monero private view key (hex, no 0x prefix) — needed for deposit scanning and sweeping |
+| `MONERO_VIEW_KEY` | LP's Monero private view key (hex, no 0x prefix) — needed to regenerate the main wallet if lost (mint deposit scanning uses the per-mint lpSecret as the view key) |
 | `MONERO_DAEMON_ADDRESS` | Monero daemon address for wallet-rpc (default: `xmr-node.cakewallet.com:18081`) |
 | `MONERO_WALLET_RPC_USER` | Basic auth username (only if `--rpc-login` enabled) |
 | `MONERO_WALLET_RPC_PASSWORD` | Basic auth password (only if `--rpc-login` enabled) |
@@ -111,11 +111,11 @@ lp-server-js/
 ```
 MintInitiated event detected
   │
-  ├── Generate Ed25519 key pair (LP spend key + LP view key)
-  ├── provideLPKey() on-chain
+  ├── Generate Ed25519 key pair (LP spend key; view pub = spend pub)
+  ├── provideLPKey() on-chain (lpPublicViewKey = lpSpendPub)
   ├── Compute shared deposit address (user pubkey + LP keys)
-  ├── Poll monero-wallet-rpc for XMR deposit (15s interval, 10min timeout)
-  │     └── Creates view-only wallet for the shared address
+  ├── Scan for XMR deposit via view-only wallet (view key = lpSecret, 15s interval)
+  │     └── Optional fallback: user submits txid+txKey via POST /mint/deposit
   ├── Update oracle prices (required for collateral check)
   ├── Generate LP secret + commitment
   ├── Persist LP secret to lp-secrets.json (for crash recovery)

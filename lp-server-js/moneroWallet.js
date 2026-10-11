@@ -4,6 +4,13 @@
 import crypto from 'crypto';
 import { spawn } from 'child_process';
 import { setTimeout as sleep } from 'timers/promises';
+import * as ed from '@noble/ed25519';
+import * as ethers from 'ethers';
+
+// Set up SHA-512 sync for @noble/ed25519 (same as moneroCrypto.js)
+if (!ed.etc.sha512Sync) {
+  ed.etc.sha512Sync = (...m) => crypto.createHash('sha512').update(Buffer.concat(m)).digest();
+}
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 const WALLET_RPC_URL = process.env.MONERO_WALLET_RPC_URL || null;
@@ -204,31 +211,207 @@ export async function checkTxKey(txid, txKey, address) {
   };
 }
 
+// ─── Daemon-level deposit scanner ───────────────────────────────────────────
+// Fallback for when monero-wallet-rpc scanning fails (corrupt wallet files,
+// flaky remote daemon, etc). Scans blocks directly via daemon JSON RPC and
+// decodes outputs with the deposit view key — no wallet file involved.
+
+const _ED_L = 2n ** 252n + 27742317777372353535851937790883648493n;
+const _ED_G = ed.ExtendedPoint.BASE;
+const _B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const _B58_BLOCK_SIZES = { 0: 0, 2: 1, 3: 2, 5: 3, 6: 4, 7: 5, 9: 6, 10: 7, 11: 8 };
+
+function _keccak(buf) {
+  return Buffer.from(ethers.keccak256(buf).slice(2), 'hex');
+}
+function _varint(n) {
+  const b = []; do { let x = n & 0x7f; n >>= 7; if (n) x |= 0x80; b.push(x); } while (n);
+  return Buffer.from(b);
+}
+function _readVarint(buf, off) {
+  let v = 0, s = 0;
+  while (true) { v |= (buf[off] & 0x7f) << s; if (!(buf[off] & 0x80)) return [v, off + 1]; s += 7; off++; }
+}
+function _scReduce(leBuf) {
+  return BigInt('0x' + Buffer.from(leBuf).reverse().toString('hex')) % _ED_L;
+}
+function _toLe32(n) {
+  return Buffer.from(n.toString(16).padStart(64, '0'), 'hex').reverse();
+}
+
+// Monero block-base58 decode → { spendPub, viewPub } as 32-byte Buffers
+function _decodeMoneroAddress(addr) {
+  const out = [];
+  for (let i = 0; i < addr.length; i += 11) {
+    const chunk = addr.slice(i, i + 11);
+    let v = 0n;
+    for (const c of chunk) v = v * 58n + BigInt(_B58.indexOf(c));
+    const n = _B58_BLOCK_SIZES[chunk.length];
+    if (n == null) throw new Error('bad base58 block size');
+    const b = Buffer.alloc(n);
+    let t = v;
+    for (let k = n - 1; k >= 0; k--) { b[k] = Number(t & 0xffn); t >>= 8n; }
+    out.push(b);
+  }
+  const raw = Buffer.concat(out);
+  if (raw.length < 69) throw new Error('decoded address too short');
+  return { spendPub: raw.slice(1, 33), viewPub: raw.slice(33, 65) };
+}
+
+// Extract tx pubkeys from tx_extra (tag 0x01 main, 0x04 additional)
+function _txPubkeys(extraHex) {
+  const e = Buffer.from(extraHex || '', 'hex');
+  const pubs = [];
+  let i = 0;
+  while (i < e.length) {
+    const tag = e[i++];
+    if (tag === 0) continue;
+    if (tag === 1) { pubs.push(e.slice(i, i + 32)); i += 32; }
+    else if (tag === 2) { const [l, ni] = _readVarint(e, i); i = ni + l; }
+    else if (tag === 3) { const [l, ni] = _readVarint(e, i); i = ni + l; }
+    else if (tag === 4) { const [c, ni] = _readVarint(e, i); i = ni; for (let k = 0; k < c; k++) { pubs.push(e.slice(i, i + 32)); i += 32; } }
+    else break;
+  }
+  return pubs;
+}
+
+// Check if a tx pays `spendPub`/`viewKeyScalar`, return [{index, amount}] matches.
+function _matchTxOutputs(txJson, viewKeyScalar, spendPubPoint) {
+  const pubs = _txPubkeys(txJson.extra);
+  const matches = [];
+  for (const R of pubs) {
+    let Rpt;
+    try { Rpt = ed.ExtendedPoint.fromHex(R); } catch { continue; }
+    const deriv = Buffer.from(Rpt.multiply(viewKeyScalar).multiply(8n).toRawBytes());
+    for (let o = 0; o < (txJson.vout || []).length; o++) {
+      const tk = txJson.vout[o].target && txJson.vout[o].target.tagged_key;
+      const target = tk ? tk.key : (txJson.vout[o].target && txJson.vout[o].target.key);
+      if (!target) continue;
+      // Fast reject via view tag when present
+      if (tk && tk.view_tag != null) {
+        const vt = _keccak(Buffer.concat([Buffer.from('view_tag'), deriv, _varint(o)]))[0];
+        if (vt !== parseInt(tk.view_tag, 16)) continue;
+      }
+      const scalar1 = _scReduce(_keccak(Buffer.concat([deriv, _varint(o)])));
+      const P = _ED_G.multiply(scalar1).add(spendPubPoint).toRawBytes();
+      if (Buffer.from(P).toString('hex') !== target) continue;
+      // Decode amount: amount = low 8 bytes of (encAmount XOR keccak("amount"||scalar1_LE))
+      let amount = null;
+      const ecdh = txJson.rct_signatures && txJson.rct_signatures.ecdhInfo && txJson.rct_signatures.ecdhInfo[o];
+      if (ecdh && ecdh.amount) {
+        const amtKey = _keccak(Buffer.concat([Buffer.from('amount'), _toLe32(scalar1)]));
+        const enc = Buffer.from(ecdh.amount, 'hex');
+        const dec = Buffer.alloc(8);
+        for (let k = 0; k < 8; k++) dec[k] = enc[k] ^ amtKey[k];
+        amount = dec.readBigUInt64LE();
+      }
+      matches.push({ index: o, amount });
+    }
+  }
+  return matches;
+}
+
+async function _daemonJson(daemonUrl, path, body) {
+  const res = await fetch(`${daemonUrl}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  return res.json();
+}
+
+/**
+ * Scan blocks [fromHeight, toHeight] on the daemon for outputs paying
+ * `depositAddress` decodable with `viewKeyHex`. Returns [{txid, amount, height}].
+ * Bypasses monero-wallet-rpc entirely — used as a fallback when wallet scanning
+ * fails to detect a deposit that is verifiably on-chain.
+ */
+export async function scanDepositViaDaemon(depositAddress, viewKeyHex, fromHeight, toHeight) {
+  const { spendPub } = _decodeMoneroAddress(depositAddress);
+  const spendPubPoint = ed.ExtendedPoint.fromHex(spendPub);
+  const viewKeyScalar = _scReduce(Buffer.from(viewKeyHex.replace(/^0x/, ''), 'hex'));
+  const found = [];
+
+  for (const daemonUrl of DAEMON_URLS) {
+    try {
+      // Collect tx hashes across the block range
+      const txJobs = []; // {txid, height}
+      for (let h = fromHeight; h <= toHeight; h++) {
+        const blk = await _daemonJson(daemonUrl, '/json_rpc', {
+          jsonrpc: '2.0', id: '0', method: 'get_block', params: { height: h },
+        });
+        const hashes = (blk.result && blk.result.tx_hashes) || [];
+        for (const txid of hashes) txJobs.push({ txid, height: h });
+      }
+      // Fetch txs in batches and decode outputs
+      for (let i = 0; i < txJobs.length; i += 50) {
+        const batch = txJobs.slice(i, i + 50);
+        const res = await _daemonJson(daemonUrl, '/get_transactions', {
+          txs_hashes: batch.map(t => t.txid), decode_as_json: true,
+        });
+        for (let j = 0; j < (res.txs || []).length; j++) {
+          const t = res.txs[j];
+          let txJson;
+          try { txJson = JSON.parse(t.as_json); } catch { continue; }
+          const matches = _matchTxOutputs(txJson, viewKeyScalar, spendPubPoint);
+          for (const m of matches) {
+            found.push({ txid: batch[j].txid, amount: m.amount, height: batch[j].height, outputIndex: m.index });
+          }
+        }
+      }
+      return found; // success on this daemon
+    } catch (err) {
+      console.warn(`[Monero] daemon scan via ${daemonUrl} failed: ${err.message}, trying next...`);
+    }
+  }
+  return found;
+}
+
 /**
  * Poll for an incoming transfer matching expected amount (within tolerance).
- * Creates a view-only wallet for the deposit address (combined address using LP's view key)
- * so the wallet can detect outputs sent to that address.
+ * Creates a view-only wallet for the deposit address so the wallet can detect
+ * outputs sent to that address. Mint deposits are LP-VIEWABLE: the deposit's
+ * private view key is the per-mint lpSecret (lpPublicViewKey = lpSpendPub), so
+ * pass it via `viewKeyHex` — no MONERO_VIEW_KEY needed.
  * Retries every `intervalMs` up to `maxWaitMs`.
+ *
+ * @param {bigint} expectedAmountAtomic
+ * @param {Object} opts
+ * @param {string} opts.depositAddress - deposit address to watch (required)
+ * @param {string} opts.viewKeyHex - private view key for the deposit address (64-char hex, no 0x)
+ * @param {number} opts.restoreHeight - block height to start scanning from
+ * @param {number} opts.toleranceBps - amount tolerance (default 50 = 0.5%)
+ * @param {number} opts.intervalMs - poll interval (default 10s)
+ * @param {number} opts.maxWaitMs - give up after this long (default 10 min)
+ * @param {Function} opts.shouldAbort - optional; return true to stop polling early
+ *   (e.g. a deposit proof arrived via another channel). Returns null on abort.
  */
 export async function pollForDeposit(expectedAmountAtomic, opts = {}) {
   const {
     depositAddress = null,
+    viewKeyHex = null,
     restoreHeight = 0,
     toleranceBps = 50,           // 0.5% tolerance
     intervalMs = 10000,          // 10s
     maxWaitMs = 600000,          // 10 min
+    shouldAbort = null,
   } = opts;
 
   if (!depositAddress) {
     throw new Error('depositAddress is required for pollForDeposit');
   }
 
-  const lpViewKey = process.env.MONERO_VIEW_KEY;
+  const lpViewKey = viewKeyHex || process.env.MONERO_VIEW_KEY;
   if (!lpViewKey) {
-    throw new Error('MONERO_VIEW_KEY not configured — needed to scan deposit address');
+    throw new Error('viewKeyHex not provided and MONERO_VIEW_KEY not configured — needed to scan deposit address');
   }
 
-  const walletName = 'deposit-' + depositAddress.slice(0, 12).replace(/[^a-zA-Z0-9]/g, '');
+  // Wallet name must be unique per (address, viewkey) pair — legacy mints can
+  // share an address prefix with a different view key, and reusing a wallet file
+  // created for different keys causes 'does not correspond to .keys' corruption.
+  const { createHash: _walletNameHash } = await import('crypto');
+  const keyFingerprint = _walletNameHash('sha256').update(depositAddress + ':' + lpViewKey).digest('hex').slice(0, 8);
+  const walletName = 'deposit-' + depositAddress.slice(0, 12).replace(/[^a-zA-Z0-9]/g, '') + '-' + keyFingerprint;
   const walletPass = 'deposit-scan-password';
   const mainWalletName = process.env.MONERO_WALLET_NAME || 'lp-wallet';
   // SECURITY: no hardcoded fallback — the previous default ('lp-wallet-password') was
@@ -240,10 +423,15 @@ export async function pollForDeposit(expectedAmountAtomic, opts = {}) {
   const walletDir = process.env.MONERO_WALLET_DIR || '/home/remsee/wsFrontendOverhaul/lp-server-js/monero-wallets';
 
   let walletInitialized = false;
+  let daemonScannedUpTo = restoreHeight; // daemon-scan fallback cursor
   const start = Date.now();
   let found = null;
 
   while (Date.now() - start < maxWaitMs) {
+    if (shouldAbort && shouldAbort()) {
+      console.log('[Monero] pollForDeposit aborted — deposit verified via another channel');
+      break;
+    }
     try {
       found = await withWalletLock(async () => {
         if (!walletInitialized) {
@@ -264,6 +452,7 @@ export async function pollForDeposit(expectedAmountAtomic, opts = {}) {
                 address: depositAddress,
                 viewkey: lpViewKey,
                 restore_height: restoreHeight,
+                autosave_current: false, // avoid save-on-close cache corruption
               });
               console.log('[Monero] View-only wallet created for deposit address');
             } catch (genErr) {
@@ -309,6 +498,7 @@ export async function pollForDeposit(expectedAmountAtomic, opts = {}) {
                 address: depositAddress,
                 viewkey: lpViewKey,
                 restore_height: restoreHeight,
+                autosave_current: false, // avoid save-on-close cache corruption
               });
               console.log('[Monero] View-only wallet recreated for deposit address');
             } catch (genErr) {
@@ -341,6 +531,35 @@ export async function pollForDeposit(expectedAmountAtomic, opts = {}) {
         }
         return null;
       });
+
+      // Fallback: wallet-rpc scanning is unreliable (corrupt wallet files, flaky
+      // daemon backends). Scan the daemon directly for outputs paying the
+      // deposit address — no wallet file involved.
+      if (!found && lpViewKey) {
+        try {
+          const tip = await getDaemonHeight();
+          const scanFrom = Math.max(restoreHeight, daemonScannedUpTo);
+          if (tip > scanFrom) {
+            const daemonTxs = await scanDepositViaDaemon(depositAddress, lpViewKey, scanFrom, tip);
+            daemonScannedUpTo = tip + 1;
+            for (const tx of daemonTxs) {
+              if (tx.amount == null) continue;
+              const diff = tx.amount > expectedAmountAtomic
+                ? tx.amount - expectedAmountAtomic
+                : expectedAmountAtomic - tx.amount;
+              const diffBps = Number(diff * 10000n / expectedAmountAtomic);
+              console.log(`[Monero] daemon-scan transfer: txid=${tx.txid} amount=${tx.amount} height=${tx.height}`);
+              if (diffBps <= toleranceBps) {
+                console.log(`[Monero] Deposit found via daemon scan: txid=${tx.txid} amount=${tx.amount} height=${tx.height}`);
+                found = tx;
+                break;
+              }
+            }
+          }
+        } catch (scanErr) {
+          console.warn('[Monero] daemon deposit scan failed:', scanErr.message);
+        }
+      }
     } catch (err) {
       console.warn('[Monero] pollForDeposit error:', err.message);
     }
@@ -363,6 +582,7 @@ export async function pollForDeposit(expectedAmountAtomic, opts = {}) {
   }
 
   if (found) return found;
+  if (shouldAbort && shouldAbort()) return null; // aborted, not timed out
   throw new Error(`Deposit not found within ${maxWaitMs}ms (expected ~${expectedAmountAtomic} atomic units)`);
 }
 
@@ -442,24 +662,28 @@ async function _sendXmr({ destination, amountAtomic, priority = 1, accountIndex 
  *   - userSecret (revealed in MintFinalized event)
  *   - lpSecret (stored by LP server during provideLPKey)
  * The full private spend key = (userSecret + lpSecret) mod l
- * The view key = userSecret (deposit is user-viewable: view pub = userPub)
+ * The view key = lpSecret (deposit is LP-viewable: view pub = lpSpendPub = lpSecret·G)
  *
  * @param {string} userSecretHex - user's secret from MintFinalized (0x-prefixed hex)
  * @param {string} lpSecretHex - LP's secret stored during provideLPKey (0x-prefixed hex)
- * @param {string} lpViewKeyHex - LP's private view key (hex, no prefix) — UNUSED for user-viewable deposits, kept for signature compatibility
  * @param {string} lpMainAddress - LP's main Monero address to sweep to
  * @param {number} restoreHeight - block height to start scanning from
- * @returns {Promise<{swept: boolean, txHashes: string[], amount: bigint}>}
+ * @param {string} viewKeyLeHex - optional override for the deposit's private view
+ *   key (64-char LE hex, no 0x). Default: lpSecret (new-scheme LP-viewable
+ *   deposits). Legacy deposits used view=userPub → pass LE(userSecret); mixed
+ *   legacy deposits used view=lpPublicViewKey → pass the corresponding private
+ *   view key (e.g. MONERO_VIEW_KEY).
+ * @returns {Promise<{swept: boolean, txHashes: string[], amount: bigint, balance: bigint}>}
  */
-export async function sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpMainAddress, restoreHeight = 0, depositHeight = 0 }) {
+export async function sweepMintDeposit({ userSecretHex, lpSecretHex, lpMainAddress, restoreHeight = 0, depositHeight = 0, viewKeyLeHex = null }) {
   if (!WALLET_RPC_URL) {
     console.warn('[Monero] MONERO_WALLET_RPC_URL not set — skipping sweep');
     return { swept: false, txHashes: [], amount: 0n };
   }
-  return withWalletLock(() => _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpMainAddress, restoreHeight, depositHeight }));
+  return withWalletLock(() => _sweepMintDeposit({ userSecretHex, lpSecretHex, lpMainAddress, restoreHeight, depositHeight, viewKeyLeHex }));
 }
 
-async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpMainAddress, restoreHeight, depositHeight }) {
+async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpMainAddress, restoreHeight, depositHeight, viewKeyLeHex }) {
   const ed = await import('@noble/ed25519');
   const { createHash } = await import('crypto');
   if (!ed.etc.sha512Sync) {
@@ -487,15 +711,15 @@ async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpM
   const pubSpend = G.multiply(combinedSpendScalar);
   const pubSpendBytes = Buffer.from(pubSpend.toRawBytes());
 
-  // Derive public view key. Mint deposits are USER-VIEWABLE: view pub = userPub
-  // (= userSecret·G), NOT the LP's view key. The LP learns userSecret when it's
-  // revealed at MintFinalized, so it scans the deposit with userSecret as the
-  // private view key.
-  const viewLe = userSecretBigInt;
-  const pubView = G.multiply(viewLe);
+  // Derive public view key. New-scheme mint deposits are LP-VIEWABLE: view pub =
+  // lpSpendPub (= lpSecret·G), private view key = lpSecret. Legacy deposits used
+  // view=userPub (private view key = LE(userSecret)) or view=lpPublicViewKey —
+  // the caller passes viewKeyLeHex to cover those.
+  const lpViewKeyLe = viewKeyLeHex || lpSecretHex.replace(/^0x/, '');
+  const viewScalarBytes = Buffer.from(lpViewKeyLe, 'hex').reverse();
+  const viewScalar = BigInt('0x' + viewScalarBytes.toString('hex')) % ED25519_L;
+  const pubView = G.multiply(viewScalar);
   const pubViewBytes = Buffer.from(pubView.toRawBytes());
-  // Private view key (little-endian hex) for generate_from_keys = userSecret mod l
-  const userViewKeyLe = Buffer.from(userSecretBigInt.toString(16).padStart(64, '0'), 'hex').reverse().toString('hex');
 
   // Compute Monero address
   const { ethers } = await import('ethers');
@@ -561,7 +785,7 @@ async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpM
         password: walletPass,
         address: depositAddress,
         spendkey: combinedSpendHex,
-        viewkey: userViewKeyLe,
+        viewkey: lpViewKeyLe,
         restore_height: moneroRestoreHeight,
       });
       walletOpened = true;
@@ -602,7 +826,7 @@ async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpViewKeyHex, lpM
       console.log(`[Monero] No deposit found in sweep wallet (current height: ${currentHeight}, restore height: ${moneroRestoreHeight})`);
       console.log(`[Monero]   Watching address: ${depositAddress}`);
       console.log(`[Monero]   Combined spend key (LE): ${combinedSpendHex}`);
-      console.log(`[Monero]   View key (userSecret): ${userViewKeyLe.slice(0, 16)}...`);
+      console.log(`[Monero]   View key (LE): ${lpViewKeyLe.slice(0, 16)}...`);
       return { swept: false, txHashes: [], amount: 0n, balance };
     }
 
@@ -917,6 +1141,35 @@ export async function getDaemonHeight() {
     }
   }
   throw new Error('All Monero daemon URLs failed — check your internet connection or set MONERO_DAEMON_URLS in .env');
+}
+
+/**
+ * Resolve a confirmed tx's block height via the daemon's /get_transactions.
+ * Used to compute sweep restore heights when depositHeight wasn't persisted.
+ * Returns 0 if the tx can't be found (in pool or all daemons failed).
+ */
+export async function getTxHeight(txid) {
+  for (const daemonUrl of DAEMON_URLS) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const res = await fetch(`${daemonUrl}/get_transactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ txs_hashes: [txid], decode_as_json: false, prune: false }),
+        signal: controller.signal,
+      });
+      const data = await res.json();
+      const tx = data.txs && data.txs[0];
+      if (tx && tx.block_height) return Number(tx.block_height);
+      if (tx) return 0; // found but in pool — no height yet
+    } catch (err) {
+      console.warn(`[Monero] get_transactions via ${daemonUrl} failed: ${err.message}, trying next...`);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  return 0;
 }
 
 // ─── Wallet Open ────────────────────────────────────────────────────────────

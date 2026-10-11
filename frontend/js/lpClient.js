@@ -1,7 +1,10 @@
 // LP Server HTTP Client
-// Handles communication with the LP server for quotes, notifications, and status polling
+// NOTE: the mint/burn protocol is fully on-chain — the LP scans deposits itself
+// (LP-viewable deposit addresses) and users confirm burns on-chain. This client
+// only remains for optional LP-server conveniences (e.g. /info health checks);
+// no user→LP messaging is required by the protocol.
 
-import { LP_SERVER_CONFIG } from './config.js';
+import { LP_SERVER_CONFIG } from './config.js?v=3.12';
 
 export class LPClient {
     constructor(baseUrl = LP_SERVER_CONFIG.defaultUrl) {
@@ -33,69 +36,6 @@ export class LPClient {
 
     async info() {
         return this.request(LP_SERVER_CONFIG.endpoints.info);
-    }
-
-    async quoteMint({ xmrAmount, userAddress }) {
-        return this.request(LP_SERVER_CONFIG.endpoints.quoteMint, {
-            method: 'POST',
-            body: JSON.stringify({
-                xmr_amount: xmrAmount,
-                user_address: userAddress
-            })
-        });
-    }
-
-    async quoteBurn({ wsxmrAmount, userAddress }) {
-        return this.request(LP_SERVER_CONFIG.endpoints.quoteBurn, {
-            method: 'POST',
-            body: JSON.stringify({
-                wsxmr_amount: wsxmrAmount,
-                user_address: userAddress
-            })
-        });
-    }
-
-    async notifyMint({ requestId, txHash }) {
-        return this.request(LP_SERVER_CONFIG.endpoints.notifyMint, {
-            method: 'POST',
-            body: JSON.stringify({
-                request_id: requestId,
-                tx_hash: txHash
-            })
-        });
-    }
-
-    /**
-     * Submit a mint deposit proof (txid + transaction secret key) so the LP can
-     * verify the payment via check_tx_key. Mint deposits are user-viewable, so the
-     * LP cannot scan them — the user proves the send with the tx key instead.
-     * @param {string} requestId - mint request id (0x-prefixed bytes32)
-     * @param {string} txid - Monero transaction hash (64-char hex)
-     * @param {string} txKey - transaction secret key r (64-char hex)
-     */
-    async submitDeposit({ requestId, txid, txKey }) {
-        return this.request(LP_SERVER_CONFIG.endpoints.submitDeposit, {
-            method: 'POST',
-            body: JSON.stringify({
-                requestId,
-                txid,
-                txKey
-            })
-        });
-    }
-
-    async getMintStatus(requestId) {
-        // Strip 0x prefix if present
-        const cleanId = requestId.startsWith('0x') ? requestId.slice(2) : requestId;
-        const endpoint = LP_SERVER_CONFIG.endpoints.getMintStatus.replace(':id', cleanId);
-        return this.request(endpoint);
-    }
-
-    async getBurnStatus(requestId) {
-        // Strip 0x prefix if present
-        const cleanId = requestId.startsWith('0x') ? requestId.slice(2) : requestId;
-        const endpoint = LP_SERVER_CONFIG.endpoints.getBurnStatus.replace(':id', cleanId);
-        return this.request(endpoint);
     }
 
     isAvailable() {

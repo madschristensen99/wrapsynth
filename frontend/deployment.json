@@ -8,7 +8,7 @@
   "contracts": {
     "wsXMR": "0x25Ed246C3CB273730235A3184aB63aB4DF4f4CF3",
     "wsXmrHub": "0xb901C70F2a49d78c32e88ea1F36290d3F5F21f12",
-    "liquidityRouter": "0x4619e409c8070042DAC16637F8f883F1C7118aEE",
+    "liquidityRouter": "0x4619e409c8070042dac16637f8f883f1c7118aee",
     "swapHelper": "0x6bbB5fE4F82b14Bd29fd8d7B9cC1f45a6e19c3dD",
     "facets": {
       "HyperCoreOracleFacet": "0x2a18BCFf642015E363080072F51DaA34A86A14bD",
@@ -20,10 +20,9 @@
     }
   },
   "externalContracts": {
-    "sDAI": "0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34",
-    "stataUSDe": "0x3BA7C8c0f693703B24AcE1db311e15fd8D2904ED",
+    "sDAI": "0x3ba7c8c0f693703b24ace1db311e15fd8d2904ed",
+    "stataUSDe": "0x3ba7c8c0f693703b24ace1db311e15fd8d2904ed",
     "USDe": "0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34",
-    "wxDAI": "0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34",
     "UniswapV3Factory": "0xB1c0fa0B789320044A6F623cFe5eBda9562602E3",
     "UniswapV3PositionManager": "0x6eDA206207c09e5428F281761DdC0D300851fBC8",
     "UniswapV3Router": "0x6D99e7f6747AF2cDbB5164b6DD50e40D4fDe1e77",
@@ -33,7 +32,7 @@
     "Ed25519Helper": "0x52AF4f5CA562793D2018fe6F7817970A30DBC67a"
   },
   "pool": {
-    "uniswapV3Pool": "0xFA529Dc1B245B3228a172CEb886F47F2127AF401",
+    "uniswapV3Pool": "0xfa529dc1b245b3228a172ceb886f47f2127af401",
     "feeTier": 3000
   },
   "urls": {

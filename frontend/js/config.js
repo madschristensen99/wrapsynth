@@ -1,6 +1,18 @@
 // Configuration for Phantom Agent
 // Contract addresses are loaded from the canonical root deployment.json (window.DEPLOYMENT).
 
+// The HTML loader sets window.DEPLOYMENT, but module evaluation can race it.
+// Top-level await guarantees every importer reads a populated manifest.
+if (!window.DEPLOYMENT) {
+    try {
+        const res = await fetch('./deployment.json?t=' + Date.now());
+        if (res.ok) window.DEPLOYMENT = await res.json();
+        else console.error('config.js: deployment.json returned ' + res.status);
+    } catch (e) {
+        console.error('config.js: failed to load deployment.json', e);
+    }
+}
+
 const D = window.DEPLOYMENT || {};
 const DC = D.contracts || {};
 const DE = D.externalContracts || {};
@@ -12,7 +24,11 @@ export const NETWORKS = {
         id: D.chainId || 999,
         name: 'HyperEVM',
         rpcUrls: [
-            'https://rpc.hyperliquid.xyz/evm'
+            // Official RPC is aggressively rate-limited; alternates keep reads alive.
+            // NOTE: hyperliquid-json-rpc.stakely.io is CORS-blocked in browsers — do not re-add.
+            'https://rpc.hyperliquid.xyz/evm',
+            'https://rpc.hypurrscan.io',
+            'https://hyperliquid.drpc.org'
         ],
         blockExplorer: D.explorer || 'https://hyperevmscan.io',
         nativeCurrency: {
@@ -37,18 +53,14 @@ export const CONTRACTS = {
 };
 
 // LP Server Configuration
+// NOTE: the mint/burn protocol is fully on-chain — no user→LP HTTP calls are
+// required. This config only remains for optional LP-server conveniences.
 export const LP_SERVER_CONFIG = {
     // Default LP server URL (operator's server)
     defaultUrl: 'http://localhost:3001',
     // Endpoints
     endpoints: {
-        info: '/info',
-        quoteMint: '/quote/mint',
-        quoteBurn: '/quote/burn',
-        notifyMint: '/mint/notify',
-        submitDeposit: '/mint/deposit',
-        getMintStatus: '/mint/:id/status',
-        getBurnStatus: '/burn/:id/status'
+        info: '/info'
     }
 };
 
@@ -71,10 +83,15 @@ export const MONERO_CONFIG = {
     
     // Public nodes (users can select or add their own)
     publicNodes: {
+        // NOTE: only unrestricted nodes (port 18081) work for monero-ts wallet
+        // sync — restricted nodes (18089) don't serve get_blocks.bin. Browser
+        // use also requires the node to send permissive CORS headers.
         mainnet: [
             'https://xmr-node.cakewallet.com:18081',
-            'https://node.moneroworld.com:18089',
-            'https://nodes.hashvault.pro:18081'
+            'https://nodes.hashvault.pro:18081',
+            'https://xmr-node-eu.cakewallet.com:18081',
+            'https://xmr-node-usa-east.cakewallet.com:18081',
+            'https://monero.stackotus.com:18081'
         ],
         stagenet: [
             'http://stagenet.xmr-tw.org:38081',

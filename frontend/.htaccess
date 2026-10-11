@@ -1,0 +1,9 @@
+# Hostinger serves static JS with Cache-Control: max-age=604800 (7 days), which
+# leaves browsers on stale ES modules after a deploy. Force revalidation instead;
+# ETag/Last-Modified still allow cheap 304 responses.
+<IfModule mod_headers.c>
+  <FilesMatch "\.(html|js|mjs|json|css)$">
+    Header set Cache-Control "no-cache, must-revalidate"
+    Header unset Expires
+  </FilesMatch>
+</IfModule>

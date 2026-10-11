@@ -7,7 +7,7 @@
 // - Requires BOTH browser access AND wallet signature to decrypt
 
 import { keccak256, hexToBytes, bytesToHex } from 'https://esm.sh/viem@2.7.0';
-import { getWalletClient, getUserAddress } from './viemClient.js';
+import { getWalletClient, getUserAddress } from './viemClient.js?v=3.12';
 
 const DB_NAME = 'Wrapsynth';
 const STORE_NAME = 'keys';
@@ -262,15 +262,16 @@ export async function loadSeed(publicSpendKey) {
 }
 
 /**
- * Find any stored seed for the current user by scanning localStorage.
- * Returns the first publicSpendKey that has a stored seed, or null.
+ * Find ALL stored seed keys for the current user by scanning localStorage.
+ * @returns {string[]} Array of publicSpendKeys that have stored seeds
  */
-export function findStoredSeedKey() {
+export function findAllStoredSeedKeys() {
     const userAddress = getUserAddress();
-    if (!userAddress) return null;
+    if (!userAddress) return [];
 
     const prefix = `wrapsynth/`;
     const suffix = `/${userAddress.toLowerCase()}`;
+    const keys = [];
 
     for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
@@ -278,11 +279,19 @@ export function findStoredSeedKey() {
             // Extract publicSpendKey from key format: wrapsynth/${publicSpendKey}/${userAddress}
             const parts = key.split('/');
             if (parts.length === 3) {
-                return parts[1];
+                keys.push(parts[1]);
             }
         }
     }
-    return null;
+    return keys;
+}
+
+/**
+ * Find any stored seed for the current user by scanning localStorage.
+ * Returns the first publicSpendKey that has a stored seed, or null.
+ */
+export function findStoredSeedKey() {
+    return findAllStoredSeedKeys()[0] || null;
 }
 
 /**

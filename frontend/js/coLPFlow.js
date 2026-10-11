@@ -8,8 +8,8 @@
  * Also includes helpers for querying active positions via on-chain event history.
  */
 
-import { CONTRACTS, ABIS, DECIMALS } from './config.js';
-import { readHub, writeHub, readWsxmr, writeWsxmr, getUserAddress, getPublicClient, getWalletClient } from './viemClient.js';
+import { CONTRACTS, ABIS, DECIMALS } from './config.js?v=3.12';
+import { readHub, writeHub, readWsxmr, writeWsxmr, getUserAddress, getPublicClient, getWalletClient } from './viemClient.js?v=3.12';
 import { formatUnits, parseUnits, parseAbi } from 'https://esm.sh/viem@2.7.0';
 
 export class CoLPFlow {
@@ -288,10 +288,11 @@ export class CoLPFlow {
         ]);
 
         const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+        const { getContractEventsChunked } = await import('./viemClient.js?v=3.12');
         const getEventsWithRetry = async (eventName, args, retries = 2) => {
             for (let attempt = 0; attempt <= retries; attempt++) {
                 try {
-                    return await publicClient.getContractEvents({
+                    return await getContractEventsChunked({
                         address: CONTRACTS.hub,
                         abi: hubAbi,
                         eventName,

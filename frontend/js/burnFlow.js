@@ -12,14 +12,14 @@
  * the LP reveals their secret to finalize. The user combines secrets to sweep XMR.
  */
 
-import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG, MONERO_CONFIG } from './config.js';
-import { readHub, writeHub, writeHubUnsafe, readWsxmr, writeWsxmr, writeWsxmrUnsafe, watchContractEvent, getUserAddress, getPublicClient } from './viemClient.js';
-import { getPhantomAgent } from './phantomAgent.js';
-import { derivePerBurnKeySet } from './seedManager.js?v=3.3';
-import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js';
-import { updateBurnProgress, showBurnVerificationLoading, showBurnVerificationDetails, showBurnVerificationManual, showBurnAddressPanel, showBurnSweepProgress, showBurnSweepComplete, showBurnSweepError, showBurnKeysFallback, showBurnKeysOption, hideBurnKeysOption, showBurnScanProgress, showBurnXmrFound, updateCancelBurnButton } from './ui.js?v=3.4';
-import { getMoneroRpc } from './moneroRpc.js';
-import { sweepBurnOutput, getCombinedKeysForImport, toLeHex } from './burnSweep.js';
+import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG, MONERO_CONFIG, LP_SERVER_CONFIG } from './config.js?v=3.12';
+import { readHub, writeHub, writeHubUnsafe, readWsxmr, writeWsxmr, writeWsxmrUnsafe, watchContractEvent, getUserAddress, getPublicClient } from './viemClient.js?v=3.12';
+import { getPhantomAgent } from './phantomAgent.js?v=3.12';
+import { derivePerBurnKeySet } from './seedManager.js?v=3.12';
+import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js?v=3.12';
+import { updateBurnProgress, showBurnVerificationLoading, showBurnVerificationDetails, showBurnVerificationManual, showBurnAddressPanel, showBurnSweepProgress, showBurnSweepComplete, showBurnSweepError, showBurnKeysFallback, showBurnKeysOption, hideBurnKeysOption, showBurnScanProgress, showBurnXmrFound, updateCancelBurnButton, showBurnDestinationInput, hideBurnDestinationInput } from './ui.js?v=3.12';
+import { getMoneroRpc, createConnectedWalletFull } from './moneroRpc.js?v=3.12';
+import { sweepBurnOutput, getCombinedKeysForImport, toLeHex } from './burnSweep.js?v=3.12';
 import { keccak256, toHex } from 'https://esm.sh/viem@2.7.0';
 
 export class BurnFlow {
@@ -68,12 +68,13 @@ export class BurnFlow {
         const lpSecret = await this.waitForLPFinalize();
         
         // Burn is functionally complete — fire animation and banner now
-        const { showBurnComplete } = await import('./ui.js?v=' + Date.now());
+        const { showBurnComplete } = await import('./ui.js?v=3.12');
         showBurnComplete(this.wsxmrAmount);
         
-        // Sweep is a post-burn claim step — don't let failures block completion
+        // Sweep is a post-burn claim step — don't let failures block completion.
+        // sweepXMR calls complete() itself only on a successful sweep, so a
+        // failed sweep leaves the swap active and resumable.
         await this.sweepXMR(lpSecret);
-        await this.complete();
     }
 
     /**
@@ -101,7 +102,7 @@ export class BurnFlow {
         console.log('Derived Monero address for receiving XMR:', agentData.moneroAddress);
 
         // Store seed for resume (encrypted in browser) — same as mintFlow does
-        const { storeSeed } = await import('./seedStorage.js');
+        const { storeSeed } = await import('./seedStorage.js?v=3.12');
         const publicSpendKeyHex = toHex(this.agent.keySet.publicSpendKey);
         try {
             await storeSeed(this.agent.seed, publicSpendKeyHex);
@@ -267,6 +268,17 @@ export class BurnFlow {
             
             // Store requestId -> burnNonce mapping for recovery
             _storeBurnNonceMapping(this.requestId, this.burnNonce);
+            // Persist the full per-burn key set — seed loss must not strand a burn
+            _storeBurnKeySet(this.requestId, this.perBurnKeySet, this.burnNonce);
+            // Record which master seed this burn derived from so resume targets
+            // one seed instead of prompting a decrypt signature per stored seed
+            try {
+                const masterPub = this.agent?.keySet?.publicSpendKey;
+                if (masterPub) {
+                    localStorage.setItem('wrapsynth_burn_seedkey_' + this.requestId,
+                        Array.from(masterPub).map(b => b.toString(16).padStart(2, '0')).join(''));
+                }
+            } catch (e) { /* ignore */ }
             
             updateSwapState({
                 requestId: this.requestId,
@@ -306,7 +318,7 @@ export class BurnFlow {
 
         // Helper to derive and show the burn address from LP public keys
         const deriveAndShowAddress = async (secretHash, lpPublicSpendKey, lpPublicViewKey) => {
-            const { computeBurnAddress } = await import('./moneroCrypto.js');
+            const { computeBurnAddress } = await import('./moneroCrypto.js?v=3.12');
             const userPublicKey = '0x' + Array.from(this.perBurnKeySet.publicSpendKey)
                 .map(b => b.toString(16).padStart(2, '0')).join('');
             const userViewKey = '0x' + Array.from(this.perBurnKeySet.publicViewKey)
@@ -383,7 +395,7 @@ export class BurnFlow {
 
         // Second, try past events check (may fail on flaky RPCs)
         try {
-            const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
+            const { getPastEvents, getBlockNumber } = await import('./viemClient.js?v=3.12');
             const currentBlock = await getBlockNumber();
             const fromBlock = currentBlock - 1000n;
 
@@ -457,7 +469,7 @@ export class BurnFlow {
 
             // Method 2: Event query fallback
             try {
-                const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
+                const { getPastEvents, getBlockNumber } = await import('./viemClient.js?v=3.12');
                 const currentBlock = await getBlockNumber();
                 const fromBlock = currentBlock - 200n;
                 const events = await getPastEvents(
@@ -507,7 +519,7 @@ export class BurnFlow {
                         const burnReq = await readHub('getBurnRequest', [this.requestId]);
                         const status = Number(burnReq.status);
                         if (status === 1) {
-                            const { showConfirmModal, showError, showSuccess } = await import('./ui.js?v=3.4');
+                            const { showConfirmModal, showError, showSuccess } = await import('./ui.js?v=3.12');
                             const confirmed = await showConfirmModal(
                                 'LP Did Not Respond',
                                 '<p>The LP did not propose a secret hash in time. You can abort the burn to recover your wsXMR.</p><p>Would you like to abort now?</p>'
@@ -552,26 +564,29 @@ export class BurnFlow {
         updateBurnProgress('confirm-lock', 'Scanning Monero blockchain for XMR...');
         showBurnVerificationLoading();
 
-        // Relabel cancel button — LP has sent XMR, cancelling is destructive
-        updateCancelBurnButton('↺ Cancel (available after deadline)', false);
+        // Relabel + disable cancel button — cancelling is only possible after the deadline
+        updateCancelBurnButton('↺ Cancel (available after deadline)', true);
 
-        // Start deadline countdown interval — updates UI every 5s
-        if (this.deadlineBlock) {
-            this._confirmCountdown = setInterval(async () => {
-                try {
-                    const currentBlock = Number(await getPublicClient().getBlockNumber());
-                    const blocksRemaining = this.deadlineBlock - currentBlock;
-                    if (blocksRemaining > 0) {
-                        const mins = Math.ceil(blocksRemaining * 5 / 60);
-                        updateBurnProgress('confirm-lock', `Verifying XMR receipt... ${mins} min remaining to confirm`);
-                    } else {
-                        updateBurnProgress('confirm-lock', 'Verifying XMR receipt... deadline passed');
-                    }
-                } catch (e) {
-                    // Ignore — burnFlow.js status messages will still show
+        // Start deadline countdown interval — updates UI every 5s.
+        // Re-fetch the deadline each tick: the contract resets it on proposeHash
+        // (commit deadline) and again on commit, so a cached value goes stale.
+        this._confirmCountdown = setInterval(async () => {
+            try {
+                const burnReq = await readHub('getBurnRequest', [this.requestId]);
+                const deadlineBlock = Number(burnReq.deadline);
+                const currentBlock = Number(await getPublicClient().getBlockNumber());
+                const blocksRemaining = deadlineBlock - currentBlock;
+                if (blocksRemaining > 0) {
+                    const mins = Math.ceil(blocksRemaining / 60); // ~1s blocks on HyperEVM
+                    updateBurnProgress('confirm-lock', `Verifying XMR receipt... ${mins} min remaining to confirm`);
+                } else {
+                    updateBurnProgress('confirm-lock', 'Deadline passed — LP did not send XMR. Click Cancel to restore your wsXMR.');
+                    updateCancelBurnButton('↺ Cancel Burn', false); // deadline reached — cancel is now valid
                 }
-            }, 5000);
-        }
+            } catch (e) {
+                // Ignore — burnFlow.js status messages will still show
+            }
+        }, 5000);
 
         console.log('LP has sent XMR to shared address:', this.sharedMoneroAddress);
         console.log('Expected amount:', this.wsxmrAmount, 'XMR');
@@ -592,7 +607,9 @@ export class BurnFlow {
         // otherwise fall back to currentHeight - 50
         let restoreHeight = 0;
         if (this.moneroProposeHeight) {
-            restoreHeight = Math.max(0, this.moneroProposeHeight - 2);
+            // The LP's XMR tx can confirm BEFORE this height is recorded (it is
+            // fetched after the tx is already in flight) — use a wide margin.
+            restoreHeight = Math.max(0, this.moneroProposeHeight - 60);
             console.log('Using stored Monero propose height as restore:', restoreHeight, '(propose was at', this.moneroProposeHeight + ')');
         } else {
             try {
@@ -610,10 +627,14 @@ export class BurnFlow {
             let viewWallet = null;
             let scanInterval = null;
             let timeoutId = null;
+            let daemonTxInterval = null;
+            let abandonedInterval = null;
 
             const cleanup = () => {
                 if (scanInterval) clearInterval(scanInterval);
                 if (timeoutId) clearTimeout(timeoutId);
+                if (daemonTxInterval) clearInterval(daemonTxInterval);
+                if (abandonedInterval) clearInterval(abandonedInterval);
                 if (this._confirmCountdown) { clearInterval(this._confirmCountdown); this._confirmCountdown = null; }
                 const btn = document.getElementById('burn-confirm-receipt');
                 const manualBtn = document.getElementById('burn-confirm-receipt-manual');
@@ -636,7 +657,7 @@ export class BurnFlow {
                     const burnReq = await readHub('getBurnRequest', [this.requestId]);
                     const status = Number(burnReq.status);
                     if (status !== 2) {
-                        const { showError } = await import('./ui.js?v=3.4');
+                        const { showError } = await import('./ui.js?v=3.12');
                         if (status === 1) {
                             showError('Cannot Confirm Yet', 'The LP has not yet proposed a secret hash. Please wait for the LP to send XMR and commit on-chain.');
                         } else if (status === 3) {
@@ -701,6 +722,82 @@ export class BurnFlow {
                 amount: this.wsxmrAmount
             });
 
+            // Independent daemon-based verifier — runs regardless of whether the
+            // WASM wallet can connect. Fetches the txid from the LP (known at
+            // broadcast), then trustlessly decodes the tx's outputs with the user's
+            // view key to prove it pays the shared address, and tracks confirmations.
+            const pollDaemonTx = async () => {
+                if (confirmed) return;
+                // Get txid from LP server (it knows it the moment it broadcasts)
+                if (!this.moneroTxHash && this.requestId) {
+                    try {
+                        const resp = await fetch(`${LP_SERVER_CONFIG.defaultUrl}/burn/${this.requestId}`);
+                        if (resp.ok) {
+                            const data = await resp.json();
+                            if (data.moneroTxHash) {
+                                this.moneroTxHash = data.moneroTxHash;
+                                // Persist so a resumed burn can poll confirmations for the unlock gate
+                                updateSwapState({ requestId: this.requestId, moneroTxHash: this.moneroTxHash, sharedMoneroAddress: this.sharedMoneroAddress, restoreHeight });
+                            }
+                        }
+                    } catch { /* LP server optional */ }
+                }
+                if (!this.moneroTxHash) return;
+                try {
+                    const moneroRpc = getMoneroRpc();
+                    const daemonUrl = await moneroRpc.getConnectedUrl();
+                    const { verifyTxPaysAddress } = await import('./moneroVerify.js?v=3.12');
+                    const res = await verifyTxPaysAddress(daemonUrl, this.moneroTxHash, this.sharedMoneroAddress, viewKeyLe);
+                    const minConf = MONERO_CONFIG.confirmations || 10;
+
+                    if (!res.found) {
+                        // Tx exists but output doesn't pay us yet (or still relaying)
+                        showBurnVerificationDetails({
+                            destination: this.sharedMoneroAddress || '',
+                            txHash: this.moneroTxHash,
+                            confirmations: res.inPool ? `0 / ${minConf} (in mempool)` : 'Confirming…',
+                            amount: `${this.wsxmrAmount} XMR`
+                        });
+                        return;
+                    }
+
+                    const confLabel = res.inPool
+                        ? `0 / ${minConf} (in mempool)`
+                        : `${res.confirmations} / ${minConf} confirmations`;
+                    const xmrAmount = res.amount != null ? Number(res.amount) / 1e12 : this.wsxmrAmount;
+                    showBurnVerificationDetails({
+                        destination: this.sharedMoneroAddress || '',
+                        txHash: this.moneroTxHash,
+                        confirmations: confLabel,
+                        amount: `${xmrAmount} XMR`
+                    });
+
+                    const amountSufficient = res.amount == null || res.amount >= expectedAtomic;
+                    if (res.inPool) {
+                        showBurnScanProgress(`✓ XMR verified to shared address — in mempool, awaiting confirmations (0/${minConf})`);
+                        updateBurnProgress('confirm-lock', `XMR verified — in mempool, 0/${minConf} confirmations`);
+                        showBurnVerificationManual();
+                    } else if (res.confirmations < minConf || !amountSufficient) {
+                        const why = !amountSufficient ? `amount ${xmrAmount} < expected` : `${res.confirmations}/${minConf} confirmations`;
+                        showBurnScanProgress(`✓ XMR verified to shared address — ${why}`);
+                        updateBurnProgress('confirm-lock', `XMR verified — ${why}`);
+                        showBurnVerificationManual();
+                    } else {
+                        // Fully verified + enough confirmations — auto-confirm
+                        console.log(`[BurnVerify] Daemon-verified ${xmrAmount} XMR to shared address, ${res.confirmations} confs — auto-confirming`);
+                        showBurnXmrFound(xmrAmount, res.confirmations, this.moneroTxHash);
+                        updateBurnProgress('confirm-lock', `✓ XMR verified: ${xmrAmount} XMR (${res.confirmations} confs)`);
+                        updateSwapState({ requestId: this.requestId, state: this.state, message: `XMR verified: ${xmrAmount} XMR received` });
+                        clearInterval(daemonTxInterval);
+                        setTimeout(() => onConfirm(), 1500);
+                    }
+                } catch (e) {
+                    console.warn('[BurnVerify] daemon verify error:', e.message);
+                }
+            };
+            daemonTxInterval = setInterval(pollDaemonTx, 8000);
+            setTimeout(pollDaemonTx, 1500); // first check almost immediately
+
             // Try auto-verification with monero-ts view-only wallet (user's own view key — trustless)
             try {
                 showBurnScanProgress('Loading Monero WASM wallet for scanning...');
@@ -723,24 +820,19 @@ export class BurnFlow {
                 showBurnScanProgress('Creating view-only wallet to scan shared address...');
                 console.log('[BurnVerify] Creating view-only wallet for address:', this.sharedMoneroAddress);
 
-                // Use the connected daemon URL from moneroRpc for the WASM wallet too
-                let wasmServerUri = MONERO_CONFIG.rpcUrl;
+                // Try each configured daemon until the wallet actually connects —
+                // a node answering /json_rpc may still lack monero-ts binary endpoints.
                 let daemonHost = '';
-                try {
-                    const moneroRpc = getMoneroRpc();
-                    wasmServerUri = await moneroRpc.getConnectedUrl();
-                    daemonHost = new URL(wasmServerUri).hostname;
-                } catch {}
-
-                viewWallet = await moneroTs.createWalletFull({
+                const connected = await createConnectedWalletFull(moneroTs, {
                     password: 'burn-verify-tmp',
                     networkType: mainnetType,
                     primaryAddress: this.sharedMoneroAddress,
                     privateViewKey: viewKeyLe,
-                    server: wasmServerUri,
                     restoreHeight: restoreHeight,
                     proxyToWorker: false,
-                });
+                }, (url) => { daemonHost = new URL(url).hostname; showBurnScanProgress(`Trying Monero node ${daemonHost}...`); });
+                viewWallet = connected.wallet;
+                daemonHost = new URL(connected.daemonUrl).hostname;
 
                 showBurnScanProgress(`Syncing wallet via ${daemonHost}...`);
                 await viewWallet.startSyncing();
@@ -896,7 +988,7 @@ export class BurnFlow {
                         }
                     } catch (e) {
                         console.warn('[BurnVerify] Scan check error:', e.message);
-                        showBurnScanProgress(`Scanning... (retrying)`);
+                        showBurnScanProgress(`Scanning... (retrying — ${(e.message || 'error').slice(0, 80)})`);
                     }
                 };
 
@@ -936,15 +1028,52 @@ export class BurnFlow {
                 if (btn) btn.addEventListener('click', onConfirm);
                 if (manualBtn) manualBtn.addEventListener('click', () => {
                     if (this.moneroTxHash) {
-                        window.open(`https://xmrchain.net/tx/${this.moneroTxHash}`, '_blank');
+                        window.open(`https://moneroblocks.info/search/${this.moneroTxHash}`, '_blank');
                     } else if (this.sharedMoneroAddress) {
-                        window.open(`https://xmrchain.net/search?value=${this.sharedMoneroAddress}`, '_blank');
+                        window.open(`https://moneroblocks.info/search/${this.sharedMoneroAddress}`, '_blank');
                     } else {
-                        window.open('https://xmrchain.net/', '_blank');
+                        window.open('https://moneroblocks.info/', '_blank');
                     }
                 });
             };
             wireButtons();
+
+            // Watch for the LP abandoning the burn post-deadline (status 6 +
+            // abandoned). When that happens, stop scanning and offer to restore
+            // wsXMR directly instead of waiting for the user to hit Cancel.
+            abandonedInterval = setInterval(async () => {
+                if (confirmed) return;
+                try {
+                    const burnReq = await readHub('getBurnRequest', [this.requestId]);
+                    if (Number(burnReq.status) === 6) {
+                        const abandoned = await readHub('abandonedBurns', [this.requestId]);
+                        if (abandoned) {
+                            console.log('[Burn] Burn abandoned by LP — offering wsXMR restore');
+                            confirmed = true;
+                            cleanup();
+                            await closeWallet();
+                            const { showBurnRestorePanel, showSuccess, showError } = await import('./ui.js?v=3.12');
+                            showBurnRestorePanel({
+                                onRestore: async () => {
+                                    try {
+                                        const cancelled = await this.cancel();
+                                        if (cancelled === false) return;
+                                        const { resetBurnUI } = await import('./main.js?v=' + Date.now());
+                                        resetBurnUI();
+                                        showSuccess('wsXMR Restored', 'Your wsXMR has been restored to your wallet.');
+                                    } catch (err) {
+                                        console.error('[Burn] Restore failed:', err);
+                                        showError('Restore Failed', err.message || 'Failed to restore wsXMR');
+                                        confirmed = false;
+                                    }
+                                }
+                            });
+                        }
+                    }
+                } catch (e) {
+                    // Ignore transient RPC errors — keep polling
+                }
+            }, 15000);
         });
     }
 
@@ -962,7 +1091,7 @@ export class BurnFlow {
         console.log('Waiting for LP to finalize burn...');
 
         // First, check if BurnFinalized event was already emitted in the past
-        const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
+        const { getPastEvents, getBlockNumber } = await import('./viemClient.js?v=3.12');
         const currentBlock = await getBlockNumber();
         const fromBlock = currentBlock - 1000n; // Check last ~1000 blocks
         
@@ -1021,7 +1150,25 @@ export class BurnFlow {
             finalizePollId = setInterval(async () => {
                 if (finalizeResolved) return;
                 try {
-                    const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
+                    // Status check first — more reliable than event scans when the
+                    // RPC is flaky. A COMPLETED burn exposes revealedSecret on-chain.
+                    const burnReq = await readHub('getBurnRequest', [this.requestId]);
+                    const revealed = burnReq.revealedSecret;
+                    if (Number(burnReq.status) === 4 && revealed && revealed !== '0x' + '0'.repeat(64)) {
+                        console.log('[Burn Poll] Burn COMPLETED on-chain — using revealedSecret from contract');
+                        updateBurnProgress('lp-finalize', '✓ LP finalized — secret revealed');
+                        const secret = handleFinalized(revealed);
+                        if (secret !== null) {
+                            unwatch();
+                            resolve(secret);
+                        }
+                        return;
+                    }
+                } catch (e) {
+                    console.warn('[Burn Poll] Status check error:', e.message);
+                }
+                try {
+                    const { getPastEvents, getBlockNumber } = await import('./viemClient.js?v=3.12');
                     const currentBlock = await getBlockNumber();
                     const fromBlock = currentBlock - 200n;
                     const events = await getPastEvents(
@@ -1055,8 +1202,16 @@ export class BurnFlow {
                         const status = Number(burnReq.status);
                         // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=COMPLETED, 5=SLASHED, 6=CANCELLED
 
-                        if (status === 3) {
-                            const { showError, showConfirmModal } = await import('./ui.js?v=3.4');
+                        if (status === 4) {
+                            // COMPLETED — the event was missed but the secret is on-chain
+                            const revealed = burnReq.revealedSecret;
+                            if (revealed && revealed !== '0x' + '0'.repeat(64)) {
+                                updateBurnProgress('lp-finalize', '✓ LP finalized — secret revealed');
+                                resolve(revealed);
+                                return;
+                            }
+                        } else if (status === 3) {
+                            const { showError, showConfirmModal } = await import('./ui.js?v=3.12');
                             const revealed = burnReq.revealedSecret && burnReq.revealedSecret !== '0x0000000000000000000000000000000000000000000000000000000000000000';
                             if (revealed) {
                                 // LP revealed the secret but never settled — the burn is settleable
@@ -1069,7 +1224,7 @@ export class BurnFlow {
                                 if (confirmed) {
                                     try {
                                         await writeHub('settleBurn', [this.requestId]);
-                                        const { showSuccess } = await import('./ui.js?v=3.4');
+                                        const { showSuccess } = await import('./ui.js?v=3.12');
                                         showSuccess('Burn Settled', 'Your reward has been queued. Withdraw it via Pending Returns.');
                                         resolve(burnReq.revealedSecret);
                                         return;
@@ -1088,7 +1243,7 @@ export class BurnFlow {
                             if (confirmed) {
                                 try {
                                     await this.claimSlashed();
-                                    const { showSuccess } = await import('./ui.js?v=3.4');
+                                    const { showSuccess } = await import('./ui.js?v=3.12');
                                     showSuccess('Slashed Collateral Claimed', 'Your sDAI has been queued. Withdraw it via Pending Returns.');
                                     resolve(null);
                                     return;
@@ -1104,7 +1259,7 @@ export class BurnFlow {
                             return;
                         } else if (status === 1) {
                             // REQUESTED — LP never proposed, user can abort
-                            const { showConfirmModal } = await import('./ui.js?v=3.4');
+                            const { showConfirmModal } = await import('./ui.js?v=3.12');
                             const confirmed = await showConfirmModal(
                                 'LP Did Not Respond',
                                 '<p>The LP did not respond to your burn request in time. You can abort the burn to recover your wsXMR.</p><p>Would you like to abort now?</p>'
@@ -1112,13 +1267,13 @@ export class BurnFlow {
                             if (confirmed) {
                                 try {
                                     await writeHub('abortBurn', [this.requestId]);
-                                    const { showSuccess } = await import('./ui.js?v=3.4');
+                                    const { showSuccess } = await import('./ui.js?v=3.12');
                                     showSuccess('Burn Aborted', 'Your wsXMR has been restored.');
                                     resolve(null);
                                     return;
                                 } catch (abortErr) {
                                     if (abortErr.message && abortErr.message.includes('DeadlineNotExpired')) {
-                                        const { showError } = await import('./ui.js?v=3.4');
+                                        const { showError } = await import('./ui.js?v=3.12');
                                         showError('Cannot Abort Yet', 'The burn deadline has not been reached yet.');
                                     } else {
                                         throw abortErr;
@@ -1129,7 +1284,7 @@ export class BurnFlow {
                             return;
                         } else if (status === 2) {
                             // PROPOSED — LP proposed but didn't follow through, anyone can resolve
-                            const { showConfirmModal } = await import('./ui.js?v=3.4');
+                            const { showConfirmModal } = await import('./ui.js?v=3.12');
                             const confirmed = await showConfirmModal(
                                 'LP Proposal Expired',
                                 '<p>The LP proposed a secret hash but did not lock XMR in time. You can resolve this to recover your wsXMR.</p><p>Would you like to resolve now?</p>'
@@ -1137,13 +1292,13 @@ export class BurnFlow {
                             if (confirmed) {
                                 try {
                                     await writeHub('resolveDeclinedProposal', [this.requestId, this.perBurnKeySet.secret]);
-                                    const { showSuccess } = await import('./ui.js?v=3.4');
+                                    const { showSuccess } = await import('./ui.js?v=3.12');
                                     showSuccess('Burn Resolved', 'Your wsXMR has been restored.');
                                     resolve(null);
                                     return;
                                 } catch (resolveErr) {
                                     if (resolveErr.message && resolveErr.message.includes('DeadlineNotExpired')) {
-                                        const { showError } = await import('./ui.js?v=3.4');
+                                        const { showError } = await import('./ui.js?v=3.12');
                                         showError('Cannot Resolve Yet', 'The burn deadline has not been reached yet.');
                                     } else {
                                         throw resolveErr;
@@ -1163,6 +1318,43 @@ export class BurnFlow {
     }
 
     /**
+     * Wait until the LP's XMR tx has enough confirmations to be spendable.
+     * Polls the daemon (no WASM needed) via verifyTransaction and shows live
+     * progress. Resolves when confirmations >= minConf, or after a soft timeout
+     * (the sweep itself will still report a locked balance if we proceed early).
+     * @param {number} minConf - confirmations required (default 10)
+     * @param {number} timeoutMs - max time to wait before proceeding anyway
+     */
+    async waitForXmrUnlock(minConf = 10, timeoutMs = 30 * 60 * 1000) {
+        const txHash = this.moneroTxHash;
+        if (!txHash) {
+            console.warn('[BurnSweep] No moneroTxHash — skipping unlock wait');
+            return;
+        }
+        const start = Date.now();
+        const moneroRpc = getMoneroRpc();
+        while (Date.now() - start < timeoutMs) {
+            try {
+                const res = await moneroRpc.verifyTransaction(txHash);
+                if (res && res.found) {
+                    const confs = res.inPool ? 0 : (res.confirmations || 0);
+                    if (confs >= minConf) {
+                        showBurnSweepProgress(`XMR unlocked (${confs}/${minConf} confirmations) — sweeping...`);
+                        return;
+                    }
+                    const label = res.inPool ? 'in mempool' : `${confs}/${minConf} confirmations`;
+                    showBurnSweepProgress(`Waiting for XMR to unlock — ${label}`);
+                    updateSwapState({ state: 'sweeping', message: `Waiting for XMR to unlock — ${label}` });
+                }
+            } catch (e) {
+                console.warn('[BurnSweep] unlock check error:', e.message);
+            }
+            await new Promise(r => setTimeout(r, 20000));
+        }
+        console.warn('[BurnSweep] unlock wait timed out — attempting sweep anyway');
+    }
+
+    /**
      * Sweep XMR from the shared Monero address to the user's destination.
      * Combines the user's Ed25519 secret with the LP's revealed secret to derive
      * the full private spend key, then uses monero-ts WASM wallet to sweep all funds.
@@ -1172,30 +1364,56 @@ export class BurnFlow {
     async sweepXMR(lpSecret) {
         this.state = 'sweeping';
         this._lastLpSecret = lpSecret; // Store for retry
+        this._sweepFailed = false;     // Fresh attempt — clear any prior failure flag
         updateSwapState({ state: this.state, message: 'Claiming XMR from shared address...' });
         showBurnSweepProgress('Preparing to claim XMR...');
 
         const userSecret = this.perBurnKeySet.secret;
         const userViewKey = '0x' + this.perBurnKeySet.privateViewKey.toString(16).padStart(64, '0');
 
-        // Get restore height from when the burn was proposed
+        // Get restore height from when the burn was proposed. The LP's tx can
+        // confirm before the recorded propose height — always subtract a margin.
         let restoreHeight = 0;
         try {
             if (this.moneroProposeHeight) {
-                restoreHeight = this.moneroProposeHeight;
+                restoreHeight = Math.max(0, this.moneroProposeHeight - 60);
                 console.log('[BurnSweep] Using propose-time restore height:', restoreHeight);
             } else {
                 const moneroRpc = getMoneroRpc();
-                restoreHeight = await moneroRpc.getHeight() - 50;
-                console.log('[BurnSweep] Using current-50 restore height:', restoreHeight);
+                restoreHeight = Math.max(0, await moneroRpc.getHeight() - 200);
+                console.log('[BurnSweep] Using current-200 restore height:', restoreHeight);
             }
         } catch (e) {
             console.warn('Could not get Monero height for restore:', e.message);
         }
 
+        // Destination may be missing on resumed burns (older saves didn't persist
+        // it) — try the form input, then show an inline input. Sweep cannot run
+        // without it.
+        if (!this.destination) {
+            const input = document.getElementById('burn-xmr-destination')?.value?.trim();
+            this.destination = (input && input.length >= 95) ? input : null;
+        }
+        if (this.destination) {
+            hideBurnDestinationInput();
+            updateSwapState({ destination: this.destination });
+        }
+
         // Show "Copy keys for manual import" option alongside auto-sweep
         const keys = getCombinedKeysForImport(userSecret, lpSecret, userViewKey);
-        showBurnKeysOption(keys, this.destination, restoreHeight);
+        showBurnKeysOption(keys, this.destination, restoreHeight, this.sharedMoneroAddress);
+
+        if (!this.destination) {
+            console.warn('[BurnSweep] No destination address — prompting inline');
+            showBurnSweepProgress('Waiting for destination address...');
+            showBurnKeysFallback(keys, null, restoreHeight, this.sharedMoneroAddress);
+            showBurnDestinationInput((addr) => {
+                this.destination = addr;
+                updateSwapState({ destination: addr });
+                this.sweepXMR(this._lastLpSecret); // completes internally on success
+            });
+            return false; // sweep deferred until the user provides a destination
+        }
 
         // Set up retry listener (cleaned up on success or new attempt)
         const retryHandler = async () => {
@@ -1204,12 +1422,19 @@ export class BurnFlow {
         };
         window.addEventListener('burn-sweep-retry', retryHandler);
 
+        // Wait for the LP's XMR tx to reach the required confirmations before
+        // sweeping — funds are locked (~10 confs) and the WASM sweep would fail
+        // on a locked balance. Uses the daemon RPC, not the WASM wallet.
+        const minConf = MONERO_CONFIG.confirmations || 10;
+        await this.waitForXmrUnlock(minConf);
+
         try {
             const result = await sweepBurnOutput({
                 userSecretHex: userSecret,
                 lpSecretHex: lpSecret,
                 userViewKeyHex: userViewKey,
                 destination: this.destination,
+                primaryAddress: this.sharedMoneroAddress,
                 restoreHeight,
                 onProgress: (msg) => {
                     showBurnSweepProgress(msg);
@@ -1226,6 +1451,10 @@ export class BurnFlow {
                     sweepTxHash: result.txHashes[0],
                     sweepAmount: result.amount
                 });
+                // Only finalize (history + clear active swap) once the XMR is
+                // actually swept — a failed sweep must stay resumable.
+                await this.complete();
+                return true;
             } else {
                 throw new Error('Sweep did not complete');
             }
@@ -1234,15 +1463,17 @@ export class BurnFlow {
             showBurnSweepError(sweepErr.message);
 
             // Show fallback: let user copy keys for manual import
-            showBurnKeysFallback(keys, this.destination, restoreHeight);
+            showBurnKeysFallback(keys, this.destination, restoreHeight, this.sharedMoneroAddress);
 
-            // Save state so user can retry later — but don't throw, burn is already complete
+            // Keep the swap active as 'sweep-failed' so it stays resumable —
+            // do NOT mark complete (that would clear the swap and hide it).
             this._sweepFailed = true;
             updateSwapState({
                 state: 'sweep-failed',
                 lpSecret: lpSecret,
                 message: 'Sweep failed. Use copied keys to claim XMR manually, or retry.'
             });
+            return false;
         }
     }
 
@@ -1318,17 +1549,17 @@ export class BurnFlow {
                 const status = Number(burnReq.status);
                 // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=COMPLETED, 5=SLASHED, 6=CANCELLED
                 const deadlineBlock = Number(burnReq.deadline);
-                const { showError } = await import('./ui.js?v=3.4');
+                const { showError } = await import('./ui.js?v=3.12');
 
                 // Pre-check: is the deadline still in the future?
                 let deadlinePassed = true;
                 if (deadlineBlock > 0) {
                     try {
-                        const currentBlock = Number(await (await import('./viemClient.js')).getPublicClient().getBlockNumber());
+                        const currentBlock = Number(await (await import('./viemClient.js?v=3.12')).getPublicClient().getBlockNumber());
                         const blocksRemaining = deadlineBlock - currentBlock;
                         if (blocksRemaining > 0) {
                             deadlinePassed = false;
-                            const minsRemaining = Math.ceil(blocksRemaining * 5 / 60);
+                            const minsRemaining = Math.ceil(blocksRemaining / 60); // ~1s blocks on HyperEVM
                             if (status === 1) {
                                 showError('Cannot Cancel Yet', `The burn deadline has not been reached. Approximately ${minsRemaining} minute(s) remaining until you can abort. The LP may still respond before then.`);
                             } else if (status === 2) {
@@ -1336,7 +1567,7 @@ export class BurnFlow {
                             } else if (status === 3) {
                                 showError('Cannot Claim Yet', `The burn deadline plus grace period has not been reached. Approximately ${minsRemaining} minute(s) remaining.`);
                             }
-                            return;
+                            return false;
                         }
                     } catch (e) {
                         console.warn('[Cancel] Could not fetch current block for deadline pre-check:', e.message);
@@ -1356,7 +1587,7 @@ export class BurnFlow {
                     } catch (err) {
                         if (isDeadlineError(err)) {
                             showError('Cannot Cancel Yet', 'The burn deadline has not been reached yet. Please wait until the timeout expires.');
-                            return;
+                            return false;
                         }
                         throw err;
                     }
@@ -1368,7 +1599,7 @@ export class BurnFlow {
                     } catch (err) {
                         if (isDeadlineError(err)) {
                             showError('Cannot Cancel Yet', 'The burn deadline has not been reached yet. The LP has already proposed and sent XMR — verify the XMR and confirm receipt instead.');
-                            return;
+                            return false;
                         }
                         throw err;
                     }
@@ -1385,7 +1616,7 @@ export class BurnFlow {
                     } catch (err) {
                         if (isDeadlineError(err)) {
                             showError('Cannot Claim Yet', 'The burn deadline plus grace period has not been reached yet. Please wait a bit longer.');
-                            return;
+                            return false;
                         }
                         throw err;
                     }
@@ -1410,9 +1641,9 @@ export class BurnFlow {
                         await writeHub('resolveDeclinedProposal', [this.requestId, this.perBurnKeySet.secret]);
                         console.log('Late claim: wsXMR restored via resolveDeclinedProposal (userSecret revealed for LP sweep)');
                     } else if (abandoned) {
-                        const { showError } = await import('./ui.js?v=3.4');
+                        const { showError } = await import('./ui.js?v=3.12');
                         showError('Claim Available', 'This burn was abandoned by the LP. Your wsXMR is still claimable, but your burn secret is unavailable — restore your seed phrase and retry.');
-                        return;
+                        return false;
                     } else {
                         await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
                         console.log('Pending returns withdrawn');
@@ -1422,14 +1653,15 @@ export class BurnFlow {
                 }
             } catch (error) {
                 console.error('Error canceling burn on EVM:', error);
-                const { showError } = await import('./ui.js?v=3.4');
+                const { showError } = await import('./ui.js?v=3.12');
                 showError('Cancel Failed', error.message || 'Failed to cancel burn');
-                return;
+                return false;
             }
         }
 
         clearActiveSwap();
         this.cleanup();
+        return true;
     }
 
     cleanup() {
@@ -1453,62 +1685,124 @@ export class BurnFlow {
         console.log('Resuming burn flow from state:', savedState.state);
 
         this.lpVault = savedState.lpVault;
-        this.wsxmrAmount = savedState.wsxmrAmount;
-        this.destination = savedState.destination;
+        this.destination = savedState.destination
+            || document.getElementById('burn-xmr-destination')?.value?.trim()
+            || null;
         this.requestId = savedState.requestId;
         this.state = savedState.state;
+        // Restore Monero tracking fields persisted during verify — needed so the
+        // sweep's confirmation gate can poll the tx after a reload.
+        this.moneroTxHash = savedState.moneroTxHash || null;
+        this.sharedMoneroAddress = savedState.sharedMoneroAddress || null;
+        this.moneroProposeHeight = savedState.moneroProposeHeight || savedState.restoreHeight || null;
+
+        // Normalize wsxmrAmount to human units — older saved states stored raw 1e8
+        // integers (e.g. "11500" instead of 0.000115), which broke the XMR amount check.
+        try {
+            const burnReq = await readHub('getBurnRequest', [this.requestId]);
+            this.wsxmrAmount = Number(burnReq.wsxmrAmount) / 1e8;
+        } catch {
+            let amt = Number(savedState.wsxmrAmount);
+            if (Number.isInteger(amt) && amt > 1000) amt /= 1e8;
+            this.wsxmrAmount = amt;
+        }
 
         this.agent = getPhantomAgent();
 
-        // Try to restore from saved seed first (like mintFlow does)
-        let savedPublicSpendKey = savedState.publicSpendKey;
-        if (!savedPublicSpendKey) {
-            // publicSpendKey missing from saved state — try to recover it
-            // 1. Read userPublicKey from on-chain burn request
+        // Read the on-chain userPublicKey once — used to verify/identify keys.
+        let onChainPub = null;
+        try {
+            const burnReq = await readHub('getBurnRequest', [this.requestId]);
+            const k = (burnReq.userPublicKey || '').toLowerCase();
+            if (k && k !== '0x' + '0'.repeat(64)) onChainPub = k;
+        } catch (e) {
+            console.warn('[Burn Resume] Could not read burn request:', e.message);
+        }
+
+        const pubHex = (ks) => ks && ks.publicSpendKey
+            ? '0x' + Array.from(ks.publicSpendKey).map(b => b.toString(16).padStart(2, '0')).join('')
+            : null;
+
+        // Fast path: a persisted per-burn key set needs no seed at all.
+        const storedKeySet = this.requestId ? _getBurnKeySet(this.requestId) : null;
+        if (storedKeySet && (!onChainPub || pubHex(storedKeySet) === onChainPub)) {
+            this.perBurnKeySet = storedKeySet;
+            this.burnNonce = storedKeySet.burnNonce;
+            console.log('[Burn Resume] Restored per-burn key set from local storage');
+        } else {
+            if (storedKeySet) console.warn('[Burn Resume] Stored key set does not match on-chain key — ignoring');
+
+            // Seed path: try EVERY stored seed — the burn's seed may not be the first.
+            // Versioned import busts caches that still hold the old module.
+            const seedStorage = await import('./seedStorage.js?v=3.12');
+            const allKeys = typeof seedStorage.findAllStoredSeedKeys === 'function'
+                ? seedStorage.findAllStoredSeedKeys()
+                : [seedStorage.findStoredSeedKey && seedStorage.findStoredSeedKey()].filter(Boolean);
+            const candidates = [];
+            // The seed recorded at burn creation is almost certainly the right one —
+            // try it first so resume needs a single decrypt signature, not N.
+            const mappedSeedKey = this.requestId
+                ? localStorage.getItem('wrapsynth_burn_seedkey_' + this.requestId)
+                : null;
+            if (mappedSeedKey) candidates.push(mappedSeedKey);
+            if (savedState.publicSpendKey && !candidates.includes(savedState.publicSpendKey)) {
+                candidates.push(savedState.publicSpendKey);
+            }
+            for (const k of allKeys) {
+                if (!candidates.includes(k)) candidates.push(k);
+            }
+
+            // Known nonce first, then scan up to the nonce counter.
+            const knownNonce = savedState.burnNonce != null
+                ? savedState.burnNonce
+                : (this.requestId ? _getBurnNonceForRequest(this.requestId) : null);
+            let maxNonce = 500;
             try {
-                const burnReq = await readHub('getBurnRequest', [this.requestId]);
-                const onChainKey = burnReq.userPublicKey;
-                if (onChainKey && onChainKey !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
-                    savedPublicSpendKey = onChainKey;
-                    console.log('[Burn Resume] Recovered publicSpendKey from on-chain burn request:', savedPublicSpendKey);
+                const c = parseInt(localStorage.getItem('wrapsynth_burn_nonce'), 10);
+                if (!isNaN(c)) maxNonce = Math.max(maxNonce, c);
+            } catch (e) { /* ignore */ }
+
+            let matched = null;
+            for (const pubKey of candidates) {
+                const restored = await this.agent.loadExistingSeed(pubKey);
+                if (!restored || !this.agent.seed) continue;
+
+                if (knownNonce != null) {
+                    const ks = derivePerBurnKeySet(this.agent.seed, knownNonce);
+                    if (!onChainPub || pubHex(ks) === onChainPub) {
+                        matched = { keySet: ks, nonce: knownNonce };
+                    }
                 }
-            } catch (e) {
-                console.warn('[Burn Resume] Could not read userPublicKey from chain:', e.message);
+                if (!matched && onChainPub) {
+                    for (let n = 0; n <= maxNonce && !matched; n++) {
+                        if (n === knownNonce) continue;
+                        const ks = derivePerBurnKeySet(this.agent.seed, n);
+                        if (pubHex(ks) === onChainPub) matched = { keySet: ks, nonce: n };
+                    }
+                    // Legacy burns used the master key set directly
+                    if (!matched && pubHex(this.agent.keySet) === onChainPub) {
+                        matched = { keySet: this.agent.keySet, nonce: null };
+                    }
+                }
+                if (matched) break;
             }
-            // 2. If still missing, scan localStorage for any stored seed
-            if (!savedPublicSpendKey) {
-                const { findStoredSeedKey } = await import('./seedStorage.js');
-                const foundKey = findStoredSeedKey();
-                if (foundKey) {
-                    savedPublicSpendKey = foundKey;
-                    console.log('[Burn Resume] Found stored seed key in localStorage:', savedPublicSpendKey);
-                }
+
+            if (matched) {
+                this.perBurnKeySet = matched.keySet;
+                this.burnNonce = matched.nonce;
+                if (matched.nonce != null) _storeBurnNonceMapping(this.requestId, matched.nonce);
+                _storeBurnKeySet(this.requestId, matched.keySet, matched.nonce);
+                console.log('[Burn Resume] Key set recovered (nonce=' + matched.nonce + ')');
+            } else if (!onChainPub && this.agent.seed && knownNonce != null) {
+                // Can't verify against chain — best effort with the known nonce
+                this.perBurnKeySet = derivePerBurnKeySet(this.agent.seed, knownNonce);
+                this.burnNonce = knownNonce;
+            } else {
+                throw new Error('Cannot resume: no stored seed matches this burn (seed lost or created in another browser).');
             }
         }
 
-        if (savedPublicSpendKey) {
-            const restored = await this.agent.loadExistingSeed(savedPublicSpendKey);
-            if (!restored) {
-                throw new Error(
-                    'Could not restore swap secret from browser storage. ' +
-                    'Clear browser data and start a new burn.'
-                );
-            }
-            console.log('Agent restored from saved seed');
-        } else {
-            await this.agent.initialize('BURN', this.wsxmrAmount.toString(), this.destination);
-        }
-
-        // Re-derive per-burn key set from saved seed + burnNonce
-        if (savedState.burnNonce != null) {
-            this.burnNonce = savedState.burnNonce;
-        } else if (this.requestId) {
-            this.burnNonce = _getBurnNonceForRequest(this.requestId);
-        }
-        if (this.burnNonce != null && this.agent.seed) {
-            this.perBurnKeySet = derivePerBurnKeySet(this.agent.seed, this.burnNonce);
-            console.log('[Burn Resume] Re-derived per-burn key set (nonce=' + this.burnNonce + ')');
-        } else {
+        if (!this.perBurnKeySet) {
             throw new Error('Cannot resume: per-burn key set could not be re-derived (missing seed or burnNonce)');
         }
 
@@ -1523,47 +1817,56 @@ export class BurnFlow {
                 await this.waitForLPProposal();
                 await this.confirmMoneroLock();
                 const lpSecret1 = await this.waitForLPFinalize();
-                { const { showBurnComplete } = await import('./ui.js?v=' + Date.now()); showBurnComplete(this.wsxmrAmount); }
+                { const { showBurnComplete } = await import('./ui.js?v=3.12'); showBurnComplete(this.wsxmrAmount); }
                 await this.sweepXMR(lpSecret1);
-                await this.complete();
                 break;
             case 'confirm-lock':
                 await this.confirmMoneroLock();
                 const lpSecret2 = await this.waitForLPFinalize();
-                { const { showBurnComplete } = await import('./ui.js?v=' + Date.now()); showBurnComplete(this.wsxmrAmount); }
+                { const { showBurnComplete } = await import('./ui.js?v=3.12'); showBurnComplete(this.wsxmrAmount); }
                 await this.sweepXMR(lpSecret2);
-                await this.complete();
                 break;
             case 'lp-finalize':
                 const lpSecret3 = await this.waitForLPFinalize();
-                { const { showBurnComplete } = await import('./ui.js?v=' + Date.now()); showBurnComplete(this.wsxmrAmount); }
+                { const { showBurnComplete } = await import('./ui.js?v=3.12'); showBurnComplete(this.wsxmrAmount); }
                 await this.sweepXMR(lpSecret3);
-                await this.complete();
                 break;
             case 'sweeping':
-            case 'sweep-failed':
+            case 'sweep-failed': {
                 // Burn is already finalized on-chain — show completion banner immediately
-                { const { showBurnComplete } = await import('./ui.js?v=' + Date.now()); showBurnComplete(this.wsxmrAmount); }
-                // Re-derive LP secret from on-chain event
-                const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
-                const currentBlock = await getBlockNumber();
-                const fromBlock = currentBlock - 10000n;
-                const pastEvents = await getPastEvents(
-                    CONTRACTS.hub,
-                    ABIS.hub,
-                    'BurnFinalized',
-                    fromBlock,
-                    'latest',
-                    { requestId: this.requestId }
-                );
-                if (pastEvents && pastEvents.length > 0) {
-                    const lpSecret = pastEvents[0].args.secret;
+                const { showBurnComplete } = await import('./ui.js?v=3.12');
+                showBurnComplete(this.wsxmrAmount);
+                // Prefer the revealed secret straight from contract state — reliable
+                // even when event scans fail on flaky RPCs.
+                let lpSecret = null;
+                try {
+                    const burnReq = await readHub('getBurnRequest', [this.requestId]);
+                    const revealed = burnReq.revealedSecret;
+                    if (revealed && revealed !== '0x' + '0'.repeat(64)) lpSecret = revealed;
+                } catch (e) {
+                    console.warn('[Burn Resume] getBurnRequest failed, falling back to event scan:', e.message);
+                }
+                if (!lpSecret) {
+                    const { getPastEvents, getBlockNumber } = await import('./viemClient.js?v=3.12');
+                    const currentBlock = await getBlockNumber();
+                    const fromBlock = currentBlock - 10000n;
+                    const pastEvents = await getPastEvents(
+                        CONTRACTS.hub,
+                        ABIS.hub,
+                        'BurnFinalized',
+                        fromBlock,
+                        'latest',
+                        { requestId: this.requestId }
+                    );
+                    if (pastEvents && pastEvents.length > 0) lpSecret = pastEvents[0].args.secret;
+                }
+                if (lpSecret) {
                     await this.sweepXMR(lpSecret);
-                    await this.complete();
                 } else {
-                    throw new Error('Cannot resume: BurnFinalized event not found');
+                    throw new Error('Cannot resume: LP secret not found on-chain');
                 }
                 break;
+            }
             default:
                 throw new Error('Cannot resume from state: ' + this.state);
         }
@@ -1600,5 +1903,40 @@ function _getBurnNonceForRequest(requestId) {
     try {
         const map = JSON.parse(localStorage.getItem(key) || '{}');
         return map[requestId] != null ? map[requestId] : null;
+    } catch (e) { return null; }
+}
+
+// ─── Per-burn key set persistence (localStorage) ─────────────────────────────
+// The per-burn secret is the ONLY thing needed to claim the XMR or resolve a
+// declined proposal — persist it per-requestId so seed loss can't strand a burn.
+
+function _storeBurnKeySet(requestId, keySet, burnNonce) {
+    try {
+        const hex = (arr) => '0x' + Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+        localStorage.setItem('wrapsynth_burn_keyset_' + requestId, JSON.stringify({
+            secret: keySet.secret,
+            privateViewKey: '0x' + keySet.privateViewKey.toString(16).padStart(64, '0'),
+            publicSpendKey: hex(keySet.publicSpendKey),
+            publicViewKey: hex(keySet.publicViewKey),
+            commitment: keySet.commitment,
+            burnNonce
+        }));
+    } catch (e) { /* ignore */ }
+}
+
+function _getBurnKeySet(requestId) {
+    try {
+        const raw = localStorage.getItem('wrapsynth_burn_keyset_' + requestId);
+        if (!raw) return null;
+        const d = JSON.parse(raw);
+        const bytes = (h) => Uint8Array.from(h.slice(2).match(/../g).map(x => parseInt(x, 16)));
+        return {
+            secret: d.secret,
+            privateViewKey: BigInt(d.privateViewKey),
+            publicSpendKey: bytes(d.publicSpendKey),
+            publicViewKey: bytes(d.publicViewKey),
+            commitment: d.commitment,
+            burnNonce: d.burnNonce
+        };
     } catch (e) { return null; }
 }

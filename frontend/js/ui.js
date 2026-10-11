@@ -1,9 +1,10 @@
 // UI Controller
 // Manages all DOM interactions and updates
 
-import { DECIMALS } from './config.js';
-import { getIconSVG } from './icons.js';
-import { launchMintCelebration, launchBurnAnimation } from './animations.js';
+import { DECIMALS, LP_SERVER_CONFIG } from './config.js?v=3.12';
+import { getMoneroNodeOverride, setMoneroNodeOverride } from './moneroRpc.js?v=3.12';
+import { getIconSVG } from './icons.js?v=3.12';
+import { launchMintCelebration, launchBurnAnimation } from './animations.js?v=3.12';
 
 /**
  * UI Element References
@@ -245,9 +246,13 @@ export function showResumeBanner(swaps, onResume, onResolve) {
         row.className = 'resume-swap-row';
 
         const typeLabel = swap.type === 'mint' ? 'Mint' : 'Burn';
+        // wsxmrAmount may be stored as human decimal (current) or raw 1e8 atomic
+        // (older saves) — normalize: large integers are raw, decimals are human.
+        let burnAmt = Number(swap.wsxmrAmount);
+        if (Number.isInteger(burnAmt) && burnAmt > 1000) burnAmt /= 1e8;
         const amount = swap.type === 'mint'
             ? (swap.xmrAmount ? `${swap.xmrAmount.toFixed ? swap.xmrAmount.toFixed(6) : swap.xmrAmount} XMR` : 'Mint')
-            : (swap.wsxmrAmount ? `${(Number(swap.wsxmrAmount) / 1e8).toFixed(4)} wsXMR` : 'Burn');
+            : (swap.wsxmrAmount ? `${burnAmt.toFixed(4)} wsXMR` : 'Burn');
         const stateLabel = formatSwapState(swap.state);
         const vaultShort = swap.lpVault ? `${swap.lpVault.slice(0, 6)}...${swap.lpVault.slice(-4)}` : '';
 
@@ -429,7 +434,7 @@ export function showResumeCountdown(requestId, deadlineBlock, currentBlock, onRe
     let cachedCurrent = currentBlock;
     function updateMsg() {
         const blocksRemaining = Math.max(0, cachedDeadline - cachedCurrent);
-        const estSeconds = blocksRemaining * 5;
+        const estSeconds = blocksRemaining; // ~1s blocks on HyperEVM
         const mins = Math.floor(estSeconds / 60);
         const secs = estSeconds % 60;
         if (blocksRemaining > 0) {
@@ -444,7 +449,7 @@ export function showResumeCountdown(requestId, deadlineBlock, currentBlock, onRe
     // Poll block number every 5s to update countdown
     const intervalId = setInterval(async () => {
         try {
-            const { getPublicClient } = await import('./viemClient.js');
+            const { getPublicClient } = await import('./viemClient.js?v=3.12');
             const client = getPublicClient();
             cachedCurrent = Number(await client.getBlockNumber());
             updateMsg();
@@ -523,7 +528,7 @@ export async function showBurnTab() {
     saveActiveTab('burn');
 
     // Update balance when showing burn tab
-    const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js');
+    const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js?v=3.12');
     const address = getUserAddress();
     if (address) {
         try {
@@ -1200,7 +1205,7 @@ export function showLPVerificationStatus() {
                     ${tx.block_height ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--text-muted);">Block</span><span>${tx.block_height}</span></div>` : ''}
                     <div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--text-muted);">Confirmations</span><span>${confirmations} / ${REQUIRED}</span></div>
                     ${tx.current_height ? `<div style="display:flex;justify-content:space-between;gap:8px;"><span style="color:var(--text-muted);">Chain Height</span><span>${tx.current_height}</span></div>` : ''}
-                    <div style="margin-top:6px;"><a href="https://xmrchain.net/tx/${txHash}" target="_blank" style="color:var(--teal);text-decoration:none;font-size:11px;">View on xmrchain.net ↗</a></div>
+                    <div style="margin-top:6px;"><a href="https://moneroblocks.info/search/${txHash}" target="_blank" style="color:var(--teal);text-decoration:none;font-size:11px;">View on moneroblocks.info ↗</a></div>
                 `;
             } catch (err) {
                 txResult.innerHTML = `<span style="color:#f87171;">Error: ${err.message}</span>`;
@@ -1219,6 +1224,70 @@ export function showLPVerificationStatus() {
         });
     }
 
+}
+
+/**
+ * Show a "deposit not detected?" proof form during lp-verifying.
+ * If the LP's wallet scan misses a deposit (wallet-rpc issues), the user can
+ * submit their txid + tx key — the LP verifies via check_tx_key and proceeds.
+ * @param {string} requestId - the mint's on-chain requestId
+ */
+export function showDepositProofOption(requestId) {
+    if (!elements.waitingLpVerification || !requestId) return;
+
+    let el = document.getElementById('mint-deposit-proof');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'mint-deposit-proof';
+        el.style.cssText = 'margin-left:20px;margin-top:12px;';
+        elements.waitingLpVerification.appendChild(el);
+    }
+
+    el.innerHTML = `
+        <details style="font-size:0.8rem;">
+            <summary style="cursor:pointer;color:var(--text-muted);">Deposit not detected? Submit tx proof</summary>
+            <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
+                <input id="deposit-proof-txid" type="text" placeholder="Monero tx hash (64 hex)" spellcheck="false" autocomplete="off"
+                    style="background:var(--bg);border:1px solid var(--line-2);border-radius:8px;padding:7px 10px;font-family:'JetBrains Mono';font-size:11px;color:var(--text);" />
+                <input id="deposit-proof-txkey" type="text" placeholder="Transaction key / tx private key (64 hex)" spellcheck="false" autocomplete="off"
+                    style="background:var(--bg);border:1px solid var(--line-2);border-radius:8px;padding:7px 10px;font-family:'JetBrains Mono';font-size:11px;color:var(--text);" />
+                <button class="mini" id="deposit-proof-btn" style="align-self:flex-start;font-size:11px;">Submit proof</button>
+                <div id="deposit-proof-result" style="font-family:'JetBrains Mono';font-size:11px;line-height:1.5;"></div>
+            </div>
+        </details>
+    `;
+
+    const btn = document.getElementById('deposit-proof-btn');
+    const result = document.getElementById('deposit-proof-result');
+    if (!btn) return;
+
+    btn.addEventListener('click', async () => {
+        const txid = document.getElementById('deposit-proof-txid').value.trim();
+        const txKey = document.getElementById('deposit-proof-txkey').value.trim();
+        if (!/^[0-9a-fA-F]{64}$/.test(txid) || !/^[0-9a-fA-F]{64}$/.test(txKey)) {
+            result.innerHTML = '<span style="color:#f87171;">Both fields must be 64 hex chars (no 0x). The tx key is in your wallet\'s tx details / proof.</span>';
+            return;
+        }
+        btn.disabled = true;
+        result.innerHTML = '<span style="color:var(--text-muted);">Verifying with LP…</span>';
+        try {
+            const resp = await fetch(`${LP_SERVER_CONFIG.defaultUrl}/mint/deposit`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ requestId, txid, txKey }),
+            });
+            const data = await resp.json();
+            if (data.verified) {
+                result.innerHTML = '<span style="color:var(--teal);">Deposit verified — LP is finalizing your mint.</span>';
+            } else {
+                result.innerHTML = `<span style="color:#f87171;">${data.error || 'Verification failed'}</span>`;
+                btn.disabled = false;
+            }
+        } catch (err) {
+            result.innerHTML = `<span style="color:#f87171;">LP unreachable: ${err.message}</span>`;
+            btn.disabled = false;
+        }
+    });
 }
 
 /**
@@ -1334,7 +1403,7 @@ export function updateBurnProgress(step, status = null) {
             if (step === 'lp-propose') {
                 detail = '<span class="burn-status-detail">The LP server generates a secret, sends XMR to your shared Monero address, and commits the secret hash on-chain. This typically takes 1–5 minutes.</span>';
             } else if (step === 'confirm-lock') {
-                detail = '<span class="burn-status-detail">Scanning the Monero blockchain with your view key to verify the LP sent XMR to the shared address.</span>';
+                detail = '<span class="burn-status-detail">Scanning the Monero blockchain with your view key to verify the LP sent XMR to the shared address. If the LP doesn\'t send XMR by the deadline, the burn is abandoned and your wsXMR is restored — Cancel becomes available after the deadline.</span>';
             } else if (step === 'lp-finalize') {
                 detail = '<span class="burn-status-detail">The LP reveals its secret on-chain, which lets you combine keys and sweep XMR to your destination.</span>';
             } else if (step === 'evm-request') {
@@ -1563,7 +1632,7 @@ export function showBurnVerificationDetails(details) {
         if (txHashEl) txHashEl.textContent = details.txHash || '—';
         if (txLinkEl) {
             if (details.txHash) {
-                txLinkEl.href = `https://xmrchain.net/tx/${details.txHash}`;
+                txLinkEl.href = `https://moneroblocks.info/search/${details.txHash}`;
                 txLinkEl.style.display = 'inline';
             } else {
                 txLinkEl.style.display = 'none';
@@ -1634,7 +1703,7 @@ export function showBurnXmrFound(amount, confirmations, txHash = null) {
         if (txHash && txHashEl) {
             txHashEl.textContent = txHash;
             if (txLinkEl) {
-                txLinkEl.href = `https://xmrchain.net/tx/${txHash}`;
+                txLinkEl.href = `https://moneroblocks.info/search/${txHash}`;
                 txLinkEl.style.display = 'inline';
             }
         }
@@ -1643,7 +1712,7 @@ export function showBurnXmrFound(amount, confirmations, txHash = null) {
     // Update explorer button label now that we have the tx hash
     const explorerLabel = document.getElementById('burn-verify-explorer-label');
     if (explorerLabel && txHash) {
-        explorerLabel.textContent = 'View tx on xmrchain.net';
+        explorerLabel.textContent = 'View tx on moneroblocks.info';
     }
 }
 
@@ -1713,6 +1782,59 @@ export function showBurnSweepProgress(message) {
 }
 
 /**
+ * Show an inline destination-address input for the burn sweep.
+ * Used when the destination wasn't persisted (resumed burns) — replaces window.prompt.
+ * @param {Function} onSubmit - called with the entered address when valid
+ */
+export function showBurnDestinationInput(onSubmit) {
+    const burnPanel = document.getElementById('burn-panel');
+    if (!burnPanel) return;
+
+    let el = document.getElementById('burn-destination-input');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'burn-destination-input';
+        el.className = 'burn-destination-input';
+        burnPanel.appendChild(el);
+    }
+
+    el.innerHTML = `
+        <div class="burn-destination-inner">
+            <p class="burn-destination-label">Enter your Monero destination address to receive the swept XMR:</p>
+            <input id="burn-dest-addr" type="text" placeholder="4... / 8..." spellcheck="false" autocomplete="off" />
+            <p class="burn-destination-error hidden" id="burn-dest-error">Invalid Monero address</p>
+            <button class="cta" id="burn-dest-submit">Set destination &amp; sweep</button>
+        </div>
+    `;
+    el.classList.remove('hidden');
+
+    const input = document.getElementById('burn-dest-addr');
+    const errEl = document.getElementById('burn-dest-error');
+    const btn = document.getElementById('burn-dest-submit');
+    if (input) input.focus();
+
+    const submit = () => {
+        const val = (input.value || '').trim();
+        // Standard Monero address: 95 chars starting with 4; integrated 106; sub 8
+        const valid = /^[48][0-9A-Za-z]{94}$/.test(val) || /^8[0-9A-Za-z]{105}$/.test(val);
+        if (!valid) {
+            if (errEl) errEl.classList.remove('hidden');
+            return;
+        }
+        el.classList.add('hidden');
+        if (typeof onSubmit === 'function') onSubmit(val);
+    };
+    if (btn) btn.addEventListener('click', submit);
+    if (input) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+}
+
+/** Hide the inline destination input. */
+export function hideBurnDestinationInput() {
+    const el = document.getElementById('burn-destination-input');
+    if (el) el.classList.add('hidden');
+}
+
+/**
  * Show burn sweep complete
  * @param {string} txHash - Monero transaction hash
  * @param {number} amount - Amount in XMR
@@ -1770,16 +1892,30 @@ export function showBurnSweepError(errorMsg) {
 
     let friendly = 'An unexpected error occurred while sweeping XMR to your destination address.';
     let detail = errorMsg;
+    const msg = errorMsg || '';
+    let isConnectivity = false;
 
-    if (errorMsg.includes('No unlocked balance') || errorMsg.includes('balance is 0')) {
-        friendly = 'The XMR at the shared address is not yet unlocked. Monero requires ~10 confirmations before funds can be spent. Please wait and try again.';
-    } else if (errorMsg.includes('No balance') || errorMsg.includes('no funds')) {
+    if (msg.includes('locked') || msg.includes('confirmations') || msg.includes('No unlocked balance') || msg.includes('balance is 0')) {
+        friendly = 'The XMR is at the shared address but still locked — Monero requires ~10 confirmations before funds can be spent. Wait a few minutes and retry.';
+    } else if (msg.includes('not connected to daemon') || msg.includes('Wallet is not connected') || msg.includes('CORS') || msg.includes('unreachable')) {
+        isConnectivity = true;
+        friendly = 'The in-browser wallet could not reach a compatible Monero node. Public nodes often block browser wallets — your XMR is safe. Enter your own node below, or claim manually with the keys.';
+    } else if (msg.includes('No balance') || msg.includes('no funds')) {
         friendly = 'No XMR found at the shared address. The LP may not have sent XMR yet.';
-    } else if (errorMsg.includes('daemon') || errorMsg.includes('connection') || errorMsg.includes('fetch')) {
-        friendly = 'Could not connect to the Monero network. Please check your internet connection and try again.';
-    } else if (errorMsg.includes('WASM') || errorMsg.includes('wasm') || errorMsg.includes('module not loaded')) {
-        friendly = 'The Monero WASM module failed to load. Please refresh the page and try again.';
+    } else if (msg.includes('daemon') || msg.includes('connection') || msg.includes('fetch') || msg.includes('network')) {
+        isConnectivity = true;
+        friendly = 'Could not reach a Monero node. Your XMR is safe — retry, or claim manually with the keys below.';
+    } else if (msg.includes('WASM') || msg.includes('wasm') || msg.includes('module not loaded')) {
+        friendly = 'The Monero wallet module failed to load. Please refresh the page and try again.';
     }
+
+    const savedNode = getMoneroNodeOverride() || '';
+    const nodeInputHtml = isConnectivity ? `
+        <div class="burn-node-override">
+            <p class="burn-node-label">Custom Monero node (optional — e.g. local <code>http://127.0.0.1:18081</code> or a node with CORS enabled):</p>
+            <input id="burn-node-url" type="text" placeholder="https://your-node:18081" value="${savedNode}" spellcheck="false" autocomplete="off" />
+        </div>
+    ` : '';
 
     el.innerHTML = `
         <div class="burn-sweep-error-inner">
@@ -1797,6 +1933,7 @@ export function showBurnSweepError(errorMsg) {
                     <summary>Technical details</summary>
                     <p>${detail}</p>
                 </details>
+                ${nodeInputHtml}
             </div>
         </div>
         <div class="burn-sweep-error-actions">
@@ -1811,6 +1948,9 @@ export function showBurnSweepError(errorMsg) {
     const retryBtn = document.getElementById('burn-sweep-retry');
     if (retryBtn) {
         retryBtn.addEventListener('click', () => {
+            // Persist a custom node if the user entered one — it's tried first on retry.
+            const nodeInput = document.getElementById('burn-node-url');
+            if (nodeInput) setMoneroNodeOverride(nodeInput.value);
             el.classList.add('hidden');
             showBurnSweepProgress('Retrying sweep...');
             window.dispatchEvent(new CustomEvent('burn-sweep-retry'));
@@ -1843,7 +1983,7 @@ export function showBurnKeysOption(keys, destination, restoreHeight = 0) {
     const btn = document.getElementById('burn-copy-keys-btn');
     if (btn) {
         btn.addEventListener('click', () => {
-            showBurnKeysFallback(keys, destination, restoreHeight);
+            showBurnKeysFallback(keys, destination, restoreHeight, sharedAddress);
         });
     }
 }
@@ -1858,7 +1998,7 @@ export function hideBurnKeysOption() {
 
 // ─── Mint Recovery (dead-mint XMR sweep) ────────────────────────────────────
 // Shown when a mint died and the LP revealed lpSecret on-chain — the user can
-// sweep the user-viewable deposit back to their own Monero address.
+// sweep the deposit back to their own Monero address (view key = lpSecret).
 
 /**
  * Render the "Recover XMR" panel: explains the situation and collects the
@@ -2006,7 +2146,7 @@ export function showMintSweepError(errorMsg, onBack) {
  * @param {Object} keys - { spendKey, viewKey } (little-endian hex, no 0x)
  * @param {string} destination - User's destination address
  */
-export function showBurnKeysFallback(keys, destination, restoreHeight = 0) {
+export function showBurnKeysFallback(keys, destination, restoreHeight = 0, sharedAddress = '') {
     const burnPanel = document.getElementById('burn-panel');
     if (!burnPanel) return;
 
@@ -2029,14 +2169,22 @@ export function showBurnKeysFallback(keys, destination, restoreHeight = 0) {
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;color:var(--amber)"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
             <span>Automatic sweep failed — claim your XMR manually</span>
         </div>
-        <p class="burn-keys-fallback-desc">Import these keys into a Monero wallet (Monero GUI, Feather Wallet) to access your funds:</p>
+        <p class="burn-keys-fallback-desc">Import these keys into a Monero wallet (Monero GUI, Feather Wallet) to access your funds.</p>
+        <p class="burn-keys-fallback-warn"><strong>Important:</strong> this is a <strong>non-deterministic</strong> wallet — the view key is independent, not derived from the spend key. You must use <strong>"Restore from keys"</strong> and enter <strong>all three</strong>: primary address, spend key, and view key. Restoring from the spend key or seed alone produces a different (empty) wallet.</p>
         <div class="burn-keys-fallback-steps">
-            <span>1. Copy the private spend key and view key below</span>
-            <span>2. Open Monero GUI Wallet → Restore from keys</span>
-            <span>3. Paste the keys and set restore height to <strong>${restoreHeightStr}</strong></span>
+            <span>1. In your wallet choose <strong>Restore from keys</strong> (non-deterministic / spendable)</span>
+            <span>2. Enter the <strong>primary address</strong>, <strong>spend key</strong>, and <strong>view key</strong> below</span>
+            <span>3. Set restore height to <strong>${restoreHeightStr}</strong></span>
             <span>4. Wait for sync, then sweep all to your destination</span>
         </div>
         <div class="burn-keys-fallback-keys">
+            <div class="burn-key-row">
+                <label>Primary Address (shared)</label>
+                <div class="burn-key-copy">
+                    <input type="text" id="fallback-primary-address" value="${sharedAddress}" readonly>
+                    <button class="btn-copy-sm" id="fallback-copy-address">Copy</button>
+                </div>
+            </div>
             <div class="burn-key-row">
                 <label>Private Spend Key</label>
                 <div class="burn-key-copy">
@@ -2053,7 +2201,7 @@ export function showBurnKeysFallback(keys, destination, restoreHeight = 0) {
             </div>
             <div class="burn-key-row">
                 <label>Destination Address</label>
-                <p class="burn-key-dest">${destination}</p>
+                <p class="burn-key-dest">${destination || '(none set — pick any address you control when sweeping)'}</p>
             </div>
             <div class="burn-key-row">
                 <label>Restore Height</label>
@@ -2068,6 +2216,15 @@ export function showBurnKeysFallback(keys, destination, restoreHeight = 0) {
 
     const copySpend = document.getElementById('fallback-copy-spend');
     const copyView = document.getElementById('fallback-copy-view');
+    const copyAddr = document.getElementById('fallback-copy-address');
+
+    if (copyAddr) {
+        copyAddr.addEventListener('click', async () => {
+            await navigator.clipboard.writeText(sharedAddress);
+            copyAddr.textContent = 'Copied!';
+            setTimeout(() => copyAddr.textContent = 'Copy', 2000);
+        });
+    }
 
     if (copySpend) {
         copySpend.addEventListener('click', async () => {
@@ -2421,6 +2578,33 @@ export function updateCancelBurnButton(label, disabled = false) {
     if (btn) {
         btn.textContent = label;
         btn.disabled = disabled;
+    }
+}
+
+/**
+ * Show the "LP abandoned the burn" restore panel during confirm-lock.
+ * Wires the Restore wsXMR button to onRestore (resolveDeclinedProposal path).
+ */
+export function showBurnRestorePanel({ onRestore }) {
+    const panel = document.getElementById('burn-restore-panel');
+    if (!panel) return;
+    panel.classList.remove('hidden');
+    const restoreBtn = document.getElementById('burn-restore-wsxmr');
+    const cancelBtn = document.getElementById('burn-restore-cancel');
+    if (restoreBtn) {
+        restoreBtn.onclick = async () => {
+            restoreBtn.disabled = true;
+            restoreBtn.textContent = 'Restoring...';
+            try {
+                await onRestore();
+            } finally {
+                restoreBtn.disabled = false;
+                restoreBtn.textContent = 'Restore wsXMR';
+            }
+        };
+    }
+    if (cancelBtn) {
+        cancelBtn.onclick = () => panel.classList.add('hidden');
     }
 }
 

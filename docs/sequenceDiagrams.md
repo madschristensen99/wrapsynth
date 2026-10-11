@@ -431,12 +431,11 @@ sequenceDiagram
 
     Note over User,Monero: Step 3: User sends XMR to the shared 2-of-2 deposit address
     User->>Monero: Send XMR to deposit address
-    Note right of User: view = userPub, spend = userPub + lpSpendPub.<br/>User-viewable — the LP cannot scan it.
+    Note right of User: view = lpSpendPub, spend = userPub + lpSpendPub.<br/>LP-viewable — the LP scans it directly.
 
-    Note over User,Monero: Step 4: User proves the deposit — LP verifies via check_tx_key
-    User->>LP: Submit txid + txKey (tx secret key) via /mint/deposit
-    LP->>Monero: check_tx_key(txid, txKey, depositAddress)
-    Monero-->>LP: received amount
+    Note over User,Monero: Step 4: LP detects the deposit by scanning (no user→LP messaging)
+    LP->>Monero: Scan chain with view-only wallet (view key = lpSecret)
+    Monero-->>LP: deposit output + amount
     LP->>VM: setMintReady(requestId)
     activate VM
     VM->>VM: Sync vault yield & re-check CR
@@ -483,7 +482,7 @@ sequenceDiagram
 
     Note over User,Monero: Step 6: LP sweeps the deposit off-chain
     LP->>Monero: Sweep deposit (userSecret + lpSecret → full spend key)
-    Note right of LP: LP learned userSecret from MintFinalized.<br/>deposit view key = userSecret (user-viewable)
+    Note right of LP: LP learned userSecret from MintFinalized.<br/>deposit view key = lpSecret (LP-viewable).<br/>If the LP ghosts, lpSecret is revealed on-chain<br/>(claim/abandon paths) and the user sweeps with it.
 ```
 
 ### Mint Cancellation Scenarios

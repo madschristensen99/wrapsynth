@@ -1,7 +1,7 @@
 // Recent Activity Feed - Shows recent mints and burns from all users
 
-import { getPublicClient } from './viemClient.js';
-import { CONTRACTS } from './config.js';
+import { getPublicClient, getContractEventsChunked } from './viemClient.js?v=3.12';
+import { CONTRACTS } from './config.js?v=3.12';
 import { parseAbi } from 'https://esm.sh/viem@2.7.0';
 
 // Event ABI strings matching the deployed contract exactly
@@ -60,22 +60,22 @@ export async function loadRecentActivity() {
             coLPUnwound,
             coLPRebalanced
         ] = await Promise.all([
-            publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'MintInitiated', fromBlock, toBlock: 'latest' }),
-            publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'MintFinalized', fromBlock, toBlock: 'latest' }),
-            publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'MintCancelled', fromBlock, toBlock: 'latest' }),
-            publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'MintKeyCancelled', fromBlock, toBlock: 'latest' }),
-            publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'BurnRequested', fromBlock, toBlock: 'latest' }),
-            publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'HashProposed', fromBlock, toBlock: 'latest' }),
-            publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'BurnCommitted', fromBlock, toBlock: 'latest' }),
-            publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'BurnFinalized', fromBlock, toBlock: 'latest' }),
-            publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'BurnSlashed', fromBlock, toBlock: 'latest' }),
-            publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'BurnCancelled', fromBlock, toBlock: 'latest' }),
-            publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'VaultCreated', fromBlock, toBlock: 'latest' }),
-            publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'CollateralDeposited', fromBlock, toBlock: 'latest' }),
-            publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'CollateralWithdrawn', fromBlock, toBlock: 'latest' }),
-            publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'CoLPDeployed', fromBlock, toBlock: 'latest' }),
-            publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'CoLPUnwound', fromBlock, toBlock: 'latest' }),
-            publicClient.getContractEvents({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'CoLPRebalanced', fromBlock, toBlock: 'latest' })
+            getContractEventsChunked({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'MintInitiated', fromBlock, toBlock: 'latest' }),
+            getContractEventsChunked({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'MintFinalized', fromBlock, toBlock: 'latest' }),
+            getContractEventsChunked({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'MintCancelled', fromBlock, toBlock: 'latest' }),
+            getContractEventsChunked({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'MintKeyCancelled', fromBlock, toBlock: 'latest' }),
+            getContractEventsChunked({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'BurnRequested', fromBlock, toBlock: 'latest' }),
+            getContractEventsChunked({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'HashProposed', fromBlock, toBlock: 'latest' }),
+            getContractEventsChunked({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'BurnCommitted', fromBlock, toBlock: 'latest' }),
+            getContractEventsChunked({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'BurnFinalized', fromBlock, toBlock: 'latest' }),
+            getContractEventsChunked({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'BurnSlashed', fromBlock, toBlock: 'latest' }),
+            getContractEventsChunked({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'BurnCancelled', fromBlock, toBlock: 'latest' }),
+            getContractEventsChunked({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'VaultCreated', fromBlock, toBlock: 'latest' }),
+            getContractEventsChunked({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'CollateralDeposited', fromBlock, toBlock: 'latest' }),
+            getContractEventsChunked({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'CollateralWithdrawn', fromBlock, toBlock: 'latest' }),
+            getContractEventsChunked({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'CoLPDeployed', fromBlock, toBlock: 'latest' }),
+            getContractEventsChunked({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'CoLPUnwound', fromBlock, toBlock: 'latest' }),
+            getContractEventsChunked({ address: hubAddress, abi: HUB_EVENTS_ABI, eventName: 'CoLPRebalanced', fromBlock, toBlock: 'latest' })
         ]);
 
         const totalEvents = mintInitiated.length + mintFinalized.length + mintCancelled.length + mintKeyCancelled.length +
@@ -374,7 +374,7 @@ function handleNewActivityLogs(logs, publicClient) {
             if (terminalMint || terminalBurn) {
                 const requestId = log.args?.requestId;
                 if (requestId) {
-                    import('./storage.js').then(({ getActiveSwapByRequestId, removeActiveSwap, saveToHistory }) => {
+                    import('./storage.js?v=3.12').then(({ getActiveSwapByRequestId, removeActiveSwap, saveToHistory }) => {
                         const existing = getActiveSwapByRequestId(requestId);
                         if (existing) {
                             let status;
@@ -431,9 +431,9 @@ export function startActivityFeedWatcher() {
 function formatBlocksAgo(blocks) {
     if (blocks === 0) return 'just now';
     if (blocks === 1) return '1 block ago';
-    if (blocks < 12) return `${blocks} blocks ago`; // < 1 min
+    if (blocks < 60) return `${blocks} blocks ago`; // < 1 min
     
-    const minutes = Math.floor(blocks / 12); // ~5s per block
+    const minutes = Math.floor(blocks / 60); // ~1s per block on HyperEVM
     if (minutes < 60) return `${minutes}m ago`;
     
     const hours = Math.floor(minutes / 60);

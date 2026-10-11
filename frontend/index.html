@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Wrapsynth — Trustless Wrapped Monero via Atomic Liquidity</title>
+<title>Wrapsynth — Monero DeFi</title>
 <meta name="description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on HyperEVM.">
 <meta property="og:title" content="Wrapsynth | Trustless Wrapped Monero via Atomic Liquidity">
 <meta property="og:description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on HyperEVM.">
@@ -71,7 +71,7 @@
     background:rgba(255,255,255,.02);text-transform:uppercase;letter-spacing:.05em}
   .dot{width:7px;height:7px;border-radius:50%;background:var(--green)}
   h1{font-family:'Plus Jakarta Sans';font-weight:600;letter-spacing:-.035em;line-height:1.04;
-    font-size:clamp(38px,6.4vw,68px);margin:24px 0 0;max-width:14ch}
+    font-size:clamp(38px,6.4vw,68px);margin:24px 0 0;max-width:16ch}
   h1 .o{color:var(--xmr)}h1 .t{color:var(--teal)}
   .lede{margin-top:22px;font-size:clamp(16px,2vw,18.5px);color:var(--muted);max-width:60ch;line-height:1.6}
   .lede b{color:var(--fg);font-weight:500}
@@ -418,8 +418,8 @@
   <canvas id="gl"></canvas>
   <div class="hero-scrim"></div>
   <div class="hero-in">
-    <h1 class="rv r1">Bring <span class="o">Monero</span> to <span class="t">DeFi</span> with atomic liquidity.</h1>
-    <p class="lede rv r2">Trustless, permissionless wrapped Monero. Exchange XMR for <b>wsXMR</b>
+    <h1 class="rv r1">Bring <span class="o">Monero</span> to <span class="t">DeFi</span> with atomic redemption.</h1>
+    <p class="lede rv r2">Permissionlessly guaranteed wrapped Monero. Exchange XMR for <b>wsXMR</b>
       backed by over-200% collateral through <b>atomic mints and burns</b> — no custodian, no bridge multisig to trust.</p>
     <div class="hero-ctas rv r3">
       <a class="btn btn-primary" href="app.html">Launch app →</a>
@@ -448,7 +448,7 @@
   <div class="wrap sec-pad">
     <span class="eyebrow-sm">Meet</span>
     <h2 class="sec-h">The builders</h2>
-    <p class="sec-sub">Two developers building trustless wrapped Monero — open source, no VC, no token grift. Plus a community of developers, supporters, and contributors.</p>
+    <p class="sec-sub">Two developers, open source, no VC, no token grift. Plus a community of developers, supporters, and contributors.</p>
     <div class="who-grid">
       <div class="who-card">
         <img class="avatar" src="./mads.jpeg" alt="REMSee">
@@ -866,10 +866,11 @@
   </div>
 </footer>
 
-<script type="module">
-  const res = await fetch('./deployment.json?t=' + Date.now());
-  if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status);
-  window.DEPLOYMENT = await res.json();
+<script>
+  window.__deploymentReady = fetch('./deployment.json?t=' + Date.now())
+    .then(res => { if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status); return res.json(); })
+    .then(d => { window.DEPLOYMENT = d; return d; })
+    .catch(err => { console.error(err); return window.DEPLOYMENT || {}; });
 </script>
 <script>
 /* ambient threads — hero only, dim + slow */
@@ -917,11 +918,12 @@ function copyAddr(btn){
 /* fetch live protocol stats */
 (async function fetchProtocolStats(){
   try {
-    const {createPublicClient,http,formatUnits,parseAbi}=await import('https://esm.sh/viem@2.21.54');
-    const hyperevm={id:999,name:'HyperEVM',nativeCurrency:{name:'HYPE',symbol:'HYPE',decimals:18},rpcUrls:{default:{http:['https://rpc.hyperliquid.xyz/evm']}}};
+    const {createPublicClient,http,formatUnits,parseAbi,fallback}=await import('https://esm.sh/viem@2.21.54');
+    const rpcUrls=['https://rpc.hyperliquid.xyz/evm','https://rpc.hypurrscan.io','https://hyperliquid.drpc.org'];
+    const hyperevm={id:999,name:'HyperEVM',nativeCurrency:{name:'HYPE',symbol:'HYPE',decimals:18},rpcUrls:{default:{http:rpcUrls}}};
     
-    const client=createPublicClient({chain:hyperevm,transport:http('https://rpc.hyperliquid.xyz/evm')});
-    const D=window.DEPLOYMENT||{};const DC=D.contracts||{};const DE=D.externalContracts||{};
+    const client=createPublicClient({chain:hyperevm,transport:fallback(rpcUrls.map(u=>http(u)))});
+    const D=await (window.__deploymentReady||Promise.resolve(window.DEPLOYMENT||{}));const DC=D.contracts||{};const DE=D.externalContracts||{};
     const hub=DC.wsXmrHub;
     const wsXMR=DC.wsXMR;
     const USDe=DE.sDAI;
@@ -1014,15 +1016,20 @@ function copyAddr(btn){
     console.log('[Stats] Total collateral shares:',totalCollateral.toString());
     console.log('[Stats] Total debt:',totalDebt.toString());
     
-    // Convert USDe shares to assets
-    const totalAssets=await client.readContract({
-      address:USDe,
-      abi:parseAbi(['function convertToAssets(uint256 shares) external view returns (uint256)']),
-      functionName:'convertToAssets',
-      args:[totalCollateral]
-    });
+    // Collateral is an 18-decimal stablecoin (~1:1 USD) — value it directly, not via ERC-4626 convertToAssets
+    let collateralPrice=1.0;
+    try{
+      const collPriceRaw=await client.readContract({
+        address:hub,
+        abi:parseAbi(['function getCollateralPrice() external view returns (uint256)']),
+        functionName:'getCollateralPrice'
+      });
+      collateralPrice=parseFloat(formatUnits(collPriceRaw,18));
+    }catch(e){
+      console.warn('getCollateralPrice unavailable, assuming $1 collateral');
+    }
     
-    const tvlUSD=parseFloat(formatUnits(totalAssets,18));
+    const tvlUSD=parseFloat(formatUnits(totalCollateral,18))*collateralPrice;
     console.log('[Stats] TVL (USD):',tvlUSD);
     document.getElementById('stat-tvl').textContent=tvlUSD>=1e6?`$${(tvlUSD/1e6).toFixed(2)}M`:tvlUSD>=1e3?`$${(tvlUSD/1e3).toFixed(1)}K`:`$${tvlUSD.toFixed(2)}`;
     

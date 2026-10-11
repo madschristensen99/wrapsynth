@@ -79,25 +79,26 @@ export function deriveMoneroAddress(publicSpendKey, publicViewKey, mainnet = tru
 /**
  * Compute the Monero deposit address for a mint.
  *
- * The deposit is USER-VIEWABLE: the view pub is the user's own public key, so the
- * user can scan + recover the output with their private view key (userSecret). The
- * LP cannot see this deposit — it verifies the payment via check_tx_key(txid, txKey)
- * rather than scanning. This removes the hostage scenario where a ghosted LP leaves
- * the user's XMR unrecoverable.
+ * The deposit is LP-VIEWABLE: the view pub is the LP's public view key, so the LP
+ * scans the chain for the deposit itself — no user→LP messaging, no HTTP. The LP
+ * posts lpPublicViewKey = lpSpendPub (i.e. lpSecret·G), so the deposit's private
+ * view key IS lpSecret. When lpSecret is revealed on-chain (claim/abandon paths),
+ * the user gets both keys and can sweep with a normal wallet.
  *
- *   deposit = ( view = userPub , spend = userPub + lpSpendPub )
+ *   deposit = ( view = lpSpendPub , spend = userPub + lpSpendPub )
  *
  * @param {string} userCommitment — userPublicKey from MintInitiated event (hex)
  * @param {string} lpPublicSpendKey — LP public spend key (hex)
- * @param {string} lpPublicViewKey — LP public view key (unused for user-view deposits; kept for signature compatibility)
+ * @param {string} lpPublicViewKey — LP public view key (LP sets this = lpSpendPub)
  * @returns {Promise<string>} Monero address
  */
 export async function computeDepositAddress(userCommitment, lpPublicSpendKey, lpPublicViewKey) {
   const userBytes = hexToBytes(userCommitment);
   const lpSpendBytes = hexToBytes(lpPublicSpendKey);
+  const lpViewBytes = hexToBytes(lpPublicViewKey);
 
   const combinedSpendKey = await addEd25519Points(userBytes, lpSpendBytes);
-  const combinedViewKey = userBytes;
+  const combinedViewKey = lpViewBytes;
 
   return deriveMoneroAddress(combinedSpendKey, combinedViewKey, true);
 }

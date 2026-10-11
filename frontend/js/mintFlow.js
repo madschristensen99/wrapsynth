@@ -12,14 +12,13 @@
  * their secret, proving they control the Monero deposit address, and wsXMR is minted.
  */
 
-import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG } from './config.js';
-import { readHub, writeHub, watchContractEvent, getUserAddress } from './viemClient.js';
-import { getPhantomAgent } from './phantomAgent.js';
-import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory, getActiveSwapByRequestId } from './storage.js';
+import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG } from './config.js?v=3.12';
+import { readHub, writeHub, watchContractEvent, getUserAddress } from './viemClient.js?v=3.12';
+import { getPhantomAgent } from './phantomAgent.js?v=3.12';
+import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory, getActiveSwapByRequestId } from './storage.js?v=3.12';
 import { keccak256, toHex, parseEther } from 'https://esm.sh/viem@2.7.0';
-import { startDeadlineTimer, startStatusPolling, stopTimers } from './mintFlowTimers.js';
-import { showLPVerificationStatus, updateMintProgress, showSuccess, showConfirmModal, showSuccessNotification, showMintComplete } from './ui.js?v=3.4';
-import { getLPClient } from './lpClient.js';
+import { startDeadlineTimer, startStatusPolling, stopTimers } from './mintFlowTimers.js?v=3.12';
+import { showLPVerificationStatus, updateMintProgress, showSuccess, showConfirmModal, showSuccessNotification, showMintComplete, showDepositProofOption } from './ui.js?v=3.12';
 
 export class MintFlow {
     constructor() {
@@ -82,17 +81,9 @@ export class MintFlow {
             confirmDiv.removeEventListener('click', this._confirmClickHandler);
         }
         // Use event delegation so the handler survives innerHTML overwrites.
-        // Dispatch by button id: the "I've sent XMR" button renders the deposit-proof
-        // form; the form's submit button posts the proof to the LP.
         this._confirmClickHandler = async (e) => {
             const btn = e.target.closest('button');
-            if (!btn) return;
-
-            if (btn.id === 'submit-deposit-proof-btn') {
-                await this.submitDepositProof();
-                return;
-            }
-            if (btn.id !== 'confirm-sent-xmr-btn') return;
+            if (!btn || btn.id !== 'confirm-sent-xmr-btn') return;
 
             // Guard: never let a user confirm on a dead mint. Statuses >= 6 are
             // terminal (6=CANCELLED, 7=EXPIRED_READY, 8=KEY_CANCELLED) — the
@@ -100,7 +91,7 @@ export class MintFlow {
             try {
                 const req = await readHub('getMintRequest', [this.requestId]);
                 if (Number(req.status) >= 6) {
-                    const { showError } = await import('./ui.js?v=3.4');
+                    const { showError } = await import('./ui.js?v=3.12');
                     showError(
                         'Mint No Longer Active',
                         'This mint was cancelled or expired. Do NOT send XMR to the deposit address — it cannot be recovered automatically. If you already sent, wait for the LP to publish their key or reclaim via Pending Returns.'
@@ -112,75 +103,12 @@ export class MintFlow {
                 console.warn('[Mint] Status check before confirm failed, proceeding:', err.message);
             }
 
-            // Deposit is user-viewable — the LP can't scan it, so the user proves the
-            // send with the txid + tx secret key (check_tx_key). Render the proof form.
-            this.showDepositProofForm();
+            // Deposit is LP-viewable — the LP scans the chain itself, so there is
+            // nothing to submit. Just advance to the LP-verification wait state.
+            showLPVerificationStatus();
+            if (this.userConfirmResolve) this.userConfirmResolve();
         };
         confirmDiv.addEventListener('click', this._confirmClickHandler);
-    }
-
-    /**
-     * Render the deposit-proof form (txid + tx key) in place of the confirm button.
-     * The user pastes these from their Monero wallet after sending the deposit.
-     */
-    showDepositProofForm() {
-        const confirmDiv = document.getElementById('confirm-sent-xmr');
-        if (!confirmDiv) return;
-        confirmDiv.innerHTML = `
-            <div class="deposit-proof-form" style="margin-top:12px;text-align:left;">
-                <p style="font-size:0.9em;margin:0 0 8px;">
-                    Prove your deposit: paste the <strong>transaction id</strong> and
-                    <strong>transaction key</strong> from your Monero wallet
-                    (<code>get_tx_key &lt;txid&gt;</code>). The LP verifies it via
-                    <code>check_tx_key</code> — your deposit stays recoverable by you.
-                </p>
-                <input id="deposit-txid" type="text" placeholder="Transaction ID (txid)"
-                    style="width:100%;margin-bottom:8px;padding:8px;font-family:monospace;" />
-                <input id="deposit-txkey" type="text" placeholder="Transaction key (r)"
-                    style="width:100%;margin-bottom:8px;padding:8px;font-family:monospace;" />
-                <button id="submit-deposit-proof-btn" class="cta" style="width:100%;">Verify Deposit</button>
-                <div id="deposit-proof-status" style="margin-top:8px;font-size:0.85em;"></div>
-            </div>
-        `;
-    }
-
-    /**
-     * Validate + submit the deposit proof (txid + tx key) to the LP via /mint/deposit.
-     * On success the LP runs check_tx_key and proceeds to setMintReady; we then resolve
-     * the user-confirm gate so waitForLPReady watches for the MintReady event.
-     */
-    async submitDepositProof() {
-        const txidEl = document.getElementById('deposit-txid');
-        const txkeyEl = document.getElementById('deposit-txkey');
-        const statusEl = document.getElementById('deposit-proof-status');
-        const txid = (txidEl?.value || '').trim();
-        const txKey = (txkeyEl?.value || '').trim();
-        const setStatus = (msg, color) => { if (statusEl) { statusEl.style.color = color || ''; statusEl.textContent = msg; } };
-
-        if (!/^[0-9a-fA-F]{64}$/.test(txid)) {
-            setStatus('Invalid txid — expected 64 hex characters.', '#e53e3e');
-            return;
-        }
-        if (!/^[0-9a-fA-F]{64}$/.test(txKey)) {
-            setStatus('Invalid transaction key — expected 64 hex characters.', '#e53e3e');
-            return;
-        }
-
-        setStatus('Submitting deposit proof to LP…');
-        try {
-            const lp = getLPClient();
-            const res = await lp.submitDeposit({ requestId: this.requestId, txid, txKey });
-            if (res && res.verified) {
-                setStatus(`Deposit verified (${res.received} atomic units). Waiting for LP to finalize…`, '#38a169');
-                showLPVerificationStatus();
-                if (this.userConfirmResolve) this.userConfirmResolve();
-            } else {
-                setStatus(res?.error || 'LP could not verify the deposit. Check txid/txKey and retry.', '#e53e3e');
-            }
-        } catch (err) {
-            console.error('[Mint] submitDeposit failed:', err);
-            setStatus(`Deposit proof failed: ${err.message}. The LP may not have computed the address yet — retry shortly.`, '#e53e3e');
-        }
     }
 
     /**
@@ -209,7 +137,7 @@ export class MintFlow {
      */
     async getRecoverableLpSecret() {
         try {
-            const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
+            const { getPastEvents, getBlockNumber } = await import('./viemClient.js?v=3.12');
             const currentBlock = await getBlockNumber();
             // Scan a wide window — the reveal may be many blocks back on a dead mint.
             const fromBlock = currentBlock > 200000n ? currentBlock - 200000n : 0n;
@@ -234,9 +162,9 @@ export class MintFlow {
     }
 
     /**
-     * Recover XMR from a user-viewable mint deposit after the LP revealed lpSecret.
-     * The deposit's view key is the user's own secret, so the user can scan + spend
-     * it with a normal MoneroWalletFull once they also have lpSecret.
+     * Recover XMR from an LP-viewable mint deposit after the LP revealed lpSecret.
+     * The deposit's private view key IS lpSecret, so once it's revealed on-chain
+     * the user can scan + spend with a normal MoneroWalletFull.
      *
      * @param {string} destination - Monero address to sweep the recovered XMR to
      * @param {Function} onProgress - optional progress callback (message: string)
@@ -255,14 +183,14 @@ export class MintFlow {
         // Scan from around when the mint was initiated so the deposit output is found.
         let restoreHeight = 0;
         try {
-            const { getMoneroRpc } = await import('./moneroRpc.js');
+            const { getMoneroRpc } = await import('./moneroRpc.js?v=3.12');
             const rpc = getMoneroRpc();
             restoreHeight = Math.max(0, (await rpc.getHeight()) - 2000);
         } catch (e) {
             console.warn('[Mint Recovery] Could not get Monero height, scanning from 0:', e.message);
         }
 
-        const { sweepMintDeposit } = await import('./mintRecovery.js');
+        const { sweepMintDeposit } = await import('./mintRecovery.js?v=3.12');
         return sweepMintDeposit({
             userSecretHex: userSecret,
             lpSecretHex: lpSecret,
@@ -280,14 +208,14 @@ export class MintFlow {
     async showRecoveryOption() {
         const lpSecret = await this.getRecoverableLpSecret();
         if (!lpSecret) return false;
-        const { showMintRecoveryPanel } = await import('./ui.js?v=3.4');
+        const { showMintRecoveryPanel } = await import('./ui.js?v=3.12');
         showMintRecoveryPanel((destination) => this._runRecovery(destination));
         return true;
     }
 
     /** Drive the dead-mint XMR sweep with progress/complete/error UI. */
     async _runRecovery(destination) {
-        const { hideMintRecoveryPanel, showMintSweepProgress, showMintSweepComplete, showMintSweepError } = await import('./ui.js?v=3.4');
+        const { hideMintRecoveryPanel, showMintSweepProgress, showMintSweepComplete, showMintSweepError } = await import('./ui.js?v=3.12');
         hideMintRecoveryPanel();
         showMintSweepProgress('Preparing recovery — scanning the deposit address...');
         try {
@@ -325,7 +253,7 @@ export class MintFlow {
             }
             
             // Call cancelMint on the contract
-            const { getWalletClient, getPublicClient } = await import('./viemClient.js');
+            const { getWalletClient, getPublicClient } = await import('./viemClient.js?v=3.12');
             
             const walletClient = await getWalletClient();
             const publicClient = await getPublicClient();
@@ -340,7 +268,7 @@ export class MintFlow {
 
             const userSecret = this._resolveUserSecret();
             if (!userSecret) {
-                const { showError } = await import('./ui.js?v=3.4');
+                const { showError } = await import('./ui.js?v=3.12');
                 showError(
                     'Cannot Cancel Mint',
                     'Your swap secret could not be recovered from browser storage. ' +
@@ -368,12 +296,12 @@ export class MintFlow {
             // reclaimParkedDeposit if the LP doesn't claim it within the window.
             // Withdraw griefing deposit (ETH) — covers PENDING cancels which refund immediately
             try {
-                const { writeHub } = await import('./viemClient.js');
+                const { writeHub } = await import('./viemClient.js?v=3.12');
                 await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
             } catch (e) { /* may have none */ }
             
             // Save to history
-            const { saveToHistory, removeActiveSwap } = await import('./storage.js');
+            const { saveToHistory, removeActiveSwap } = await import('./storage.js?v=3.12');
             saveToHistory({
                 type: 'mint',
                 requestId: this.requestId,
@@ -393,7 +321,7 @@ export class MintFlow {
             this.cleanup();
 
             // Show success with appropriate message
-            const { showSuccess, resetMintUI } = await import('./ui.js?v=3.4');
+            const { showSuccess, resetMintUI } = await import('./ui.js?v=3.12');
             if (statusBefore === 2 || statusBefore === 3) {
                 showSuccess('Mint Cancelled', 'The mint has been cancelled. Your griefing deposit is parked on-chain — if the LP does not claim it within the claim window, you can reclaim it (plus any slashed collateral) via Pending Returns.');
             } else {
@@ -404,18 +332,18 @@ export class MintFlow {
             resetMintUI();
             
             // Refresh history display
-            const { displaySwapHistory } = await import('./swapHistory.js');
+            const { displaySwapHistory } = await import('./swapHistory.js?v=3.12');
             displaySwapHistory();
             
         } catch (error) {
             console.error('Error cancelling mint:', error);
-            const { showError } = await import('./ui.js?v=3.4');
+            const { showError } = await import('./ui.js?v=3.12');
             
             // Handle TimeoutNotReached gracefully
             if (error.message && error.message.includes('TimeoutNotReached')) {
                 const blocksRemaining = await this._getBlocksRemaining();
                 const timeMsg = blocksRemaining !== null
-                    ? ` You need to wait ~${Math.ceil(blocksRemaining * 5 / 60)} more minutes (${blocksRemaining} blocks) before you can cancel.`
+                    ? ` You need to wait ~${Math.ceil(blocksRemaining / 60)} more minutes (${blocksRemaining} blocks) before you can cancel.`
                     : ' The mint timeout period has not been reached yet.';
                 showError('Cannot Cancel Yet', 'The mint timeout has not been reached.' + timeMsg);
                 return;
@@ -433,8 +361,8 @@ export class MintFlow {
     async _checkTimeoutReached() {
         const blocksRemaining = await this._getBlocksRemaining();
         if (blocksRemaining !== null && blocksRemaining > 0) {
-            const minutes = Math.ceil(blocksRemaining * 5 / 60);
-            const { showError } = await import('./ui.js?v=3.4');
+            const minutes = Math.ceil(blocksRemaining / 60);
+            const { showError } = await import('./ui.js?v=3.12');
             showError(
                 'Cannot Cancel Yet',
                 `The mint timeout has not been reached. You must wait ~${minutes} more minutes (${blocksRemaining} blocks) before cancelling.`
@@ -453,7 +381,7 @@ export class MintFlow {
                 const mintReq = await readHub('getMintRequest', [this.requestId]);
                 this.timeout = mintReq.timeout;
             }
-            const { getPublicClient } = await import('./viemClient.js');
+            const { getPublicClient } = await import('./viemClient.js?v=3.12');
             const publicClient = getPublicClient();
             const currentBlock = await publicClient.getBlockNumber();
             return Number(this.timeout) - Number(currentBlock);
@@ -501,7 +429,7 @@ export class MintFlow {
         console.log('Initializing Phantom Agent...');
 
         // Reset singleton to prevent state pollution from previous mints
-        const { resetPhantomAgent } = await import('./phantomAgent.js');
+        const { resetPhantomAgent } = await import('./phantomAgent.js?v=3.12');
         resetPhantomAgent();
         
         this.agent = getPhantomAgent();
@@ -510,7 +438,7 @@ export class MintFlow {
         console.log('Agent initialized:', agentData);
 
         // Store seed for later resume (encrypted in browser)
-        const { storeSeed } = await import('./seedStorage.js');
+        const { storeSeed } = await import('./seedStorage.js?v=3.12');
         const publicSpendKeyHex = toHex(this.agent.keySet.publicSpendKey);
         try {
             await storeSeed(this.agent.seed, publicSpendKeyHex);
@@ -641,7 +569,7 @@ export class MintFlow {
             console.log('Mint timeout (block):', this.timeout.toString());
             
             // Save complete swap state to localStorage
-            const { addOrUpdateActiveSwap } = await import('./storage.js');
+            const { addOrUpdateActiveSwap } = await import('./storage.js?v=3.12');
             const publicSpendKey = toHex(this.agent.keySet.publicSpendKey);
             const claimSecret = this.agent.secret;
             addOrUpdateActiveSwap({
@@ -741,7 +669,7 @@ export class MintFlow {
             try {
                 // First check if the mint has expired on-chain
                 if (this.timeout) {
-                    const { getPublicClient } = await import('./viemClient.js');
+                    const { getPublicClient } = await import('./viemClient.js?v=3.12');
                     const publicClient = getPublicClient();
                     const currentBlock = await publicClient.getBlockNumber();
                     if (currentBlock >= this.timeout) {
@@ -781,7 +709,7 @@ export class MintFlow {
      */
     async waitForLPReady() {
         // Check on-chain status first so resume paths can skip unnecessary waits
-        const { readHub } = await import('./viemClient.js');
+        const { readHub } = await import('./viemClient.js?v=3.12');
         let mintRequest;
         try {
             mintRequest = await readHub('getMintRequest', [this.requestId]);
@@ -809,7 +737,7 @@ export class MintFlow {
             // Ensure the deposit info UI (including the "I've sent XMR" button) is rendered
             // before wiring up the click handler — trackMintProgress may not have fired yet
             if (this.depositAddress) {
-                const { showMintDepositInfo } = await import('./ui.js?v=3.4');
+                const { showMintDepositInfo } = await import('./ui.js?v=3.12');
                 await showMintDepositInfo(this.depositAddress, this.xmrAmount);
             }
             this.setupConfirmSentButton();
@@ -847,14 +775,17 @@ export class MintFlow {
             clearInterval(statusPollInterval);
         }
 
-        console.log('User confirmed XMR sent. Now waiting for LP to verify...');
+        console.log('Waiting for LP to detect and verify the XMR deposit on-chain...');
 
         updateSwapState({
             requestId: this.requestId,
             state: 'lp-verifying',
-            message: 'LP is updating oracle prices and verifying your XMR deposit...'
+            message: 'LP is scanning for your XMR deposit and updating oracle prices...'
         });
         showLPVerificationStatus();
+        // If the LP's wallet scan misses the deposit, the user can prove it
+        // directly with txid + tx key (verified via check_tx_key on the LP).
+        showDepositProofOption(this.requestId);
 
         // If already ready, skip event watching and go straight to claim
         if (isAlreadyReady) {
@@ -873,28 +804,49 @@ export class MintFlow {
         await startDeadlineTimer(this);
         startStatusPolling(this);
 
-        // First, check if MintReady event was already emitted in the past
-        const { getPastEvents, getBlockNumber } = await import('./viemClient.js');
-        const currentBlock = await getBlockNumber();
-        const fromBlock = currentBlock - 1000n; // Check last ~1000 blocks
-        
-        console.log(`Checking for past MintReady events from block ${fromBlock} to ${currentBlock}...`);
-        const pastEvents = await getPastEvents(
-            CONTRACTS.hub,
-            ABIS.hub,
-            'MintReady',
-            fromBlock,
-            'latest',
-            { requestId: this.requestId }
-        );
+        // First, check if MintReady event was already emitted in the past.
+        // HyperEVM RPCs cap eth_getLogs at ~1000 blocks — stay under it, and
+        // don't let a failed query kill the flow (the status poll below covers us).
+        let mintReadySeen = false;
+        try {
+            const { getPastEvents, getBlockNumber } = await import('./viemClient.js?v=3.12');
+            const currentBlock = await getBlockNumber();
+            const fromBlock = currentBlock - 900n;
 
-        if (pastEvents && pastEvents.length > 0) {
+            console.log(`Checking for past MintReady events from block ${fromBlock} to ${currentBlock}...`);
+            const pastEvents = await getPastEvents(
+                CONTRACTS.hub,
+                ABIS.hub,
+                'MintReady',
+                fromBlock,
+                'latest',
+                { requestId: this.requestId }
+            );
+            mintReadySeen = !!(pastEvents && pastEvents.length > 0);
+        } catch (e) {
+            console.warn('Past MintReady query failed, falling back to status poll:', e.message || e);
+        }
+
+        if (mintReadySeen) {
             console.log('Found existing MintReady event - verifying on-chain status...');
         } else {
-            console.log('No past MintReady event found, setting up watcher for new events...');
-            
-            // Watch for on-chain MintReady event
+            console.log('No past MintReady event found, watching for event + polling status...');
+
+            // Race the MintReady event watcher against a direct status poll.
+            // The watcher alone is unreliable on HyperEVM: filter support is spotty,
+            // rate limits silently kill polls, and an event emitted before the
+            // watcher attaches is never re-delivered.
             await new Promise((resolve, reject) => {
+                let settled = false;
+                const finish = () => {
+                    if (settled) return;
+                    settled = true;
+                    clearInterval(poll);
+                    clearTimeout(timeout);
+                    unwatch();
+                    resolve();
+                };
+
                 const unwatch = watchContractEvent(
                     CONTRACTS.hub,
                     ABIS.hub,
@@ -902,15 +854,33 @@ export class MintFlow {
                     { requestId: this.requestId },
                     (log) => {
                         console.log('MintReady event received');
-                        unwatch();
-                        resolve();
+                        finish();
                     }
                 );
 
                 this.eventWatchers.push(unwatch);
 
+                const poll = setInterval(async () => {
+                    try {
+                        const req = await readHub('getMintRequest', [this.requestId]);
+                        const status = Number(req.status);
+                        if (status === 3 || status === 5) {
+                            console.log(`[Mint Poll] Status ${status} detected — proceeding`);
+                            finish();
+                        } else if (status >= 6) {
+                            console.log(`[Mint Poll] Mint reached terminal status ${status}`);
+                            finish();
+                        }
+                    } catch (e) {
+                        console.warn('[Mint Poll] status check failed:', e.message || e);
+                    }
+                }, 5000);
+
                 // Timeout after 30 minutes
-                setTimeout(() => {
+                const timeout = setTimeout(() => {
+                    if (settled) return;
+                    settled = true;
+                    clearInterval(poll);
                     unwatch();
                     reject(new Error('LP ready timeout - MintReady event not received'));
                 }, 1800000);
@@ -935,7 +905,7 @@ export class MintFlow {
                     console.log('Mint was cancelled by LP after MintReady event');
                     this.state = 'expired';
                     updateSwapState({ requestId: this.requestId, state: this.state });
-                    const { showError } = await import('./ui.js?v=3.4');
+                    const { showError } = await import('./ui.js?v=3.12');
                     showError('Mint Cancelled', 'The LP cancelled this mint. If you had a griefing deposit, you can withdraw it via Pending Returns.');
                     throw new Error('Mint cancelled by LP');
                 }
@@ -987,7 +957,7 @@ export class MintFlow {
      * when clicked, allowing waitForLPReady to proceed to finalize.
      */
     async setupClaimButton() {
-        const { showClaimWsXmrButton } = await import('./ui.js?v=3.4');
+        const { showClaimWsXmrButton } = await import('./ui.js?v=3.12');
         showClaimWsXmrButton(() => {
             console.log('User clicked Claim wsXMR');
             if (this.userClaimResolve) {
@@ -1027,7 +997,7 @@ export class MintFlow {
      * On success, transitions to complete() and saves to history.
      */
     async _doFinalize() {
-        const { readHub } = await import('./viemClient.js');
+        const { readHub } = await import('./viemClient.js?v=3.12');
 
         // Verify status before attempting reveal
         try {
@@ -1035,7 +1005,7 @@ export class MintFlow {
             const status = Number(mintReq.status);
 
             if (status >= 6) {
-                const { showError } = await import('./ui.js?v=3.4');
+                const { showError } = await import('./ui.js?v=3.12');
                 showError('Mint Cancelled', 'This mint was cancelled by the LP. If you had a griefing deposit, you can withdraw it via Pending Returns.');
                 throw new Error('Mint was cancelled');
             }
@@ -1050,7 +1020,7 @@ export class MintFlow {
                 // Already SECRET_REVEALED — skip reveal, go straight to finalize
                 console.log('Secret already revealed, finalizing...');
             } else if (status !== 3) {
-                const { showError } = await import('./ui.js?v=3.4');
+                const { showError } = await import('./ui.js?v=3.12');
                 showError('Invalid Status', `Cannot finalize mint - current status is ${status}. Expected status 3 (READY) or 4 (SECRET_REVEALED).`);
                 throw new Error(`Invalid mint status: ${status}`);
             }
@@ -1086,7 +1056,7 @@ export class MintFlow {
                 this.complete();
                 return;
             } else if (status >= 6) {
-                const { showError } = await import('./ui.js?v=3.4');
+                const { showError } = await import('./ui.js?v=3.12');
                 showError('Mint Cancelled', 'This mint was cancelled. If you had a griefing deposit, you can withdraw it via Pending Returns.');
                 throw new Error('Mint was cancelled');
             } else {
@@ -1106,7 +1076,7 @@ export class MintFlow {
                     if (status >= 6) {
                         this.state = 'expired';
                         updateSwapState({ requestId: this.requestId, state: 'expired', message: 'Mint was cancelled on-chain.' });
-                        const { showError } = await import('./ui.js?v=3.4');
+                        const { showError } = await import('./ui.js?v=3.12');
                         showError('Mint Cancelled', 'This mint was cancelled. If you had a griefing deposit, you can withdraw it via Pending Returns.');
                         throw new Error('Mint was cancelled');
                     }
@@ -1149,7 +1119,7 @@ export class MintFlow {
                     if (status >= 6) {
                         this.state = 'expired';
                         updateSwapState({ requestId: this.requestId, state: 'expired', message: 'Mint was cancelled on-chain.' });
-                        const { showError } = await import('./ui.js?v=3.4');
+                        const { showError } = await import('./ui.js?v=3.12');
                         showError('Mint Cancelled', 'This mint was cancelled. If you had a griefing deposit, you can withdraw it via Pending Returns.');
                         throw new Error('Mint was cancelled');
                     }
@@ -1216,7 +1186,7 @@ export class MintFlow {
                     // parked deposit. If they reveal, the user can recover any XMR sent.
                     // If the window expires, reclaimParkedDeposit returns the deposit and
                     // slashes the LP's key bond to the user.
-                    const { getPublicClient } = await import('./viemClient.js');
+                    const { getPublicClient } = await import('./viemClient.js?v=3.12');
                     const publicClient = getPublicClient();
                     const currentBlock = await publicClient.getBlockNumber();
                     const claimWindowEnd = Number(mintReq.timeout);
@@ -1225,7 +1195,7 @@ export class MintFlow {
                         console.log('Parked deposit reclaimed — deposit + slashed key bond returned');
                         await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
                         try {
-                            const { CONTRACTS } = await import('./config.js');
+                            const { CONTRACTS } = await import('./config.js?v=3.12');
                             await writeHub('withdrawReturns', [CONTRACTS.sDAI]);
                             console.log('Slashed sDAI key bond claimed via withdrawReturns');
                         } catch (sDaiErr) {
@@ -1233,8 +1203,8 @@ export class MintFlow {
                         }
                     } else {
                         const blocksRemaining = claimWindowEnd - Number(currentBlock);
-                        const minutes = Math.ceil(blocksRemaining * 5 / 60);
-                        const { showError } = await import('./ui.js?v=3.4');
+                        const minutes = Math.ceil(blocksRemaining / 60);
+                        const { showError } = await import('./ui.js?v=3.12');
                         showError(
                             'Waiting for LP Claim Window',
                             `This mint was cancelled. The LP has ~${minutes} minutes (${blocksRemaining} blocks) to claim the griefing deposit by revealing their key — which also lets you recover any XMR sent. If the LP does not claim, you can reclaim your deposit plus slashed collateral after the window expires.`
@@ -1245,7 +1215,7 @@ export class MintFlow {
                     // EXPIRED_READY — LP has a claim window to reveal secret and take deposit.
                     // If LP reveals, user can read lpSecret from the event and recover XMR from shared address.
                     // If LP doesn't claim within the window, anyone can sweep — user gets griefing deposit + par-value sDAI slash.
-                    const { getPublicClient } = await import('./viemClient.js');
+                    const { getPublicClient } = await import('./viemClient.js?v=3.12');
                     const publicClient = getPublicClient();
                     const currentBlock = await publicClient.getBlockNumber();
                     const claimWindowEnd = Number(mintReq.timeout);
@@ -1258,7 +1228,7 @@ export class MintFlow {
                         console.log('Griefing deposit claimed via withdrawReturns');
                         // Withdraw sDAI returns (slashed collateral)
                         try {
-                            const { CONTRACTS } = await import('./config.js');
+                            const { CONTRACTS } = await import('./config.js?v=3.12');
                             await writeHub('withdrawReturns', [CONTRACTS.sDAI]);
                             console.log('Slashed sDAI collateral claimed via withdrawReturns');
                         } catch (sDaiErr) {
@@ -1266,8 +1236,8 @@ export class MintFlow {
                         }
                     } else {
                         const blocksRemaining = claimWindowEnd - Number(currentBlock);
-                        const minutes = Math.ceil(blocksRemaining * 5 / 60);
-                        const { showError } = await import('./ui.js?v=3.4');
+                        const minutes = Math.ceil(blocksRemaining / 60);
+                        const { showError } = await import('./ui.js?v=3.12');
                         showError(
                             'Waiting for LP Claim Window',
                             `This mint expired without finalization. The LP has ~${minutes} minutes (${blocksRemaining} blocks) to claim the griefing deposit by revealing their secret. If the LP does not claim, you can sweep your deposit back after the window expires.`
@@ -1278,13 +1248,13 @@ export class MintFlow {
                     // Check timeout before calling cancelMint to avoid TimeoutNotReached revert
                     const blocksRemaining = await this._getBlocksRemaining();
                     if (blocksRemaining !== null && blocksRemaining > 0) {
-                        const minutes = Math.ceil(blocksRemaining * 5 / 60);
+                        const minutes = Math.ceil(blocksRemaining / 60);
                         console.warn(`Cannot cancel yet: timeout not reached (${blocksRemaining} blocks, ~${minutes} min remaining)`);
                         return;
                     }
                     const userSecret = this._resolveUserSecret();
                     if (!userSecret) {
-                        const { showError } = await import('./ui.js?v=3.4');
+                        const { showError } = await import('./ui.js?v=3.12');
                         showError(
                             'Cannot Cancel Mint',
                             'Your swap secret could not be recovered from browser storage. ' +
@@ -1299,7 +1269,7 @@ export class MintFlow {
                     // Try withdrawing sDAI returns anyway in case a slash already landed.
                     if (status === 2) {
                         try {
-                            const { CONTRACTS } = await import('./config.js');
+                            const { CONTRACTS } = await import('./config.js?v=3.12');
                             await writeHub('withdrawReturns', [CONTRACTS.sDAI]);
                             console.log('Slashed sDAI collateral claimed via withdrawReturns');
                         } catch (sDaiErr) {
@@ -1315,7 +1285,7 @@ export class MintFlow {
                 }
             } catch (error) {
                 console.error('Error canceling mint on EVM:', error);
-                const { showError } = await import('./ui.js?v=3.4');
+                const { showError } = await import('./ui.js?v=3.12');
                 showError('Cancel Failed', error.message || 'Failed to cancel mint');
                 return;
             }
@@ -1359,8 +1329,8 @@ export class MintFlow {
             // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED, 7=EXPIRED_READY, 8=KEY_CANCELLED
             if (status === 6 || status === 8) {
                 console.log('Mint was cancelled on-chain; aborting resume');
-                const { removeActiveSwap, saveToHistory } = await import('./storage.js');
-                const { showError, resetMintUI } = await import('./ui.js?v=3.4');
+                const { removeActiveSwap, saveToHistory } = await import('./storage.js?v=3.12');
+                const { showError, resetMintUI } = await import('./ui.js?v=3.12');
                 saveToHistory({ ...savedState, status: 'Cancelled', completedAt: Date.now() });
                 removeActiveSwap(this.requestId);
                 showError('Mint Cancelled', 'This mint was cancelled on-chain. If you had a griefing deposit, you can withdraw it via Pending Returns.');
@@ -1369,8 +1339,8 @@ export class MintFlow {
             }
             if (status === 7) {
                 console.log('Mint is EXPIRED_READY on-chain; aborting resume');
-                const { removeActiveSwap, saveToHistory } = await import('./storage.js');
-                const { showError, resetMintUI } = await import('./ui.js?v=3.4');
+                const { removeActiveSwap, saveToHistory } = await import('./storage.js?v=3.12');
+                const { showError, resetMintUI } = await import('./ui.js?v=3.12');
                 saveToHistory({ ...savedState, status: 'Expired', completedAt: Date.now() });
                 removeActiveSwap(this.requestId);
                 showError('Mint Expired', 'This mint expired without finalization. Use Cancel to check if you can sweep your deposit back after the LP claim window.');
@@ -1379,8 +1349,8 @@ export class MintFlow {
             }
             if (status === 5) {
                 console.log('Mint was already completed on-chain; clearing from active swaps');
-                const { removeActiveSwap, saveToHistory } = await import('./storage.js');
-                const { showSuccess, resetMintUI } = await import('./ui.js?v=3.4');
+                const { removeActiveSwap, saveToHistory } = await import('./storage.js?v=3.12');
+                const { showSuccess, resetMintUI } = await import('./ui.js?v=3.12');
                 saveToHistory({ ...savedState, status: 'Completed', completedAt: Date.now() });
                 removeActiveSwap(this.requestId);
                 showSuccess('Mint Completed', 'This mint was already finalized on-chain.');
@@ -1389,8 +1359,8 @@ export class MintFlow {
             }
             if (status === 0) {
                 console.log('Mint is invalid on-chain; clearing from active swaps');
-                const { removeActiveSwap } = await import('./storage.js');
-                const { resetMintUI } = await import('./ui.js?v=3.4');
+                const { removeActiveSwap } = await import('./storage.js?v=3.12');
+                const { resetMintUI } = await import('./ui.js?v=3.12');
                 removeActiveSwap(this.requestId);
                 resetMintUI();
                 throw new Error('Mint is invalid on-chain');
@@ -1486,8 +1456,8 @@ export class MintFlow {
                         return;
                     } else if (status === 4) {
                         console.log('Mint already completed on-chain');
-                        const { removeActiveSwap, saveToHistory } = await import('./storage.js');
-                        const { showSuccess, resetMintUI } = await import('./ui.js?v=3.4');
+                        const { removeActiveSwap, saveToHistory } = await import('./storage.js?v=3.12');
+                        const { showSuccess, resetMintUI } = await import('./ui.js?v=3.12');
                         saveToHistory({ ...savedState, status: 'Completed', completedAt: Date.now() });
                         removeActiveSwap(this.requestId);
                         showSuccess('Mint Completed', 'This mint was already finalized on-chain.');
@@ -1495,8 +1465,8 @@ export class MintFlow {
                         return;
                     } else if (status === 5) {
                         console.log('Mint was cancelled on-chain');
-                        const { removeActiveSwap, saveToHistory } = await import('./storage.js');
-                        const { showError, resetMintUI } = await import('./ui.js?v=3.4');
+                        const { removeActiveSwap, saveToHistory } = await import('./storage.js?v=3.12');
+                        const { showError, resetMintUI } = await import('./ui.js?v=3.12');
                         saveToHistory({ ...savedState, status: 'Cancelled', completedAt: Date.now() });
                         removeActiveSwap(this.requestId);
                         showError('Mint Cancelled', 'This mint was cancelled on-chain.');
@@ -1561,7 +1531,7 @@ export class MintFlow {
                 });
                 
                 // Force UI update by importing and calling showMintDepositInfo
-                const { showMintDepositInfo } = await import('./ui.js?v=3.4');
+                const { showMintDepositInfo } = await import('./ui.js?v=3.12');
                 showMintDepositInfo(this.depositAddress, this.xmrAmount);
                 
                 await this.waitForLPReady();
@@ -1610,7 +1580,7 @@ export class MintFlow {
                         console.log('Deposit address re-derived:', this.depositAddress);
                         
                         // Update storage with the deposit address and LP keys
-                        const { updateSwapState } = await import('./storage.js');
+                        const { updateSwapState } = await import('./storage.js?v=3.12');
                         updateSwapState({
                             requestId: this.requestId,
                             depositAddress: this.depositAddress,
@@ -1619,7 +1589,7 @@ export class MintFlow {
                         });
                         
                         // Force UI update to show deposit info
-                        const { showMintDepositInfo } = await import('./ui.js?v=3.4');
+                        const { showMintDepositInfo } = await import('./ui.js?v=3.12');
                         showMintDepositInfo(this.depositAddress, this.xmrAmount);
                         console.log('Deposit info UI updated with address');
                     } catch (e) {

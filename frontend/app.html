@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>Wrapsynth — Atomic Liquidity for Monero</title>
+<title>Wrapsynth — Monero DeFi</title>
 <meta name="description" content="Mint and burn wsXMR. Bridge your Monero to HyperEVM with trustless atomic swaps backed by >200% collateral.">
 <meta property="og:title" content="Wrapsynth | Atomic Liquidity for Monero">
 <meta property="og:description" content="Mint and burn wsXMR. Bridge your Monero to HyperEVM with trustless atomic swaps backed by >200% collateral.">
@@ -96,7 +96,7 @@ if ('serviceWorker' in navigator) {
   <nav>
     <a href="index.html" class="brand" style="text-decoration:none"><img src="./wrapsynth-symbol.png" alt="Wrapsynth" style="width:22px;height:22px;border-radius:6px">Wrapsynth</a>
     <div class="nav-right">
-      <span class="pill">HyperEVM</span>
+      <span class="pill"><img src="./hyperliquid.png" alt="HyperEVM" style="width:14px;height:14px;margin-right:4px;border-radius:50%;vertical-align:-2px">HyperEVM</span>
       <a id="dexscreener-link" class="pill" href="#" target="_blank" rel="noopener noreferrer" style="text-decoration:none"><img src="https://dexscreener.com/favicon.ico" alt="Pool" style="width:14px;height:14px;margin-right:4px">Trade</a>
       <span class="pill price">XMR <b id="xmrPx">$--</b></span>
       <button class="connect" id="connect-wallet">Connect wallet</button>
@@ -347,8 +347,20 @@ if ('serviceWorker' in navigator) {
               </button>
               <button class="cta ghost" id="burn-confirm-receipt-manual">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:4px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                <span id="burn-verify-explorer-label">View on xmrchain.net</span>
+                <span id="burn-verify-explorer-label">View on moneroblocks.info</span>
               </button>
+            </div>
+          </div>
+
+          <!-- Burn restore: LP abandoned the burn (didn't send XMR by deadline) -->
+          <div id="burn-restore-panel" class="hidden">
+            <div style="border:1px solid var(--accent-orange);border-radius:10px;padding:12px;margin:0.75rem 0;background:rgba(255,159,67,0.06);">
+              <div style="font-size:0.85rem;color:var(--text);font-weight:600;margin-bottom:4px;">LP did not send XMR by the deadline</div>
+              <p style="font-size:0.8rem;color:var(--text-2);margin:0 0 10px;">The burn was abandoned on-chain. Your wsXMR is still yours — restore it to your wallet now.</p>
+              <div class="action-buttons">
+                <button class="cta" id="burn-restore-wsxmr">Restore wsXMR</button>
+                <button class="cta ghost" id="burn-restore-cancel">Not now</button>
+              </div>
             </div>
           </div>
 
@@ -479,6 +491,6 @@ if ('serviceWorker' in navigator) {
 </script>
 <!-- Monero WASM wallet (loaded as classic script, exposes window.monero_ts) -->
 <script src="./js/monero-ts.js"></script>
-<script type="module" src="./js/main.js?v=3.10"></script>
+<script type="module" src="./js/main.js?v=3.12"></script>
 </body>
 </html>

@@ -34,6 +34,31 @@ let hubContract = null;
 let wallet = null;
 let provider = null;
 
+// HyperEVM RPC caps eth_getLogs at 1000-block ranges — chunk wide scans.
+// Retries on rate-limit errors and paces chunks to stay under the limit.
+const LOG_QUERY_CHUNK = 900;
+const LOG_CHUNK_DELAY_MS = 150;
+async function queryFilterChunked(contract, filter, fromBlock, toBlock) {
+  const events = [];
+  for (let start = fromBlock; start <= toBlock; start += LOG_QUERY_CHUNK) {
+    const end = Math.min(start + LOG_QUERY_CHUNK - 1, toBlock);
+    let retries = 5;
+    while (true) {
+      try {
+        events.push(...await contract.queryFilter(filter, start, end));
+        break;
+      } catch (err) {
+        const rateLimited = err.message?.includes('rate limit')
+          || err.code === 'UNKNOWN_ERROR' || err.code === 'BAD_DATA';
+        if (!rateLimited || --retries === 0) throw err;
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+    await new Promise(r => setTimeout(r, LOG_CHUNK_DELAY_MS));
+  }
+  return events;
+}
+
 // ─── Burn Secret Persistence ─────────────────────────────────────────────────
 
 function loadBurnSecrets() {
@@ -116,6 +141,35 @@ async function sendXmr(destination, amountAtomic) {
     return { txHash: null, sent: false };
   }
   return moneroWallet.sendXmr({ destination, amountAtomic });
+}
+
+// ─── XMR Send Retry ─────────────────────────────────────────────────────────
+// Retry the burn XMR send every 30s while the burn stays PROPOSED on-chain.
+// A single-shot retry is not enough: the LP wallet may be funded minutes after
+// the first failure (e.g. operator top-up), and the commit deadline is ~2h.
+const XMR_SEND_RETRY_MS = 30000;
+const XMR_SEND_MAX_ATTEMPTS = 240; // 240 × 30s = 2h ≈ BURN_COMMIT_TIMEOUT_BLOCKS
+
+function scheduleXmrSendRetry(reqIdHex, burn, sharedAddress, attempt = 1) {
+  setTimeout(async () => {
+    if (burn.state !== 'proposed' || burn.moneroTxHash) return;
+    try {
+      console.log(`[Burn] Retrying XMR send for ${reqIdHex} (attempt ${attempt}/${XMR_SEND_MAX_ATTEMPTS})...`);
+      const xmrAmountAtomic = BigInt(burn.xmrAmount);
+      const result = await sendXmr(sharedAddress, xmrAmountAtomic);
+      burn.moneroTxHash = result.txHash;
+      updateBurnSecretState(reqIdHex, 'proposed', { moneroTxHash: result.txHash, error: null });
+      console.log(`[Burn] XMR retry send succeeded for ${reqIdHex}: txHash=${result.txHash}`);
+    } catch (retryErr) {
+      console.error(`[Burn] XMR retry ${attempt} failed for ${reqIdHex}:`, retryErr.message);
+      updateBurnSecretState(reqIdHex, 'proposed', { error: retryErr.message });
+      if (burn.state === 'proposed' && !burn.moneroTxHash && attempt < XMR_SEND_MAX_ATTEMPTS) {
+        scheduleXmrSendRetry(reqIdHex, burn, sharedAddress, attempt + 1);
+      } else if (attempt >= XMR_SEND_MAX_ATTEMPTS) {
+        console.error(`[Burn] Gave up sending XMR for ${reqIdHex} after ${XMR_SEND_MAX_ATTEMPTS} attempts`);
+      }
+    }
+  }, XMR_SEND_RETRY_MS);
 }
 
 // ─── Burn State Machine ─────────────────────────────────────────────────────
@@ -319,20 +373,8 @@ async function processPropose(reqIdHex, customKeys = {}) {
       updateBurnSecretState(reqIdHex, 'proposed', { error: xmrErr.message });
       // If funds are locked (not insufficient), retry after a short delay
       if (xmrErr.message.includes('XMR locked') || xmrErr.message.includes('not enough money') || xmrErr.message.includes('Insufficient XMR') || xmrErr.message.includes('0.000000 XMR')) {
-        console.log(`[Burn] Will retry XMR send for ${reqIdHex} in 30s...`);
-        setTimeout(async () => {
-          try {
-            if (burn.state !== 'proposed') return;
-            console.log(`[Burn] Retrying XMR send for ${reqIdHex}...`);
-            const xmrAmountAtomic = BigInt(burn.xmrAmount);
-            const result = await sendXmr(sharedAddress, xmrAmountAtomic);
-            burn.moneroTxHash = result.txHash;
-            updateBurnSecretState(reqIdHex, 'proposed', { moneroTxHash: result.txHash });
-            console.log(`[Burn] XMR retry send succeeded: txHash=${result.txHash}`);
-          } catch (retryErr) {
-            console.error(`[Burn] XMR retry failed for ${reqIdHex}:`, retryErr.message);
-          }
-        }, 30000);
+        console.log(`[Burn] Will retry XMR send for ${reqIdHex} every 30s while proposed...`);
+        scheduleXmrSendRetry(reqIdHex, burn, sharedAddress);
       }
       // XMR send failed but proposeHash already confirmed — the burn is proposed on-chain
       // LP's XMR is not sent yet; user will not confirm lock and burn will eventually be resolved
@@ -708,7 +750,9 @@ function attachEventListeners(hub, _wallet, _provider) {
   // Use polling instead of hub.on() to avoid filter issues with Base Sepolia RPC
   let lastCheckedBlock = 0;
   let lastPollError = '';
-  provider.getBlockNumber().then(b => { lastCheckedBlock = b; });
+  provider.getBlockNumber()
+    .then(b => { lastCheckedBlock = b; })
+    .catch(err => console.warn('[Burn] Initial block number fetch failed:', err.message));
 
   setInterval(async () => {
     try {
@@ -722,7 +766,7 @@ function attachEventListeners(hub, _wallet, _provider) {
         let retries = 3;
         while (retries > 0) {
           try {
-            return await hubContract.queryFilter(filter, from, to);
+            return await queryFilterChunked(hubContract, filter, from, to);
           } catch (err) {
             if (err.message?.includes('rate limit') || err.code === 'UNKNOWN_ERROR') {
               retries--;
@@ -1007,6 +1051,7 @@ async function startupRecoverBurns() {
             } catch (retryErr) {
               console.error(`[Burn Recovery] XMR retry failed for ${reqIdHex}:`, retryErr.message);
               updateBurnSecretState(reqIdHex, 'proposed', { error: retryErr.message });
+              scheduleXmrSendRetry(reqIdHex, burn, burn.sharedAddress);
             }
           })();
         }
@@ -1041,7 +1086,7 @@ async function startupRecoverBurns() {
   try {
     const currentBlock = await provider.getBlockNumber();
     const fromBlock = Math.max(0, currentBlock - 9999);
-    const burnEvents = await hubContract.queryFilter(hubContract.filters.BurnRequested(), fromBlock, currentBlock);
+    const burnEvents = await queryFilterChunked(hubContract, hubContract.filters.BurnRequested(), fromBlock, currentBlock);
     const ourBurns = burnEvents.filter(
       e => e.args.lpVault.toLowerCase() === wallet.address.toLowerCase()
     );

@@ -1,7 +1,7 @@
 // LocalStorage manager for persisting swap state
 // Supports multiple concurrent active swaps
 
-import { STORAGE_KEYS } from './config.js';
+import { STORAGE_KEYS } from './config.js?v=3.12';
 
 const ACTIVE_SWAPS_KEY = 'wrapsynth_active_swaps_v2';
 

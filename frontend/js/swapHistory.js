@@ -1,9 +1,9 @@
 // Swap History Display
 
-import { loadSwapHistory } from './storage.js';
-import { getIconSVG } from './icons.js';
-import { getPastEvents, getUserAddress, getPublicClient } from './viemClient.js';
-import { CONTRACTS, DECIMALS, NETWORKS } from './config.js';
+import { loadSwapHistory } from './storage.js?v=3.12';
+import { getIconSVG } from './icons.js?v=3.12';
+import { getPastEvents, getUserAddress, getPublicClient } from './viemClient.js?v=3.12';
+import { CONTRACTS, DECIMALS, NETWORKS } from './config.js?v=3.12';
 
 const TRANSFER_EVENT_ABI = ['event Transfer(address indexed from, address indexed to, uint256 value)'];
 

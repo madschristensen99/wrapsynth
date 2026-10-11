@@ -113,31 +113,32 @@ function base58Encode(data) {
 /**
  * Compute Monero deposit address from user and LP public keys.
  *
- * The deposit is USER-VIEWABLE: the view pub is the user's own public key, so the
- * user can scan + recover the output with their private view key (userSecret) via a
- * normal wallet (createWalletFull). The LP cannot see the deposit — it verifies the
- * payment via check_tx_key(txid, txKey) instead of scanning. This removes the
- * hostage scenario where a ghosted LP leaves the user's XMR unrecoverable.
+ * The deposit is LP-VIEWABLE: the view pub is the LP's public view key, so the LP
+ * scans the chain for the deposit itself — no user→LP messaging, no HTTP. The LP
+ * posts lpPublicViewKey = lpSpendPub (i.e. lpSecret·G), so the deposit's private
+ * view key IS lpSecret. When lpSecret is revealed on-chain (claim/abandon paths),
+ * the user gets both keys and can sweep with a normal wallet:
  *
- *   deposit = ( view = userPub , spend = userPub + lpSpendPub )
- *   private view key  = userSecret
+ *   deposit = ( view = lpSpendPub , spend = userPub + lpSpendPub )
+ *   private view key  = lpSecret            (revealed on-chain in cancel paths)
  *   private spend key = userSecret + lpSecret   (2-of-2 until lpSecret is revealed)
  *
  * @param {string} userCommitment - User's public key P_a (hex string with 0x prefix)
  * @param {string} lpPublicSpendKey - LP's public spend key P_b (hex string with 0x prefix)
- * @param {string} lpPublicViewKey - LP's public view key V_b (unused for user-view deposits; kept for signature compatibility)
+ * @param {string} lpPublicViewKey - LP's public view key V_b (LP sets this = lpSpendPub)
  * @returns {Promise<string>} - Monero deposit address
  */
 export async function computeDepositAddress(userCommitment, lpPublicSpendKey, lpPublicViewKey) {
     // Remove 0x prefix and convert to Uint8Array
     const userBytes = hexToBytes(userCommitment);
     const lpSpendBytes = hexToBytes(lpPublicSpendKey);
+    const lpViewBytes = hexToBytes(lpPublicViewKey);
 
     // Add the public spend keys: P_combined = P_a + P_b
     const combinedSpendKey = await addEd25519Points(userBytes, lpSpendBytes);
 
-    // View pub = user's public key (so the user can scan/recover with their private view key)
-    const combinedViewKey = userBytes;
+    // View pub = LP's public view key (LP scans the deposit itself)
+    const combinedViewKey = lpViewBytes;
 
     // Derive Monero address
     const address = deriveMoneroAddress(combinedSpendKey, combinedViewKey, true);

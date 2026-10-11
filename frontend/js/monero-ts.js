@@ -3734,9 +3734,11 @@ var monero_ts = (() => {
             return {};
           }
           function js_send_json_request(uri, username, password, reject_unauthorized_fn_id, method, body, timeout) {
-            const HttpClient = this.HttpClient;
-            const LibraryUtils = this.LibraryUtils;
-            const GenUtils = this.GenUtils;
+            // `this` is undefined when WASM invokes the import unbound (strict-mode
+            // bundle) — fall back to the globals set by LibraryUtils.initWasmModule.
+            const HttpClient = (this && this.HttpClient) || globalThis.HttpClient;
+            const LibraryUtils = (this && this.LibraryUtils) || globalThis.LibraryUtils;
+            const GenUtils = (this && this.GenUtils) || globalThis.GenUtils;
             return Asyncify.handleSleep(function(wakeUp) {
               let wakeUpCalled = false;
               HttpClient.request({ method: UTF8ToString(method), uri: UTF8ToString(uri), username: UTF8ToString(username), password: UTF8ToString(password), body: UTF8ToString(body), resolveWithFullResponse: true, rejectUnauthorized: LibraryUtils.isRejectUnauthorized(UTF8ToString(reject_unauthorized_fn_id)) }).then((resp) => {
@@ -3763,9 +3765,9 @@ var monero_ts = (() => {
             });
           }
           function js_send_binary_request(uri, username, password, reject_unauthorized_fn_id, method, body, body_length, timeout) {
-            const HttpClient = this.HttpClient;
-            const LibraryUtils = this.LibraryUtils;
-            const GenUtils = this.GenUtils;
+            const HttpClient = (this && this.HttpClient) || globalThis.HttpClient;
+            const LibraryUtils = (this && this.LibraryUtils) || globalThis.LibraryUtils;
+            const GenUtils = (this && this.GenUtils) || globalThis.GenUtils;
             return Asyncify.handleSleep(function(wakeUp) {
               LibraryUtils.loadWasmModule().then((module2) => {
                 let ptr = body;
@@ -8517,7 +8519,7 @@ var monero_ts = (() => {
         }
         /**
          * Set the path to load the worker. Defaults to "/monero.worker.js" in the browser
-         * and "./MoneroWebWorker.js" in node.
+         * and "./MoneroWebWorker.js?v=3.12" in node.
          * 
          * @param {string} workerDistPath - path to load the worker
          */
@@ -8671,7 +8673,7 @@ var monero_ts = (() => {
         let curPath = _path.default.normalize(__dirname);
         const targetPath = _path.default.join("monero-ts", "dist");
         if (!curPath.includes(targetPath)) curPath = _path.default.join(curPath, "../../../../dist/src/main/js/common");
-        curPath = _LibraryUtils.prefixWindowsPath(_path.default.join(curPath, "./MoneroWebWorker.js"));
+        curPath = _LibraryUtils.prefixWindowsPath(_path.default.join(curPath, "./MoneroWebWorker.js?v=3.12"));
         if (_GenUtils.default.isDeno()) curPath = _path.default.join("file://", curPath);
         return curPath;
       })());

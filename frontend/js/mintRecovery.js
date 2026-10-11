@@ -1,24 +1,27 @@
 /**
- * Mint Recovery Module — reclaim XMR from a user-viewable mint deposit.
+ * Mint Recovery Module — reclaim XMR from an LP-viewable mint deposit.
  *
- * Mint deposits are USER-VIEWABLE:
- *   deposit = ( view = userPub , spend = userPub + lpSpendPub )
- *   private view key  = userSecret
- *   private spend key = userSecret + lpSecret
+ * Mint deposits are LP-VIEWABLE:
+ *   deposit = ( view = lpSpendPub , spend = userPub + lpSpendPub )
+ *   private view key  = lpSecret              (LE bytes verbatim)
+ *   private spend key = userSecret + lpSecret (BE(userSecret) + LE(lpSecret))
  *
  * If the LP ghosts (or the mint is cancelled/expired) the LP's secret is revealed
  * on-chain. The user then combines their own secret with the LP secret to get the
- * full spend key, and — because the view key is their own secret — can scan and
- * sweep the deposit with a normal MoneroWalletFull, exactly like the burn sweep.
+ * full spend key, and — because the deposit's private view key IS lpSecret — can
+ * scan and sweep the deposit with a normal MoneroWalletFull, exactly like the
+ * burn sweep.
  *
- * This is a thin wrapper over burnSweep.sweepBurnOutput: the only difference is
- * that the mint deposit's view key IS the user's spend secret.
+ * NOTE on endianness: the mint lpSecret's bytes are the little-endian scalar
+ * encoding (lpSpendPub = LE(lpSecret)·G), unlike burn secrets which are
+ * big-endian. The revealed on-chain value is the same byte string, so the
+ * private view key for the deposit wallet is lpSecret verbatim.
  */
 
-import { sweepBurnOutput, combineSpendKeys } from './burnSweep.js';
+import { sweepBurnOutput, combineSpendKeys, reverseHexBytes } from './burnSweep.js?v=3.12';
 
 /**
- * Sweep XMR from a user-viewable mint deposit to the user's destination.
+ * Sweep XMR from an LP-viewable mint deposit to the user's destination.
  *
  * @param {Object} params
  * @param {string} params.userSecretHex - User's mint secret / private spend key (0x hex)
@@ -30,12 +33,15 @@ import { sweepBurnOutput, combineSpendKeys } from './burnSweep.js';
  * @returns {Promise<{swept: boolean, txHashes: string[], amount: string}>}
  */
 export async function sweepMintDeposit({ userSecretHex, lpSecretHex, destination, restoreHeight = 0, onProgress }) {
-    // The mint deposit's view pub is userPub = userSecret·G, so the private view key
-    // is simply userSecret. Reuse the burn sweep with the user's secret as the view key.
+    // The mint deposit's view pub is lpSpendPub = lpSecret·G, so the private view
+    // key is lpSecret itself — its bytes are already the LE scalar encoding.
+    // lpSecretIsLe tells the sweep to interpret lpSecret as LE when combining
+    // spend keys (mints differ from burns here).
     return sweepBurnOutput({
         userSecretHex,
         lpSecretHex,
-        userViewKeyHex: userSecretHex,
+        viewKeyLeHex: lpSecretHex.replace(/^0x/, ''),
+        lpSecretIsLe: true,
         destination,
         restoreHeight,
         onProgress,
@@ -46,11 +52,14 @@ export async function sweepMintDeposit({ userSecretHex, lpSecretHex, destination
  * Derive the expected mint deposit address from the combined keys, so the user can
  * confirm they're about to sweep the right address before broadcasting.
  *
- *   view pub  = userSecret·G            (= userPub)
- *   spend pub = (userSecret+lpSecret)·G (= userPub + lpSpendPub)
+ *   view pub  = lpSecret·G                          (= lpSpendPub)
+ *   spend pub = userSecret·G + lpSecret·G           (= userPub + lpSpendPub)
  *
- * @param {string} userSecretHex - User's mint secret (0x hex)
- * @param {string} lpSecretHex - LP's revealed secret (0x hex)
+ * userSecret is big-endian (on-chain convention); lpSecret bytes are the
+ * little-endian scalar encoding (Monero convention used at provideLPKey).
+ *
+ * @param {string} userSecretHex - User's mint secret (0x hex, big-endian)
+ * @param {string} lpSecretHex - LP's revealed secret (0x hex, LE scalar bytes)
  * @returns {Promise<string>} Expected Monero deposit address
  */
 export async function deriveMintDepositAddress(userSecretHex, lpSecretHex) {
@@ -59,27 +68,27 @@ export async function deriveMintDepositAddress(userSecretHex, lpSecretHex) {
     const ED25519_L = 2n ** 252n + 27742317777372353535851937790883648493n;
 
     const userSecret = BigInt(userSecretHex) % ED25519_L;
-    const lpSecret = BigInt(lpSecretHex) % ED25519_L;
+    const lpSecret = BigInt('0x' + reverseHexBytes(lpSecretHex)) % ED25519_L;
     const combined = (userSecret + lpSecret) % ED25519_L;
 
-    const userPub = Point.BASE.multiply(userSecret).toRawBytes();          // view pub
-    const combinedSpend = Point.BASE.multiply(combined).toRawBytes();      // spend pub
+    const lpSpendPub = Point.BASE.multiply(lpSecret).toRawBytes();         // view pub
+    const combinedSpend = Point.BASE.multiply(combined).toRawBytes();    // spend pub
 
-    const { deriveMoneroAddress } = await import('./moneroCrypto.js');
-    return deriveMoneroAddress(combinedSpend, userPub, true);
+    const { deriveMoneroAddress } = await import('./moneroCrypto.js?v=3.12');
+    return deriveMoneroAddress(combinedSpend, lpSpendPub, true);
 }
 
 /**
  * Get the combined keys for manual import into a Monero GUI/CLI wallet (fallback).
- * view key = userSecret (LE), spend key = userSecret + lpSecret (LE).
+ * view key = lpSecret (LE bytes verbatim), spend key = userSecret + lpSecret (LE).
  *
- * @param {string} userSecretHex - User's mint secret (0x hex)
- * @param {string} lpSecretHex - LP's revealed secret (0x hex)
+ * @param {string} userSecretHex - User's mint secret (0x hex, big-endian)
+ * @param {string} lpSecretHex - LP's revealed secret (0x hex, LE scalar bytes)
  * @returns {{spendKey: string, viewKey: string}}
  */
 export function getMintKeysForImport(userSecretHex, lpSecretHex) {
     return {
-        spendKey: combineSpendKeys(userSecretHex, lpSecretHex),
-        viewKey: combineSpendKeys(userSecretHex, '0x0'), // userSecret mod L, little-endian
+        spendKey: combineSpendKeys(userSecretHex, lpSecretHex, true),
+        viewKey: lpSecretHex.replace(/^0x/, ''), // already little-endian
     };
 }

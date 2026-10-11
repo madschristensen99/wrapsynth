@@ -1,7 +1,7 @@
 // Protocol Stats - Calculate real-time protocol metrics
 
-import { getPublicClient, readHub } from './viemClient.js';
-import { CONTRACTS } from './config.js';
+import { getPublicClient, getContractEventsChunked, readHub } from './viemClient.js?v=3.12';
+import { CONTRACTS } from './config.js?v=3.12';
 import { formatUnits } from 'https://esm.sh/viem@2.7.0';
 
 // Correct inline event definitions matching the deployed contract ABI
@@ -34,10 +34,11 @@ export async function updateProtocolStats() {
             ? currentBlock - MAX_BLOCK_RANGE
             : DEPLOYMENT_BLOCK;
 
-        // Fetch mint events (capped to RPC provider block-range limit)
-        const mintEvents = await publicClient.getLogs({
+        // Fetch mint events (chunked — HyperEVM RPCs cap eth_getLogs at ~1000 blocks)
+        const mintEvents = await getContractEventsChunked({
             address: CONTRACTS.hub,
-            event: MINT_INITIATED_EVENT,
+            abi: [MINT_INITIATED_EVENT],
+            eventName: 'MintInitiated',
             fromBlock,
             toBlock: 'latest'
         }).catch(err => {

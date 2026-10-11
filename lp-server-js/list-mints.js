@@ -34,19 +34,30 @@ if (!userAddress) {
 const provider = new ethers.JsonRpcProvider(RPC_URL, CHAIN_ID);
 const hub = new ethers.Contract(HUB_ADDRESS, HUB_ABI, provider);
 
+// HyperEVM RPC caps eth_getLogs at 1000-block ranges — chunk wide scans.
+const LOG_QUERY_CHUNK = 900;
+async function queryFilterChunked(contract, filter, fromBlock, toBlock) {
+  const events = [];
+  for (let start = fromBlock; start <= toBlock; start += LOG_QUERY_CHUNK) {
+    const end = Math.min(start + LOG_QUERY_CHUNK - 1, toBlock);
+    events.push(...await contract.queryFilter(filter, start, end));
+  }
+  return events;
+}
+
 console.log(`Searching for mints initiated by: ${userAddress}`);
 console.log(`Hub: ${HUB_ADDRESS}\n`);
 
 try {
-  // Get deployment block from deployment.json or use a safe default
-  const fromBlock = 46700000; // Search further back for old mints
+  // Scan back far enough to cover the deployment age (~2.3 days at 1s blocks)
   const currentBlock = await provider.getBlockNumber();
+  const fromBlock = Math.max(0, currentBlock - 200000);
   
   console.log(`Scanning from block ${fromBlock} to ${currentBlock}...\n`);
   
   // Query MintInitiated events
   const filter = hub.filters.MintInitiated(null, userAddress);
-  const events = await hub.queryFilter(filter, fromBlock, currentBlock);
+  const events = await queryFilterChunked(hub, filter, fromBlock, currentBlock);
   
   if (events.length === 0) {
     console.log('No mints found for this address.');

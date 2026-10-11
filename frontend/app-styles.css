@@ -568,6 +568,46 @@ body:not(.js-loaded) .panel{display:none!important}
   font-size:13px;padding:8px 16px;
 }
 
+/* Custom Monero node override (shown on connectivity errors) */
+.burn-node-override{
+  margin-top:10px;
+}
+.burn-node-label{
+  margin:0 0 6px;font-size:12px;color:var(--text-2);line-height:1.4;
+}
+.burn-node-label code{
+  font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal);
+}
+.burn-node-override input{
+  width:100%;box-sizing:border-box;padding:8px 10px;font-size:12px;
+  font-family:'JetBrains Mono',monospace;color:var(--text-1,#eee);
+  background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.12);
+  border-radius:8px;outline:none;
+}
+.burn-node-override input:focus{border-color:var(--teal);}
+
+/* Inline destination-address input (replaces window.prompt) */
+.burn-destination-input{
+  margin-top:12px;padding:14px 16px;border-radius:12px;
+  background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);
+}
+.burn-destination-label{
+  margin:0 0 8px;font-size:13px;color:var(--text-2);line-height:1.4;
+}
+.burn-destination-input input{
+  width:100%;box-sizing:border-box;padding:9px 11px;font-size:12px;
+  font-family:'JetBrains Mono',monospace;color:var(--text-1,#eee);
+  background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.12);
+  border-radius:8px;outline:none;margin-bottom:8px;
+}
+.burn-destination-input input:focus{border-color:var(--teal);}
+.burn-destination-error{
+  margin:0 0 8px;font-size:12px;color:#f87171;
+}
+.burn-destination-input .cta{
+  font-size:13px;padding:8px 16px;
+}
+
 /* Inline keys fallback (replaces modal) */
 .burn-keys-fallback{
   margin-top:12px;padding:16px;background:var(--panel-2);
@@ -578,6 +618,11 @@ body:not(.js-loaded) .panel{display:none!important}
 }
 .burn-keys-fallback-desc{
   margin:8px 0 0;font-size:12px;color:var(--muted);line-height:1.5;
+}
+.burn-keys-fallback-warn{
+  margin:8px 0 0;font-size:12px;line-height:1.5;color:var(--amber,#fbbf24);
+  background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);
+  border-radius:8px;padding:8px 10px;
 }
 .burn-keys-fallback-steps{
   margin:10px 0 0;display:flex;flex-direction:column;gap:4px;

@@ -2,7 +2,7 @@
 // Uses createPublicClient and createWalletClient as required
 
 import { createPublicClient, createWalletClient, custom, http, fallback, parseAbi, defineChain } from 'https://esm.sh/viem@2.7.0';
-import { NETWORKS, CONTRACTS, ABIS, RAW_ABIS } from './config.js';
+import { NETWORKS, CONTRACTS, ABIS, RAW_ABIS } from './config.js?v=3.12';
 
 // HyperEVM mainnet (chainId 999) — not a built-in viem chain, so define it.
 export const hyperevm = defineChain({
@@ -44,16 +44,13 @@ function getTransport() {
     const timeout = 10000; // 10s — prevent slow RPC from blocking UI
     const retryOpts = { retryCount: 1, retryDelay: 200, timeout };
     const httpTransports = NETWORKS.hyperevm.rpcUrls.map(url => http(url, retryOpts));
-    // HTTP RPCs first for reads — MetaMask's internal RPC can be slow/unreliable.
-    // MetaMask is still used for writes via walletClient.
-    if (typeof window !== 'undefined' && window.ethereum) {
-        return fallback([
-            ...httpTransports,
-            custom(window.ethereum, retryOpts)
-        ], { rank: false, retryCount: 2 });
-    }
-    // Fallback to HTTP RPCs for users without a wallet
-    return fallback(httpTransports, { rank: false, retryCount: 2 });
+    // Reads go ONLY to HTTP RPCs. Never route reads through window.ethereum:
+    // wallet extensions (Ambire, MetaMask) forward eth_getLogs to their own
+    // RPC endpoints, which are CORS-blocked/rate-limited and spam
+    // "Failed to fetch" errors. Writes still go through walletClient.
+    // rank: false — ranking pings EVERY transport periodically, which
+    // needlessly hammers rate-limited endpoints.
+    return fallback(httpTransports, { retryCount: 2 });
 }
 
 export async function initializeClients() {
@@ -456,29 +453,83 @@ export async function getNativeBalance(address = null) {
 /**
  * Watch for contract events
  */
-export function watchContractEvent(contractAddress, abi, eventName, args = {}, callback, fromBlock = 'latest') {
+export function watchContractEvent(contractAddress, abi, eventName, args = {}, callback, fromBlock = 'latest', onError = undefined) {
     const client = getPublicClient();
-    
+
     return client.watchContractEvent({
         address: contractAddress,
         abi: parseAbi(abi),
         eventName,
         args,
         onLogs: callback,
+        // Without onError, viem swallows poll failures (e.g. rate limits) and the
+        // watcher silently never fires — always log so stalls are diagnosable.
+        onError: onError || ((err) => console.warn(`[watchContractEvent:${eventName}] poll error:`, err?.message || err)),
         pollingInterval: 5000,
         fromBlock
     });
 }
 
+// HyperEVM RPCs cap eth_getLogs at ~1000-block ranges — chunk wide scans.
+const LOG_QUERY_CHUNK = 900n;
+const LOG_CHUNK_DELAY_MS = 120;
+
 /**
- * Get past contract events
+ * getContractEvents with automatic block-range chunking.
+ * Accepts the same params as client.getContractEvents; fromBlock/toBlock may be
+ * bigint or 'latest'. Retries each chunk on rate-limit/RPC errors.
+ */
+export async function getContractEventsChunked(params) {
+    const client = getPublicClient();
+    const to = params.toBlock === 'latest' || params.toBlock === undefined
+        ? await client.getBlockNumber()
+        : BigInt(params.toBlock);
+    const from = BigInt(params.fromBlock || 0n);
+    const events = [];
+
+    const queryRange = async (start, end, depth) => {
+        let retries = 4;
+        while (true) {
+            try {
+                return await client.getContractEvents({ ...params, fromBlock: start, toBlock: end });
+            } catch (err) {
+                const msg = err?.message || '';
+                const details = err?.details || '';
+                const isRangeError = msg.includes('block range') || details.includes('block range')
+                    || msg.includes('exceeds max') || details.includes('exceeds max');
+                // Some RPCs cap eth_getLogs below our chunk size — split the range.
+                if (isRangeError && end - start > 50n && depth < 8) {
+                    const mid = start + (end - start) / 2n;
+                    const first = await queryRange(start, mid, depth + 1);
+                    const second = await queryRange(mid + 1n, end, depth + 1);
+                    return [...first, ...second];
+                }
+                const retryable = msg.includes('rate limit') || msg.includes('exceeds max block range')
+                    || msg.includes('Failed to fetch') || msg.includes('fetch failed')
+                    || err?.code === -32000 || err?.code === 429
+                    || err?.name === 'RpcRequestError' || err?.name === 'InvalidParamsRpcError'
+                    || err?.name === 'TypeError';
+                if (!retryable || --retries === 0) throw err;
+                await new Promise(r => setTimeout(r, 800));
+            }
+        }
+    };
+
+    for (let start = from; start <= to; start += LOG_QUERY_CHUNK) {
+        const end = start + LOG_QUERY_CHUNK - 1n > to ? to : start + LOG_QUERY_CHUNK - 1n;
+        events.push(...await queryRange(start, end, 0));
+        await new Promise(r => setTimeout(r, LOG_CHUNK_DELAY_MS));
+    }
+    return events;
+}
+
+/**
+ * Get past contract events (chunked — safe for ranges > 1000 blocks)
  */
 export async function getPastEvents(contractAddress, abi, eventName, fromBlock, toBlock = 'latest', args = {}) {
-    const client = getPublicClient();
-    
-    return await client.getContractEvents({
+    return await getContractEventsChunked({
         address: contractAddress,
-        abi: parseAbi(abi),
+        abi: Array.isArray(abi) && typeof abi[0] === 'string' ? parseAbi(abi) : abi,
         eventName,
         fromBlock,
         toBlock,
