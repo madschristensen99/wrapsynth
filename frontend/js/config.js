@@ -85,13 +85,12 @@ export const MONERO_CONFIG = {
     publicNodes: {
         // NOTE: only unrestricted nodes (port 18081) work for monero-ts wallet
         // sync — restricted nodes (18089) don't serve get_blocks.bin. Browser
-        // use also requires the node to send permissive CORS headers.
+        // use also requires the node to send permissive CORS headers. As of
+        // Oct 2026 essentially ALL public nodes are restricted, so the WASM
+        // sweep falls back to the key-export path (Monero GUI/Feather) or a
+        // user-supplied local node via the custom-node override.
         mainnet: [
-            'https://xmr-node.cakewallet.com:18081',
-            'https://nodes.hashvault.pro:18081',
-            'https://xmr-node-eu.cakewallet.com:18081',
-            'https://xmr-node-usa-east.cakewallet.com:18081',
-            'https://monero.stackotus.com:18081'
+            'https://xmr-node.cakewallet.com:18081'
         ],
         stagenet: [
             'http://stagenet.xmr-tw.org:38081',

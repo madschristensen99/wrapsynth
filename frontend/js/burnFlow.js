@@ -18,7 +18,7 @@ import { getPhantomAgent } from './phantomAgent.js?v=3.12';
 import { derivePerBurnKeySet } from './seedManager.js?v=3.12';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js?v=3.12';
 import { updateBurnProgress, showBurnVerificationLoading, showBurnVerificationDetails, showBurnVerificationManual, showBurnAddressPanel, showBurnSweepProgress, showBurnSweepComplete, showBurnSweepError, showBurnKeysFallback, showBurnKeysOption, hideBurnKeysOption, showBurnScanProgress, showBurnXmrFound, updateCancelBurnButton, showBurnDestinationInput, hideBurnDestinationInput } from './ui.js?v=3.12';
-import { getMoneroRpc, createConnectedWalletFull } from './moneroRpc.js?v=3.12';
+import { getMoneroRpc, createConnectedWalletFull, getMoneroNodeOverride } from './moneroRpc.js?v=3.12';
 import { sweepBurnOutput, getCombinedKeysForImport, toLeHex } from './burnSweep.js?v=3.12';
 import { keccak256, toHex } from 'https://esm.sh/viem@2.7.0';
 
@@ -1413,6 +1413,24 @@ export class BurnFlow {
                 this.sweepXMR(this._lastLpSecret); // completes internally on success
             });
             return false; // sweep deferred until the user provides a destination
+        }
+
+        // The in-browser WASM sweep needs an UNRESTRICTED Monero daemon (binary
+        // endpoints get_blocks.bin / get_outputs.bin), but every public node is
+        // restricted — so auto-sweep only works with a user-supplied local node
+        // (custom-node override). Without one, go straight to the key-export path
+        // instead of failing through the node list.
+        if (!getMoneroNodeOverride()) {
+            console.warn('[BurnSweep] No custom Monero node configured — showing key-export fallback (public nodes are all restricted)');
+            showBurnSweepProgress('Automatic sweep unavailable — public Monero nodes are restricted. Use the keys below to claim your XMR in any Monero wallet.');
+            showBurnKeysFallback(keys, this.destination, restoreHeight, this.sharedMoneroAddress);
+            this._sweepFailed = true;
+            updateSwapState({
+                state: 'sweep-failed',
+                lpSecret: lpSecret,
+                message: 'Sweep unavailable without a custom node. Use copied keys to claim XMR manually.'
+            });
+            return false;
         }
 
         // Set up retry listener (cleaned up on success or new attempt)
