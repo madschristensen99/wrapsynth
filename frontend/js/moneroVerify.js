@@ -105,6 +105,41 @@ function txPubkeys(extra) {
     return pubs;
 }
 
+// Match a decoded tx's outputs against the recipient's spend pub + view key.
+// Returns { amount, outputIndex } for the first matching output, or null.
+function matchTxOutputs(txJson, viewKeyScalar, spendPubPoint, G) {
+    const pubs = txPubkeys(txJson.extra);
+    for (const R of pubs) {
+        let Rpt;
+        try { Rpt = edlib.ExtendedPoint.fromHex(R); } catch { continue; }
+        const deriv = Rpt.multiply(viewKeyScalar).multiply(8n).toRawBytes();
+        for (let o = 0; o < (txJson.vout || []).length; o++) {
+            const tk = txJson.vout[o].target && txJson.vout[o].target.tagged_key;
+            const target = tk ? tk.key : (txJson.vout[o].target && txJson.vout[o].target.key);
+            if (!target) continue;
+            if (tk && tk.view_tag != null) {
+                const vt = keccak(concatBytes(utf8('view_tag'), deriv, varint(o)))[0];
+                if (vt !== parseInt(tk.view_tag, 16)) continue;
+            }
+            const scalar1 = scReduce(keccak(concatBytes(deriv, varint(o))));
+            const P = G.multiply(scalar1).add(spendPubPoint).toRawBytes();
+            if (bytesToHex(P) !== target) continue;
+            // Decode amount
+            let amount = null;
+            const ecdh = txJson.rct_signatures && txJson.rct_signatures.ecdhInfo && txJson.rct_signatures.ecdhInfo[o];
+            if (ecdh && ecdh.amount) {
+                const amtKey = keccak(concatBytes(utf8('amount'), bigIntToLe32(scalar1)));
+                const enc = hexToBytes(ecdh.amount);
+                const dec = new Uint8Array(8);
+                for (let k = 0; k < 8; k++) dec[k] = enc[k] ^ amtKey[k];
+                amount = readBigUInt64LE(dec);
+            }
+            return { amount, outputIndex: o };
+        }
+    }
+    return null;
+}
+
 /**
  * Verify a Monero tx pays `address` an output decodable with `viewKeyLeHex`.
  * @param {string} daemonUrl - base daemon URL (e.g. https://xmr-node.cakewallet.com:18081)
@@ -147,35 +182,65 @@ export async function verifyTxPaysAddress(daemonUrl, txid, address, viewKeyLeHex
         if (tip) confirmations = Math.max(0, tip - tx.block_height);
     }
 
-    // Match outputs
-    const pubs = txPubkeys(txJson.extra);
-    for (const R of pubs) {
-        let Rpt;
-        try { Rpt = edlib.ExtendedPoint.fromHex(R); } catch { continue; }
-        const deriv = Rpt.multiply(viewKeyScalar).multiply(8n).toRawBytes();
-        for (let o = 0; o < (txJson.vout || []).length; o++) {
-            const tk = txJson.vout[o].target && txJson.vout[o].target.tagged_key;
-            const target = tk ? tk.key : (txJson.vout[o].target && txJson.vout[o].target.key);
-            if (!target) continue;
-            if (tk && tk.view_tag != null) {
-                const vt = keccak(concatBytes(utf8('view_tag'), deriv, varint(o)))[0];
-                if (vt !== parseInt(tk.view_tag, 16)) continue;
-            }
-            const scalar1 = scReduce(keccak(concatBytes(deriv, varint(o))));
-            const P = G.multiply(scalar1).add(spendPubPoint).toRawBytes();
-            if (bytesToHex(P) !== target) continue;
-            // Decode amount
-            let amount = null;
-            const ecdh = txJson.rct_signatures && txJson.rct_signatures.ecdhInfo && txJson.rct_signatures.ecdhInfo[o];
-            if (ecdh && ecdh.amount) {
-                const amtKey = keccak(concatBytes(utf8('amount'), bigIntToLe32(scalar1)));
-                const enc = hexToBytes(ecdh.amount);
-                const dec = new Uint8Array(8);
-                for (let k = 0; k < 8; k++) dec[k] = enc[k] ^ amtKey[k];
-                amount = readBigUInt64LE(dec);
-            }
-            return { found: true, amount, confirmations, blockHeight: tx.block_height, inPool, outputIndex: o };
-        }
+    const match = matchTxOutputs(txJson, viewKeyScalar, spendPubPoint, G);
+    if (match) {
+        return { found: true, amount: match.amount, confirmations, blockHeight: tx.block_height, inPool, outputIndex: match.outputIndex };
     }
     return { found: false, confirmations, blockHeight: tx.block_height, inPool };
+}
+
+/**
+ * Scan a range of Monero blocks for any tx paying `address` an output
+ * decodable with `viewKeyLeHex`. Mirrors the LP server's scanDepositViaDaemon.
+ * @param {string} daemonUrl - base daemon URL
+ * @param {number} fromHeight - first block to scan (inclusive)
+ * @param {number} toHeight - last block to scan (inclusive)
+ * @param {string} address - shared/destination address to check
+ * @param {string} viewKeyLeHex - private view key, little-endian hex (no 0x)
+ * @returns {Promise<Array<{txid, height, amount, outputIndex}>>}
+ */
+export async function scanBlocksForPayment(daemonUrl, fromHeight, toHeight, address, viewKeyLeHex) {
+    const edlib = await ed();
+    const G = edlib.ExtendedPoint.BASE;
+    const { spendPub } = decodeMoneroAddress(address);
+    const spendPubPoint = edlib.ExtendedPoint.fromHex(spendPub);
+    const viewKeyScalar = scReduce(hexToBytes(viewKeyLeHex));
+    const found = [];
+
+    const from = Math.max(0, fromHeight);
+    const to = Math.max(from, toHeight);
+
+    // Collect tx hashes across the block range
+    const txJobs = [];
+    for (let h = from; h <= to; h++) {
+        const blkRes = await fetch(`${daemonUrl}/json_rpc`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: '0', method: 'get_block', params: { height: h } }),
+        });
+        const blk = await blkRes.json();
+        const hashes = (blk.result && blk.result.tx_hashes) || [];
+        for (const txid of hashes) txJobs.push({ txid, height: h });
+    }
+
+    // Fetch txs in batches and decode outputs
+    for (let i = 0; i < txJobs.length; i += 50) {
+        const batch = txJobs.slice(i, i + 50);
+        const res = await fetch(`${daemonUrl}/get_transactions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ txs_hashes: batch.map(t => t.txid), decode_as_json: true }),
+        });
+        const data = await res.json();
+        for (let j = 0; j < (data.txs || []).length; j++) {
+            const t = data.txs[j];
+            let txJson;
+            try { txJson = JSON.parse(t.as_json); } catch { continue; }
+            const match = matchTxOutputs(txJson, viewKeyScalar, spendPubPoint, G);
+            if (match) {
+                found.push({ txid: batch[j].txid, height: batch[j].height, amount: match.amount, outputIndex: match.outputIndex });
+            }
+        }
+    }
+    return found;
 }

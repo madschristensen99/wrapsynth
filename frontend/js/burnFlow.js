@@ -708,19 +708,48 @@ export class BurnFlow {
                 amount: this.wsxmrAmount
             });
 
-            // Independent daemon-based verifier — runs when a txid is already
-            // known (resumed burn with a persisted txid). Trustlessly decodes the
-            // tx's outputs with the user's view key to prove it pays the shared
-            // address, and tracks confirmations. Fresh burns confirm manually.
-            const pollDaemonTx = async () => {
+            // Daemon-based auto-scan — scans recent Monero blocks for the LP's
+            // XMR tx paying the shared address (decoded trustlessly with the
+            // user's view key). Works for fresh burns too: the scan discovers
+            // the txid, then the txid verifier tracks confirmations.
+            let scanCursor = restoreHeight;
+            const pollDaemonScan = async () => {
                 if (confirmed) return;
-                if (!this.moneroTxHash) return;
                 try {
                     const moneroRpc = getMoneroRpc();
                     const daemonUrl = await moneroRpc.getConnectedUrl();
+                    const minConf = MONERO_CONFIG.confirmations || 10;
+
+                    if (!this.moneroTxHash) {
+                        // No txid yet — scan newly-mined blocks for the payment
+                        const tip = await moneroRpc.getHeight();
+                        if (tip <= scanCursor) return;
+                        const { scanBlocksForPayment } = await import('./moneroVerify.js?v=3.12');
+                        const matches = await scanBlocksForPayment(daemonUrl, scanCursor, tip - 1, this.sharedMoneroAddress, viewKeyLe);
+                        scanCursor = tip;
+                        if (matches.length === 0) return;
+                        const m = matches[0];
+                        this.moneroTxHash = m.txid;
+                        this.moneroTxHeight = m.height;
+                        console.log(`[BurnVerify] Found LP payment tx ${m.txid} at height ${m.height}`);
+                        updateSwapState({
+                            requestId: this.requestId,
+                            state: this.state,
+                            moneroTxHash: this.moneroTxHash,
+                            message: 'XMR payment found — verifying confirmations...'
+                        });
+                        showBurnVerificationDetails({
+                            destination: this.sharedMoneroAddress || '',
+                            txHash: this.moneroTxHash,
+                            confirmations: 'Confirming…',
+                            amount: `${this.wsxmrAmount} XMR`
+                        });
+                        return;
+                    }
+
+                    // Txid known — verify it pays the shared address + track confirmations
                     const { verifyTxPaysAddress } = await import('./moneroVerify.js?v=3.12');
                     const res = await verifyTxPaysAddress(daemonUrl, this.moneroTxHash, this.sharedMoneroAddress, viewKeyLe);
-                    const minConf = MONERO_CONFIG.confirmations || 10;
 
                     if (!res.found) {
                         // Tx exists but output doesn't pay us yet (or still relaying)
@@ -764,11 +793,11 @@ export class BurnFlow {
                         setTimeout(() => onConfirm(), 1500);
                     }
                 } catch (e) {
-                    console.warn('[BurnVerify] daemon verify error:', e.message);
+                    console.warn('[BurnVerify] daemon scan error:', e.message);
                 }
             };
-            daemonTxInterval = setInterval(pollDaemonTx, 8000);
-            setTimeout(pollDaemonTx, 1500); // first check almost immediately
+            daemonTxInterval = setInterval(pollDaemonScan, 10000);
+            setTimeout(pollDaemonScan, 1500); // first check almost immediately
 
 
             // Show manual confirm button immediately alongside auto-scan
