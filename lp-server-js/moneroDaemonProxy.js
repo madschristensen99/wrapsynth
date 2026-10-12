@@ -375,29 +375,52 @@ router.options('*', (req, res) => {
     res.sendStatus(204);
 });
 
-/** Forward the request to the upstream node and pass through the response. */
-async function forwardRaw(req, res) {
+/** Fetch the upstream response WITHOUT sending it — lets callers translate on failure. */
+async function fetchUpstream(req) {
     const target = `${UPSTREAM}${req.originalUrl.replace(/^\/monero-daemon/, '')}`;
+    // express.json() (mounted before this router) already parsed JSON bodies into
+    // an object — re-serialize them. Binary bodies arrive as Buffers via express.raw().
+    const body = Buffer.isBuffer(req.body)
+        ? req.body
+        : Buffer.from(typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {}), 'utf8');
     const upstream = await fetch(target, {
         method: 'POST',
         headers: { 'Content-Type': req.headers['content-type'] || 'application/octet-stream' },
-        body: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0),
+        body,
     });
     const buf = Buffer.from(await upstream.arrayBuffer());
+    return {
+        status: upstream.status,
+        contentType: upstream.headers.get('content-type') || 'application/octet-stream',
+        body: buf,
+    };
+}
+
+/** Forward the request to the upstream node and pass through the response. */
+async function forwardRaw(req, res) {
+    const { status, contentType, body } = await fetchUpstream(req);
     setCors(res);
-    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/octet-stream');
-    res.status(upstream.status);
-    res.send(buf);
-    return upstream.status;
+    res.setHeader('Content-Type', contentType);
+    res.status(status);
+    res.send(body);
+    return status;
+}
+
+/** Send an upstream response to the client (used by binary routes after fetchUpstream). */
+function sendUpstream(res, up) {
+    setCors(res);
+    res.setHeader('Content-Type', up.contentType);
+    res.status(up.status);
+    res.send(up.body);
 }
 
 // get_hashes.bin — forward to the node (it serves these); translate only if blocked.
 router.post(['/get_hashes.bin', '/gethashes.bin'], async (req, res) => {
     const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
     try {
-        const status = await forwardRaw(req, res);
-        if (status < 400) return;
-        console.log('[MoneroProxy] get_hashes.bin blocked upstream (' + status + '), translating');
+        const up = await fetchUpstream(req);
+        if (up.status < 400) { sendUpstream(res, up); return; }
+        console.log('[MoneroProxy] get_hashes.bin blocked upstream (' + up.status + '), translating');
     } catch (e) {
         console.warn('[MoneroProxy] get_hashes.bin forward failed:', e.message);
     }
@@ -445,9 +468,9 @@ router.post(['/get_hashes.bin', '/gethashes.bin'], async (req, res) => {
 router.post(['/get_blocks.bin', '/getblocks.bin'], async (req, res) => {
     const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
     try {
-        const status = await forwardRaw(req, res);
-        if (status < 400) return;
-        console.log('[MoneroProxy] get_blocks.bin blocked upstream (' + status + '), translating');
+        const up = await fetchUpstream(req);
+        if (up.status < 400) { sendUpstream(res, up); return; }
+        console.log('[MoneroProxy] get_blocks.bin blocked upstream (' + up.status + '), translating');
     } catch (e) {
         console.warn('[MoneroProxy] get_blocks.bin forward failed:', e.message);
     }
@@ -549,9 +572,9 @@ router.post(['/get_blocks.bin', '/getblocks.bin'], async (req, res) => {
 router.post('/get_outs.bin', async (req, res) => {
     const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
     try {
-        const status = await forwardRaw(req, res);
-        if (status < 400) return;
-        console.log('[MoneroProxy] get_outs.bin blocked upstream (' + status + '), translating');
+        const up = await fetchUpstream(req);
+        if (up.status < 400) { sendUpstream(res, up); return; }
+        console.log('[MoneroProxy] get_outs.bin blocked upstream (' + up.status + '), translating');
     } catch (e) {
         console.warn('[MoneroProxy] get_outs.bin forward failed:', e.message);
     }
