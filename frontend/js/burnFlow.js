@@ -640,6 +640,10 @@ export class BurnFlow {
                 const manualBtn = document.getElementById('burn-confirm-receipt-manual');
                 if (btn) btn.replaceWith(btn.cloneNode(true));
                 if (manualBtn) manualBtn.replaceWith(manualBtn.cloneNode(true));
+                // Hide the manual confirm container — the user has confirmed (or the
+                // burn was abandoned); there's nothing left to click.
+                const manual = document.getElementById('burn-verification-manual');
+                if (manual) manual.classList.add('hidden');
             };
 
             const closeWallet = async () => {
