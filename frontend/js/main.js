@@ -2079,34 +2079,42 @@ export async function loadVaults() {
         let globalDebtIndex = 1e18;
         let pricesFresh = false;
 
-        // Single round-trip: all oracle reads + vault data + burn IDs in parallel
+        // Single round-trip: all oracle reads + vault data + burn IDs in parallel.
+        // lastXmrPrice/lastCollateralPrice are public storage getters that NEVER
+        // revert — the last logged oracle price is always readable. getXmrPrice/
+        // getCollateralPrice revert when stale, so they're used only as a
+        // freshness probe (getMintCapacity reverts when stale).
         const oracleResults = await Promise.all([
-            readHub('getXmrPrice').catch(e => {
-                console.warn('getXmrPrice reverted:', e.message);
+            readHub('lastXmrPrice').catch(e => {
+                console.warn('lastXmrPrice failed:', e.message);
                 return null;
             }),
-            readHub('getCollateralPrice').catch(e => {
-                console.warn('getCollateralPrice reverted:', e.message);
+            readHub('lastCollateralPrice').catch(e => {
+                console.warn('lastCollateralPrice failed:', e.message);
                 return null;
             }),
+            readHub('getXmrPrice').catch(() => null),
+            readHub('getCollateralPrice').catch(() => null),
             readHub('globalDebtIndex').catch(e => {
                 console.warn('globalDebtIndex failed:', e.message);
                 return null;
             }),
         ]);
 
-        if (oracleResults[0] !== null && oracleResults[1] !== null) {
-            xmrPrice = Number(oracleResults[0]) / 1e18;
-            collPrice = Number(oracleResults[1]) / 1e18;
-            pricesFresh = true;
-            console.log('Oracle prices (fresh):', { xmrPrice, collPrice });
+        // Stored prices are 8-decimal int192
+        if (oracleResults[0] !== null) xmrPrice = Number(oracleResults[0]) / 1e8;
+        if (oracleResults[1] !== null) collPrice = Number(oracleResults[1]) / 1e8;
+        pricesFresh = oracleResults[2] !== null && oracleResults[3] !== null;
+
+        if (xmrPrice > 0 && collPrice > 0) {
+            console.log('Oracle prices (stored):', { xmrPrice, collPrice, fresh: pricesFresh });
         } else {
             xmrPrice = priceCache.value || 0;
             collPrice = 1.0;
             console.log('Using off-chain fallback prices:', { xmrPrice, collPrice, source: 'CoinGecko cache' });
         }
-        if (oracleResults[2] !== null) {
-            globalDebtIndex = oracleResults[2];
+        if (oracleResults[4] !== null) {
+            globalDebtIndex = oracleResults[4];
         }
 
         // Only attempt getMintCapacity if oracle prices are fresh (it reverts otherwise)

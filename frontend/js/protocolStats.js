@@ -88,19 +88,21 @@ async function fetchVaultAggregates() {
         vaultAddresses.push(CONTRACTS.defaultLpVault);
     }
 
-    // Fetch oracle prices
-    let xmrPrice = 150;
+    // Fetch oracle prices — use the public storage getters (never revert) so the
+    // last logged price is always available even when the oracle is stale.
+    let xmrPrice = 0;
     let collateralPrice = 1.0;
     try {
-        const [xmrPriceWei, collPriceWei] = await Promise.all([
-            readHub('getXmrPrice').catch(() => null),
-            readHub('getCollateralPrice').catch(() => null),
+        const [xmrPriceRaw, collPriceRaw] = await Promise.all([
+            readHub('lastXmrPrice').catch(() => null),
+            readHub('lastCollateralPrice').catch(() => null),
         ]);
-        if (xmrPriceWei !== null) xmrPrice = Number(xmrPriceWei) / 1e18;
-        if (collPriceWei !== null) collateralPrice = Number(collPriceWei) / 1e18;
+        if (xmrPriceRaw !== null) xmrPrice = Number(xmrPriceRaw) / 1e8;
+        if (collPriceRaw !== null) collateralPrice = Number(collPriceRaw) / 1e8;
     } catch (e) {
         console.warn('[Protocol Stats] Price fetch failed, using defaults');
     }
+    if (xmrPrice <= 0) xmrPrice = 150; // last resort — should not happen
 
     // Fetch all vault data + debts in parallel
     const vaultResults = await Promise.all(
@@ -134,8 +136,21 @@ async function fetchVaultAggregates() {
         activeCount++;
     }
 
-    // Collateral ratio
-    const collateralValueUsd = Number(formatUnits(totalCollateral, 18)) * collateralPrice;
+    // Collateral ratio — convert sDAI shares to assets (share price > 1)
+    let collateralAssets = totalCollateral;
+    try {
+        const publicClient = getPublicClient();
+        const assets = await publicClient.readContract({
+            address: CONTRACTS.sDAI,
+            abi: [{ name: 'convertToAssets', type: 'function', stateMutability: 'view', inputs: [{ name: 'shares', type: 'uint256' }], outputs: [{ name: '', type: 'uint256' }] }],
+            functionName: 'convertToAssets',
+            args: [totalCollateral],
+        });
+        if (assets !== null && assets !== undefined) collateralAssets = BigInt(assets.toString());
+    } catch (e) {
+        console.warn('[Protocol Stats] convertToAssets failed, using shares as collateral:', e.message);
+    }
+    const collateralValueUsd = Number(formatUnits(collateralAssets, 18)) * collateralPrice;
     const debtValueUsd = Number(formatUnits(totalDebt, 8)) * xmrPrice;
     const collateralRatio = debtValueUsd > 0 ? (collateralValueUsd / debtValueUsd) * 100 : 0;
 
