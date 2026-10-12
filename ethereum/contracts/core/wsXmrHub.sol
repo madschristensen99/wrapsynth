@@ -367,12 +367,21 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         uint256 currentDebt = actualDebt + vault.pendingDebt;
         uint256 currentDebtValueUsd = (currentDebt * xmrPrice) / WSXMR_DECIMALS;
 
-        // Max total debt at 150% CR
+        // Max total debt at 150% CR — still needed for the per-mint maxMintBps cap,
+        // which initiateMint applies to the non-bond-reduced available collateral.
         uint256 maxTotalDebtValueUsd = (collateralValueUsd * RATIO_PRECISION) / COLLATERAL_RATIO;
-        if (currentDebtValueUsd >= maxTotalDebtValueUsd) return 0;
 
-        uint256 maxAdditionalDebtValueUsd = maxTotalDebtValueUsd - currentDebtValueUsd;
-        maxWsxmrAmount = (maxAdditionalDebtValueUsd * WSXMR_DECIMALS) / xmrPrice;
+        // Bond-reserved capacity: a mint of x wsXMR locks a 110%-of-par key bond
+        // AND must leave the remaining free collateral at CR >= 150%:
+        //   (C - 1.1·x·p) · 100  >=  150 · (D0 + x) · p        [all terms USD]
+        //   x <= (100·C - 150·D0) / ((150 + 110)·p)
+        // Mirrors the bond-reserved check in initiateMint/provideLPKey so the
+        // reported capacity is actually mintable — not just CR-eligible.
+        uint256 numerator = collateralValueUsd * RATIO_PRECISION;
+        uint256 debtTerm = currentDebtValueUsd * COLLATERAL_RATIO;
+        if (numerator <= debtTerm) return 0;
+        maxWsxmrAmount = ((numerator - debtTerm) * WSXMR_DECIMALS)
+            / ((COLLATERAL_RATIO + MINT_LOCK_RATIO) * xmrPrice);
 
         // Apply maxMintBps limit (limits single mint USD value)
         if (vault.maxMintBps > 0) {
