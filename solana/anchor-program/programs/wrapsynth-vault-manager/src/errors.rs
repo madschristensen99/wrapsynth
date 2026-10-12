@@ -26,6 +26,14 @@ pub enum WrapSynthError {
     BurnAlreadyExists,
     #[msg("Invalid secret")]
     InvalidSecret,
+    #[msg("Invalid user secret")]
+    InvalidUserSecret,
+    #[msg("Burn exceeds vault debt")]
+    BurnExceedsVaultDebt,
+    #[msg("Invalid commitment")]
+    InvalidCommitment,
+    #[msg("Pending mints must be resolved first")]
+    PendingMintLock,
     #[msg("Invalid status for operation")]
     InvalidStatus,
     #[msg("Timeout not reached")]
@@ -58,8 +66,6 @@ pub enum WrapSynthError {
     MaxBurnRequestsReached,
     #[msg("Only user can initiate this operation")]
     OnlyUserCanInitiate,
-    #[msg("Only user can cancel during grace period")]
-    GracePeriodOnlyUser,
     #[msg("Burn invalidated by liquidation")]
     BurnInvalidatedByLiquidation,
     #[msg("Buy-and-burn cooldown active")]

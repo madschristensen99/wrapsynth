@@ -72,6 +72,17 @@ pub fn mul_verify(secret: &[u8; 32], commitment: &[u8; 32]) -> bool {
     computed == *commitment
 }
 
+/// Verify a secret against a stored compressed Ed25519 public key.
+/// Returns true iff compress(secret * G) == public_key.
+/// Used on the burn side to verify the user's Monero spend key half on slash /
+/// decline paths (mirrors the EVM's compressPoint comparison).
+pub fn verify_public_key(secret: &[u8; 32], public_key: &[u8; 32]) -> bool {
+    let scalar = Scalar::from_bytes_mod_order(*secret);
+    let point: EdwardsPoint = ED25519_BASEPOINT_POINT * scalar;
+    let compressed = point.compress();
+    compressed.as_bytes() == public_key
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

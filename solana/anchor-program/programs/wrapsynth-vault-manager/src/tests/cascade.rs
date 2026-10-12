@@ -128,6 +128,7 @@ fn cascade_liquidation_math_commutative() {
         global_pending_burn_debt: 0,
         last_buy_timestamp: 0,
         vault_count: 5,
+        total_pending_mints: 0,
         request_nonce: 0,
         bump: 0,
     };
@@ -153,6 +154,7 @@ fn cascade_liquidation_math_commutative() {
                 principal_shares: coll,
                 principal_sol_value: coll,
                 active_burn_count: 0,
+                pending_mint_count: 0,
                 active: true,
                 bump: 0,
             };
@@ -264,10 +266,18 @@ fn burn_request_nonce_invalidation() {
         xmr_amount: 10_000_000_000,
         locked_collateral: 100_000,
         reward_collateral: 10_000,
+        user_claim_commitment: [0u8; 32],
+        user_public_key: [0u8; 32],
+        user_view_key: [0u8; 32],
+        xmr_price_at_request: 1_000_000_000_000_000_000,
         secret_hash: [0u8; 32],
+        lp_public_spend_key: [0u8; 32],
+        lp_public_view_key: [0u8; 32],
+        revealed_secret: [0u8; 32],
         deadline: 0,
         vault_liquidation_nonce: 0, // created before liquidation
         normalized_debt_amount: 100,
+        abandoned: false,
         status: BurnStatus::Committed,
         bump: 0,
     };
@@ -289,6 +299,7 @@ fn burn_request_nonce_invalidation() {
         principal_shares: 1_000_000,
         principal_sol_value: 1_000_000,
         active_burn_count: 1,
+        pending_mint_count: 0,
         active: true,
         bump: 0,
     };
@@ -319,6 +330,7 @@ fn partial_liquidation_does_not_underflow() {
         principal_shares: 10_000_000_000_000_000,
         principal_sol_value: 10_000_000_000_000_000,
         active_burn_count: 0,
+        pending_mint_count: 0,
         active: true,
         bump: 0,
     };
@@ -341,6 +353,7 @@ fn partial_liquidation_does_not_underflow() {
         global_pending_burn_debt: 0,
         last_buy_timestamp: 0,
         vault_count: 1,
+        total_pending_mints: 0,
         request_nonce: 0,
         bump: 0,
     };

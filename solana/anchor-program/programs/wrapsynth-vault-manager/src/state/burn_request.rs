@@ -36,19 +36,39 @@ pub struct BurnRequest {
     pub locked_collateral: u64,
     /// Extra collateral locked as burn reward
     pub reward_collateral: u64,
+    /// User's Ed25519 commitment: keccak256(compress(secret · G))
+    pub user_claim_commitment: [u8; 32],
+    /// User's compressed Ed25519 public spend key (for Monero address derivation + slash verification)
+    pub user_public_key: [u8; 32],
+    /// User's Ed25519 public view key (x-coordinate)
+    pub user_view_key: [u8; 32],
+    /// XMR price snapshot at request time (par settlement for slashes)
+    pub xmr_price_at_request: u64,
     /// Hash of LP's secret (set in propose_hash)
     pub secret_hash: [u8; 32],
+    /// LP's Ed25519 public spend key (x-coordinate) — set at propose_hash
+    pub lp_public_spend_key: [u8; 32],
+    /// LP's Ed25519 public view key (x-coordinate) — set at propose_hash
+    pub lp_public_view_key: [u8; 32],
+    /// LP's revealed Ed25519 secret (set by reveal_burn_secret / finalize_burn)
+    pub revealed_secret: [u8; 32],
     /// Deadline unix timestamp
     pub deadline: i64,
     /// Snapshot of vault liquidation nonce at creation
     pub vault_liquidation_nonce: u64,
-    /// Normalized debt amount deducted when burn was requested
+    /// Normalized debt amount deducted at settlement (0 until then — debt is NOT
+    /// reduced at request time, eliminating index-shift debt inflation bugs)
     pub normalized_debt_amount: u64,
+    /// True when the LP abandoned a PROPOSED burn — the user's wsXMR remains
+    /// claimable via resolve_declined_proposal (requires userSecret reveal)
+    pub abandoned: bool,
     pub status: BurnStatus,
     pub bump: u8,
 }
 
 impl BurnRequest {
-    /// 8 + 32 + 32*2 + 8*6 + 32 + 8 + 8*2 + 1 + 1 + padding = ~270
-    pub const LEN: usize = 280;
+    /// 8 disc + 3*32 (ids) + 4*8 (amounts) + 8*32 (commitments/keys/secrets)
+    /// + 8 (deadline) + 8 (nonce) + 8 (normalized) + 1 (abandoned) + 1 (status)
+    /// + 1 (bump) + padding = ~440 → 512 for safety
+    pub const LEN: usize = 512;
 }

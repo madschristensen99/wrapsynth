@@ -215,6 +215,18 @@ function makeSecretAndCommitment(): { secret: Buffer; commitment: Buffer } {
   return { secret, commitment };
 }
 
+// Compressed Ed25519 public point (32 bytes) — the userPublicKey / LP public keys
+// stored on-chain. Matches the Rust scheme: compress(secret · G) little-endian.
+function computePublicKey(secret: Buffer): Buffer {
+  let scalar = 0n;
+  for (let i = 0; i < 32; i++) {
+    scalar |= BigInt(secret[i]) << BigInt(i * 8);
+  }
+  const reduced = scalar % ED25519_L;
+  const publicKeyPoint = Point.BASE.multiply(reduced);
+  return Buffer.from(publicKeyPoint.toRawBytes());
+}
+
 // ─── Helper: derive PDA ───────────────────────────────────────────────────────
 function deriveGlobalState(programId: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([GLOBAL_STATE_SEED], programId);
@@ -594,6 +606,12 @@ describe("WrapSynth VaultManager — Full Integration", () => {
     const xmrAmount  = 100_000_000_000n;  // 0.1 XMR in atomic units (12 dec)
     const wsxmrAmt   = 10_000_000n;         // 0.1 wsXMR (8 dec)
     const { secret, commitment } = makeSecretAndCommitment();
+    const userPublicKey = computePublicKey(secret);
+    // LP key material for provide_lp_key (view = spend is the canonical scheme)
+    const lpSecret = crypto.randomBytes(32);
+    const lpCommitment = computeCommitment(lpSecret);
+    const lpSpendKey = computePublicKey(lpSecret);
+    const lpViewKey = computePublicKey(lpSecret);
 
     let requestId: Buffer;
     let mintRequestPda: PublicKey;
@@ -621,6 +639,7 @@ describe("WrapSynth VaultManager — Full Integration", () => {
           .initiateMint(
             new BN(xmrAmount.toString()),
             Array.from(commitment),
+            Array.from(userPublicKey),
             new BN(timeoutDuration),
             Array.from(requestId),
           )
@@ -643,6 +662,7 @@ describe("WrapSynth VaultManager — Full Integration", () => {
         assert.equal(mr.initiator.toBase58(), user.publicKey.toBase58());
         assert.equal(mr.xmrAmount.toString(), xmrAmount.toString());
         assert.deepEqual(Array.from(mr.claimCommitment), Array.from(commitment));
+        assert.deepEqual(Array.from(mr.userPublicKey), Array.from(userPublicKey));
         assert.isDefined(mr.status.pending, "Status should be Pending");
         console.log("    ✓ MintRequest created:", mintRequestPda.toBase58());
       } catch (e: any) {
@@ -654,12 +674,59 @@ describe("WrapSynth VaultManager — Full Integration", () => {
       }
     });
 
-    it("4.2 LP marks mint as ready", async () => {
+    it("4.2 LP provides keys and locks the key bond", async () => {
       if (!mintRequestPda) return;
       try {
         await (program.account as any).mintRequest.fetch(mintRequestPda);
       } catch {
-        console.log("    ⚠ Skipping set_mint_ready: mintRequest not created");
+        console.log("    ⚠ Skipping provide_lp_key: mintRequest not created");
+        return;
+      }
+
+      try {
+        await program.methods
+          .provideLpKey(
+            Array.from(lpSpendKey),
+            Array.from(lpViewKey),
+            Array.from(lpCommitment),
+          )
+          .accounts({
+            lp:            lp.publicKey,
+            vault:         vaultPda,
+            globalState,
+            mintRequest:   mintRequestPda,
+            pythXmr:       pythXmrKeypair.publicKey,
+            pythCollateral: pythColKeypair.publicKey,
+            jitosolStakePool: new PublicKey("Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb"),
+          } as any)
+          .signers([lp])
+          .rpc();
+
+        const mr = await (program.account as any).mintRequest.fetch(mintRequestPda);
+        assert.isDefined(mr.status.keyProvided, "Mint request should be KeyProvided");
+        assert.deepEqual(Array.from(mr.lpCommitment), Array.from(lpCommitment));
+        assert.isTrue(mr.lockedCollateral.gtn(0), "Key bond should be locked");
+        console.log("    ✓ LP key provided, bond locked:", mr.lockedCollateral.toString());
+      } catch (e: any) {
+        if (e.message?.includes("StalePrice") || e.message?.includes("InsufficientCollateral")) {
+          console.log("    ⚠ Skipping provide_lp_key:", e.message.split("\n")[0]);
+        } else {
+          throw e;
+        }
+      }
+    });
+
+    it("4.3 LP marks mint as ready", async () => {
+      if (!mintRequestPda) return;
+      let mr: any;
+      try {
+        mr = await (program.account as any).mintRequest.fetch(mintRequestPda);
+        if (!JSON.stringify(mr.status).includes("KeyProvided")) {
+          console.log("    ⚠ Skipping set_mint_ready: request not KeyProvided");
+          return;
+        }
+      } catch {
+        console.log("    ⚠ Skipping set_mint_ready: mintRequest not found");
         return;
       }
 
@@ -673,12 +740,13 @@ describe("WrapSynth VaultManager — Full Integration", () => {
             mintRequest:   mintRequestPda,
             pythXmr:       pythXmrKeypair.publicKey,
             pythCollateral: pythColKeypair.publicKey,
+            jitosolStakePool: new PublicKey("Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb"),
           } as any)
           .signers([lp])
           .rpc();
 
-        const mr = await (program.account as any).mintRequest.fetch(mintRequestPda);
-        assert.isDefined(mr.status.ready, "Mint request should be Ready");
+        const mr2 = await (program.account as any).mintRequest.fetch(mintRequestPda);
+        assert.isDefined(mr2.status.ready, "Mint request should be Ready");
         console.log("    ✓ MintRequest marked Ready");
       } catch (e: any) {
         if (e.message?.includes("StalePrice")) {
@@ -689,13 +757,50 @@ describe("WrapSynth VaultManager — Full Integration", () => {
       }
     });
 
-    it("4.3 finalizes mint with correct secret", async () => {
+    it("4.4 user reveals secret (pure verification)", async () => {
       if (!mintRequestPda) return;
       let mr: any;
       try {
         mr = await (program.account as any).mintRequest.fetch(mintRequestPda);
         if (!JSON.stringify(mr.status).includes("Ready")) {
-          console.log("    ⚠ Skipping finalize: request not Ready");
+          console.log("    ⚠ Skipping reveal_secret: request not Ready");
+          return;
+        }
+      } catch {
+        console.log("    ⚠ Skipping reveal_secret: mintRequest not found");
+        return;
+      }
+
+      try {
+        await program.methods
+          .revealSecret(Array.from(secret))
+          .accounts({
+            caller:      user.publicKey,
+            mintRequest: mintRequestPda,
+          } as any)
+          .signers([user])
+          .rpc();
+
+        const mr2 = await (program.account as any).mintRequest.fetch(mintRequestPda);
+        assert.isDefined(mr2.status.secretRevealed, "Mint request should be SecretRevealed");
+        assert.deepEqual(Array.from(mr2.revealedSecret), Array.from(secret));
+        console.log("    ✓ Secret revealed, status: SecretRevealed");
+      } catch (e: any) {
+        if (e.message?.includes("InvalidSecret")) {
+          console.log("    ⚠ Skipping reveal_secret:", e.message.split("\n")[0]);
+        } else {
+          throw e;
+        }
+      }
+    });
+
+    it("4.5 finalizes mint (permissionless, reads stored secret)", async () => {
+      if (!mintRequestPda) return;
+      let mr: any;
+      try {
+        mr = await (program.account as any).mintRequest.fetch(mintRequestPda);
+        if (!JSON.stringify(mr.status).includes("SecretRevealed")) {
+          console.log("    ⚠ Skipping finalize: request not SecretRevealed");
           return;
         }
       } catch {
@@ -705,7 +810,7 @@ describe("WrapSynth VaultManager — Full Integration", () => {
 
       try {
         await program.methods
-          .finalizeMint(Array.from(secret))
+          .finalizeMint()
           .accounts({
             caller:           user.publicKey,
             vault:            vaultPda,
@@ -717,6 +822,7 @@ describe("WrapSynth VaultManager — Full Integration", () => {
             pendingReturns:   userPendingReturns,
             pythXmr:          pythXmrKeypair.publicKey,
             pythCollateral:   pythColKeypair.publicKey,
+            jitosolStakePool: new PublicKey("Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb"),
             tokenProgram:     TOKEN_2022_PROGRAM_ID,
             systemProgram:    SystemProgram.programId,
           } as any)
@@ -758,6 +864,14 @@ describe("WrapSynth VaultManager — Full Integration", () => {
     // LP's secret for the burn handshake
     const lpBurnSecret = crypto.randomBytes(32);
     const lpSecretHash = computeCommitment(lpBurnSecret);
+    const lpBurnSpendKey = computePublicKey(lpBurnSecret);
+    const lpBurnViewKey = computePublicKey(lpBurnSecret);
+
+    // User's key material for the burn request
+    const userBurnSecret = crypto.randomBytes(32);
+    const userClaimCommitment = computeCommitment(userBurnSecret);
+    const userBurnPublicKey = computePublicKey(userBurnSecret);
+    const userBurnViewKey = computePublicKey(userBurnSecret);
 
     it("5.1 user requests a burn", async () => {
       const gs = await (program.account as any).globalState.fetch(globalState);
@@ -774,6 +888,9 @@ describe("WrapSynth VaultManager — Full Integration", () => {
         await program.methods
           .requestBurn(
             new BN(wsxmrToBurn.toString()),
+            Array.from(userClaimCommitment),
+            Array.from(userBurnPublicKey),
+            Array.from(userBurnViewKey),
             Array.from(burnRequestId),
           )
           .accounts({
@@ -829,7 +946,11 @@ describe("WrapSynth VaultManager — Full Integration", () => {
       }
 
       await program.methods
-        .proposeHash(Array.from(lpSecretHash))
+        .proposeHash(
+          Array.from(lpSecretHash),
+          Array.from(lpBurnSpendKey),
+          Array.from(lpBurnViewKey),
+        )
         .accounts({
           lp:          lp.publicKey,
           vault:       vaultPda,
@@ -888,13 +1009,15 @@ describe("WrapSynth VaultManager — Full Integration", () => {
         await program.methods
           .finalizeBurn(Array.from(lpBurnSecret))
           .accounts({
-            lp:                 lp.publicKey,
+            caller:             lp.publicKey,
+            vaultLp:            lp.publicKey,
             vault:              vaultPda,
             globalState,
             burnRequest:        burnRequestPda,
             userPendingReturns,
             pythXmr:            pythXmrKeypair.publicKey,
             pythCollateral:     pythColKeypair.publicKey,
+            jitosolStakePool:   new PublicKey("Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb"),
             systemProgram:      SystemProgram.programId,
           } as any)
           .preInstructions([
@@ -923,7 +1046,8 @@ describe("WrapSynth VaultManager — Full Integration", () => {
   // 6. CANCEL MINT (timeout path)
   // ══════════════════════════════════════════════════════════════════════════════
   describe("6. Cancel Mint (timeout path)", () => {
-    const { commitment: c2 } = makeSecretAndCommitment();
+    const { commitment: c2, secret: s2 } = makeSecretAndCommitment();
+    const userPublicKey2 = computePublicKey(s2);
     const xmrAmt = 500_000_000_000n; // 0.5 XMR
     let cancelMintRequestId: Buffer;
     let cancelMintPda: PublicKey;
@@ -941,6 +1065,7 @@ describe("WrapSynth VaultManager — Full Integration", () => {
           .initiateMint(
             new BN(xmrAmt.toString()),
             Array.from(c2),
+            Array.from(userPublicKey2),
             new BN(10), // very short timeout for testing
             Array.from(cancelMintRequestId),
           )
@@ -991,6 +1116,13 @@ describe("WrapSynth VaultManager — Full Integration", () => {
             mintRequest:     cancelMintPda,
             initiatorReturns: userPendingReturns,
             lpReturns:       lpPendingReturns,
+            wsxmrMint,
+            recipientWsxmrAta: userWsxmrAta,
+            lpWsxmrAta,
+            pythXmr:         pythXmrKeypair.publicKey,
+            pythCollateral:  pythColKeypair.publicKey,
+            jitosolStakePool: new PublicKey("Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb"),
+            tokenProgram:    TOKEN_2022_PROGRAM_ID,
             systemProgram:   SystemProgram.programId,
           } as any)
           .signers([admin])
@@ -1012,12 +1144,18 @@ describe("WrapSynth VaultManager — Full Integration", () => {
   // ══════════════════════════════════════════════════════════════════════════════
   // 7. CANCEL BURN (pre-commit path)
   // ══════════════════════════════════════════════════════════════════════════════
-  describe("7. Cancel Burn (pre-commit)", () => {
+  describe("7. Abort Burn (pre-commit path)", () => {
     const wsxmrAmt = 2_000_000n; // 0.02 wsXMR
     let cancelBurnId: Buffer;
     let cancelBurnPda: PublicKey;
 
-    it("creates a burn request to cancel", async () => {
+    // User key material for the burn request
+    const abortUserSecret = crypto.randomBytes(32);
+    const abortClaimCommitment = computeCommitment(abortUserSecret);
+    const abortUserPublicKey = computePublicKey(abortUserSecret);
+    const abortUserViewKey = computePublicKey(abortUserSecret);
+
+    it("creates a burn request to abort", async () => {
       const gs = await (program.account as any).globalState.fetch(globalState);
       const nonce = BigInt(gs.requestNonce.toString()) + 1n;
       cancelBurnId = computeRequestId(user.publicKey, vaultPda, wsxmrAmt, nonce);
@@ -1025,7 +1163,13 @@ describe("WrapSynth VaultManager — Full Integration", () => {
 
       try {
         await program.methods
-          .requestBurn(new BN(wsxmrAmt.toString()), Array.from(cancelBurnId))
+          .requestBurn(
+            new BN(wsxmrAmt.toString()),
+            Array.from(abortClaimCommitment),
+            Array.from(abortUserPublicKey),
+            Array.from(abortUserViewKey),
+            Array.from(cancelBurnId),
+          )
           .accounts({
             user:          user.publicKey,
             vault:         vaultPda,
@@ -1046,36 +1190,29 @@ describe("WrapSynth VaultManager — Full Integration", () => {
       }
     });
 
-    it("cancels burn before user commits (Requested → Cancelled)", async () => {
+    it("aborts burn before user commits (Requested → Cancelled)", async () => {
       let br: any;
       try {
         br = await (program.account as any).burnRequest.fetch(cancelBurnPda);
         if (!JSON.stringify(br.status).includes("Requested")) {
-          console.log("    ⚠ Skipping cancel: burn not in Requested state");
+          console.log("    ⚠ Skipping abort: burn not in Requested state");
           return;
         }
       } catch {
-        console.log("    ⚠ Skipping cancel: burnRequest not found");
+        console.log("    ⚠ Skipping abort: burnRequest not found");
         return;
       }
 
-      // Wait past the BURN_REQUEST_TIMEOUT (3600s on chain, but in test we just check
-      // that cancel works if LP doesn't propose — here we call immediately since
-      // the protocol allows cancel in Requested state after deadline)
-      // For test purposes, advance slot time or call with caller == user
       try {
         await program.methods
-          .cancelBurn()
+          .abortBurn()
           .accounts({
             caller:            user.publicKey,
             vault:             vaultPda,
             globalState,
             burnRequest:       cancelBurnPda,
-            userPendingReturns,
             wsxmrMint,
             userWsxmrAta,
-            pythXmr:           pythXmrKeypair.publicKey,
-            pythCollateral:    pythColKeypair.publicKey,
             tokenProgram:      TOKEN_2022_PROGRAM_ID,
             systemProgram:     SystemProgram.programId,
           } as any)
@@ -1084,10 +1221,10 @@ describe("WrapSynth VaultManager — Full Integration", () => {
 
         const cancelled = await (program.account as any).burnRequest.fetch(cancelBurnPda);
         assert.ok(JSON.stringify(cancelled.status).includes("Cancelled"), "Should be Cancelled");
-        console.log("    ✓ Burn cancelled before commit");
+        console.log("    ✓ Burn aborted before commit");
       } catch (e: any) {
-        if (e.message?.includes("StalePrice") || e.message?.includes("NotExpired")) {
-          console.log("    ⚠ Cancel burn failed:", e.message.split("\n")[0]);
+        if (e.message?.includes("NotExpired") || e.message?.includes("StalePrice")) {
+          console.log("    ⚠ Abort burn failed:", e.message.split("\n")[0]);
         } else {
           throw e;
         }
@@ -1104,6 +1241,14 @@ describe("WrapSynth VaultManager — Full Integration", () => {
     let slashBurnPda: PublicKey;
     const fakeLpSecret = crypto.randomBytes(32);
     const fakeLpHash   = computeCommitment(fakeLpSecret);
+    const fakeLpSpendKey = computePublicKey(fakeLpSecret);
+    const fakeLpViewKey = computePublicKey(fakeLpSecret);
+
+    // User key material — the slash claim requires revealing the user's spend key half
+    const slashUserSecret = crypto.randomBytes(32);
+    const slashClaimCommitment = computeCommitment(slashUserSecret);
+    const slashUserPublicKey = computePublicKey(slashUserSecret);
+    const slashUserViewKey = computePublicKey(slashUserSecret);
 
     it("creates and commits a burn request (reaching Committed)", async () => {
       const gs = await (program.account as any).globalState.fetch(globalState);
@@ -1114,7 +1259,13 @@ describe("WrapSynth VaultManager — Full Integration", () => {
       try {
         // Step 1: request_burn
         await program.methods
-          .requestBurn(new BN(wsxmrAmt.toString()), Array.from(slashBurnId))
+          .requestBurn(
+            new BN(wsxmrAmt.toString()),
+            Array.from(slashClaimCommitment),
+            Array.from(slashUserPublicKey),
+            Array.from(slashUserViewKey),
+            Array.from(slashBurnId),
+          )
           .accounts({
             user: user.publicKey, vault: vaultPda, globalState,
             burnRequest: slashBurnPda, wsxmrMint, userWsxmrAta,
@@ -1128,7 +1279,11 @@ describe("WrapSynth VaultManager — Full Integration", () => {
 
         // Step 2: propose_hash
         await program.methods
-          .proposeHash(Array.from(fakeLpHash))
+          .proposeHash(
+            Array.from(fakeLpHash),
+            Array.from(fakeLpSpendKey),
+            Array.from(fakeLpViewKey),
+          )
           .accounts({ lp: lp.publicKey, vault: vaultPda, burnRequest: slashBurnPda } as any)
           .signers([lp])
           .rpc();
@@ -1165,7 +1320,7 @@ describe("WrapSynth VaultManager — Full Integration", () => {
       // to warp clock. We verify the instruction is callable and check revert behavior.
       try {
         await program.methods
-          .claimSlashedCollateral()
+          .claimSlashedCollateral(Array.from(slashUserSecret))
           .accounts({
             user:              user.publicKey,
             vaultLp:           lp.publicKey,

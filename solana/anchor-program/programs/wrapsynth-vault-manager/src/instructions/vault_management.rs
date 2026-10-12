@@ -124,6 +124,9 @@ pub fn withdraw_collateral(ctx: Context<WithdrawCollateral>, amount: u64) -> Res
 
     let vault = &mut ctx.accounts.vault;
     require!(vault.active, WrapSynthError::VaultNotActive);
+    // Block withdrawals while READY mints are pending — the par lock must stay
+    // reserved until the mint is finalized or cancelled (EVM parity).
+    require!(vault.pending_mint_count == 0, WrapSynthError::PendingMintLock);
 
     // Sync yield FIRST before reading state
     sync_vault_yield(

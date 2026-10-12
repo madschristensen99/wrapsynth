@@ -38,6 +38,8 @@ pub struct GlobalState {
     pub last_buy_timestamp: i64,
     /// Number of active vaults
     pub vault_count: u32,
+    /// Number of mints in READY state across all vaults — blocks buy-and-burn until resolved
+    pub total_pending_mints: u32,
     /// Global nonce for request ID generation
     pub request_nonce: u64,
 
@@ -49,8 +51,8 @@ impl GlobalState {
     /// Pubkeys: 5 * 32 = 160 (removed pyth_collateral_feed)
     /// u64s: 10 * 8 = 80 (added global_lp_principal_sol_value)
     /// i64: 8
-    /// u32: 4
+    /// u32s: 2 * 4 = 8 (added total_pending_mints)
     /// u8: 1
-    /// Total data: 253 + 8 discriminator = 261 → pad to 268
-    pub const LEN: usize = 8 + 160 + 80 + 8 + 4 + 1 + 7; // = 268
+    /// Total data: 257 + 8 discriminator = 265 → pad to 276
+    pub const LEN: usize = 8 + 160 + 80 + 8 + 8 + 1 + 11; // = 276
 }

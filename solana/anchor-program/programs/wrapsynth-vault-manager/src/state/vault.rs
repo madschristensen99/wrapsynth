@@ -35,12 +35,14 @@ pub struct Vault {
     pub principal_sol_value: u64,
     /// Number of currently active (non-terminal) burn requests
     pub active_burn_count: u32,
+    /// Number of mints in READY state — blocks state-changing vault ops until resolved
+    pub pending_mint_count: u32,
     pub active: bool,
     pub bump: u8,
 }
 
 impl Vault {
-    /// 8 disc + 32 + 8*8 + 3*2 + u64*2 + u32 + 2*bool/u8 + padding
-    /// 8 + 32 + 64 + 6 + 16 + 4 + 2 + 12 (pad) = 144 → use 200 for safety
-    pub const LEN: usize = 200;
+    /// 8 disc + 32 + 8*8 + 3*2 + u64*2 + u32*2 + 2*bool/u8 + padding
+    /// 8 + 32 + 64 + 6 + 16 + 8 + 2 + 12 (pad) = 148 → use 216 for safety
+    pub const LEN: usize = 216;
 }

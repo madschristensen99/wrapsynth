@@ -41,6 +41,10 @@ pub fn trigger_buy_and_burn(
         WrapSynthError::CooldownActive
     );
 
+    // 1b. Pending mint lock — a full wipe while READY mints are outstanding would
+    //     zero the index under their reservations (EVM parity).
+    require!(global.total_pending_mints == 0, WrapSynthError::PendingMintLock);
+
     // 2. EMA vs Spot: spot <= ema * 99/100
     let spot = get_xmr_price(&ctx.accounts.pyth_xmr, 3600)?;
     let ema = get_xmr_ema_price(&ctx.accounts.pyth_xmr, 3600)?;

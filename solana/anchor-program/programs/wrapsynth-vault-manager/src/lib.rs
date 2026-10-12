@@ -94,56 +94,154 @@ pub mod wrapsynth_vault_manager {
         ctx: Context<InitiateMint>,
         xmr_amount: u64,
         claim_commitment: [u8; 32],
+        user_public_key: [u8; 32],
         timeout_duration: i64,
         request_id: [u8; 32],
     ) -> Result<()> {
-        mint_flow::initiate_mint(ctx, xmr_amount, claim_commitment, timeout_duration, request_id)
+        mint_flow::initiate_mint(
+            ctx,
+            xmr_amount,
+            claim_commitment,
+            user_public_key,
+            timeout_duration,
+            request_id,
+        )
+    }
+
+    pub fn provide_lp_key(
+        ctx: Context<ProvideLPKey>,
+        lp_public_spend_key: [u8; 32],
+        lp_public_view_key: [u8; 32],
+        lp_commitment: [u8; 32],
+    ) -> Result<()> {
+        mint_flow::provide_lp_key(ctx, lp_public_spend_key, lp_public_view_key, lp_commitment)
     }
 
     pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
         mint_flow::set_mint_ready(ctx)
     }
 
-    pub fn finalize_mint(ctx: Context<FinalizeMint>, secret: [u8; 32]) -> Result<()> {
-        mint_flow::finalize_mint(ctx, secret)
+    pub fn reveal_secret(ctx: Context<RevealSecret>, secret: [u8; 32]) -> Result<()> {
+        mint_flow::reveal_secret(ctx, secret)
+    }
+
+    pub fn finalize_mint(ctx: Context<FinalizeMint>) -> Result<()> {
+        mint_flow::finalize_mint(ctx)
     }
 
     pub fn cancel_mint(ctx: Context<CancelMint>) -> Result<()> {
         mint_flow::cancel_mint(ctx)
     }
 
+    pub fn abandon_key_provided_mint(
+        ctx: Context<AbandonKeyProvidedMint>,
+        lp_secret: [u8; 32],
+    ) -> Result<()> {
+        mint_flow::abandon_key_provided_mint(ctx, lp_secret)
+    }
+
+    pub fn reclaim_parked_deposit(ctx: Context<ReclaimParkedDeposit>) -> Result<()> {
+        mint_flow::reclaim_parked_deposit(ctx)
+    }
+
+    pub fn claim_griefing_deposit(
+        ctx: Context<ClaimGriefingDeposit>,
+        lp_secret: [u8; 32],
+    ) -> Result<()> {
+        mint_flow::claim_griefing_deposit(ctx, lp_secret)
+    }
+
+    pub fn sweep_unclaimed_expired_mint(ctx: Context<SweepUnclaimedExpiredMint>) -> Result<()> {
+        mint_flow::sweep_unclaimed_expired_mint(ctx)
+    }
+
     // ── Burning Flow (3-step handshake) ───────────────────────────────────────
 
-    pub fn request_burn(ctx: Context<RequestBurn>, wsxmr_amount: u64, request_id: [u8; 32]) -> Result<()> {
-        burn_flow::request_burn(ctx, wsxmr_amount, request_id)
+    pub fn request_burn(
+        ctx: Context<RequestBurn>,
+        wsxmr_amount: u64,
+        claim_commitment: [u8; 32],
+        user_public_key: [u8; 32],
+        user_view_key: [u8; 32],
+        request_id: [u8; 32],
+    ) -> Result<()> {
+        burn_flow::request_burn(
+            ctx,
+            wsxmr_amount,
+            claim_commitment,
+            user_public_key,
+            user_view_key,
+            request_id,
+        )
     }
 
     pub fn request_burn_from_router(
         ctx: Context<RequestBurn>,
         wsxmr_amount: u64,
+        claim_commitment: [u8; 32],
+        user_public_key: [u8; 32],
+        user_view_key: [u8; 32],
         request_id: [u8; 32],
     ) -> Result<()> {
-        burn_flow::request_burn_from_router(ctx, wsxmr_amount, request_id)
+        burn_flow::request_burn_from_router(
+            ctx,
+            wsxmr_amount,
+            claim_commitment,
+            user_public_key,
+            user_view_key,
+            request_id,
+        )
     }
 
-    pub fn propose_hash(ctx: Context<ProposeHash>, secret_hash: [u8; 32]) -> Result<()> {
-        burn_flow::propose_hash(ctx, secret_hash)
+    pub fn propose_hash(
+        ctx: Context<ProposeHash>,
+        secret_hash: [u8; 32],
+        lp_public_spend_key: [u8; 32],
+        lp_public_view_key: [u8; 32],
+    ) -> Result<()> {
+        burn_flow::propose_hash(ctx, secret_hash, lp_public_spend_key, lp_public_view_key)
     }
 
     pub fn confirm_monero_lock(ctx: Context<ConfirmMoneroLock>) -> Result<()> {
         burn_flow::confirm_monero_lock(ctx)
     }
 
+    pub fn reveal_burn_secret(ctx: Context<RevealBurnSecret>, secret: [u8; 32]) -> Result<()> {
+        burn_flow::reveal_burn_secret(ctx, secret)
+    }
+
+    pub fn settle_burn(ctx: Context<SettleBurn>) -> Result<()> {
+        burn_flow::settle_burn(ctx)
+    }
+
     pub fn finalize_burn(ctx: Context<FinalizeBurn>, secret: [u8; 32]) -> Result<()> {
         burn_flow::finalize_burn(ctx, secret)
     }
 
-    pub fn claim_slashed_collateral(ctx: Context<ClaimSlashedCollateral>) -> Result<()> {
-        burn_flow::claim_slashed_collateral(ctx)
+    pub fn claim_slashed_collateral(
+        ctx: Context<ClaimSlashedCollateral>,
+        user_secret: [u8; 32],
+    ) -> Result<()> {
+        burn_flow::claim_slashed_collateral(ctx, user_secret)
     }
 
-    pub fn cancel_burn(ctx: Context<CancelBurn>) -> Result<()> {
-        burn_flow::cancel_burn(ctx)
+    pub fn abort_burn(ctx: Context<AbortBurn>) -> Result<()> {
+        burn_flow::abort_burn(ctx)
+    }
+
+    pub fn force_settle_burn(ctx: Context<ForceSettleBurn>) -> Result<()> {
+        burn_flow::force_settle_burn(ctx)
+    }
+
+    pub fn resolve_declined_proposal(
+        ctx: Context<ResolveDeclinedProposal>,
+        user_secret: [u8; 32],
+    ) -> Result<()> {
+        burn_flow::resolve_declined_proposal(ctx, user_secret)
+    }
+
+    pub fn abandon_proposed_burn(ctx: Context<AbandonProposedBurn>) -> Result<()> {
+        burn_flow::abandon_proposed_burn(ctx)
     }
 
     // ── Liquidation ───────────────────────────────────────────────────────────

@@ -54,32 +54,24 @@ pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> 
 
     match request.status {
         BurnStatus::Requested | BurnStatus::Proposed => {
-            // LP has not yet committed XMR — re-mint wsXMR to user and restore debt
+            // LP has not yet committed XMR — re-mint wsXMR to user. Debt was NOT
+            // reduced at request time, so there is nothing to restore.
             let vault = &mut ctx.accounts.vault;
             let global = &mut ctx.accounts.global_state;
 
-            // Restore normalized debt
-            let max_normalized = normalize_debt(request.wsxmr_amount, global.global_debt_index);
-            let safe_normalized = request.normalized_debt_amount.min(max_normalized);
-            vault.normalized_debt = vault
-                .normalized_debt
-                .checked_add(safe_normalized)
-                .ok_or(WrapSynthError::MathOverflow)?;
-            global.global_total_debt = global
-                .global_total_debt
-                .checked_add(request.wsxmr_amount)
-                .ok_or(WrapSynthError::MathOverflow)?;
-            global.global_pending_burn_debt = global
-                .global_pending_burn_debt
-                .saturating_sub(request.wsxmr_amount);
-
-            // Unlock collateral back to liquid
-            vault.locked_collateral = vault.locked_collateral.saturating_sub(total_locked);
-            vault.collateral_amount = vault
-                .collateral_amount
-                .checked_add(total_locked)
-                .ok_or(WrapSynthError::MathOverflow)?;
+            // Total model: release the reservation only.
+            if vault.locked_collateral < total_locked {
+                vault.locked_collateral = 0;
+            } else {
+                vault.locked_collateral -= total_locked;
+            }
             vault.active_burn_count = vault.active_burn_count.saturating_sub(1);
+
+            if global.global_pending_burn_debt < request.wsxmr_amount {
+                global.global_pending_burn_debt = 0;
+            } else {
+                global.global_pending_burn_debt -= request.wsxmr_amount;
+            }
 
             // Re-mint wsXMR to user
             let bump = global.bump;
@@ -100,29 +92,113 @@ pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> 
             msg!("Burn {:?} re-minted to user (pre-liquidation)", request.request_id);
         }
         BurnStatus::Committed => {
-            // User confirmed Monero lock — slash locked collateral to user
-            let vault = &mut ctx.accounts.vault;
-            let global = &mut ctx.accounts.global_state;
+            if request.revealed_secret != [0u8; 32] {
+                // LP already revealed — the user can claim the XMR. Settle rather
+                // than slash: release the lock to the vault (seizable) and pay
+                // only the reward (mirrors EVM _settleRevealedBurnLiquidation).
+                let vault = &mut ctx.accounts.vault;
+                let global = &mut ctx.accounts.global_state;
 
-            vault.locked_collateral = vault.locked_collateral.saturating_sub(total_locked);
-            vault.active_burn_count = vault.active_burn_count.saturating_sub(1);
+                if vault.locked_collateral < total_locked {
+                    vault.locked_collateral = 0;
+                } else {
+                    vault.locked_collateral -= total_locked;
+                }
 
-            ctx.accounts.user_pending_returns.collateral_amount = ctx
-                .accounts
-                .user_pending_returns
-                .collateral_amount
-                .checked_add(total_locked)
-                .ok_or(WrapSynthError::MathOverflow)?;
-            global.global_pending_collateral = global
-                .global_pending_collateral
-                .checked_add(total_locked)
-                .ok_or(WrapSynthError::MathOverflow)?;
-            global.global_pending_burn_debt = global
-                .global_pending_burn_debt
-                .saturating_sub(request.wsxmr_amount);
+                let mut reward = request.reward_collateral;
+                if vault.collateral_amount < reward {
+                    reward = vault.collateral_amount;
+                }
+                vault.collateral_amount -= reward;
 
-            request.status = BurnStatus::Slashed;
-            msg!("Burn {:?} slashed to user (liquidation)", request.request_id);
+                // Debt reduction happens here at settlement
+                let normalized_burn = normalize_debt(request.wsxmr_amount, global.global_debt_index);
+                let normalized_burn = normalized_burn.min(vault.normalized_debt);
+                vault.normalized_debt -= normalized_burn;
+                global.global_total_debt = global
+                    .global_total_debt
+                    .saturating_sub(get_actual_debt(normalized_burn, global.global_debt_index));
+
+                if global.global_pending_burn_debt < request.wsxmr_amount {
+                    global.global_pending_burn_debt = 0;
+                } else {
+                    global.global_pending_burn_debt -= request.wsxmr_amount;
+                }
+
+                if reward > 0 {
+                    ctx.accounts.user_pending_returns.collateral_amount = ctx
+                        .accounts
+                        .user_pending_returns
+                        .collateral_amount
+                        .checked_add(reward)
+                        .ok_or(WrapSynthError::MathOverflow)?;
+                    global.global_pending_collateral = global
+                        .global_pending_collateral
+                        .checked_add(reward)
+                        .ok_or(WrapSynthError::MathOverflow)?;
+                }
+
+                vault.active_burn_count = vault.active_burn_count.saturating_sub(1);
+                request.status = BurnStatus::Completed;
+                msg!("Burn {:?} settled (revealed, liquidation)", request.request_id);
+            } else {
+                // User confirmed Monero lock, LP never revealed — par-capped slash:
+                // user receives min(par, locked) + reward; excess returns to vault
+                // (mirrors EVM _settleCommittedBurnSlash).
+                let vault = &mut ctx.accounts.vault;
+                let global = &mut ctx.accounts.global_state;
+
+                let par_value_usd = (request.wsxmr_amount as u128)
+                    .checked_mul(request.xmr_price_at_request as u128)
+                    .ok_or(WrapSynthError::MathOverflow)?
+                    / WSXMR_DECIMALS as u128;
+                let par_collateral = usd_to_collateral(par_value_usd as u64, col_price);
+
+                let user_base = par_collateral.min(request.locked_collateral);
+                let user_payout = user_base.saturating_add(request.reward_collateral);
+
+                if vault.locked_collateral < total_locked {
+                    vault.locked_collateral = 0;
+                } else {
+                    vault.locked_collateral -= total_locked;
+                }
+                if vault.collateral_amount < user_payout {
+                    vault.collateral_amount = 0;
+                } else {
+                    vault.collateral_amount -= user_payout;
+                }
+
+                // Debt reduction happens here at settlement
+                let normalized_burn = normalize_debt(request.wsxmr_amount, global.global_debt_index);
+                let normalized_burn = normalized_burn.min(vault.normalized_debt);
+                vault.normalized_debt -= normalized_burn;
+                global.global_total_debt = global
+                    .global_total_debt
+                    .saturating_sub(get_actual_debt(normalized_burn, global.global_debt_index));
+
+                if global.global_pending_burn_debt < request.wsxmr_amount {
+                    global.global_pending_burn_debt = 0;
+                } else {
+                    global.global_pending_burn_debt -= request.wsxmr_amount;
+                }
+
+                if user_payout > 0 {
+                    ctx.accounts.user_pending_returns.collateral_amount = ctx
+                        .accounts
+                        .user_pending_returns
+                        .collateral_amount
+                        .checked_add(user_payout)
+                        .ok_or(WrapSynthError::MathOverflow)?;
+                    global.global_pending_collateral = global
+                        .global_pending_collateral
+                        .checked_add(user_payout)
+                        .ok_or(WrapSynthError::MathOverflow)?;
+                }
+
+                vault.active_burn_count = vault.active_burn_count.saturating_sub(1);
+                request.status = BurnStatus::Slashed;
+                msg!("Burn {:?} slashed to user (liquidation)", request.request_id);
+            }
         }
         _ => return err!(WrapSynthError::InvalidStatus),
     }
@@ -139,7 +215,10 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
     let vault = &mut ctx.accounts.vault;
     require!(vault.active, WrapSynthError::VaultNotActive);
     require!(vault.active_burn_count == 0, WrapSynthError::UnresolvedBurns);
-    require!(vault.locked_collateral == 0, WrapSynthError::CancelBurnsFirst);
+    // NOTE: locked_collateral may be > 0 from in-flight mint key bonds / par
+    // locks. Liquidation never seizes locked collateral — the seizure below caps
+    // at the liquid balance, and the mint's cancel/finalize paths resolve the
+    // bond against the bumped mint_nonce (EVM parity).
 
     sync_vault_yield(
         vault,
@@ -174,12 +253,14 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
     let col_val_usd = collateral_value_for_debt(debt_to_clear, xmr_price, LIQUIDATION_BONUS);
     let mut collateral_amount = usd_to_collateral(col_val_usd, col_price);
 
-    // Cap at available (unlocked) collateral
-    if collateral_amount > vault.collateral_amount {
+    // Cap at available (unlocked) collateral — total model: locked collateral
+    // (mint bonds / burn locks) is never seized.
+    let available_collateral = vault.collateral_amount.saturating_sub(vault.locked_collateral);
+    if collateral_amount > available_collateral {
         // Scale down proportionally to maintain liquidator's bonus
-        debt_to_clear = (debt_to_clear as u128 * vault.collateral_amount as u128
+        debt_to_clear = (debt_to_clear as u128 * available_collateral as u128
             / collateral_amount as u128) as u64;
-        collateral_amount = vault.collateral_amount;
+        collateral_amount = available_collateral;
     }
 
     // Update principal tracking proportionally
@@ -223,7 +304,10 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
         vault.normalized_debt = 0;
     }
 
-    // Increment nonces to atomically invalidate all pending mints/burns
+    // Increment nonces to atomically invalidate all pending mints/burns.
+    // pending_debt is intentionally NOT zeroed — liquidation never touches it;
+    // the invalidated mint requests release their own reservations on cancel/
+    // finalize (EVM parity).
     vault.liquidation_nonce = vault
         .liquidation_nonce
         .checked_add(1)
@@ -232,7 +316,6 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
         .mint_nonce
         .checked_add(1)
         .ok_or(WrapSynthError::MathOverflow)?;
-    vault.pending_debt = 0;
 
     // Burn liquidator's wsXMR
     let cpi_ctx = CpiContext::new(

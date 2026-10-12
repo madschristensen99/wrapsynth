@@ -13,9 +13,12 @@ programs/
       instructions/
         initialize.rs        # Protocol init, GlobalState + wsXMR mint creation
         vault_management.rs  # LP vault CRUD, collateral deposit/withdraw, yield sync
-        mint_flow.rs         # initiate_mint → set_mint_ready → finalize_mint → cancel_mint
+        mint_flow.rs         # initiate_mint → provide_lp_key → set_mint_ready → reveal_secret
+                             # → finalize_mint; cancel_mint + abandon/reclaim/claim/sweep paths
         burn_flow.rs         # request_burn → propose_hash → confirm_monero_lock → finalize_burn
-                             # + cancel_burn, claim_slashed_collateral
+                             # + reveal_burn_secret/settle_burn, claim_slashed_collateral,
+                             # abort_burn, force_settle_burn, resolve_declined_proposal,
+                             # abandon_proposed_burn
         liquidation.rs       # resolve_burn_for_liquidation, execute_liquidation
         buy_and_burn.rs      # trigger_buy_and_burn (war-chest deflation)
         withdrawals.rs       # initialize_pending_returns, withdraw_collateral_returns, withdraw_sol_returns

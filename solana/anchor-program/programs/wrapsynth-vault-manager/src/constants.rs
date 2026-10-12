@@ -11,6 +11,7 @@ pub const LIQUIDATION_BONUS: u64 = 112;     // liquidator incentive (was 110)
 pub const RATIO_PRECISION: u64 = 100;
 pub const BURN_LOCK_RATIO: u64 = 160;       // reserve for in-flight burns (was 130)
 pub const YIELD_BUFFER_RATIO: u64 = 190;    // CR + 10 headroom after yield extraction
+pub const MINT_LOCK_RATIO: u64 = 110;       // key bond / par lock buffer over par (EVM parity)
 
 // Compile-time invariant checks — these must hold or the program fails to compile.
 // Ordering: LIQUIDATION_RATIO < COLLATERAL_RATIO < YIELD_BUFFER_RATIO
@@ -32,9 +33,11 @@ pub const XMR_TO_WSXMR_DIVISOR: u64 = 10_000;               // 1e4 (12 dec → 8
 
 // Timeouts (seconds)
 pub const MAX_MINT_TIMEOUT: i64 = 7_200;    // 2 hours
+pub const LP_CLAIM_WINDOW: i64 = 1_800;     // 30 min for LP to claim after mint expiry
 pub const MINT_READY_EXTENSION: i64 = 7_200; // 2 hours
 pub const BURN_REQUEST_TIMEOUT: i64 = 3_600; // 1 hour
 pub const BURN_COMMIT_TIMEOUT: i64 = 7_200;  // 2 hours
+pub const BURN_FINALIZE_GRACE: i64 = 600;    // 10 min grace for LP finalization
 pub const GRACE_PERIOD: i64 = 900;           // 15 minutes
 
 // Fee caps
