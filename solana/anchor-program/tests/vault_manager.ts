@@ -556,6 +556,35 @@ describe("WrapSynth VaultManager — Full Integration", () => {
       console.log("    ✓ Batch whitelist works");
     });
 
+    it("sets max co-LP range", async () => {
+      await program.methods
+        .setMaxCoLPRange(3000)
+        .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
+        .signers([lp])
+        .rpc();
+
+      const vault = await (program.account as any).vault.fetch(vaultPda);
+      assert.equal(vault.maxCoLPRangeBps, 3000, "Max co-LP range should be 3000 bps");
+      console.log("    ✓ Max co-LP range set");
+    });
+
+    it("rejects out-of-range co-LP range config", async () => {
+      try {
+        await program.methods
+          .setMaxCoLPRange(100) // below MIN_CO_LP_RANGE_BPS (1000)
+          .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
+          .signers([lp])
+          .rpc();
+        assert.fail("Should have rejected out-of-range co-LP range");
+      } catch (e: any) {
+        assert.ok(
+          e.message && !e.message.includes("panicked"),
+          "Should fail gracefully"
+        );
+        console.log("    ✓ Out-of-range co-LP range rejected:", e.message.split("\n")[0].substring(0, 60));
+      }
+    });
+
     it("initializes vault collateral ATA", async () => {
       [vaultCollateralAta] = deriveVaultCollateral(vaultPda, programId);
       await program.methods

@@ -289,6 +289,33 @@ pub mod wrapsynth_vault_manager {
         liquidation::backstop_vault(ctx)
     }
 
+    // ── Co-LP (Orca Whirlpools) ───────────────────────────────────────────────
+
+    /// LP sets the preferred max co-LP range width (basis points).
+    pub fn set_max_co_lp_range(ctx: Context<SetMaxCoLPRange>, bps: u16) -> Result<()> {
+        co_lp::set_max_co_lp_range(ctx, bps)
+    }
+
+    /// User pairs wsXMR with vault idle sUSDe collateral to open a position.
+    pub fn user_open_co_lp(ctx: Context<UserOpenCoLP>, wsxmr_amount: u64) -> Result<()> {
+        co_lp::user_open_co_lp(ctx, wsxmr_amount)
+    }
+
+    /// LP or user collects accrued fees from a co-LP position.
+    pub fn collect_co_lp_fees(ctx: Context<CollectCoLPFees>) -> Result<()> {
+        co_lp::collect_co_lp_fees(ctx)
+    }
+
+    /// LP or user closes a co-LP position and distributes proceeds.
+    pub fn unwind_co_lp(ctx: Context<UnwindCoLP>) -> Result<()> {
+        co_lp::unwind_co_lp(ctx)
+    }
+
+    /// Keeper drains a co-LP position for rebalancing (re-open via user_open_co_lp).
+    pub fn rebalance_co_lp(ctx: Context<RebalanceCoLP>, new_range_bps: u16) -> Result<()> {
+        co_lp::rebalance_co_lp(ctx, new_range_bps)
+    }
+
     // ── Buy-and-Burn ──────────────────────────────────────────────────────────
 
     pub fn trigger_buy_and_burn(

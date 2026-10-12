@@ -21,6 +21,8 @@ programs/
                              # abort_burn, force_settle_burn, resolve_declined_proposal,
                              # abandon_proposed_burn
         liquidation.rs       # resolve_burn_for_liquidation, execute_liquidation, backstop_vault
+        co_lp.rs             # set_max_co_lp_range, user_open_co_lp, collect_co_lp_fees,
+                             # unwind_co_lp, rebalance_co_lp (Orca Whirlpools concentrated LP)
         buy_and_burn.rs      # trigger_buy_and_burn (war-chest deflation) + continue_debt_wipe,
                              # continue_debt_migration (batch debt wipe / index migration)
         withdrawals.rs       # initialize_pending_returns, withdraw_collateral_returns, withdraw_sol_returns

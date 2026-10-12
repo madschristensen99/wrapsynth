@@ -215,6 +215,9 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
     let vault = &mut ctx.accounts.vault;
     require!(vault.active, WrapSynthError::VaultNotActive);
     require!(vault.active_burn_count == 0, WrapSynthError::UnresolvedBurns);
+    // Co-LP positions must be unwound first (EVM _unwindAllVaultPositions parity —
+    // Solana unwinds via unwind_co_lp, one position at a time).
+    require!(vault.deployed_collateral == 0, WrapSynthError::UnresolvedBurns);
     // NOTE: locked_collateral may be > 0 from in-flight mint key bonds / par
     // locks. Liquidation never seizes locked collateral — the seizure below caps
     // at the liquid balance, and the mint's cancel/finalize paths resolve the
@@ -365,6 +368,8 @@ pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
     let old = &mut ctx.accounts.old_vault;
     let new = &mut ctx.accounts.new_vault;
     require!(old.active, WrapSynthError::VaultNotActive);
+    // Co-LP positions must be unwound first (EVM _unwindAllVaultPositions parity)
+    require!(old.deployed_collateral == 0, WrapSynthError::UnresolvedBurns);
     require!(new.active, WrapSynthError::VaultNotActive);
     require!(old.key() != new.key(), WrapSynthError::InvalidValue);
     require!(old.active_burn_count == 0, WrapSynthError::UnresolvedBurns);

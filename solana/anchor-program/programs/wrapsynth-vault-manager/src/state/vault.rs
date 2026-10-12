@@ -48,12 +48,16 @@ pub struct Vault {
     pub whitelisted_minters: [Pubkey; MAX_WHITELISTED_MINTERS],
     /// Number of entries in whitelisted_minters
     pub whitelisted_minter_count: u32,
+    /// sUSDe shares deployed into co-LP positions (excluded from liquid balance)
+    pub deployed_collateral: u64,
+    /// LP's preferred max co-LP range width in basis points (EVM maxCoLPRangeBps parity)
+    pub max_co_lp_range_bps: u16,
     pub active: bool,
     pub bump: u8,
 }
 
 impl Vault {
     /// 8 disc + 32 + 11*8 + 3*2 + 3*4 + 2*8 (timeouts) + 32*32 (whitelist)
-    /// + 1 + 1 = 8+32+88+6+12+16+1024+2 = 1188 → pad to 1200
-    pub const LEN: usize = 1200;
+    /// + 8 (deployed) + 2 (max range) + 1 + 1 = 1198 → pad to 1216
+    pub const LEN: usize = 1216;
 }

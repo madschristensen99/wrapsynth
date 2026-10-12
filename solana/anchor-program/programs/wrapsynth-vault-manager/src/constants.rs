@@ -45,6 +45,13 @@ pub const DEFAULT_BURN_TIMEOUT_SECONDS: i64 = 3_600; // ~1 hour
 // Minter whitelist (EVM whitelistedMinters parity — fixed-size cap for Solana)
 pub const MAX_WHITELISTED_MINTERS: usize = 32;
 
+// Co-LP (Orca Whirlpools) — EVM co-LP constants parity
+pub const MIN_CO_LP_RANGE_BPS: u16 = 1_000;
+pub const MAX_CO_LP_RANGE_BPS: u16 = 10_000;
+pub const DEFAULT_CO_LP_RANGE_BPS: u16 = 2_500;
+pub const CO_LP_REBALANCE_FEE_BPS: u64 = 10; // 0.1% keeper fee on rebalance
+pub const ORCA_WHIRLPOOLS_PROGRAM_ID: &str = "whirLbMiicVdio4qv2fSf1YjRUUPXusSbq2vMZmZ2A";
+
 // Fee caps
 pub const BPS_DENOMINATOR: u64 = 10_000;
 pub const MAX_MARGIN_BPS: u64 = 1_000; // 10%
@@ -109,3 +116,5 @@ pub const BURN_REQUEST_SEED: &[u8] = b"burn_request";
 pub const PENDING_RETURNS_SEED: &[u8] = b"pending_returns";
 pub const WSXMR_MINT_SEED: &[u8] = b"wsxmr_mint";
 pub const VAULT_COLLATERAL_SEED: &[u8] = b"vault_collateral";
+pub const CO_LP_POSITION_SEED: &[u8] = b"co_lp_position";
+pub const CO_LP_POSITION_MINT_SEED: &[u8] = b"co_lp_position_mint";

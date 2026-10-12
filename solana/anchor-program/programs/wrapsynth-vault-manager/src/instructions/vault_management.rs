@@ -37,6 +37,8 @@ pub fn create_vault(ctx: Context<CreateVault>) -> Result<()> {
     vault.burn_timeout_seconds = DEFAULT_BURN_TIMEOUT_SECONDS;
     vault.whitelisted_minters = [Pubkey::default(); MAX_WHITELISTED_MINTERS];
     vault.whitelisted_minter_count = 0;
+    vault.deployed_collateral = 0;
+    vault.max_co_lp_range_bps = DEFAULT_CO_LP_RANGE_BPS;
     vault.active = true;
     vault.bump = ctx.bumps.vault;
 

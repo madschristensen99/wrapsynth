@@ -6,6 +6,7 @@ pub mod liquidation;
 pub mod buy_and_burn;
 pub mod withdrawals;
 pub mod reconciliation;
+pub mod co_lp;
 
 pub use initialize::*;
 pub use vault_management::*;
@@ -15,3 +16,4 @@ pub use liquidation::*;
 pub use buy_and_burn::*;
 pub use withdrawals::*;
 pub use reconciliation::*;
+pub use co_lp::*;

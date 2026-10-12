@@ -93,6 +93,28 @@ fn ratio_invariants_hold() {
 }
 
 #[test]
+fn whirlpool_tick_math_sane() {
+    use crate::utils::whirlpool::{compute_range_ticks, tick_array_start_index};
+
+    // A range centered on a tick must bracket it and align to tick spacing
+    let (lower, upper) = compute_range_ticks(0, 2500, 60);
+    assert!(lower < 0 && upper > 0, "range must bracket current tick");
+    assert_eq!(lower % 60, 0, "lower must align to tick spacing");
+    assert_eq!(upper % 60, 0, "upper must align to tick spacing");
+    assert!(upper - lower > 0, "range must be positive width");
+
+    // Wider range → wider tick span
+    let (l2, u2) = compute_range_ticks(0, 10000, 60);
+    assert!(u2 - l2 > upper - lower, "wider range must widen ticks");
+
+    // Tick array start index must be a multiple of (88 * tick_spacing)
+    let start = tick_array_start_index(12345, 60);
+    assert_eq!(start % (88 * 60), 0, "tick array start must align");
+    let start_neg = tick_array_start_index(-12345, 60);
+    assert_eq!(start_neg % (88 * 60), 0, "negative tick array start must align");
+}
+
+#[test]
 fn cascade_liquidation_math_commutative() {
     // Prices before drop (both $1 in 1e18 to keep arithmetic simple and within u64)
     let xmr_price = 1_000_000_000_000_000_000u64; // $1 in 1e18
@@ -164,6 +186,8 @@ fn cascade_liquidation_math_commutative() {
                 burn_timeout_seconds: DEFAULT_BURN_TIMEOUT_SECONDS,
                 whitelisted_minters: [Pubkey::default(); MAX_WHITELISTED_MINTERS],
                 whitelisted_minter_count: 0,
+                deployed_collateral: 0,
+                max_co_lp_range_bps: DEFAULT_CO_LP_RANGE_BPS,
                 active: true,
                 bump: 0,
             };
@@ -313,6 +337,8 @@ fn burn_request_nonce_invalidation() {
         burn_timeout_seconds: DEFAULT_BURN_TIMEOUT_SECONDS,
         whitelisted_minters: [Pubkey::default(); MAX_WHITELISTED_MINTERS],
         whitelisted_minter_count: 0,
+        deployed_collateral: 0,
+        max_co_lp_range_bps: DEFAULT_CO_LP_RANGE_BPS,
         active: true,
         bump: 0,
     };
@@ -348,6 +374,8 @@ fn partial_liquidation_does_not_underflow() {
         burn_timeout_seconds: DEFAULT_BURN_TIMEOUT_SECONDS,
         whitelisted_minters: [Pubkey::default(); MAX_WHITELISTED_MINTERS],
         whitelisted_minter_count: 0,
+        deployed_collateral: 0,
+        max_co_lp_range_bps: DEFAULT_CO_LP_RANGE_BPS,
         active: true,
         bump: 0,
     };
