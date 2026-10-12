@@ -590,8 +590,10 @@ export class BurnFlow {
         let restoreHeight = 0;
         if (this.moneroProposeHeight) {
             // The LP's XMR tx can confirm BEFORE this height is recorded (it is
-            // fetched after the tx is already in flight) — use a wide margin.
-            restoreHeight = Math.max(0, this.moneroProposeHeight - 60);
+            // fetched after the tx is already in flight) — use a margin. The tx
+            // confirms within ~10 blocks of propose, so 20 is safe and keeps the
+            // first scan fast.
+            restoreHeight = Math.max(0, this.moneroProposeHeight - 20);
             console.log('Using stored Monero propose height as restore:', restoreHeight, '(propose was at', this.moneroProposeHeight + ')');
         } else {
             try {
@@ -725,9 +727,16 @@ export class BurnFlow {
                         const tip = await moneroRpc.getHeight();
                         if (tip <= scanCursor) return;
                         console.log(`[BurnVerify] Scanning blocks ${scanCursor} → ${tip - 1} for LP payment...`);
+                        showBurnVerificationDetails({
+                            destination: this.sharedMoneroAddress || '',
+                            txHash: '',
+                            confirmations: `Scanning blocks ${scanCursor.toLocaleString()} → ${(tip - 1).toLocaleString()}…`,
+                            amount: `${this.wsxmrAmount} XMR`
+                        });
                         const { scanBlocksForPayment } = await import('./moneroVerify.js?v=3.12');
                         const matches = await scanBlocksForPayment(daemonUrl, scanCursor, tip - 1, this.sharedMoneroAddress, viewKeyLe);
                         scanCursor = tip;
+                        console.log(`[BurnVerify] Scan of ${scanCursor - restoreHeight} blocks found ${matches.length} match(es)`);
                         if (matches.length === 0) return;
                         const m = matches[0];
                         this.moneroTxHash = m.txid;
@@ -794,7 +803,7 @@ export class BurnFlow {
                         setTimeout(() => onConfirm(), 1500);
                     }
                 } catch (e) {
-                    console.warn('[BurnVerify] daemon scan error:', e.message);
+                    console.warn('[BurnVerify] daemon scan error:', e);
                 }
             };
             daemonTxInterval = setInterval(pollDaemonScan, 10000);
