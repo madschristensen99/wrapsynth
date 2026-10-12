@@ -327,21 +327,35 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpSpendP
 
   const mint = pendingMints.get(reqIdHex) || {};
 
-  // 0. Check on-chain status to handle restarts gracefully
+  // 0. Check on-chain status to handle restarts gracefully. Retry transient
+  // RPC failures — proceeding with an unknown status risks a blind
+  // provideLPKey call (reverts if keys are already posted).
   let onChainStatus = -1;
-  try {
-    const mintReq = await hub.getMintRequest(reqIdHex);
-    onChainStatus = Number(mintReq.status);
-    console.log(`[Chain] Mint ${reqIdHex} on-chain status: ${onChainStatus} (1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED)`);
-
-    if (onChainStatus === 5 || onChainStatus === 6) {
-      console.log(`[Mint] Mint already ${onChainStatus === 5 ? 'completed' : 'cancelled'}, skipping`);
-      pendingMints.delete(reqIdHex);
-      return;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const mintReq = await hub.getMintRequest(reqIdHex);
+      onChainStatus = Number(mintReq.status);
+      console.log(`[Chain] Mint ${reqIdHex} on-chain status: ${onChainStatus} (1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED)`);
+      break;
+    } catch (err) {
+      if (attempt < 3) {
+        console.warn(`[Chain] Status read failed (attempt ${attempt}/3), retrying:`, err.message);
+        await new Promise(r => setTimeout(r, 3000 * attempt));
+      } else {
+        console.warn(`[Chain] Could not query mint status after 3 attempts, proceeding anyway:`, err.message);
+      }
     }
+  }
 
-    // If keys already provided on-chain, use the existing keys instead of calling provideLPKey again
-    if (onChainStatus >= 2) {
+  if (onChainStatus === 5 || onChainStatus === 6) {
+    console.log(`[Mint] Mint already ${onChainStatus === 5 ? 'completed' : 'cancelled'}, skipping`);
+    pendingMints.delete(reqIdHex);
+    return;
+  }
+
+  // If keys already provided on-chain, use the existing keys instead of calling provideLPKey again
+  if (onChainStatus >= 2) {
+    try {
       const existingSpendKey = await hub.lpPublicKeys(reqIdHex);
       const existingViewKey = await hub.lpPublicViewKeys(reqIdHex);
       if (existingSpendKey !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
@@ -349,12 +363,17 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpSpendP
         lpPublicSpendKey = existingSpendKey;
         lpPublicViewKey = existingViewKey;
       }
+    } catch (err) {
+      console.warn(`[Chain] Could not read existing LP keys, proceeding with provided keys:`, err.message);
     }
+  }
 
-    // Refuse to key a mint whose claimCommitment doesn't bind to userPublicKey —
-    // the revealed secret would not complete the deposit spend key, so the XMR
-    // could never be swept while wsXMR still mints against our vault.
-    if (onChainStatus === 1) {
+  // Refuse to key a mint whose claimCommitment doesn't bind to userPublicKey —
+  // the revealed secret would not complete the deposit spend key, so the XMR
+  // could never be swept while wsXMR still mints against our vault.
+  if (onChainStatus === 1) {
+    try {
+      const mintReq = await hub.getMintRequest(reqIdHex);
       const bound = await verifyCommitmentBinding(mintReq.claimCommitment, mintReq.userPublicKey);
       if (!bound) {
         console.error(`[Mint] ${reqIdHex}: claimCommitment does not match userPublicKey — refusing to key (deposit would be unspendable)`);
@@ -363,9 +382,9 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpSpendP
         pendingMints.set(reqIdHex, mint);
         return;
       }
+    } catch (err) {
+      console.warn(`[Chain] Could not verify commitment binding, proceeding anyway:`, err.message);
     }
-  } catch (err) {
-    console.warn(`[Chain] Could not query mint status, proceeding anyway:`, err.message);
   }
 
   // 1. Compute LP secret and commitment (needed for provideLPKey)
@@ -500,7 +519,11 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpSpendP
       let scanHeight = 0;
       try {
         const height = await moneroWallet.getDaemonHeight();
-        scanHeight = Math.max(0, height - 100);
+        // Scan a deep window — late-processed mints (recovery path) may have
+        // deposits older than 100 blocks. 1000 Monero blocks ≈ 33h, which
+        // covers any mint still inside its timeout window. (initiatedAtBlock
+        // is an EVM block number, NOT a Monero height — cannot be used here.)
+        scanHeight = Math.max(0, height - 1000);
         console.log(`[Mint] Current Monero height: ${height}, scanning from ${scanHeight}`);
       } catch (err) {
         console.warn(`[Mint] Could not get daemon height, scanning from 0:`, err.message);
@@ -1623,10 +1646,16 @@ app.listen(PORT, async () => {
       console.error('[Startup] Monero wallet RPC unreachable — mint scanning will fail until monero-wallet-rpc is started');
     }
   }
-  try {
-    await startupRecoverMints();
-  } catch (err) {
-    console.error('[Startup] Mint recovery failed:', err.message);
+  // Retry recovery a few times — the RPC is flaky and a transient failure at
+  // startup would strand KEY_PROVIDED mints until the next restart.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await startupRecoverMints();
+      break;
+    } catch (err) {
+      console.error(`[Startup] Mint recovery failed (attempt ${attempt}/3):`, err.message || err);
+      if (attempt < 3) await new Promise(r => setTimeout(r, 10000 * attempt));
+    }
   }
   try {
     await startupResolveStale();
