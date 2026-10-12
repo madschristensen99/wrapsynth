@@ -210,27 +210,44 @@ export async function scanBlocksForPayment(daemonUrl, fromHeight, toHeight, addr
     const from = Math.max(0, fromHeight);
     const to = Math.max(from, toHeight);
 
+    // Small helper with retry — public daemons rate-limit parallel requests,
+    // and a silently-dropped block/batch would miss the payment tx entirely.
+    async function fetchJson(url, body, retries = 3) {
+        let lastErr;
+        for (let attempt = 1; attempt <= retries; attempt++) {
+            try {
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return await res.json();
+            } catch (err) {
+                lastErr = err;
+                await new Promise(r => setTimeout(r, 500 * attempt));
+            }
+        }
+        throw lastErr;
+    }
+
     // Collect tx hashes across the block range. Fetch blocks in parallel
-    // (concurrency-limited) — sequential get_block calls are too slow for a
-    // 60+ block window.
+    // (concurrency-limited) with retries.
     const heights = [];
     for (let h = from; h <= to; h++) heights.push(h);
     const blockHashes = new Array(heights.length);
-    const CONCURRENCY = 8;
+    const CONCURRENCY = 4;
     let nextBlock = 0;
+    let blockFailures = 0;
     async function blockWorker() {
         while (nextBlock < heights.length) {
             const i = nextBlock++;
             const h = heights[i];
             try {
-                const blkRes = await fetch(`${daemonUrl}/json_rpc`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ jsonrpc: '2.0', id: '0', method: 'get_block', params: { height: h } }),
-                });
-                const blk = await blkRes.json();
+                const blk = await fetchJson(`${daemonUrl}/json_rpc`, { jsonrpc: '2.0', id: '0', method: 'get_block', params: { height: h } });
                 blockHashes[i] = (blk.result && blk.result.tx_hashes) || [];
             } catch {
+                blockFailures++;
                 blockHashes[i] = [];
             }
         }
@@ -242,26 +259,25 @@ export async function scanBlocksForPayment(daemonUrl, fromHeight, toHeight, addr
         for (const txid of blockHashes[i]) txJobs.push({ txid, height: heights[i] });
     }
 
-    // Fetch txs in batches and decode outputs (parallel batches)
+    // Fetch txs in batches and decode outputs (parallel batches, with retries)
     const batchResults = new Array(Math.ceil(txJobs.length / 50));
     let nextBatch = 0;
+    let batchFailures = 0;
     async function txWorker() {
         while (nextBatch < batchResults.length) {
             const b = nextBatch++;
             const batch = txJobs.slice(b * 50, b * 50 + 50);
             try {
-                const res = await fetch(`${daemonUrl}/get_transactions`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ txs_hashes: batch.map(t => t.txid), decode_as_json: true }),
-                });
-                batchResults[b] = await res.json();
+                batchResults[b] = await fetchJson(`${daemonUrl}/get_transactions`, { txs_hashes: batch.map(t => t.txid), decode_as_json: true });
             } catch {
+                batchFailures++;
                 batchResults[b] = { txs: [] };
             }
         }
     }
-    await Promise.all(Array.from({ length: Math.min(4, batchResults.length) }, txWorker));
+    await Promise.all(Array.from({ length: Math.min(2, batchResults.length) }, txWorker));
+
+    console.log(`[MoneroScan] ${heights.length} blocks (${blockFailures} failed), ${txJobs.length} txs, ${batchResults.length} batches (${batchFailures} failed)`);
 
     for (let b = 0; b < batchResults.length; b++) {
         const data = batchResults[b];
