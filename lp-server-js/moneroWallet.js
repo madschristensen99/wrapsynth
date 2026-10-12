@@ -433,104 +433,77 @@ export async function pollForDeposit(expectedAmountAtomic, opts = {}) {
       break;
     }
     try {
-      found = await withWalletLock(async () => {
-        if (!walletInitialized) {
-          console.log(`[Monero] Creating view-only wallet for deposit address: ${depositAddress.slice(0, 16)}...`);
-          try {
-            await walletRpc('close_wallet', {});
+      // Wallet-rpc scan is unreliable (0.18.4.5 cache corruption bug — the
+      // cache file stops matching .keys after one cycle, forcing a recreate
+      // every poll). Try it ONCE on the first cycle, then rely on the daemon
+      // scan so the deposit wallet isn't recreated (and re-corrupted) each poll.
+      if (!walletInitialized) {
+        try {
+          found = await withWalletLock(async () => {
+            console.log(`[Monero] Creating view-only wallet for deposit address: ${depositAddress.slice(0, 16)}...`);
             try {
-              const fs = await import('fs');
-              for (const ext of ['', '.keys', '.address.txt']) {
-                const p = `${walletDir}/${walletName}${ext}`;
-                if (fs.existsSync(p)) fs.unlinkSync(p);
+              await walletRpc('close_wallet', {});
+              try {
+                const fs = await import('fs');
+                for (const ext of ['', '.keys', '.address.txt']) {
+                  const p = `${walletDir}/${walletName}${ext}`;
+                  if (fs.existsSync(p)) fs.unlinkSync(p);
+                }
+              } catch {}
+              try {
+                await walletRpc('generate_from_keys', {
+                  filename: walletName,
+                  password: walletPass,
+                  address: depositAddress,
+                  viewkey: lpViewKey,
+                  restore_height: restoreHeight,
+                  autosave_current: false, // avoid save-on-close cache corruption
+                });
+                console.log('[Monero] View-only wallet created for deposit address');
+              } catch (genErr) {
+                if (genErr.message.includes('already exists') || genErr.message.includes('file_exists')) {
+                  await walletRpc('open_wallet', { filename: walletName, password: walletPass });
+                  console.log('[Monero] Opened existing view-only wallet for deposit address');
+                } else {
+                  throw genErr;
+                }
               }
-            } catch {}
+            } catch (err) {
+              console.error('[Monero] Failed to create/open view-only wallet:', err.message);
+              try { await walletRpc('open_wallet', { filename: mainWalletName, password: mainWalletPass }); } catch {}
+              throw err;
+            }
+
+            console.log(`[Monero] Refreshing view-only wallet (scanning from height ${restoreHeight})...`);
             try {
-              await walletRpc('generate_from_keys', {
-                filename: walletName,
-                password: walletPass,
-                address: depositAddress,
-                viewkey: lpViewKey,
-                restore_height: restoreHeight,
-                autosave_current: false, // avoid save-on-close cache corruption
-              });
-              console.log('[Monero] View-only wallet created for deposit address');
-            } catch (genErr) {
-              if (genErr.message.includes('already exists') || genErr.message.includes('file_exists')) {
-                await walletRpc('open_wallet', { filename: walletName, password: walletPass });
-                console.log('[Monero] Opened existing view-only wallet for deposit address');
-              } else {
-                throw genErr;
+              const refreshRes = await walletRpc('refresh', { start_height: restoreHeight }, 3, 300000);
+              console.log(`[Monero] Refresh complete: blocks_fetched=${refreshRes.blocks_fetched || 0}`);
+            } catch (err) {
+              console.warn('[Monero] Refresh failed (continuing anyway):', err.message);
+            }
+
+            const txs = await getIncomingTransfers({ minHeight: restoreHeight });
+            console.log(`[Monero] pollForDeposit: found ${txs.length} transfer(s), expected ${expectedAmountAtomic} atomic units`);
+
+            for (const tx of txs) {
+              console.log(`[Monero]   transfer: txid=${tx.txid} amount=${tx.amount} height=${tx.height}`);
+              const diff = tx.amount > expectedAmountAtomic
+                ? tx.amount - expectedAmountAtomic
+                : expectedAmountAtomic - tx.amount;
+              const diffBps = Number(diff * 10000n / expectedAmountAtomic);
+
+              if (diffBps <= toleranceBps) {
+                console.log(`[Monero] Deposit found: txid=${tx.txid} amount=${tx.amount} height=${tx.height}`);
+                return tx;
               }
             }
-          } catch (err) {
-            console.error('[Monero] Failed to create/open view-only wallet:', err.message);
-            try { await walletRpc('open_wallet', { filename: mainWalletName, password: mainWalletPass }); } catch {}
-            throw err;
-          }
-
-          console.log(`[Monero] Refreshing view-only wallet (scanning from height ${restoreHeight})...`);
-          try {
-            const refreshRes = await walletRpc('refresh', { start_height: restoreHeight }, 3, 300000);
-            console.log(`[Monero] Refresh complete: blocks_fetched=${refreshRes.blocks_fetched || 0}`);
-          } catch (err) {
-            console.warn('[Monero] Refresh failed (continuing anyway):', err.message);
-          }
-          walletInitialized = true;
-        } else {
-          // Re-open the deposit wallet (another mint's poll may have swapped it)
-          try {
-            await walletRpc('close_wallet', {});
-            await walletRpc('open_wallet', { filename: walletName, password: walletPass });
-          } catch (openErr) {
-            console.warn(`[Monero] Failed to re-open deposit wallet ${walletName}: ${openErr.message}, recreating from keys...`);
-            try {
-              const fs = await import('fs');
-              for (const ext of ['', '.keys', '.address.txt']) {
-                const p = `${walletDir}/${walletName}${ext}`;
-                if (fs.existsSync(p)) fs.unlinkSync(p);
-              }
-            } catch {}
-            try {
-              await walletRpc('generate_from_keys', {
-                filename: walletName,
-                password: walletPass,
-                address: depositAddress,
-                viewkey: lpViewKey,
-                restore_height: restoreHeight,
-                autosave_current: false, // avoid save-on-close cache corruption
-              });
-              console.log('[Monero] View-only wallet recreated for deposit address');
-            } catch (genErr) {
-              console.warn('[Monero] Failed to recreate wallet:', genErr.message);
-            }
-          }
-          // Refresh to pick up new blocks
-          try {
-            const refreshRes = await walletRpc('refresh', { start_height: restoreHeight }, 3, 300000);
-            console.log(`[Monero] Refresh complete: blocks_fetched=${refreshRes.blocks_fetched || 0}`);
-          } catch (refreshErr) {
-            console.warn('[Monero] Refresh failed:', refreshErr.message);
-          }
+            return null;
+          });
+        } catch (walletErr) {
+          console.warn('[Monero] Wallet scan failed — relying on daemon scan:', walletErr.message);
         }
-
-        const txs = await getIncomingTransfers({ minHeight: restoreHeight });
-        console.log(`[Monero] pollForDeposit: found ${txs.length} transfer(s), expected ${expectedAmountAtomic} atomic units`);
-
-        for (const tx of txs) {
-          console.log(`[Monero]   transfer: txid=${tx.txid} amount=${tx.amount} height=${tx.height}`);
-          const diff = tx.amount > expectedAmountAtomic
-            ? tx.amount - expectedAmountAtomic
-            : expectedAmountAtomic - tx.amount;
-          const diffBps = Number(diff * 10000n / expectedAmountAtomic);
-
-          if (diffBps <= toleranceBps) {
-            console.log(`[Monero] Deposit found: txid=${tx.txid} amount=${tx.amount} height=${tx.height}`);
-            return tx;
-          }
-        }
-        return null;
-      });
+        walletInitialized = true; // never recreate the wallet on later cycles
+      }
 
       // Fallback: wallet-rpc scanning is unreliable (corrupt wallet files, flaky
       // daemon backends). Scan the daemon directly for outputs paying the
