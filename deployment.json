@@ -49,10 +49,25 @@
   "previousDeployment": {
     "wsXMR": "0x25Ed246C3CB273730235A3184aB63aB4DF4f4CF3",
     "wsXmrHub": "0xb901C70F2a49d78c32e88ea1F36290d3F5F21f12",
-    "note": "v1 hub — still functional; pending mints/burns and legacy collateral live there. See ethereum/deployments/hyperevm-deployment.v1.json"
+    "note": "v1 hub \u2014 still functional; pending mints/burns and legacy collateral live there. See ethereum/deployments/hyperevm-deployment.v1.json"
   },
   "verification": {
-    "status": "pending",
-    "verifiedContracts": []
+    "status": "verified",
+    "verifier": "sourcify",
+    "verifiedContracts": [
+      "wsXMR",
+      "wsXmrHub",
+      "liquidityRouter",
+      "swapHelper",
+      "HyperCoreOracleFacet",
+      "VaultFacet",
+      "MintFacet",
+      "BurnFacet",
+      "LiquidationFacet",
+      "YieldFacet",
+      "StataUSDe",
+      "Ed25519Helper"
+    ],
+    "note": "All exact_match on Sourcify (chainid 999). hyperevmscan display requires Etherscan V2 API key (unified key covers all chains)."
   }
 }
