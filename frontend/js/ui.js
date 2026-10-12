@@ -1797,7 +1797,8 @@ export function showMintSweepError(errorMsg, onBack) {
  * @param {string} sharedAddress - the shared 2-of-2 address
  */
 export function showBurnKeysFallback(keys, restoreHeight = 0, sharedAddress = '') {
-    const burnPanel = document.getElementById('burn-panel');
+    // Works from the swap page (#burn-panel) and the account page (body)
+    const burnPanel = document.getElementById('burn-panel') || document.body;
     if (!burnPanel) return;
 
     // Remove any existing overlay modal

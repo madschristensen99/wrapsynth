@@ -8,6 +8,9 @@
  * sweep the XMR manually — there is no in-browser WASM sweep.
  */
 
+import { readHub } from './viemClient.js?v=3.12';
+import { computeBurnAddress } from './moneroCrypto.js?v=3.12';
+
 const ED25519_L = 2n ** 252n + 27742317777372353535851937790883648493n;
 
 /**
@@ -85,4 +88,68 @@ export function getCombinedKeysForImport(userSecretHex, lpSecretHex, userViewKey
         spendKey: combinedSpendLe,
         viewKey: viewKeyLe,
     };
+}
+
+/**
+ * Rebuild the claim keys for a completed burn from persisted browser state +
+ * on-chain data. Reads the per-burn key set written by burnFlow (localStorage),
+ * fetches the LP's revealed secret and public keys from the contract, re-derives
+ * the shared Monero address, and returns the combined keys for manual import.
+ *
+ * @param {string} requestId - burn request id (0x hex)
+ * @returns {Promise<{keys: {spendKey: string, viewKey: string}, sharedAddress: string, restoreHeight: number}>}
+ * @throws {Error} with a user-facing message if keys are unavailable or the LP
+ *   has not revealed its secret yet.
+ */
+export async function buildBurnClaimKeys(requestId) {
+    // 1. Persisted per-burn key set (written at burn creation, survives completion)
+    let d;
+    try {
+        const raw = localStorage.getItem('wrapsynth_burn_keyset_' + requestId);
+        if (!raw) throw new Error('missing');
+        d = JSON.parse(raw);
+    } catch {
+        throw new Error('Claim keys were not found in this browser. They only exist in the browser where the burn was created.');
+    }
+    const bytes = (h) => Uint8Array.from(h.slice(2).match(/../g).map(x => parseInt(x, 16)));
+    const keySet = {
+        secret: d.secret,
+        privateViewKey: BigInt(d.privateViewKey),
+        publicSpendKey: bytes(d.publicSpendKey),
+        publicViewKey: bytes(d.publicViewKey),
+        commitment: d.commitment,
+        burnNonce: d.burnNonce,
+    };
+
+    // 2. LP data from on-chain
+    let burnReq, lpSpendKey;
+    try {
+        burnReq = await readHub('getBurnRequest', [requestId]);
+        lpSpendKey = await readHub('burnLpPublicKeys', [requestId]);
+    } catch (e) {
+        throw new Error('Could not read the burn from the chain: ' + (e.message || e));
+    }
+    const lpSecret = burnReq.revealedSecret;
+    if (!lpSecret || lpSecret === '0x' + '0'.repeat(64)) {
+        throw new Error('The LP has not revealed its secret on-chain yet — the burn must be finalized before claiming.');
+    }
+
+    // 3. Re-derive the shared Monero address from user + LP public keys
+    const userPublicKey = '0x' + Array.from(keySet.publicSpendKey).map(b => b.toString(16).padStart(2, '0')).join('');
+    const userViewPub = '0x' + Array.from(keySet.publicViewKey).map(b => b.toString(16).padStart(2, '0')).join('');
+    const sharedAddress = await computeBurnAddress(userPublicKey, userViewPub, lpSpendKey);
+
+    // 4. Combined private keys for wallet import
+    const userViewKeyHex = '0x' + keySet.privateViewKey.toString(16).padStart(64, '0');
+    const keys = getCombinedKeysForImport(keySet.secret, lpSecret, userViewKeyHex);
+
+    // 5. Restore height hint — the LP's XMR tx is recent, so a deep window is safe
+    let restoreHeight = 0;
+    try {
+        const { getMoneroRpc } = await import('./moneroRpc.js?v=3.12');
+        const height = await getMoneroRpc().getHeight();
+        restoreHeight = Math.max(0, height - 1000);
+    } catch { /* leave 0 — modal shows a generic hint */ }
+
+    return { keys, sharedAddress, restoreHeight };
 }

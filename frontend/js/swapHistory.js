@@ -45,6 +45,11 @@ export async function displaySwapHistory() {
         const amount = item.xmrAmount || item.amount || '0';
         const timestamp = formatTimestamp(item.completedAt || item.timestamp);
         const requestId = item.requestId ? item.requestId.slice(0, 8) + '...' : 'N/A';
+        // Completed burns that provided keys (not swept) can be re-claimed
+        const claimable = item.type === 'burn'
+            && item.requestId
+            && item.sweepStatus !== 'swept'
+            && (item.state === 'completed' || item.status === 'completed' || item.sweepStatus === 'keys-provided');
 
         return `
             <div class="history-item ${status.className}">
@@ -66,9 +71,32 @@ export async function displaySwapHistory() {
                         <span class="detail-value">${timestamp}</span>
                     </div>
                 </div>
+                ${claimable ? `<button class="claim-xmr-btn" data-request-id="${item.requestId}" style="margin-top:0.75rem;padding:0.5rem 1rem;border-radius:8px;border:1px solid var(--xmr,#f97316);background:transparent;color:var(--xmr,#f97316);font-weight:600;cursor:pointer;">Claim XMR</button>` : ''}
             </div>
         `;
     }).join('');
+
+    // Delegated click handler for claim buttons
+    historyList.onclick = async (e) => {
+        const btn = e.target.closest('.claim-xmr-btn');
+        if (!btn) return;
+        const requestId = btn.dataset.requestId;
+        btn.disabled = true;
+        btn.textContent = 'Loading keys…';
+        try {
+            const { buildBurnClaimKeys } = await import('./burnSweep.js?v=3.12');
+            const { showBurnKeysFallback } = await import('./ui.js?v=3.12');
+            const { keys, sharedAddress, restoreHeight } = await buildBurnClaimKeys(requestId);
+            showBurnKeysFallback(keys, restoreHeight, sharedAddress);
+        } catch (err) {
+            console.error('Claim failed:', err);
+            const { showError } = await import('./ui.js?v=3.12');
+            showError('Cannot Claim XMR', err.message || 'Could not rebuild your claim keys.');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Claim XMR';
+        }
+    };
 }
 
 async function fetchWsXmrTransfers(userAddress) {

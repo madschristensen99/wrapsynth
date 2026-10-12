@@ -134,11 +134,12 @@ const MINT_STATUS = {
 
 const BURN_STATUS = {
   0: { label: 'Requested', class: 'status-initiated' },
-  1: { label: 'Hash Proposed', class: 'status-proposed' },
-  2: { label: 'Committed', class: 'status-committed' },
-  3: { label: 'Finalized', class: 'status-completed' },
-  4: { label: 'Cancelled', class: 'status-cancelled' },
-  5: { label: 'Slashed', class: 'status-slashed' }
+  1: { label: 'Requested', class: 'status-initiated' },
+  2: { label: 'Hash Proposed', class: 'status-proposed' },
+  3: { label: 'Committed', class: 'status-committed' },
+  4: { label: 'Completed', class: 'status-completed' },
+  5: { label: 'Slashed', class: 'status-slashed' },
+  6: { label: 'Cancelled', class: 'status-cancelled' }
 };
 
 /* ── Load account ── */
@@ -243,6 +244,7 @@ async function fetchBurnHistory(address) {
         vault: req.lpVault,
         status: statusInfo.label,
         statusClass: statusInfo.class,
+        claimable: status === 4, // COMPLETED — LP revealed its secret, XMR claimable
         timestamp: Number(req.deadline) ? 0 : 0,
         timestampLabel: '—',
         details: [
@@ -364,9 +366,32 @@ function renderHistory() {
           </div>
           ${detailsHtml}
         </div>
+        ${item.claimable ? `<button class="claim-xmr-btn" data-request-id="${item.requestId}" style="margin-top:0.75rem;padding:0.5rem 1rem;border-radius:8px;border:1px solid var(--xmr,#f97316);background:transparent;color:var(--xmr,#f97316);font-weight:600;cursor:pointer;">Claim XMR</button>` : ''}
       </div>
     `;
   }).join('');
+
+  // Delegated click handler for claim buttons
+  list.onclick = async (e) => {
+    const btn = e.target.closest('.claim-xmr-btn');
+    if (!btn) return;
+    const requestId = btn.dataset.requestId;
+    btn.disabled = true;
+    btn.textContent = 'Loading keys…';
+    try {
+      const { buildBurnClaimKeys } = await import('./burnSweep.js?v=3.12');
+      const { showBurnKeysFallback } = await import('./ui.js?v=3.12');
+      const { keys, sharedAddress, restoreHeight } = await buildBurnClaimKeys(requestId);
+      showBurnKeysFallback(keys, restoreHeight, sharedAddress);
+    } catch (err) {
+      console.error('Claim failed:', err);
+      const { showError } = await import('./ui.js?v=3.12');
+      showError('Cannot Claim XMR', err.message || 'Could not rebuild your claim keys.');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Claim XMR';
+    }
+  };
 }
 
 init().catch(console.error);
