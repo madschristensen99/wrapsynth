@@ -837,6 +837,16 @@ async function handleChainChange(chainId) {
 }
 
 /**
+ * Filter active swaps for the resume banner — exclude the swap the user is
+ * currently viewing (it's already on screen; a resume prompt for it is noise).
+ */
+function getBannerSwaps(swaps) {
+    const currentId = (currentBurnFlow && currentBurnFlow.requestId) || (currentMintFlow && currentMintFlow.requestId);
+    if (!currentId) return swaps;
+    return swaps.filter(s => s.requestId !== currentId);
+}
+
+/**
  * Check for active swap on startup (localStorage only)
  */
 async function checkForActiveSwap() {
@@ -846,7 +856,7 @@ async function checkForActiveSwap() {
     console.log('Found saved swaps in localStorage:', swaps);
 
     // Show banner for non-dismissed swaps - on-chain check will happen when wallet connects
-    showResumeBanner(swaps, handleResumeSwap, handleResolveSwap);
+    showResumeBanner(getBannerSwaps(swaps), handleResumeSwap, handleResolveSwap);
 }
 
 /**
@@ -1079,7 +1089,7 @@ async function checkForActiveSwapOnChain(userAddress) {
         console.log('[CHAIN CHECK] All stored swaps:', all.length, all.map(s => ({ id: s.requestId?.slice(0,14), dismissed: s.dismissed })));
         const remaining = all.filter(s => !s.dismissed);
         if (remaining.length > 0) {
-            showResumeBanner(remaining, handleResumeSwap, handleResolveSwap);
+            showResumeBanner(getBannerSwaps(remaining), handleResumeSwap, handleResolveSwap);
             console.log('[CHAIN CHECK] Banner shown with', remaining.length, 'active swap(s)');
         } else {
             hideResumeBanner();
@@ -1718,7 +1728,7 @@ function addDismissButtonToSwapItem(requestId) {
         const remaining = loadActiveSwaps().filter(s => !s.dismissed);
         console.log('[DISMISS] Remaining non-dismissed swaps:', remaining.length);
         if (remaining.length > 0) {
-            showResumeBanner(remaining, handleResumeSwap, handleResolveSwap);
+            showResumeBanner(getBannerSwaps(remaining), handleResumeSwap, handleResolveSwap);
         } else {
             const banner = document.getElementById('resume-banner');
             if (banner) banner.classList.add('hidden');
@@ -2036,7 +2046,7 @@ async function handleResolveSwap(swap) {
         // Refresh banner
         const remaining = loadActiveSwaps();
         if (remaining.length > 0) {
-            showResumeBanner(remaining, handleResumeSwap, handleResolveSwap);
+            showResumeBanner(getBannerSwaps(remaining), handleResumeSwap, handleResolveSwap);
         } else {
             hideResumeBanner();
         }
