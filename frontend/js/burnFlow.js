@@ -12,7 +12,7 @@
  * the LP reveals their secret to finalize. The user combines secrets to sweep XMR.
  */
 
-import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG, MONERO_CONFIG, LP_SERVER_CONFIG } from './config.js?v=3.12';
+import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG, MONERO_CONFIG } from './config.js?v=3.12';
 import { readHub, writeHub, writeHubUnsafe, readWsxmr, writeWsxmr, writeWsxmrUnsafe, watchContractEvent, getUserAddress, getPublicClient } from './viemClient.js?v=3.12';
 import { getPhantomAgent } from './phantomAgent.js?v=3.12';
 import { derivePerBurnKeySet } from './seedManager.js?v=3.12';
@@ -716,26 +716,12 @@ export class BurnFlow {
                 amount: this.wsxmrAmount
             });
 
-            // Independent daemon-based verifier — runs regardless of whether the
-            // WASM wallet can connect. Fetches the txid from the LP (known at
-            // broadcast), then trustlessly decodes the tx's outputs with the user's
-            // view key to prove it pays the shared address, and tracks confirmations.
+            // Independent daemon-based verifier — runs when a txid is already
+            // known (resumed burn with a persisted txid). Trustlessly decodes the
+            // tx's outputs with the user's view key to prove it pays the shared
+            // address, and tracks confirmations. Fresh burns confirm manually.
             const pollDaemonTx = async () => {
                 if (confirmed) return;
-                // Get txid from LP server (it knows it the moment it broadcasts)
-                if (!this.moneroTxHash && this.requestId) {
-                    try {
-                        const resp = await fetch(`${LP_SERVER_CONFIG.defaultUrl}/burn/${this.requestId}`);
-                        if (resp.ok) {
-                            const data = await resp.json();
-                            if (data.moneroTxHash) {
-                                this.moneroTxHash = data.moneroTxHash;
-                                // Persist so a resumed burn can poll confirmations for the unlock gate
-                                updateSwapState({ requestId: this.requestId, moneroTxHash: this.moneroTxHash, sharedMoneroAddress: this.sharedMoneroAddress, restoreHeight });
-                            }
-                        }
-                    } catch { /* LP server optional */ }
-                }
                 if (!this.moneroTxHash) return;
                 try {
                     const moneroRpc = getMoneroRpc();

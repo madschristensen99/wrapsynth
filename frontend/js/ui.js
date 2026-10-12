@@ -1,7 +1,7 @@
 // UI Controller
 // Manages all DOM interactions and updates
 
-import { DECIMALS, LP_SERVER_CONFIG } from './config.js?v=3.12';
+import { DECIMALS } from './config.js?v=3.12';
 import { getIconSVG } from './icons.js?v=3.12';
 import { launchMintCelebration, launchBurnAnimation } from './animations.js?v=3.12';
 
@@ -1225,69 +1225,6 @@ export function showLPVerificationStatus() {
 
 }
 
-/**
- * Show a "deposit not detected?" proof form during lp-verifying.
- * If the LP's wallet scan misses a deposit (wallet-rpc issues), the user can
- * submit their txid + tx key — the LP verifies via check_tx_key and proceeds.
- * @param {string} requestId - the mint's on-chain requestId
- */
-export function showDepositProofOption(requestId) {
-    if (!elements.waitingLpVerification || !requestId) return;
-
-    let el = document.getElementById('mint-deposit-proof');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'mint-deposit-proof';
-        el.style.cssText = 'margin-left:20px;margin-top:12px;';
-        elements.waitingLpVerification.appendChild(el);
-    }
-
-    el.innerHTML = `
-        <details style="font-size:0.8rem;">
-            <summary style="cursor:pointer;color:var(--text-muted);">Deposit not detected? Submit tx proof</summary>
-            <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
-                <input id="deposit-proof-txid" type="text" placeholder="Monero tx hash (64 hex)" spellcheck="false" autocomplete="off"
-                    style="background:var(--bg);border:1px solid var(--line-2);border-radius:8px;padding:7px 10px;font-family:'JetBrains Mono';font-size:11px;color:var(--text);" />
-                <input id="deposit-proof-txkey" type="text" placeholder="Transaction key / tx private key (64 hex)" spellcheck="false" autocomplete="off"
-                    style="background:var(--bg);border:1px solid var(--line-2);border-radius:8px;padding:7px 10px;font-family:'JetBrains Mono';font-size:11px;color:var(--text);" />
-                <button class="mini" id="deposit-proof-btn" style="align-self:flex-start;font-size:11px;">Submit proof</button>
-                <div id="deposit-proof-result" style="font-family:'JetBrains Mono';font-size:11px;line-height:1.5;"></div>
-            </div>
-        </details>
-    `;
-
-    const btn = document.getElementById('deposit-proof-btn');
-    const result = document.getElementById('deposit-proof-result');
-    if (!btn) return;
-
-    btn.addEventListener('click', async () => {
-        const txid = document.getElementById('deposit-proof-txid').value.trim();
-        const txKey = document.getElementById('deposit-proof-txkey').value.trim();
-        if (!/^[0-9a-fA-F]{64}$/.test(txid) || !/^[0-9a-fA-F]{64}$/.test(txKey)) {
-            result.innerHTML = '<span style="color:#f87171;">Both fields must be 64 hex chars (no 0x). The tx key is in your wallet\'s tx details / proof.</span>';
-            return;
-        }
-        btn.disabled = true;
-        result.innerHTML = '<span style="color:var(--text-muted);">Verifying with LP…</span>';
-        try {
-            const resp = await fetch(`${LP_SERVER_CONFIG.defaultUrl}/mint/deposit`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ requestId, txid, txKey }),
-            });
-            const data = await resp.json();
-            if (data.verified) {
-                result.innerHTML = '<span style="color:var(--teal);">Deposit verified — LP is finalizing your mint.</span>';
-            } else {
-                result.innerHTML = `<span style="color:#f87171;">${data.error || 'Verification failed'}</span>`;
-                btn.disabled = false;
-            }
-        } catch (err) {
-            result.innerHTML = `<span style="color:#f87171;">LP unreachable: ${err.message}</span>`;
-            btn.disabled = false;
-        }
-    });
-}
 
 /**
  * Show "Claim wsXMR" button after LP confirms receipt

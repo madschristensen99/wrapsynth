@@ -52,18 +52,6 @@ export const CONTRACTS = {
     MintCancelledWithSecretSig: '0xabfd3b3a7e454869f42e528d99f9f2c2c1ad4aa49c0927059dda28aa4e99093d'
 };
 
-// LP Server Configuration
-// NOTE: the mint/burn protocol is fully on-chain — no user→LP HTTP calls are
-// required. This config only remains for optional LP-server conveniences.
-export const LP_SERVER_CONFIG = {
-    // Default LP server URL (operator's server)
-    defaultUrl: 'http://localhost:3001',
-    // Endpoints
-    endpoints: {
-        info: '/info'
-    }
-};
-
 // Token decimals
 export const DECIMALS = {
     wsXMR: 8,      // EVM wsXMR token decimals

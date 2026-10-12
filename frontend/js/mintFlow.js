@@ -18,7 +18,7 @@ import { getPhantomAgent } from './phantomAgent.js?v=3.12';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory, getActiveSwapByRequestId } from './storage.js?v=3.12';
 import { keccak256, toHex, parseEther } from 'https://esm.sh/viem@2.7.0';
 import { startDeadlineTimer, startStatusPolling, stopTimers } from './mintFlowTimers.js?v=3.12';
-import { showLPVerificationStatus, updateMintProgress, showSuccess, showConfirmModal, showSuccessNotification, showMintComplete, showDepositProofOption } from './ui.js?v=3.12';
+import { showLPVerificationStatus, updateMintProgress, showSuccess, showConfirmModal, showSuccessNotification, showMintComplete } from './ui.js?v=3.12';
 
 export class MintFlow {
     constructor() {
@@ -770,9 +770,6 @@ export class MintFlow {
             message: 'LP is scanning for your XMR deposit and updating oracle prices...'
         });
         showLPVerificationStatus();
-        // If the LP's wallet scan misses the deposit, the user can prove it
-        // directly with txid + tx key (verified via check_tx_key on the LP).
-        showDepositProofOption(this.requestId);
 
         // If already ready, skip event watching and go straight to claim
         if (isAlreadyReady) {

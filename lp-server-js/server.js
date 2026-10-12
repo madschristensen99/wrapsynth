@@ -243,19 +243,6 @@ async function scalarHexToPubKeyHex(keyHex) {
   return Buffer.from(ed.ExtendedPoint.BASE.multiply(s).toRawBytes()).toString('hex');
 }
 
-// ─── Deposit-proof coordination (check_tx_key fallback) ─────────────────────
-// Mint deposits are LP-viewable (view pub = lpSpendPub, private view key =
-// lpSecret), so processMint scans the chain directly via pollForDeposit. The
-// /mint/deposit endpoint remains as an OPTIONAL fallback: if a user submits
-// txid+txKey, we verify via check_tx_key and resolve the waiter / drive
-// finalization directly. depositProofs stores the verified result so a proof
-// submitted before processMint starts waiting still counts.
-const depositWaiters = new Map(); // requestId -> resolve(depositTx)
-const depositProofs = new Map();  // requestId -> { verified, depositTx }
-// Generous window — the user must send XMR, then submit txid + tx key. check_tx_key
-// works on in-pool (0-conf) txs so they can submit right after broadcasting.
-const DEPOSIT_PROOF_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
-
 // ─── Mint Processing Mutex ──────────────────────────────────────────────────
 // monero-wallet-rpc can only have one wallet open at a time, so mint processing
 // (which creates/closes view-only deposit wallets) must be serialized.
@@ -469,8 +456,7 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpSpendP
       console.log(`[Mint] Deposit address for ${reqIdHex}: ${depositAddress}`);
       // Legacy mints (lpViewPub != lpSpendPub, keyed by the old server) may have
       // had the deposit sent to the OLD-scheme address (view = userPub) if the
-      // user's frontend predates the LP-viewable change. Compute it so
-      // /mint/deposit can verify proofs against both candidates.
+      // user's frontend predates the LP-viewable change. Track it for reference.
       if (keysDiffer) {
         mint.legacyDepositAddress = await moneroCrypto.computeDepositAddress(userPublicKey, lpPublicSpendKey, userPublicKey);
         console.log(`[Mint] Legacy deposit address (view=userPub) for ${reqIdHex}: ${mint.legacyDepositAddress}`);
@@ -484,7 +470,7 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpSpendP
   //    lpSpendPub, private view key = lpSecret) and scanned directly. Legacy
   //    mints posted lpPublicViewKey = the LP main wallet's view pub, so the
   //    deposit is scannable with MONERO_VIEW_KEY instead. If neither key fits
-  //    (e.g. lost lpSecret), we rely solely on the /mint/deposit fallback.
+  //    (e.g. lost lpSecret), the deposit cannot be verified.
   let scanViewKey = null;
   const lpSecretMatchesChain = lpPublicSpendKey &&
     (await scalarHexToPubKeyHex(mint.lpSecret)) === lpPublicSpendKey.replace(/^0x/, '').toLowerCase();
@@ -495,7 +481,7 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpSpendP
     if (lpSecretMatchesChain) {
       scanViewKey = mint.lpSecret.replace(/^0x/, '');
     } else {
-      console.warn(`[Mint] Cannot scan deposit — lpSecret doesn't derive on-chain lpSpendPub; relying on /mint/deposit fallback`);
+      console.warn(`[Mint] Cannot scan deposit — lpSecret doesn't derive on-chain lpSpendPub; deposit cannot be verified`);
     }
   } else if (process.env.MONERO_VIEW_KEY) {
     const mainViewPub = await scalarHexToPubKeyHex(process.env.MONERO_VIEW_KEY);
@@ -503,13 +489,12 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpSpendP
       scanViewKey = process.env.MONERO_VIEW_KEY.replace(/^0x/, '');
       console.log(`[Mint] Legacy mint — scanning deposit address with MONERO_VIEW_KEY (view pub = lpPublicViewKey)`);
     } else {
-      console.warn(`[Mint] Legacy mint — lpPublicViewKey is not our wallet view pub; cannot scan, relying on /mint/deposit fallback`);
+      console.warn(`[Mint] Legacy mint — lpPublicViewKey is not our wallet view pub; cannot scan, deposit cannot be verified`);
     }
   }
 
   const expectedAmount = BigInt(mint.xmrAmount || '0');
   if (expectedAmount > 0n && moneroWallet.isWalletConfigured() && mint.depositAddress) {
-    const waiters = [waitForDepositProof(reqIdHex, { maxWaitMs: DEPOSIT_PROOF_TIMEOUT_MS })];
     if (scanViewKey) {
       // Fetch current height before pollForDeposit closes the main wallet
       let scanHeight = 0;
@@ -521,31 +506,26 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpSpendP
         console.warn(`[Mint] Could not get daemon height, scanning from 0:`, err.message);
       }
       console.log(`[Mint] Scanning for XMR deposit of ${expectedAmount} atomic units...`);
-      waiters.unshift(moneroWallet.pollForDeposit(expectedAmount, {
-        depositAddress: mint.depositAddress,
-        viewKeyHex: scanViewKey,
-        restoreHeight: scanHeight,
-        toleranceBps: 300,   // 3% tolerance for fees / rounding
-        intervalMs: 15000,   // 15s
-        maxWaitMs: DEPOSIT_PROOF_TIMEOUT_MS,
-        shouldAbort: () => !!depositProofs.get(reqIdHex)?.verified,
-      }));
+      try {
+        const depositTx = await moneroWallet.pollForDeposit(expectedAmount, {
+          depositAddress: mint.depositAddress,
+          viewKeyHex: scanViewKey,
+          restoreHeight: scanHeight,
+          toleranceBps: 300,   // 3% tolerance for fees / rounding
+          intervalMs: 15000,   // 15s
+          maxWaitMs: 2 * 60 * 60 * 1000, // 2 hours — deposit scan window
+        });
+        mint.depositTx = depositTx;
+        pendingMints.set(reqIdHex, mint);
+        console.log(`[Mint] Deposit verified: ${depositTx.txid} (received=${depositTx.amount})`);
+      } catch (waitErr) {
+        console.error(`[Mint] Deposit wait failed for ${reqIdHex}:`, waitErr.message);
+        mint.autoProcessError = waitErr.message;
+        pendingMints.set(reqIdHex, mint);
+        return; // Do NOT call setMintReady if deposit was not verified
+      }
     } else {
-      console.log(`[Mint] Not scanning — waiting for /mint/deposit proof only`);
-    }
-    try {
-      const depositTx = await Promise.race(waiters)
-        || await waitForDepositProof(reqIdHex, { maxWaitMs: 60000 });
-      // ^ pollForDeposit returns null when aborted because a /mint/deposit proof
-      //   landed mid-scan — depositProofs is already set, so this resolves fast.
-      mint.depositTx = depositTx;
-      pendingMints.set(reqIdHex, mint);
-      console.log(`[Mint] Deposit verified: ${depositTx.txid} (received=${depositTx.amount})`);
-    } catch (waitErr) {
-      console.error(`[Mint] Deposit wait failed for ${reqIdHex}:`, waitErr.message);
-      mint.autoProcessError = waitErr.message;
-      pendingMints.set(reqIdHex, mint);
-      return; // Do NOT call setMintReady if deposit was not verified
+      console.warn(`[Mint] Cannot scan deposit for ${reqIdHex} — no view key matches on-chain keys; skipping deposit verification`);
     }
   } else if (expectedAmount > 0n) {
     console.warn(`[Mint] MONERO_WALLET_RPC_URL not configured or no deposit address — skipping deposit verification`);
@@ -555,49 +535,9 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpSpendP
   await finalizeMint(reqIdHex, mint, lpCommitment);
 }
 
-// ─── Deposit-proof wait ─────────────────────────────────────────────────────
-// Parks until /mint/deposit verifies a check_tx_key proof and resolves the waiter.
-// Returns the verified depositTx. If the proof was submitted before we started
-// waiting, depositProofs already holds it and we return immediately.
-function waitForDepositProof(reqIdHex, { maxWaitMs = DEPOSIT_PROOF_TIMEOUT_MS } = {}) {
-  const existing = depositProofs.get(reqIdHex);
-  if (existing && existing.verified) {
-    return Promise.resolve(existing.depositTx);
-  }
-  return new Promise((resolve, reject) => {
-    const finish = (fn, arg) => {
-      clearTimeout(timer);
-      clearInterval(statusPoll);
-      depositWaiters.delete(reqIdHex);
-      fn(arg);
-    };
-    const timer = setTimeout(() => {
-      finish(reject, new Error('Timed out waiting for deposit proof (txid + tx key) via /mint/deposit'));
-    }, maxWaitMs);
-    // Watch on-chain status — if the mint leaves KEY_PROVIDED (cancelled/expired)
-    // while we're parked, abort early instead of waiting the full timeout.
-    const statusPoll = setInterval(async () => {
-      try {
-        const mintReq = await hub.getMintRequest(reqIdHex);
-        const status = Number(mintReq.status);
-        if (status !== 2) { // not KEY_PROVIDED anymore
-          finish(reject, new Error(`Mint left KEY_PROVIDED (status=${status}) while waiting for deposit proof — aborting`));
-        }
-      } catch (e) {
-        // Ignore transient read failures — keep waiting.
-      }
-    }, 15000);
-    depositWaiters.set(reqIdHex, (depositTx) => {
-      finish(resolve, depositTx);
-    });
-  });
-}
-
 // ─── Finalize a verified mint ───────────────────────────────────────────────
 // Runs the oracle update, persists lpSecret, and calls setMintReady. Invoked by
-// processMint after the deposit proof arrives, or directly by /mint/deposit when
-// processMint is no longer parked (timed out / restarted). Guarded against
-// double-invocation.
+// processMint after the deposit scan succeeds. Guarded against double-invocation.
 async function finalizeMint(reqIdHex, mint, lpCommitment) {
   if (mint.finalizeStarted) {
     console.log(`[Mint] finalizeMint already in progress for ${reqIdHex}, skipping`);
@@ -1537,38 +1477,6 @@ app.get('/mints', (_req, res) => {
   res.json(JSON.parse(JSON.stringify({ mints: list, count: list.length }, (k, v) => typeof v === 'bigint' ? v.toString() : v)));
 });
 
-// Burn status — lets the frontend show the real Monero txid without waiting
-// for the browser WASM scan. Falls back to persisted secrets file.
-app.get('/burn/:requestId', (req, res) => {
-  const reqId = req.params.requestId;
-  if (!/^0x[0-9a-fA-F]{64}$/.test(reqId)) {
-    return res.status(400).json({ error: 'Invalid requestId — must be 0x + 64 hex chars' });
-  }
-  const burn = burnHandler.pendingBurns.get(reqId);
-  if (burn) {
-    return res.json({
-      requestId: reqId,
-      state: burn.state,
-      moneroTxHash: burn.moneroTxHash || null,
-      sharedAddress: burn.sharedAddress || null,
-      error: burn.error || null,
-    });
-  }
-  try {
-    const secrets = JSON.parse(fs.readFileSync(path.join(__dirname, 'lp-burn-secrets.json'), 'utf8'));
-    const saved = secrets[reqId];
-    if (saved) {
-      return res.json({
-        requestId: reqId,
-        state: saved.state || null,
-        moneroTxHash: saved.moneroTxHash || null,
-        sharedAddress: saved.sharedAddress || null,
-        error: saved.error || null,
-      });
-    }
-  } catch {}
-  res.status(404).json({ error: 'Burn not tracked by this LP' });
-});
 
 // Manually trigger deposit scan for a mint (useful when LP keys were already provided)
 app.post('/mint/scan', async (req, res) => {
@@ -1624,126 +1532,6 @@ app.post('/mint/scan', async (req, res) => {
   }
 });
 
-// ─── Submit deposit proof (check_tx_key) — OPTIONAL FALLBACK ────────────────
-// DEPRECATED: deposits are LP-viewable and scanned directly by pollForDeposit.
-// This endpoint remains for compatibility — if a user submits txid + txKey, we
-// verify via check_tx_key against the deposit address and proceed to
-// setMintReady. Body: { requestId, txid, txKey }.
-app.post('/mint/deposit', async (req, res) => {
-  const { requestId, txid, txKey } = req.body || {};
-  if (!requestId || !txid || !txKey) {
-    return res.status(400).json({ error: 'requestId, txid and txKey required' });
-  }
-  if (!/^[0-9a-fA-F]{64}$/.test(txid) || !/^[0-9a-fA-F]{64}$/.test(txKey)) {
-    return res.status(400).json({ error: 'txid and txKey must be 64-char hex' });
-  }
-
-  const reqIdHex = ethers.hexlify(requestId);
-  const mint = pendingMints.get(reqIdHex);
-  if (!mint || !mint.depositAddress) {
-    return res.status(409).json({
-      error: 'Mint deposit address not computed yet — retry shortly',
-      requestId: reqIdHex,
-    });
-  }
-
-  // On-chain status guard — only KEY_PROVIDED can still reach setMintReady.
-  // If the mint already died (timed out / cancelled), check_tx_key would still
-  // succeed (the XMR is really there) but setMintReady would revert — so tell the
-  // user to recover instead of returning a misleading 'verified'.
-  // MintStatus: 0=INVALID,1=PENDING,2=KEY_PROVIDED,3=READY,4=SECRET_REVEALED,5=COMPLETED,6=CANCELLED,7=EXPIRED_READY,8=KEY_CANCELLED
-  try {
-    const mintReq = await hub.getMintRequest(reqIdHex);
-    const status = Number(mintReq.status);
-    if (status === 3 || status === 4 || status === 5) {
-      // Already past the deposit step — nothing to verify.
-      return res.json({ verified: true, alreadyReady: true, status, requestId: reqIdHex });
-    }
-    if (status !== 2) {
-      // Terminal/dead mint — the deposit can't be attested. User should recover.
-      return res.status(409).json({
-        verified: false,
-        deadMint: true,
-        status,
-        error: 'Mint is no longer active on-chain — recover your XMR via the lpSecret reveal instead of submitting a deposit proof.',
-        requestId: reqIdHex,
-      });
-    }
-  } catch (statusErr) {
-    // Don't block the happy path on a flaky status read — proceed to check_tx_key.
-    console.warn(`[Mint] Could not read on-chain status for ${reqIdHex} (proceeding):`, statusErr.message);
-  }
-
-  if (!moneroWallet.isWalletConfigured()) {
-    return res.status(503).json({ error: 'MONERO_WALLET_RPC_URL not configured on LP', requestId: reqIdHex });
-  }
-
-  try {
-    // Legacy mints may have received the deposit at the OLD-scheme address
-    // (view=userPub) — check every candidate address until one reports received.
-    const candidateAddresses = [mint.depositAddress];
-    if (mint.legacyDepositAddress && mint.legacyDepositAddress !== mint.depositAddress) {
-      candidateAddresses.push(mint.legacyDepositAddress);
-    }
-    let result = null;
-    let matchedAddress = mint.depositAddress;
-    for (const addr of candidateAddresses) {
-      const r = await moneroWallet.checkTxKey(txid, txKey, addr);
-      if (r.received > 0n) {
-        result = r;
-        matchedAddress = addr;
-        break;
-      }
-      if (!result) result = r;
-    }
-    const expected = BigInt(mint.xmrAmount || '0');
-    // 3% tolerance for fees / rounding (matches previous scan tolerance)
-    const minReceived = expected - (expected * 300n / 10000n);
-    if (result.received < minReceived) {
-      return res.status(402).json({
-        verified: false,
-        error: `Insufficient deposit to ${matchedAddress}: received ${result.received} < expected ${expected}`,
-        received: result.received.toString(),
-        expected: expected.toString(),
-        requestId: reqIdHex,
-      });
-    }
-
-    const depositTx = {
-      txid,
-      amount: result.received,
-      confirmations: result.confirmations,
-      inPool: result.inPool,
-    };
-    mint.depositTx = depositTx;
-    pendingMints.set(reqIdHex, mint);
-    depositProofs.set(reqIdHex, { verified: true, depositTx });
-    console.log(`[Mint] Deposit proof accepted for ${reqIdHex}: txid=${txid} received=${result.received} conf=${result.confirmations}`);
-
-    res.json({
-      success: true,
-      verified: true,
-      requestId: reqIdHex,
-      received: result.received.toString(),
-      confirmations: result.confirmations,
-      inPool: result.inPool,
-    });
-
-    // Unblock the parked processMint if it's waiting; otherwise drive finalization
-    // directly (processMint timed out or the server restarted).
-    const waiter = depositWaiters.get(reqIdHex);
-    if (waiter) {
-      depositWaiters.delete(reqIdHex);
-      waiter(depositTx);
-    } else {
-      finalizeMint(reqIdHex, mint, mint.lpCommitment).catch(err =>
-        console.error(`[Mint] finalizeMint after /mint/deposit failed for ${reqIdHex}:`, err.message));
-    }
-  } catch (err) {
-    console.error(`[Mint] check_tx_key failed for ${reqIdHex}:`, err.message);
-    res.status(502).json({ verified: false, error: err.message, requestId: reqIdHex });
-  }
-});
 
 // ─── Chainlink Data Streams Report Proxy ────────────────────────────────────
 // Serves signed fullReport blobs to the frontend so the API secret never
