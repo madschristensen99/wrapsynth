@@ -1797,7 +1797,7 @@ burnHandler.registerRoutes(app);
 // Monero daemon proxy — translates binary endpoints restricted nodes block
 // (get_outs.bin) into JSON-RPC calls. Raw body parser: binary + JSON forwarded
 // verbatim to the upstream daemon.
-app.use('/monero-daemon', express.raw({ type: '*/*', limit: '10mb' }), moneroDaemonProxyRouter);
+app.use('/monero-daemon', express.raw({ type: () => true, limit: '10mb' }), moneroDaemonProxyRouter);
 
 // ─── Start Server ─────────────────────────────────────────────────────────────
 app.listen(PORT, async () => {

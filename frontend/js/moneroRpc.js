@@ -1,7 +1,7 @@
 // Monero RPC Client
 // Handles all Monero daemon and wallet RPC interactions
 
-import { MONERO_CONFIG } from './config.js?v=3.12';
+import { MONERO_CONFIG, LP_SERVER_CONFIG } from './config.js?v=3.12';
 
 /**
  * Monero RPC Client for daemon and wallet operations
@@ -351,8 +351,10 @@ async function probeDaemon(url, timeoutMs = 6000) {
 export async function createConnectedWalletFull(moneroTs, walletConfig, onTry) {
     const override = getMoneroNodeOverride();
     const configured = MONERO_CONFIG.publicNodes?.mainnet || [MONERO_CONFIG.rpcUrl];
-    // User override first, then configured nodes (dedup).
-    const urls = [...new Set([...(override ? [override] : []), ...configured])];
+    // LP-server proxy first (it forwards to a node and adds CORS for the browser),
+    // then user override, then configured nodes (dedup).
+    const proxyUrl = `${LP_SERVER_CONFIG.defaultUrl}/monero-daemon`;
+    const urls = [...new Set([proxyUrl, ...(override ? [override] : []), ...configured])];
 
     let lastErr = null;
     for (const url of urls) {

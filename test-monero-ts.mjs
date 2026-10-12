@@ -175,8 +175,8 @@ console.log('monero_ts loaded. keys:', Object.keys(monero_ts).filter(k => /daemo
 const proxyUrl = process.env.PROXY_URL || 'http://localhost:3001/monero-daemon';
 console.log('proxy:', proxyUrl);
 
-// ─── Test the C++ wallet path (it talks to the daemon URL directly) ──────────
-// Fake keys — we only need to trigger get_outs.bin through the proxy.
+// ─── Test the C++ wallet sync path through the proxy ────────────────────────
+// The wallet syncs via get_hashes.bin/get_blocks.bin through the proxy.
 const fakeSpend = '01'.repeat(32);
 const fakeView = '02'.repeat(32);
 const fakeAddress = addressFromKeys(fakeSpend, fakeView);
@@ -187,40 +187,44 @@ const wallet = await monero_ts.createWalletFull({
     primaryAddress: fakeAddress,
     privateSpendKey: fakeSpend,
     privateViewKey: fakeView,
-    restoreHeight: 0,
+    restoreHeight: 3781890,
+    server: proxyUrl,
     proxyToWorker: false,
 });
-console.log('wallet created (offline)');
+console.log('wallet created with proxy server');
 const walletAddress = await wallet.getAddress(0, 0);
 console.log('wallet address:', walletAddress);
 
-// Import a fake output so the wallet has something to sweep.
-// flags: rct(0x04) — key image computed by the wallet from pubkey + spend key.
-// First verify the import path with the wallet's own (empty) export.
+const connected = await wallet.isConnectedToDaemon();
+console.log('connected to daemon:', connected);
+
+// Debug the connection state.
 try {
-    const emptyExport = await wallet.exportOutputs(true);
-    console.log('empty export len:', emptyExport.length);
-    console.log('empty export hex:', emptyExport);
-    const n = await wallet.importOutputs(emptyExport);
-    console.log('empty import ok:', n);
+    const conn = await wallet.getDaemonConnection();
+    console.log('daemon connection:', conn ? (conn.getUri ? conn.getUri() : JSON.stringify(conn)) : 'null');
 } catch (e) {
-    console.error('empty import FAILED:', e.message || e);
+    console.log('getDaemonConnection error:', e.message);
+}
+try {
+    const height = await wallet.getHeight();
+    console.log('wallet height:', height);
+} catch (e) {
+    console.log('getHeight error:', e.message);
+}
+
+// Sync a small range through the proxy.
+try {
+    const result = await wallet.sync(new monero_ts.MoneroWalletListener());
+    console.log('sync result:', JSON.stringify(result));
+} catch (e) {
+    console.error('sync FAILED:', e.message || e);
     process.exit(1);
 }
-const outputsHex = exportOutputsHex({
-    pubkey: 'cd'.repeat(32),
-    internalIndex: 0,
-    globalIndex: 165324508,
-    txPubkey: 'ef'.repeat(32),
-    flags: 0x04,
-    amount: 124380000,
-});
-const numImported = await wallet.importOutputs(outputsHex);
-console.log('outputs imported:', numImported);
 
-// Connect the daemon AFTER import (offline wallets can import; hot wallets cannot).
-await wallet.setDaemonConnection(proxyUrl);
-console.log('daemon connected');
+const height = await wallet.getHeight();
+console.log('wallet height:', height);
+const balance = await wallet.getBalance();
+console.log('balance:', balance);
 
 // Get the wallet's computed key image for the imported output.
 const walletOutputs = await wallet.getOutputs();
