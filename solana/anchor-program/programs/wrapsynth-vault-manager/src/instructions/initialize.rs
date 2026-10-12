@@ -39,6 +39,10 @@ pub fn handler(
     global.global_pending_burn_debt = 0;
     global.last_buy_timestamp = 0;
     global.vault_count = 0;
+    global.vault_list = [Pubkey::default(); MAX_VAULTS];
+    global.debt_wipe_batch_start = 0;
+    global.migration_batch_start = 0;
+    global.migration_old_index = 0;
     global.request_nonce = 0;
     global.bump = ctx.bumps.global_state;
 

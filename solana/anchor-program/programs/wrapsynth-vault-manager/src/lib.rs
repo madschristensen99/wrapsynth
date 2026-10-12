@@ -262,6 +262,11 @@ pub mod wrapsynth_vault_manager {
         liquidation::execute_liquidation(ctx, debt_to_clear)
     }
 
+    /// P1-1: A new LP assumes the debt and collateral of an underwater vault.
+    pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
+        liquidation::backstop_vault(ctx)
+    }
+
     // ── Buy-and-Burn ──────────────────────────────────────────────────────────
 
     pub fn trigger_buy_and_burn(
@@ -269,6 +274,21 @@ pub mod wrapsynth_vault_manager {
         wsxmr_bought: u64,
     ) -> Result<()> {
         buy_and_burn::trigger_buy_and_burn(ctx, wsxmr_bought)
+    }
+
+    /// Continue zeroing vault normalized debts after a full buy-and-burn wipe.
+    /// Pass the vault accounts for the batch range as remaining accounts.
+    pub fn continue_debt_wipe(ctx: Context<ContinueDebtWipe>, batch_size: u64) -> Result<()> {
+        buy_and_burn::continue_debt_wipe(ctx, batch_size)
+    }
+
+    /// Continue rescaling vault normalized debts after a debt-index migration.
+    /// Pass the vault accounts for the batch range as remaining accounts.
+    pub fn continue_debt_migration(
+        ctx: Context<ContinueDebtMigration>,
+        batch_size: u64,
+    ) -> Result<()> {
+        buy_and_burn::continue_debt_migration(ctx, batch_size)
     }
 
     // ── Withdrawals ───────────────────────────────────────────────────────────

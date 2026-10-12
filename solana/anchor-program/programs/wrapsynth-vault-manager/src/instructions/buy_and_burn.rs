@@ -4,7 +4,7 @@ use anchor_spl::token_interface::{Mint, TokenAccount};
 
 use crate::constants::*;
 use crate::errors::WrapSynthError;
-use crate::state::{GlobalState, PendingReturns};
+use crate::state::{GlobalState, PendingReturns, Vault};
 use crate::utils::{
     get_xmr_price, get_xmr_ema_price, get_collateral_price,
     math::{collateral_to_usd, usd_to_collateral},
@@ -44,6 +44,11 @@ pub fn trigger_buy_and_burn(
     // 1b. Pending mint lock — a full wipe while READY mints are outstanding would
     //     zero the index under their reservations (EVM parity).
     require!(global.total_pending_mints == 0, WrapSynthError::PendingMintLock);
+
+    // 1c. Batch wipe/migration locks — a new buy-and-burn while a wipe or
+    //     migration is in progress would corrupt the index accounting (EVM parity).
+    require!(global.debt_wipe_batch_start == 0, WrapSynthError::WipeInProgress);
+    require!(global.migration_batch_start == 0, WrapSynthError::MigrationInProgress);
 
     // 2. EMA vs Spot: spot <= ema * 99/100
     let spot = get_xmr_price(&ctx.accounts.pyth_xmr, 3600)?;
@@ -117,7 +122,7 @@ pub fn trigger_buy_and_burn(
 
     let global = &mut ctx.accounts.global_state;
 
-    // 9. Update global debt index — O(1) proportional forgiveness
+    // 9. Update global debt — O(1) proportional forgiveness (EVM parity)
     // effective_debt excludes wsXMR locked in pending burns (already burned by user)
     let effective_debt = if global.global_total_debt > global.global_pending_burn_debt {
         global.global_total_debt - global.global_pending_burn_debt
@@ -125,35 +130,27 @@ pub fn trigger_buy_and_burn(
         0
     };
 
-    if effective_debt > 0 {
-        if wsxmr_bought >= effective_debt {
-            // Full wipe — reset index but preserve vault normalized debts
-            // (they will be worth 0 after index reset which is intentional)
-            global.global_debt_index = INITIAL_DEBT_INDEX;
-            global.global_total_debt = 0;
-        } else {
-            let remaining_debt = effective_debt - wsxmr_bought;
-            // new_index = old_index * remaining / effective
-            let new_index = (global.global_debt_index as u128 * remaining_debt as u128
-                / effective_debt as u128) as u64;
-            global.global_debt_index = new_index;
-            global.global_total_debt = remaining_debt;
-
-            // Dust guard
-            if global.global_total_debt < DEBT_DUST_THRESHOLD
-                || global.global_debt_index < MIN_DEBT_INDEX
-            {
-                global.global_debt_index = INITIAL_DEBT_INDEX;
-                global.global_total_debt = 0;
-            }
-        }
+    if wsxmr_bought >= effective_debt {
+        // Full wipe: start batch zeroing of vault normalized debts.
+        // Index is NOT reset to 1e18 until all vaults are zeroed via
+        // continue_debt_wipe() — until then it stays so _denormalizeDebt
+        // remains correct for un-wiped vaults (EVM parity).
+        global.global_total_debt = global.global_pending_burn_debt;
+        global.debt_wipe_batch_start = 1;
+    } else {
+        let remaining_debt = effective_debt - wsxmr_bought;
+        global.global_total_debt -= wsxmr_bought;
+        // new_index = old_index * remaining / effective
+        global.global_debt_index = (global.global_debt_index as u128 * remaining_debt as u128
+            / effective_debt as u128) as u64;
     }
 
-    // 10. Proportionally reduce bad debt
-    if global.global_bad_debt > 0 && effective_debt > 0 {
-        let reduction = (global.global_bad_debt as u128 * wsxmr_bought as u128
-            / (effective_debt as u128 + wsxmr_bought as u128)) as u64;
-        global.global_bad_debt = global.global_bad_debt.saturating_sub(reduction);
+    // 9b. Migrate debt index when it drops too low to prevent precision loss.
+    //     Starts a batch migration; continue_debt_migration() rescales vaults
+    //     and resets the index to 1e18 when complete (EVM parity).
+    if global.global_debt_index < INITIAL_DEBT_INDEX {
+        global.migration_old_index = global.global_debt_index;
+        global.migration_batch_start = 1;
     }
 
     msg!(
@@ -162,6 +159,109 @@ pub fn trigger_buy_and_burn(
         global.global_debt_index,
         keeper_reward
     );
+    Ok(())
+}
+
+// ─── continue_debt_wipe ──────────────────────────────────────────────────────
+// Continue an in-progress debt wipe (zeroing vault normalized debts after a
+// full buy-and-burn). Processes up to batch_size vaults per call. Resets
+// global_debt_index to 1e18 when complete (EVM continueDebtWipe parity).
+// The caller must pass the vault accounts for the batch range as remaining
+// accounts, in vault-list order.
+
+pub fn continue_debt_wipe(ctx: Context<ContinueDebtWipe>, batch_size: u64) -> Result<()> {
+    let global = &mut ctx.accounts.global_state;
+    require!(global.debt_wipe_batch_start > 0, WrapSynthError::WipeNotInProgress);
+
+    let start = (global.debt_wipe_batch_start - 1) as usize;
+    let count = global.vault_count as usize;
+    let mut end = start.saturating_add(batch_size as usize);
+    if end > count {
+        end = count;
+    }
+
+    let remaining = &ctx.remaining_accounts;
+    require!(remaining.len() == end - start, WrapSynthError::InvalidValue);
+
+    for (i, acc) in remaining.iter().enumerate() {
+        require!(acc.is_writable, WrapSynthError::InvalidValue);
+        // Verify the account is the vault PDA for the expected LP in the list
+        let expected_lp = global.vault_list[start + i];
+        let (expected_pda, _) = Pubkey::find_program_address(
+            &[VAULT_SEED, expected_lp.as_ref()],
+            ctx.program_id,
+        );
+        require!(acc.key() == expected_pda, WrapSynthError::Unauthorized);
+
+        // Manual deserialize/mutate/serialize (avoids Account lifetime issues)
+        let mut data = acc.try_borrow_mut_data()?;
+        let mut vault = Vault::try_deserialize(&mut &data[..])?;
+        vault.normalized_debt = 0;
+        let mut out = Vec::with_capacity(Vault::LEN);
+        vault.try_serialize(&mut out)?;
+        data[..out.len()].copy_from_slice(&out);
+    }
+
+    if end >= count {
+        global.debt_wipe_batch_start = 0;
+        global.global_debt_index = INITIAL_DEBT_INDEX;
+        msg!("Debt wipe complete: {} vaults zeroed", count);
+    } else {
+        global.debt_wipe_batch_start = (end + 1) as u64;
+    }
+    Ok(())
+}
+
+// ─── continue_debt_migration ─────────────────────────────────────────────────
+// Continue an in-progress debt index migration (rescaling vault normalized
+// debts). Processes up to batch_size vaults per call. Resets global_debt_index
+// to 1e18 when complete (EVM continueDebtMigration parity).
+// The caller must pass the vault accounts for the batch range as remaining
+// accounts, in vault-list order.
+
+pub fn continue_debt_migration(ctx: Context<ContinueDebtMigration>, batch_size: u64) -> Result<()> {
+    let global = &mut ctx.accounts.global_state;
+    require!(global.migration_batch_start > 0, WrapSynthError::MigrationNotInProgress);
+
+    let start = (global.migration_batch_start - 1) as usize;
+    let count = global.vault_count as usize;
+    let mut end = start.saturating_add(batch_size as usize);
+    if end > count {
+        end = count;
+    }
+
+    let old_index = global.migration_old_index;
+    let remaining = &ctx.remaining_accounts;
+    require!(remaining.len() == end - start, WrapSynthError::InvalidValue);
+
+    for (i, acc) in remaining.iter().enumerate() {
+        require!(acc.is_writable, WrapSynthError::InvalidValue);
+        let expected_lp = global.vault_list[start + i];
+        let (expected_pda, _) = Pubkey::find_program_address(
+            &[VAULT_SEED, expected_lp.as_ref()],
+            ctx.program_id,
+        );
+        require!(acc.key() == expected_pda, WrapSynthError::Unauthorized);
+
+        // Manual deserialize/mutate/serialize (avoids Account lifetime issues)
+        let mut data = acc.try_borrow_mut_data()?;
+        let mut vault = Vault::try_deserialize(&mut &data[..])?;
+        if vault.normalized_debt > 0 {
+            vault.normalized_debt = (vault.normalized_debt as u128 * old_index as u128
+                / DEBT_INDEX_PRECISION as u128) as u64;
+        }
+        let mut out = Vec::with_capacity(Vault::LEN);
+        vault.try_serialize(&mut out)?;
+        data[..out.len()].copy_from_slice(&out);
+    }
+
+    if end >= count {
+        global.migration_batch_start = 0;
+        global.global_debt_index = INITIAL_DEBT_INDEX;
+        msg!("Debt index migration complete: {} vaults rescaled", count);
+    } else {
+        global.migration_batch_start = (end + 1) as u64;
+    }
     Ok(())
 }
 
@@ -203,4 +303,28 @@ pub struct TriggerBuyAndBurn<'info> {
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct ContinueDebtWipe<'info> {
+    #[account(
+        mut,
+        seeds = [GLOBAL_STATE_SEED],
+        bump = global_state.bump,
+    )]
+    pub global_state: Account<'info, GlobalState>,
+    // Vault accounts for the batch range are passed as remaining accounts and
+    // validated against the global vault list in the handler.
+}
+
+#[derive(Accounts)]
+pub struct ContinueDebtMigration<'info> {
+    #[account(
+        mut,
+        seeds = [GLOBAL_STATE_SEED],
+        bump = global_state.bump,
+    )]
+    pub global_state: Account<'info, GlobalState>,
+    // Vault accounts for the batch range are passed as remaining accounts and
+    // validated against the global vault list in the handler.
 }

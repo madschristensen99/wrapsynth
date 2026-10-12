@@ -3,6 +3,8 @@
 /// LiteSVM covers the math and state-transition invariants here.
 /// Surfpool forked-mainnet feed test is TODO (see end of file).
 
+use anchor_lang::prelude::Pubkey;
+
 use crate::constants::*;
 use crate::state::{GlobalState, Vault, BurnRequest, BurnStatus};
 use crate::utils::math::*;
@@ -128,6 +130,10 @@ fn cascade_liquidation_math_commutative() {
         global_pending_burn_debt: 0,
         last_buy_timestamp: 0,
         vault_count: 5,
+        vault_list: [Pubkey::default(); MAX_VAULTS],
+        debt_wipe_batch_start: 0,
+        migration_batch_start: 0,
+        migration_old_index: 0,
         total_pending_mints: 0,
         request_nonce: 0,
         bump: 0,
@@ -353,6 +359,10 @@ fn partial_liquidation_does_not_underflow() {
         global_pending_burn_debt: 0,
         last_buy_timestamp: 0,
         vault_count: 1,
+        vault_list: [Pubkey::default(); MAX_VAULTS],
+        debt_wipe_batch_start: 0,
+        migration_batch_start: 0,
+        migration_old_index: 0,
         total_pending_mints: 0,
         request_nonce: 0,
         bump: 0,

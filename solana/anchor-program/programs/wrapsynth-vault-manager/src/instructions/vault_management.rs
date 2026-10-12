@@ -35,9 +35,14 @@ pub fn create_vault(ctx: Context<CreateVault>) -> Result<()> {
     vault.active = true;
     vault.bump = ctx.bumps.vault;
 
-    ctx.accounts.global_state.vault_count = ctx
-        .accounts
-        .global_state
+    let global = &mut ctx.accounts.global_state;
+    require!(
+        (global.vault_count as usize) < MAX_VAULTS,
+        WrapSynthError::MaxVaultsReached
+    );
+    let idx = global.vault_count as usize;
+    global.vault_list[idx] = ctx.accounts.lp.key();
+    global.vault_count = global
         .vault_count
         .checked_add(1)
         .ok_or(WrapSynthError::MathOverflow)?;
@@ -259,11 +264,23 @@ pub fn deactivate_vault(ctx: Context<DeactivateVault>) -> Result<()> {
     require!(vault.collateral_amount == 0, WrapSynthError::InsufficientCollateral);
     require!(vault.active_burn_count == 0, WrapSynthError::UnresolvedBurns);
     vault.active = false;
-    ctx.accounts.global_state.vault_count = ctx
-        .accounts
-        .global_state
-        .vault_count
-        .saturating_sub(1);
+    let global = &mut ctx.accounts.global_state;
+    // Swap-remove from the vault list (EVM _removeFromVaultList parity)
+    let count = global.vault_count as usize;
+    let mut idx = None;
+    for i in 0..count {
+        if global.vault_list[i] == vault.lp_address {
+            idx = Some(i);
+            break;
+        }
+    }
+    if let Some(i) = idx {
+        if i != count - 1 {
+            global.vault_list[i] = global.vault_list[count - 1];
+        }
+        global.vault_list[count - 1] = Pubkey::default();
+        global.vault_count = global.vault_count.saturating_sub(1);
+    }
     msg!("Vault deactivated: {}", ctx.accounts.lp.key());
     Ok(())
 }
@@ -286,6 +303,12 @@ pub fn sync_vault_yield(
     let exchange_rate = get_jitosol_exchange_rate(jitosol_stake_pool)?;
 
     let actual_debt = crate::utils::math::get_actual_debt(vault.normalized_debt, global.global_debt_index);
+
+    // EVM parity: yield is only extractable when the vault has debt obligations.
+    // A debt-free vault's excess stays with the LP (no war-chest siphon).
+    if actual_debt == 0 && vault.pending_debt == 0 {
+        return Ok(());
+    }
 
     let yield_shares = calculate_extractable_yield(
         vault.collateral_amount,

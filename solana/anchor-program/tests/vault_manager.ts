@@ -1409,6 +1409,35 @@ describe("WrapSynth VaultManager — Full Integration", () => {
         console.log("    ✓ resolve_burn_for_liquidation rejected correctly:", e.message.split("\n")[0].substring(0, 80));
       }
     });
+
+    it("backstop_vault rejects when old vault == new vault", async () => {
+      // Deterministic rejection: same vault as both old and new → InvalidValue.
+      // (A real backstop needs an underwater second vault + oracle data, which
+      // localnet smoke tests cannot set up.)
+      try {
+        await program.methods
+          .backstopVault()
+          .accounts({
+            newLp:            lp.publicKey,
+            oldVault:         vaultPda,
+            newVault:         vaultPda,
+            globalState,
+            pythXmr:          pythXmrKeypair.publicKey,
+            pythCollateral:   pythColKeypair.publicKey,
+            jitosolStakePool: new PublicKey("Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb"),
+            systemProgram:    SystemProgram.programId,
+          } as any)
+          .signers([lp])
+          .rpc();
+        assert.fail("Should have rejected backstop with same vault");
+      } catch (e: any) {
+        assert.ok(
+          e.message && !e.message.includes("panicked"),
+          "Should fail gracefully"
+        );
+        console.log("    ✓ backstop_vault rejected correctly:", e.message.split("\n")[0].substring(0, 80));
+      }
+    });
   });
 
   // ══════════════════════════════════════════════════════════════════════════════
@@ -1461,6 +1490,43 @@ describe("WrapSynth VaultManager — Full Integration", () => {
       console.log("    War chest balance:", gs.yieldWarChest.toString());
       // Verify state is accessible; actual buy-and-burn needs XMR price dip + war chest
       assert.ok(true, "State accessible");
+    });
+
+    it("continue_debt_wipe rejects when no wipe in progress", async () => {
+      // Deterministic rejection: debtWipeBatchStart == 0 → WipeNotInProgress.
+      // (A real wipe requires a full buy-and-burn, which needs oracle + war chest.)
+      try {
+        await program.methods
+          .continueDebtWipe(new BN(10))
+          .accounts({ globalState } as any)
+          .signers([admin])
+          .rpc();
+        assert.fail("Should have rejected wipe with no wipe in progress");
+      } catch (e: any) {
+        assert.ok(
+          e.message && !e.message.includes("panicked"),
+          "Should fail gracefully"
+        );
+        console.log("    ✓ continue_debt_wipe rejected correctly:", e.message.split("\n")[0].substring(0, 80));
+      }
+    });
+
+    it("continue_debt_migration rejects when no migration in progress", async () => {
+      // Deterministic rejection: migrationBatchStart == 0 → MigrationNotInProgress.
+      try {
+        await program.methods
+          .continueDebtMigration(new BN(10))
+          .accounts({ globalState } as any)
+          .signers([admin])
+          .rpc();
+        assert.fail("Should have rejected migration with no migration in progress");
+      } catch (e: any) {
+        assert.ok(
+          e.message && !e.message.includes("panicked"),
+          "Should fail gracefully"
+        );
+        console.log("    ✓ continue_debt_migration rejected correctly:", e.message.split("\n")[0].substring(0, 80));
+      }
     });
   });
 

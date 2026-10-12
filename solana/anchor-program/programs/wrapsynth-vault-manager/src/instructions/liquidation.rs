@@ -354,6 +354,148 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
     Ok(())
 }
 
+// ─── backstop_vault ───────────────────────────────────────────────────────────
+// P1-1: Backstop an underwater vault by assuming its debt and collateral.
+// A new LP takes over the old vault's position at a discount (no wsXMR sourcing
+// needed). Mirrors EVM backstopVault, adapted to Solana's two-phase burn
+// resolution: burns must be resolved first via resolve_burn_for_liquidation
+// (active_burn_count == 0), since burn requests are PDAs resolved one at a time.
+
+pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
+    let old = &mut ctx.accounts.old_vault;
+    let new = &mut ctx.accounts.new_vault;
+    require!(old.active, WrapSynthError::VaultNotActive);
+    require!(new.active, WrapSynthError::VaultNotActive);
+    require!(old.key() != new.key(), WrapSynthError::InvalidValue);
+    require!(old.active_burn_count == 0, WrapSynthError::UnresolvedBurns);
+
+    // Extract yield from both vaults (EVM parity — yield is harvested before takeover)
+    sync_vault_yield(
+        old,
+        &mut ctx.accounts.global_state,
+        &ctx.accounts.pyth_xmr,
+        &ctx.accounts.pyth_collateral,
+        &ctx.accounts.jitosol_stake_pool,
+    )?;
+    sync_vault_yield(
+        new,
+        &mut ctx.accounts.global_state,
+        &ctx.accounts.pyth_xmr,
+        &ctx.accounts.pyth_collateral,
+        &ctx.accounts.jitosol_stake_pool,
+    )?;
+
+    let global = &ctx.accounts.global_state;
+    let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
+    let col_price = get_collateral_price(
+        &ctx.accounts.pyth_collateral,
+        PRICE_MAX_AGE,
+        &JITOSOL_USD_FEED_ID,
+    )?;
+
+    let old_debt = get_actual_debt(old.normalized_debt, global.global_debt_index);
+    require!(old_debt > 0, WrapSynthError::InsufficientDebt);
+
+    // Old vault must be underwater (total collateral model — locked included)
+    let col_usd = collateral_to_usd(old.collateral_amount, col_price);
+    let debt_usd = (old_debt as u128 * xmr_price as u128 / WSXMR_DECIMALS as u128) as u64;
+    let ratio = calculate_collateral_ratio(col_usd, debt_usd);
+    require!(ratio < LIQUIDATION_RATIO, WrapSynthError::VaultHealthy);
+
+    // Absorb old vault's collateral (after yield extraction)
+    let absorbed = old.collateral_amount;
+    let exchange_rate = crate::utils::get_jitosol_exchange_rate(&ctx.accounts.jitosol_stake_pool)?;
+    let absorbed_sol_value = ((absorbed as u128)
+        .saturating_mul(exchange_rate as u128)
+        / PRICE_PRECISION as u128) as u64;
+
+    // Transfer state: new vault assumes old vault's debt and collateral.
+    // The discount is implicit — new LP gets collateral worth less than debt at market.
+    new.normalized_debt = new
+        .normalized_debt
+        .checked_add(old.normalized_debt)
+        .ok_or(WrapSynthError::MathOverflow)?;
+    new.collateral_amount = new
+        .collateral_amount
+        .checked_add(absorbed)
+        .ok_or(WrapSynthError::MathOverflow)?;
+
+    // C2: Track absorbed collateral as principal to prevent yield extraction.
+    // Must update BOTH principal_shares (used in withdrawals) AND principal_deposits
+    // (used by calculate_extractable_yield as the yield threshold).
+    new.principal_shares = new
+        .principal_shares
+        .checked_add(absorbed)
+        .ok_or(WrapSynthError::MathOverflow)?;
+    new.principal_deposits = new
+        .principal_deposits
+        .checked_add(absorbed)
+        .ok_or(WrapSynthError::MathOverflow)?;
+    new.principal_sol_value = new
+        .principal_sol_value
+        .checked_add(absorbed_sol_value)
+        .ok_or(WrapSynthError::MathOverflow)?;
+
+    let global = &mut ctx.accounts.global_state;
+    global.global_lp_principal_shares = global
+        .global_lp_principal_shares
+        .checked_add(absorbed)
+        .ok_or(WrapSynthError::MathOverflow)?;
+    global.global_lp_principal = global
+        .global_lp_principal
+        .checked_add(absorbed)
+        .ok_or(WrapSynthError::MathOverflow)?;
+    global.global_lp_principal_sol_value = global
+        .global_lp_principal_sol_value
+        .checked_add(absorbed_sol_value)
+        .ok_or(WrapSynthError::MathOverflow)?;
+
+    // Remove old vault principal from globals
+    global.global_lp_principal_shares = global
+        .global_lp_principal_shares
+        .saturating_sub(old.principal_shares);
+    global.global_lp_principal = global
+        .global_lp_principal
+        .saturating_sub(old.principal_deposits);
+    global.global_lp_principal_sol_value = global
+        .global_lp_principal_sol_value
+        .saturating_sub(old.principal_sol_value);
+
+    // Zero out old vault — must clear ALL state to prevent phantom locked collateral
+    old.normalized_debt = 0;
+    old.collateral_amount = 0;
+    old.locked_collateral = 0;
+    old.principal_shares = 0;
+    old.principal_deposits = 0;
+    old.principal_sol_value = 0;
+    old.liquidation_nonce = old
+        .liquidation_nonce
+        .checked_add(1)
+        .ok_or(WrapSynthError::MathOverflow)?;
+    old.mint_nonce = old
+        .mint_nonce
+        .checked_add(1)
+        .ok_or(WrapSynthError::MathOverflow)?;
+    // pending_debt is intentionally NOT zeroed — invalidated mint requests
+    // release their own reservations on cancel/finalize (EVM parity).
+
+    // Verify new vault is healthy after takeover
+    let new_debt = get_actual_debt(new.normalized_debt, global.global_debt_index);
+    let new_col_usd = collateral_to_usd(new.collateral_amount, col_price);
+    let new_debt_usd = (new_debt as u128 * xmr_price as u128 / WSXMR_DECIMALS as u128) as u64;
+    let new_ratio = calculate_collateral_ratio(new_col_usd, new_debt_usd);
+    require!(new_ratio >= COLLATERAL_RATIO, WrapSynthError::InsufficientCollateral);
+
+    msg!(
+        "Vault backstopped: old {} → new {}, {} debt, {} collateral absorbed",
+        old.lp_address,
+        new.lp_address,
+        old_debt,
+        absorbed
+    );
+    Ok(())
+}
+
 // ─── Accounts ────────────────────────────────────────────────────────────────
 
 #[derive(Accounts)]
@@ -453,5 +595,42 @@ pub struct ExecuteLiquidation<'info> {
     pub jitosol_stake_pool: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct BackstopVault<'info> {
+    #[account(mut)]
+    pub new_lp: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [VAULT_SEED, old_vault.lp_address.as_ref()],
+        bump = old_vault.bump,
+    )]
+    pub old_vault: Account<'info, Vault>,
+
+    #[account(
+        mut,
+        seeds = [VAULT_SEED, new_lp.key().as_ref()],
+        bump = new_vault.bump,
+        constraint = new_vault.lp_address == new_lp.key() @ WrapSynthError::Unauthorized,
+    )]
+    pub new_vault: Account<'info, Vault>,
+
+    #[account(
+        mut,
+        seeds = [GLOBAL_STATE_SEED],
+        bump = global_state.bump,
+    )]
+    pub global_state: Account<'info, GlobalState>,
+
+    /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
+    pub pyth_xmr: AccountInfo<'info>,
+    /// CHECK: Pyth collateral price feed — validated by oracle.rs
+    pub pyth_collateral: AccountInfo<'info>,
+    /// CHECK: JitoSOL stake pool account for reading exchange rate
+    pub jitosol_stake_pool: AccountInfo<'info>,
+
     pub system_program: Program<'info, System>,
 }

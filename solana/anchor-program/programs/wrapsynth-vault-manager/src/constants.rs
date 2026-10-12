@@ -54,6 +54,9 @@ pub const MEV_SLIPPAGE_BPS: u64 = 200;      // 2% max slippage
 // Protocol limits
 pub const MIN_BURN_AMOUNT: u64 = 1_000_000; // 0.01 wsXMR (8 decimals)
 pub const MAX_BURN_REQUESTS_PER_VAULT: u32 = 50;
+/// Fixed-size vault list cap (EVM MAX_VAULT_COUNT is 10000; Solana caps at 128
+/// to keep GlobalState within account size limits)
+pub const MAX_VAULTS: usize = 128;
 pub const INITIAL_DEBT_INDEX: u64 = 1_000_000_000_000_000_000; // 1e18
 pub const DEBT_DUST_THRESHOLD: u64 = 10_000;
 pub const MIN_DEBT_INDEX: u64 = 10_000_000_000; // 1e10

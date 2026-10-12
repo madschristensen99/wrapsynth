@@ -1,5 +1,7 @@
 use anchor_lang::prelude::*;
 
+use crate::constants::MAX_VAULTS;
+
 #[account]
 pub struct GlobalState {
     /// Deployer/admin pubkey (one-time router setup)
@@ -38,6 +40,15 @@ pub struct GlobalState {
     pub last_buy_timestamp: i64,
     /// Number of active vaults
     pub vault_count: u32,
+    /// Fixed-size vault list (LP pubkeys) — authoritative ordering for batch
+    /// debt wipe / index migration (EVM vaultList parity, capped at MAX_VAULTS)
+    pub vault_list: [Pubkey; MAX_VAULTS],
+    /// Batch debt-wipe progress: 0 = idle, 1-indexed next vault to zero
+    pub debt_wipe_batch_start: u64,
+    /// Batch index-migration progress: 0 = idle, 1-indexed next vault to rescale
+    pub migration_batch_start: u64,
+    /// Old index captured when a batch migration starts
+    pub migration_old_index: u64,
     /// Number of mints in READY state across all vaults — blocks buy-and-burn until resolved
     pub total_pending_mints: u32,
     /// Global nonce for request ID generation
@@ -49,10 +60,11 @@ pub struct GlobalState {
 impl GlobalState {
     /// Account discriminator + all fields.
     /// Pubkeys: 5 * 32 = 160 (removed pyth_collateral_feed)
-    /// u64s: 10 * 8 = 80 (added global_lp_principal_sol_value)
+    /// u64s: 13 * 8 = 104 (added batch wipe/migration state)
     /// i64: 8
     /// u32s: 2 * 4 = 8 (added total_pending_mints)
+    /// vault_list: MAX_VAULTS * 32 = 4096
     /// u8: 1
-    /// Total data: 257 + 8 discriminator = 265 → pad to 276
-    pub const LEN: usize = 8 + 160 + 80 + 8 + 8 + 1 + 11; // = 276
+    /// Total data: 8 + 160 + 104 + 8 + 8 + 4096 + 1 = 4385 → pad to 4392
+    pub const LEN: usize = 8 + 160 + 104 + 8 + 8 + 4096 + 1 + 7; // = 4392
 }

@@ -74,6 +74,16 @@ pub enum WrapSynthError {
     XMRNotDipped,
     #[msg("Yield war chest is empty")]
     WarChestEmpty,
+    #[msg("Debt wipe already in progress")]
+    WipeInProgress,
+    #[msg("Debt index migration already in progress")]
+    MigrationInProgress,
+    #[msg("No debt wipe in progress")]
+    WipeNotInProgress,
+    #[msg("No debt index migration in progress")]
+    MigrationNotInProgress,
+    #[msg("Maximum vault count reached")]
+    MaxVaultsReached,
     #[msg("Liquidity router already set")]
     RouterAlreadySet,
     #[msg("Only liquidity router can call this")]
@@ -82,8 +92,6 @@ pub enum WrapSynthError {
     OnlyDeployer,
     #[msg("Vault mint nonce mismatch")]
     MintNonceMismatch,
-    #[msg("Cancel pending burns first")]
-    CancelBurnsFirst,
     #[msg("Price normalized to zero")]
     PriceNormalizedToZero,
     #[msg("XMR amount too small (minimum 1e4 atomic units)")]

@@ -19,8 +19,9 @@ programs/
                              # + reveal_burn_secret/settle_burn, claim_slashed_collateral,
                              # abort_burn, force_settle_burn, resolve_declined_proposal,
                              # abandon_proposed_burn
-        liquidation.rs       # resolve_burn_for_liquidation, execute_liquidation
-        buy_and_burn.rs      # trigger_buy_and_burn (war-chest deflation)
+        liquidation.rs       # resolve_burn_for_liquidation, execute_liquidation, backstop_vault
+        buy_and_burn.rs      # trigger_buy_and_burn (war-chest deflation) + continue_debt_wipe,
+                             # continue_debt_migration (batch debt wipe / index migration)
         withdrawals.rs       # initialize_pending_returns, withdraw_collateral_returns, withdraw_sol_returns
         reconciliation.rs    # reconcile_global_debt across all vaults
       state/                 # Account structs: GlobalState, Vault, MintRequest, BurnRequest, PendingReturns
