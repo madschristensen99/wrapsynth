@@ -1797,69 +1797,68 @@ export function showMintSweepError(errorMsg, onBack) {
  * @param {string} sharedAddress - the shared 2-of-2 address
  */
 export function showBurnKeysFallback(keys, restoreHeight = 0, sharedAddress = '') {
-    // Works from the swap page (#burn-panel) and the account page (body)
-    const burnPanel = document.getElementById('burn-panel') || document.body;
-    if (!burnPanel) return;
-
     // Remove any existing overlay modal
     const existing = document.getElementById('burn-keys-fallback-overlay');
     if (existing) existing.remove();
 
-    let el = document.getElementById('burn-keys-fallback');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'burn-keys-fallback';
-        el.className = 'burn-keys-fallback';
-        burnPanel.appendChild(el);
-    }
-
     const restoreHeightStr = restoreHeight > 0 ? restoreHeight.toString() : '(use block height when burn was initiated)';
 
-    el.innerHTML = `
-        <div class="burn-keys-fallback-header">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;color:var(--amber)"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
-            <span>Claim your XMR</span>
-        </div>
-        <p class="burn-keys-fallback-desc">Import these keys into a Monero wallet (Monero GUI, Feather Wallet) to access your funds.</p>
-        <p class="burn-keys-fallback-warn"><strong>Important:</strong> this is a <strong>non-deterministic</strong> wallet — the view key is independent, not derived from the spend key. You must use <strong>"Restore from keys"</strong> and enter <strong>all three</strong>: primary address, spend key, and view key. Restoring from the spend key or seed alone produces a different (empty) wallet.</p>
-        <div class="burn-keys-fallback-steps">
-            <span>1. In your wallet choose <strong>Restore from keys</strong> (non-deterministic / spendable)</span>
-            <span>2. Enter the <strong>primary address</strong>, <strong>spend key</strong>, and <strong>view key</strong> below</span>
-            <span>3. Set restore height to <strong>${restoreHeightStr}</strong></span>
-            <span>4. Wait for sync, then sweep all to your destination</span>
-        </div>
-        <div class="burn-keys-fallback-keys">
-            <div class="burn-key-row">
-                <label>Primary Address (shared)</label>
-                <div class="burn-key-copy">
-                    <input type="text" id="fallback-primary-address" value="${sharedAddress}" readonly>
-                    <button class="btn-copy-sm" id="fallback-copy-address">Copy</button>
-                </div>
+    const overlay = document.createElement('div');
+    overlay.id = 'burn-keys-fallback-overlay';
+    overlay.className = 'burn-keys-fallback-overlay';
+    overlay.innerHTML = `
+        <div class="burn-keys-fallback-modal">
+            <button class="burn-keys-fallback-close" aria-label="Close">&times;</button>
+            <div class="burn-keys-fallback-header">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;color:var(--amber)"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+                <span>Claim your XMR</span>
             </div>
-            <div class="burn-key-row">
-                <label>Private Spend Key</label>
-                <div class="burn-key-copy">
-                    <input type="password" id="fallback-spend-key" value="${keys.spendKey}" readonly>
-                    <button class="btn-copy-sm" id="fallback-copy-spend">Copy</button>
-                </div>
+            <p class="burn-keys-fallback-desc">Import these keys into a Monero wallet (Monero GUI, Feather Wallet) to access your funds.</p>
+            <p class="burn-keys-fallback-warn"><strong>Important:</strong> this is a <strong>non-deterministic</strong> wallet — the view key is independent, not derived from the spend key. You must use <strong>"Restore from keys"</strong> and enter <strong>all three</strong>: primary address, spend key, and view key. Restoring from the spend key or seed alone produces a different (empty) wallet.</p>
+            <div class="burn-keys-fallback-steps">
+                <span>1. In your wallet choose <strong>Restore from keys</strong> (non-deterministic / spendable)</span>
+                <span>2. Enter the <strong>primary address</strong>, <strong>spend key</strong>, and <strong>view key</strong> below</span>
+                <span>3. Set restore height to <strong>${restoreHeightStr}</strong></span>
+                <span>4. Wait for sync, then sweep all to your destination</span>
             </div>
-            <div class="burn-key-row">
-                <label>Private View Key</label>
-                <div class="burn-key-copy">
-                    <input type="password" id="fallback-view-key" value="${keys.viewKey}" readonly>
-                    <button class="btn-copy-sm" id="fallback-copy-view">Copy</button>
+            <div class="burn-keys-fallback-keys">
+                <div class="burn-key-row">
+                    <label>Primary Address (shared)</label>
+                    <div class="burn-key-copy">
+                        <input type="text" id="fallback-primary-address" value="${sharedAddress}" readonly>
+                        <button class="btn-copy-sm" id="fallback-copy-address">Copy</button>
+                    </div>
                 </div>
-            </div>
-            <div class="burn-key-row">
-                <label>Restore Height</label>
-                <div class="burn-key-copy">
-                    <input type="text" id="fallback-restore-height" value="${restoreHeight > 0 ? restoreHeight : ''}" readonly>
-                    <button class="btn-copy-sm" id="fallback-copy-height">Copy</button>
+                <div class="burn-key-row">
+                    <label>Private Spend Key</label>
+                    <div class="burn-key-copy">
+                        <input type="password" id="fallback-spend-key" value="${keys.spendKey}" readonly>
+                        <button class="btn-copy-sm" id="fallback-copy-spend">Copy</button>
+                    </div>
+                </div>
+                <div class="burn-key-row">
+                    <label>Private View Key</label>
+                    <div class="burn-key-copy">
+                        <input type="password" id="fallback-view-key" value="${keys.viewKey}" readonly>
+                        <button class="btn-copy-sm" id="fallback-copy-view">Copy</button>
+                    </div>
+                </div>
+                <div class="burn-key-row">
+                    <label>Restore Height</label>
+                    <div class="burn-key-copy">
+                        <input type="text" id="fallback-restore-height" value="${restoreHeight > 0 ? restoreHeight : ''}" readonly>
+                        <button class="btn-copy-sm" id="fallback-copy-height">Copy</button>
+                    </div>
                 </div>
             </div>
         </div>
     `;
-    el.classList.remove('hidden');
+    document.body.appendChild(overlay);
+
+    const close = () => overlay.remove();
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    const closeBtn = overlay.querySelector('.burn-keys-fallback-close');
+    if (closeBtn) closeBtn.addEventListener('click', close);
 
     const copySpend = document.getElementById('fallback-copy-spend');
     const copyView = document.getElementById('fallback-copy-view');
