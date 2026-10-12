@@ -53,7 +53,6 @@ const elements = {
     // Burn panel
     burnPanel: null,
     burnAmount: null,
-    burnXmrDestination: null,
     burnVaultSelect: null,
     burnVaultInfo: null,
     burnUserBalance: null,
@@ -127,7 +126,6 @@ export function initUI() {
     // Burn panel
     elements.burnPanel = document.getElementById('burn-panel');
     elements.burnAmount = document.getElementById('burn-amount');
-    elements.burnXmrDestination = document.getElementById('burn-xmr-destination');
     elements.burnVaultSelect = document.getElementById('burn-vault-select');
     elements.burnVaultInfo = document.getElementById('burn-vault-info');
     elements.burnUserBalance = document.getElementById('burn-user-balance');
@@ -1795,9 +1793,10 @@ export function showMintSweepError(errorMsg, onBack) {
  * Show burn keys fallback modal (copy-only, no on-screen key display)
  * Lets user copy combined private keys for manual import into Monero GUI wallet
  * @param {Object} keys - { spendKey, viewKey } (little-endian hex, no 0x)
- * @param {string} destination - User's destination address
+ * @param {number} restoreHeight - Monero block height to restore from
+ * @param {string} sharedAddress - the shared 2-of-2 address
  */
-export function showBurnKeysFallback(keys, destination, restoreHeight = 0, sharedAddress = '') {
+export function showBurnKeysFallback(keys, restoreHeight = 0, sharedAddress = '') {
     const burnPanel = document.getElementById('burn-panel');
     if (!burnPanel) return;
 
@@ -1849,10 +1848,6 @@ export function showBurnKeysFallback(keys, destination, restoreHeight = 0, share
                     <input type="password" id="fallback-view-key" value="${keys.viewKey}" readonly>
                     <button class="btn-copy-sm" id="fallback-copy-view">Copy</button>
                 </div>
-            </div>
-            <div class="burn-key-row">
-                <label>Destination Address</label>
-                <p class="burn-key-dest">${destination || '(none set — pick any address you control when sweeping)'}</p>
             </div>
             <div class="burn-key-row">
                 <label>Restore Height</label>
@@ -2069,7 +2064,6 @@ export function disableInputs(isMint = true) {
         setVaultPickerDisabled('mint', true);
     } else {
         elements.burnAmount.disabled = true;
-        elements.burnXmrDestination.disabled = true;
         elements.burnVaultSelect.disabled = true;
         elements.startBurn.disabled = true;
         setVaultPickerDisabled('burn', true);
@@ -2086,7 +2080,6 @@ export function enableInputs(isMint = true) {
         setVaultPickerDisabled('mint', false);
     } else {
         elements.burnAmount.disabled = false;
-        elements.burnXmrDestination.disabled = false;
         elements.burnVaultSelect.disabled = false;
         elements.startBurn.disabled = false;
         setVaultPickerDisabled('burn', false);

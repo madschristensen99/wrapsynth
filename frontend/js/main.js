@@ -3092,7 +3092,6 @@ async function handleStartBurn() {
     }
     
     const amount = parseFloat(elements.burnAmount.value);
-    const destination = elements.burnXmrDestination.value;
     const vaultAddress = elements.burnVaultSelect.value;
     
     // Validate inputs
@@ -3106,11 +3105,6 @@ async function handleStartBurn() {
             'Amount Too Small',
             `Minimum burn amount is ${SWAP_CONFIG.minBurnAmount} wsXMR. You entered ${amount} wsXMR.`
         );
-        return;
-    }
-    
-    if (!destination || destination.length < 95) {
-        showError('Invalid Address', 'Please enter a valid Monero destination address');
         return;
     }
     
@@ -3129,7 +3123,7 @@ async function handleStartBurn() {
         trackBurnProgress(currentBurnFlow);
         
         // Start the flow
-        await currentBurnFlow.start(vaultAddress, amount, destination);
+        await currentBurnFlow.start(vaultAddress, amount);
         
         // Update balance
         const address = getUserAddress();

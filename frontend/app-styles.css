@@ -645,11 +645,6 @@ body:not(.js-loaded) .panel{display:none!important}
   background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--text);
   min-width:0;
 }
-.burn-key-dest{
-  margin:0;font-family:'JetBrains Mono',monospace;font-size:11px;
-  word-break:break-all;color:var(--muted);line-height:1.4;
-  padding:8px 10px;background:var(--bg);border:1px solid var(--line);border-radius:8px;
-}
 
 /* CO-LP POSITION CARDS */
 .position-card{display:flex;align-items:center;justify-content:space-between;

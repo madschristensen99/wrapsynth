@@ -29,7 +29,6 @@ export class BurnFlow {
         this.agent = null;
         this.lpVault = null;
         this.wsxmrAmount = null;
-        this.destination = null;
         this.secretHash = null;
         this.sharedMoneroAddress = null;
         this.privateViewKeyHex = null;
@@ -48,18 +47,12 @@ export class BurnFlow {
      * LP finalize wait → XMR sweep → complete.
      * @param {string} lpVault - LP vault address to burn against
      * @param {number} wsxmrAmount - Amount of wsXMR to burn (human-readable)
-     * @param {string} destination - Monero destination address for receiving XMR
      */
-    async start(lpVault, wsxmrAmount, destination) {
-        console.log('Starting burn flow:', { lpVault, wsxmrAmount, destination });
-
-        if (!destination || destination.length < 95) {
-            throw new Error('Invalid Monero destination address');
-        }
+    async start(lpVault, wsxmrAmount) {
+        console.log('Starting burn flow:', { lpVault, wsxmrAmount });
 
         this.lpVault = lpVault;
         this.wsxmrAmount = wsxmrAmount;
-        this.destination = destination;
 
         await this.initializeAgent();
         await this.requestBurnOnEVM();
@@ -88,15 +81,14 @@ export class BurnFlow {
             type: 'burn',
             state: this.state,
             lpVault: this.lpVault,
-            wsxmrAmount: this.wsxmrAmount,
-            destination: this.destination
+            wsxmrAmount: this.wsxmrAmount
         });
 
         updateBurnProgress('init', 'Generating Ed25519 keys and deriving Monero address...');
         console.log('Initializing Phantom Agent...');
         
         this.agent = getPhantomAgent();
-        const agentData = await this.agent.initialize('BURN', this.wsxmrAmount.toString(), this.destination);
+        const agentData = await this.agent.initialize('BURN', this.wsxmrAmount.toString());
 
         console.log('Agent initialized:', agentData);
         console.log('Derived Monero address for receiving XMR:', agentData.moneroAddress);
@@ -1108,7 +1100,7 @@ export class BurnFlow {
         // The browser WASM sweep is gone — the user imports these keys into a
         // Monero wallet (GUI/Feather, "Restore from keys") to claim the XMR.
         const keys = getCombinedKeysForImport(userSecret, lpSecret, userViewKey);
-        showBurnKeysFallback(keys, this.destination, restoreHeight, this.sharedMoneroAddress);
+        showBurnKeysFallback(keys, restoreHeight, this.sharedMoneroAddress);
 
         updateSwapState({
             state: 'sweep-failed',
@@ -1131,7 +1123,6 @@ export class BurnFlow {
             requestId: this.requestId,
             lpVault: this.lpVault,
             wsxmrAmount: this.wsxmrAmount,
-            destination: this.destination,
             state: 'completed',
             sweepStatus: this._sweepFailed ? 'keys-provided' : 'swept',
             timestamp: Date.now()
@@ -1328,9 +1319,6 @@ export class BurnFlow {
         console.log('Resuming burn flow from state:', savedState.state);
 
         this.lpVault = savedState.lpVault;
-        this.destination = savedState.destination
-            || document.getElementById('burn-xmr-destination')?.value?.trim()
-            || null;
         this.requestId = savedState.requestId;
         this.state = savedState.state;
         // Restore Monero tracking fields persisted during verify — needed so the
