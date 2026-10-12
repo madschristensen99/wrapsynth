@@ -89,7 +89,6 @@ fn simulate_liquidation(
 fn ratio_invariants_hold() {
     assert!(LIQUIDATION_RATIO < COLLATERAL_RATIO, "LR < CR");
     assert!(COLLATERAL_RATIO < YIELD_BUFFER_RATIO, "CR < YBR");
-    assert!(LIQUIDATION_RATIO < BURN_LOCK_RATIO, "LR < BLR");
     assert!(BURN_LOCK_RATIO <= COLLATERAL_RATIO + 10, "BLR <= CR + 10");
 }
 
@@ -123,7 +122,7 @@ fn cascade_liquidation_math_commutative() {
         yield_war_chest: 0,
         global_lp_principal: 0,
         global_lp_principal_shares: 0,
-        global_lp_principal_sol_value: 0,
+        global_lp_principal_value: 0,
         global_pending_collateral: 0,
         global_pending_sol: 0,
         global_bad_debt: 0,
@@ -158,7 +157,7 @@ fn cascade_liquidation_math_commutative() {
                 min_burn_amount: 0,
                 principal_deposits: coll,
                 principal_shares: coll,
-                principal_sol_value: coll,
+                principal_value: coll,
                 active_burn_count: 0,
                 pending_mint_count: 0,
                 mint_timeout_seconds: DEFAULT_MINT_TIMEOUT_SECONDS,
@@ -178,9 +177,9 @@ fn cascade_liquidation_math_commutative() {
     let initial_total_debt = global.global_total_debt;
     let initial_total_collateral: u64 = vaults.iter().map(|v| v.collateral_amount).sum();
 
-    // Sharp JitoSOL/USD drop: -30% (e.g. depeg or market crash)
+    // Sharp sUSDe/USD drop: -30% (e.g. depeg or market crash)
     let dropped_col_price = ((col_price as u128) * 70 / 100) as u64;
-    // After drop ratios: 175%, 126%, 105%, 98%, 70% → vaults 1-4 are liquidatable
+    // After drop ratios: 175%, 126%, 105%, 98%, 70% → vaults 2-4 are liquidatable (LR=120)
 
     // Verify vaults below LR after drop
     for v in &vaults {
@@ -194,8 +193,8 @@ fn cascade_liquidation_math_commutative() {
         );
     }
 
-    // Interleaved liquidation order: liquidate vaults 2,4,3,1 (skipping 0 which stays healthy)
-    let liquidation_order = vec![2usize, 4, 3, 1];
+    // Interleaved liquidation order: liquidate vaults 2,4,3 (skipping 0 and 1 which stay healthy)
+    let liquidation_order = vec![2usize, 4, 3];
     let mut total_cleared = 0u64;
 
     for &idx in &liquidation_order {
@@ -307,7 +306,7 @@ fn burn_request_nonce_invalidation() {
         min_burn_amount: 0,
         principal_deposits: 1_000_000,
         principal_shares: 1_000_000,
-        principal_sol_value: 1_000_000,
+        principal_value: 1_000_000,
         active_burn_count: 1,
         pending_mint_count: 0,
         mint_timeout_seconds: DEFAULT_MINT_TIMEOUT_SECONDS,
@@ -342,7 +341,7 @@ fn partial_liquidation_does_not_underflow() {
         min_burn_amount: 0,
         principal_deposits: 10_000_000_000_000_000,
         principal_shares: 10_000_000_000_000_000,
-        principal_sol_value: 10_000_000_000_000_000,
+        principal_value: 10_000_000_000_000_000,
         active_burn_count: 0,
         pending_mint_count: 0,
         mint_timeout_seconds: DEFAULT_MINT_TIMEOUT_SECONDS,
@@ -364,7 +363,7 @@ fn partial_liquidation_does_not_underflow() {
         yield_war_chest: 0,
         global_lp_principal: 10_000_000_000_000_000,
         global_lp_principal_shares: 10_000_000_000_000_000,
-        global_lp_principal_sol_value: 0,
+        global_lp_principal_value: 0,
         global_pending_collateral: 0,
         global_pending_sol: 0,
         global_bad_debt: 0,

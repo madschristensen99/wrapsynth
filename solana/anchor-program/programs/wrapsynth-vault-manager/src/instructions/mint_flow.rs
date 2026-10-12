@@ -6,7 +6,7 @@ use crate::constants::*;
 use crate::errors::WrapSynthError;
 use crate::state::{GlobalState, Vault, MintRequest, MintStatus, PendingReturns};
 use crate::utils::{
-    get_xmr_price, get_collateral_price, get_jitosol_exchange_rate, check_depeg_guard, mul_verify,
+    get_xmr_price, get_collateral_price, get_collateral_redemption_rate, check_depeg_guard, mul_verify,
     math::{get_actual_debt, normalize_debt, collateral_to_usd, usd_to_collateral, check_collateral_ratio},
 };
 use crate::instructions::vault_management::sync_vault_yield;
@@ -51,7 +51,7 @@ pub fn initiate_mint(
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
-        &ctx.accounts.jitosol_stake_pool,
+        &ctx.accounts.pyth_susde_rr,
     )?;
 
     let global = &ctx.accounts.global_state;
@@ -88,7 +88,7 @@ pub fn initiate_mint(
         let col_price = get_collateral_price(
             &ctx.accounts.pyth_collateral,
             PRICE_MAX_AGE,
-            &JITOSOL_USD_FEED_ID,
+            &SUSDE_USD_FEED_ID,
         )?;
         let col_val_usd = collateral_to_usd(vault.collateral_amount, col_price);
         let max_debt_capacity = (col_val_usd as u128 * RATIO_PRECISION as u128)
@@ -117,7 +117,7 @@ pub fn initiate_mint(
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &JITOSOL_USD_FEED_ID,
+        &SUSDE_USD_FEED_ID,
     )?;
     let bond_shares = compute_mint_lock(wsxmr_amount, xmr_price, col_price)?;
     require!(
@@ -137,14 +137,10 @@ pub fn initiate_mint(
         WrapSynthError::InsufficientCollateral
     );
 
-    // Depeg guard: prevent new mints if JitoSOL market price diverges below fair value
-    let jitosol_exchange_rate = get_jitosol_exchange_rate(&ctx.accounts.jitosol_stake_pool)?;
-    let sol_usd_price = get_collateral_price(
-        &ctx.accounts.pyth_sol,
-        PRICE_MAX_AGE,
-        &SOL_USD_FEED_ID,
-    )?;
-    check_depeg_guard(col_price, jitosol_exchange_rate, sol_usd_price)?;
+    // Depeg guard: prevent new mints if sUSDe market price diverges below its
+    // redemption value (fair value ≈ sUSDe→USDe rate, since USDe is pegged 1:1)
+    let redemption_rate = get_collateral_redemption_rate(&ctx.accounts.pyth_susde_rr)?;
+    check_depeg_guard(col_price, redemption_rate)?;
 
     // Increment nonce. Client pre-computed request_id = keccak(initiator, vault, amount, commitment, nonce+1).
     ctx.accounts.global_state.request_nonce = ctx.accounts.global_state.request_nonce
@@ -220,7 +216,7 @@ pub fn provide_lp_key(
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
-        &ctx.accounts.jitosol_stake_pool,
+        &ctx.accounts.pyth_susde_rr,
     )?;
 
     // Reserve debt capacity now that the LP has engaged. Reverts if the vault
@@ -236,7 +232,7 @@ pub fn provide_lp_key(
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &JITOSOL_USD_FEED_ID,
+        &SUSDE_USD_FEED_ID,
     )?;
     let bond_shares = compute_mint_lock(request.wsxmr_amount, xmr_price, col_price)?;
 
@@ -304,7 +300,7 @@ pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
-        &ctx.accounts.jitosol_stake_pool,
+        &ctx.accounts.pyth_susde_rr,
     )?;
 
     let vault = &mut ctx.accounts.vault;
@@ -313,7 +309,7 @@ pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &JITOSOL_USD_FEED_ID,
+        &SUSDE_USD_FEED_ID,
     )?;
 
     // Re-price the par-value lock at ready time
@@ -418,7 +414,7 @@ pub fn finalize_mint(ctx: Context<FinalizeMint>) -> Result<()> {
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
-        &ctx.accounts.jitosol_stake_pool,
+        &ctx.accounts.pyth_susde_rr,
         &ctx.accounts.wsxmr_mint,
         &ctx.accounts.recipient_wsxmr_ata,
         &ctx.accounts.lp_wsxmr_ata,
@@ -439,7 +435,7 @@ fn execute_finalize<'a>(
     global: &mut GlobalState,
     pyth_xmr: &AccountInfo<'a>,
     pyth_collateral: &AccountInfo<'a>,
-    jitosol_stake_pool: &AccountInfo<'a>,
+    pyth_susde_rr: &AccountInfo<'a>,
     wsxmr_mint: &InterfaceAccount<'a, Mint>,
     recipient_wsxmr_ata: &InterfaceAccount<'a, TokenAccount>,
     lp_wsxmr_ata: &InterfaceAccount<'a, TokenAccount>,
@@ -490,7 +486,7 @@ fn execute_finalize<'a>(
     }
 
     // Sync yield
-    sync_vault_yield(vault, global, pyth_xmr, pyth_collateral, jitosol_stake_pool)?;
+    sync_vault_yield(vault, global, pyth_xmr, pyth_collateral, pyth_susde_rr)?;
 
     // Release locked collateral — mint succeeded, reservation no longer needed.
     // Total model: only the reservation is released; collateral stays in the vault.
@@ -623,7 +619,7 @@ pub fn cancel_mint(ctx: Context<CancelMint>) -> Result<()> {
             &mut ctx.accounts.global_state,
             &ctx.accounts.pyth_xmr,
             &ctx.accounts.pyth_collateral,
-            &ctx.accounts.jitosol_stake_pool,
+            &ctx.accounts.pyth_susde_rr,
             &ctx.accounts.wsxmr_mint,
             &ctx.accounts.recipient_wsxmr_ata,
             &ctx.accounts.lp_wsxmr_ata,
@@ -940,12 +936,10 @@ pub struct InitiateMint<'info> {
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth collateral price feed (JitoSOL/USD) — validated by oracle.rs
+    /// CHECK: Pyth collateral price feed (sUSDe/USD) — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: Pyth SOL/USD price feed for depeg guard — validated by oracle.rs
-    pub pyth_sol: AccountInfo<'info>,
-    /// CHECK: JitoSOL stake pool account for reading exchange rate
-    pub jitosol_stake_pool: AccountInfo<'info>,
+    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
+    pub pyth_susde_rr: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
 }
@@ -980,8 +974,8 @@ pub struct SetMintReady<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: JitoSOL stake pool account for reading exchange rate
-    pub jitosol_stake_pool: AccountInfo<'info>,
+    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
+    pub pyth_susde_rr: AccountInfo<'info>,
 }
 
 #[derive(Accounts)]
@@ -1031,8 +1025,8 @@ pub struct FinalizeMint<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: JitoSOL stake pool account for reading exchange rate
-    pub jitosol_stake_pool: AccountInfo<'info>,
+    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
+    pub pyth_susde_rr: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -1068,8 +1062,8 @@ pub struct ProvideLPKey<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: JitoSOL stake pool account for reading exchange rate
-    pub jitosol_stake_pool: AccountInfo<'info>,
+    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
+    pub pyth_susde_rr: AccountInfo<'info>,
 }
 
 #[derive(Accounts)]
@@ -1287,8 +1281,8 @@ pub struct CancelMint<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: JitoSOL stake pool account for reading exchange rate
-    pub jitosol_stake_pool: AccountInfo<'info>,
+    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
+    pub pyth_susde_rr: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,

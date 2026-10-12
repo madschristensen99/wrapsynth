@@ -5,33 +5,37 @@
 ///
 /// # DUAL-SOURCE ORACLE DESIGN: SOURCE-OF-TRUTH RULES
 ///
-/// This module implements a two-source oracle design for JitoSOL collateral:
+/// This module implements a two-source oracle design for sUSDe collateral:
 ///
-/// 1. **Market Price (Pyth JitoSOL/USD)** — THE SOLVENCY SOURCE OF TRUTH
+/// 1. **Market Price (Pyth sUSDe/USD)** — THE SOLVENCY SOURCE OF TRUTH
 ///    - Used for: mint collateralization checks, burn health checks, liquidation thresholds,
 ///      yield buffer min-collateral USD calculations
-///    - Function: `get_collateral_price(&pyth_account, max_age, &JITOSOL_USD_FEED_ID)`
+///    - Function: `get_collateral_price(&pyth_account, max_age, &SUSDE_USD_FEED_ID)`
 ///    - Why: Reflects real market conditions including depegs. This is the price at which
 ///      the protocol can actually liquidate positions or realize collateral value.
 ///
-/// 2. **Stake Pool Rate (JitoSOL→SOL exchange rate)** — YIELD ACCOUNTING ONLY
+/// 2. **Redemption Rate (Pyth sUSDe→USDe)** — YIELD ACCOUNTING ONLY
 ///    - Used for: yield principal/current-value accounting (tracking staking rewards)
-///    - Function: `get_jitosol_exchange_rate(&stake_pool_account)`
-///    - Why: Monotonically increasing (staking rewards accrue), but CANNOT reflect depegs.
+///    - Function: `get_collateral_redemption_rate(&pyth_rr_account)`
+///    - Why: Monotonically increasing (yield accrues), but CANNOT reflect depegs.
 ///      Using this for solvency would blind the protocol to tail risk scenarios where
-///      JitoSOL trades below its redemption value (liquidity crisis, smart contract risk, etc).
+///      sUSDe trades below its redemption value (liquidity crisis, smart contract risk, etc).
 ///
-/// **CRITICAL**: Never use the stake pool rate for any solvency/health calculation. The
-/// stake pool rate is purely for measuring yield (current_value - principal). All debt
+/// **CRITICAL**: Never use the redemption rate for any solvency/health calculation. The
+/// redemption rate is purely for measuring yield (current_value - principal). All debt
 /// safety checks MUST use the market price to protect against depeg scenarios.
 ///
 /// # DEPEG GUARD
 ///
 /// The dual-source design enables a depeg detection mechanism:
-/// - Fair value = stake_pool_rate × SOL/USD (theoretical redemption value)
-/// - Market price = JitoSOL/USD Pyth feed (actual trading price)
-/// - If market < fair_value × (1 - DEPEG_TOLERANCE_BPS/10000), JitoSOL is depegging
+/// - Fair value = sUSDe→USDe redemption rate (≈ USD, since USDe is pegged 1:1)
+/// - Market price = sUSDe/USD Pyth feed (actual trading price)
+/// - If market < fair_value × (1 - DEPEG_TOLERANCE_BPS/10000), sUSDe is depegging
 /// - Action: Pause new mints (no new debt against depegging asset), allow liquidations/burns
+///
+/// Note: using the redemption rate directly as fair value (instead of rate × USDe/USD)
+/// errs toward triggering the guard if USDe itself depegs — the market price drops while
+/// the rate stays near 1.0 — which is the conservative (safe) direction.
 ///
 /// # PYTH PRICEUPDATE V2 ON-CHAIN LAYOUT
 ///
@@ -177,86 +181,57 @@ pub fn get_collateral_price(
     normalize_pyth_price(parsed.price, parsed.exponent)
 }
 
-/// Read JitoSOL→SOL exchange rate from the SPL stake pool account.
+/// Read the sUSDe→USDe redemption rate from the Pyth SUSDE/USDE.RR feed.
 ///
-/// Returns the exchange rate as: (total_lamports * 1e18) / pool_token_supply
-/// This gives SOL per JitoSOL share in 18-decimal precision.
-///
-/// Uses spl-stake-pool crate for safe deserialization to avoid layout fragility.
-pub fn get_jitosol_exchange_rate(stake_pool_account: &AccountInfo) -> Result<u64> {
-    use spl_stake_pool::state::StakePool;
-    
-    let data = stake_pool_account.try_borrow_data()?;
-    
-    // Deserialize using spl-stake-pool's official struct
-    let stake_pool = StakePool::try_from_slice(&data)
-        .map_err(|_| WrapSynthError::StalePrice)?;
-    
-    let total_lamports = stake_pool.total_lamports;
-    let pool_token_supply = stake_pool.pool_token_supply;
-    
-    require!(pool_token_supply > 0, WrapSynthError::PriceNormalizedToZero);
-    
-    // Exchange rate = (total_lamports * 1e18) / pool_token_supply
-    // Both total_lamports and pool_token_supply are in lamports (9 decimals)
-    let rate = (total_lamports as u128)
-        .checked_mul(PRICE_PRECISION as u128)
-        .ok_or(WrapSynthError::MathOverflow)?
-        .checked_div(pool_token_supply as u128)
-        .ok_or(WrapSynthError::MathOverflow)?;
-    
-    require!(rate > 0 && rate <= u64::MAX as u128, WrapSynthError::PriceNormalizedToZero);
-    Ok(rate as u64)
+/// Returns the rate in 18-decimal precision (USDe per sUSDe share). The rate
+/// grows as Ethena staking rewards accrue — the yield-accounting analog of the
+/// JitoSOL stake-pool exchange rate, but read from Pyth so no external CPI is
+/// needed and the existing PriceUpdateV2 parsing is reused.
+pub fn get_collateral_redemption_rate(price_account: &AccountInfo) -> Result<u64> {
+    let parsed = parse_pyth_price(price_account)?;
+    validate_price(&parsed, PRICE_MAX_AGE, &SUSDE_USDE_RR_FEED_ID)?;
+    normalize_pyth_price(parsed.price, parsed.exponent)
 }
 
-/// Check for JitoSOL depeg condition.
+/// Check for sUSDe depeg condition.
 ///
-/// Compares the market JitoSOL/USD price against the theoretical fair value computed from
-/// the stake pool exchange rate and SOL/USD price. If the market price diverges below the
-/// fair value by more than DEPEG_TOLERANCE_BPS, returns Err to signal a depeg.
+/// Compares the market sUSDe/USD price against the redemption rate (fair value,
+/// ≈ USD since USDe is pegged 1:1). If the market price diverges below the fair
+/// value by more than DEPEG_TOLERANCE_BPS, returns Err to signal a depeg.
 ///
 /// **Depeg Logic**:
-/// - Fair value = (jitosol_exchange_rate × sol_usd_price) / 1e18
+/// - Fair value = sUSDe→USDe redemption rate (18 decimals, ≈ $1)
 /// - Threshold = fair_value × (10000 - DEPEG_TOLERANCE_BPS) / 10000
-/// - If market_price < threshold, JitoSOL is depegging
+/// - If market_price < threshold, sUSDe is depegging
 ///
 /// **Action on depeg**: Caller should pause new mints (no new debt against depegging asset)
 /// while still allowing liquidations and burns at the market price.
 ///
 /// # Arguments
-/// * `jitosol_market_price` - JitoSOL/USD from Pyth (18 decimals)
-/// * `jitosol_exchange_rate` - JitoSOL→SOL from stake pool (18 decimals, SOL per JitoSOL)
-/// * `sol_usd_price` - SOL/USD from Pyth (18 decimals)
+/// * `susde_market_price` - sUSDe/USD from Pyth (18 decimals)
+/// * `redemption_rate` - sUSDe→USDe from Pyth SUSDE/USDE.RR (18 decimals)
 pub fn check_depeg_guard(
-    jitosol_market_price: u64,
-    jitosol_exchange_rate: u64,
-    sol_usd_price: u64,
+    susde_market_price: u64,
+    redemption_rate: u64,
 ) -> Result<()> {
-    // Fair value = exchange_rate × sol_price / 1e18
-    let fair_value = (jitosol_exchange_rate as u128)
-        .checked_mul(sol_usd_price as u128)
-        .ok_or(WrapSynthError::MathOverflow)?
-        .checked_div(PRICE_PRECISION as u128)
-        .ok_or(WrapSynthError::MathOverflow)?;
-    
-    require!(fair_value <= u64::MAX as u128, WrapSynthError::MathOverflow);
-    let fair_value = fair_value as u64;
-    
+    // Fair value ≈ redemption rate (USDe is pegged 1:1 to USD)
+    let fair_value = redemption_rate;
+
     // Threshold = fair_value × (10000 - tolerance_bps) / 10000
     let threshold = (fair_value as u128)
         .checked_mul((BPS_DENOMINATOR - DEPEG_TOLERANCE_BPS) as u128)
         .ok_or(WrapSynthError::MathOverflow)?
         .checked_div(BPS_DENOMINATOR as u128)
         .ok_or(WrapSynthError::MathOverflow)?;
-    
+
     require!(threshold <= u64::MAX as u128, WrapSynthError::MathOverflow);
     let threshold = threshold as u64;
-    
+
     // If market price < threshold, depeg detected
     require!(
-        jitosol_market_price >= threshold,
+        susde_market_price >= threshold,
         WrapSynthError::CollateralDepegged
     );
-    
+
     Ok(())
 }

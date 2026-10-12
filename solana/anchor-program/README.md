@@ -1,6 +1,6 @@
 # WrapSynth Vault Manager — Solana Program
 
-A Solana/Anchor implementation of the WrapSynth vault manager protocol, which enables minting and burning of **wsXMR** (wrapped Monero) tokens backed by collateral held in permissioned LP vaults.
+A Solana/Anchor implementation of the WrapSynth vault manager protocol, which enables minting and burning of **wsXMR** (wrapped Monero) tokens backed by **sUSDe** (Ethena staked USDe) collateral held in permissioned LP vaults.
 
 ---
 

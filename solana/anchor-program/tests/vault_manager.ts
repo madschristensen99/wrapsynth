@@ -731,6 +731,7 @@ describe("WrapSynth VaultManager — Full Integration", () => {
             initiatorPendingReturns: userPendingReturns,
             pythXmr:                 pythXmrKeypair.publicKey,
             pythCollateral:          pythColKeypair.publicKey,
+            pythSusdeRr:             pythColKeypair.publicKey,
             systemProgram:           SystemProgram.programId,
           } as any)
           .signers([user])
@@ -775,7 +776,7 @@ describe("WrapSynth VaultManager — Full Integration", () => {
             mintRequest:   mintRequestPda,
             pythXmr:       pythXmrKeypair.publicKey,
             pythCollateral: pythColKeypair.publicKey,
-            jitosolStakePool: new PublicKey("Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb"),
+            pythSusdeRr: pythColKeypair.publicKey,
           } as any)
           .signers([lp])
           .rpc();
@@ -818,7 +819,7 @@ describe("WrapSynth VaultManager — Full Integration", () => {
             mintRequest:   mintRequestPda,
             pythXmr:       pythXmrKeypair.publicKey,
             pythCollateral: pythColKeypair.publicKey,
-            jitosolStakePool: new PublicKey("Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb"),
+            pythSusdeRr: pythColKeypair.publicKey,
           } as any)
           .signers([lp])
           .rpc();
@@ -900,7 +901,7 @@ describe("WrapSynth VaultManager — Full Integration", () => {
             pendingReturns:   userPendingReturns,
             pythXmr:          pythXmrKeypair.publicKey,
             pythCollateral:   pythColKeypair.publicKey,
-            jitosolStakePool: new PublicKey("Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb"),
+            pythSusdeRr: pythColKeypair.publicKey,
             tokenProgram:     TOKEN_2022_PROGRAM_ID,
             systemProgram:    SystemProgram.programId,
           } as any)
@@ -1156,6 +1157,7 @@ describe("WrapSynth VaultManager — Full Integration", () => {
             initiatorPendingReturns: userPendingReturns,
             pythXmr:                 pythXmrKeypair.publicKey,
             pythCollateral:          pythColKeypair.publicKey,
+            pythSusdeRr:             pythColKeypair.publicKey,
             systemProgram:           SystemProgram.programId,
           } as any)
           .signers([user])
@@ -1198,7 +1200,7 @@ describe("WrapSynth VaultManager — Full Integration", () => {
             lpWsxmrAta,
             pythXmr:         pythXmrKeypair.publicKey,
             pythCollateral:  pythColKeypair.publicKey,
-            jitosolStakePool: new PublicKey("Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb"),
+            pythSusdeRr: pythColKeypair.publicKey,
             tokenProgram:    TOKEN_2022_PROGRAM_ID,
             systemProgram:   SystemProgram.programId,
           } as any)
@@ -1501,7 +1503,7 @@ describe("WrapSynth VaultManager — Full Integration", () => {
             globalState,
             pythXmr:          pythXmrKeypair.publicKey,
             pythCollateral:   pythColKeypair.publicKey,
-            jitosolStakePool: new PublicKey("Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb"),
+            pythSusdeRr: pythColKeypair.publicKey,
             systemProgram:    SystemProgram.programId,
           } as any)
           .signers([lp])
@@ -1752,6 +1754,7 @@ describe("WrapSynth VaultManager — Full Integration", () => {
             initiatorPendingReturns: userPendingReturns,
             pythXmr:                 pythXmrKeypair.publicKey,
             pythCollateral:          pythColKeypair.publicKey,
+            pythSusdeRr:             pythColKeypair.publicKey,
             systemProgram:           SystemProgram.programId,
           } as any)
           .signers([user])

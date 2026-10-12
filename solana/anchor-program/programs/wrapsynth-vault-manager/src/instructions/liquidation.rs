@@ -31,7 +31,7 @@ pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> 
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &JITOSOL_USD_FEED_ID,
+        &SUSDE_USD_FEED_ID,
     )?;
     let col_usd = collateral_to_usd(vault.collateral_amount, col_price);
     let debt_usd = (actual_debt as u128 * xmr_price as u128 / WSXMR_DECIMALS as u128) as u64;
@@ -225,7 +225,7 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
-        &ctx.accounts.jitosol_stake_pool,
+        &ctx.accounts.pyth_susde_rr,
     )?;
 
     let global = &ctx.accounts.global_state;
@@ -233,14 +233,14 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &JITOSOL_USD_FEED_ID,
+        &SUSDE_USD_FEED_ID,
     )?;
 
     let actual_debt = get_actual_debt(vault.normalized_debt, global.global_debt_index);
     require!(actual_debt > 0, WrapSynthError::InsufficientDebt);
 
     // Verify vault is liquidatable (unlocked collateral vs actual debt).
-    // Uses market JitoSOL/USD price (Task 2) so depegs are already marked down.
+    // Uses market sUSDe/USD price so depegs are already marked down.
     // Depeg-pause only blocks minting; liquidations remain permissionless.
     let col_usd = collateral_to_usd(vault.collateral_amount, col_price);
     let debt_usd = (actual_debt as u128 * xmr_price as u128 / WSXMR_DECIMALS as u128) as u64;
@@ -375,14 +375,14 @@ pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
-        &ctx.accounts.jitosol_stake_pool,
+        &ctx.accounts.pyth_susde_rr,
     )?;
     sync_vault_yield(
         new,
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
-        &ctx.accounts.jitosol_stake_pool,
+        &ctx.accounts.pyth_susde_rr,
     )?;
 
     let global = &ctx.accounts.global_state;
@@ -390,7 +390,7 @@ pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &JITOSOL_USD_FEED_ID,
+        &SUSDE_USD_FEED_ID,
     )?;
 
     let old_debt = get_actual_debt(old.normalized_debt, global.global_debt_index);
@@ -404,9 +404,9 @@ pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
 
     // Absorb old vault's collateral (after yield extraction)
     let absorbed = old.collateral_amount;
-    let exchange_rate = crate::utils::get_jitosol_exchange_rate(&ctx.accounts.jitosol_stake_pool)?;
-    let absorbed_sol_value = ((absorbed as u128)
-        .saturating_mul(exchange_rate as u128)
+    let redemption_rate = crate::utils::get_collateral_redemption_rate(&ctx.accounts.pyth_susde_rr)?;
+    let absorbed_value = ((absorbed as u128)
+        .saturating_mul(redemption_rate as u128)
         / PRICE_PRECISION as u128) as u64;
 
     // Transfer state: new vault assumes old vault's debt and collateral.
@@ -431,9 +431,9 @@ pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
         .principal_deposits
         .checked_add(absorbed)
         .ok_or(WrapSynthError::MathOverflow)?;
-    new.principal_sol_value = new
-        .principal_sol_value
-        .checked_add(absorbed_sol_value)
+    new.principal_value = new
+        .principal_value
+        .checked_add(absorbed_value)
         .ok_or(WrapSynthError::MathOverflow)?;
 
     let global = &mut ctx.accounts.global_state;
@@ -445,9 +445,9 @@ pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
         .global_lp_principal
         .checked_add(absorbed)
         .ok_or(WrapSynthError::MathOverflow)?;
-    global.global_lp_principal_sol_value = global
-        .global_lp_principal_sol_value
-        .checked_add(absorbed_sol_value)
+    global.global_lp_principal_value = global
+        .global_lp_principal_value
+        .checked_add(absorbed_value)
         .ok_or(WrapSynthError::MathOverflow)?;
 
     // Remove old vault principal from globals
@@ -457,9 +457,9 @@ pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
     global.global_lp_principal = global
         .global_lp_principal
         .saturating_sub(old.principal_deposits);
-    global.global_lp_principal_sol_value = global
-        .global_lp_principal_sol_value
-        .saturating_sub(old.principal_sol_value);
+    global.global_lp_principal_value = global
+        .global_lp_principal_value
+        .saturating_sub(old.principal_value);
 
     // Zero out old vault — must clear ALL state to prevent phantom locked collateral
     old.normalized_debt = 0;
@@ -467,7 +467,7 @@ pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
     old.locked_collateral = 0;
     old.principal_shares = 0;
     old.principal_deposits = 0;
-    old.principal_sol_value = 0;
+    old.principal_value = 0;
     old.liquidation_nonce = old
         .liquidation_nonce
         .checked_add(1)
@@ -543,8 +543,8 @@ pub struct ResolveBurnForLiquidation<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: JitoSOL stake pool account for reading exchange rate
-    pub jitosol_stake_pool: AccountInfo<'info>,
+    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
+    pub pyth_susde_rr: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -591,8 +591,8 @@ pub struct ExecuteLiquidation<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: JitoSOL stake pool account for reading exchange rate
-    pub jitosol_stake_pool: AccountInfo<'info>,
+    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
+    pub pyth_susde_rr: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -629,8 +629,8 @@ pub struct BackstopVault<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: JitoSOL stake pool account for reading exchange rate
-    pub jitosol_stake_pool: AccountInfo<'info>,
+    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
+    pub pyth_susde_rr: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
 }

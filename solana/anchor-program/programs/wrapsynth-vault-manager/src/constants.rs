@@ -1,27 +1,23 @@
 /// Protocol constants — direct port from VaultManager.sol
 
-// Collateral ratios (percentage, precision 100)
-// Tuned for volatile LST collateral (JitoSOL) where BOTH collateral and debt legs move.
-// With sDAI only the XMR leg moved; with JitoSOL both JitoSOL/USD and XMR/USD are volatile.
-// The offsetting factor is SOL↔XMR positive correlation dampening JitoSOL/XMR ratio volatility.
-// 180/150 is a defensible midpoint pending backtest of worst adverse JitoSOL/XMR move.
-pub const COLLATERAL_RATIO: u64 = 180;      // mint floor (was 150)
-pub const LIQUIDATION_RATIO: u64 = 150;     // liquidate below this (was 120)
-pub const LIQUIDATION_BONUS: u64 = 112;     // liquidator incentive (was 110)
+// Collateral ratios (percentage, precision 100) — EVM parity values for stable
+// collateral (sUSDe ≈ sDAI): only the XMR leg moves.
+pub const COLLATERAL_RATIO: u64 = 150;      // mint floor (EVM parity)
+pub const LIQUIDATION_RATIO: u64 = 120;     // liquidate below this (EVM parity)
+pub const LIQUIDATION_BONUS: u64 = 110;     // liquidator incentive (EVM parity)
 pub const RATIO_PRECISION: u64 = 100;
-pub const BURN_LOCK_RATIO: u64 = 160;       // reserve for in-flight burns (was 130)
-pub const YIELD_BUFFER_RATIO: u64 = 190;    // CR + 10 headroom after yield extraction
+pub const BURN_LOCK_RATIO: u64 = 110;       // reserve for in-flight burns (EVM parity)
+pub const YIELD_BUFFER_RATIO: u64 = 160;    // CR + 10 headroom after yield extraction
 pub const MINT_LOCK_RATIO: u64 = 110;       // key bond / par lock buffer over par (EVM parity)
 
 // Compile-time invariant checks — these must hold or the program fails to compile.
 // Ordering: LIQUIDATION_RATIO < COLLATERAL_RATIO < YIELD_BUFFER_RATIO
-// Burn lock must sit above liquidation so locked collateral survives drops through handshake window.
+// Note: BURN_LOCK_RATIO (110) sits BELOW LIQUIDATION_RATIO (120) — same as the EVM,
+// where the burn lock is a buffer over par for the handshake window, not a solvency floor.
 const _: () = assert!(LIQUIDATION_RATIO < COLLATERAL_RATIO,
     "LIQUIDATION_RATIO must be < COLLATERAL_RATIO");
 const _: () = assert!(COLLATERAL_RATIO < YIELD_BUFFER_RATIO,
     "COLLATERAL_RATIO must be < YIELD_BUFFER_RATIO");
-const _: () = assert!(LIQUIDATION_RATIO < BURN_LOCK_RATIO,
-    "LIQUIDATION_RATIO must be < BURN_LOCK_RATIO");
 const _: () = assert!(BURN_LOCK_RATIO <= COLLATERAL_RATIO + 10,
     "BURN_LOCK_RATIO must not exceed COLLATERAL_RATIO + 10");
 
@@ -82,32 +78,28 @@ pub const XMR_USD_FEED_ID: [u8; 32] = [
     0x65, 0x0f, 0x63, 0x76, 0xe3, 0x7c, 0x32, 0x1d,
 ];
 
-// JitoSOL/USD Pyth feed ID (verified from Hermes API 2026-06-14)
-pub const JITOSOL_USD_FEED_ID: [u8; 32] = [
-    0x67, 0xbe, 0x9f, 0x51, 0x9b, 0x95, 0xcf, 0x24,
-    0x33, 0x88, 0x01, 0x05, 0x1f, 0x9a, 0x80, 0x8e,
-    0xff, 0x0a, 0x57, 0x8c, 0xcb, 0x38, 0x8d, 0xb7,
-    0x3b, 0x7f, 0x6f, 0xe1, 0xde, 0x01, 0x9f, 0xfb,
+// sUSDe/USD Pyth feed ID (Ethena staked USDe on Solana, verified 2026-10-12)
+pub const SUSDE_USD_FEED_ID: [u8; 32] = [
+    0xca, 0x3b, 0xa9, 0xa6, 0x19, 0xa4, 0xb3, 0x75,
+    0x5c, 0x10, 0xac, 0x7d, 0x5e, 0x76, 0x02, 0x75,
+    0xaa, 0x95, 0xe9, 0x82, 0x3d, 0x38, 0xa8, 0x4f,
+    0xed, 0xd4, 0x16, 0x85, 0x6c, 0xdb, 0xa3, 0x7c,
 ];
 
-// SOL/USD Pyth feed ID (verified from Hermes API 2026-06-14)
-pub const SOL_USD_FEED_ID: [u8; 32] = [
-    0xef, 0x0d, 0x8b, 0x6f, 0xda, 0x2c, 0xce, 0xd6,
-    0x91, 0x3b, 0xdc, 0xb2, 0x8c, 0x05, 0x54, 0xf6,
-    0x59, 0xe5, 0x5e, 0x8f, 0x88, 0x09, 0xf8, 0x85,
-    0x2b, 0x24, 0xe7, 0xdc, 0xfb, 0x75, 0xad, 0x54,
+// sUSDe→USDe redemption rate Pyth feed ID (yield accounting — replaces the
+// JitoSOL stake-pool exchange rate read)
+pub const SUSDE_USDE_RR_FEED_ID: [u8; 32] = [
+    0x27, 0x1c, 0x64, 0xce, 0x45, 0x99, 0x37, 0xab,
+    0xf7, 0x21, 0xd4, 0x25, 0x52, 0x03, 0x57, 0x13,
+    0xb6, 0xc5, 0x8f, 0x80, 0xee, 0xce, 0xab, 0x71,
+    0x6a, 0x62, 0x46, 0x07, 0xfd, 0xa4, 0xb1, 0x0f,
 ];
 
-// Depeg guard tolerance: pause minting if market JitoSOL/USD < fair value * (100 - tolerance) / 100
+// Depeg guard tolerance: pause minting if market sUSDe/USD < redemption value * (100 - tolerance) / 100
 pub const DEPEG_TOLERANCE_BPS: u64 = 300; // 3%
 
-// JitoSOL mainnet addresses (verified from jito.network docs 2026-06-14)
-// Stake Pool account: Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb
-pub const JITOSOL_STAKE_POOL: &str = "Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb";
-// JitoSOL mint: J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn
-pub const JITOSOL_MINT: &str = "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn";
-// SPL Stake Pool program: SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy
-pub const SPL_STAKE_POOL_PROGRAM: &str = "SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy";
+// sUSDe mainnet mint (Ethena staked USDe on Solana, verified 2026-10-12)
+pub const SUSDE_MINT: &str = "Eh6XEPhSwoLv5wFApukmnaVSHQ6sAnoD9BmgmwQoN2sN";
 
 // PDA seeds
 pub const GLOBAL_STATE_SEED: &[u8] = b"global_state";

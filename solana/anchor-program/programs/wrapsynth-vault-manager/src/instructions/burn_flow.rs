@@ -93,7 +93,7 @@ fn _request_burn(
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
-        &ctx.accounts.jitosol_stake_pool,
+        &ctx.accounts.pyth_susde_rr,
     )?;
 
     let global = &ctx.accounts.global_state;
@@ -101,7 +101,7 @@ fn _request_burn(
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &JITOSOL_USD_FEED_ID,
+        &SUSDE_USD_FEED_ID,
     )?;
 
     // M1: Burn cannot exceed the vault's own debt. Debt is NOT reduced here —
@@ -305,7 +305,7 @@ pub fn settle_burn(ctx: Context<SettleBurn>) -> Result<()> {
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
-        &ctx.accounts.jitosol_stake_pool,
+        &ctx.accounts.pyth_susde_rr,
         &mut ctx.accounts.user_pending_returns,
     )
 }
@@ -336,7 +336,7 @@ pub fn finalize_burn(ctx: Context<FinalizeBurn>, secret: [u8; 32]) -> Result<()>
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
-        &ctx.accounts.jitosol_stake_pool,
+        &ctx.accounts.pyth_susde_rr,
         &mut ctx.accounts.user_pending_returns,
     )
 }
@@ -351,13 +351,13 @@ fn settle_burn_internal<'a>(
     global: &mut GlobalState,
     pyth_xmr: &AccountInfo<'a>,
     pyth_collateral: &AccountInfo<'a>,
-    jitosol_stake_pool: &AccountInfo<'a>,
+    pyth_susde_rr: &AccountInfo<'a>,
     user_pending_returns: &mut PendingReturns,
 ) -> Result<()> {
-    sync_vault_yield(vault, global, pyth_xmr, pyth_collateral, jitosol_stake_pool)?;
+    sync_vault_yield(vault, global, pyth_xmr, pyth_collateral, pyth_susde_rr)?;
 
     let xmr_price = get_xmr_price(pyth_xmr, PRICE_MAX_AGE)?;
-    let col_price = get_collateral_price(pyth_collateral, PRICE_MAX_AGE, &JITOSOL_USD_FEED_ID)?;
+    let col_price = get_collateral_price(pyth_collateral, PRICE_MAX_AGE, &SUSDE_USD_FEED_ID)?;
 
     let mut safe_reward = request.reward_collateral;
     let total_unlock = request.locked_collateral + request.reward_collateral;
@@ -477,7 +477,7 @@ pub fn claim_slashed_collateral(
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
-        &ctx.accounts.jitosol_stake_pool,
+        &ctx.accounts.pyth_susde_rr,
     )?;
 
     let vault = &mut ctx.accounts.vault;
@@ -489,7 +489,7 @@ pub fn claim_slashed_collateral(
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &JITOSOL_USD_FEED_ID,
+        &SUSDE_USD_FEED_ID,
     )?;
     let par_value_usd = (request.wsxmr_amount as u128)
         .checked_mul(request.xmr_price_at_request as u128)
@@ -621,7 +621,7 @@ pub fn force_settle_burn(ctx: Context<ForceSettleBurn>) -> Result<()> {
         &mut ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
-        &ctx.accounts.jitosol_stake_pool,
+        &ctx.accounts.pyth_susde_rr,
     )?;
 
     let vault = &mut ctx.accounts.vault;
@@ -633,7 +633,7 @@ pub fn force_settle_burn(ctx: Context<ForceSettleBurn>) -> Result<()> {
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &JITOSOL_USD_FEED_ID,
+        &SUSDE_USD_FEED_ID,
     )?;
     let par_value_usd = (request.wsxmr_amount as u128)
         .checked_mul(request.xmr_price_at_request as u128)
@@ -847,8 +847,8 @@ pub struct RequestBurn<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: JitoSOL stake pool account for reading exchange rate
-    pub jitosol_stake_pool: AccountInfo<'info>,
+    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
+    pub pyth_susde_rr: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -943,8 +943,8 @@ pub struct SettleBurn<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: JitoSOL stake pool account for reading exchange rate
-    pub jitosol_stake_pool: AccountInfo<'info>,
+    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
+    pub pyth_susde_rr: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
 }
@@ -992,8 +992,8 @@ pub struct FinalizeBurn<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: JitoSOL stake pool account for reading exchange rate
-    pub jitosol_stake_pool: AccountInfo<'info>,
+    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
+    pub pyth_susde_rr: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
 }
@@ -1041,8 +1041,8 @@ pub struct ClaimSlashedCollateral<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: JitoSOL stake pool account for reading exchange rate
-    pub jitosol_stake_pool: AccountInfo<'info>,
+    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
+    pub pyth_susde_rr: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
 }
@@ -1120,8 +1120,8 @@ pub struct ForceSettleBurn<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: JitoSOL stake pool account for reading exchange rate
-    pub jitosol_stake_pool: AccountInfo<'info>,
+    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
+    pub pyth_susde_rr: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
 }

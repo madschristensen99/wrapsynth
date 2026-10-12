@@ -74,7 +74,7 @@ pub fn trigger_buy_and_burn(
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &JITOSOL_USD_FEED_ID,
+        &SUSDE_USD_FEED_ID,
     )?;
     let xmr_price = spot;
     let spend_usd = collateral_to_usd(spend_amount, col_price);
