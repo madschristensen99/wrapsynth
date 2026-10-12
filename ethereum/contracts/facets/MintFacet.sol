@@ -83,7 +83,23 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             ? vault.collateralShares - vault.lockedCollateral 
             : 0;
         
-        uint256 ratio = _calculateCollateralRatio(availableCollateral, totalProjectedDebt);
+        // Reserve the key bond (110% of par) in the CR check — identical to
+        // provideLPKey. Without this, a mint can be initiated that the LP can
+        // never key (initiateMint passes, provideLPKey reverts
+        // InsufficientCollateral), stranding the user's griefing deposit until
+        // timeout. Nothing is reserved in storage here — the check is just
+        // consistent with what provideLPKey will enforce.
+        uint256 xmrPrice = _getXmrPriceFromStorage();
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
+        uint256 parValueUsd = (wsxmrAmount * xmrPrice) / WSXMR_DECIMALS;
+        uint256 parDaiAmount = (parValueUsd * SDAI_DECIMALS) / collateralPrice;
+        uint256 lockDaiAmount = (parDaiAmount * MINT_LOCK_RATIO) / RATIO_PRECISION;
+        uint256 bondShares = _daiToShares(lockDaiAmount);
+        
+        if (availableCollateral < bondShares) revert InsufficientCollateral();
+        uint256 remainingFree = availableCollateral - bondShares;
+        
+        uint256 ratio = _calculateCollateralRatio(remainingFree, totalProjectedDebt);
         if (ratio < COLLATERAL_RATIO) revert InsufficientCollateral();
         
         requestId = keccak256(abi.encodePacked(

@@ -2256,8 +2256,11 @@ export async function loadVaults() {
                         capacityAvailable = true;
                         console.log('On-chain mint capacity (wsXMR):', mintCapacityResult.toString(), '=> XMR:', maxMintCapacityXmr);
                     } else if (xmrPrice > 0 && collPrice > 0) {
-                        // Fallback: estimate from off-chain prices (CoinGecko + sDAI ≈ $1)
-                        maxMintCapacityXmr = (freeCollateral * collPrice) / (1.5 * xmrPrice);
+                        // Fallback: estimate matching provideLPKey's check — the
+                        // 110% key bond is reserved from free collateral BEFORE the
+                        // 150% CR check, so the divisor is 1.1 + 1.5 = 2.6, not 1.5.
+                        // (freeCollateral already excludes 1.5x existing debt.)
+                        maxMintCapacityXmr = (freeCollateral * collPrice) / (2.6 * xmrPrice);
                         const maxMintBps = Number(vaultData.maxMintBps);
                         if (maxMintBps > 0) {
                             const collateralValueUsd = collAmountDAI * collPrice;
