@@ -73,7 +73,7 @@ async function deploy(w,p,name,args,man,key){
       const nonce=await w.getTransactionCount('pending');
       const unsigned=await f.getDeployTransaction(...args,{gasLimit:gas,gasPrice:GP,nonce});
       const signed=await w.signTransaction(unsigned);
-      const target=ethers.utils.parseTransaction(signed).to;
+      const target=ethers.utils.getContractAddress({from:w.address,nonce});
       const resp=await p.sendTransaction(signed);
       console.log(`  ${name} tx ${resp.hash} (nonce ${nonce})`);
       // Poll code at the target (ground truth) — big blocks mine ~60s.

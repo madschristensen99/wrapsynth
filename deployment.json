@@ -1,38 +1,38 @@
 {
   "network": "HyperEVM Mainnet",
   "chainId": 999,
-  "deploymentDate": "2026-10-11T18:00:00.000Z",
+  "deploymentDate": "2026-10-12T15:30:00.000Z",
   "rpcUrl": "https://rpc.hyperliquid.xyz/evm",
   "wsUrl": "",
   "explorer": "https://hyperevmscan.io",
   "contracts": {
-    "wsXMR": "0x25Ed246C3CB273730235A3184aB63aB4DF4f4CF3",
-    "wsXmrHub": "0xb901C70F2a49d78c32e88ea1F36290d3F5F21f12",
-    "liquidityRouter": "0x4619e409c8070042dac16637f8f883f1c7118aee",
-    "swapHelper": "0xfb2Ebe73143C5F5aF51Ba7058b8F47702dDA7df8",
+    "wsXMR": "0xC91D8d5CfBF25632024dF384bDB0448405E38909",
+    "wsXmrHub": "0xEfA8A92Cba265eC3cc1DcA0BF6D9c33730507bb2",
+    "liquidityRouter": "0x9C3C1c35C9427F33B69327225EeBFCffACBf8161",
+    "swapHelper": "0xe4f8F75145A64de5f0686a6276633f70AD029fea",
     "facets": {
-      "HyperCoreOracleFacet": "0xE91A4B01632a7D281fb3eB0E83Ad9D5F0305d48f",
-      "VaultFacet": "0x5F8b8a6ccA1aa4266fAC32efc729527BC0F333d1",
-      "MintFacet": "0x463F0C28e8E9328DB7ab220Dd4133131c9f053dB",
-      "BurnFacet": "0x36fe621680dA06a1CA80B52769c6413A212081bC",
-      "LiquidationFacet": "0x97e2F14C2533a5f678A9596cF5f05bE955FA19fB",
-      "YieldFacet": "0x917a2Afc28BE633B0BDE1aeE4923C4A97F0ab250"
+      "HyperCoreOracleFacet": "0xccBf67788c6eFd4A96b2CD08ef10FBEe8f2A2723",
+      "VaultFacet": "0x8cF3b4ccF45287AD033b8E1131741c04Ce7F5Fa2",
+      "MintFacet": "0x16B50D42f91d6E4d675A5c23CeC67F9Dfa4086e4",
+      "BurnFacet": "0x5b7c16eE5654289d64f4BEe851E97F4d4A84e0Cf",
+      "LiquidationFacet": "0x04106B1129301725b3C71A583cB39841E981Df35",
+      "YieldFacet": "0x977DBb71191344d24dA7f88A626eC0e421AA672D"
     }
   },
   "externalContracts": {
-    "sDAI": "0x3ba7c8c0f693703b24ace1db311e15fd8d2904ed",
-    "stataUSDe": "0x3ba7c8c0f693703b24ace1db311e15fd8d2904ed",
+    "sDAI": "0x44E13C01bf0bdfdB88f419C111fA611F3aa24fAB",
+    "stataUSDe": "0x44E13C01bf0bdfdB88f419C111fA611F3aa24fAB",
     "USDe": "0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34",
     "UniswapV3Factory": "0xB1c0fa0B789320044A6F623cFe5eBda9562602E3",
     "UniswapV3PositionManager": "0x6eDA206207c09e5428F281761DdC0D300851fBC8",
     "UniswapV3Router": "0x6D99e7f6747AF2cDbB5164b6DD50e40D4fDe1e77",
     "hyperlendPool": "0x00A89d7a5A02160f20150EbEA7a2b5E4879A1A8b",
     "hyperlendAToken": "0x333819c04975554260AaC119948562a0E24C2bd6",
-    "SwapHelper": "0xfb2Ebe73143C5F5aF51Ba7058b8F47702dDA7df8",
-    "Ed25519Helper": "0xE70694B1E032E022dFb0090b8C5b9cc7Cb0B2640"
+    "SwapHelper": "0xe4f8F75145A64de5f0686a6276633f70AD029fea",
+    "Ed25519Helper": "0xDbFE73263D94b9566C02f05C1Ccf87d7E4525f27"
   },
   "pool": {
-    "uniswapV3Pool": "0xfa529dc1b245b3228a172ceb886f47f2127af401",
+    "uniswapV3Pool": "0xe9d7d7033cb731B60DBC0d71078a35Ec7d5E3f8b",
     "feeTier": 3000
   },
   "urls": {
@@ -46,21 +46,13 @@
     "liquidationThreshold": 120,
     "targetCollateralRatio": 180
   },
+  "previousDeployment": {
+    "wsXMR": "0x25Ed246C3CB273730235A3184aB63aB4DF4f4CF3",
+    "wsXmrHub": "0xb901C70F2a49d78c32e88ea1F36290d3F5F21f12",
+    "note": "v1 hub — still functional; pending mints/burns and legacy collateral live there. See ethereum/deployments/hyperevm-deployment.v1.json"
+  },
   "verification": {
-    "status": "verified",
-    "verifiedContracts": [
-      "wsXMR",
-      "wsXmrHub",
-      "liquidityRouter",
-      "swapHelper",
-      "HyperCoreOracleFacet",
-      "VaultFacet",
-      "MintFacet",
-      "BurnFacet",
-      "LiquidationFacet",
-      "YieldFacet",
-      "StataUSDe",
-      "Ed25519Helper"
-    ]
+    "status": "pending",
+    "verifiedContracts": []
   }
 }
