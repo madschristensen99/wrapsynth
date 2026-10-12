@@ -7,3 +7,11 @@
     Header unset Expires
   </FilesMatch>
 </IfModule>
+
+# Clean URLs: /account -> account.html, /app -> app.html, /lp-vault -> lp-vault.html
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^account/?$ account.html [L]
+  RewriteRule ^app/?$ app.html [L]
+  RewriteRule ^lp-vault/?$ lp-vault.html [L]
+</IfModule>
