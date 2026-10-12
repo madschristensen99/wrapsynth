@@ -172,20 +172,27 @@ async function loadHistory(address) {
   list.innerHTML = '<div class="history-empty">Loading history...</div>';
   allHistory = [];
 
+  // Mints + burns are quick contract reads — render them first so the page
+  // never hangs on the slow transfer scan.
+  const [mints, burns] = await Promise.all([
+    fetchMintHistory(address).catch((e) => { console.warn('Mints failed:', e); return []; }),
+    fetchBurnHistory(address).catch((e) => { console.warn('Burns failed:', e); return []; })
+  ]);
+  allHistory = [...mints, ...burns];
+  renderHistory();
+
+  // Transfers scan a wide block range — load them separately with a timeout
+  // so they can't block the page forever on a flaky RPC.
   try {
-    const [mints, burns, transfers] = await Promise.all([
-      fetchMintHistory(address).catch((e) => { console.warn('Mints failed:', e); return []; }),
-      fetchBurnHistory(address).catch((e) => { console.warn('Burns failed:', e); return []; }),
-      fetchTransferHistory(address).catch((e) => { console.warn('Transfers failed:', e); return []; })
+    const transfers = await Promise.race([
+      fetchTransferHistory(address),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('transfer scan timed out')), 15000))
     ]);
-
-    allHistory = [...mints, ...burns, ...transfers];
+    allHistory = [...allHistory, ...transfers];
     allHistory.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-
     renderHistory();
   } catch (e) {
-    console.error('History load failed:', e);
-    list.innerHTML = '<div class="history-empty">Failed to load history. Try refreshing.</div>';
+    console.warn('Transfers failed (history still shows mints/burns):', e);
   }
 }
 
@@ -264,27 +271,32 @@ async function fetchBurnHistory(address) {
 async function fetchTransferHistory(address) {
   const client = getPublicClient();
   const currentBlock = await client.getBlockNumber();
-  const fromBlock = currentBlock > 50000n ? currentBlock - 50000n : 0n;
+  // ~20000 blocks (~5.5h at ~1s blocks) — wide enough for recent activity,
+  // small enough that the chunked eth_getLogs scan finishes quickly.
+  const fromBlock = currentBlock > 20000n ? currentBlock - 20000n : 0n;
 
   const [outEvents, inEvents] = await Promise.all([
     getPastEvents(CONTRACTS.wsxmrToken, TRANSFER_ABI, 'Transfer', fromBlock, 'latest', { from: address }).catch(() => []),
     getPastEvents(CONTRACTS.wsxmrToken, TRANSFER_ABI, 'Transfer', fromBlock, 'latest', { to: address }).catch(() => [])
   ]);
 
-  // Fetch block timestamps
-  const blockNumbers = new Set();
-  for (const ev of [...outEvents, ...inEvents]) {
-    blockNumbers.add(ev.blockNumber);
-  }
+  // Fetch block timestamps in parallel (concurrency-limited)
+  const blockNumbers = [...new Set([...outEvents, ...inEvents].map(ev => ev.blockNumber))];
   const blockTimestamps = new Map();
-  for (const bn of blockNumbers) {
-    try {
-      const block = await client.getBlock({ blockNumber: bn });
-      blockTimestamps.set(bn, Number(block.timestamp));
-    } catch (e) {
-      blockTimestamps.set(bn, 0);
+  const CONCURRENCY = 8;
+  let next = 0;
+  async function tsWorker() {
+    while (next < blockNumbers.length) {
+      const bn = blockNumbers[next++];
+      try {
+        const block = await client.getBlock({ blockNumber: bn });
+        blockTimestamps.set(bn, Number(block.timestamp));
+      } catch {
+        blockTimestamps.set(bn, 0);
+      }
     }
   }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, blockNumbers.length) }, tsWorker));
 
   const items = [];
   for (const ev of outEvents) {
