@@ -16,6 +16,8 @@ import { parseAbi, formatUnits } from 'https://esm.sh/viem@2.7.0';
 
 const EXPLORER = NETWORKS.hyperevm.blockExplorer;
 const TRANSFER_ABI = ['event Transfer(address indexed from, address indexed to, uint256 value)'];
+const MINT_EVENT_ABI = ['event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout)'];
+const BURN_EVENT_ABI = ['event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey)'];
 
 let allHistory = [];
 let currentFilter = 'all';
@@ -181,6 +183,15 @@ async function loadHistory(address) {
   allHistory = [...mints, ...burns];
   renderHistory();
 
+  // Best-effort: fill in real creation timestamps from events, then re-sort
+  // newest-first. Never blocks the render — falls back to contract order.
+  await Promise.all([
+    enrichWithTimestamps(mints, MINT_EVENT_ABI, 'MintInitiated', 'initiator', address),
+    enrichWithTimestamps(burns, BURN_EVENT_ABI, 'BurnRequested', 'user', address)
+  ]);
+  allHistory.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  renderHistory();
+
   // Transfers scan a wide block range — load them separately with a timeout
   // so they can't block the page forever on a flaky RPC.
   try {
@@ -194,6 +205,62 @@ async function loadHistory(address) {
   } catch (e) {
     console.warn('Transfers failed (history still shows mints/burns):', e);
   }
+}
+
+/**
+ * Fill in creation timestamps for mint/burn items from their Initiated/Requested
+ * events. Scans a tight window around the earliest deadline (creation precedes
+ * the deadline) so it stays fast; times out gracefully on flaky RPCs.
+ */
+async function enrichWithTimestamps(items, eventAbi, eventName, filterField, address) {
+  if (!items.length) return;
+  try {
+    const client = getPublicClient();
+    const deadlines = items.map(i => i._deadline).filter(Boolean);
+    if (!deadlines.length) return;
+    const minDeadline = BigInt(Math.min(...deadlines));
+    const fromBlock = minDeadline > 5000n ? minDeadline - 5000n : 0n;
+
+    const events = await Promise.race([
+      getPastEvents(CONTRACTS.hub, eventAbi, eventName, fromBlock, 'latest', { [filterField]: address }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('event scan timed out')), 10000))
+    ]);
+
+    const blockByReq = new Map();
+    for (const ev of events) blockByReq.set(ev.args.requestId, ev.blockNumber);
+    const tss = await fetchBlockTimestamps([...new Set(blockByReq.values())]);
+    for (const item of items) {
+      const bn = blockByReq.get(item.requestId);
+      const ts = bn ? tss.get(bn) : 0;
+      if (ts) {
+        item.timestamp = ts;
+        item.timestampLabel = tsLabel(ts);
+      }
+    }
+  } catch (e) {
+    console.warn('Timestamp enrichment failed (times stay unknown):', e);
+  }
+}
+
+/** Fetch block timestamps in parallel (concurrency-limited). */
+async function fetchBlockTimestamps(blockNumbers) {
+  const client = getPublicClient();
+  const timestamps = new Map();
+  const CONCURRENCY = 8;
+  let next = 0;
+  async function worker() {
+    while (next < blockNumbers.length) {
+      const bn = blockNumbers[next++];
+      try {
+        const block = await client.getBlock({ blockNumber: bn });
+        timestamps.set(bn, Number(block.timestamp));
+      } catch {
+        timestamps.set(bn, 0);
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, blockNumbers.length) }, worker));
+  return timestamps;
 }
 
 /* ── Mint history ── */
@@ -216,7 +283,8 @@ async function fetchMintHistory(address) {
         vault: req.lpVault,
         status: statusInfo.label,
         statusClass: statusInfo.class,
-        timestamp: Number(req.timeout) ? 0 : 0, // timeout is deadline, not timestamp
+        _deadline: Number(req.timeout) || 0,
+        timestamp: 0,
         timestampLabel: '—',
         details: [
           { label: 'Request ID', value: formatAddr(id) },
@@ -252,7 +320,8 @@ async function fetchBurnHistory(address) {
         status: statusInfo.label,
         statusClass: statusInfo.class,
         claimable: status === 4, // COMPLETED — LP revealed its secret, XMR claimable
-        timestamp: Number(req.deadline) ? 0 : 0,
+        _deadline: Number(req.deadline) || 0,
+        timestamp: 0,
         timestampLabel: '—',
         details: [
           { label: 'Request ID', value: formatAddr(id) },
@@ -282,21 +351,7 @@ async function fetchTransferHistory(address) {
 
   // Fetch block timestamps in parallel (concurrency-limited)
   const blockNumbers = [...new Set([...outEvents, ...inEvents].map(ev => ev.blockNumber))];
-  const blockTimestamps = new Map();
-  const CONCURRENCY = 8;
-  let next = 0;
-  async function tsWorker() {
-    while (next < blockNumbers.length) {
-      const bn = blockNumbers[next++];
-      try {
-        const block = await client.getBlock({ blockNumber: bn });
-        blockTimestamps.set(bn, Number(block.timestamp));
-      } catch {
-        blockTimestamps.set(bn, 0);
-      }
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, blockNumbers.length) }, tsWorker));
+  const blockTimestamps = await fetchBlockTimestamps(blockNumbers);
 
   const items = [];
   for (const ev of outEvents) {

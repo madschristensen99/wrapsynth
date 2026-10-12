@@ -143,11 +143,15 @@ export async function buildBurnClaimKeys(requestId) {
     const userViewKeyHex = '0x' + keySet.privateViewKey.toString(16).padStart(64, '0');
     const keys = getCombinedKeysForImport(keySet.secret, lpSecret, userViewKeyHex);
 
-    // 5. Restore height hint — the LP's XMR tx is recent, so a deep window is safe
+    // 5. Restore height hint — the LP's XMR tx is recent, so a deep window is safe.
+    //    Never block the claim on a slow daemon: time out and fall back to 0.
     let restoreHeight = 0;
     try {
         const { getMoneroRpc } = await import('./moneroRpc.js?v=3.12');
-        const height = await getMoneroRpc().getHeight();
+        const height = await Promise.race([
+            getMoneroRpc().getHeight(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('daemon height timed out')), 4000))
+        ]);
         restoreHeight = Math.max(0, height - 1000);
     } catch { /* leave 0 — modal shows a generic hint */ }
 
