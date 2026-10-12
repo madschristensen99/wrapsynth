@@ -1535,7 +1535,7 @@ app.post('/mint/key', async (req, res) => {
 // List tracked mints
 app.get('/mints', (_req, res) => {
   const list = Array.from(pendingMints.values());
-  res.json({ mints: list, count: list.length });
+  res.json(JSON.parse(JSON.stringify({ mints: list, count: list.length }, (k, v) => typeof v === 'bigint' ? v.toString() : v)));
 });
 
 // Burn status — lets the frontend show the real Monero txid without waiting

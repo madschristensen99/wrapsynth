@@ -539,8 +539,11 @@ export async function pollForDeposit(expectedAmountAtomic, opts = {}) {
         try {
           const tip = await getDaemonHeight();
           const scanFrom = Math.max(restoreHeight, daemonScannedUpTo);
+          console.log(`[Monero] daemon-scan check: tip=${tip} scanFrom=${scanFrom} daemonScannedUpTo=${daemonScannedUpTo} restoreHeight=${restoreHeight}`);
           if (tip > scanFrom) {
+            console.log(`[Monero] daemon-scan running ${scanFrom}..${tip}...`);
             const daemonTxs = await scanDepositViaDaemon(depositAddress, lpViewKey, scanFrom, tip);
+            console.log(`[Monero] daemon-scan done: ${daemonTxs.length} match(es)`);
             daemonScannedUpTo = tip + 1;
             for (const tx of daemonTxs) {
               if (tx.amount == null) continue;
