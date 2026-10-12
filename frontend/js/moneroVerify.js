@@ -210,35 +210,68 @@ export async function scanBlocksForPayment(daemonUrl, fromHeight, toHeight, addr
     const from = Math.max(0, fromHeight);
     const to = Math.max(from, toHeight);
 
-    // Collect tx hashes across the block range
+    // Collect tx hashes across the block range. Fetch blocks in parallel
+    // (concurrency-limited) — sequential get_block calls are too slow for a
+    // 60+ block window.
+    const heights = [];
+    for (let h = from; h <= to; h++) heights.push(h);
+    const blockHashes = new Array(heights.length);
+    const CONCURRENCY = 8;
+    let nextBlock = 0;
+    async function blockWorker() {
+        while (nextBlock < heights.length) {
+            const i = nextBlock++;
+            const h = heights[i];
+            try {
+                const blkRes = await fetch(`${daemonUrl}/json_rpc`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jsonrpc: '2.0', id: '0', method: 'get_block', params: { height: h } }),
+                });
+                const blk = await blkRes.json();
+                blockHashes[i] = (blk.result && blk.result.tx_hashes) || [];
+            } catch {
+                blockHashes[i] = [];
+            }
+        }
+    }
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, heights.length) }, blockWorker));
+
     const txJobs = [];
-    for (let h = from; h <= to; h++) {
-        const blkRes = await fetch(`${daemonUrl}/json_rpc`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ jsonrpc: '2.0', id: '0', method: 'get_block', params: { height: h } }),
-        });
-        const blk = await blkRes.json();
-        const hashes = (blk.result && blk.result.tx_hashes) || [];
-        for (const txid of hashes) txJobs.push({ txid, height: h });
+    for (let i = 0; i < heights.length; i++) {
+        for (const txid of blockHashes[i]) txJobs.push({ txid, height: heights[i] });
     }
 
-    // Fetch txs in batches and decode outputs
-    for (let i = 0; i < txJobs.length; i += 50) {
-        const batch = txJobs.slice(i, i + 50);
-        const res = await fetch(`${daemonUrl}/get_transactions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ txs_hashes: batch.map(t => t.txid), decode_as_json: true }),
-        });
-        const data = await res.json();
+    // Fetch txs in batches and decode outputs (parallel batches)
+    const batchResults = new Array(Math.ceil(txJobs.length / 50));
+    let nextBatch = 0;
+    async function txWorker() {
+        while (nextBatch < batchResults.length) {
+            const b = nextBatch++;
+            const batch = txJobs.slice(b * 50, b * 50 + 50);
+            try {
+                const res = await fetch(`${daemonUrl}/get_transactions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ txs_hashes: batch.map(t => t.txid), decode_as_json: true }),
+                });
+                batchResults[b] = await res.json();
+            } catch {
+                batchResults[b] = { txs: [] };
+            }
+        }
+    }
+    await Promise.all(Array.from({ length: Math.min(4, batchResults.length) }, txWorker));
+
+    for (let b = 0; b < batchResults.length; b++) {
+        const data = batchResults[b];
         for (let j = 0; j < (data.txs || []).length; j++) {
             const t = data.txs[j];
             let txJson;
             try { txJson = JSON.parse(t.as_json); } catch { continue; }
             const match = matchTxOutputs(txJson, viewKeyScalar, spendPubPoint, G);
             if (match) {
-                found.push({ txid: batch[j].txid, height: batch[j].height, amount: match.amount, outputIndex: match.outputIndex });
+                found.push({ txid: txJobs[b * 50 + j].txid, height: txJobs[b * 50 + j].height, amount: match.amount, outputIndex: match.outputIndex });
             }
         }
     }

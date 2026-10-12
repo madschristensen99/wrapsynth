@@ -724,6 +724,7 @@ export class BurnFlow {
                         // No txid yet — scan newly-mined blocks for the payment
                         const tip = await moneroRpc.getHeight();
                         if (tip <= scanCursor) return;
+                        console.log(`[BurnVerify] Scanning blocks ${scanCursor} → ${tip - 1} for LP payment...`);
                         const { scanBlocksForPayment } = await import('./moneroVerify.js?v=3.12');
                         const matches = await scanBlocksForPayment(daemonUrl, scanCursor, tip - 1, this.sharedMoneroAddress, viewKeyLe);
                         scanCursor = tip;
