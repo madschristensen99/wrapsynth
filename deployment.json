@@ -53,7 +53,7 @@
   },
   "verification": {
     "status": "verified",
-    "verifier": "sourcify",
+    "verifier": "hyperevmscan (etherscan-v2) + sourcify",
     "verifiedContracts": [
       "wsXMR",
       "wsXmrHub",
@@ -67,7 +67,6 @@
       "YieldFacet",
       "StataUSDe",
       "Ed25519Helper"
-    ],
-    "note": "All exact_match on Sourcify (chainid 999). hyperevmscan display requires Etherscan V2 API key (unified key covers all chains)."
+    ]
   }
 }
