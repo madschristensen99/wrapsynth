@@ -2,7 +2,6 @@
 // Manages all DOM interactions and updates
 
 import { DECIMALS, LP_SERVER_CONFIG } from './config.js?v=3.12';
-import { getMoneroNodeOverride, setMoneroNodeOverride } from './moneroRpc.js?v=3.12';
 import { getIconSVG } from './icons.js?v=3.12';
 import { launchMintCelebration, launchBurnAnimation } from './animations.js?v=3.12';
 
@@ -1754,256 +1753,16 @@ export function showBurnAddressPanel(data) {
     if (loadingEl) loadingEl.classList.add('hidden');
 }
 
-/**
- * Show burn sweep progress (claiming XMR from shared address)
- * @param {string} message - Progress message
- */
-export function showBurnSweepProgress(message) {
-    const burnPanel = document.getElementById('burn-panel');
-    if (!burnPanel) return;
-
-    // Hide cancel button during sweep
-    const cancelBtn = document.getElementById('cancel-burn');
-    if (cancelBtn) cancelBtn.classList.add('hidden');
-
-    let el = document.getElementById('burn-sweep-progress');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'burn-sweep-progress';
-        el.className = 'burn-sweep-progress';
-        burnPanel.appendChild(el);
-    }
-
-    el.innerHTML = `
-        <div class="sweep-spinner"></div>
-        <p>${message}</p>
-    `;
-    el.classList.remove('hidden');
-}
-
-/**
- * Show an inline destination-address input for the burn sweep.
- * Used when the destination wasn't persisted (resumed burns) — replaces window.prompt.
- * @param {Function} onSubmit - called with the entered address when valid
- */
-export function showBurnDestinationInput(onSubmit) {
-    const burnPanel = document.getElementById('burn-panel');
-    if (!burnPanel) return;
-
-    let el = document.getElementById('burn-destination-input');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'burn-destination-input';
-        el.className = 'burn-destination-input';
-        burnPanel.appendChild(el);
-    }
-
-    el.innerHTML = `
-        <div class="burn-destination-inner">
-            <p class="burn-destination-label">Enter your Monero destination address to receive the swept XMR:</p>
-            <input id="burn-dest-addr" type="text" placeholder="4... / 8..." spellcheck="false" autocomplete="off" />
-            <p class="burn-destination-error hidden" id="burn-dest-error">Invalid Monero address</p>
-            <button class="cta" id="burn-dest-submit">Set destination &amp; sweep</button>
-        </div>
-    `;
-    el.classList.remove('hidden');
-
-    const input = document.getElementById('burn-dest-addr');
-    const errEl = document.getElementById('burn-dest-error');
-    const btn = document.getElementById('burn-dest-submit');
-    if (input) input.focus();
-
-    const submit = () => {
-        const val = (input.value || '').trim();
-        // Standard Monero address: 95 chars starting with 4; integrated 106; sub 8
-        const valid = /^[48][0-9A-Za-z]{94}$/.test(val) || /^8[0-9A-Za-z]{105}$/.test(val);
-        if (!valid) {
-            if (errEl) errEl.classList.remove('hidden');
-            return;
-        }
-        el.classList.add('hidden');
-        if (typeof onSubmit === 'function') onSubmit(val);
-    };
-    if (btn) btn.addEventListener('click', submit);
-    if (input) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
-}
-
-/** Hide the inline destination input. */
-export function hideBurnDestinationInput() {
-    const el = document.getElementById('burn-destination-input');
-    if (el) el.classList.add('hidden');
-}
-
-/**
- * Show burn sweep complete
- * @param {string} txHash - Monero transaction hash
- * @param {number} amount - Amount in XMR
- */
-export function showBurnSweepComplete(txHash, amount) {
-    const burnPanel = document.getElementById('burn-panel');
-    if (!burnPanel) return;
-
-    const progressEl = document.getElementById('burn-sweep-progress');
-    if (progressEl) progressEl.classList.add('hidden');
-
-    // Hide cancel button on completion
-    const cancelBtn = document.getElementById('cancel-burn');
-    if (cancelBtn) cancelBtn.classList.add('hidden');
-
-    let el = document.getElementById('burn-sweep-complete');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'burn-sweep-complete';
-        el.className = 'burn-sweep-complete';
-        burnPanel.appendChild(el);
-    }
-
-    el.innerHTML = `
-        <div class="burn-complete-inner">
-            <h3>XMR Received!</h3>
-            <p>Swept ${amount.toFixed(8)} XMR to your destination address</p>
-            <p class="text-muted">Tx: ${txHash.slice(0, 16)}...${txHash.slice(-16)}</p>
-        </div>
-    `;
-    el.classList.remove('hidden');
-}
-
-/**
- * Show burn sweep error
- * @param {string} errorMsg - Error message
- */
-export function showBurnSweepError(errorMsg) {
-    const burnPanel = document.getElementById('burn-panel');
-    if (!burnPanel) return;
-
-    const progressEl = document.getElementById('burn-sweep-progress');
-    if (progressEl) progressEl.classList.add('hidden');
-
-    const completeEl = document.getElementById('burn-sweep-complete');
-    if (completeEl) completeEl.classList.add('hidden');
-
-    let el = document.getElementById('burn-sweep-error');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'burn-sweep-error';
-        el.className = 'burn-sweep-error';
-        burnPanel.appendChild(el);
-    }
-
-    let friendly = 'An unexpected error occurred while sweeping XMR to your destination address.';
-    let detail = errorMsg;
-    const msg = errorMsg || '';
-    let isConnectivity = false;
-
-    if (msg.includes('locked') || msg.includes('confirmations') || msg.includes('No unlocked balance') || msg.includes('balance is 0')) {
-        friendly = 'The XMR is at the shared address but still locked — Monero requires ~10 confirmations before funds can be spent. Wait a few minutes and retry.';
-    } else if (msg.includes('not connected to daemon') || msg.includes('Wallet is not connected') || msg.includes('CORS') || msg.includes('unreachable')) {
-        isConnectivity = true;
-        friendly = 'The in-browser wallet could not reach a compatible Monero node. Public nodes often block browser wallets — your XMR is safe. Enter your own node below, or claim manually with the keys.';
-    } else if (msg.includes('No balance') || msg.includes('no funds')) {
-        friendly = 'No XMR found at the shared address. The LP may not have sent XMR yet.';
-    } else if (msg.includes('daemon') || msg.includes('connection') || msg.includes('fetch') || msg.includes('network')) {
-        isConnectivity = true;
-        friendly = 'Could not reach a Monero node. Your XMR is safe — retry, or claim manually with the keys below.';
-    } else if (msg.includes('WASM') || msg.includes('wasm') || msg.includes('module not loaded')) {
-        friendly = 'The Monero wallet module failed to load. Please refresh the page and try again.';
-    }
-
-    const savedNode = getMoneroNodeOverride() || '';
-    const nodeInputHtml = isConnectivity ? `
-        <div class="burn-node-override">
-            <p class="burn-node-label">Custom Monero node (optional — e.g. local <code>http://127.0.0.1:18081</code> or a node with CORS enabled):</p>
-            <input id="burn-node-url" type="text" placeholder="https://your-node:18081" value="${savedNode}" spellcheck="false" autocomplete="off" />
-        </div>
-    ` : '';
-
-    el.innerHTML = `
-        <div class="burn-sweep-error-inner">
-            <div class="burn-sweep-error-icon">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10"/>
-                    <line x1="12" y1="8" x2="12" y2="12"/>
-                    <line x1="12" y1="16" x2="12.01" y2="16"/>
-                </svg>
-            </div>
-            <div class="burn-sweep-error-content">
-                <h3>Sweep Failed</h3>
-                <p class="burn-sweep-error-friendly">${friendly}</p>
-                <details class="burn-sweep-error-details">
-                    <summary>Technical details</summary>
-                    <p>${detail}</p>
-                </details>
-                ${nodeInputHtml}
-            </div>
-        </div>
-        <div class="burn-sweep-error-actions">
-            <button class="cta" id="burn-sweep-retry">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:4px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-                Retry sweep
-            </button>
-        </div>
-    `;
-    el.classList.remove('hidden');
-
-    const retryBtn = document.getElementById('burn-sweep-retry');
-    if (retryBtn) {
-        retryBtn.addEventListener('click', () => {
-            // Persist a custom node if the user entered one — it's tried first on retry.
-            const nodeInput = document.getElementById('burn-node-url');
-            if (nodeInput) setMoneroNodeOverride(nodeInput.value);
-            el.classList.add('hidden');
-            showBurnSweepProgress('Retrying sweep...');
-            window.dispatchEvent(new CustomEvent('burn-sweep-retry'));
-        });
-    }
-}
-
-/**
- * Show a non-intrusive "Copy keys for manual import" button during burn sweep.
- * Lets user proactively copy combined keys without waiting for a sweep failure.
- * @param {Object} keys - { spendKey, viewKey } (little-endian hex, no 0x)
- * @param {string} destination - User's destination address
- */
-export function showBurnKeysOption(keys, destination, restoreHeight = 0) {
-    const burnPanel = document.getElementById('burn-panel');
-    if (!burnPanel) return;
-
-    let el = document.getElementById('burn-keys-option');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'burn-keys-option';
-        el.className = 'burn-keys-option';
-        el.style.cssText = 'margin-top: 12px; text-align: center;';
-        burnPanel.appendChild(el);
-    }
-
-    el.innerHTML = `<button class="btn-secondary" id="burn-copy-keys-btn" style="font-size: 0.85rem; opacity: 0.8;">Copy keys for manual import</button>`;
-    el.classList.remove('hidden');
-
-    const btn = document.getElementById('burn-copy-keys-btn');
-    if (btn) {
-        btn.addEventListener('click', () => {
-            showBurnKeysFallback(keys, destination, restoreHeight, sharedAddress);
-        });
-    }
-}
-
-/**
- * Hide the burn keys option button (call when sweep succeeds)
- */
-export function hideBurnKeysOption() {
-    const el = document.getElementById('burn-keys-option');
-    if (el) el.classList.add('hidden');
-}
 
 // ─── Mint Recovery (dead-mint XMR sweep) ────────────────────────────────────
 // Shown when a mint died and the LP revealed lpSecret on-chain — the user can
 // sweep the deposit back to their own Monero address (view key = lpSecret).
 
 /**
- * Render the "Recover XMR" panel: explains the situation and collects the
- * destination Monero address. Calls onRecover(destination) on submit.
- * @param {Function} onRecover - async (destinationAddress) => void
+ * Render the "Recover XMR" panel: explains the situation and shows the
+ * manual-import keys. Calls onRecover() on submit (no destination needed —
+ * keys are imported manually).
+ * @param {Function} onRecover - async () => void
  */
 export function showMintRecoveryPanel(onRecover) {
     const mintPanel = document.getElementById('mint-panel');
@@ -2020,29 +1779,21 @@ export function showMintRecoveryPanel(onRecover) {
     el.innerHTML = `
         <div class="mint-recovery-inner">
             <h3>Recover your XMR</h3>
-            <p>This mint did not complete, but the LP revealed their key — you can sweep the XMR you sent back to your own Monero address.</p>
-            <label for="mint-recovery-dest" class="mint-recovery-label">Destination Monero address</label>
-            <input type="text" id="mint-recovery-dest" class="mint-recovery-dest" placeholder="4... / 8... (your Monero address)" spellcheck="false" autocomplete="off">
-            <button class="cta" id="mint-recovery-btn">Recover XMR</button>
+            <p>This mint did not complete, but the LP revealed their key — you can claim the XMR you sent back by importing the keys below into a Monero wallet (Monero GUI / Feather, "Restore from keys").</p>
+            <button class="cta" id="mint-recovery-btn">Get my keys</button>
             <p class="mint-recovery-err hidden" id="mint-recovery-err"></p>
         </div>
     `;
     el.classList.remove('hidden');
 
     const btn = document.getElementById('mint-recovery-btn');
-    const destInput = document.getElementById('mint-recovery-dest');
     const errEl = document.getElementById('mint-recovery-err');
     if (btn) {
         btn.addEventListener('click', async () => {
-            const dest = (destInput?.value || '').trim();
-            if (!dest || dest.length < 90) {
-                if (errEl) { errEl.textContent = 'Enter a valid Monero address.'; errEl.classList.remove('hidden'); }
-                return;
-            }
             if (errEl) errEl.classList.add('hidden');
             btn.disabled = true;
             try {
-                await onRecover(dest);
+                await onRecover();
             } finally {
                 btn.disabled = false;
             }
@@ -2056,43 +1807,6 @@ export function hideMintRecoveryPanel() {
     if (el) el.classList.add('hidden');
 }
 
-/** Show mint recovery sweep progress. */
-export function showMintSweepProgress(message) {
-    const mintPanel = document.getElementById('mint-panel');
-    if (!mintPanel) return;
-    let el = document.getElementById('mint-sweep-progress');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'mint-sweep-progress';
-        el.className = 'burn-sweep-progress';
-        mintPanel.appendChild(el);
-    }
-    el.innerHTML = `<div class="sweep-spinner"></div><p>${message}</p>`;
-    el.classList.remove('hidden');
-}
-
-/** Show mint recovery sweep complete. */
-export function showMintSweepComplete(txHash, amount) {
-    const mintPanel = document.getElementById('mint-panel');
-    if (!mintPanel) return;
-    const progressEl = document.getElementById('mint-sweep-progress');
-    if (progressEl) progressEl.classList.add('hidden');
-    let el = document.getElementById('mint-sweep-complete');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'mint-sweep-complete';
-        el.className = 'burn-sweep-complete';
-        mintPanel.appendChild(el);
-    }
-    el.innerHTML = `
-        <div class="burn-complete-inner">
-            <h3>XMR Recovered!</h3>
-            <p>Swept ${amount.toFixed(8)} XMR to your destination address</p>
-            <p class="text-muted">Tx: ${txHash.slice(0, 16)}...${txHash.slice(-16)}</p>
-        </div>
-    `;
-    el.classList.remove('hidden');
-}
 
 /** Show mint recovery sweep error. onBack (optional) re-shows the recovery panel. */
 export function showMintSweepError(errorMsg, onBack) {

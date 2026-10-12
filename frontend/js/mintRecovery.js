@@ -8,9 +8,8 @@
  *
  * If the LP ghosts (or the mint is cancelled/expired) the LP's secret is revealed
  * on-chain. The user then combines their own secret with the LP secret to get the
- * full spend key, and — because the deposit's private view key IS lpSecret — can
- * scan and sweep the deposit with a normal MoneroWalletFull, exactly like the
- * burn sweep.
+ * full spend key, and imports the keys into a Monero wallet (GUI/Feather,
+ * "Restore from keys") to claim the XMR manually.
  *
  * NOTE on endianness: the mint lpSecret's bytes are the little-endian scalar
  * encoding (lpSpendPub = LE(lpSecret)·G), unlike burn secrets which are
@@ -18,35 +17,7 @@
  * private view key for the deposit wallet is lpSecret verbatim.
  */
 
-import { sweepBurnOutput, combineSpendKeys, reverseHexBytes } from './burnSweep.js?v=3.12';
-
-/**
- * Sweep XMR from an LP-viewable mint deposit to the user's destination.
- *
- * @param {Object} params
- * @param {string} params.userSecretHex - User's mint secret / private spend key (0x hex)
- * @param {string} params.lpSecretHex - LP's revealed secret (0x hex)
- * @param {string} params.destination - Monero destination address
- * @param {number} params.restoreHeight - Block height to start scanning from (use the
- *                                        MintInitiated block or a bit before it)
- * @param {Function} params.onProgress - Progress callback (message: string)
- * @returns {Promise<{swept: boolean, txHashes: string[], amount: string}>}
- */
-export async function sweepMintDeposit({ userSecretHex, lpSecretHex, destination, restoreHeight = 0, onProgress }) {
-    // The mint deposit's view pub is lpSpendPub = lpSecret·G, so the private view
-    // key is lpSecret itself — its bytes are already the LE scalar encoding.
-    // lpSecretIsLe tells the sweep to interpret lpSecret as LE when combining
-    // spend keys (mints differ from burns here).
-    return sweepBurnOutput({
-        userSecretHex,
-        lpSecretHex,
-        viewKeyLeHex: lpSecretHex.replace(/^0x/, ''),
-        lpSecretIsLe: true,
-        destination,
-        restoreHeight,
-        onProgress,
-    });
-}
+import { combineSpendKeys, reverseHexBytes } from './burnSweep.js?v=3.12';
 
 /**
  * Derive the expected mint deposit address from the combined keys, so the user can
@@ -79,7 +50,7 @@ export async function deriveMintDepositAddress(userSecretHex, lpSecretHex) {
 }
 
 /**
- * Get the combined keys for manual import into a Monero GUI/CLI wallet (fallback).
+ * Get the combined keys for manual import into a Monero GUI/CLI wallet.
  * view key = lpSecret (LE bytes verbatim), spend key = userSecret + lpSecret (LE).
  *
  * @param {string} userSecretHex - User's mint secret (0x hex, big-endian)

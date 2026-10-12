@@ -162,15 +162,14 @@ export class MintFlow {
     }
 
     /**
-     * Recover XMR from an LP-viewable mint deposit after the LP revealed lpSecret.
-     * The deposit's private view key IS lpSecret, so once it's revealed on-chain
-     * the user can scan + spend with a normal MoneroWalletFull.
+     * Derive the keys to reclaim XMR from an LP-viewable mint deposit after the
+     * LP revealed lpSecret. The deposit's private view key IS lpSecret, so the
+     * user imports these keys into a Monero wallet (GUI/Feather, "Restore from
+     * keys") to sweep the deposit manually.
      *
-     * @param {string} destination - Monero address to sweep the recovered XMR to
-     * @param {Function} onProgress - optional progress callback (message: string)
-     * @returns {Promise<{swept: boolean, txHashes: string[], amount: string}>}
+     * @returns {Promise<{keys: {spendKey: string, viewKey: string}, restoreHeight: number}>}
      */
-    async recoverMintDeposit(destination, onProgress) {
+    async getRecoveryKeys() {
         const lpSecret = await this.getRecoverableLpSecret();
         if (!lpSecret) {
             throw new Error('LP secret not revealed on-chain yet — the deposit is not recoverable until the LP claims the parked deposit or abandons the key.');
@@ -190,44 +189,32 @@ export class MintFlow {
             console.warn('[Mint Recovery] Could not get Monero height, scanning from 0:', e.message);
         }
 
-        const { sweepMintDeposit } = await import('./mintRecovery.js?v=3.12');
-        return sweepMintDeposit({
-            userSecretHex: userSecret,
-            lpSecretHex: lpSecret,
-            destination,
-            restoreHeight,
-            onProgress,
-        });
+        const { getMintKeysForImport } = await import('./mintRecovery.js?v=3.12');
+        return { keys: getMintKeysForImport(userSecret, lpSecret), restoreHeight };
     }
 
     /**
      * Offer the "Recover XMR" UI if this mint's deposit is recoverable (LP revealed
-     * lpSecret on-chain). Renders the destination-input panel; returns true if the
+     * lpSecret on-chain). Renders the key-export panel; returns true if the
      * panel was shown, false if the deposit isn't recoverable yet.
      */
     async showRecoveryOption() {
         const lpSecret = await this.getRecoverableLpSecret();
         if (!lpSecret) return false;
         const { showMintRecoveryPanel } = await import('./ui.js?v=3.12');
-        showMintRecoveryPanel((destination) => this._runRecovery(destination));
+        showMintRecoveryPanel(() => this._runRecovery());
         return true;
     }
 
-    /** Drive the dead-mint XMR sweep with progress/complete/error UI. */
-    async _runRecovery(destination) {
-        const { hideMintRecoveryPanel, showMintSweepProgress, showMintSweepComplete, showMintSweepError } = await import('./ui.js?v=3.12');
+    /** Show the manual-import keys for the dead-mint deposit. */
+    async _runRecovery() {
+        const { hideMintRecoveryPanel, showBurnKeysFallback, showMintSweepError } = await import('./ui.js?v=3.12');
         hideMintRecoveryPanel();
-        showMintSweepProgress('Preparing recovery — scanning the deposit address...');
         try {
-            const result = await this.recoverMintDeposit(destination, (msg) => showMintSweepProgress(msg));
-            if (result && result.swept && result.txHashes && result.txHashes.length > 0) {
-                const amountXmr = Number(result.amount) / 1e12;
-                showMintSweepComplete(result.txHashes[0], amountXmr);
-            } else {
-                showMintSweepError('No spendable XMR was found at the deposit address.', () => this.showRecoveryOption());
-            }
+            const { keys, restoreHeight } = await this.getRecoveryKeys();
+            showBurnKeysFallback(keys, null, restoreHeight, this.depositAddress || '');
         } catch (e) {
-            console.error('[Mint Recovery] sweep failed:', e);
+            console.error('[Mint Recovery] key derivation failed:', e);
             showMintSweepError(e.message || 'Recovery failed', () => this.showRecoveryOption());
         }
     }

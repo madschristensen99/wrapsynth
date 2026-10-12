@@ -1,7 +1,7 @@
 // Monero RPC Client
 // Handles all Monero daemon and wallet RPC interactions
 
-import { MONERO_CONFIG, LP_SERVER_CONFIG } from './config.js?v=3.12';
+import { MONERO_CONFIG } from './config.js?v=3.12';
 
 /**
  * Monero RPC Client for daemon and wallet operations
@@ -296,107 +296,4 @@ export function getMoneroRpc() {
         rpcInstance = new MoneroRpcClient();
     }
     return rpcInstance;
-}
-
-/** localStorage key for a user-supplied Monero node (e.g. a local monerod). */
-const MONERO_NODE_KEY = 'monero-node-url';
-
-/** Get the user-configured Monero node URL, or null. */
-export function getMoneroNodeOverride() {
-    try { return localStorage.getItem(MONERO_NODE_KEY) || null; } catch { return null; }
-}
-
-/** Persist a user-configured Monero node URL (empty string clears it). */
-export function setMoneroNodeOverride(url) {
-    try {
-        if (url && url.trim()) localStorage.setItem(MONERO_NODE_KEY, url.trim());
-        else localStorage.removeItem(MONERO_NODE_KEY);
-    } catch {}
-}
-
-/**
- * Quick reachability + CORS probe for a daemon. monero-ts needs the node to
- * answer browser fetch() with permissive CORS — a node that responds to curl
- * may still be unusable from a browser. Returns true if the node answers.
- */
-async function probeDaemon(url, timeoutMs = 6000) {
-    try {
-        const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), timeoutMs);
-        const res = await fetch(`${url}/get_info`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: '{}',
-            signal: controller.signal,
-        });
-        clearTimeout(t);
-        return res.ok;
-    } catch {
-        return false;
-    }
-}
-
-/**
- * Create a monero-ts MoneroWalletFull connected to a working daemon.
- * monero-ts needs a daemon that supports its binary endpoints (get_blocks.bin)
- * and permissive CORS — a node that answers /json_rpc may still fail. This tries
- * a user-configured node first, then each configured daemon, until the wallet
- * reports a live daemon connection.
- *
- * @param {Object} moneroTs - the monero-ts module (window.monero_ts)
- * @param {Object} walletConfig - createWalletFull config WITHOUT `server`
- * @param {Function} [onTry] - optional callback(url) before each attempt
- * @returns {Promise<{wallet: Object, daemonUrl: string}>}
- */
-export async function createConnectedWalletFull(moneroTs, walletConfig, onTry) {
-    const override = getMoneroNodeOverride();
-    const configured = MONERO_CONFIG.publicNodes?.mainnet || [MONERO_CONFIG.rpcUrl];
-    // LP-server proxy first (it forwards to a node and adds CORS for the browser),
-    // then user override, then configured nodes (dedup).
-    const proxyUrl = `${LP_SERVER_CONFIG.defaultUrl}/monero-daemon`;
-    const urls = [...new Set([proxyUrl, ...(override ? [override] : []), ...configured])];
-
-    let lastErr = null;
-    for (const url of urls) {
-        // Fast probe — skip nodes that don't answer a browser fetch (CORS/down)
-        // instead of paying the createWalletFull + isConnectedToDaemon cost.
-        if (!(await probeDaemon(url))) {
-            console.warn(`[Monero RPC] ${url} failed probe (unreachable or CORS) — skipping`);
-            lastErr = new Error(`Node unreachable or CORS-blocked (${url})`);
-            continue;
-        }
-
-        let wallet = null;
-        try {
-            if (onTry) onTry(url);
-            wallet = await moneroTs.createWalletFull({ ...walletConfig, server: url });
-            // Verify the daemon connection is actually live — createWalletFull can
-            // resolve without a usable daemon (binary endpoints / CORS blocked).
-            let connected = false;
-            try { connected = await wallet.isConnectedToDaemon(); } catch { connected = false; }
-            if (!connected) {
-                // Give the connection a brief moment then re-check once.
-                await new Promise(r => setTimeout(r, 1500));
-                try { connected = await wallet.isConnectedToDaemon(); } catch { connected = false; }
-            }
-            if (connected) {
-                console.log(`[Monero RPC] monero-ts wallet connected via ${url}`);
-                return { wallet, daemonUrl: url };
-            }
-            try { await wallet.close(); } catch {}
-            lastErr = new Error(`Wallet is not connected to daemon (${url})`);
-        } catch (e) {
-            if (wallet) { try { await wallet.close(); } catch {} }
-            lastErr = e;
-            console.warn(`[Monero RPC] monero-ts wallet failed on ${url}: ${e.message}`);
-        }
-    }
-    throw lastErr || new Error('No compatible Monero daemon found for the in-browser wallet');
-}
-
-/**
- * Set custom RPC URL (for testing or custom nodes)
- */
-export function setMoneroRpcUrl(url) {
-    rpcInstance = new MoneroRpcClient(url);
 }

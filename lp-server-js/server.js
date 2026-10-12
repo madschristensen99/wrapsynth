@@ -10,7 +10,6 @@ import * as moneroWallet from './moneroWallet.js';
 import * as moneroCrypto from './moneroCrypto.js';
 import { computeSecretHash } from './commitment.js';
 import { setHubWallet, updateOraclePricesManual, broadcastOracleUpdate } from './oracleUpdate.js';
-import { moneroDaemonProxyRouter } from './moneroDaemonProxy.js';
 import crypto from 'crypto';
 
 // ─── Global Error Handlers ──────────────────────────────────────────────────
@@ -1793,11 +1792,6 @@ app.get('/reports', async (req, res) => {
 
 // ─── Burn Handler Integration ───────────────────────────────────────────────
 burnHandler.registerRoutes(app);
-
-// Monero daemon proxy — translates binary endpoints restricted nodes block
-// (get_outs.bin) into JSON-RPC calls. Raw body parser: binary + JSON forwarded
-// verbatim to the upstream daemon.
-app.use('/monero-daemon', express.raw({ type: () => true, limit: '10mb' }), moneroDaemonProxyRouter);
 
 // ─── Start Server ─────────────────────────────────────────────────────────────
 app.listen(PORT, async () => {

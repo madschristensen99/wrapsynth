@@ -83,12 +83,9 @@ export const MONERO_CONFIG = {
     
     // Public nodes (users can select or add their own)
     publicNodes: {
-        // NOTE: only unrestricted nodes (port 18081) work for monero-ts wallet
-        // sync — restricted nodes (18089) don't serve get_blocks.bin. Browser
-        // use also requires the node to send permissive CORS headers. As of
-        // Oct 2026 essentially ALL public nodes are restricted, so the WASM
-        // sweep falls back to the key-export path (Monero GUI/Feather) or a
-        // user-supplied local node via the custom-node override.
+        // Used by the frontend's read-only daemon RPC (height, tx verification).
+        // The browser WASM sweep was removed — XMR is claimed by importing keys
+        // into a Monero wallet (GUI/Feather, "Restore from keys").
         mainnet: [
             'https://xmr-node.cakewallet.com:18081'
         ],
