@@ -107,7 +107,7 @@ function txPubkeys(extra) {
 
 // Match a decoded tx's outputs against the recipient's spend pub + view key.
 // Returns { amount, outputIndex } for the first matching output, or null.
-function matchTxOutputs(txJson, viewKeyScalar, spendPubPoint, G) {
+function matchTxOutputs(txJson, viewKeyScalar, spendPubPoint, G, edlib) {
     const pubs = txPubkeys(txJson.extra);
     for (const R of pubs) {
         let Rpt;
@@ -182,7 +182,7 @@ export async function verifyTxPaysAddress(daemonUrl, txid, address, viewKeyLeHex
         if (tip) confirmations = Math.max(0, tip - tx.block_height);
     }
 
-    const match = matchTxOutputs(txJson, viewKeyScalar, spendPubPoint, G);
+    const match = matchTxOutputs(txJson, viewKeyScalar, spendPubPoint, G, edlib);
     if (match) {
         return { found: true, amount: match.amount, confirmations, blockHeight: tx.block_height, inPool, outputIndex: match.outputIndex };
     }
@@ -285,7 +285,7 @@ export async function scanBlocksForPayment(daemonUrl, fromHeight, toHeight, addr
             const t = data.txs[j];
             let txJson;
             try { txJson = JSON.parse(t.as_json); } catch { continue; }
-            const match = matchTxOutputs(txJson, viewKeyScalar, spendPubPoint, G);
+            const match = matchTxOutputs(txJson, viewKeyScalar, spendPubPoint, G, edlib);
             if (match) {
                 found.push({ txid: txJobs[b * 50 + j].txid, height: txJobs[b * 50 + j].height, amount: match.amount, outputIndex: match.outputIndex });
             }
