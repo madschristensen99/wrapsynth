@@ -1,5 +1,7 @@
 use anchor_lang::prelude::*;
 
+use crate::constants::MAX_WHITELISTED_MINTERS;
+
 #[account]
 pub struct Vault {
     /// LP owner of this vault
@@ -37,12 +39,20 @@ pub struct Vault {
     pub active_burn_count: u32,
     /// Number of mints in READY state — blocks state-changing vault ops until resolved
     pub pending_mint_count: u32,
+    /// LP-configured mint request timeout in seconds (EVM mintTimeoutBlocks parity)
+    pub mint_timeout_seconds: i64,
+    /// LP-configured burn request timeout in seconds (EVM burnTimeoutBlocks parity)
+    pub burn_timeout_seconds: i64,
+    /// Whitelisted minters that bypass the griefing deposit (EVM whitelistedMinters parity)
+    pub whitelisted_minters: [Pubkey; MAX_WHITELISTED_MINTERS],
+    /// Number of entries in whitelisted_minters
+    pub whitelisted_minter_count: u32,
     pub active: bool,
     pub bump: u8,
 }
 
 impl Vault {
-    /// 8 disc + 32 + 8*8 + 3*2 + u64*2 + u32*2 + 2*bool/u8 + padding
-    /// 8 + 32 + 64 + 6 + 16 + 8 + 2 + 12 (pad) = 148 → use 216 for safety
-    pub const LEN: usize = 216;
+    /// 8 disc + 32 + 11*8 + 3*2 + 3*4 + 2*8 (timeouts) + 32*32 (whitelist)
+    /// + 1 + 1 = 8+32+88+6+12+16+1024+2 = 1188 → pad to 1200
+    pub const LEN: usize = 1200;
 }

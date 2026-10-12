@@ -84,6 +84,8 @@ pub enum WrapSynthError {
     MigrationNotInProgress,
     #[msg("Maximum vault count reached")]
     MaxVaultsReached,
+    #[msg("Invalid configuration value")]
+    InvalidConfig,
     #[msg("Liquidity router already set")]
     RouterAlreadySet,
     #[msg("Only liquidity router can call this")]

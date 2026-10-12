@@ -32,13 +32,22 @@ pub const DEBT_INDEX_PRECISION: u64 = 1_000_000_000_000_000_000; // 1e18
 pub const XMR_TO_WSXMR_DIVISOR: u64 = 10_000;               // 1e4 (12 dec → 8 dec)
 
 // Timeouts (seconds)
-pub const MAX_MINT_TIMEOUT: i64 = 7_200;    // 2 hours
 pub const LP_CLAIM_WINDOW: i64 = 1_800;     // 30 min for LP to claim after mint expiry
 pub const MINT_READY_EXTENSION: i64 = 7_200; // 2 hours
-pub const BURN_REQUEST_TIMEOUT: i64 = 3_600; // 1 hour
 pub const BURN_COMMIT_TIMEOUT: i64 = 7_200;  // 2 hours
 pub const BURN_FINALIZE_GRACE: i64 = 600;    // 10 min grace for LP finalization
 pub const GRACE_PERIOD: i64 = 900;           // 15 minutes
+
+// Per-vault timeout configuration (EVM MIN/MAX/DEFAULT_*_TIMEOUT_BLOCKS parity)
+pub const MIN_MINT_TIMEOUT_SECONDS: i64 = 1_800;    // ~30 min
+pub const MAX_MINT_TIMEOUT_SECONDS: i64 = 86_400;   // ~24 hours
+pub const DEFAULT_MINT_TIMEOUT_SECONDS: i64 = 3_600; // ~1 hour
+pub const MIN_BURN_TIMEOUT_SECONDS: i64 = 1_800;    // ~30 min
+pub const MAX_BURN_TIMEOUT_SECONDS: i64 = 86_400;   // ~24 hours
+pub const DEFAULT_BURN_TIMEOUT_SECONDS: i64 = 3_600; // ~1 hour
+
+// Minter whitelist (EVM whitelistedMinters parity — fixed-size cap for Solana)
+pub const MAX_WHITELISTED_MINTERS: usize = 32;
 
 // Fee caps
 pub const BPS_DENOMINATOR: u64 = 10_000;

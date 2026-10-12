@@ -32,6 +32,11 @@ pub fn create_vault(ctx: Context<CreateVault>) -> Result<()> {
     vault.principal_shares = 0;
     vault.principal_sol_value = 0;
     vault.active_burn_count = 0;
+    vault.pending_mint_count = 0;
+    vault.mint_timeout_seconds = DEFAULT_MINT_TIMEOUT_SECONDS;
+    vault.burn_timeout_seconds = DEFAULT_BURN_TIMEOUT_SECONDS;
+    vault.whitelisted_minters = [Pubkey::default(); MAX_WHITELISTED_MINTERS];
+    vault.whitelisted_minter_count = 0;
     vault.active = true;
     vault.bump = ctx.bumps.vault;
 
@@ -254,6 +259,82 @@ pub fn set_max_mint_bps(ctx: Context<UpdateVaultConfig>, max_mint_bps: u16) -> R
 
 pub fn set_min_burn_amount(ctx: Context<UpdateVaultConfig>, min_amount: u64) -> Result<()> {
     ctx.accounts.vault.min_burn_amount = min_amount;
+    Ok(())
+}
+
+pub fn set_mint_timeout(ctx: Context<UpdateVaultConfig>, seconds: i64) -> Result<()> {
+    require!(
+        seconds >= MIN_MINT_TIMEOUT_SECONDS && seconds <= MAX_MINT_TIMEOUT_SECONDS,
+        WrapSynthError::InvalidConfig
+    );
+    ctx.accounts.vault.mint_timeout_seconds = seconds;
+    Ok(())
+}
+
+pub fn set_burn_timeout(ctx: Context<UpdateVaultConfig>, seconds: i64) -> Result<()> {
+    require!(
+        seconds >= MIN_BURN_TIMEOUT_SECONDS && seconds <= MAX_BURN_TIMEOUT_SECONDS,
+        WrapSynthError::InvalidConfig
+    );
+    ctx.accounts.vault.burn_timeout_seconds = seconds;
+    Ok(())
+}
+
+pub fn set_minter_whitelist(
+    ctx: Context<UpdateVaultConfig>,
+    minter: Pubkey,
+    whitelisted: bool,
+) -> Result<()> {
+    require!(minter != Pubkey::default(), WrapSynthError::ZeroAddress);
+    set_minter_whitelist_internal(&mut ctx.accounts.vault, minter, whitelisted)?;
+    msg!("Minter whitelist updated: {} → {}", minter, whitelisted);
+    Ok(())
+}
+
+fn set_minter_whitelist_internal(
+    vault: &mut Vault,
+    minter: Pubkey,
+    whitelisted: bool,
+) -> Result<()> {
+    let count = vault.whitelisted_minter_count as usize;
+    let mut idx = None;
+    for i in 0..count {
+        if vault.whitelisted_minters[i] == minter {
+            idx = Some(i);
+            break;
+        }
+    }
+
+    if whitelisted {
+        if idx.is_none() {
+            require!(
+                count < MAX_WHITELISTED_MINTERS,
+                WrapSynthError::MaxVaultsReached
+            );
+            vault.whitelisted_minters[count] = minter;
+            vault.whitelisted_minter_count = (count + 1) as u32;
+        }
+    } else if let Some(i) = idx {
+        // Swap-remove
+        let last = count - 1;
+        if i != last {
+            vault.whitelisted_minters[i] = vault.whitelisted_minters[last];
+        }
+        vault.whitelisted_minters[last] = Pubkey::default();
+        vault.whitelisted_minter_count = last as u32;
+    }
+    Ok(())
+}
+
+pub fn batch_set_minter_whitelist(
+    ctx: Context<UpdateVaultConfig>,
+    minters: Vec<Pubkey>,
+    whitelisted: bool,
+) -> Result<()> {
+    for minter in minters {
+        require!(minter != Pubkey::default(), WrapSynthError::ZeroAddress);
+        set_minter_whitelist_internal(&mut ctx.accounts.vault, minter, whitelisted)?;
+    }
     Ok(())
 }
 

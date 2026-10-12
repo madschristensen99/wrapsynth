@@ -12,7 +12,8 @@ programs/
     src/
       instructions/
         initialize.rs        # Protocol init, GlobalState + wsXMR mint creation
-        vault_management.rs  # LP vault CRUD, collateral deposit/withdraw, yield sync
+        vault_management.rs  # LP vault CRUD, collateral deposit/withdraw, yield sync,
+                             # per-vault timeouts + minter whitelist
         mint_flow.rs         # initiate_mint → provide_lp_key → set_mint_ready → reveal_secret
                              # → finalize_mint; cancel_mint + abandon/reclaim/claim/sweep paths
         burn_flow.rs         # request_burn → propose_hash → confirm_monero_lock → finalize_burn

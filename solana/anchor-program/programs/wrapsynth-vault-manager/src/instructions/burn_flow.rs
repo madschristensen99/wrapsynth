@@ -206,7 +206,7 @@ fn _request_burn(
     burn_req.lp_public_spend_key = [0u8; 32];
     burn_req.lp_public_view_key = [0u8; 32];
     burn_req.revealed_secret = [0u8; 32];
-    burn_req.deadline = clock.unix_timestamp + BURN_REQUEST_TIMEOUT;
+    burn_req.deadline = clock.unix_timestamp + ctx.accounts.vault.burn_timeout_seconds;
     burn_req.vault_liquidation_nonce = ctx.accounts.vault.liquidation_nonce;
     burn_req.normalized_debt_amount = 0;
     burn_req.abandoned = false;

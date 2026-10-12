@@ -84,6 +84,30 @@ pub mod wrapsynth_vault_manager {
         vault_management::set_min_burn_amount(ctx, min_amount)
     }
 
+    pub fn set_mint_timeout(ctx: Context<UpdateVaultConfig>, seconds: i64) -> Result<()> {
+        vault_management::set_mint_timeout(ctx, seconds)
+    }
+
+    pub fn set_burn_timeout(ctx: Context<UpdateVaultConfig>, seconds: i64) -> Result<()> {
+        vault_management::set_burn_timeout(ctx, seconds)
+    }
+
+    pub fn set_minter_whitelist(
+        ctx: Context<UpdateVaultConfig>,
+        minter: Pubkey,
+        whitelisted: bool,
+    ) -> Result<()> {
+        vault_management::set_minter_whitelist(ctx, minter, whitelisted)
+    }
+
+    pub fn batch_set_minter_whitelist(
+        ctx: Context<UpdateVaultConfig>,
+        minters: Vec<Pubkey>,
+        whitelisted: bool,
+    ) -> Result<()> {
+        vault_management::batch_set_minter_whitelist(ctx, minters, whitelisted)
+    }
+
     pub fn deactivate_vault(ctx: Context<DeactivateVault>) -> Result<()> {
         vault_management::deactivate_vault(ctx)
     }
@@ -95,7 +119,6 @@ pub mod wrapsynth_vault_manager {
         xmr_amount: u64,
         claim_commitment: [u8; 32],
         user_public_key: [u8; 32],
-        timeout_duration: i64,
         request_id: [u8; 32],
     ) -> Result<()> {
         mint_flow::initiate_mint(
@@ -103,7 +126,6 @@ pub mod wrapsynth_vault_manager {
             xmr_amount,
             claim_commitment,
             user_public_key,
-            timeout_duration,
             request_id,
         )
     }

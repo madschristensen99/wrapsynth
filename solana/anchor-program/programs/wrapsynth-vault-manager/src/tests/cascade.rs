@@ -161,6 +161,10 @@ fn cascade_liquidation_math_commutative() {
                 principal_sol_value: coll,
                 active_burn_count: 0,
                 pending_mint_count: 0,
+                mint_timeout_seconds: DEFAULT_MINT_TIMEOUT_SECONDS,
+                burn_timeout_seconds: DEFAULT_BURN_TIMEOUT_SECONDS,
+                whitelisted_minters: [Pubkey::default(); MAX_WHITELISTED_MINTERS],
+                whitelisted_minter_count: 0,
                 active: true,
                 bump: 0,
             };
@@ -306,6 +310,10 @@ fn burn_request_nonce_invalidation() {
         principal_sol_value: 1_000_000,
         active_burn_count: 1,
         pending_mint_count: 0,
+        mint_timeout_seconds: DEFAULT_MINT_TIMEOUT_SECONDS,
+        burn_timeout_seconds: DEFAULT_BURN_TIMEOUT_SECONDS,
+        whitelisted_minters: [Pubkey::default(); MAX_WHITELISTED_MINTERS],
+        whitelisted_minter_count: 0,
         active: true,
         bump: 0,
     };
@@ -337,6 +345,10 @@ fn partial_liquidation_does_not_underflow() {
         principal_sol_value: 10_000_000_000_000_000,
         active_burn_count: 0,
         pending_mint_count: 0,
+        mint_timeout_seconds: DEFAULT_MINT_TIMEOUT_SECONDS,
+        burn_timeout_seconds: DEFAULT_BURN_TIMEOUT_SECONDS,
+        whitelisted_minters: [Pubkey::default(); MAX_WHITELISTED_MINTERS],
+        whitelisted_minter_count: 0,
         active: true,
         bump: 0,
     };

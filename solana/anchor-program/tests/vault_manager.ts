@@ -475,6 +475,87 @@ describe("WrapSynth VaultManager — Full Integration", () => {
       assert.equal(vault.maxMintBps, 0);
     });
 
+    it("sets per-vault mint and burn timeouts", async () => {
+      await program.methods
+        .setMintTimeout(new BN(7200))
+        .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
+        .signers([lp])
+        .rpc();
+      await program.methods
+        .setBurnTimeout(new BN(5400))
+        .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
+        .signers([lp])
+        .rpc();
+
+      const vault = await (program.account as any).vault.fetch(vaultPda);
+      assert.equal(vault.mintTimeoutSeconds.toString(), "7200");
+      assert.equal(vault.burnTimeoutSeconds.toString(), "5400");
+      console.log("    ✓ Per-vault timeouts configured");
+    });
+
+    it("rejects out-of-range timeout config", async () => {
+      try {
+        await program.methods
+          .setMintTimeout(new BN(60)) // below MIN_MINT_TIMEOUT_SECONDS (1800)
+          .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
+          .signers([lp])
+          .rpc();
+        assert.fail("Should have rejected out-of-range timeout");
+      } catch (e: any) {
+        assert.ok(
+          e.message && !e.message.includes("panicked"),
+          "Should fail gracefully"
+        );
+        console.log("    ✓ Out-of-range timeout rejected:", e.message.split("\n")[0].substring(0, 60));
+      }
+    });
+
+    it("whitelists and un-whitelists a minter", async () => {
+      await program.methods
+        .setMinterWhitelist(user.publicKey, true)
+        .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
+        .signers([lp])
+        .rpc();
+
+      let vault = await (program.account as any).vault.fetch(vaultPda);
+      assert.equal(vault.whitelistedMinterCount, 1, "One minter whitelisted");
+      assert.equal(
+        vault.whitelistedMinters[0].toBase58(),
+        user.publicKey.toBase58(),
+        "User should be in whitelist"
+      );
+
+      await program.methods
+        .setMinterWhitelist(user.publicKey, false)
+        .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
+        .signers([lp])
+        .rpc();
+
+      vault = await (program.account as any).vault.fetch(vaultPda);
+      assert.equal(vault.whitelistedMinterCount, 0, "Whitelist cleared");
+      console.log("    ✓ Minter whitelist add/remove works");
+    });
+
+    it("batch whitelists minters", async () => {
+      const minters = [user.publicKey, keeper.publicKey];
+      await program.methods
+        .batchSetMinterWhitelist(minters, true)
+        .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
+        .signers([lp])
+        .rpc();
+
+      const vault = await (program.account as any).vault.fetch(vaultPda);
+      assert.equal(vault.whitelistedMinterCount, 2, "Two minters whitelisted");
+
+      // Clean up: remove both
+      await program.methods
+        .batchSetMinterWhitelist(minters, false)
+        .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
+        .signers([lp])
+        .rpc();
+      console.log("    ✓ Batch whitelist works");
+    });
+
     it("initializes vault collateral ATA", async () => {
       [vaultCollateralAta] = deriveVaultCollateral(vaultPda, programId);
       await program.methods
@@ -632,15 +713,12 @@ describe("WrapSynth VaultManager — Full Integration", () => {
       );
       [mintRequestPda] = deriveMintRequest(requestId, programId);
 
-      const timeoutDuration = 7200; // 2 hours
-
       try {
         await program.methods
           .initiateMint(
             new BN(xmrAmount.toString()),
             Array.from(commitment),
             Array.from(userPublicKey),
-            new BN(timeoutDuration),
             Array.from(requestId),
           )
           .accounts({
@@ -1066,7 +1144,6 @@ describe("WrapSynth VaultManager — Full Integration", () => {
             new BN(xmrAmt.toString()),
             Array.from(c2),
             Array.from(userPublicKey2),
-            new BN(10), // very short timeout for testing
             Array.from(cancelMintRequestId),
           )
           .accounts({
@@ -1663,7 +1740,6 @@ describe("WrapSynth VaultManager — Full Integration", () => {
           .initiateMint(
             new BN("1000000000000"),
             Array.from(commitment),
-            new BN(3600),
             Array.from(reqId),
           )
           .accounts({

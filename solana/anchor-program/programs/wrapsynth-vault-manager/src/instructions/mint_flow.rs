@@ -36,16 +36,11 @@ pub fn initiate_mint(
     xmr_amount: u64,
     claim_commitment: [u8; 32],
     user_public_key: [u8; 32],
-    timeout_duration: i64,
     request_id: [u8; 32],
 ) -> Result<()> {
     require!(xmr_amount >= XMR_TO_WSXMR_DIVISOR, WrapSynthError::XmrAmountTooSmall);
     require!(claim_commitment != [0u8; 32], WrapSynthError::InvalidCommitment);
     require!(user_public_key != [0u8; 32], WrapSynthError::InvalidCommitment);
-    require!(
-        timeout_duration > 0 && timeout_duration <= MAX_MINT_TIMEOUT,
-        WrapSynthError::InvalidValue
-    );
 
     let vault = &mut ctx.accounts.vault;
     require!(vault.active, WrapSynthError::VaultNotActive);
@@ -61,11 +56,24 @@ pub fn initiate_mint(
 
     let global = &ctx.accounts.global_state;
 
-    // Griefing deposit check
-    require!(
-        ctx.accounts.griefing_escrow.lamports() >= vault.mint_griefing_deposit,
-        WrapSynthError::InsufficientDeposit
-    );
+    // Griefing deposit check — whitelisted minters bypass it (EVM parity)
+    let is_whitelisted = {
+        let count = vault.whitelisted_minter_count as usize;
+        let mut found = false;
+        for i in 0..count {
+            if vault.whitelisted_minters[i] == ctx.accounts.initiator.key() {
+                found = true;
+                break;
+            }
+        }
+        found
+    };
+    if !is_whitelisted {
+        require!(
+            ctx.accounts.griefing_escrow.lamports() >= vault.mint_griefing_deposit,
+            WrapSynthError::InsufficientDeposit
+        );
+    }
 
     let wsxmr_amount = xmr_amount / XMR_TO_WSXMR_DIVISOR;
     let fee_amount = (wsxmr_amount as u128)
@@ -161,7 +169,7 @@ pub fn initiate_mint(
     request.lp_public_spend_key = [0u8; 32];
     request.lp_public_view_key = [0u8; 32];
     request.lp_commitment = [0u8; 32];
-    request.timeout = clock.unix_timestamp + timeout_duration;
+    request.timeout = clock.unix_timestamp + vault.mint_timeout_seconds;
     request.griefing_deposit = vault.mint_griefing_deposit;
     request.locked_collateral = 0;
     request.xmr_price_at_ready = 0;
@@ -880,7 +888,7 @@ pub fn sweep_unclaimed_expired_mint(ctx: Context<SweepUnclaimedExpiredMint>) -> 
 // ─── Accounts ────────────────────────────────────────────────────────────────
 
 #[derive(Accounts)]
-#[instruction(xmr_amount: u64, claim_commitment: [u8; 32], user_public_key: [u8; 32], timeout_duration: i64)]
+#[instruction(xmr_amount: u64, claim_commitment: [u8; 32], user_public_key: [u8; 32])]
 pub struct InitiateMint<'info> {
     #[account(mut)]
     pub initiator: Signer<'info>,
