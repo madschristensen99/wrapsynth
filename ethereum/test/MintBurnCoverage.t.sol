@@ -84,10 +84,56 @@ contract MintBurnCoverageTest is HyperEVMTestBase {
         address newLp = makeAddr("feeFreeLp");
         _createVaultAndDeposit(newLp, 100 ether);
         vm.prank(newLp);
-        VaultFacet(address(hub)).setVaultMarketMetrics(0, 0);
+        VaultFacet(address(hub)).setVaultMarketMetrics(0, 100);
+        uint256 wsxmrAmount = 1_000_000; // 0.01 wsXMR
+        uint256 fee = _calculateMintFee(newLp, wsxmrAmount);
+        assertEq(fee, 0, "fee should be 0 when bps is 0");
+    }
 
-        uint256 fee = _calculateMintFee(newLp, 1_000_000);
-        assertEq(fee, 0, "zero bps should give zero fee");
+    // ========== Mint capacity edge cases ==========
+
+    /// @notice REGRESSION: a mint could be initiated (initiateMint's CR check
+    ///         skipped the key bond) that provideLPKey could never key (it
+    ///         reserves the 110% bond before the 150% CR check) — stranding the
+    ///         user's griefing deposit until timeout. initiateMint must reject
+    ///         it up front with the same bond-reserved math.
+    function test_InitiateMint_RejectsWhenBondReservedCRBelowMin() public {
+        // Build debt so the vault is near capacity: 7 mints × 0.02 wsXMR = 0.14
+        for (uint256 i = 0; i < 7; i++) {
+            _mintForUser(user, lp);
+        }
+
+        // 8th mint (0.02 wsXMR): CR without the bond = ~160% (old check passed),
+        // with the 110% bond reserved = ~146% < 150% — must revert at initiation.
+        uint256 xmrAmount = 20000000000; // 0.02 XMR
+        bytes32 secret = bytes32(uint256(0x1234));
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
+        bytes32 commitment = keccak256(abi.encodePacked(px, py));
+
+        vm.prank(user);
+        vm.expectRevert(IErrors.InsufficientCollateral.selector);
+        MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
+            lp, user, xmrAmount, commitment, bytes32(uint256(0xdeadbeef))
+        );
+    }
+
+    /// @notice The bond-reserved check must still allow mints that clear the bar.
+    function test_InitiateMint_PassesWhenBondReservedCRAboveMin() public {
+        // 6 mints × 0.02 wsXMR = 0.12 debt; 7th mint: CR with bond ≈ 167% — passes.
+        for (uint256 i = 0; i < 6; i++) {
+            _mintForUser(user, lp);
+        }
+
+        uint256 xmrAmount = 20000000000;
+        bytes32 secret = bytes32(uint256(0x1234));
+        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
+        bytes32 commitment = keccak256(abi.encodePacked(px, py));
+
+        vm.prank(user);
+        bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(
+            lp, user, xmrAmount, commitment, bytes32(uint256(0xdeadbeef))
+        );
+        assertTrue(reqId != bytes32(0), "mint should initiate when bond-reserved CR >= 150%");
     }
 
     // ========== getBurnRequest ==========
