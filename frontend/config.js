@@ -73,7 +73,7 @@ export const DEPLOYMENTS = {
         liquidationFacet: DF.LiquidationFacet,
         yieldFacet: DF.YieldFacet,
         liquidityRouter: DC.liquidityRouter,
-        sDAI: DE.sDAI,
+        stataUSDe: DE.stataUSDe || DE.sDAI,
         ed25519Helper: DE.Ed25519Helper,
         initialMoneroBlock: 3607954,
         deployedAt: D.deploymentDate,
@@ -82,7 +82,7 @@ export const DEPLOYMENTS = {
         chainId: 1301,
         wrappedMonero: '0xC67Cf54d14078ff2968b4Fcd55331C48CEf69eeF',
         plonkVerifier: '0x...', // Add when deployed
-        sDAI: '0xc02fe7317d4eb8753a02c35fe019786854a92001', // Placeholder for testnet
+        stataUSDe: '0xc02fe7317d4eb8753a02c35fe019786854a92001', // Placeholder for testnet
         initialMoneroBlock: 3605079,
         deployedAt: null,
     },

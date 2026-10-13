@@ -1,15 +1,15 @@
 // RedStone Oracle Price Update Helper
 // Manually builds calldata to avoid viem v1 / connector selector bugs with bytes[] params
 
-import { CONTRACTS, ABIS } from './config.js?v=3.12';
-import { getWalletClient, getPublicClient, getUserAddress } from './viemClient.js?v=3.12';
+import { CONTRACTS, ABIS } from './config.js?v=3.21';
+import { getWalletClient, getPublicClient, getUserAddress, ensureAuthorizedAccount } from './viemClient.js?v=3.21';
 
 /**
  * Update oracle prices using RedStone
  * Manually constructs transaction data: viem v2 encodeFunctionData + RedStone payload
  */
 /**
- * Fetch current XMR and DAI prices from RedStone API (off-chain, no wallet needed).
+ * Fetch current XMR and USDe prices from RedStone API (off-chain, no wallet needed).
  * Returns human-readable prices for UI display.
  */
 export async function fetchRedStonePrices() {
@@ -17,7 +17,7 @@ export async function fetchRedStonePrices() {
 
     try {
         const resp = await fetch(
-            'https://api.redstone.finance/prices?symbol=XMR,DAI&provider=redstone-primary-prod&limit=1',
+            'https://api.redstone.finance/prices?symbol=XMR,USDe&provider=redstone-primary-prod&limit=1',
             { headers: { 'Accept': 'application/json' } }
         );
         if (!resp.ok) {
@@ -30,18 +30,18 @@ export async function fetchRedStonePrices() {
         const prices = Array.isArray(data) ? data : (data.prices || []);
 
         const xmrEntry = prices.find(p => p.symbol === 'XMR' || p.symbol === 'XMR' );
-        const daiEntry = prices.find(p => p.symbol === 'DAI' || p.symbol === 'DAI');
+        const usdeEntry = prices.find(p => p.symbol === 'USDe' || p.symbol === 'USDE');
 
         return {
             xmrPrice: xmrEntry ? Number(xmrEntry.value) : null,
-            daiPrice: daiEntry ? Number(daiEntry.value) : null,
+            usdePrice: usdeEntry ? Number(usdeEntry.value) : null,
             xmrTimestamp: xmrEntry ? xmrEntry.timestamp : null,
-            daiTimestamp: daiEntry ? daiEntry.timestamp : null
+            usdeTimestamp: usdeEntry ? usdeEntry.timestamp : null
         };
     } catch (error) {
         console.warn('Could not fetch RedStone prices from API:', error.message);
         // Fallback: return nulls so caller can still proceed with payload-based update
-        return { xmrPrice: null, daiPrice: null, xmrTimestamp: null, daiTimestamp: null };
+        return { xmrPrice: null, usdePrice: null, xmrTimestamp: null, usdeTimestamp: null };
     }
 }
 
@@ -62,7 +62,7 @@ export async function buildRedStonePayload() {
         uniqueSignersCount: 3,
         urls: ['https://oracle-gateway-1.a.redstone.finance']
     };
-    const dataFeeds = ['XMR', 'DAI'];
+    const dataFeeds = ['XMR', 'USDe'];
 
     const rsWalletClient = getWalletClientRs(
         { chain: hyperevm, transport: custom(window.ethereum), account },
@@ -92,7 +92,9 @@ export async function sendPriceUpdate({ functionData, redstonePayload }) {
 
     const walletClient = getWalletClient();
     const publicClient = getPublicClient();
-    const account = getUserAddress();
+    // Re-sync with the wallet's authorized account for this origin — a stale
+    // cached address makes eth_sendTransaction throw 4100 'not authorized'.
+    const account = await ensureAuthorizedAccount();
     const { createPublicClient, http } = await import('https://esm.sh/viem@2.7.0');
 
     const data = functionData + redstonePayload;

@@ -1,7 +1,7 @@
 // UI Controller
 // Manages all DOM interactions and updates
 
-import { DECIMALS } from './config.js?v=3.12';
+import { DECIMALS } from './config.js?v=3.21';
 import { getIconSVG } from './icons.js?v=3.12';
 import { launchMintCelebration, launchBurnAnimation } from './animations.js?v=3.12';
 
@@ -167,6 +167,9 @@ export function showWalletConnected(address, balance) {
     elements.connectedInfo.classList.remove('hidden');
     elements.userAddress.textContent = formatAddress(address);
     updateBalance(balance);
+    // Withdraw-returns visibility is driven by checkPendingReturns — it shows
+    // with the amount label when returns exist and hides on confirmed zero.
+    setWithdrawReturnsVisible(false);
     // Enable action buttons
     elements.startMint.disabled = false;
     elements.startBurn.disabled = false;
@@ -177,12 +180,14 @@ export function showWalletConnected(address, balance) {
 /**
  * Show/hide withdraw returns button based on pending amount
  */
-export function setWithdrawReturnsVisible(visible) {
+export function setWithdrawReturnsVisible(visible, label) {
     if (elements.withdrawReturnsBtn) {
         if (visible) {
             elements.withdrawReturnsBtn.classList.remove('hidden');
+            elements.withdrawReturnsBtn.textContent = label || 'Withdraw returns';
         } else {
             elements.withdrawReturnsBtn.classList.add('hidden');
+            elements.withdrawReturnsBtn.textContent = 'Withdraw returns';
         }
     }
 }
@@ -193,6 +198,7 @@ export function setWithdrawReturnsVisible(visible) {
 export function showWalletDisconnected() {
     elements.connectWallet.classList.remove('hidden');
     elements.connectedInfo.classList.add('hidden');
+    setWithdrawReturnsVisible(false);
     // Disable action buttons since wallet is required
     elements.startMint.disabled = true;
     elements.startBurn.disabled = true;
@@ -446,7 +452,7 @@ export function showResumeCountdown(requestId, deadlineBlock, currentBlock, onRe
     // Poll block number every 5s to update countdown
     const intervalId = setInterval(async () => {
         try {
-            const { getPublicClient } = await import('./viemClient.js?v=3.12');
+            const { getPublicClient } = await import('./viemClient.js?v=3.21');
             const client = getPublicClient();
             cachedCurrent = Number(await client.getBlockNumber());
             updateMsg();
@@ -525,7 +531,7 @@ export async function showBurnTab() {
     saveActiveTab('burn');
 
     // Update balance when showing burn tab
-    const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js?v=3.12');
+    const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js?v=3.21');
     const address = getUserAddress();
     if (address) {
         try {
@@ -730,10 +736,10 @@ export function populateVaults(vaults) {
                 // Use actual debt if available, otherwise fall back to normalized debt
                 const debt = v.actualDebt ? Number(v.actualDebt) / 1e8 : (v.debt ? Number(v.debt) / 1e8 : 0);
                 
-                // Calculate ratio in USD terms (sDAI ≈ $1, wsXMR needs XMR price)
+                // Calculate ratio in USD terms (USDe ≈ $1, wsXMR needs XMR price)
                 // Use stored xmrPrice and collPrice from vault data if available
                 const xmrPrice = v.xmrPrice || 200; // fallback
-                const collPrice = v.collPrice || 1.0; // sDAI ≈ $1
+                const collPrice = v.collPrice || 1.0; // USDe ≈ $1
                 const collateralUSD = collateral * collPrice;
                 const debtUSD = debt * xmrPrice;
                 const cr = debtUSD > 0 ? Math.round((collateralUSD / debtUSD) * 100) : 200;
@@ -743,7 +749,7 @@ export function populateVaults(vaults) {
                 const usedColl = v.usedCollateral || 0;
                 const pendingColl = v.pendingCollateral || 0;
                 const bufferColl = v.bufferCollateral || 0;
-                const coLpColl = v.deployedSDAIShares ? Number(v.deployedSDAIShares) / 1e18 : 0;
+                const coLpColl = v.deployedUSDeShares ? Number(v.deployedUSDeShares) / 1e18 : 0;
                 const lockedColl = v.lockedCollateral ? Number(v.lockedCollateral) / 1e18 : 0;
                 const totalColl = collateral;
                 const freeColl = v.capacityAvailable === false && !v.capacityEstimated ? 0 : (v.freeCollateral || 0);
@@ -755,7 +761,7 @@ export function populateVaults(vaults) {
                 const lockedPct = totalColl > 0 ? (lockedColl / totalColl) * 100 : 0;
                 const freePct = totalColl > 0 ? (freeColl / totalColl) * 100 : 0;
                 
-                const pieChart = makePieChart(usedPct, pendingPct, bufferPct, coLpPct, freePct);
+                const pieChart = makePieChart(usedPct, pendingPct, bufferPct, coLpPct, lockedPct, freePct);
                 
                 const crColor = cr >= 200 ? 'var(--teal)' : cr >= 150 ? 'var(--amber)' : 'var(--red)';
                 
@@ -769,7 +775,7 @@ export function populateVaults(vaults) {
                       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">collateral ratio</div>
                     </div>
                     <div class="vrow" style="border-top:1px solid var(--line-2);padding-top:12px">
-                      <span class="l"><span style="opacity:.6">collateral</span><b style="color:var(--fg)">${collateral.toFixed(4)} sDAI</b></span>
+                      <span class="l"><span style="opacity:.6">collateral</span><b style="color:var(--fg)">${collateral.toFixed(4)} USDe</b></span>
                       <span class="l"><span style="opacity:.6">debt</span><b style="color:var(--fg)">${debt.toFixed(4)} wsXMR</b></span>
                     </div>
                     <div class="vrow" style="font-size:12px;gap:10px;margin-top:14px;display:grid;grid-template-columns:1fr 1fr;row-gap:10px">
@@ -832,7 +838,7 @@ export function renderLPDetailCard(isMint, vault) {
     const usedColl = vault.usedCollateral || 0;
     const pendingColl = vault.pendingCollateral || 0;
     const bufferColl = vault.bufferCollateral || 0;
-    const coLpColl = vault.deployedSDAIShares ? Number(vault.deployedSDAIShares) / 1e18 : 0;
+    const coLpColl = vault.deployedUSDeShares ? Number(vault.deployedUSDeShares) / 1e18 : 0;
     const lockedColl = vault.lockedCollateral ? Number(vault.lockedCollateral) / 1e18 : 0;
     const totalColl = collateral;
     const freeColl = vault.capacityAvailable === false && !vault.capacityEstimated ? 0 : (vault.freeCollateral || 0);
@@ -844,7 +850,7 @@ export function renderLPDetailCard(isMint, vault) {
     const lockedPct = totalColl > 0 ? (lockedColl / totalColl) * 100 : 0;
     const freePct = totalColl > 0 ? (freeColl / totalColl) * 100 : 0;
 
-    const pieChart = makePieChart(usedPct, pendingPct, bufferPct, coLpPct, freePct);
+    const pieChart = makePieChart(usedPct, pendingPct, bufferPct, coLpPct, lockedPct, freePct);
 
     // Populate chart
     const chartEl = document.getElementById(`${prefix}-lp-chart`);
@@ -854,7 +860,7 @@ export function renderLPDetailCard(isMint, vault) {
     const set = (id, val) => { const el = document.getElementById(`${prefix}-lp-${id}`); if (el) el.innerHTML = val; };
 
     set('cr', `<span style="color:${crColor};text-shadow:0 0 16px ${crColor}40">${crDisplay}</span>`);
-    set('collateral', `${collateral.toFixed(4)} sDAI`);
+    set('collateral', `${collateral.toFixed(4)} USDe`);
     set('debt', `${debt.toFixed(4)} wsXMR`);
 
     if (isMint) {
@@ -2264,9 +2270,9 @@ function fmtCapacity(val) {
 
 /**
  * Generate inline SVG donut chart for vault capacity
- * Slices: reserved (orange), pending (purple), safety buffer (yellow), co-lp (blue), free (green)
+ * Slices: reserved (red), pending (purple), safety buffer (yellow), co-lp (blue), burn lock (orange), free (teal)
  */
-function makePieChart(usedPct, pendingPct, bufferPct, coLpPct, freePct) {
+function makePieChart(usedPct, pendingPct, bufferPct, coLpPct, lockedPct, freePct) {
     const size = 100;
     const cx = size / 2;
     const cy = size / 2;
@@ -2278,6 +2284,7 @@ function makePieChart(usedPct, pendingPct, bufferPct, coLpPct, freePct) {
     let pendingLen = +(pendingPct / 100 * circ).toFixed(2);
     let bufferLen = +(bufferPct / 100 * circ).toFixed(2);
     let coLpLen = +(coLpPct / 100 * circ).toFixed(2);
+    let lockedLen = +(lockedPct / 100 * circ).toFixed(2);
     let freeLen = +(freePct / 100 * circ).toFixed(2);
 
     // Clamp
@@ -2285,6 +2292,7 @@ function makePieChart(usedPct, pendingPct, bufferPct, coLpPct, freePct) {
     pendingLen = Math.min(pendingLen, circ);
     bufferLen = Math.min(bufferLen, circ);
     coLpLen = Math.min(coLpLen, circ);
+    lockedLen = Math.min(lockedLen, circ);
     freeLen = Math.min(freeLen, circ);
 
     // Guard against NaN / Infinity
@@ -2292,6 +2300,7 @@ function makePieChart(usedPct, pendingPct, bufferPct, coLpPct, freePct) {
     if (!Number.isFinite(pendingLen)) pendingLen = 0;
     if (!Number.isFinite(bufferLen)) bufferLen = 0;
     if (!Number.isFinite(coLpLen)) coLpLen = 0;
+    if (!Number.isFinite(lockedLen)) lockedLen = 0;
     if (!Number.isFinite(freeLen)) freeLen = circ;
 
     // Build SVG — stacked circles with dash offsets
@@ -2299,11 +2308,13 @@ function makePieChart(usedPct, pendingPct, bufferPct, coLpPct, freePct) {
     const pendingDash = `${pendingLen} ${circ}`;
     const bufferDash = `${bufferLen} ${circ}`;
     const coLpDash = `${coLpLen} ${circ}`;
+    const lockedDash = `${lockedLen} ${circ}`;
     const freeDash = `${freeLen} ${circ}`;
     const pendingOff = -usedLen;
     const bufferOff = -(usedLen + pendingLen);
     const coLpOff = -(usedLen + pendingLen + bufferLen);
-    const freeOff = -(usedLen + pendingLen + bufferLen + coLpLen);
+    const lockedOff = -(usedLen + pendingLen + bufferLen + coLpLen);
+    const freeOff = -(usedLen + pendingLen + bufferLen + coLpLen + lockedLen);
 
     return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
         <defs>
@@ -2321,6 +2332,7 @@ function makePieChart(usedPct, pendingPct, bufferPct, coLpPct, freePct) {
           <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#8b5cf6" stroke-width="${strokeW}" stroke-dasharray="${pendingDash}" stroke-dashoffset="${pendingOff}" stroke-linecap="round" opacity="0.85"/>
           <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#facc15" stroke-width="${strokeW}" stroke-dasharray="${bufferDash}" stroke-dashoffset="${bufferOff}" stroke-linecap="round" opacity="0.85"/>
           <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#3b82f6" stroke-width="${strokeW}" stroke-dasharray="${coLpDash}" stroke-dashoffset="${coLpOff}" stroke-linecap="round" opacity="0.9"/>
+          <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#f97316" stroke-width="${strokeW}" stroke-dasharray="${lockedDash}" stroke-dashoffset="${lockedOff}" stroke-linecap="round" opacity="0.9"/>
           <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#2fe6c4" stroke-width="${strokeW}" stroke-dasharray="${freeDash}" stroke-dashoffset="${freeOff}" stroke-linecap="round" opacity="0.9"/>
         </g>
         <circle cx="${cx}" cy="${cy}" r="${r - strokeW / 2}" fill="var(--input)"/>

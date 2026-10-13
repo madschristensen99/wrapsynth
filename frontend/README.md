@@ -125,7 +125,7 @@ To point at a different deployment, replace `deployment.json` with your own mani
 {
   "chainId": 999,
   "contracts": { "wsXmrHub": "0x...", "wsXMR": "0x...", "liquidityRouter": "0x..." },
-  "externalContracts": { "sDAI": "0x..." },
+  "externalContracts": { "stataUSDe": "0x...", "USDe": "0x..." },
   "pool": { "uniswapV3Pool": "0x..." },
   "lpConfig": { "defaultLpVault": "0x..." }
 }

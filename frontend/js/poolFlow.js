@@ -1,7 +1,7 @@
 // Co-LP Pairing Flow - Liquidity Router Integration
 
-import { CONTRACTS, ABIS, DECIMALS } from './config.js?v=3.12';
-import { readHub, writeHub, readWsxmr, writeWsxmr, getUserAddress, getPublicClient, getWalletClient } from './viemClient.js?v=3.12';
+import { CONTRACTS, ABIS, DECIMALS } from './config.js?v=3.21';
+import { readHub, writeHub, readWsxmr, writeWsxmr, getUserAddress, getPublicClient, getWalletClient } from './viemClient.js?v=3.21';
 import { formatUnits, parseUnits, parseAbi } from 'https://esm.sh/viem@2.7.0';
 
 export class PoolFlow {
@@ -26,8 +26,8 @@ export class PoolFlow {
         return true;
     }
 
-    async allocateLiquidity(sDAIAmount) {
-        const amount = parseUnits(sDAIAmount.toString(), DECIMALS.ETH);
+    async allocateLiquidity(usdeAmount) {
+        const amount = parseUnits(usdeAmount.toString(), DECIMALS.ETH);
         
         const client = getWalletClient();
         const publicClient = getPublicClient();
@@ -70,8 +70,8 @@ export class PoolFlow {
         return receipt;
     }
 
-    async createPosition(lpAddress, sDAIAmount, wsxmrAmount, deadline) {
-        const sDAI = parseUnits(sDAIAmount.toString(), DECIMALS.ETH);
+    async createPosition(lpAddress, usdeAmount, wsxmrAmount, deadline) {
+        const usde = parseUnits(usdeAmount.toString(), DECIMALS.ETH);
         const wsxmr = parseUnits(wsxmrAmount.toString(), DECIMALS.wsXMR);
         
         const client = getWalletClient();
@@ -81,7 +81,7 @@ export class PoolFlow {
             address: CONTRACTS.liquidityRouter,
             abi: parseAbi(ABIS.liquidityRouter),
             functionName: 'createPosition',
-            args: [lpAddress, this.userAddress, sDAI, wsxmr, BigInt(deadline)],
+            args: [lpAddress, this.userAddress, usde, wsxmr, BigInt(deadline)],
             account: this.userAddress
         });
         

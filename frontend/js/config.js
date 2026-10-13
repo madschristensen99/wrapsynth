@@ -24,11 +24,13 @@ export const NETWORKS = {
         id: D.chainId || 999,
         name: 'HyperEVM',
         rpcUrls: [
-            // Official RPC is aggressively rate-limited; alternates keep reads alive.
+            // hypurrscan serves eth_getLogs most reliably; the official RPC is
+            // aggressively rate-limited — keep it LAST so reads don't pay a
+            // failed roundtrip before falling back.
             // NOTE: hyperliquid-json-rpc.stakely.io is CORS-blocked in browsers — do not re-add.
-            'https://rpc.hyperliquid.xyz/evm',
             'https://rpc.hypurrscan.io',
-            'https://hyperliquid.drpc.org'
+            'https://hyperliquid.drpc.org',
+            'https://rpc.hyperliquid.xyz/evm'
         ],
         blockExplorer: D.explorer || 'https://hyperevmscan.io',
         nativeCurrency: {
@@ -44,8 +46,10 @@ export const CONTRACTS = {
     hub: DC.wsXmrHub,
     wsxmrToken: DC.wsXMR,
     liquidityRouter: DC.liquidityRouter,
-    sDAI: DE.sDAI,
+    // Collateral share token (stataUSDe on HyperEVM; sDAI on legacy Gnosis deployment)
+    stataUSDe: DE.stataUSDe || DE.sDAI || DC.StataUSDe,
     uniswapV3Pool: DP.uniswapV3Pool,
+    nfpm: DE.UniswapV3PositionManager,
     // Default LP vault to use for mints (the active LP running the LP node)
     defaultLpVault: DLC.defaultLpVault,
     // Event topic hashes for log parsing
@@ -129,7 +133,7 @@ export const RAW_ABIS = {
                 { name: 'mintNonce', type: 'uint256' },
                 { name: 'minBurnAmount', type: 'uint256' },
                 { name: 'active', type: 'bool' },
-                { name: 'deployedSDAIShares', type: 'uint256' },
+                { name: 'deployedUSDeShares', type: 'uint256' },
                 { name: 'maxCoLPRangeBps', type: 'uint16' },
                 { name: 'mintTimeoutBlocks', type: 'uint256' },
                 { name: 'burnTimeoutBlocks', type: 'uint256' },
@@ -164,6 +168,26 @@ export const RAW_ABIS = {
                 { name: 'status', type: 'uint8' },
                 { name: 'lockedCollateral', type: 'uint256' },
                 { name: 'xmrPriceAtReady', type: 'uint256' }
+            ],
+            name: '',
+            type: 'tuple'
+        }],
+        stateMutability: 'view',
+        type: 'function'
+    },
+    getPositionMetadata: {
+        inputs: [{ name: 'tokenId', type: 'uint256' }],
+        name: 'getPositionMetadata',
+        outputs: [{
+            components: [
+                { name: 'vaultOwner', type: 'address' },
+                { name: 'user', type: 'address' },
+                { name: 'sDAISharesOriginal', type: 'uint256' },
+                { name: 'wsxmrOriginal', type: 'uint256' },
+                { name: 'tickLower', type: 'int24' },
+                { name: 'tickUpper', type: 'int24' },
+                { name: 'liquidity', type: 'uint128' },
+                { name: 'createdAt', type: 'uint256' }
             ],
             name: '',
             type: 'tuple'
@@ -261,6 +285,7 @@ export const ABIS = {
         // Co-LP operations
         'function userOpenCoLP(address lpVault, uint256 wsxmrAmount, uint256 deadline) external returns (uint256 tokenId)',
         'function unwindCoLP(uint256 tokenId, uint256 deadline) external',
+        'function collectCoLPFees(uint256 tokenId) external',
         'function rebalanceCoLP(uint256 tokenId, uint16 newRangeBps, uint256 deadline) external',
         'function getCoLPCapacity(address lpVault) external view returns (uint256 maxWsxmrAcceptable)',
         'function setMaxCoLPRange(uint16 newMaxBps) external',
@@ -320,6 +345,8 @@ export const ABIS = {
         'function updateOraclePrices(bytes[] calldata) external payable',
         'function getXmrPrice() external view returns (uint256)',
         'function getCollateralPrice() external view returns (uint256)',
+        'function getXmrPriceWithAge(uint256 maxAge) external view returns (uint256)',
+        'function getCollateralPriceWithAge(uint256 maxAge) external view returns (uint256)',
         'function lastXmrPrice() external view returns (int192)',
         'function lastCollateralPrice() external view returns (int192)',
         'function globalDebtIndex() external view returns (uint256)',
@@ -349,10 +376,10 @@ export const ABIS = {
 
     liquidityRouter: [
         // LP side
-        'function allocateLiquidity(uint256 sDAIAmount) external',
-        'function withdrawSDAI(uint256 sDAIAmount) external',
-        'function increaseUserApproval(address user, uint256 additionalSDAI) external',
-        'function decreaseUserApproval(address user, uint256 reduceSDAI) external',
+        'function allocateLiquidity(uint256 usdeAmount) external',
+        'function withdrawUSDe(uint256 usdeAmount) external',
+        'function increaseUserApproval(address user, uint256 additionalUSDe) external',
+        'function decreaseUserApproval(address user, uint256 reduceUSDe) external',
         // User side
         'function depositWsxmr(uint256 amount) external',
         'function withdrawWsXMR(uint256 wsxmrAmount) external',
@@ -360,8 +387,8 @@ export const ABIS = {
         'function decreaseLpApproval(address lp, uint256 reduceWsxmr) external',
         'function burnFromInternalBalance(uint256 wsxmrAmount, address lpVault) external returns (bytes32)',
         // Positions
-        'function createPosition(address lp, address user, uint256 sDAIAmount, uint256 wsxmrAmount, uint256 deadline) external returns (uint256)',
-        'function createPositionWithPriceUpdate(address lp, address user, uint256 sDAIAmount, uint256 wsxmrAmount, uint256 deadline, bytes[] calldata oracleUpdateData) external payable returns (uint256)',
+        'function createPosition(address lp, address user, uint256 usdeAmount, uint256 wsxmrAmount, uint256 deadline) external returns (uint256)',
+        'function createPositionWithPriceUpdate(address lp, address user, uint256 usdeAmount, uint256 wsxmrAmount, uint256 deadline, bytes[] calldata oracleUpdateData) external payable returns (uint256)',
         'function closePosition(uint256 positionIndex, uint256 deadline, uint256 minTotalValueUSD) external',
         'function collectFees(uint256 positionIndex) external',
         'function withdrawFees() external',
@@ -373,11 +400,11 @@ export const ABIS = {
         'function userApprovalAmount(address user, address lp) external view returns (uint256)',
         'function activePositionCount(address account) external view returns (uint256)',
         // Events
-        'event PositionCreated(uint256 indexed positionIndex, uint256 dexTokenId, address indexed lp, address indexed user, uint256 sDAIAmount, uint256 wsxmrAmount)',
-        'event PositionClosed(uint256 indexed positionIndex, uint256 sDAIReturned, uint256 wsxmrReturned)',
+        'event PositionCreated(uint256 indexed positionIndex, uint256 dexTokenId, address indexed lp, address indexed user, uint256 usdeAmount, uint256 wsxmrAmount)',
+        'event PositionClosed(uint256 indexed positionIndex, uint256 usdeReturned, uint256 wsxmrReturned)',
         'event LpApprovedUser(address indexed lp, address indexed user, uint256 amount)',
         'event UserApprovedLp(address indexed user, address indexed lp, uint256 amount)',
-        'event ILSDAICredited(address indexed user, uint256 amount, uint256 positionIndex)',
+        'event ILSUSDeCredited(address indexed user, uint256 amount, uint256 positionIndex)',
         'event ILWsxmrCredited(address indexed lp, uint256 amount, uint256 positionIndex)'
     ],
 

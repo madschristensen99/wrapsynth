@@ -8,7 +8,7 @@ pub mod instructions;
 
 use instructions::*;
 
-declare_id!("EZ1hsgYwmqmCY5Gzw9mwnJnJE4PJcKX5hHw5MZXk2ssy");
+declare_id!("k4TC3sLs4feJfuMYBf8piyRQMU1WENM2LbQoKJNWbmx");
 
 #[program]
 pub mod wrapsynth_vault_manager {
@@ -297,22 +297,33 @@ pub mod wrapsynth_vault_manager {
     }
 
     /// User pairs wsXMR with vault idle sUSDe collateral to open a position.
-    pub fn user_open_co_lp(ctx: Context<UserOpenCoLP>, wsxmr_amount: u64) -> Result<()> {
-        co_lp::user_open_co_lp(ctx, wsxmr_amount)
+    pub fn user_open_co_lp<'info>(
+        ctx: Context<'_, '_, '_, 'info, UserOpenCoLP<'info>>,
+        wsxmr_amount: u64,
+        nonce: u64,
+    ) -> Result<()> {
+        co_lp::user_open_co_lp(ctx, wsxmr_amount, nonce)
     }
 
     /// LP or user collects accrued fees from a co-LP position.
-    pub fn collect_co_lp_fees(ctx: Context<CollectCoLPFees>) -> Result<()> {
+    pub fn collect_co_lp_fees<'info>(
+        ctx: Context<'_, '_, '_, 'info, CollectCoLPFees<'info>>,
+    ) -> Result<()> {
         co_lp::collect_co_lp_fees(ctx)
     }
 
     /// LP or user closes a co-LP position and distributes proceeds.
-    pub fn unwind_co_lp(ctx: Context<UnwindCoLP>) -> Result<()> {
+    pub fn unwind_co_lp<'info>(
+        ctx: Context<'_, '_, '_, 'info, UnwindCoLP<'info>>,
+    ) -> Result<()> {
         co_lp::unwind_co_lp(ctx)
     }
 
     /// Keeper drains a co-LP position for rebalancing (re-open via user_open_co_lp).
-    pub fn rebalance_co_lp(ctx: Context<RebalanceCoLP>, new_range_bps: u16) -> Result<()> {
+    pub fn rebalance_co_lp<'info>(
+        ctx: Context<'_, '_, '_, 'info, RebalanceCoLP<'info>>,
+        new_range_bps: u16,
+    ) -> Result<()> {
         co_lp::rebalance_co_lp(ctx, new_range_bps)
     }
 

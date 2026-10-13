@@ -23,7 +23,7 @@ use crate::instructions::vault_management::sync_vault_yield;
 
 pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> Result<()> {
     let vault = &ctx.accounts.vault;
-    let global = &ctx.accounts.global_state;
+    let global = &ctx.accounts.global_state.load()?;
 
     // Verify the vault is actually liquidatable before resolving burns
     let actual_debt = get_actual_debt(vault.normalized_debt, global.global_debt_index);
@@ -57,7 +57,7 @@ pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> 
             // LP has not yet committed XMR — re-mint wsXMR to user. Debt was NOT
             // reduced at request time, so there is nothing to restore.
             let vault = &mut ctx.accounts.vault;
-            let global = &mut ctx.accounts.global_state;
+            let global = &mut ctx.accounts.global_state.load_mut()?;
 
             // Total model: release the reservation only.
             if vault.locked_collateral < total_locked {
@@ -97,7 +97,7 @@ pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> 
                 // than slash: release the lock to the vault (seizable) and pay
                 // only the reward (mirrors EVM _settleRevealedBurnLiquidation).
                 let vault = &mut ctx.accounts.vault;
-                let global = &mut ctx.accounts.global_state;
+                let global = &mut ctx.accounts.global_state.load_mut()?;
 
                 if vault.locked_collateral < total_locked {
                     vault.locked_collateral = 0;
@@ -146,7 +146,7 @@ pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> 
                 // user receives min(par, locked) + reward; excess returns to vault
                 // (mirrors EVM _settleCommittedBurnSlash).
                 let vault = &mut ctx.accounts.vault;
-                let global = &mut ctx.accounts.global_state;
+                let global = &mut ctx.accounts.global_state.load_mut()?;
 
                 let par_value_usd = (request.wsxmr_amount as u128)
                     .checked_mul(request.xmr_price_at_request as u128)
@@ -225,13 +225,13 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
 
     sync_vault_yield(
         vault,
-        &mut ctx.accounts.global_state,
+        &mut *ctx.accounts.global_state.load_mut()?,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
         &ctx.accounts.pyth_susde_rr,
     )?;
 
-    let global = &ctx.accounts.global_state;
+    let global = &ctx.accounts.global_state.load()?;
     let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
@@ -272,25 +272,25 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
         let principal_reduction = (vault.principal_deposits as u128 * collateral_amount as u128
             / total_before as u128) as u64;
         vault.principal_deposits = vault.principal_deposits.saturating_sub(principal_reduction);
-        let global_mut = &mut ctx.accounts.global_state;
+        let global_mut = &mut ctx.accounts.global_state.load_mut()?;
         global_mut.global_lp_principal = global_mut.global_lp_principal.saturating_sub(principal_reduction);
     }
     if vault.principal_shares > 0 && total_before > 0 {
         let shares_reduction = (vault.principal_shares as u128 * collateral_amount as u128
             / total_before as u128) as u64;
         vault.principal_shares = vault.principal_shares.saturating_sub(shares_reduction);
-        let global_mut = &mut ctx.accounts.global_state;
+        let global_mut = &mut ctx.accounts.global_state.load_mut()?;
         global_mut.global_lp_principal_shares = global_mut.global_lp_principal_shares.saturating_sub(shares_reduction);
     }
 
     vault.collateral_amount = vault.collateral_amount.saturating_sub(collateral_amount);
 
     // Clear normalized debt
-    let normalized_clear = normalize_debt(debt_to_clear, ctx.accounts.global_state.global_debt_index);
+    let normalized_clear = normalize_debt(debt_to_clear, ctx.accounts.global_state.load()?.global_debt_index);
     let normalized_clear = normalized_clear.min(vault.normalized_debt);
     vault.normalized_debt = vault.normalized_debt.saturating_sub(normalized_clear);
 
-    let global = &mut ctx.accounts.global_state;
+    let global = &mut ctx.accounts.global_state.load_mut()?;
     global.global_total_debt = global.global_total_debt.saturating_sub(debt_to_clear);
 
     // Track bad debt if vault is fully drained and zero it cleanly.
@@ -377,20 +377,20 @@ pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
     // Extract yield from both vaults (EVM parity — yield is harvested before takeover)
     sync_vault_yield(
         old,
-        &mut ctx.accounts.global_state,
+        &mut *ctx.accounts.global_state.load_mut()?,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
         &ctx.accounts.pyth_susde_rr,
     )?;
     sync_vault_yield(
         new,
-        &mut ctx.accounts.global_state,
+        &mut *ctx.accounts.global_state.load_mut()?,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
         &ctx.accounts.pyth_susde_rr,
     )?;
 
-    let global = &ctx.accounts.global_state;
+    let global = &ctx.accounts.global_state.load()?;
     let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
@@ -441,7 +441,7 @@ pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
         .checked_add(absorbed_value)
         .ok_or(WrapSynthError::MathOverflow)?;
 
-    let global = &mut ctx.accounts.global_state;
+    let global = &mut ctx.accounts.global_state.load_mut()?;
     global.global_lp_principal_shares = global
         .global_lp_principal_shares
         .checked_add(absorbed)
@@ -513,21 +513,21 @@ pub struct ResolveBurnForLiquidation<'info> {
         seeds = [VAULT_SEED, vault.lp_address.as_ref()],
         bump = vault.bump,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         mut,
         seeds = [BURN_REQUEST_SEED, burn_request.request_id.as_ref()],
         bump = burn_request.bump,
     )]
-    pub burn_request: Account<'info, BurnRequest>,
+    pub burn_request: Box<Account<'info, BurnRequest>>,
 
     #[account(
         init_if_needed,
@@ -536,7 +536,7 @@ pub struct ResolveBurnForLiquidation<'info> {
         seeds = [PENDING_RETURNS_SEED, burn_request.user.as_ref()],
         bump,
     )]
-    pub user_pending_returns: Account<'info, PendingReturns>,
+    pub user_pending_returns: Box<Account<'info, PendingReturns>>,
 
     #[account(mut)]
     pub wsxmr_mint: InterfaceAccount<'info, Mint>,
@@ -565,14 +565,14 @@ pub struct ExecuteLiquidation<'info> {
         seeds = [VAULT_SEED, vault.lp_address.as_ref()],
         bump = vault.bump,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(mut)]
     pub wsxmr_mint: InterfaceAccount<'info, Mint>,
@@ -613,7 +613,7 @@ pub struct BackstopVault<'info> {
         seeds = [VAULT_SEED, old_vault.lp_address.as_ref()],
         bump = old_vault.bump,
     )]
-    pub old_vault: Account<'info, Vault>,
+    pub old_vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
@@ -621,14 +621,14 @@ pub struct BackstopVault<'info> {
         bump = new_vault.bump,
         constraint = new_vault.lp_address == new_lp.key() @ WrapSynthError::Unauthorized,
     )]
-    pub new_vault: Account<'info, Vault>,
+    pub new_vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,

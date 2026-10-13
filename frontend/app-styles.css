@@ -350,6 +350,19 @@ nav{display:flex;align-items:center;justify-content:space-between;height:66px;
 .alert-error{background:rgba(255,133,128,.1);border:1px solid rgba(255,133,128,.35);color:var(--red);
   padding:12px 16px;border-radius:10px;margin:12px 0;box-shadow:0 0 20px rgba(255,133,128,.1)}
 
+/* Co-LP pending returns row */
+#co-lp-pending{display:flex;align-items:center;justify-content:space-between;
+  padding:10px 14px;margin-bottom:12px;border:1px solid rgba(62,252,224,.3);
+  border-radius:10px;background:rgba(62,252,224,.05);font-size:13px;color:var(--fg)}
+#co-lp-pending b{color:var(--teal)}
+#co-lp-pending.hidden{display:none}
+#co-lp-pending .cta{padding:6px 12px;font-size:12px}
+
+/* Disabled action buttons (e.g. Claim with no accrued fees) */
+.position-card .position-actions button:disabled{opacity:.35;cursor:default}
+.position-card .position-actions button:disabled:hover{background:rgba(255,255,255,.06);
+  color:var(--fg);border-color:var(--line);box-shadow:none}
+
 /* Utility */
 .hidden{display:none!important}
 

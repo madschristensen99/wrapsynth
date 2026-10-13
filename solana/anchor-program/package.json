@@ -4,6 +4,7 @@
     "pretest": "node scripts/gen-mock-pyth.js",
     "test": "anchor test --skip-build",
     "test:mocha": "ts-mocha -p ./tsconfig.json -t 1000000 tests/vault_manager.ts",
+    "test:fork": "bash scripts/run-fork-tests.sh",
     "build": "anchor build",
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"

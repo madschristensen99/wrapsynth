@@ -150,14 +150,15 @@ fn cascade_liquidation_math_commutative() {
         global_bad_debt: 0,
         global_pending_burn_debt: 0,
         last_buy_timestamp: 0,
-        vault_count: 5,
-        vault_list: [Pubkey::default(); MAX_VAULTS],
         debt_wipe_batch_start: 0,
         migration_batch_start: 0,
         migration_old_index: 0,
-        total_pending_mints: 0,
         request_nonce: 0,
+        vault_count: 5,
+        total_pending_mints: 0,
+        vault_list: [Pubkey::default(); MAX_VAULTS],
         bump: 0,
+        _reserved: [0u8; 7],
     };
 
     let mut vaults: Vec<Vault> = vault_configs
@@ -397,14 +398,15 @@ fn partial_liquidation_does_not_underflow() {
         global_bad_debt: 0,
         global_pending_burn_debt: 0,
         last_buy_timestamp: 0,
-        vault_count: 1,
-        vault_list: [Pubkey::default(); MAX_VAULTS],
         debt_wipe_batch_start: 0,
         migration_batch_start: 0,
         migration_old_index: 0,
-        total_pending_mints: 0,
         request_nonce: 0,
+        vault_count: 1,
+        total_pending_mints: 0,
+        vault_list: [Pubkey::default(); MAX_VAULTS],
         bump: 0,
+        _reserved: [0u8; 7],
     };
 
     // Price: collateral worth $1, debt worth $1 → 100% ratio (at liquidation boundary)

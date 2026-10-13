@@ -32,7 +32,7 @@ pub fn trigger_buy_and_burn(
     ctx: Context<TriggerBuyAndBurn>,
     wsxmr_bought: u64,
 ) -> Result<()> {
-    let global = &mut ctx.accounts.global_state;
+    let global = &mut ctx.accounts.global_state.load_mut()?;
     let clock = Clock::get()?;
 
     // 1. Cooldown check (24 hours)
@@ -120,7 +120,7 @@ pub fn trigger_buy_and_burn(
     );
     burn_tokens(cpi_ctx, wsxmr_bought)?;
 
-    let global = &mut ctx.accounts.global_state;
+    let global = &mut ctx.accounts.global_state.load_mut()?;
 
     // 9. Update global debt — O(1) proportional forgiveness (EVM parity)
     // effective_debt excludes wsXMR locked in pending burns (already burned by user)
@@ -170,7 +170,7 @@ pub fn trigger_buy_and_burn(
 // accounts, in vault-list order.
 
 pub fn continue_debt_wipe(ctx: Context<ContinueDebtWipe>, batch_size: u64) -> Result<()> {
-    let global = &mut ctx.accounts.global_state;
+    let global = &mut ctx.accounts.global_state.load_mut()?;
     require!(global.debt_wipe_batch_start > 0, WrapSynthError::WipeNotInProgress);
 
     let start = (global.debt_wipe_batch_start - 1) as usize;
@@ -220,7 +220,7 @@ pub fn continue_debt_wipe(ctx: Context<ContinueDebtWipe>, batch_size: u64) -> Re
 // accounts, in vault-list order.
 
 pub fn continue_debt_migration(ctx: Context<ContinueDebtMigration>, batch_size: u64) -> Result<()> {
-    let global = &mut ctx.accounts.global_state;
+    let global = &mut ctx.accounts.global_state.load_mut()?;
     require!(global.migration_batch_start > 0, WrapSynthError::MigrationNotInProgress);
 
     let start = (global.migration_batch_start - 1) as usize;
@@ -275,9 +275,9 @@ pub struct TriggerBuyAndBurn<'info> {
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(mut)]
     pub wsxmr_mint: InterfaceAccount<'info, Mint>,
@@ -294,7 +294,7 @@ pub struct TriggerBuyAndBurn<'info> {
         seeds = [PENDING_RETURNS_SEED, keeper.key().as_ref()],
         bump,
     )]
-    pub keeper_pending_returns: Account<'info, PendingReturns>,
+    pub keeper_pending_returns: Box<Account<'info, PendingReturns>>,
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
@@ -310,9 +310,9 @@ pub struct ContinueDebtWipe<'info> {
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
     // Vault accounts for the batch range are passed as remaining accounts and
     // validated against the global vault list in the handler.
 }
@@ -322,9 +322,9 @@ pub struct ContinueDebtMigration<'info> {
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
     // Vault accounts for the batch range are passed as remaining accounts and
     // validated against the global vault list in the handler.
 }

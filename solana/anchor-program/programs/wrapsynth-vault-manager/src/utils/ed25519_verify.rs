@@ -21,11 +21,55 @@
 /// frontend) must use this 32-byte compressed scheme to verify on Solana.
 
 use sha3::{Digest, Keccak256};
-use curve25519_dalek::{
-    constants::ED25519_BASEPOINT_POINT,
-    scalar::Scalar,
-    edwards::EdwardsPoint,
-};
+use curve25519_dalek::{scalar::Scalar};
+#[cfg(not(target_os = "solana"))]
+use curve25519_dalek::{constants::ED25519_BASEPOINT_POINT, edwards::EdwardsPoint};
+
+/// The Ed25519 basepoint, compressed (y = 4/5 mod p, little-endian).
+/// `compress(G)` in canonical form — a constant 32-byte value.
+const ED25519_BASE_COMPRESSED: [u8; 32] = [
+    0x58, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+];
+
+/// Compute `compress(secret · G)` — the 32-byte compressed Ed25519 public point.
+///
+/// On-chain (`target_os = "solana"`) this is done with the `sol_curve_multiscalar_mul`
+/// native syscall, which is cheap and returns the compressed point directly.
+/// In-curve `scalar * G` via curve25519-dalek exceeds the SBF compute budget
+/// (software field math) and its windowed table paths overflow the 4KB stack.
+/// Off-chain (tests / tools) we use curve25519-dalek directly.
+#[cfg(target_os = "solana")]
+fn basepoint_compress(secret: &[u8; 32]) -> Option<[u8; 32]> {
+    use anchor_lang::solana_program::syscalls::sol_curve_multiscalar_mul;
+    const CURVE25519_EDWARDS: u64 = 0;
+    // Canonical scalar bytes (reduce mod L) — the syscall expects canonical input.
+    let scalar = Scalar::from_bytes_mod_order(*secret).to_bytes();
+    let mut out = [0u8; 32];
+    let rc = unsafe {
+        sol_curve_multiscalar_mul(
+            CURVE25519_EDWARDS,
+            scalar.as_ptr(),
+            ED25519_BASE_COMPRESSED.as_ptr(),
+            1,
+            out.as_mut_ptr(),
+        )
+    };
+    if rc == 0 {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+#[cfg(not(target_os = "solana"))]
+fn basepoint_compress(secret: &[u8; 32]) -> Option<[u8; 32]> {
+    let scalar = Scalar::from_bytes_mod_order(*secret);
+    let point: EdwardsPoint = ED25519_BASEPOINT_POINT * scalar;
+    Some(point.compress().to_bytes())
+}
 
 /// Known-answer test vector — fixed secret → expected commitment.
 /// Both the on-chain verifier and the LP-server / off-chain generators must
@@ -53,16 +97,16 @@ pub const TEST_VECTOR_COMMITMENT: [u8; 32] = [
 /// Compute keccak256(compress(secret · G)) on the Ed25519 basepoint.
 /// Returns the 32-byte commitment hash.
 pub fn compute_commitment(secret: &[u8; 32]) -> [u8; 32] {
-    let scalar = Scalar::from_bytes_mod_order(*secret);
-    let point: EdwardsPoint = ED25519_BASEPOINT_POINT * scalar;
-
-    // Compress → 32 bytes: Y in little-endian, bit 255 = X sign bit
-    let compressed = point.compress();
-    let compressed_bytes = compressed.as_bytes();
-
-    let mut hasher = Keccak256::new();
-    hasher.update(compressed_bytes);
-    hasher.finalize().into()
+    match basepoint_compress(secret) {
+        Some(compressed) => {
+            // Compress → 32 bytes: Y in little-endian, bit 255 = X sign bit
+            let mut hasher = Keccak256::new();
+            hasher.update(&compressed);
+            hasher.finalize().into()
+        }
+        // syscall unavailable → commitment that can't match any real value
+        None => [0u8; 32],
+    }
 }
 
 /// Verify a secret against a stored commitment.
@@ -77,10 +121,10 @@ pub fn mul_verify(secret: &[u8; 32], commitment: &[u8; 32]) -> bool {
 /// Used on the burn side to verify the user's Monero spend key half on slash /
 /// decline paths (mirrors the EVM's compressPoint comparison).
 pub fn verify_public_key(secret: &[u8; 32], public_key: &[u8; 32]) -> bool {
-    let scalar = Scalar::from_bytes_mod_order(*secret);
-    let point: EdwardsPoint = ED25519_BASEPOINT_POINT * scalar;
-    let compressed = point.compress();
-    compressed.as_bytes() == public_key
+    match basepoint_compress(secret) {
+        Some(compressed) => &compressed == public_key,
+        None => false,
+    }
 }
 
 #[cfg(test)]

@@ -19,6 +19,14 @@ const WALLET_RPC_PASSWORD = process.env.MONERO_WALLET_RPC_PASSWORD || null;
 const WALLET_RPC_PORT = WALLET_RPC_URL ? new URL(WALLET_RPC_URL).port : '18082';
 const WALLET_RPC_HOST = WALLET_RPC_URL ? new URL(WALLET_RPC_URL).hostname : '127.0.0.1';
 
+// Dedicated deposit-scan wallet-rpc — a SEPARATE monero-wallet-rpc instance
+// (spawned by server.js) hosting ONLY per-mint view-only deposit wallets.
+// This removes both reasons wallet-rpc scanning was once-only: the main LP
+// wallet is never evicted, and cache corruption on reopen can't block the
+// primary path (stale deposit wallets are disposable — regenerate at will).
+const DEPOSIT_RPC_URL = process.env.DEPOSIT_WALLET_RPC_URL || 'http://127.0.0.1:18083';
+const DEPOSIT_WALLET_DIR = process.env.DEPOSIT_WALLET_DIR || '/home/remsee/wsFrontendOverhaul/lp-server-js/monero-wallets-deposit';
+
 // Fallback Monero daemon URLs for getDaemonHeight()
 // Used in order until one succeeds
 const DAEMON_URLS = (
@@ -311,13 +319,20 @@ function _matchTxOutputs(txJson, viewKeyScalar, spendPubPoint) {
   return matches;
 }
 
-async function _daemonJson(daemonUrl, path, body) {
-  const res = await fetch(`${daemonUrl}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  });
-  return res.json();
+async function _daemonJson(daemonUrl, path, body, timeoutMs = 60000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${daemonUrl}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+      signal: controller.signal,
+    });
+    return res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /**
@@ -332,39 +347,201 @@ export async function scanDepositViaDaemon(depositAddress, viewKeyHex, fromHeigh
   const viewKeyScalar = _scReduce(Buffer.from(viewKeyHex.replace(/^0x/, ''), 'hex'));
   const found = [];
 
+  let lastErr = null;
   for (const daemonUrl of DAEMON_URLS) {
     try {
-      // Collect tx hashes across the block range
-      const txJobs = []; // {txid, height}
-      for (let h = fromHeight; h <= toHeight; h++) {
-        const blk = await _daemonJson(daemonUrl, '/json_rpc', {
-          jsonrpc: '2.0', id: '0', method: 'get_block', params: { height: h },
-        });
-        const hashes = (blk.result && blk.result.tx_hashes) || [];
-        for (const txid of hashes) txJobs.push({ txid, height: h });
-      }
-      // Fetch txs in batches and decode outputs
-      for (let i = 0; i < txJobs.length; i += 50) {
-        const batch = txJobs.slice(i, i + 50);
-        const res = await _daemonJson(daemonUrl, '/get_transactions', {
-          txs_hashes: batch.map(t => t.txid), decode_as_json: true,
-        });
-        for (let j = 0; j < (res.txs || []).length; j++) {
-          const t = res.txs[j];
-          let txJson;
-          try { txJson = JSON.parse(t.as_json); } catch { continue; }
-          const matches = _matchTxOutputs(txJson, viewKeyScalar, spendPubPoint);
-          for (const m of matches) {
-            found.push({ txid: batch[j].txid, amount: m.amount, height: batch[j].height, outputIndex: m.index });
+      // Scan BACKWARDS from tip — deposits almost always sit in recent
+      // blocks, so newest-first finds them after a few blocks instead of
+      // grinding the whole range. Early-exit on first match.
+      const CHUNK = 20;
+      const BLOCK_CONCURRENCY = 8;
+      const totalBlocks = toHeight - fromHeight + 1;
+      let scanned = 0;
+      scanLoop:
+      for (let top = toHeight; top >= fromHeight; top -= CHUNK) {
+        const bottom = Math.max(fromHeight, top - CHUNK + 1);
+        const heights = [];
+        for (let h = top; h >= bottom; h--) heights.push(h);
+        // Fetch this chunk's blocks in parallel batches
+        const txJobs = []; // {txid, height}
+        for (let i = 0; i < heights.length; i += BLOCK_CONCURRENCY) {
+          const batch = heights.slice(i, i + BLOCK_CONCURRENCY);
+          const blocks = await Promise.all(batch.map(h =>
+            _daemonJson(daemonUrl, '/json_rpc', {
+              jsonrpc: '2.0', id: '0', method: 'get_block', params: { height: h },
+            }).then(blk => ({ blk, h }))
+          ));
+          for (const { blk, h } of blocks) {
+            const hashes = (blk.result && blk.result.tx_hashes) || [];
+            for (const txid of hashes) txJobs.push({ txid, height: h });
           }
         }
+        scanned += heights.length;
+        // Match response txs by tx_hash, NOT by array index — the daemon
+        // omits hashes it can't find, which silently shifted res.txs[j]
+        // vs batch[j] attribution before.
+        for (let i = 0; i < txJobs.length; i += 50) {
+          const batch = txJobs.slice(i, i + 50);
+          const res = await _daemonJson(daemonUrl, '/get_transactions', {
+            txs_hashes: batch.map(t => t.txid), decode_as_json: true,
+          });
+          const heightByHash = new Map(batch.map(t => [t.txid, t.height]));
+          for (const t of (res.txs || [])) {
+            let txJson;
+            try { txJson = JSON.parse(t.as_json); } catch { continue; }
+            const matches = _matchTxOutputs(txJson, viewKeyScalar, spendPubPoint);
+            for (const m of matches) {
+              found.push({ txid: t.tx_hash, amount: m.amount, height: heightByHash.get(t.tx_hash) ?? 0, outputIndex: m.index });
+            }
+          }
+          if (found.length > 0) break scanLoop; // deposit found — stop early
+        }
+        if (totalBlocks > 100 && scanned % 100 < CHUNK) {
+          console.log(`[Monero] daemon-scan progress: ${scanned}/${totalBlocks} blocks (${daemonUrl})`);
+        }
       }
-      return found; // success on this daemon
+      return found; // success on this daemon ([] = genuinely no deposit)
     } catch (err) {
       console.warn(`[Monero] daemon scan via ${daemonUrl} failed: ${err.message}, trying next...`);
+      lastErr = err;
     }
   }
-  return found;
+  // All daemons failed — must NOT return an empty result. The caller advances
+  // its scan cursor on success, so a silent [] skips these blocks forever
+  // (the permanent deposit-miss bug). Throw so the range is retried next poll.
+  throw lastErr || new Error('daemon deposit scan: all daemons failed');
+}
+
+/**
+ * Scan the daemon mempool for unconfirmed outputs paying `depositAddress`.
+ * Detection only — callers should log pool hits but only ACT on confirmed
+ * deposits (a dropped pool tx must never trigger setMintReady).
+ */
+export async function scanMempoolViaDaemon(depositAddress, viewKeyHex) {
+  const { spendPub } = _decodeMoneroAddress(depositAddress);
+  const spendPubPoint = ed.ExtendedPoint.fromHex(spendPub);
+  const viewKeyScalar = _scReduce(Buffer.from(viewKeyHex.replace(/^0x/, ''), 'hex'));
+  const found = [];
+  for (const daemonUrl of DAEMON_URLS) {
+    try {
+      const res = await _daemonJson(daemonUrl, '/get_transaction_pool', {});
+      for (const p of (res.transactions || [])) {
+        let txJson;
+        try { txJson = typeof p.tx_json === 'string' ? JSON.parse(p.tx_json) : p.tx_json; } catch { continue; }
+        if (!txJson) continue;
+        const matches = _matchTxOutputs(txJson, viewKeyScalar, spendPubPoint);
+        for (const m of matches) {
+          found.push({ txid: p.id_hash, amount: m.amount, height: 0, outputIndex: m.index, inPool: true });
+        }
+      }
+      return found; // worked on this daemon
+    } catch (err) {
+      console.warn(`[Monero] mempool scan via ${daemonUrl} failed: ${err.message}`);
+    }
+  }
+  return found; // mempool failures are non-fatal — empty is fine
+}
+
+// ─── Dedicated deposit-scan wallet-rpc ──────────────────────────────────────
+// JSON-RPC against the dedicated instance (separate process from the main
+// wallet-rpc — no wallet lock needed, only one wallet open at a time there).
+async function depositRpc(method, params = {}, timeoutMs = 60000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${DEPOSIT_RPC_URL}/json_rpc`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: '0', method, params }),
+      signal: controller.signal,
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+    return data.result;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Which wallet filename is currently open on the deposit-scan rpc.
+// Only one wallet can be open per rpc instance, so concurrent mint polls
+// ping-pong — each provisions its own wallet when it's their turn.
+let _depositRpcCurrentWallet = null;
+
+/**
+ * One poll cycle on the dedicated deposit-scan wallet-rpc.
+ * Provisions the view-only wallet on first use (generate or open), then
+ * refresh + get_transfers — the wallet stays OPEN between cycles (no
+ * open/close churn, no corruption path, main LP wallet untouched).
+ * Returns a matching confirmed transfer or null. Throws on rpc failure so
+ * the caller can fall back to daemon scanning.
+ */
+async function _pollDepositRpcOnce(depositAddress, lpViewKey, expectedAmountAtomic, { restoreHeight, toleranceBps, walletName, walletPass }) {
+  if (_depositRpcCurrentWallet !== walletName) {
+    try { await depositRpc('close_wallet', {}); } catch { /* none open */ }
+    try {
+      await depositRpc('generate_from_keys', {
+        filename: walletName,
+        password: walletPass,
+        address: depositAddress,
+        viewkey: lpViewKey,
+        restore_height: restoreHeight,
+        autosave_current: true, // proper save → open_wallet works next cycle
+      }, 180000);
+      console.log('[Monero] Deposit-scan wallet generated on dedicated rpc');
+    } catch (genErr) {
+      const msg = genErr.message || '';
+      if (msg.includes('already exists') || msg.includes('file_exists')) {
+        try {
+          await depositRpc('open_wallet', { filename: walletName, password: walletPass });
+        } catch (openErr) {
+          // Stale/corrupted deposit wallet file — disposable, regenerate
+          console.warn(`[Monero] deposit wallet open failed (${openErr.message}) — deleting and regenerating`);
+          try {
+            const fs = await import('fs');
+            for (const ext of ['', '.keys', '.address.txt']) {
+              const p = `${DEPOSIT_WALLET_DIR}/${walletName}${ext}`;
+              if (fs.existsSync(p)) fs.unlinkSync(p);
+            }
+          } catch {}
+          await depositRpc('generate_from_keys', {
+            filename: walletName, password: walletPass,
+            address: depositAddress, viewkey: lpViewKey,
+            restore_height: restoreHeight, autosave_current: true,
+          }, 180000);
+        }
+      } else {
+        throw genErr;
+      }
+    }
+    _depositRpcCurrentWallet = walletName;
+  }
+
+  await depositRpc('refresh', {}, 120000);
+  const res = await depositRpc('get_transfers', { in: true, pool: true });
+
+  // Log unconfirmed matches — detection only, never accepted (a dropped
+  // pool tx must not trigger setMintReady).
+  for (const t of (res.pool || [])) {
+    const amt = BigInt(t.amount);
+    const diff = amt > expectedAmountAtomic ? amt - expectedAmountAtomic : expectedAmountAtomic - amt;
+    if (Number(diff * 10000n / expectedAmountAtomic) <= toleranceBps) {
+      console.log(`[Monero] Deposit seen in mempool (unconfirmed): txid=${t.txid} amount=${amt}`);
+    }
+  }
+
+  for (const t of (res.in || [])) {
+    if (restoreHeight && t.height < restoreHeight) continue;
+    const amt = BigInt(t.amount);
+    const diff = amt > expectedAmountAtomic ? amt - expectedAmountAtomic : expectedAmountAtomic - amt;
+    const diffBps = Number(diff * 10000n / expectedAmountAtomic);
+    console.log(`[Monero] deposit-rpc transfer: txid=${t.txid} amount=${amt} height=${t.height}`);
+    if (diffBps <= toleranceBps) {
+      console.log(`[Monero] Deposit found via deposit-rpc: txid=${t.txid} amount=${amt} height=${t.height}`);
+      return { txid: t.txid, amount: amt, height: t.height };
+    }
+  }
+  return null;
 }
 
 /**
@@ -413,16 +590,12 @@ export async function pollForDeposit(expectedAmountAtomic, opts = {}) {
   const keyFingerprint = _walletNameHash('sha256').update(depositAddress + ':' + lpViewKey).digest('hex').slice(0, 8);
   const walletName = 'deposit-' + depositAddress.slice(0, 12).replace(/[^a-zA-Z0-9]/g, '') + '-' + keyFingerprint;
   const walletPass = 'deposit-scan-password';
-  const mainWalletName = process.env.MONERO_WALLET_NAME || 'lp-wallet';
-  // SECURITY: no hardcoded fallback — the previous default ('lp-wallet-password') was
-  // committed to a public repo and is the only protection on the wallet's .keys file.
-  const mainWalletPass = process.env.MONERO_WALLET_PASSWORD;
-  if (!mainWalletPass) {
-    throw new Error('MONERO_WALLET_PASSWORD not configured — refusing to use the old public default');
-  }
-  const walletDir = process.env.MONERO_WALLET_DIR || '/home/remsee/wsFrontendOverhaul/lp-server-js/monero-wallets';
 
-  let walletInitialized = false;
+  // depositRpcOk: disable the deposit-rpc path after a failure so a dead
+  // instance doesn't cost a timeout every cycle. poolLogged: one-shot
+  // "seen in mempool" log to avoid spam.
+  let depositRpcOk = true;
+  let poolLogged = false;
   let daemonScannedUpTo = restoreHeight; // daemon-scan fallback cursor
   const start = Date.now();
   let found = null;
@@ -433,76 +606,35 @@ export async function pollForDeposit(expectedAmountAtomic, opts = {}) {
       break;
     }
     try {
-      // Wallet-rpc scan is unreliable (0.18.4.5 cache corruption bug — the
-      // cache file stops matching .keys after one cycle, forcing a recreate
-      // every poll). Try it ONCE on the first cycle, then rely on the daemon
-      // scan so the deposit wallet isn't recreated (and re-corrupted) each poll.
-      if (!walletInitialized) {
+      // PRIMARY: dedicated deposit-scan wallet-rpc — refresh+get_transfers
+      // every cycle at C++ speed. Separate instance: the main LP wallet is
+      // never evicted and the reopen-corruption bug can't apply.
+      if (!found && depositRpcOk) {
         try {
-          found = await withWalletLock(async () => {
-            console.log(`[Monero] Creating view-only wallet for deposit address: ${depositAddress.slice(0, 16)}...`);
-            try {
-              await walletRpc('close_wallet', {});
-              try {
-                const fs = await import('fs');
-                for (const ext of ['', '.keys', '.address.txt']) {
-                  const p = `${walletDir}/${walletName}${ext}`;
-                  if (fs.existsSync(p)) fs.unlinkSync(p);
-                }
-              } catch {}
-              try {
-                await walletRpc('generate_from_keys', {
-                  filename: walletName,
-                  password: walletPass,
-                  address: depositAddress,
-                  viewkey: lpViewKey,
-                  restore_height: restoreHeight,
-                  autosave_current: false, // avoid save-on-close cache corruption
-                });
-                console.log('[Monero] View-only wallet created for deposit address');
-              } catch (genErr) {
-                if (genErr.message.includes('already exists') || genErr.message.includes('file_exists')) {
-                  await walletRpc('open_wallet', { filename: walletName, password: walletPass });
-                  console.log('[Monero] Opened existing view-only wallet for deposit address');
-                } else {
-                  throw genErr;
-                }
-              }
-            } catch (err) {
-              console.error('[Monero] Failed to create/open view-only wallet:', err.message);
-              try { await walletRpc('open_wallet', { filename: mainWalletName, password: mainWalletPass }); } catch {}
-              throw err;
-            }
-
-            console.log(`[Monero] Refreshing view-only wallet (scanning from height ${restoreHeight})...`);
-            try {
-              const refreshRes = await walletRpc('refresh', { start_height: restoreHeight }, 3, 300000);
-              console.log(`[Monero] Refresh complete: blocks_fetched=${refreshRes.blocks_fetched || 0}`);
-            } catch (err) {
-              console.warn('[Monero] Refresh failed (continuing anyway):', err.message);
-            }
-
-            const txs = await getIncomingTransfers({ minHeight: restoreHeight });
-            console.log(`[Monero] pollForDeposit: found ${txs.length} transfer(s), expected ${expectedAmountAtomic} atomic units`);
-
-            for (const tx of txs) {
-              console.log(`[Monero]   transfer: txid=${tx.txid} amount=${tx.amount} height=${tx.height}`);
-              const diff = tx.amount > expectedAmountAtomic
-                ? tx.amount - expectedAmountAtomic
-                : expectedAmountAtomic - tx.amount;
-              const diffBps = Number(diff * 10000n / expectedAmountAtomic);
-
-              if (diffBps <= toleranceBps) {
-                console.log(`[Monero] Deposit found: txid=${tx.txid} amount=${tx.amount} height=${tx.height}`);
-                return tx;
-              }
-            }
-            return null;
-          });
-        } catch (walletErr) {
-          console.warn('[Monero] Wallet scan failed — relying on daemon scan:', walletErr.message);
+          found = await _pollDepositRpcOnce(depositAddress, lpViewKey, expectedAmountAtomic,
+            { restoreHeight, toleranceBps, walletName, walletPass });
+        } catch (depErr) {
+          console.warn('[Monero] deposit-rpc scan failed — daemon-scan fallback:', depErr.message);
+          depositRpcOk = false; // don't pay a dead rpc's timeout every cycle
         }
-        walletInitialized = true; // never recreate the wallet on later cycles
+      }
+
+      // Mempool visibility — a deposit shows up here before it mines.
+      // Detection only: a dropped pool tx must never trigger setMintReady.
+      if (!found && !poolLogged) {
+        try {
+          const poolTxs = await scanMempoolViaDaemon(depositAddress, lpViewKey);
+          for (const tx of poolTxs) {
+            if (tx.amount == null) continue;
+            const diff = tx.amount > expectedAmountAtomic
+              ? tx.amount - expectedAmountAtomic
+              : expectedAmountAtomic - tx.amount;
+            if (Number(diff * 10000n / expectedAmountAtomic) <= toleranceBps) {
+              console.log(`[Monero] Deposit seen in mempool (unconfirmed): txid=${tx.txid} amount=${tx.amount}`);
+              poolLogged = true;
+            }
+          }
+        } catch { /* mempool scan is best-effort */ }
       }
 
       // Fallback: wallet-rpc scanning is unreliable (corrupt wallet files, flaky
@@ -511,7 +643,12 @@ export async function pollForDeposit(expectedAmountAtomic, opts = {}) {
       if (!found && lpViewKey) {
         try {
           const tip = await getDaemonHeight();
-          const scanFrom = Math.max(restoreHeight, daemonScannedUpTo);
+          // Rescan a trailing 10-block window behind the cursor every cycle.
+          // The tip can come from a source ahead of the daemon serving
+          // get_block (remote nodes race), and a tx mining mid-scan lands in
+          // an already-passed height — without overlap that block is never
+          // revisited: permanent miss. 10 extra get_block calls/cycle is cheap.
+          const scanFrom = Math.max(restoreHeight, daemonScannedUpTo - 10);
           console.log(`[Monero] daemon-scan check: tip=${tip} scanFrom=${scanFrom} daemonScannedUpTo=${daemonScannedUpTo} restoreHeight=${restoreHeight}`);
           if (tip > scanFrom) {
             console.log(`[Monero] daemon-scan running ${scanFrom}..${tip}...`);
@@ -545,17 +682,8 @@ export async function pollForDeposit(expectedAmountAtomic, opts = {}) {
     await new Promise(r => setTimeout(r, intervalMs));
   }
 
-  // Restore main wallet
-  console.log('[Monero] Restoring main LP wallet...');
-  try {
-    await withWalletLock(async () => {
-      await walletRpc('close_wallet', {});
-      walletOpened = false;
-      await ensureWalletOpen();
-    });
-  } catch (err) {
-    console.warn('[Monero] Failed to restore main wallet:', err.message);
-  }
+  // No main-wallet restore needed — deposit wallets live on the dedicated
+  // deposit-scan rpc instance, so the main LP wallet is never evicted.
 
   if (found) return found;
   if (shouldAbort && shouldAbort()) return null; // aborted, not timed out

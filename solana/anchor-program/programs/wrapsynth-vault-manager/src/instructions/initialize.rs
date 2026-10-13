@@ -21,7 +21,7 @@ pub fn handler(
     require!(pyth_xmr_feed != Pubkey::default(), WrapSynthError::ZeroAddress);
     require!(collateral_mint != Pubkey::default(), WrapSynthError::ZeroAddress);
 
-    let global = &mut ctx.accounts.global_state;
+    let global = &mut ctx.accounts.global_state.load_init()?;
     global.authority = ctx.accounts.authority.key();
     global.wsxmr_mint = ctx.accounts.wsxmr_mint.key();
     global.collateral_mint = collateral_mint;
@@ -78,7 +78,7 @@ pub fn handler(
         ),
         8,              // decimals
         &global_key,    // mint authority = GlobalState PDA
-        Some(&global_key),
+        None,           // freeze authority — must be None: whirlpools reject freezable mints
     )?;
 
     msg!("WrapSynth initialized. wsXMR mint: {}", ctx.accounts.wsxmr_mint.key());
@@ -87,7 +87,7 @@ pub fn handler(
 
 /// Set the liquidity router — one-time, deployer only.
 pub fn set_liquidity_router(ctx: Context<SetLiquidityRouter>, router: Pubkey) -> Result<()> {
-    let global = &mut ctx.accounts.global_state;
+    let global = &mut ctx.accounts.global_state.load_mut()?;
     require!(
         ctx.accounts.authority.key() == global.authority,
         WrapSynthError::OnlyDeployer
@@ -113,7 +113,7 @@ pub struct Initialize<'info> {
         seeds = [GLOBAL_STATE_SEED],
         bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     /// wsXMR Token-2022 mint PDA. Allocated and initialized manually in handler
     /// to avoid Anchor 0.30 double-init bug with InterfaceAccount<Mint> + Token-2022.
@@ -136,7 +136,7 @@ pub struct SetLiquidityRouter<'info> {
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 }

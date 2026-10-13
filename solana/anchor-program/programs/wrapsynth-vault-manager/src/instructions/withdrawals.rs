@@ -29,7 +29,7 @@ pub struct InitializePendingReturns<'info> {
         seeds = [PENDING_RETURNS_SEED, owner.key().as_ref()],
         bump,
     )]
-    pub pending_returns: Account<'info, PendingReturns>,
+    pub pending_returns: Box<Account<'info, PendingReturns>>,
 
     pub system_program: Program<'info, System>,
 }
@@ -43,14 +43,12 @@ pub fn withdraw_collateral_returns(ctx: Context<WithdrawCollateralReturns>) -> R
 
     // CEI: clear state before transfer
     returns.collateral_amount = 0;
-    ctx.accounts.global_state.global_pending_collateral = ctx
-        .accounts
-        .global_state
-        .global_pending_collateral
+    let __global_pending_collateral_cur = ctx.accounts.global_state.load()?.global_pending_collateral;
+    ctx.accounts.global_state.load_mut()?.global_pending_collateral = __global_pending_collateral_cur
         .saturating_sub(amount);
 
     // Transfer from war_chest ATA (program-owned) to user
-    let bump = ctx.accounts.global_state.bump;
+    let bump = ctx.accounts.global_state.load()?.bump;
     let seeds: &[&[u8]] = &[GLOBAL_STATE_SEED, &[bump]];
     let signer_seeds = &[seeds];
 
@@ -82,10 +80,8 @@ pub fn withdraw_sol_returns(ctx: Context<WithdrawSolReturns>) -> Result<()> {
     require!(amount > 0, WrapSynthError::ZeroAmount);
 
     returns.sol_amount = 0;
-    ctx.accounts.global_state.global_pending_sol = ctx
-        .accounts
-        .global_state
-        .global_pending_sol
+    let __global_pending_sol_cur = ctx.accounts.global_state.load()?.global_pending_sol;
+    ctx.accounts.global_state.load_mut()?.global_pending_sol = __global_pending_sol_cur
         .saturating_sub(amount);
 
     // Transfer SOL lamports from escrow account to owner
@@ -112,14 +108,14 @@ pub struct WithdrawCollateralReturns<'info> {
         bump = pending_returns.bump,
         constraint = pending_returns.owner == owner.key() @ WrapSynthError::Unauthorized,
     )]
-    pub pending_returns: Account<'info, PendingReturns>,
+    pub pending_returns: Box<Account<'info, PendingReturns>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     pub collateral_mint: InterfaceAccount<'info, Mint>,
 
@@ -144,14 +140,14 @@ pub struct WithdrawSolReturns<'info> {
         bump = pending_returns.bump,
         constraint = pending_returns.owner == owner.key() @ WrapSynthError::Unauthorized,
     )]
-    pub pending_returns: Account<'info, PendingReturns>,
+    pub pending_returns: Box<Account<'info, PendingReturns>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     /// Program-owned SOL escrow account holding griefing deposits
     /// CHECK: validated by seeds, lamport transfer is manual

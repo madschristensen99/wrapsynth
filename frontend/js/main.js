@@ -2,9 +2,9 @@
 // Phantom Agent - Deterministic Ephemeral Browser Wallet for XMR ⇄ wsXMR Swaps
 console.log('🔄 Wrapsynth Frontend v2.1 - DYNAMIC FEE & RECEIVE FIX');
 
-import { 
-    initializeClients, 
-    connectWallet, 
+import {
+    initializeClients,
+    connectWallet,
     ensureConnected,
     getUserAddress,
     getWsXmrBalance,
@@ -12,7 +12,8 @@ import {
     writeHub,
     onAccountsChanged,
     onChainChanged
-} from './viemClient.js?v=3.12';
+} from './viemClient.js?v=3.21';
+import { formatUnits } from 'https://esm.sh/viem@2.7.0';
 
 import { 
     initUI,
@@ -55,17 +56,17 @@ import {
     renderLPDetailCard,
     initLPDetailToggles,
     initVaultPickers
-} from './ui.js?v=3.12';
+} from './ui.js?v=3.21';
 
 import { MintFlow } from './mintFlow.js?v=3.12';
 import { stopTimers } from './mintFlowTimers.js?v=3.12';
 import { BurnFlow } from './burnFlow.js?v=3.12';
 import { getLPPanel } from './lpPanel.js?v=3.12';
 import { getPoolFlow } from './poolFlow.js?v=3.12';
-import { getCoLPFlow } from './coLPFlow.js?v=3.12';
+import { getCoLPFlow } from './coLPFlow.js?v=3.21';
 import { getDashboard } from './dashboard.js?v=3.12';
 import { hasActiveSwap, loadActiveSwap, loadActiveSwaps, saveActiveSwap, addOrUpdateActiveSwap, removeActiveSwap, clearActiveSwap, setSwapsArray, getActiveSwapByRequestId, saveToHistory, getSwapHistory } from './storage.js?v=3.12';
-import { CONTRACTS, SWAP_CONFIG } from './config.js?v=3.12';
+import { CONTRACTS, SWAP_CONFIG } from './config.js?v=3.21';
 import { displaySwapHistory } from './swapHistory.js?v=3.12';
 import { loadRecentActivity, startActivityFeedWatcher } from './activityFeed.js?v=3.12';
 import { updateProtocolStats } from './protocolStats.js?v=3.12';
@@ -170,8 +171,8 @@ const volumeScanCache = { lastBlock: null, mintEvents: [], burnEvents: [] };
  */
 async function fetch24hVolume() {
     try {
-        const { getPublicClient, getContractEventsChunked } = await import('./viemClient.js?v=3.12');
-        const { CONTRACTS } = await import('./config.js?v=3.12');
+        const { getPublicClient, getContractEventsChunked } = await import('./viemClient.js?v=3.21');
+        const { CONTRACTS } = await import('./config.js?v=3.21');
         const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
 
         const publicClient = getPublicClient();
@@ -410,6 +411,7 @@ function setupEventHandlers() {
     if (elements.withdrawReturnsBtn) {
         elements.withdrawReturnsBtn.addEventListener('click', handleWithdrawReturns);
     }
+    document.getElementById('co-lp-withdraw-btn')?.addEventListener('click', handleWithdrawReturns);
     
     // Tab switching
     elements.tabMint.addEventListener('click', () => showMintTab());
@@ -479,7 +481,7 @@ async function handleBurnPercentage(event) {
     const feedback = document.getElementById('burn-percentage-feedback');
     
     // Get actual balance from contract
-    const { readWsxmr, getUserAddress } = await import('./viemClient.js?v=3.12');
+    const { readWsxmr, getUserAddress } = await import('./viemClient.js?v=3.21');
     const userAddress = getUserAddress();
     
     if (!userAddress) {
@@ -584,7 +586,7 @@ async function handleUpdatePrices() {
         }, 2000);
         
         console.log('✅ Oracle prices updated successfully');
-        const { showSuccessNotification } = await import('./ui.js?v=3.12');
+        const { showSuccessNotification } = await import('./ui.js?v=3.21');
         showSuccessNotification('Prices Updated', '<p>Oracle prices have been updated with latest RedStone data.</p>');
         
     } catch (error) {
@@ -595,7 +597,7 @@ async function handleUpdatePrices() {
             btn.disabled = false;
         }, 2000);
         
-        const { showErrorNotification } = await import('./ui.js?v=3.12');
+        const { showErrorNotification } = await import('./ui.js?v=3.21');
         showErrorNotification('Update Failed', `<p>Could not update oracle prices: ${error.message}</p>`);
     }
 }
@@ -743,7 +745,7 @@ async function handleAccountChange(newAddress) {
     } else {
         console.log('Account disconnected');
         // Try to silently reconnect before showing disconnected state
-        const { ensureConnected } = await import('./viemClient.js?v=3.12');
+        const { ensureConnected } = await import('./viemClient.js?v=3.21');
         const reconnected = await ensureConnected();
         if (reconnected) {
             console.log('Silently reconnected:', reconnected);
@@ -761,11 +763,34 @@ async function handleAccountChange(newAddress) {
 async function checkPendingReturns(address) {
     try {
         const ethReturns = await readHub('getPendingReturns', [address, '0x0000000000000000000000000000000000000000']);
-        const sDAIReturns = await readHub('getPendingReturns', [address, CONTRACTS.sDAI]);
-        setWithdrawReturnsVisible(ethReturns > 0n || sDAIReturns > 0n);
+        const usdeReturns = CONTRACTS.stataUSDe
+            ? await readHub('getPendingReturns', [address, CONTRACTS.stataUSDe])
+            : 0n;
+        const wsxmrReturns = CONTRACTS.wsxmrToken
+            ? await readHub('getPendingReturns', [address, CONTRACTS.wsxmrToken])
+            : 0n;
+        const hasReturns = ethReturns > 0n || usdeReturns > 0n || wsxmrReturns > 0n;
+        const parts = [];
+        if (wsxmrReturns > 0n) parts.push(`${formatUnits(wsxmrReturns, 8)} wsXMR`);
+        if (usdeReturns > 0n) parts.push(`${formatUnits(usdeReturns, 18)} stataUSDe`);
+        if (ethReturns > 0n) parts.push(`${formatUnits(ethReturns, 18)} HYPE`);
+        // Show only when there's something to claim — label carries the amounts.
+        // On read failure (catch) we leave the current state untouched rather
+        // than hide a balance we failed to measure.
+        setWithdrawReturnsVisible(hasReturns, hasReturns ? `Withdraw ${parts.join(' + ')}` : undefined);
+
+        // Mirror into the Co-LP panel row so users see it where they claimed
+        const row = document.getElementById('co-lp-pending');
+        if (row) {
+            if (hasReturns) {
+                document.getElementById('co-lp-pending-amt').textContent = parts.join(' + ');
+                row.classList.remove('hidden');
+            } else {
+                row.classList.add('hidden');
+            }
+        }
     } catch (error) {
         console.warn('Could not check pending returns:', error.message);
-        setWithdrawReturnsVisible(false);
     }
 }
 
@@ -778,7 +803,8 @@ async function handleWithdrawReturns() {
     
     try {
         const ethReturns = await readHub('getPendingReturns', [address, '0x0000000000000000000000000000000000000000']);
-        const sDAIReturns = await readHub('getPendingReturns', [address, CONTRACTS.sDAI]);
+        const usdeReturns = await readHub('getPendingReturns', [address, CONTRACTS.stataUSDe]);
+        const wsxmrReturns = await readHub('getPendingReturns', [address, CONTRACTS.wsxmrToken]);
         
         const txs = [];
         
@@ -787,14 +813,19 @@ async function handleWithdrawReturns() {
             txs.push(receipt.transactionHash);
         }
         
-        if (sDAIReturns > 0n) {
-            const receipt = await writeHub('withdrawReturns', [CONTRACTS.sDAI]);
+        if (usdeReturns > 0n) {
+            const receipt = await writeHub('withdrawReturns', [CONTRACTS.stataUSDe]);
+            txs.push(receipt.transactionHash);
+        }
+
+        if (wsxmrReturns > 0n) {
+            const receipt = await writeHub('withdrawReturns', [CONTRACTS.wsxmrToken]);
             txs.push(receipt.transactionHash);
         }
         
         if (txs.length > 0) {
             showSuccess('Returns Withdrawn', `Withdrew from ${txs.length} token(s).`);
-            setWithdrawReturnsVisible(false);
+            checkPendingReturns(address).catch(() => {});
         } else {
             showError('No Returns', 'You have no pending returns to withdraw.');
         }
@@ -880,7 +911,7 @@ async function checkForActiveSwapOnChain(userAddress) {
 
     try {
         // Fetch mint request IDs, burn request IDs, and current block number in parallel
-        const { getPublicClient } = await import('./viemClient.js?v=3.12');
+        const { getPublicClient } = await import('./viemClient.js?v=3.21');
         const publicClient = getPublicClient();
 
         console.log('[CHAIN CHECK] Fetching mint IDs, burn IDs, and block number in parallel for', userAddress);
@@ -1138,8 +1169,21 @@ async function handleRefreshCoLPPositions() {
             return;
         }
 
-        listEl.innerHTML = positions.map(p => {
+        // Preview claimable fees per position (parallel eth_calls, no tx)
+        const feeResults = await Promise.allSettled(
+            positions.map(p => coLPFlow.getClaimableFees(p.tokenId))
+        );
+
+        listEl.innerHTML = positions.map((p, i) => {
             const vaultShort = `${p.vault.slice(0, 6)}...${p.vault.slice(-4)}`;
+            const fees = feeResults[i].status === 'fulfilled' ? feeResults[i].value : { wsxmr: 0n, usde: 0n };
+            const wsxmrFee = parseFloat(formatUnits(fees.wsxmr, 8));
+            const hasFees = fees.wsxmr > 0n || fees.usde > 0n;
+            const claimLabel = hasFees ? `Claim ${wsxmrFee.toFixed(8)}` : 'Claim 0';
+            const claimDisabled = hasFees ? '' : 'disabled';
+            const claimTitle = hasFees
+                ? `title="Your wsXMR share: ${wsxmrFee.toFixed(8)} · Vault USDe share: ${parseFloat(formatUnits(fees.usde, 18)).toFixed(6)}"`
+                : 'title="No fees accrued yet"';
             return `
                 <div class="position-card" data-token-id="${p.tokenId}">
                     <div class="position-info">
@@ -1149,6 +1193,7 @@ async function handleRefreshCoLPPositions() {
                     <div class="position-actions">
                         <input class="colp-rebalance-input" type="number" placeholder="bps" min="1000" max="10000" value="${p.rangeBps}" data-token-id="${p.tokenId}" />
                         <button class="btn-rebalance" data-token-id="${p.tokenId}">Rebalance</button>
+                        <button class="btn-claim-fees" data-token-id="${p.tokenId}" ${claimDisabled} ${claimTitle}>${claimLabel}</button>
                         <button class="btn-unwind" data-token-id="${p.tokenId}">Close</button>
                     </div>
                 </div>
@@ -1162,6 +1207,12 @@ async function handleRefreshCoLPPositions() {
                 const bpsInput = listEl.querySelector(`.colp-rebalance-input[data-token-id="${tokenId}"]`);
                 const rangeBps = Number(bpsInput?.value);
                 await handleCoLPRebalance(tokenId, rangeBps);
+            });
+        });
+        listEl.querySelectorAll('.btn-claim-fees').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const tokenId = btn.dataset.tokenId;
+                await handleCoLPClaimFees(tokenId);
             });
         });
         listEl.querySelectorAll('.btn-unwind').forEach(btn => {
@@ -1197,7 +1248,7 @@ function renderCoLPPositions(positions) {
  */
 async function refreshCoLPBalance(prefetchedBalance) {
     try {
-        const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js?v=3.12');
+        const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js?v=3.21');
         const address = getUserAddress();
         const balanceEl = document.getElementById('co-lp-user-balance');
         if (address && balanceEl) {
@@ -1367,6 +1418,40 @@ async function handleCoLPUnwind(tokenIdParam) {
 }
 
 /**
+ * Handle claim Co-LP fees — collects accrued UniV3 fees into pendingReturns.
+ * wsXMR fees go to the user, stataUSDe share fees to the LP vault. After
+ * collecting, the user sweeps them out via the Withdraw Returns button.
+ */
+async function handleCoLPClaimFees(tokenIdParam) {
+    const tokenId = tokenIdParam?.toString().trim();
+
+    if (!getUserAddress()) {
+        showError('Wallet Required', 'Please connect your wallet');
+        return;
+    }
+    if (!tokenId || isNaN(Number(tokenId))) {
+        showError('Invalid Input', 'Invalid position token ID');
+        return;
+    }
+
+    try {
+        const coLPFlow = getCoLPFlow();
+        await coLPFlow.init();
+
+        await coLPFlow.collectCoLPFees(tokenId);
+
+        showSuccess('Fees Collected', 'Co-LP fees moved to pending returns — use Withdraw to claim them');
+        // Refresh pending-returns UI + positions so the claim amount resets to 0
+        const address = getUserAddress();
+        if (address) checkPendingReturns(address).catch(() => {});
+        handleRefreshCoLPPositions().catch(() => {});
+    } catch (error) {
+        console.error('Claim Co-LP fees error:', error);
+        showError('Claim Fees Error', error.message);
+    }
+}
+
+/**
  * Handle rebalance Co-LP position
  */
 async function handleCoLPRebalance(tokenIdParam, rangeBpsParam) {
@@ -1462,7 +1547,7 @@ async function loadLpStats(address, vaultData) {
         console.log('Vault pending debt:', vault.pendingDebt);
         
         // Update UI with vault stats
-        document.getElementById('lp-collateral').textContent = `${(Number(vault.collateralShares) / 1e18).toFixed(2)} sDAI`;
+        document.getElementById('lp-collateral').textContent = `${(Number(vault.collateralShares) / 1e18).toFixed(2)} USDe`;
         document.getElementById('lp-debt').textContent = `${(Number(debt) / 1e8).toFixed(4)} wsXMR`;
         document.getElementById('lp-pending-debt').textContent = `${(Number(vault.pendingDebt) / 1e8).toFixed(4)} wsXMR`;
         document.getElementById('lp-health').textContent = `${(Number(health) / 1e16).toFixed(0)}%`;
@@ -1520,7 +1605,7 @@ async function handleResumeSwap(specificSwap) {
         // Ensure wallet is connected
         let address = getUserAddress();
         if (!address) {
-            const { ensureConnected } = await import('./viemClient.js?v=3.12');
+            const { ensureConnected } = await import('./viemClient.js?v=3.21');
             address = await ensureConnected();
             if (!address) {
                 await handleConnectWallet();
@@ -1829,7 +1914,7 @@ async function handleResolveSwap(swap) {
         // PENDING mint: cancel on-chain to recover griefing deposit
         if (swap.type === 'mint' && (swap.state === 'awaiting-lp-key' || swap.state === 'evm-init' || swap.state === 'initiated' || swap.state === 'deposit' || swap.state === 'lp-verifying')) {
             console.log('Resolving stale mint on-chain:', swap.requestId);
-            const { readHub, writeHub } = await import('./viemClient.js?v=3.12');
+            const { readHub, writeHub } = await import('./viemClient.js?v=3.21');
             const mintReq = await readHub('getMintRequest', [swap.requestId]);
             const status = Number(mintReq.status);
             // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED
@@ -1838,7 +1923,7 @@ async function handleResolveSwap(swap) {
                 showResumeSuccess(swap.requestId, 'Mint was already cancelled. Your griefing deposit has been claimed.');
             } else if (status === 1 || status === 2 || status === 3 || status === 4) {
                 // Check timeout before calling cancelMint to avoid TimeoutNotReached revert
-                const { getPublicClient } = await import('./viemClient.js?v=3.12');
+                const { getPublicClient } = await import('./viemClient.js?v=3.21');
                 const publicClient = getPublicClient();
                 const currentBlock = await publicClient.getBlockNumber();
                 const timeout = mintReq.timeout;
@@ -1859,7 +1944,7 @@ async function handleResolveSwap(swap) {
                     console.log('cancelMint tx:', receipt.transactionHash);
                     let msg = 'Mint cancelled. Your griefing deposit has been refunded.';
                     if (status === 2) {
-                        msg = 'Mint cancelled. LP collateral was slashed and you received sDAI compensation. Claim it via Pending Returns.';
+                        msg = 'Mint cancelled. LP collateral was slashed and you received USDe compensation. Claim it via Pending Returns.';
                     }
                     showResumeSuccess(swap.requestId, msg);
                 } catch (cancelErr) {
@@ -1879,7 +1964,7 @@ async function handleResolveSwap(swap) {
         // REQUESTED burn: abort on-chain to recover wsXMR
         else if (swap.type === 'burn' && (swap.state === 'evm-request' || swap.state === 'lp-propose')) {
             console.log('Resolving stale burn on-chain:', swap.requestId);
-            const { getPublicClient, getWalletClient, getUserAddress } = await import('./viemClient.js?v=3.12');
+            const { getPublicClient, getWalletClient, getUserAddress } = await import('./viemClient.js?v=3.21');
             const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
             const publicClient = getPublicClient();
             const walletClient = getWalletClient();
@@ -2020,7 +2105,7 @@ async function handleResolveSwap(swap) {
         else if (swap.type === 'mint' && (swap.state === 'lp-ready' || swap.state === 'finalize')) {
             console.log('Mint is READY but secret is missing, trying cancel anyway:', swap.requestId);
             try {
-                const { writeHub } = await import('./viemClient.js?v=3.12');
+                const { writeHub } = await import('./viemClient.js?v=3.21');
                 const receipt = await writeHub('cancelMint', [swap.requestId, '0x0000000000000000000000000000000000000000000000000000000000000000']);
                 console.log('cancelMint tx:', receipt.transactionHash);
                 showResumeSuccess(swap.requestId, 'Mint cancelled. Your griefing deposit has been refunded.');
@@ -2068,11 +2153,11 @@ export async function loadVaults() {
         let totalCollateralWei = 0n;
 
         // Fire ALL independent reads in a single Promise.all — no sequential round-trips
-        const { getPublicClient } = await import('./viemClient.js?v=3.12');
+        const { getPublicClient } = await import('./viemClient.js?v=3.21');
         const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
         const publicClient = getPublicClient();
-        const sDAIAbi = parseAbi(['function convertToAssets(uint256 shares) view returns (uint256)']);
-        const sDAIAddress = CONTRACTS.sDAI;
+        const usdeAbi = parseAbi(['function convertToAssets(uint256 shares) view returns (uint256)']);
+        const usdeAddress = CONTRACTS.stataUSDe;
 
         let xmrPrice = 0;
         let collPrice = 0;
@@ -2157,8 +2242,8 @@ export async function loadVaults() {
                     // Fetch convertToAssets calls and all burn request details in parallel
                     const [assetsWeiResult, totalAssetsWeiResult, ...burnReqResults] = await Promise.all([
                         publicClient.readContract({
-                            address: sDAIAddress,
-                            abi: sDAIAbi,
+                            address: usdeAddress,
+                            abi: usdeAbi,
                             functionName: 'convertToAssets',
                             args: [availableShares]
                         }).catch(e => {
@@ -2166,8 +2251,8 @@ export async function loadVaults() {
                             return null;
                         }),
                         publicClient.readContract({
-                            address: sDAIAddress,
-                            abi: sDAIAbi,
+                            address: usdeAddress,
+                            abi: usdeAbi,
                             functionName: 'convertToAssets',
                             args: [collShares]
                         }).catch(e => {
@@ -2182,9 +2267,9 @@ export async function loadVaults() {
                         ),
                     ]);
 
-                    let collAmountDAI = Number(availableShares) / 1e18; // fallback: assume 1:1
+                    let collAmountUSDe = Number(availableShares) / 1e18; // fallback: assume 1:1
                     if (assetsWeiResult !== null) {
-                        collAmountDAI = Number(assetsWeiResult) / 1e18;
+                        collAmountUSDe = Number(assetsWeiResult) / 1e18;
                     }
 
                     // Denormalize debt using globalDebtIndex (actualDebt = normalizedDebt * index / 1e18)
@@ -2216,22 +2301,22 @@ export async function loadVaults() {
                     const pendingCollateral = collPrice > 0 ? pendingDebtValueUsd / collPrice : 0;
                     // Buffer = extra 50% collateral required to maintain 150% ratio (on total debt)
                     const bufferCollateral = (usedCollateral + pendingCollateral) * 0.5;
-                    const freeCollateral = Math.max(0, collAmountDAI - usedCollateral - pendingCollateral - bufferCollateral);
+                    const freeCollateral = Math.max(0, collAmountUSDe - usedCollateral - pendingCollateral - bufferCollateral);
                     
                     console.log('💰 CAPACITY BREAKDOWN:', {
-                        collAmountDAI,
+                        collAmountUSDe,
                         usedCollateral,
                         pendingCollateral,
                         bufferCollateral,
                         freeCollateral,
-                        calculation: `${collAmountDAI.toFixed(4)} - ${usedCollateral.toFixed(4)} - ${pendingCollateral.toFixed(4)} - ${bufferCollateral.toFixed(4)} = ${freeCollateral.toFixed(4)}`
+                        calculation: `${collAmountUSDe.toFixed(4)} - ${usedCollateral.toFixed(4)} - ${pendingCollateral.toFixed(4)} - ${bufferCollateral.toFixed(4)} = ${freeCollateral.toFixed(4)}`
                     });
 
                     console.log('Vault capacity:', {
                         collShares: collShares.toString(),
                         lockedShares: lockedShares.toString(),
                         availableShares: availableShares.toString(),
-                        collAmountDAI,
+                        collAmountUSDe,
                         normalizedDebt: normalizedDebt.toString(),
                         actualDebt: actualDebt.toString(),
                         debtAmount,
@@ -2263,7 +2348,7 @@ export async function loadVaults() {
                         maxMintCapacityXmr = (freeCollateral * collPrice) / (2.6 * xmrPrice);
                         const maxMintBps = Number(vaultData.maxMintBps);
                         if (maxMintBps > 0) {
-                            const collateralValueUsd = collAmountDAI * collPrice;
+                            const collateralValueUsd = collAmountUSDe * collPrice;
                             const maxTotalDebtCapacity = (collateralValueUsd * 100) / 150;
                             const maxMintAllowedUsd = (maxTotalDebtCapacity * maxMintBps) / 10000;
                             const maxMintBpsCapacity = maxMintAllowedUsd / xmrPrice;
@@ -2276,40 +2361,46 @@ export async function loadVaults() {
                     }
 
                     // Use pre-fetched total collateral conversion result
-                    let totalCollateralDAI = Number(collShares) / 1e18;
+                    let totalCollateralUSDe = Number(collShares) / 1e18;
                     if (totalAssetsWeiResult !== null) {
-                        totalCollateralDAI = Number(totalAssetsWeiResult) / 1e18;
+                        totalCollateralUSDe = Number(totalAssetsWeiResult) / 1e18;
                     }
 
-                    // Derive breakdown from on-chain values when prices are fresh:
-                    // - lockedColl: from vault.lockedCollateral (burn escrow)
-                    // - usedColl: debt value in sDAI
-                    // - pendingColl: pending + in-flight burn debt in sDAI
+                    // Derive breakdown slices; free is the residual so the chart
+                    // always sums to total collateral:
+                    // - usedColl: debt value in USDe
+                    // - pendingColl: pending + in-flight burn debt in USDe
                     // - bufferColl: 50% of (used + pending) for 150% CR safety
-                    // - freeColl: back-calculate from on-chain getMintCapacity if available
-                    //   freeColl = capacity * 1.5 * xmrPrice / collPrice
-                    let breakdownUsedColl = usedCollateral;
-                    let breakdownPendingColl = pendingCollateral;
-                    let breakdownBufferColl = bufferCollateral;
-                    let breakdownFreeColl = freeCollateral;
-                    if (capacityAvailable && xmrPrice > 0 && collPrice > 0) {
-                        breakdownFreeColl = (maxMintCapacityXmr * 1.5 * xmrPrice) / collPrice;
-                    } else if (capacityEstimated) {
-                        breakdownFreeColl = freeCollateral; // already computed from off-chain prices
-                    } else if (!pricesFresh) {
-                        breakdownFreeColl = 0;
-                    }
+                    // - coLpColl: deployedUSDeShares (co-LP deployed collateral)
+                    // - lockedColl: vault.lockedCollateral (burn escrow)
+                    // - freeColl: everything left over
+                    // NOTE: do NOT back-calc free from getMintCapacity — its divisor
+                    // is (150% CR + 110% key bond) = 2.6, not 1.5, which understates
+                    // free collateral and leaves a gap in the donut chart.
+                    const breakdownUsedColl = usedCollateral;
+                    const breakdownPendingColl = pendingCollateral;
+                    const breakdownBufferColl = bufferCollateral;
+                    const breakdownCoLpColl = Number(vaultData.deployedUSDeShares) / 1e18;
+                    const breakdownLockedColl = Number(vaultData.lockedCollateral) / 1e18;
+                    const breakdownFreeColl = Math.max(0,
+                        totalCollateralUSDe
+                        - breakdownUsedColl
+                        - breakdownPendingColl
+                        - breakdownBufferColl
+                        - breakdownCoLpColl
+                        - breakdownLockedColl
+                    );
 
                     const vault = {
                         address: vaultAddress,
-                        name: `LP Vault ${vaultAddress.slice(0, 6)}...${vaultAddress.slice(-4)}`,
+                        name: `LP Vault ${vaultAddress.slice(0,6)}...${vaultAddress.slice(-4)}`,
                         collateral: vaultData.collateralShares,
-                        collateralAmount: totalCollateralDAI, // Converted to sDAI
+                        collateralAmount: totalCollateralUSDe, // Converted to USDe
                         lockedCollateral: vaultData.lockedCollateral,
                         debt: vaultData.normalizedDebt,
                         actualDebt: actualDebt,
                         pendingDebt: vaultData.pendingDebt,
-                        deployedSDAIShares: vaultData.deployedSDAIShares,
+                        deployedUSDeShares: vaultData.deployedUSDeShares,
                         usedCollateral: breakdownUsedColl,
                         pendingCollateral: breakdownPendingColl,
                         bufferCollateral: breakdownBufferColl,
@@ -2345,13 +2436,13 @@ export async function loadVaults() {
             vaultsStatEl.textContent = activeVaults.length.toString();
         }
         
-        // Update TVL (convert sDAI shares to approximate USD value)
-        // sDAI is roughly 1:1 with DAI, so we can approximate
+        // Update TVL (convert stataUSDe shares to approximate USD value)
+        // stataUSDe is roughly 1:1 with USDe, so we can approximate
         const tvlStatEl = document.getElementById('tvl-stat');
         if (tvlStatEl && totalCollateralWei > 0n) {
-            const collateralInDai = Number(totalCollateralWei) / 1e18;
-            // Assuming DAI ≈ $1
-            const tvlUsd = collateralInDai;
+            const collateralInUsde = Number(totalCollateralWei) / 1e18;
+            // Assuming USDe ≈ $1
+            const tvlUsd = collateralInUsde;
             if (tvlUsd >= 1000) {
                 tvlStatEl.textContent = `$${(tvlUsd / 1000).toFixed(1)}K`;
             } else {
@@ -2420,7 +2511,7 @@ export async function loadVaults() {
                 const xmrPrice = firstVault.xmrPrice || 200;
                 const collPrice = firstVault.collPrice || 1.0;
                 const cr = debt * xmrPrice > 0 ? Math.round((coll * collPrice) / (debt * xmrPrice) * 100) : 200;
-                backingEl.textContent = `sDAI · ${cr}%`;
+                backingEl.textContent = `USDe · ${cr}%`;
             }
         }
         
@@ -2568,8 +2659,8 @@ function updateMintReceiveAmount() {
 }
 
 /**
- * Calculate and display the DAI backing collateral for the current mint amount.
- * Shows 150% of the XMR value in DAI terms.
+ * Calculate and display the USDe backing collateral for the current mint amount.
+ * Shows 150% of the XMR value in USDe terms.
  */
 async function updateMintBackingCollateral() {
     try {
@@ -2579,14 +2670,14 @@ async function updateMintBackingCollateral() {
         const amountStr = document.getElementById('mint-amount')?.value || '';
         const amount = parseFloat(amountStr);
         if (isNaN(amount) || amount <= 0) {
-            backingEl.textContent = 'DAI · 150%';
+            backingEl.textContent = 'USDe · 150%';
             return;
         }
 
         // Fetch fresh XMR price from oracle, fall back to CoinGecko cache, then vault cache
         let xmrPrice = 0;
         try {
-            const { readHub } = await import('./viemClient.js?v=3.12');
+            const { readHub } = await import('./viemClient.js?v=3.21');
             const xmrPriceWei = await readHub('getXmrPrice');
             xmrPrice = Number(xmrPriceWei) / 1e18;
         } catch (e) {
@@ -2601,14 +2692,14 @@ async function updateMintBackingCollateral() {
         }
 
         if (!xmrPrice || xmrPrice <= 0) {
-            backingEl.textContent = 'DAI · 150%';
+            backingEl.textContent = 'USDe · 150%';
             return;
         }
 
-        // Backing collateral in DAI = XMR amount * XMR price (USD) * 150%
-        // DAI ≈ $1, so this is the USD value of collateral needed
-        const daiAmount = amount * xmrPrice * 1.5;
-        backingEl.textContent = `${daiAmount.toFixed(2)} DAI · 150%`;
+        // Backing collateral in USDe = XMR amount * XMR price (USD) * 150%
+        // USDe ≈ $1, so this is the USD value of collateral needed
+        const usdeAmount = amount * xmrPrice * 1.5;
+        backingEl.textContent = `${usdeAmount.toFixed(2)} USDe · 150%`;
     } catch (err) {
         console.warn('[BackingCollateral] Update failed:', err.message);
     }
@@ -2634,7 +2725,7 @@ function updateBurnReceiveAmount() {
         receiveEl.value = amount.toFixed(6);
         updateUsdEquivalent('burn-usd-equiv', amount);
 
-        // Also update the sDAI reward display
+        // Also update the USDe reward display
         updateBurnRewardDisplay();
     } catch (err) {
         console.error('[Receive] Burn receive update failed:', err);
@@ -2642,7 +2733,7 @@ function updateBurnReceiveAmount() {
 }
 
 /**
- * Calculate and display burn reward in sDAI using on-chain calculateBurnCollateral.
+ * Calculate and display burn reward in USDe using on-chain calculateBurnCollateral.
  * Debounced to avoid 2 RPC calls per keystroke.
  */
 let burnRewardDebounce = null;
@@ -2655,7 +2746,7 @@ async function _updateBurnRewardDisplay() {
     try {
         const amountStr = document.getElementById('burn-amount')?.value || '';
         const vaultSelect = document.getElementById('burn-vault-select');
-        const rewardEl = document.getElementById('burn-reward-sdai');
+        const rewardEl = document.getElementById('burn-reward-usde');
         if (!rewardEl) return;
 
         const amount = parseFloat(amountStr);
@@ -2671,11 +2762,11 @@ async function _updateBurnRewardDisplay() {
         }
 
         const wsxmrAmount = BigInt(Math.round(amount * 1e8));
-        const { getPublicClient } = await import('./viemClient.js?v=3.12');
+        const { getPublicClient } = await import('./viemClient.js?v=3.21');
         const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
         const publicClient = getPublicClient();
 
-        // Call calculateBurnCollateral to get exact on-chain rewardLock (sDAI shares)
+        // Call calculateBurnCollateral to get exact on-chain rewardLock (stataUSDe shares)
         // Include StalePrice error in ABI so viem decodes it properly
         const hubAbi = parseAbi([
             'function calculateBurnCollateral(address lpVault, uint256 wsxmrAmount) external view returns (uint256 baseLock, uint256 rewardLock)',
@@ -2688,25 +2779,25 @@ async function _updateBurnRewardDisplay() {
             args: [vaultAddress, wsxmrAmount]
         });
 
-        // Convert sDAI shares to DAI assets for display
-        const sDAIAbi = parseAbi(['function convertToAssets(uint256 shares) external view returns (uint256)']);
+        // Convert stataUSDe shares to USDe assets for display
+        const usdeAbi = parseAbi(['function convertToAssets(uint256 shares) external view returns (uint256)']);
         const assetsWei = await publicClient.readContract({
-            address: CONTRACTS.sDAI,
-            abi: sDAIAbi,
+            address: CONTRACTS.stataUSDe,
+            abi: usdeAbi,
             functionName: 'convertToAssets',
             args: [result[1]] // rewardLock
         });
 
-        const rewardDai = Number(assetsWei) / 1e18;
-        if (rewardDai > 0) {
-            // sDAI ≈ $1, so DAI value is the USD equivalent
-            const usdStr = rewardDai < 0.01 ? rewardDai.toFixed(4) : rewardDai < 1 ? rewardDai.toFixed(3) : rewardDai.toFixed(2);
-            rewardEl.innerHTML = `${rewardDai.toFixed(4)} sDAI <span style="color:var(--muted);font-size:11px">≈ $${usdStr}</span>`;
+        const rewardUsde = Number(assetsWei) / 1e18;
+        if (rewardUsde > 0) {
+            // USDe ≈ $1, so USDe value is the USD equivalent
+            const usdStr = rewardUsde < 0.01 ? rewardUsde.toFixed(4) : rewardUsde < 1 ? rewardUsde.toFixed(3) : rewardUsde.toFixed(2);
+            rewardEl.innerHTML = `${rewardUsde.toFixed(4)} USDe <span style="color:var(--muted);font-size:11px">≈ $${usdStr}</span>`;
         } else {
             rewardEl.textContent = '—';
         }
     } catch (err) {
-        const rewardEl = document.getElementById('burn-reward-sdai');
+        const rewardEl = document.getElementById('burn-reward-usde');
         if (rewardEl) {
             if (err.errorName === 'StalePrice' || err.message?.includes('StalePrice') || err.message?.includes('0x19abf40e')) {
                 rewardEl.textContent = '— (oracle stale)';
@@ -2763,7 +2854,7 @@ async function handleVaultSelect(isMint) {
             const xmrPrice = vault.xmrPrice || 200;
             const collPrice = vault.collPrice || 1.0;
             const cr = debt * xmrPrice > 0 ? Math.round((coll * collPrice) / (debt * xmrPrice) * 100) : 200;
-            backingEl.textContent = `sDAI · ${cr}%`;
+            backingEl.textContent = `USDe · ${cr}%`;
         }
     } else {
         // Fallback: fetch from RPC if not in cache
@@ -2864,7 +2955,7 @@ async function handleStartMint() {
         trackMintProgress(currentMintFlow);
         
         // Use the default LP vault from config
-        const { CONTRACTS } = await import('./config.js?v=3.12');
+        const { CONTRACTS } = await import('./config.js?v=3.21');
         
         // Start the flow with the LP vault that has the running LP node
         await currentMintFlow.start(CONTRACTS.defaultLpVault, amount);

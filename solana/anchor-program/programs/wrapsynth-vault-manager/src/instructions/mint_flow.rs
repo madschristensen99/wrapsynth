@@ -48,13 +48,13 @@ pub fn initiate_mint(
     // Sync yield before reading collateral
     sync_vault_yield(
         vault,
-        &mut ctx.accounts.global_state,
+        &mut *ctx.accounts.global_state.load_mut()?,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
         &ctx.accounts.pyth_susde_rr,
     )?;
 
-    let global = &ctx.accounts.global_state;
+    let global_debt_index = ctx.accounts.global_state.load()?.global_debt_index;
 
     // Griefing deposit check — whitelisted minters bypass it (EVM parity)
     let is_whitelisted = {
@@ -103,7 +103,7 @@ pub fn initiate_mint(
     // par) is reserved in the CR check so the LP can always key the mint. Nothing
     // is reserved in storage here; pending_debt is reserved at provide_lp_key so
     // spamming initiate_mint cannot DoS the vault's minting ability.
-    let actual_debt = get_actual_debt(vault.normalized_debt, global.global_debt_index);
+    let actual_debt = get_actual_debt(vault.normalized_debt, global_debt_index);
     let total_projected = actual_debt
         .checked_add(vault.pending_debt)
         .ok_or(WrapSynthError::MathOverflow)?
@@ -143,9 +143,20 @@ pub fn initiate_mint(
     check_depeg_guard(col_price, redemption_rate)?;
 
     // Increment nonce. Client pre-computed request_id = keccak(initiator, vault, amount, commitment, nonce+1).
-    ctx.accounts.global_state.request_nonce = ctx.accounts.global_state.request_nonce
+    let gs = &mut ctx.accounts.global_state.load_mut()?;
+    gs.request_nonce = gs.request_nonce
         .checked_add(1)
         .ok_or(WrapSynthError::MathOverflow)?;
+    // Bind the passed request_id to the canonical hash (seed uses request_id directly)
+    let expected_id = anchor_lang::solana_program::keccak::hashv(&[
+        ctx.accounts.initiator.key().as_ref(),
+        ctx.accounts.vault.key().as_ref(),
+        &xmr_amount.to_le_bytes(),
+        &claim_commitment,
+        &gs.request_nonce.to_le_bytes(),
+    ])
+    .0;
+    require!(request_id == expected_id, WrapSynthError::InvalidMintRequest);
 
     // Extract vault key before mutable borrow.
     let vault_key = ctx.accounts.vault.key();
@@ -213,7 +224,7 @@ pub fn provide_lp_key(
     // Sync yield before reading collateral
     sync_vault_yield(
         &mut ctx.accounts.vault,
-        &mut ctx.accounts.global_state,
+        &mut *ctx.accounts.global_state.load_mut()?,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
         &ctx.accounts.pyth_susde_rr,
@@ -245,7 +256,7 @@ pub fn provide_lp_key(
     let remaining_free = available_collateral - bond_shares;
     let actual_debt = get_actual_debt(
         vault.normalized_debt,
-        ctx.accounts.global_state.global_debt_index,
+        ctx.accounts.global_state.load()?.global_debt_index,
     );
     let projected_debt = actual_debt
         .checked_add(vault.pending_debt)
@@ -297,7 +308,7 @@ pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
     // Sync yield + re-check collateral
     sync_vault_yield(
         &mut ctx.accounts.vault,
-        &mut ctx.accounts.global_state,
+        &mut *ctx.accounts.global_state.load_mut()?,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
         &ctx.accounts.pyth_susde_rr,
@@ -329,7 +340,7 @@ pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
     // Re-check CR with the remaining free collateral after adjustment
     let actual_debt = get_actual_debt(
         vault.normalized_debt,
-        ctx.accounts.global_state.global_debt_index,
+        ctx.accounts.global_state.load()?.global_debt_index,
     );
     let projected_debt = actual_debt
         .checked_add(vault.pending_debt)
@@ -365,10 +376,8 @@ pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
         .pending_mint_count
         .checked_add(1)
         .ok_or(WrapSynthError::MathOverflow)?;
-    ctx.accounts.global_state.total_pending_mints = ctx
-        .accounts
-        .global_state
-        .total_pending_mints
+    let __total_pending_mints_cur = ctx.accounts.global_state.load()?.total_pending_mints;
+    ctx.accounts.global_state.load_mut()?.total_pending_mints = __total_pending_mints_cur
         .checked_add(1)
         .ok_or(WrapSynthError::MathOverflow)?;
     msg!("Mint ready: {:?}", request.request_id);
@@ -405,13 +414,13 @@ pub fn finalize_mint(ctx: Context<FinalizeMint>) -> Result<()> {
     require!(request.revealed_secret != [0u8; 32], WrapSynthError::InvalidStatus);
 
     // Extract bump and account_info before mutable borrows (needed for CPIs).
-    let gs_bump = ctx.accounts.global_state.bump;
+    let gs_bump = ctx.accounts.global_state.load()?.bump;
     let gs_info = ctx.accounts.global_state.to_account_info();
 
     execute_finalize(
         request,
         &mut ctx.accounts.vault,
-        &mut ctx.accounts.global_state,
+        &ctx.accounts.global_state,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
         &ctx.accounts.pyth_susde_rr,
@@ -432,7 +441,7 @@ pub fn finalize_mint(ctx: Context<FinalizeMint>) -> Result<()> {
 fn execute_finalize<'a>(
     request: &mut MintRequest,
     vault: &mut Vault,
-    global: &mut GlobalState,
+    global_state: &AccountLoader<'a, GlobalState>,
     pyth_xmr: &AccountInfo<'a>,
     pyth_collateral: &AccountInfo<'a>,
     pyth_susde_rr: &AccountInfo<'a>,
@@ -449,6 +458,7 @@ fn execute_finalize<'a>(
         // Vault was liquidated — cancel and compensate the user. The user's
         // secret is public, so the LP can sweep the XMR; slash the locked
         // collateral to the user if still held.
+        let global = &mut *global_state.load_mut()?;
         request.status = MintStatus::Cancelled;
         vault.pending_mint_count = vault.pending_mint_count.saturating_sub(1);
         global.total_pending_mints = global.total_pending_mints.saturating_sub(1);
@@ -485,27 +495,33 @@ fn execute_finalize<'a>(
         return Ok(());
     }
 
-    // Sync yield
-    sync_vault_yield(vault, global, pyth_xmr, pyth_collateral, pyth_susde_rr)?;
+    // Sync yield + debt/collateral accounting — scope the global borrow so the
+    // RefMut is dropped before the mint_to CPIs reuse gs_info (global_state's
+    // AccountInfo). invoke_signed borrows the account data to serialize, so we
+    // must not hold a load_mut() across the CPI.
+    {
+        let global = &mut *global_state.load_mut()?;
+        sync_vault_yield(vault, global, pyth_xmr, pyth_collateral, pyth_susde_rr)?;
 
-    // Release locked collateral — mint succeeded, reservation no longer needed.
-    // Total model: only the reservation is released; collateral stays in the vault.
-    if request.locked_collateral > 0 && vault.locked_collateral >= request.locked_collateral {
-        vault.locked_collateral -= request.locked_collateral;
+        // Release locked collateral — mint succeeded, reservation no longer needed.
+        // Total model: only the reservation is released; collateral stays in the vault.
+        if request.locked_collateral > 0 && vault.locked_collateral >= request.locked_collateral {
+            vault.locked_collateral -= request.locked_collateral;
+        }
+
+        // Release pending debt reservation and add to actual normalized debt
+        vault.pending_debt = vault.pending_debt.saturating_sub(request.wsxmr_amount);
+        let normalized = normalize_debt(request.wsxmr_amount, global.global_debt_index);
+        vault.normalized_debt = vault
+            .normalized_debt
+            .checked_add(normalized)
+            .ok_or(WrapSynthError::MathOverflow)?;
+        request.normalized_debt_amount = normalized;
+        global.global_total_debt = global
+            .global_total_debt
+            .checked_add(request.wsxmr_amount)
+            .ok_or(WrapSynthError::MathOverflow)?;
     }
-
-    // Release pending debt reservation and add to actual normalized debt
-    vault.pending_debt = vault.pending_debt.saturating_sub(request.wsxmr_amount);
-    let normalized = normalize_debt(request.wsxmr_amount, global.global_debt_index);
-    vault.normalized_debt = vault
-        .normalized_debt
-        .checked_add(normalized)
-        .ok_or(WrapSynthError::MathOverflow)?;
-    request.normalized_debt_amount = normalized;
-    global.global_total_debt = global
-        .global_total_debt
-        .checked_add(request.wsxmr_amount)
-        .ok_or(WrapSynthError::MathOverflow)?;
 
     // Mint wsXMR to recipient (net of fee) and fee to LP
     let seeds: &[&[u8]] = &[GLOBAL_STATE_SEED, &[gs_bump]];
@@ -544,14 +560,20 @@ fn execute_finalize<'a>(
             .sol_amount
             .checked_add(request.griefing_deposit)
             .ok_or(WrapSynthError::MathOverflow)?;
-        global.global_pending_sol = global
-            .global_pending_sol
-            .checked_add(request.griefing_deposit)
-            .ok_or(WrapSynthError::MathOverflow)?;
     }
 
+    // Post-CPI global bookkeeping — fresh scoped borrow (CPIs are done above).
+    {
+        let global = &mut *global_state.load_mut()?;
+        if request.griefing_deposit > 0 {
+            global.global_pending_sol = global
+                .global_pending_sol
+                .checked_add(request.griefing_deposit)
+                .ok_or(WrapSynthError::MathOverflow)?;
+        }
+        global.total_pending_mints = global.total_pending_mints.saturating_sub(1);
+    }
     vault.pending_mint_count = vault.pending_mint_count.saturating_sub(1);
-    global.total_pending_mints = global.total_pending_mints.saturating_sub(1);
     request.status = MintStatus::Completed;
     msg!("Mint finalized: {:?}", request.request_id);
     Ok(())
@@ -593,10 +615,8 @@ pub fn cancel_mint(ctx: Context<CancelMint>) -> Result<()> {
                 .sol_amount
                 .checked_add(request.griefing_deposit)
                 .ok_or(WrapSynthError::MathOverflow)?;
-            ctx.accounts.global_state.global_pending_sol = ctx
-                .accounts
-                .global_state
-                .global_pending_sol
+            let __global_pending_sol_cur = ctx.accounts.global_state.load()?.global_pending_sol;
+            ctx.accounts.global_state.load_mut()?.global_pending_sol = __global_pending_sol_cur
                 .checked_add(request.griefing_deposit)
                 .ok_or(WrapSynthError::MathOverflow)?;
         }
@@ -611,12 +631,12 @@ pub fn cancel_mint(ctx: Context<CancelMint>) -> Result<()> {
         msg!("Mint key cancelled: {:?}", request.request_id);
     } else if original_status == MintStatus::SecretRevealed {
         // Secret already public via reveal_secret — mint anyway (see execute_finalize).
-        let gs_bump = ctx.accounts.global_state.bump;
+        let gs_bump = ctx.accounts.global_state.load()?.bump;
         let gs_info = ctx.accounts.global_state.to_account_info();
         execute_finalize(
             request,
             vault,
-            &mut ctx.accounts.global_state,
+            &ctx.accounts.global_state,
             &ctx.accounts.pyth_xmr,
             &ctx.accounts.pyth_collateral,
             &ctx.accounts.pyth_susde_rr,
@@ -693,10 +713,8 @@ pub fn abandon_key_provided_mint(
             .sol_amount
             .checked_add(request.griefing_deposit)
             .ok_or(WrapSynthError::MathOverflow)?;
-        ctx.accounts.global_state.global_pending_sol = ctx
-            .accounts
-            .global_state
-            .global_pending_sol
+        let __global_pending_sol_cur = ctx.accounts.global_state.load()?.global_pending_sol;
+        ctx.accounts.global_state.load_mut()?.global_pending_sol = __global_pending_sol_cur
             .checked_add(request.griefing_deposit)
             .ok_or(WrapSynthError::MathOverflow)?;
     }
@@ -733,10 +751,8 @@ pub fn reclaim_parked_deposit(ctx: Context<ReclaimParkedDeposit>) -> Result<()> 
                 .collateral_amount
                 .checked_add(request.locked_collateral)
                 .ok_or(WrapSynthError::MathOverflow)?;
-            ctx.accounts.global_state.global_pending_collateral = ctx
-                .accounts
-                .global_state
-                .global_pending_collateral
+            let __global_pending_collateral_cur = ctx.accounts.global_state.load()?.global_pending_collateral;
+            ctx.accounts.global_state.load_mut()?.global_pending_collateral = __global_pending_collateral_cur
                 .checked_add(request.locked_collateral)
                 .ok_or(WrapSynthError::MathOverflow)?;
         } else if vault.locked_collateral >= request.locked_collateral {
@@ -751,10 +767,8 @@ pub fn reclaim_parked_deposit(ctx: Context<ReclaimParkedDeposit>) -> Result<()> 
             .sol_amount
             .checked_add(request.griefing_deposit)
             .ok_or(WrapSynthError::MathOverflow)?;
-        ctx.accounts.global_state.global_pending_sol = ctx
-            .accounts
-            .global_state
-            .global_pending_sol
+        let __global_pending_sol_cur = ctx.accounts.global_state.load()?.global_pending_sol;
+        ctx.accounts.global_state.load_mut()?.global_pending_sol = __global_pending_sol_cur
             .checked_add(request.griefing_deposit)
             .ok_or(WrapSynthError::MathOverflow)?;
     }
@@ -786,10 +800,8 @@ pub fn claim_griefing_deposit(ctx: Context<ClaimGriefingDeposit>, lp_secret: [u8
     let vault = &mut ctx.accounts.vault;
     request.status = MintStatus::Cancelled;
     vault.pending_mint_count = vault.pending_mint_count.saturating_sub(1);
-    ctx.accounts.global_state.total_pending_mints = ctx
-        .accounts
-        .global_state
-        .total_pending_mints
+    let __total_pending_mints_cur = ctx.accounts.global_state.load()?.total_pending_mints;
+    ctx.accounts.global_state.load_mut()?.total_pending_mints = __total_pending_mints_cur
         .saturating_sub(1);
 
     // Release locked collateral back to vault — LP revealed their secret, user
@@ -805,10 +817,8 @@ pub fn claim_griefing_deposit(ctx: Context<ClaimGriefingDeposit>, lp_secret: [u8
             .sol_amount
             .checked_add(request.griefing_deposit)
             .ok_or(WrapSynthError::MathOverflow)?;
-        ctx.accounts.global_state.global_pending_sol = ctx
-            .accounts
-            .global_state
-            .global_pending_sol
+        let __global_pending_sol_cur = ctx.accounts.global_state.load()?.global_pending_sol;
+        ctx.accounts.global_state.load_mut()?.global_pending_sol = __global_pending_sol_cur
             .checked_add(request.griefing_deposit)
             .ok_or(WrapSynthError::MathOverflow)?;
     }
@@ -829,10 +839,8 @@ pub fn sweep_unclaimed_expired_mint(ctx: Context<SweepUnclaimedExpiredMint>) -> 
     let vault = &mut ctx.accounts.vault;
     request.status = MintStatus::Cancelled;
     vault.pending_mint_count = vault.pending_mint_count.saturating_sub(1);
-    ctx.accounts.global_state.total_pending_mints = ctx
-        .accounts
-        .global_state
-        .total_pending_mints
+    let __total_pending_mints_cur = ctx.accounts.global_state.load()?.total_pending_mints;
+    ctx.accounts.global_state.load_mut()?.total_pending_mints = __total_pending_mints_cur
         .saturating_sub(1);
 
     // Release the par-value lock. If the vault was not liquidated, slash it to
@@ -851,10 +859,8 @@ pub fn sweep_unclaimed_expired_mint(ctx: Context<SweepUnclaimedExpiredMint>) -> 
                 .collateral_amount
                 .checked_add(request.locked_collateral)
                 .ok_or(WrapSynthError::MathOverflow)?;
-            ctx.accounts.global_state.global_pending_collateral = ctx
-                .accounts
-                .global_state
-                .global_pending_collateral
+            let __global_pending_collateral_cur = ctx.accounts.global_state.load()?.global_pending_collateral;
+            ctx.accounts.global_state.load_mut()?.global_pending_collateral = __global_pending_collateral_cur
                 .checked_add(request.locked_collateral)
                 .ok_or(WrapSynthError::MathOverflow)?;
         } else if vault.locked_collateral >= request.locked_collateral {
@@ -869,10 +875,8 @@ pub fn sweep_unclaimed_expired_mint(ctx: Context<SweepUnclaimedExpiredMint>) -> 
             .sol_amount
             .checked_add(request.griefing_deposit)
             .ok_or(WrapSynthError::MathOverflow)?;
-        ctx.accounts.global_state.global_pending_sol = ctx
-            .accounts
-            .global_state
-            .global_pending_sol
+        let __global_pending_sol_cur = ctx.accounts.global_state.load()?.global_pending_sol;
+        ctx.accounts.global_state.load_mut()?.global_pending_sol = __global_pending_sol_cur
             .checked_add(request.griefing_deposit)
             .ok_or(WrapSynthError::MathOverflow)?;
     }
@@ -884,7 +888,7 @@ pub fn sweep_unclaimed_expired_mint(ctx: Context<SweepUnclaimedExpiredMint>) -> 
 // ─── Accounts ────────────────────────────────────────────────────────────────
 
 #[derive(Accounts)]
-#[instruction(xmr_amount: u64, claim_commitment: [u8; 32], user_public_key: [u8; 32])]
+#[instruction(xmr_amount: u64, claim_commitment: [u8; 32], user_public_key: [u8; 32], request_id: [u8; 32])]
 pub struct InitiateMint<'info> {
     #[account(mut)]
     pub initiator: Signer<'info>,
@@ -898,29 +902,23 @@ pub struct InitiateMint<'info> {
         bump = vault.bump,
         constraint = vault.active @ WrapSynthError::VaultNotActive,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         init,
         payer = initiator,
         space = MintRequest::LEN,
-        seeds = [MINT_REQUEST_SEED, &anchor_lang::solana_program::keccak::hashv(&[
-            initiator.key().as_ref(),
-            vault.key().as_ref(),
-            &xmr_amount.to_le_bytes(),
-            &claim_commitment,
-            &(global_state.request_nonce + 1).to_le_bytes(),
-        ]).0],
+        seeds = [MINT_REQUEST_SEED, request_id.as_ref()],
         bump,
     )]
-    pub mint_request: Account<'info, MintRequest>,
+    pub mint_request: Box<Account<'info, MintRequest>>,
 
     /// SOL escrow account for griefing deposit (created by initiator, lamports checked)
     /// CHECK: balance verified in instruction
@@ -953,14 +951,14 @@ pub struct SetMintReady<'info> {
         seeds = [VAULT_SEED, lp.key().as_ref()],
         bump = vault.bump,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         mut,
@@ -968,7 +966,7 @@ pub struct SetMintReady<'info> {
         bump = mint_request.bump,
         constraint = mint_request.lp_vault == vault.key() @ WrapSynthError::Unauthorized,
     )]
-    pub mint_request: Account<'info, MintRequest>,
+    pub mint_request: Box<Account<'info, MintRequest>>,
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
@@ -988,14 +986,14 @@ pub struct FinalizeMint<'info> {
         seeds = [VAULT_SEED, vault.lp_address.as_ref()],
         bump = vault.bump,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         mut,
@@ -1003,7 +1001,7 @@ pub struct FinalizeMint<'info> {
         bump = mint_request.bump,
         constraint = mint_request.lp_vault == vault.key() @ WrapSynthError::InvalidMintRequest,
     )]
-    pub mint_request: Account<'info, MintRequest>,
+    pub mint_request: Box<Account<'info, MintRequest>>,
 
     #[account(mut)]
     pub wsxmr_mint: InterfaceAccount<'info, Mint>,
@@ -1041,14 +1039,14 @@ pub struct ProvideLPKey<'info> {
         seeds = [VAULT_SEED, lp.key().as_ref()],
         bump = vault.bump,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         mut,
@@ -1056,7 +1054,7 @@ pub struct ProvideLPKey<'info> {
         bump = mint_request.bump,
         constraint = mint_request.lp_vault == vault.key() @ WrapSynthError::Unauthorized,
     )]
-    pub mint_request: Account<'info, MintRequest>,
+    pub mint_request: Box<Account<'info, MintRequest>>,
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
@@ -1077,7 +1075,7 @@ pub struct RevealSecret<'info> {
         seeds = [MINT_REQUEST_SEED, mint_request.request_id.as_ref()],
         bump = mint_request.bump,
     )]
-    pub mint_request: Account<'info, MintRequest>,
+    pub mint_request: Box<Account<'info, MintRequest>>,
 }
 
 #[derive(Accounts)]
@@ -1089,14 +1087,14 @@ pub struct AbandonKeyProvidedMint<'info> {
         seeds = [VAULT_SEED, lp.key().as_ref()],
         bump = vault.bump,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         mut,
@@ -1104,14 +1102,14 @@ pub struct AbandonKeyProvidedMint<'info> {
         bump = mint_request.bump,
         constraint = mint_request.lp_vault == vault.key() @ WrapSynthError::Unauthorized,
     )]
-    pub mint_request: Account<'info, MintRequest>,
+    pub mint_request: Box<Account<'info, MintRequest>>,
 
     /// Pre-existing PendingReturns for vault LP.
     #[account(
         mut,
         constraint = lp_returns.owner == vault.lp_address @ WrapSynthError::Unauthorized,
     )]
-    pub lp_returns: Account<'info, PendingReturns>,
+    pub lp_returns: Box<Account<'info, PendingReturns>>,
 
     pub system_program: Program<'info, System>,
 }
@@ -1127,28 +1125,28 @@ pub struct ReclaimParkedDeposit<'info> {
         seeds = [VAULT_SEED, vault.lp_address.as_ref()],
         bump = vault.bump,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         mut,
         seeds = [MINT_REQUEST_SEED, mint_request.request_id.as_ref()],
         bump = mint_request.bump,
     )]
-    pub mint_request: Account<'info, MintRequest>,
+    pub mint_request: Box<Account<'info, MintRequest>>,
 
     /// Pre-existing PendingReturns for mint initiator (collateral slash + SOL refund).
     #[account(
         mut,
         constraint = initiator_returns.owner == mint_request.initiator @ WrapSynthError::InvalidMintRequest,
     )]
-    pub initiator_returns: Account<'info, PendingReturns>,
+    pub initiator_returns: Box<Account<'info, PendingReturns>>,
 
     pub system_program: Program<'info, System>,
 }
@@ -1162,14 +1160,14 @@ pub struct ClaimGriefingDeposit<'info> {
         seeds = [VAULT_SEED, lp.key().as_ref()],
         bump = vault.bump,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         mut,
@@ -1177,14 +1175,14 @@ pub struct ClaimGriefingDeposit<'info> {
         bump = mint_request.bump,
         constraint = mint_request.lp_vault == vault.key() @ WrapSynthError::Unauthorized,
     )]
-    pub mint_request: Account<'info, MintRequest>,
+    pub mint_request: Box<Account<'info, MintRequest>>,
 
     /// Pre-existing PendingReturns for vault LP.
     #[account(
         mut,
         constraint = lp_returns.owner == vault.lp_address @ WrapSynthError::Unauthorized,
     )]
-    pub lp_returns: Account<'info, PendingReturns>,
+    pub lp_returns: Box<Account<'info, PendingReturns>>,
 
     pub system_program: Program<'info, System>,
 }
@@ -1200,28 +1198,28 @@ pub struct SweepUnclaimedExpiredMint<'info> {
         seeds = [VAULT_SEED, vault.lp_address.as_ref()],
         bump = vault.bump,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         mut,
         seeds = [MINT_REQUEST_SEED, mint_request.request_id.as_ref()],
         bump = mint_request.bump,
     )]
-    pub mint_request: Account<'info, MintRequest>,
+    pub mint_request: Box<Account<'info, MintRequest>>,
 
     /// Pre-existing PendingReturns for mint initiator (collateral slash + SOL refund).
     #[account(
         mut,
         constraint = initiator_returns.owner == mint_request.initiator @ WrapSynthError::InvalidMintRequest,
     )]
-    pub initiator_returns: Account<'info, PendingReturns>,
+    pub initiator_returns: Box<Account<'info, PendingReturns>>,
 
     pub system_program: Program<'info, System>,
 }
@@ -1237,35 +1235,35 @@ pub struct CancelMint<'info> {
         seeds = [VAULT_SEED, vault.lp_address.as_ref()],
         bump = vault.bump,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         mut,
         seeds = [MINT_REQUEST_SEED, mint_request.request_id.as_ref()],
         bump = mint_request.bump,
     )]
-    pub mint_request: Account<'info, MintRequest>,
+    pub mint_request: Box<Account<'info, MintRequest>>,
 
     /// Pre-existing PendingReturns for mint initiator (SOL refund + collateral slash).
     #[account(
         mut,
         constraint = initiator_returns.owner == mint_request.initiator @ WrapSynthError::InvalidMintRequest,
     )]
-    pub initiator_returns: Account<'info, PendingReturns>,
+    pub initiator_returns: Box<Account<'info, PendingReturns>>,
 
     /// Pre-existing PendingReturns for vault LP.
     #[account(
         mut,
         constraint = lp_returns.owner == vault.lp_address @ WrapSynthError::Unauthorized,
     )]
-    pub lp_returns: Account<'info, PendingReturns>,
+    pub lp_returns: Box<Account<'info, PendingReturns>>,
 
     // ── Accounts required only for the SECRET_REVEALED branch (inline finalize) ──
     #[account(mut)]

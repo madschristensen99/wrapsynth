@@ -44,6 +44,11 @@ pub fn whirlpool_program_id() -> Pubkey {
     ORCA_WHIRLPOOLS_PROGRAM_ID.parse().unwrap()
 }
 
+/// Whirlpool's fixed position-NFT metadata update authority — required for
+/// `open_position_with_token_extensions` (constrained via `address` in the ix).
+pub const WHIRLPOOLS_METADATA_UPDATE_AUTH: &str =
+    "3axbTs2z5GBy6usVbNVoqEgZMng3vZvMnAoX29BFfwhr";
+
 /// Anchor instruction discriminator: sha256("global:<name>")[0..8]
 fn discriminator(name: &str) -> [u8; 8] {
     let hash = anchor_lang::solana_program::hash::hash(format!("global:{}", name).as_bytes());
@@ -149,11 +154,34 @@ pub fn compute_range_ticks(
     let lower_tick = (lower_price.ln() / 1.0001f64.ln()).floor() as i32;
     let upper_tick = (upper_price.ln() / 1.0001f64.ln()).ceil() as i32;
 
-    // Align to tick spacing
+    // Align to tick spacing (floor for lower, ceil for upper — truncation
+    // would round negative ticks toward zero and break the lower bound)
     let spacing = tick_spacing as i32;
-    let lower = (lower_tick / spacing) * spacing;
-    let upper = ((upper_tick + spacing - 1) / spacing) * spacing;
+    let lower = div_floor_i32(lower_tick, spacing) * spacing;
+    let upper = div_ceil_i32(upper_tick, spacing) * spacing;
     (lower, upper)
+}
+
+/// Floor division for i32 (works for negative operands; SBF rustc lacks div_euclid on all paths).
+fn div_floor_i32(a: i32, b: i32) -> i32 {
+    if a % b == 0 {
+        a / b
+    } else if a > 0 {
+        a / b
+    } else {
+        a / b - 1
+    }
+}
+
+/// Ceil division for i32 (works for negative operands; SBF rustc lacks div_ceil).
+fn div_ceil_i32(a: i32, b: i32) -> i32 {
+    if a % b == 0 {
+        a / b
+    } else if a > 0 {
+        a / b + 1
+    } else {
+        a / b
+    }
 }
 
 /// Start index of the tick array containing `tick` (for PDA derivation).
@@ -206,13 +234,13 @@ pub fn open_position_ix(
     metadata_update_auth: &Pubkey,
     tick_lower: i32,
     tick_upper: i32,
-    tick_spacing: u16,
+    with_token_metadata_extension: bool,
 ) -> Instruction {
-    let mut data = Vec::with_capacity(8 + 4 + 4 + 2);
+    let mut data = Vec::with_capacity(8 + 4 + 4 + 1);
     data.extend_from_slice(&discriminator("open_position_with_token_extensions"));
     data.extend_from_slice(&tick_lower.to_le_bytes());
     data.extend_from_slice(&tick_upper.to_le_bytes());
-    data.extend_from_slice(&tick_spacing.to_le_bytes());
+    data.extend_from_slice(&[with_token_metadata_extension as u8]);
 
     Instruction {
         program_id: whirlpool_program_id(),
@@ -220,7 +248,7 @@ pub fn open_position_ix(
             AccountMeta::new(*funder, true),
             AccountMeta::new_readonly(*owner, false),
             AccountMeta::new(*position, false),
-            AccountMeta::new(*position_mint, false),
+            AccountMeta::new(*position_mint, true),   // whirlpool inits it → must sign
             AccountMeta::new(*position_token_account, false),
             AccountMeta::new_readonly(*whirlpool, false),
             AccountMeta::new_readonly(*token2022_program, false),
@@ -254,11 +282,14 @@ pub fn increase_liquidity_ix(
     token_max_a: u64,
     token_max_b: u64,
 ) -> Instruction {
-    let mut data = Vec::with_capacity(8 + 16 + 8 + 8);
+    // increase_liquidity_v2 (ModifyLiquidityV2): 15 named accounts + optional
+    // transfer-hook remaining_accounts (none needed for sUSDe/wsXMR).
+    let mut data = Vec::with_capacity(8 + 16 + 8 + 8 + 1);
     data.extend_from_slice(&discriminator("increase_liquidity_v2"));
     data.extend_from_slice(&liquidity.to_le_bytes());
     data.extend_from_slice(&token_max_a.to_le_bytes());
     data.extend_from_slice(&token_max_b.to_le_bytes());
+    data.push(0); // remaining_accounts_info: Option<RemainingAccountsInfo> = None
 
     Instruction {
         program_id: whirlpool_program_id(),
@@ -269,7 +300,7 @@ pub fn increase_liquidity_ix(
             AccountMeta::new_readonly(*memo_program, false),
             AccountMeta::new_readonly(*position_authority, true),
             AccountMeta::new(*position, false),
-            AccountMeta::new(*position_token_account, false),
+            AccountMeta::new_readonly(*position_token_account, false),
             AccountMeta::new_readonly(*token_mint_a, false),
             AccountMeta::new_readonly(*token_mint_b, false),
             AccountMeta::new(*token_owner_account_a, false),
@@ -317,7 +348,12 @@ pub fn collect_fees_ix(
             AccountMeta::new_readonly(*token_program_b, false),
             AccountMeta::new_readonly(*memo_program, false),
         ],
-        data: discriminator("collect_fees_v2").to_vec(),
+        // collect_fees_v2 takes remaining_accounts_info: Option<…> (transfer hooks) — None.
+        data: {
+            let mut d = discriminator("collect_fees_v2").to_vec();
+            d.push(0);
+            d
+        },
     }
 }
 
@@ -343,11 +379,12 @@ pub fn decrease_liquidity_ix(
     token_min_a: u64,
     token_min_b: u64,
 ) -> Instruction {
-    let mut data = Vec::with_capacity(8 + 16 + 8 + 8);
+    let mut data = Vec::with_capacity(8 + 16 + 8 + 8 + 1);
     data.extend_from_slice(&discriminator("decrease_liquidity_v2"));
     data.extend_from_slice(&liquidity.to_le_bytes());
     data.extend_from_slice(&token_min_a.to_le_bytes());
     data.extend_from_slice(&token_min_b.to_le_bytes());
+    data.push(0); // remaining_accounts_info: Option<RemainingAccountsInfo> = None
 
     Instruction {
         program_id: whirlpool_program_id(),
@@ -392,5 +429,56 @@ pub fn close_position_ix(
             AccountMeta::new_readonly(*token_program, false),
         ],
         data: discriminator("close_position").to_vec(),
+    }
+}
+
+/// update_fees_and_rewards — recomputes the position's accrued fees (fee_owed_*)
+/// from the tick arrays' fee_growth_outside. Must be called BEFORE collect_fees,
+/// which only transfers the stored fee_owed_* values and does not recompute them.
+/// Accounts: whirlpool(w), position(w), tick_array_lower(r), tick_array_upper(r).
+pub fn update_fees_and_rewards_ix(
+    whirlpool: &Pubkey,
+    position: &Pubkey,
+    tick_array_lower: &Pubkey,
+    tick_array_upper: &Pubkey,
+) -> Instruction {
+    Instruction {
+        program_id: whirlpool_program_id(),
+        accounts: vec![
+            AccountMeta::new(*whirlpool, false),
+            AccountMeta::new(*position, false),
+            AccountMeta::new_readonly(*tick_array_lower, false),
+            AccountMeta::new_readonly(*tick_array_upper, false),
+        ],
+        data: discriminator("update_fees_and_rewards").to_vec(),
+    }
+}
+
+/// close_position_with_token_extensions — burns a Token-2022 position NFT and
+/// closes the Position + position_mint accounts. Our positions are Token-2022
+/// (open_position_with_token_extensions), so this variant is required (plain
+/// close_position expects an SPL-Token position mint).
+/// Accounts: position_authority(signer), receiver(w), position(w),
+///           position_mint(w), position_token_account(w), token_2022_program.
+/// Uses ctx.remaining_accounts for position-mint transfer hooks (none here).
+pub fn close_position_with_token_extensions_ix(
+    position_authority: &Pubkey,
+    receiver: &Pubkey,
+    position: &Pubkey,
+    position_mint: &Pubkey,
+    position_token_account: &Pubkey,
+    token_2022_program: &Pubkey,
+) -> Instruction {
+    Instruction {
+        program_id: whirlpool_program_id(),
+        accounts: vec![
+            AccountMeta::new_readonly(*position_authority, true),
+            AccountMeta::new(*receiver, false),
+            AccountMeta::new(*position, false),
+            AccountMeta::new(*position_mint, false),
+            AccountMeta::new(*position_token_account, false),
+            AccountMeta::new_readonly(*token_2022_program, false),
+        ],
+        data: discriminator("close_position_with_token_extensions").to_vec(),
     }
 }

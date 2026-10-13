@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 
 use crate::constants::MAX_VAULTS;
 
-#[account]
+#[account(zero_copy)]
 pub struct GlobalState {
     /// Deployer/admin pubkey (one-time router setup)
     pub authority: Pubkey,
@@ -38,33 +38,34 @@ pub struct GlobalState {
     pub global_pending_burn_debt: u64,
     /// Unix timestamp of last buy-and-burn execution
     pub last_buy_timestamp: i64,
-    /// Number of active vaults
-    pub vault_count: u32,
-    /// Fixed-size vault list (LP pubkeys) — authoritative ordering for batch
-    /// debt wipe / index migration (EVM vaultList parity, capped at MAX_VAULTS)
-    pub vault_list: [Pubkey; MAX_VAULTS],
     /// Batch debt-wipe progress: 0 = idle, 1-indexed next vault to zero
     pub debt_wipe_batch_start: u64,
     /// Batch index-migration progress: 0 = idle, 1-indexed next vault to rescale
     pub migration_batch_start: u64,
     /// Old index captured when a batch migration starts
     pub migration_old_index: u64,
-    /// Number of mints in READY state across all vaults — blocks buy-and-burn until resolved
-    pub total_pending_mints: u32,
     /// Global nonce for request ID generation
     pub request_nonce: u64,
-
+    /// Number of active vaults
+    pub vault_count: u32,
+    /// Number of mints in READY state across all vaults — blocks buy-and-burn until resolved
+    pub total_pending_mints: u32,
+    /// Fixed-size vault list (LP pubkeys) — authoritative ordering for batch
+    /// debt wipe / index migration (EVM vaultList parity, capped at MAX_VAULTS)
+    pub vault_list: [Pubkey; MAX_VAULTS],
     pub bump: u8,
+    /// Explicit padding so the struct is Pod-compatible (no implicit alignment padding)
+    pub _reserved: [u8; 7],
 }
 
 impl GlobalState {
-    /// Account discriminator + all fields.
-    /// Pubkeys: 5 * 32 = 160 (removed pyth_collateral_feed)
-    /// u64s: 13 * 8 = 104 (added batch wipe/migration state)
+    /// Account discriminator + all fields (zero-copy, no implicit padding).
+    /// Pubkeys: 5 * 32 = 160
+    /// u64s: 14 * 8 = 112 (incl. request_nonce)
     /// i64: 8
-    /// u32s: 2 * 4 = 8 (added total_pending_mints)
+    /// u32s: 2 * 4 = 8
     /// vault_list: MAX_VAULTS * 32 = 4096
-    /// u8: 1
-    /// Total data: 8 + 160 + 104 + 8 + 8 + 4096 + 1 = 4385 → pad to 4392
-    pub const LEN: usize = 8 + 160 + 104 + 8 + 8 + 4096 + 1 + 7; // = 4392
+    /// u8 bump + 7 reserved = 8
+    /// Total data: 8 + 160 + 112 + 8 + 8 + 4096 + 8 = 4400
+    pub const LEN: usize = 8 + 160 + 112 + 8 + 8 + 4096 + 8; // = 4400
 }

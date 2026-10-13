@@ -42,7 +42,7 @@ pub fn create_vault(ctx: Context<CreateVault>) -> Result<()> {
     vault.active = true;
     vault.bump = ctx.bumps.vault;
 
-    let global = &mut ctx.accounts.global_state;
+    let global = &mut ctx.accounts.global_state.load_mut()?;
     require!(
         (global.vault_count as usize) < MAX_VAULTS,
         WrapSynthError::MaxVaultsReached
@@ -70,7 +70,7 @@ pub fn deposit_collateral_shares(ctx: Context<DepositCollateral>, amount: u64) -
     // Sync yield before modifying balances
     sync_vault_yield(
         vault,
-        &mut ctx.accounts.global_state,
+        &mut *ctx.accounts.global_state.load_mut()?,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
         &ctx.accounts.pyth_susde_rr,
@@ -111,7 +111,7 @@ pub fn deposit_collateral_shares(ctx: Context<DepositCollateral>, amount: u64) -
         .checked_add(value_deposited)
         .ok_or(WrapSynthError::MathOverflow)?;
 
-    let global = &mut ctx.accounts.global_state;
+    let global = &mut ctx.accounts.global_state.load_mut()?;
     global.global_lp_principal_shares = global
         .global_lp_principal_shares
         .checked_add(amount)
@@ -143,7 +143,7 @@ pub fn withdraw_collateral(ctx: Context<WithdrawCollateral>, amount: u64) -> Res
     // Sync yield FIRST before reading state
     sync_vault_yield(
         vault,
-        &mut ctx.accounts.global_state,
+        &mut *ctx.accounts.global_state.load_mut()?,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
         &ctx.accounts.pyth_susde_rr,
@@ -166,7 +166,7 @@ pub fn withdraw_collateral(ctx: Context<WithdrawCollateral>, amount: u64) -> Res
     let new_collateral = vault.collateral_amount - amount;
 
     // Health check after withdrawal
-    let global = &ctx.accounts.global_state;
+    let global = &ctx.accounts.global_state.load()?;
     let actual_debt = crate::utils::math::get_actual_debt(vault.normalized_debt, global.global_debt_index);
     let total_obligations = actual_debt.saturating_add(vault.pending_debt);
 
@@ -202,7 +202,7 @@ pub fn withdraw_collateral(ctx: Context<WithdrawCollateral>, amount: u64) -> Res
         vault.principal_shares = vault.principal_shares.saturating_sub(shares_to_deduct);
         vault.principal_value = vault.principal_value.saturating_sub(value_to_deduct);
 
-        let global_mut = &mut ctx.accounts.global_state;
+        let global_mut = &mut ctx.accounts.global_state.load_mut()?;
         global_mut.global_lp_principal = global_mut.global_lp_principal.saturating_sub(principal_to_deduct);
         global_mut.global_lp_principal_shares = global_mut.global_lp_principal_shares.saturating_sub(shares_to_deduct);
         global_mut.global_lp_principal_value = global_mut.global_lp_principal_value.saturating_sub(value_to_deduct);
@@ -347,7 +347,7 @@ pub fn deactivate_vault(ctx: Context<DeactivateVault>) -> Result<()> {
     require!(vault.collateral_amount == 0, WrapSynthError::InsufficientCollateral);
     require!(vault.active_burn_count == 0, WrapSynthError::UnresolvedBurns);
     vault.active = false;
-    let global = &mut ctx.accounts.global_state;
+    let global = &mut ctx.accounts.global_state.load_mut()?;
     // Swap-remove from the vault list (EVM _removeFromVaultList parity)
     let count = global.vault_count as usize;
     let mut idx = None;
@@ -429,14 +429,14 @@ pub struct CreateVault<'info> {
         seeds = [VAULT_SEED, lp.key().as_ref()],
         bump,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     pub system_program: Program<'info, System>,
 }
@@ -452,14 +452,14 @@ pub struct DepositCollateral<'info> {
         bump = vault.bump,
         constraint = vault.lp_address == lp.key() @ WrapSynthError::Unauthorized,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     pub collateral_mint: InterfaceAccount<'info, Mint>,
 
@@ -501,7 +501,7 @@ pub struct InitializeVaultCollateral<'info> {
         bump = vault.bump,
         constraint = vault.lp_address == lp.key() @ WrapSynthError::Unauthorized,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     pub collateral_mint: InterfaceAccount<'info, Mint>,
 
@@ -531,14 +531,14 @@ pub struct WithdrawCollateral<'info> {
         bump = vault.bump,
         constraint = vault.lp_address == lp.key() @ WrapSynthError::Unauthorized,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     pub collateral_mint: InterfaceAccount<'info, Mint>,
 
@@ -574,7 +574,7 @@ pub struct UpdateVaultConfig<'info> {
         constraint = vault.lp_address == lp.key() @ WrapSynthError::Unauthorized,
         constraint = vault.active @ WrapSynthError::VaultNotActive,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 }
 
 #[derive(Accounts)]
@@ -587,12 +587,12 @@ pub struct DeactivateVault<'info> {
         bump = vault.bump,
         constraint = vault.lp_address == lp.key() @ WrapSynthError::Unauthorized,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 }

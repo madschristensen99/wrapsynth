@@ -1,7 +1,7 @@
 // Protocol Stats - Calculate real-time protocol metrics
 
-import { getPublicClient, getContractEventsChunked, readHub } from './viemClient.js?v=3.12';
-import { CONTRACTS } from './config.js?v=3.12';
+import { getPublicClient, getContractEventsChunked, readHub } from './viemClient.js?v=3.21';
+import { CONTRACTS } from './config.js?v=3.21';
 import { formatUnits } from 'https://esm.sh/viem@2.7.0';
 
 // Correct inline event definitions matching the deployed contract ABI
@@ -136,12 +136,12 @@ async function fetchVaultAggregates() {
         activeCount++;
     }
 
-    // Collateral ratio — convert sDAI shares to assets (share price > 1)
+    // Collateral ratio — convert stataUSDe shares to assets (share price > 1)
     let collateralAssets = totalCollateral;
     try {
         const publicClient = getPublicClient();
         const assets = await publicClient.readContract({
-            address: CONTRACTS.sDAI,
+            address: CONTRACTS.stataUSDe,
             abi: [{ name: 'convertToAssets', type: 'function', stateMutability: 'view', inputs: [{ name: 'shares', type: 'uint256' }], outputs: [{ name: '', type: 'uint256' }] }],
             functionName: 'convertToAssets',
             args: [totalCollateral],

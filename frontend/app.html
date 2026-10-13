@@ -50,7 +50,7 @@ if ('serviceWorker' in navigator) {
     });
 }
 </script>
-<link rel="stylesheet" href="app-styles.css?v=2.3">
+<link rel="stylesheet" href="app-styles.css?v=2.4">
 </head>
 <body class="app-page">
 <!-- Animated Background -->
@@ -99,6 +99,7 @@ if ('serviceWorker' in navigator) {
       <span class="pill"><img src="./hyperliquid.png" alt="HyperEVM" style="width:14px;height:14px;margin-right:4px;border-radius:50%;vertical-align:-2px">HyperEVM</span>
       <a id="dexscreener-link" class="pill" href="#" target="_blank" rel="noopener noreferrer" style="text-decoration:none"><img src="https://dexscreener.com/favicon.ico" alt="Pool" style="width:14px;height:14px;margin-right:4px">Trade</a>
       <span class="pill price">XMR <b id="xmrPx">$--</b></span>
+      <button class="connect hidden" id="withdraw-returns-btn" style="margin-right:8px">Withdraw returns</button>
       <button class="connect" id="connect-wallet">Connect wallet</button>
       <a href="account.html" id="connected-info" class="wallet-connected hidden" style="text-decoration:none">
         <div class="wallet-avatar"></div>
@@ -250,7 +251,7 @@ if ('serviceWorker' in navigator) {
           </div>
           <div class="r" id="burn-vault-info" style="display:none"><span>Vault capacity</span><b id="burn-capacity">—</b></div>
           <div class="r"><span id="burn-fee-label">Reward rate</span><b id="burn-fee">—</b></div>
-          <div class="r"><span>Burn reward</span><b id="burn-reward-sdai">—</b></div>
+          <div class="r"><span>Burn reward</span><b id="burn-reward-usde">—</b></div>
           <div class="r"><span>LP timeout window</span><b id="burn-timeout">—</b></div>
         </div>
 
@@ -372,6 +373,10 @@ if ('serviceWorker' in navigator) {
             <h3 style="font-family:'Plus Jakarta Sans';font-size:15px;font-weight:600">Your Co-LP Positions</h3>
             <button class="cta ghost" id="co-lp-refresh-positions" style="padding:6px 10px;font-size:13px">↻ Refresh</button>
           </div>
+          <div id="co-lp-pending" class="hidden">
+            <span>Pending returns: <b id="co-lp-pending-amt"></b></span>
+            <button class="cta ghost" id="co-lp-withdraw-btn">Withdraw</button>
+          </div>
           <div id="co-lp-positions-list" style="margin-bottom:20px">
             <div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">Connect wallet to see positions</div>
           </div>
@@ -486,6 +491,6 @@ if ('serviceWorker' in navigator) {
   if (hub) { hub.textContent = short(DC.wsXmrHub); hub.href = `https://hyperevmscan.io/address/${DC.wsXmrHub}`; }
   if (router) { router.textContent = short(DC.liquidityRouter); router.href = `https://hyperevmscan.io/address/${DC.liquidityRouter}`; }
 </script>
-<script type="module" src="./js/main.js?v=3.13"></script>
+<script type="module" src="./js/main.js?v=3.21"></script>
 </body>
 </html>

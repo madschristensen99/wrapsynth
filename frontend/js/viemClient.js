@@ -2,7 +2,7 @@
 // Uses createPublicClient and createWalletClient as required
 
 import { createPublicClient, createWalletClient, custom, http, fallback, parseAbi, defineChain } from 'https://esm.sh/viem@2.7.0';
-import { NETWORKS, CONTRACTS, ABIS, RAW_ABIS } from './config.js?v=3.12';
+import { NETWORKS, CONTRACTS, ABIS, RAW_ABIS } from './config.js?v=3.21';
 
 // HyperEVM mainnet (chainId 999) — not a built-in viem chain, so define it.
 export const hyperevm = defineChain({
@@ -135,11 +135,57 @@ export function getUserAddress() {
 }
 
 /**
+ * Ensure the wallet has authorized an account for THIS origin.
+ * eth_sendTransaction throws 4100 'account has not been authorized' when
+ * `from` isn't in the wallet's authorized set for the site — happens when
+ * the cached userAddress is stale (permissions expired, different account
+ * connected, first visit to a new origin like the live domain).
+ * Re-requests authorization and syncs userAddress + walletClient to
+ * whatever the wallet actually returns.
+ */
+export async function ensureAuthorizedAccount() {
+    if (!window.ethereum) throw new Error('No wallet provider found');
+    let accounts = await window.ethereum.request({ method: 'eth_accounts' });
+    if (!accounts || accounts.length === 0) {
+        accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+    }
+    if (!accounts || accounts.length === 0) {
+        throw new Error('Wallet did not authorize an account');
+    }
+    if (!userAddress || userAddress.toLowerCase() !== accounts[0].toLowerCase()) {
+        // Cached address is stale or was never authorized on this origin
+        userAddress = accounts[0];
+        walletClient = createWalletClient({
+            account: userAddress,
+            chain: hyperevm,
+            transport: custom(window.ethereum)
+        });
+    }
+    return accounts[0];
+}
+
+/**
  * Ensure wallet is connected. Silently tries to get the current address
  * from MetaMask without prompting if already authorized.
  */
 export async function ensureConnected() {
-    if (userAddress) return userAddress;
+    if (userAddress) {
+        // Revalidate the cached address against the wallet's authorized
+        // accounts — a stale one passes all reads (wrong user's data) but
+        // every send dies with 4100.
+        try {
+            const acc = await window.ethereum?.request({ method: 'eth_accounts' });
+            if (acc && acc.length > 0 && acc[0].toLowerCase() !== userAddress.toLowerCase()) {
+                userAddress = acc[0];
+                walletClient = createWalletClient({
+                    account: userAddress,
+                    chain: hyperevm,
+                    transport: custom(window.ethereum)
+                });
+            }
+        } catch { /* non-fatal */ }
+        return userAddress;
+    }
     if (!walletClient || !window.ethereum) return null;
 
     // Only try silent reconnect if user has previously connected via the app.
@@ -217,6 +263,14 @@ export async function readHub(functionName, args = []) {
             args
         });
     }
+    if (functionName === 'getPositionMetadata') {
+        return await client.readContract({
+            address: CONTRACTS.hub,
+            abi: [RAW_ABIS.getPositionMetadata],
+            functionName,
+            args
+        });
+    }
     
     return await client.readContract({
         address: CONTRACTS.hub,
@@ -234,7 +288,7 @@ export async function readHub(functionName, args = []) {
  * @param {bigint} gas - Optional gas limit override
  */
 export async function writeHub(functionName, args = [], value = 0n, gas = undefined) {
-    const account = getUserAddress();
+    const account = await ensureAuthorizedAccount();
     const { encodeFunctionData } = await import('https://esm.sh/viem@2.7.0');
 
     const data = encodeFunctionData({
@@ -521,6 +575,59 @@ export async function getContractEventsChunked(params) {
         await new Promise(r => setTimeout(r, LOG_CHUNK_DELAY_MS));
     }
     return events;
+}
+
+/**
+ * eth_getLogs (raw, undecoded) with automatic block-range chunking.
+ * Same chunk/retry discipline as getContractEventsChunked, but accepts raw
+ * topics — lets a caller match MULTIPLE event signatures in one request
+ * (topics[0] = [sigA, sigB, ...]) instead of one scan per event.
+ * onChunk(logs, scannedTo) fires after each range so callers can persist
+ * incremental progress and resume a timed-out scan.
+ */
+export async function getLogsChunked({ address, topics, fromBlock, toBlock = 'latest', onChunk = null }) {
+    const client = getPublicClient();
+    const to = toBlock === 'latest' || toBlock === undefined
+        ? await client.getBlockNumber()
+        : BigInt(toBlock);
+    const from = BigInt(fromBlock || 0n);
+    const logs = [];
+
+    const queryLogs = async (start, end, depth) => {
+        let retries = 4;
+        while (true) {
+            try {
+                return await client.getLogs({ address, topics, fromBlock: start, toBlock: end });
+            } catch (err) {
+                const msg = err?.message || '';
+                const details = err?.details || '';
+                const isRangeError = msg.includes('block range') || details.includes('block range')
+                    || msg.includes('exceeds max') || details.includes('exceeds max');
+                if (isRangeError && end - start > 50n && depth < 8) {
+                    const mid = start + (end - start) / 2n;
+                    const first = await queryLogs(start, mid, depth + 1);
+                    const second = await queryLogs(mid + 1n, end, depth + 1);
+                    return [...first, ...second];
+                }
+                const retryable = msg.includes('rate limit') || msg.includes('exceeds max block range')
+                    || msg.includes('Failed to fetch') || msg.includes('fetch failed')
+                    || err?.code === -32000 || err?.code === 429
+                    || err?.name === 'RpcRequestError' || err?.name === 'InvalidParamsRpcError'
+                    || err?.name === 'TypeError';
+                if (!retryable || --retries === 0) throw err;
+                await new Promise(r => setTimeout(r, 800));
+            }
+        }
+    };
+
+    for (let start = from; start <= to; start += LOG_QUERY_CHUNK) {
+        const end = start + LOG_QUERY_CHUNK - 1n > to ? to : start + LOG_QUERY_CHUNK - 1n;
+        const chunk = await queryLogs(start, end, 0);
+        logs.push(...chunk);
+        if (onChunk) { try { onChunk(chunk, end); } catch {} }
+        await new Promise(r => setTimeout(r, LOG_CHUNK_DELAY_MS));
+    }
+    return logs;
 }
 
 /**

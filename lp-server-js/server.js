@@ -3,7 +3,7 @@ import express from 'express';
 import * as ethers from 'ethers';
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import * as burnHandler from './burnHandler.js';
 import * as moneroWallet from './moneroWallet.js';
@@ -519,11 +519,17 @@ async function processMint(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpSpendP
       let scanHeight = 0;
       try {
         const height = await moneroWallet.getDaemonHeight();
-        // Scan a deep window — late-processed mints (recovery path) may have
-        // deposits older than 100 blocks. 1000 Monero blocks ≈ 33h, which
-        // covers any mint still inside its timeout window. (initiatedAtBlock
-        // is an EVM block number, NOT a Monero height — cannot be used here.)
-        scanHeight = Math.max(0, height - 1000);
+        // How far back can the deposit be? The deposit address is only
+        // public once provideLPKey lands. If this run is about to post the
+        // keys itself (status 1 = PENDING), the deposit can't predate now —
+        // 40 blocks (~80 min) is a generous shallow window that scans in
+        // seconds. If keys were already posted at an unknown earlier time
+        // (KEY_PROVIDED+, recovery/manual-scan path, or unknown status), keep
+        // the deep window: deposits may be hours old. 1000 blocks ≈ 33h,
+        // covering any mint inside its timeout. (initiatedAtBlock is an EVM
+        // block number, NOT a Monero height — cannot be used here.)
+        const lookback = onChainStatus === 1 ? 40 : 1000;
+        scanHeight = Math.max(0, height - lookback);
         console.log(`[Mint] Current Monero height: ${height}, scanning from ${scanHeight}`);
       } catch (err) {
         console.warn(`[Mint] Could not get daemon height, scanning from 0:`, err.message);
@@ -1607,6 +1613,33 @@ burnHandler.registerRoutes(app);
 // ─── Start Server ─────────────────────────────────────────────────────────────
 app.listen(PORT, async () => {
   console.log(`HTTP server listening on http://localhost:${PORT}`);
+
+  // Spawn dedicated deposit-scan monero-wallet-rpc — hosts ONLY per-mint
+  // view-only wallets, so refresh+get_transfers can run every poll cycle
+  // without evicting the main LP wallet or hitting the reopen-corruption
+  // bug. daemon-scan remains as fallback if this can't start.
+  const DEPOSIT_RPC_PORT = process.env.DEPOSIT_WALLET_RPC_PORT || '18083';
+  const DEPOSIT_WALLET_DIR = process.env.DEPOSIT_WALLET_DIR || path.join(__dirname, 'monero-wallets-deposit');
+  try {
+    fs.mkdirSync(DEPOSIT_WALLET_DIR, { recursive: true });
+    const depositRpcLog = fs.openSync(path.join(__dirname, 'monero-wallet-rpc-deposit.log'), 'a');
+    const depositRpcProc = spawn('monero-wallet-rpc', [
+      '--wallet-dir', DEPOSIT_WALLET_DIR,
+      '--rpc-bind-port', String(DEPOSIT_RPC_PORT),
+      '--rpc-bind-ip', '127.0.0.1',
+      '--daemon-address', process.env.MONERO_DAEMON_ADDRESS || 'xmr-node.cakewallet.com:18081',
+      '--trusted-daemon',
+      '--daemon-ssl', 'enabled',
+      '--daemon-ssl-allow-any-cert',
+      '--disable-rpc-login',
+      '--non-interactive',
+    ], { stdio: ['ignore', 'ignore', depositRpcLog], detached: true });
+    depositRpcProc.unref();
+    console.log(`[Startup] Deposit-scan wallet-rpc spawned on :${DEPOSIT_RPC_PORT} (dir: ${DEPOSIT_WALLET_DIR})`);
+  } catch (err) {
+    console.warn('[Startup] Could not spawn deposit wallet-rpc — daemon-scan fallback will be used:', err.message);
+  }
+
   try {
     await startEventListener();
   } catch (err) {

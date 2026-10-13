@@ -15,7 +15,7 @@ use crate::utils::math::get_actual_debt;
 /// This instruction is non-destructive: it only updates global_total_debt.
 /// Anyone can call it.
 pub fn reconcile_global_debt(ctx: Context<ReconcileGlobalDebt>) -> Result<()> {
-    let global = &mut ctx.accounts.global_state;
+    let global = &mut ctx.accounts.global_state.load_mut()?;
     let old_debt = global.global_total_debt;
 
     let mut computed_debt: u64 = 0;
@@ -49,9 +49,8 @@ pub struct ReconcileGlobalDebt<'info> {
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
-        constraint = global_state.authority == authority.key() @ WrapSynthError::Unauthorized,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
     // remaining_accounts: Vec<AccountInfo> of Vault PDAs
 }

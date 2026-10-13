@@ -48,7 +48,7 @@ pub fn request_burn_from_router(
     request_id: [u8; 32],
 ) -> Result<()> {
     require!(
-        ctx.accounts.global_state.liquidity_router == ctx.accounts.user.key(),
+        ctx.accounts.global_state.load()?.liquidity_router == ctx.accounts.user.key(),
         WrapSynthError::OnlyRouter
     );
     _request_burn(
@@ -90,13 +90,13 @@ fn _request_burn(
 
     sync_vault_yield(
         vault,
-        &mut ctx.accounts.global_state,
+        &mut *ctx.accounts.global_state.load_mut()?,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
         &ctx.accounts.pyth_susde_rr,
     )?;
 
-    let global = &ctx.accounts.global_state;
+    let global = &ctx.accounts.global_state.load()?;
     let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
@@ -149,8 +149,8 @@ fn _request_burn(
     }
 
     // Generate request_id
-    let nonce = ctx.accounts.global_state.request_nonce + 1;
-    ctx.accounts.global_state.request_nonce = nonce;
+    let nonce = ctx.accounts.global_state.load_mut()?.request_nonce + 1;
+    ctx.accounts.global_state.load_mut()?.request_nonce = nonce;
     let request_id = anchor_lang::solana_program::keccak::hashv(&[
         ctx.accounts.user.key().as_ref(),
         ctx.accounts.vault.key().as_ref(),
@@ -183,7 +183,7 @@ fn _request_burn(
         .checked_add(1)
         .ok_or(WrapSynthError::MathOverflow)?;
 
-    let global = &mut ctx.accounts.global_state;
+    let global = &mut ctx.accounts.global_state.load_mut()?;
     global.global_pending_burn_debt = global
         .global_pending_burn_debt
         .checked_add(wsxmr_amount)
@@ -302,7 +302,7 @@ pub fn settle_burn(ctx: Context<SettleBurn>) -> Result<()> {
     settle_burn_internal(
         request,
         &mut ctx.accounts.vault,
-        &mut ctx.accounts.global_state,
+        &mut *ctx.accounts.global_state.load_mut()?,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
         &ctx.accounts.pyth_susde_rr,
@@ -333,7 +333,7 @@ pub fn finalize_burn(ctx: Context<FinalizeBurn>, secret: [u8; 32]) -> Result<()>
     settle_burn_internal(
         request,
         &mut ctx.accounts.vault,
-        &mut ctx.accounts.global_state,
+        &mut *ctx.accounts.global_state.load_mut()?,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
         &ctx.accounts.pyth_susde_rr,
@@ -474,14 +474,14 @@ pub fn claim_slashed_collateral(
 
     sync_vault_yield(
         &mut ctx.accounts.vault,
-        &mut ctx.accounts.global_state,
+        &mut *ctx.accounts.global_state.load_mut()?,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
         &ctx.accounts.pyth_susde_rr,
     )?;
 
     let vault = &mut ctx.accounts.vault;
-    let global = &mut ctx.accounts.global_state;
+    let global = &mut ctx.accounts.global_state.load_mut()?;
 
     // Par-capped slash: user receives min(par, locked) — NO reward, since the LP
     // never completed the burn. Par is fixed at request time via xmr_price_at_request,
@@ -576,7 +576,7 @@ pub fn abort_burn(ctx: Context<AbortBurn>) -> Result<()> {
         vault.locked_collateral -= total_lock;
     }
 
-    let global = &mut ctx.accounts.global_state;
+    let global = &mut ctx.accounts.global_state.load_mut()?;
     if global.global_pending_burn_debt < request.wsxmr_amount {
         global.global_pending_burn_debt = 0;
     } else {
@@ -618,14 +618,14 @@ pub fn force_settle_burn(ctx: Context<ForceSettleBurn>) -> Result<()> {
 
     sync_vault_yield(
         &mut ctx.accounts.vault,
-        &mut ctx.accounts.global_state,
+        &mut *ctx.accounts.global_state.load_mut()?,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
         &ctx.accounts.pyth_susde_rr,
     )?;
 
     let vault = &mut ctx.accounts.vault;
-    let global = &mut ctx.accounts.global_state;
+    let global = &mut ctx.accounts.global_state.load_mut()?;
 
     // Par-capped settlement: user receives min(par, locked) — no reward, since
     // the LP never proposed. Unlike abort_burn, this pays collateral instead of
@@ -726,7 +726,7 @@ pub fn resolve_declined_proposal(
             vault.locked_collateral -= total_lock;
         }
 
-        let global = &mut ctx.accounts.global_state;
+        let global = &mut ctx.accounts.global_state.load_mut()?;
         if global.global_pending_burn_debt < request.wsxmr_amount {
             global.global_pending_burn_debt = 0;
         } else {
@@ -741,7 +741,7 @@ pub fn resolve_declined_proposal(
     }
 
     // Restore wsXMR to holder
-    let gs_bump = ctx.accounts.global_state.bump;
+    let gs_bump = ctx.accounts.global_state.load()?.bump;
     let gs_info = ctx.accounts.global_state.to_account_info();
     let seeds: &[&[u8]] = &[GLOBAL_STATE_SEED, &[gs_bump]];
     let signer_seeds = &[seeds];
@@ -782,7 +782,7 @@ pub fn abandon_proposed_burn(ctx: Context<AbandonProposedBurn>) -> Result<()> {
         vault.locked_collateral -= total_lock;
     }
 
-    let global = &mut ctx.accounts.global_state;
+    let global = &mut ctx.accounts.global_state.load_mut()?;
     if global.global_pending_burn_debt < request.wsxmr_amount {
         global.global_pending_burn_debt = 0;
     } else {
@@ -803,7 +803,7 @@ pub fn abandon_proposed_burn(ctx: Context<AbandonProposedBurn>) -> Result<()> {
 // ─── Accounts ────────────────────────────────────────────────────────────────
 
 #[derive(Accounts)]
-#[instruction(wsxmr_amount: u64, claim_commitment: [u8; 32], user_public_key: [u8; 32], user_view_key: [u8; 32])]
+#[instruction(wsxmr_amount: u64, claim_commitment: [u8; 32], user_public_key: [u8; 32], user_view_key: [u8; 32], request_id: [u8; 32])]
 pub struct RequestBurn<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
@@ -814,28 +814,23 @@ pub struct RequestBurn<'info> {
         bump = vault.bump,
         constraint = vault.active @ WrapSynthError::VaultNotActive,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         init,
         payer = user,
         space = BurnRequest::LEN,
-        seeds = [BURN_REQUEST_SEED, &anchor_lang::solana_program::keccak::hashv(&[
-            user.key().as_ref(),
-            vault.key().as_ref(),
-            &wsxmr_amount.to_le_bytes(),
-            &(global_state.request_nonce + 1).to_le_bytes(),
-        ]).0],
+        seeds = [BURN_REQUEST_SEED, request_id.as_ref()],
         bump,
     )]
-    pub burn_request: Account<'info, BurnRequest>,
+    pub burn_request: Box<Account<'info, BurnRequest>>,
 
     #[account(mut)]
     pub wsxmr_mint: InterfaceAccount<'info, Mint>,
@@ -862,7 +857,7 @@ pub struct ProposeHash<'info> {
         seeds = [VAULT_SEED, lp.key().as_ref()],
         bump = vault.bump,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
@@ -870,7 +865,7 @@ pub struct ProposeHash<'info> {
         bump = burn_request.bump,
         constraint = burn_request.lp_vault == vault.key() @ WrapSynthError::Unauthorized,
     )]
-    pub burn_request: Account<'info, BurnRequest>,
+    pub burn_request: Box<Account<'info, BurnRequest>>,
 }
 
 #[derive(Accounts)]
@@ -883,7 +878,7 @@ pub struct ConfirmMoneroLock<'info> {
         bump = burn_request.bump,
         constraint = burn_request.user == user.key() @ WrapSynthError::Unauthorized,
     )]
-    pub burn_request: Account<'info, BurnRequest>,
+    pub burn_request: Box<Account<'info, BurnRequest>>,
 }
 
 #[derive(Accounts)]
@@ -897,7 +892,7 @@ pub struct RevealBurnSecret<'info> {
         seeds = [BURN_REQUEST_SEED, burn_request.request_id.as_ref()],
         bump = burn_request.bump,
     )]
-    pub burn_request: Account<'info, BurnRequest>,
+    pub burn_request: Box<Account<'info, BurnRequest>>,
 }
 
 #[derive(Accounts)]
@@ -915,14 +910,14 @@ pub struct SettleBurn<'info> {
         bump = vault.bump,
         constraint = vault.key() == burn_request.lp_vault @ WrapSynthError::Unauthorized,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         mut,
@@ -930,14 +925,14 @@ pub struct SettleBurn<'info> {
         bump = burn_request.bump,
         constraint = burn_request.lp_vault == vault.key() @ WrapSynthError::Unauthorized,
     )]
-    pub burn_request: Account<'info, BurnRequest>,
+    pub burn_request: Box<Account<'info, BurnRequest>>,
 
     /// Pre-existing PendingReturns for burn user. Created via initialize_pending_returns.
     #[account(
         mut,
         constraint = user_pending_returns.owner == burn_request.user @ WrapSynthError::Unauthorized,
     )]
-    pub user_pending_returns: Account<'info, PendingReturns>,
+    pub user_pending_returns: Box<Account<'info, PendingReturns>>,
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
@@ -964,14 +959,14 @@ pub struct FinalizeBurn<'info> {
         bump = vault.bump,
         constraint = vault.key() == burn_request.lp_vault @ WrapSynthError::Unauthorized,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         mut,
@@ -979,14 +974,14 @@ pub struct FinalizeBurn<'info> {
         bump = burn_request.bump,
         constraint = burn_request.lp_vault == vault.key() @ WrapSynthError::Unauthorized,
     )]
-    pub burn_request: Account<'info, BurnRequest>,
+    pub burn_request: Box<Account<'info, BurnRequest>>,
 
     /// Pre-existing PendingReturns for burn user. Created via initialize_pending_returns.
     #[account(
         mut,
         constraint = user_pending_returns.owner == burn_request.user @ WrapSynthError::Unauthorized,
     )]
-    pub user_pending_returns: Account<'info, PendingReturns>,
+    pub user_pending_returns: Box<Account<'info, PendingReturns>>,
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
@@ -1012,14 +1007,14 @@ pub struct ClaimSlashedCollateral<'info> {
         bump = vault.bump,
         constraint = vault.key() == burn_request.lp_vault @ WrapSynthError::Unauthorized,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         mut,
@@ -1027,7 +1022,7 @@ pub struct ClaimSlashedCollateral<'info> {
         bump = burn_request.bump,
         constraint = burn_request.user == user.key() @ WrapSynthError::Unauthorized,
     )]
-    pub burn_request: Account<'info, BurnRequest>,
+    pub burn_request: Box<Account<'info, BurnRequest>>,
 
     #[account(
         mut,
@@ -1035,7 +1030,7 @@ pub struct ClaimSlashedCollateral<'info> {
         bump = user_pending_returns.bump,
         constraint = user_pending_returns.owner == user.key() @ WrapSynthError::Unauthorized,
     )]
-    pub user_pending_returns: Account<'info, PendingReturns>,
+    pub user_pending_returns: Box<Account<'info, PendingReturns>>,
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
@@ -1057,21 +1052,21 @@ pub struct AbortBurn<'info> {
         seeds = [VAULT_SEED, burn_request.lp_vault.as_ref()],
         bump = vault.bump,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         mut,
         seeds = [BURN_REQUEST_SEED, burn_request.request_id.as_ref()],
         bump = burn_request.bump,
     )]
-    pub burn_request: Account<'info, BurnRequest>,
+    pub burn_request: Box<Account<'info, BurnRequest>>,
 
     #[account(mut)]
     pub wsxmr_mint: InterfaceAccount<'info, Mint>,
@@ -1093,28 +1088,28 @@ pub struct ForceSettleBurn<'info> {
         seeds = [VAULT_SEED, burn_request.lp_vault.as_ref()],
         bump = vault.bump,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         mut,
         seeds = [BURN_REQUEST_SEED, burn_request.request_id.as_ref()],
         bump = burn_request.bump,
     )]
-    pub burn_request: Account<'info, BurnRequest>,
+    pub burn_request: Box<Account<'info, BurnRequest>>,
 
     /// Pre-existing PendingReturns for burn user.
     #[account(
         mut,
         constraint = user_pending_returns.owner == burn_request.user @ WrapSynthError::Unauthorized,
     )]
-    pub user_pending_returns: Account<'info, PendingReturns>,
+    pub user_pending_returns: Box<Account<'info, PendingReturns>>,
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
@@ -1137,21 +1132,21 @@ pub struct ResolveDeclinedProposal<'info> {
         seeds = [VAULT_SEED, burn_request.lp_vault.as_ref()],
         bump = vault.bump,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         mut,
         seeds = [BURN_REQUEST_SEED, burn_request.request_id.as_ref()],
         bump = burn_request.bump,
     )]
-    pub burn_request: Account<'info, BurnRequest>,
+    pub burn_request: Box<Account<'info, BurnRequest>>,
 
     #[account(mut)]
     pub wsxmr_mint: InterfaceAccount<'info, Mint>,
@@ -1172,14 +1167,14 @@ pub struct AbandonProposedBurn<'info> {
         seeds = [VAULT_SEED, lp.key().as_ref()],
         bump = vault.bump,
     )]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
 
     #[account(
         mut,
         seeds = [GLOBAL_STATE_SEED],
-        bump = global_state.bump,
+        bump,
     )]
-    pub global_state: Account<'info, GlobalState>,
+    pub global_state: AccountLoader<'info, GlobalState>,
 
     #[account(
         mut,
@@ -1187,7 +1182,7 @@ pub struct AbandonProposedBurn<'info> {
         bump = burn_request.bump,
         constraint = burn_request.lp_vault == vault.key() @ WrapSynthError::Unauthorized,
     )]
-    pub burn_request: Account<'info, BurnRequest>,
+    pub burn_request: Box<Account<'info, BurnRequest>>,
 
     pub system_program: Program<'info, System>,
 }

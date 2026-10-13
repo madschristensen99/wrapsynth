@@ -165,7 +165,7 @@
     % Six "why now" factors in 2 rows of 3
     
     % Row 1
-    \begin{scope}[shift={(-4.5,1.8)}]
+    \begin{scope}[shift={(-4.7,1.8)}]
       \fill[lightbg,rounded corners=12pt] (-2.3,-1.2) rectangle (2.3,1.2);
       \draw[primary,line width=0.8pt,rounded corners=12pt] (-2.3,-1.2) rectangle (2.3,1.2);
       \node[text=primary,font=\Large] at (0,0.55) {\faChartLine};
@@ -179,15 +179,15 @@
       \node[text=textprimary,font=\small\bfseries,align=center,text width=4cm] at (0,-0.35) {CEX delistings\\accelerating};
     \end{scope}
     
-    \begin{scope}[shift={(4.5,1.8)}]
+    \begin{scope}[shift={(4.7,1.8)}]
       \fill[lightbg,rounded corners=12pt] (-2.3,-1.2) rectangle (2.3,1.2);
       \draw[primary,line width=0.8pt,rounded corners=12pt] (-2.3,-1.2) rectangle (2.3,1.2);
       \node[text=primary,font=\Large] at (0,0.55) {\faRocket};
-      \node[text=textprimary,font=\small\bfseries,align=center,text width=4cm] at (0,-0.35) {XMR to \$4000 on Jupiter\\speculative demand proven};
+      \node[text=textprimary,font=\small\bfseries,align=center,text width=4cm] at (0,-0.35) {XMR to \$4000 on Jupiter};
     \end{scope}
     
     % Row 2
-    \begin{scope}[shift={(-4.5,-1.8)}]
+    \begin{scope}[shift={(-4.7,-1.8)}]
       \fill[lightbg,rounded corners=12pt] (-2.3,-1.2) rectangle (2.3,1.2);
       \draw[primary,line width=0.8pt,rounded corners=12pt] (-2.3,-1.2) rectangle (2.3,1.2);
       \node[text=primary,font=\Large] at (0,0.55) {\faNetworkWired};
@@ -201,7 +201,7 @@
       \node[text=textprimary,font=\small\bfseries,align=center,text width=4cm] at (0,-0.35) {Atomic swap tech\\proven and audited};
     \end{scope}
     
-    \begin{scope}[shift={(4.5,-1.8)}]
+    \begin{scope}[shift={(4.7,-1.8)}]
       \fill[lightbg,rounded corners=12pt] (-2.3,-1.2) rectangle (2.3,1.2);
       \draw[primary,line width=0.8pt,rounded corners=12pt] (-2.3,-1.2) rectangle (2.3,1.2);
       \node[text=primary,font=\Large] at (0,0.55) {\faTrophy};
@@ -230,14 +230,14 @@
     \draw[primary,line width=1.5pt,rounded corners=12pt] (-2.1,0) rectangle (2.1,4.2);
     \node[text=primary,font=\Huge] at (0,3) {\faLock};
     \node[text=textprimary,font=\large\bfseries,align=center] at (0,1.8) {Overcollateralized\\LP Vaults};
-    \node[text=textsecondary,font=\scriptsize,align=center,text width=3.5cm] at (0,0.6) {USDe collateral (HyperEVM)\\JitoSOL (Solana)\\On-chain slashing};
+    \node[text=textsecondary,font=\scriptsize,align=center,text width=3.5cm] at (0,0.6) {USDe + JitoSOL\\On-chain slashing};
     
     % Multi-chain
     \fill[lightbg,rounded corners=12pt] (2.6,0) rectangle (6.8,4.2);
     \draw[primary,line width=1.5pt,rounded corners=12pt] (2.6,0) rectangle (6.8,4.2);
     \node[text=primary,font=\Huge] at (4.7,3) {\faLink};
     \node[text=textprimary,font=\large\bfseries,align=center] at (4.7,1.8) {Multi-Chain\\Wrapped Tokens};
-    \node[text=textsecondary,font=\scriptsize,align=center,text width=3.5cm] at (4.7,0.6) {HyperEVM (ERC-20 + HIP-1)\\Solana (SPL)\\Robinhood Chain (Q4)};
+    \node[text=textsecondary,font=\scriptsize,align=center,text width=3.5cm] at (4.7,0.6) {HyperEVM + Solana + Robinhood (Q4)};
   \end{tikzpicture}
   
 \end{frame}
@@ -258,16 +258,16 @@
     
     % Three columns of proof points
     \node[text=textprimary,font=\small\bfseries,align=center] at (-4,1.8) {Contracts};
-    \node[text=textsecondary,font=\scriptsize,align=center,text width=3.5cm] at (-4,0.8) {wsXmrHub (Diamond)\\VaultFacet\\MintFacet\\BurnFacet\\LiquidationFacet\\YieldFacet\\RedStoneOracleFacet};
+    \node[text=textsecondary,font=\scriptsize,align=center,text width=3.5cm] at (-4,0.8) {wsXmrHub diamond\\+ 6 facets};
     
     \node[text=textprimary,font=\small\bfseries,align=center] at (0,1.8) {Collateral};
-    \node[text=textsecondary,font=\scriptsize,align=center,text width=3.5cm] at (0,0.8) {USDe via HyperLend\\10\% raw-USDe buffer\\150/180/120 ratios\\On-chain slashing\\Trustless settlement};
+    \node[text=textsecondary,font=\scriptsize,align=center,text width=3.5cm] at (0,0.8) {USDe via HyperLend\\150/180/120 ratios\\On-chain slashing};
     
     \node[text=textprimary,font=\small\bfseries,align=center] at (4,1.8) {Security};
-    \node[text=textsecondary,font=\scriptsize,align=center,text width=3.5cm] at (4,0.8) {lockHub() executed\\lockDeployer() executed\\EIP-1153 delegate context\\633-line invariant suite\\Two security reviews};
+    \node[text=textsecondary,font=\scriptsize,align=center,text width=3.5cm] at (4,0.8) {Hub + deployer locked\\633-line invariant suite\\2 security reviews};
     
     % Bottom emphasis
-    \node[text=primary,font=\normalsize\bfseries,align=center] at (0,-1.8) {Same settlement model, now on the chain where XMR demand actually trades};
+    \node[text=primary,font=\normalsize\bfseries,align=center] at (0,-1.8) {Same settlement model --- now where XMR demand trades};
     \node[text=textsecondary,font=\small,align=center] at (0,-2.5) {Demo: wrapsynth.com};
     
   \end{tikzpicture}
@@ -297,7 +297,7 @@
     \fill[lightbg,rounded corners=15pt] (-7,-0.4) rectangle (7,0.7);
     \draw[primary,line width=0.5pt,rounded corners=15pt] (-7,-0.4) rectangle (7,0.7);
     \node[text=primary,font=\Large] at (-6,0.15) {\faCubes};
-    \node[text=textprimary,font=\large\bfseries,align=left,anchor=west] at (-5.2,0.15) {Full ERC-20 composability vs dead-end HyperCore-only assets};
+    \node[text=textprimary,font=\large\bfseries,align=left,anchor=west] at (-5.2,0.15) {Full ERC-20 composability vs HyperCore-only assets};
     
     % Multi-chain
     \fill[lightbg,rounded corners=15pt] (-7,-1.7) rectangle (7,-0.6);
@@ -390,16 +390,16 @@
     % Key market figures
     
     % Wagyu volume
-    \node[text=primary,font=\fontsize{42}{50}\selectfont\bfseries] at (-5,2) {\$700M+};
-    \node[text=textsecondary,font=\small,align=center] at (-5,0.8) {Wagyu cumulative volume\\(Hyperliquid, Jan--Aug 2026)};
+    \node[text=primary,font=\fontsize{32}{38}\selectfont\bfseries] at (-5.2,2) {\$700M+};
+    \node[text=textsecondary,font=\small,align=center] at (-5.2,0.8) {Wagyu cumulative volume\\(Hyperliquid, Jan--Aug 2026)};
     
     % WXMR daily
-    \node[text=primary,font=\fontsize{42}{50}\selectfont\bfseries] at (0,2) {\$12M/day};
+    \node[text=primary,font=\fontsize{32}{38}\selectfont\bfseries] at (0,2) {\$12M/day};
     \node[text=textsecondary,font=\small,align=center] at (0,0.8) {WXMR trading volume\\(Solana / Jupiter)};
     
     % Delistings
-    \node[text=primary,font=\fontsize{42}{50}\selectfont\bfseries] at (5,2) {Accelerating};
-    \node[text=textsecondary,font=\small,align=center] at (5,0.8) {CEX XMR delistings\\(Binance, Kraken EEA, others)};
+    \node[text=primary,font=\fontsize{24}{28}\selectfont\bfseries] at (5.2,2) {priv/acc};
+    \node[text=textsecondary,font=\small,align=center] at (5.2,0.8) {CEX XMR delistings\\(Binance, Kraken EEA, others)};
     
     % Bottom line
     \node[text=textprimary,font=\large\bfseries,align=center] at (0,-1.5) {Demand is proven. The trustless solution doesn't exist yet.};

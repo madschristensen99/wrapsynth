@@ -12,12 +12,12 @@
  * the LP reveals their secret to finalize. The user combines secrets to sweep XMR.
  */
 
-import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG, MONERO_CONFIG } from './config.js?v=3.12';
-import { readHub, writeHub, writeHubUnsafe, readWsxmr, writeWsxmr, writeWsxmrUnsafe, watchContractEvent, getUserAddress, getPublicClient } from './viemClient.js?v=3.12';
+import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG, MONERO_CONFIG } from './config.js?v=3.21';
+import { readHub, writeHub, writeHubUnsafe, readWsxmr, writeWsxmr, writeWsxmrUnsafe, watchContractEvent, getUserAddress, getPublicClient } from './viemClient.js?v=3.21';
 import { getPhantomAgent } from './phantomAgent.js?v=3.12';
 import { derivePerBurnKeySet } from './seedManager.js?v=3.12';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js?v=3.12';
-import { updateBurnProgress, showBurnVerificationLoading, showBurnVerificationDetails, showBurnVerificationManual, showBurnAddressPanel, showBurnKeysFallback, showBurnScanProgress, showBurnXmrFound, updateCancelBurnButton } from './ui.js?v=3.12';
+import { updateBurnProgress, showBurnVerificationLoading, showBurnVerificationDetails, showBurnVerificationManual, showBurnAddressPanel, showBurnKeysFallback, showBurnScanProgress, showBurnXmrFound, updateCancelBurnButton } from './ui.js?v=3.21';
 import { getMoneroRpc } from './moneroRpc.js?v=3.12';
 import { getCombinedKeysForImport, toLeHex } from './burnSweep.js?v=3.12';
 import { keccak256, toHex } from 'https://esm.sh/viem@2.7.0';
@@ -61,7 +61,7 @@ export class BurnFlow {
         const lpSecret = await this.waitForLPFinalize();
         
         // Burn is functionally complete — fire animation and banner now
-        const { showBurnComplete } = await import('./ui.js?v=3.12');
+        const { showBurnComplete } = await import('./ui.js?v=3.21');
         showBurnComplete(this.wsxmrAmount);
         
         // Sweep is a post-burn claim step — don't let failures block completion.
@@ -377,7 +377,7 @@ export class BurnFlow {
 
         // Second, try past events check (may fail on flaky RPCs)
         try {
-            const { getPastEvents, getBlockNumber } = await import('./viemClient.js?v=3.12');
+            const { getPastEvents, getBlockNumber } = await import('./viemClient.js?v=3.21');
             const currentBlock = await getBlockNumber();
             const fromBlock = currentBlock - 1000n;
 
@@ -451,7 +451,7 @@ export class BurnFlow {
 
             // Method 2: Event query fallback
             try {
-                const { getPastEvents, getBlockNumber } = await import('./viemClient.js?v=3.12');
+                const { getPastEvents, getBlockNumber } = await import('./viemClient.js?v=3.21');
                 const currentBlock = await getBlockNumber();
                 const fromBlock = currentBlock - 200n;
                 const events = await getPastEvents(
@@ -501,7 +501,7 @@ export class BurnFlow {
                         const burnReq = await readHub('getBurnRequest', [this.requestId]);
                         const status = Number(burnReq.status);
                         if (status === 1) {
-                            const { showConfirmModal, showError, showSuccess } = await import('./ui.js?v=3.12');
+                            const { showConfirmModal, showError, showSuccess } = await import('./ui.js?v=3.21');
                             const confirmed = await showConfirmModal(
                                 'LP Did Not Respond',
                                 '<p>The LP did not propose a secret hash in time. You can abort the burn to recover your wsXMR.</p><p>Would you like to abort now?</p>'
@@ -645,7 +645,7 @@ export class BurnFlow {
                     const burnReq = await readHub('getBurnRequest', [this.requestId]);
                     const status = Number(burnReq.status);
                     if (status !== 2) {
-                        const { showError } = await import('./ui.js?v=3.12');
+                        const { showError } = await import('./ui.js?v=3.21');
                         if (status === 1) {
                             showError('Cannot Confirm Yet', 'The LP has not yet proposed a secret hash. Please wait for the LP to send XMR and commit on-chain.');
                         } else if (status === 3) {
@@ -844,13 +844,13 @@ export class BurnFlow {
                             confirmed = true;
                             cleanup();
                             await closeWallet();
-                            const { showBurnRestorePanel, showSuccess, showError } = await import('./ui.js?v=3.12');
+                            const { showBurnRestorePanel, showSuccess, showError } = await import('./ui.js?v=3.21');
                             showBurnRestorePanel({
                                 onRestore: async () => {
                                     try {
                                         const cancelled = await this.cancel();
                                         if (cancelled === false) return;
-                                        const { resetBurnUI } = await import('./main.js?v=' + Date.now());
+                                        const { resetBurnUI } = await import('./main.js?v=3.21' + Date.now());
                                         resetBurnUI();
                                         showSuccess('wsXMR Restored', 'Your wsXMR has been restored to your wallet.');
                                     } catch (err) {
@@ -883,7 +883,7 @@ export class BurnFlow {
         console.log('Waiting for LP to finalize burn...');
 
         // First, check if BurnFinalized event was already emitted in the past
-        const { getPastEvents, getBlockNumber } = await import('./viemClient.js?v=3.12');
+        const { getPastEvents, getBlockNumber } = await import('./viemClient.js?v=3.21');
         const currentBlock = await getBlockNumber();
         const fromBlock = currentBlock - 1000n; // Check last ~1000 blocks
         
@@ -960,7 +960,7 @@ export class BurnFlow {
                     console.warn('[Burn Poll] Status check error:', e.message);
                 }
                 try {
-                    const { getPastEvents, getBlockNumber } = await import('./viemClient.js?v=3.12');
+                    const { getPastEvents, getBlockNumber } = await import('./viemClient.js?v=3.21');
                     const currentBlock = await getBlockNumber();
                     const fromBlock = currentBlock - 200n;
                     const events = await getPastEvents(
@@ -1003,7 +1003,7 @@ export class BurnFlow {
                                 return;
                             }
                         } else if (status === 3) {
-                            const { showError, showConfirmModal } = await import('./ui.js?v=3.12');
+                            const { showError, showConfirmModal } = await import('./ui.js?v=3.21');
                             const revealed = burnReq.revealedSecret && burnReq.revealedSecret !== '0x0000000000000000000000000000000000000000000000000000000000000000';
                             if (revealed) {
                                 // LP revealed the secret but never settled — the burn is settleable
@@ -1016,7 +1016,7 @@ export class BurnFlow {
                                 if (confirmed) {
                                     try {
                                         await writeHub('settleBurn', [this.requestId]);
-                                        const { showSuccess } = await import('./ui.js?v=3.12');
+                                        const { showSuccess } = await import('./ui.js?v=3.21');
                                         showSuccess('Burn Settled', 'Your reward has been queued. Withdraw it via Pending Returns.');
                                         resolve(burnReq.revealedSecret);
                                         return;
@@ -1035,8 +1035,8 @@ export class BurnFlow {
                             if (confirmed) {
                                 try {
                                     await this.claimSlashed();
-                                    const { showSuccess } = await import('./ui.js?v=3.12');
-                                    showSuccess('Slashed Collateral Claimed', 'Your sDAI has been queued. Withdraw it via Pending Returns.');
+                                    const { showSuccess } = await import('./ui.js?v=3.21');
+                                    showSuccess('Slashed Collateral Claimed', 'Your USDe has been queued. Withdraw it via Pending Returns.');
                                     resolve(null);
                                     return;
                                 } catch (claimErr) {
@@ -1051,7 +1051,7 @@ export class BurnFlow {
                             return;
                         } else if (status === 1) {
                             // REQUESTED — LP never proposed, user can abort
-                            const { showConfirmModal } = await import('./ui.js?v=3.12');
+                            const { showConfirmModal } = await import('./ui.js?v=3.21');
                             const confirmed = await showConfirmModal(
                                 'LP Did Not Respond',
                                 '<p>The LP did not respond to your burn request in time. You can abort the burn to recover your wsXMR.</p><p>Would you like to abort now?</p>'
@@ -1059,13 +1059,13 @@ export class BurnFlow {
                             if (confirmed) {
                                 try {
                                     await writeHub('abortBurn', [this.requestId]);
-                                    const { showSuccess } = await import('./ui.js?v=3.12');
+                                    const { showSuccess } = await import('./ui.js?v=3.21');
                                     showSuccess('Burn Aborted', 'Your wsXMR has been restored.');
                                     resolve(null);
                                     return;
                                 } catch (abortErr) {
                                     if (abortErr.message && abortErr.message.includes('DeadlineNotExpired')) {
-                                        const { showError } = await import('./ui.js?v=3.12');
+                                        const { showError } = await import('./ui.js?v=3.21');
                                         showError('Cannot Abort Yet', 'The burn deadline has not been reached yet.');
                                     } else {
                                         throw abortErr;
@@ -1076,7 +1076,7 @@ export class BurnFlow {
                             return;
                         } else if (status === 2) {
                             // PROPOSED — LP proposed but didn't follow through, anyone can resolve
-                            const { showConfirmModal } = await import('./ui.js?v=3.12');
+                            const { showConfirmModal } = await import('./ui.js?v=3.21');
                             const confirmed = await showConfirmModal(
                                 'LP Proposal Expired',
                                 '<p>The LP proposed a secret hash but did not lock XMR in time. You can resolve this to recover your wsXMR.</p><p>Would you like to resolve now?</p>'
@@ -1084,13 +1084,13 @@ export class BurnFlow {
                             if (confirmed) {
                                 try {
                                     await writeHub('resolveDeclinedProposal', [this.requestId, this.perBurnKeySet.secret]);
-                                    const { showSuccess } = await import('./ui.js?v=3.12');
+                                    const { showSuccess } = await import('./ui.js?v=3.21');
                                     showSuccess('Burn Resolved', 'Your wsXMR has been restored.');
                                     resolve(null);
                                     return;
                                 } catch (resolveErr) {
                                     if (resolveErr.message && resolveErr.message.includes('DeadlineNotExpired')) {
-                                        const { showError } = await import('./ui.js?v=3.12');
+                                        const { showError } = await import('./ui.js?v=3.21');
                                         showError('Cannot Resolve Yet', 'The burn deadline has not been reached yet.');
                                     } else {
                                         throw resolveErr;
@@ -1173,7 +1173,7 @@ export class BurnFlow {
 
         // Refresh vault data so mint capacity reflects the burned debt
         try {
-            const { loadVaults } = await import('./main.js?v=' + Date.now());
+            const { loadVaults } = await import('./main.js?v=3.21' + Date.now());
             if (typeof loadVaults === 'function') {
                 console.log('[Burn] Refreshing vault data after burn completion...');
                 loadVaults();
@@ -1222,13 +1222,13 @@ export class BurnFlow {
                 const status = Number(burnReq.status);
                 // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=COMPLETED, 5=SLASHED, 6=CANCELLED
                 const deadlineBlock = Number(burnReq.deadline);
-                const { showError } = await import('./ui.js?v=3.12');
+                const { showError } = await import('./ui.js?v=3.21');
 
                 // Pre-check: is the deadline still in the future?
                 let deadlinePassed = true;
                 if (deadlineBlock > 0) {
                     try {
-                        const currentBlock = Number(await (await import('./viemClient.js?v=3.12')).getPublicClient().getBlockNumber());
+                        const currentBlock = Number(await (await import('./viemClient.js?v=3.21')).getPublicClient().getBlockNumber());
                         const blocksRemaining = deadlineBlock - currentBlock;
                         if (blocksRemaining > 0) {
                             deadlinePassed = false;
@@ -1314,7 +1314,7 @@ export class BurnFlow {
                         await writeHub('resolveDeclinedProposal', [this.requestId, this.perBurnKeySet.secret]);
                         console.log('Late claim: wsXMR restored via resolveDeclinedProposal (userSecret revealed for LP sweep)');
                     } else if (abandoned) {
-                        const { showError } = await import('./ui.js?v=3.12');
+                        const { showError } = await import('./ui.js?v=3.21');
                         showError('Claim Available', 'This burn was abandoned by the LP. Your wsXMR is still claimable, but your burn secret is unavailable — restore your seed phrase and retry.');
                         return false;
                     } else {
@@ -1326,7 +1326,7 @@ export class BurnFlow {
                 }
             } catch (error) {
                 console.error('Error canceling burn on EVM:', error);
-                const { showError } = await import('./ui.js?v=3.12');
+                const { showError } = await import('./ui.js?v=3.21');
                 showError('Cancel Failed', error.message || 'Failed to cancel burn');
                 return false;
             }
@@ -1487,24 +1487,24 @@ export class BurnFlow {
                 await this.waitForLPProposal();
                 await this.confirmMoneroLock();
                 const lpSecret1 = await this.waitForLPFinalize();
-                { const { showBurnComplete } = await import('./ui.js?v=3.12'); showBurnComplete(this.wsxmrAmount); }
+                { const { showBurnComplete } = await import('./ui.js?v=3.21'); showBurnComplete(this.wsxmrAmount); }
                 await this.sweepXMR(lpSecret1);
                 break;
             case 'confirm-lock':
                 await this.confirmMoneroLock();
                 const lpSecret2 = await this.waitForLPFinalize();
-                { const { showBurnComplete } = await import('./ui.js?v=3.12'); showBurnComplete(this.wsxmrAmount); }
+                { const { showBurnComplete } = await import('./ui.js?v=3.21'); showBurnComplete(this.wsxmrAmount); }
                 await this.sweepXMR(lpSecret2);
                 break;
             case 'lp-finalize':
                 const lpSecret3 = await this.waitForLPFinalize();
-                { const { showBurnComplete } = await import('./ui.js?v=3.12'); showBurnComplete(this.wsxmrAmount); }
+                { const { showBurnComplete } = await import('./ui.js?v=3.21'); showBurnComplete(this.wsxmrAmount); }
                 await this.sweepXMR(lpSecret3);
                 break;
             case 'sweeping':
             case 'sweep-failed': {
                 // Burn is already finalized on-chain — show completion banner immediately
-                const { showBurnComplete } = await import('./ui.js?v=3.12');
+                const { showBurnComplete } = await import('./ui.js?v=3.21');
                 showBurnComplete(this.wsxmrAmount);
                 // Prefer the revealed secret straight from contract state — reliable
                 // even when event scans fail on flaky RPCs.
@@ -1517,7 +1517,7 @@ export class BurnFlow {
                     console.warn('[Burn Resume] getBurnRequest failed, falling back to event scan:', e.message);
                 }
                 if (!lpSecret) {
-                    const { getPastEvents, getBlockNumber } = await import('./viemClient.js?v=3.12');
+                    const { getPastEvents, getBlockNumber } = await import('./viemClient.js?v=3.21');
                     const currentBlock = await getBlockNumber();
                     const fromBlock = currentBlock - 10000n;
                     const pastEvents = await getPastEvents(
