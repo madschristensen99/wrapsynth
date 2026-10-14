@@ -5,37 +5,35 @@
 ///
 /// # DUAL-SOURCE ORACLE DESIGN: SOURCE-OF-TRUTH RULES
 ///
-/// This module implements a two-source oracle design for sUSDe collateral:
+/// This module implements a two-source oracle design for QQQx collateral:
 ///
-/// 1. **Market Price (Pyth sUSDe/USD)** — THE SOLVENCY SOURCE OF TRUTH
-///    - Used for: mint collateralization checks, burn health checks, liquidation thresholds,
-///      yield buffer min-collateral USD calculations
-///    - Function: `get_collateral_price(&pyth_account, max_age, &SUSDE_USD_FEED_ID)`
-///    - Why: Reflects real market conditions including depegs. This is the price at which
-///      the protocol can actually liquidate positions or realize collateral value.
+/// 1. **Market Price (Pyth Crypto.QQQX/USD)** — THE SOLVENCY SOURCE OF TRUTH
+///    - Used for: mint collateralization checks, burn health checks, liquidation
+///      thresholds, co-LP sizing
+///    - Function: `get_collateral_price(&pyth_account, max_age, &QQQX_USD_FEED_ID)`
+///    - Why: Reflects real market conditions 24/7 (crypto-class feed, no market
+///      hours). This is the price at which the protocol can actually realize
+///      collateral value, including issuer/distress discounts.
 ///
-/// 2. **Redemption Rate (Pyth sUSDe→USDe)** — YIELD ACCOUNTING ONLY
-///    - Used for: yield principal/current-value accounting (tracking staking rewards)
-///    - Function: `get_collateral_redemption_rate(&pyth_rr_account)`
-///    - Why: Monotonically increasing (yield accrues), but CANNOT reflect depegs.
-///      Using this for solvency would blind the protocol to tail risk scenarios where
-///      sUSDe trades below its redemption value (liquidity crisis, smart contract risk, etc).
+/// 2. **Fair Value (Pyth QQQX/USD EMA)** — DISCOUNT GUARD ONLY
+///    - Used for: mint-time discount guard (QQQx trading sharply below its own
+///      EMA signals issuer/custody distress or a market break)
+///    - Function: `get_collateral_ema_price(&pyth_collateral_account)`
+///    - Why: Pyth's EMA is published inside the same QQQX/USD message, so no
+///      second feed account is needed. It is a robust smoothed fair-value
+///      proxy and — unlike an underlying-QQQ feed — it already reflects the
+///      Token-2022 scaledUiAmount multiplier (dividends/splits).
 ///
-/// **CRITICAL**: Never use the redemption rate for any solvency/health calculation. The
-/// redemption rate is purely for measuring yield (current_value - principal). All debt
-/// safety checks MUST use the market price to protect against depeg scenarios.
+/// **CRITICAL**: Never use the EMA for any solvency/health calculation. It is
+/// purely a fair-value reference for the discount guard. All debt safety
+/// checks MUST use the market spot price.
 ///
-/// # DEPEG GUARD
+/// # DISCOUNT GUARD
 ///
-/// The dual-source design enables a depeg detection mechanism:
-/// - Fair value = sUSDe→USDe redemption rate (≈ USD, since USDe is pegged 1:1)
-/// - Market price = sUSDe/USD Pyth feed (actual trading price)
-/// - If market < fair_value × (1 - DEPEG_TOLERANCE_BPS/10000), sUSDe is depegging
-/// - Action: Pause new mints (no new debt against depegging asset), allow liquidations/burns
-///
-/// Note: using the redemption rate directly as fair value (instead of rate × USDe/USD)
-/// errs toward triggering the guard if USDe itself depegs — the market price drops while
-/// the rate stays near 1.0 — which is the conservative (safe) direction.
+/// - Fair value = QQQX/USD EMA (24/7, multiplier-aware)
+/// - Threshold = EMA × (10000 - DEPEG_TOLERANCE_BPS) / 10000
+/// - If spot < threshold → acute discount → pause new mints
+///   (liquidations/burns still settle at market spot)
 ///
 /// # PYTH PRICEUPDATE V2 ON-CHAIN LAYOUT
 ///
@@ -55,7 +53,6 @@
 ///
 /// This layout is pinned to pyth-solana-receiver-sdk v0.2.x. If the SDK version changes,
 /// verify the discriminator and layout against live mainnet feeds via Hermes API.
-
 use anchor_lang::prelude::*;
 
 use crate::constants::*;
@@ -101,27 +98,34 @@ pub fn parse_pyth_price(account: &AccountInfo) -> Result<PythPrice> {
     // prev_publish_time at offset+60..+68, skip it
     let ema_price = i64::from_le_bytes(data[offset + 68..offset + 76].try_into().unwrap());
 
-    Ok(PythPrice { feed_id, price, conf, exponent, publish_time, ema_price })
+    Ok(PythPrice {
+        feed_id,
+        price,
+        conf,
+        exponent,
+        publish_time,
+        ema_price,
+    })
 }
 
 /// Normalize a Pyth price (with exponent) to 18-decimal USD precision.
 /// Mirrors EVM VaultManager normalization exactly.
-fn normalize_pyth_price(price: i64, exponent: i32) -> Result<u64> {
+fn normalize_pyth_price(price: i64, exponent: i32) -> Result<u128> {
     if price <= 0 {
         return err!(WrapSynthError::StalePrice);
     }
-    let p = price as u64;
-    let normalized: u64 = if exponent >= 0 {
-        p.checked_mul(10u64.pow(exponent as u32))
+    let p = price as u128;
+    let normalized: u128 = if exponent >= 0 {
+        p.checked_mul(10u128.pow(exponent as u32))
             .ok_or(WrapSynthError::MathOverflow)?
-            .checked_mul(1_000_000_000_000_000_000u64)
+            .checked_mul(1_000_000_000_000_000_000u128)
             .ok_or(WrapSynthError::MathOverflow)?
     } else {
         let abs_exp = (-exponent) as u32;
         if abs_exp >= 18 {
-            p / 10u64.pow(abs_exp - 18)
+            p / 10u128.pow(abs_exp - 18)
         } else {
-            p.checked_mul(10u64.pow(18 - abs_exp))
+            p.checked_mul(10u128.pow(18 - abs_exp))
                 .ok_or(WrapSynthError::MathOverflow)?
         }
     };
@@ -134,7 +138,10 @@ fn validate_price(parsed: &PythPrice, max_age_secs: u64, expected_feed: &[u8; 32
     require!(parsed.feed_id == *expected_feed, WrapSynthError::StalePrice);
     let clock = Clock::get()?;
     let age = clock.unix_timestamp.saturating_sub(parsed.publish_time);
-    require!(age >= 0 && (age as u64) <= max_age_secs, WrapSynthError::StalePrice);
+    require!(
+        age >= 0 && (age as u64) <= max_age_secs,
+        WrapSynthError::StalePrice
+    );
     // Confidence check: conf * 10 <= price
     require!(
         parsed.conf.saturating_mul(10) <= parsed.price as u64,
@@ -144,92 +151,55 @@ fn validate_price(parsed: &PythPrice, max_age_secs: u64, expected_feed: &[u8; 32
 }
 
 /// Fetch XMR/USD spot price, normalized to 18 decimals.
-pub fn get_xmr_price(price_account: &AccountInfo, max_age_secs: u64) -> Result<u64> {
+pub fn get_xmr_price(price_account: &AccountInfo, max_age_secs: u64) -> Result<u128> {
     let parsed = parse_pyth_price(price_account)?;
     validate_price(&parsed, max_age_secs, &XMR_USD_FEED_ID)?;
     normalize_pyth_price(parsed.price, parsed.exponent)
 }
 
-/// Fetch XMR EMA price, normalized to 18 decimals.
-///
-/// **EMA DIVERGENCE NOTE**: This function reads Pyth's published EMA price directly from
-/// the price feed message, NOT a locally-maintained EMA accumulator. This differs from the
-/// EVM VaultManager's `xmrEmaPrice` which maintains a 10-period EMA with alpha=182/1000.
-///
-/// Pyth's EMA uses their own smoothing window (typically confidence-weighted), so the
-/// buy-and-burn trigger condition (spot <= ema * 99/100) keys off Pyth's EMA semantics,
-/// not the EVM's 10-period moving average. This behavioral difference is acceptable for
-/// Solana deployment but should be reviewed if cross-chain EMA consistency is required.
-pub fn get_xmr_ema_price(price_account: &AccountInfo, max_age_secs: u64) -> Result<u64> {
-    let parsed = parse_pyth_price(price_account)?;
-    // Freshness validated via spot price publish_time (same message)
-    let clock = Clock::get()?;
-    let age = clock.unix_timestamp.saturating_sub(parsed.publish_time);
-    require!(age >= 0 && (age as u64) <= max_age_secs, WrapSynthError::StalePrice);
-    require!(parsed.feed_id == XMR_USD_FEED_ID, WrapSynthError::StalePrice);
-    normalize_pyth_price(parsed.ema_price, parsed.exponent)
-}
-
-/// Fetch collateral/USD price, normalized to 18 decimals.
+/// Fetch QQQx collateral/USD price, normalized to 18 decimals.
 pub fn get_collateral_price(
     price_account: &AccountInfo,
     max_age_secs: u64,
     feed_id: &[u8; 32],
-) -> Result<u64> {
+) -> Result<u128> {
     let parsed = parse_pyth_price(price_account)?;
     validate_price(&parsed, max_age_secs, feed_id)?;
     normalize_pyth_price(parsed.price, parsed.exponent)
 }
 
-/// Read the sUSDe→USDe redemption rate from the Pyth SUSDE/USDE.RR feed.
+/// Fetch the QQQx EMA price from the same QQQX/USD message.
 ///
-/// Returns the rate in 18-decimal precision (USDe per sUSDe share). The rate
-/// grows as Ethena staking rewards accrue — the yield-accounting analog of the
-/// JitoSOL stake-pool exchange rate, but read from Pyth so no external CPI is
-/// needed and the existing PriceUpdateV2 parsing is reused.
-pub fn get_collateral_redemption_rate(price_account: &AccountInfo) -> Result<u64> {
+/// Used as the fair-value reference for the discount guard: Pyth's EMA is a
+/// 24/7 available smoothed price that captures the scaledUiAmount fair value
+/// without depending on the slower QQQX/QQQ.RR redemption-rate feed.
+pub fn get_collateral_ema_price(price_account: &AccountInfo, max_age_secs: u64) -> Result<u128> {
     let parsed = parse_pyth_price(price_account)?;
-    validate_price(&parsed, PRICE_MAX_AGE, &SUSDE_USDE_RR_FEED_ID)?;
-    normalize_pyth_price(parsed.price, parsed.exponent)
+    validate_price(&parsed, max_age_secs, &QQQX_USD_FEED_ID)?;
+    normalize_pyth_price(parsed.ema_price, parsed.exponent)
 }
 
-/// Check for sUSDe depeg condition.
+/// Check for QQQx market discount (distress) condition.
 ///
-/// Compares the market sUSDe/USD price against the redemption rate (fair value,
-/// ≈ USD since USDe is pegged 1:1). If the market price diverges below the fair
-/// value by more than DEPEG_TOLERANCE_BPS, returns Err to signal a depeg.
-///
-/// **Depeg Logic**:
-/// - Fair value = sUSDe→USDe redemption rate (18 decimals, ≈ $1)
-/// - Threshold = fair_value × (10000 - DEPEG_TOLERANCE_BPS) / 10000
-/// - If market_price < threshold, sUSDe is depegging
-///
-/// **Action on depeg**: Caller should pause new mints (no new debt against depegging asset)
-/// while still allowing liquidations and burns at the market price.
+/// Compares the market QQQX/USD spot price against its own EMA (fair-value
+/// proxy). If spot trades more than DEPEG_TOLERANCE_BPS below the EMA, QQQx is
+/// under acute discount pressure — likely issuer/custody distress — and new
+/// mints must pause. Liquidations and burns stay permissionless (they use the
+/// market price regardless).
 ///
 /// # Arguments
-/// * `susde_market_price` - sUSDe/USD from Pyth (18 decimals)
-/// * `redemption_rate` - sUSDe→USDe from Pyth SUSDE/USDE.RR (18 decimals)
-pub fn check_depeg_guard(
-    susde_market_price: u64,
-    redemption_rate: u64,
-) -> Result<()> {
-    // Fair value ≈ redemption rate (USDe is pegged 1:1 to USD)
-    let fair_value = redemption_rate;
-
-    // Threshold = fair_value × (10000 - tolerance_bps) / 10000
-    let threshold = (fair_value as u128)
+/// * `qqqx_market_price` - QQQX/USD spot from Pyth (18 decimals)
+/// * `qqqx_ema_price` - QQQX/USD EMA from Pyth (18 decimals)
+pub fn check_discount_guard(qqqx_market_price: u128, qqqx_ema_price: u128) -> Result<()> {
+    let threshold = qqqx_ema_price
         .checked_mul((BPS_DENOMINATOR - DEPEG_TOLERANCE_BPS) as u128)
         .ok_or(WrapSynthError::MathOverflow)?
         .checked_div(BPS_DENOMINATOR as u128)
         .ok_or(WrapSynthError::MathOverflow)?;
 
-    require!(threshold <= u64::MAX as u128, WrapSynthError::MathOverflow);
-    let threshold = threshold as u64;
-
-    // If market price < threshold, depeg detected
+    // If market spot < threshold, distress discount detected
     require!(
-        susde_market_price >= threshold,
+        qqqx_market_price >= threshold,
         WrapSynthError::CollateralDepegged
     );
 

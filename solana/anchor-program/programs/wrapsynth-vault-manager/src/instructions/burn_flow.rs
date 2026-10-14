@@ -1,22 +1,19 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_2022::{
-    Token2022, Burn as BurnCpi, burn as burn_tokens,
-    MintTo, mint_to,
-};
+use anchor_spl::token_2022::{burn as burn_tokens, mint_to, Burn as BurnCpi, MintTo, Token2022};
 use anchor_spl::token_interface::{Mint, TokenAccount};
 
 use crate::constants::*;
 use crate::errors::WrapSynthError;
-use crate::state::{GlobalState, Vault, BurnRequest, BurnStatus, PendingReturns};
+use crate::instructions::vault_management::slash_to_pool;
+use crate::state::{BurnRequest, BurnStatus, GlobalState, PendingReturns, Vault};
 use crate::utils::{
-    get_xmr_price, get_collateral_price, mul_verify, verify_public_key,
+    get_collateral_price, get_xmr_price,
     math::{
-        get_actual_debt, normalize_debt, collateral_value_for_debt,
-        usd_to_collateral, check_collateral_ratio, collateral_to_usd,
-        calculate_collateral_ratio,
+        calculate_collateral_ratio, check_collateral_ratio, collateral_to_usd,
+        collateral_value_for_debt, get_actual_debt, normalize_debt, usd_to_collateral,
     },
+    mul_verify, verify_public_key,
 };
-use crate::instructions::vault_management::sync_vault_yield;
 
 // ─── request_burn ─────────────────────────────────────────────────────────────
 
@@ -71,67 +68,80 @@ fn _request_burn(
     request_id: [u8; 32],
     from_router: bool,
 ) -> Result<()> {
-    require!(claim_commitment != [0u8; 32], WrapSynthError::InvalidCommitment);
-    require!(user_public_key != [0u8; 32], WrapSynthError::InvalidCommitment);
-    require!(user_view_key != [0u8; 32], WrapSynthError::InvalidCommitment);
+    require!(
+        claim_commitment != [0u8; 32],
+        WrapSynthError::InvalidCommitment
+    );
+    require!(
+        user_public_key != [0u8; 32],
+        WrapSynthError::InvalidCommitment
+    );
+    require!(
+        user_view_key != [0u8; 32],
+        WrapSynthError::InvalidCommitment
+    );
     require!(wsxmr_amount > 0, WrapSynthError::ZeroAmount);
-    require!(wsxmr_amount >= MIN_BURN_AMOUNT, WrapSynthError::BelowMinimumBurn);
+    require!(
+        wsxmr_amount >= MIN_BURN_AMOUNT,
+        WrapSynthError::BelowMinimumBurn
+    );
 
     let vault = &mut ctx.accounts.vault;
     require!(vault.active, WrapSynthError::VaultNotActive);
 
     if vault.min_burn_amount > 0 {
-        require!(wsxmr_amount >= vault.min_burn_amount, WrapSynthError::BelowMinimumBurn);
+        require!(
+            wsxmr_amount >= vault.min_burn_amount,
+            WrapSynthError::BelowMinimumBurn
+        );
     }
     require!(
         vault.active_burn_count < MAX_BURN_REQUESTS_PER_VAULT,
         WrapSynthError::MaxBurnRequestsReached
     );
 
-    sync_vault_yield(
-        vault,
-        &mut *ctx.accounts.global_state.load_mut()?,
-        &ctx.accounts.pyth_xmr,
-        &ctx.accounts.pyth_collateral,
-        &ctx.accounts.pyth_susde_rr,
-    )?;
-
-    let global = &ctx.accounts.global_state.load()?;
+    let global_debt_index = ctx.accounts.global_state.load()?.global_debt_index;
     let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &SUSDE_USD_FEED_ID,
+        &QQQX_USD_FEED_ID,
     )?;
 
     // M1: Burn cannot exceed the vault's own debt. Debt is NOT reduced here —
     // it is reduced only at settlement (finalize, slash, force_settle, abort).
     // This eliminates the class of index-shift debt inflation bugs that would
     // occur if debt were reduced and then restored on cancel/abort.
-    let actual_debt = get_actual_debt(vault.normalized_debt, global.global_debt_index);
-    require!(wsxmr_amount <= actual_debt, WrapSynthError::BurnExceedsVaultDebt);
+    let actual_debt = get_actual_debt(vault.normalized_debt, global_debt_index);
+    require!(
+        wsxmr_amount <= actual_debt,
+        WrapSynthError::BurnExceedsVaultDebt
+    );
 
     // Calculate collateral to lock at BURN_LOCK_RATIO + reward
     let col_val_usd = collateral_value_for_debt(wsxmr_amount, xmr_price, BURN_LOCK_RATIO);
     let collateral_to_lock = usd_to_collateral(col_val_usd, col_price);
 
-    let reward_usd = (wsxmr_amount as u128)
-        .checked_mul(xmr_price as u128)
-        .unwrap_or(0)
-        / WSXMR_DECIMALS as u128;
-    let reward_usd = (reward_usd as u128)
+    let reward_usd =
+        (wsxmr_amount as u128).checked_mul(xmr_price).unwrap_or(0) / WSXMR_DECIMALS as u128;
+    let reward_usd = reward_usd
         .checked_mul(vault.burn_reward_bps as u128)
         .unwrap_or(0)
         / BPS_DENOMINATOR as u128;
-    let reward_collateral = usd_to_collateral(reward_usd as u64, col_price);
+    let reward_collateral = usd_to_collateral(reward_usd, col_price);
     let total_lock = collateral_to_lock
         .checked_add(reward_collateral)
         .ok_or(WrapSynthError::MathOverflow)?;
 
     // Total collateral model: collateral_amount = total (locked included), so
     // available = collateral_amount - locked_collateral.
-    let available_collateral = vault.collateral_amount.saturating_sub(vault.locked_collateral);
-    require!(available_collateral >= total_lock, WrapSynthError::InsufficientCollateral);
+    let available_collateral = vault
+        .collateral_amount
+        .saturating_sub(vault.locked_collateral);
+    require!(
+        available_collateral >= total_lock,
+        WrapSynthError::InsufficientCollateral
+    );
 
     // Ensure remaining free collateral can back pending mints at COLLATERAL_RATIO
     let remaining_free = available_collateral - total_lock;
@@ -148,16 +158,21 @@ fn _request_burn(
         );
     }
 
-    // Generate request_id
+    // Increment nonce. Client pre-computed request_id = keccak(user, vault, amount, nonce+1).
     let nonce = ctx.accounts.global_state.load_mut()?.request_nonce + 1;
     ctx.accounts.global_state.load_mut()?.request_nonce = nonce;
-    let request_id = anchor_lang::solana_program::keccak::hashv(&[
+    // Bind the passed request_id to the canonical hash (seed uses request_id directly)
+    let expected_id = anchor_lang::solana_program::keccak::hashv(&[
         ctx.accounts.user.key().as_ref(),
         ctx.accounts.vault.key().as_ref(),
         &wsxmr_amount.to_le_bytes(),
         &nonce.to_le_bytes(),
     ])
     .0;
+    require!(
+        request_id == expected_id,
+        WrapSynthError::InvalidBurnRequest
+    );
 
     // Burn wsXMR from user unless coming from router (router handles its own burn)
     if !from_router {
@@ -213,7 +228,11 @@ fn _request_burn(
     burn_req.status = BurnStatus::Requested;
     burn_req.bump = ctx.bumps.burn_request;
 
-    msg!("Burn requested: {:?} for {} wsXMR", request_id, wsxmr_amount);
+    msg!(
+        "Burn requested: {:?} for {} wsXMR",
+        request_id,
+        wsxmr_amount
+    );
     Ok(())
 }
 
@@ -226,16 +245,28 @@ pub fn propose_hash(
     lp_public_view_key: [u8; 32],
 ) -> Result<()> {
     require!(secret_hash != [0u8; 32], WrapSynthError::InvalidSecret);
-    require!(lp_public_spend_key != [0u8; 32], WrapSynthError::InvalidCommitment);
-    require!(lp_public_view_key != [0u8; 32], WrapSynthError::InvalidCommitment);
+    require!(
+        lp_public_spend_key != [0u8; 32],
+        WrapSynthError::InvalidCommitment
+    );
+    require!(
+        lp_public_view_key != [0u8; 32],
+        WrapSynthError::InvalidCommitment
+    );
     let request = &mut ctx.accounts.burn_request;
-    require!(request.status == BurnStatus::Requested, WrapSynthError::InvalidStatus);
+    require!(
+        request.status == BurnStatus::Requested,
+        WrapSynthError::InvalidStatus
+    );
     require!(
         ctx.accounts.lp.key() == ctx.accounts.vault.lp_address,
         WrapSynthError::Unauthorized
     );
     // Already provided
-    require!(request.lp_public_spend_key == [0u8; 32], WrapSynthError::InvalidStatus);
+    require!(
+        request.lp_public_spend_key == [0u8; 32],
+        WrapSynthError::InvalidStatus
+    );
 
     request.secret_hash = secret_hash;
     request.lp_public_spend_key = lp_public_spend_key;
@@ -251,7 +282,10 @@ pub fn propose_hash(
 
 pub fn confirm_monero_lock(ctx: Context<ConfirmMoneroLock>) -> Result<()> {
     let request = &mut ctx.accounts.burn_request;
-    require!(request.status == BurnStatus::Proposed, WrapSynthError::InvalidStatus);
+    require!(
+        request.status == BurnStatus::Proposed,
+        WrapSynthError::InvalidStatus
+    );
     require!(
         ctx.accounts.user.key() == request.user,
         WrapSynthError::Unauthorized
@@ -269,8 +303,14 @@ pub fn confirm_monero_lock(ctx: Context<ConfirmMoneroLock>) -> Result<()> {
 pub fn reveal_burn_secret(ctx: Context<RevealBurnSecret>, secret: [u8; 32]) -> Result<()> {
     require!(secret != [0u8; 32], WrapSynthError::InvalidSecret);
     let request = &mut ctx.accounts.burn_request;
-    require!(request.status == BurnStatus::Committed, WrapSynthError::InvalidStatus);
-    require!(request.revealed_secret == [0u8; 32], WrapSynthError::InvalidStatus);
+    require!(
+        request.status == BurnStatus::Committed,
+        WrapSynthError::InvalidStatus
+    );
+    require!(
+        request.revealed_secret == [0u8; 32],
+        WrapSynthError::InvalidStatus
+    );
 
     let clock = Clock::get()?;
     require!(
@@ -296,16 +336,27 @@ pub fn reveal_burn_secret(ctx: Context<RevealBurnSecret>, secret: [u8; 32]) -> R
 
 pub fn settle_burn(ctx: Context<SettleBurn>) -> Result<()> {
     let request = &mut ctx.accounts.burn_request;
-    require!(request.status == BurnStatus::Committed, WrapSynthError::InvalidStatus);
-    require!(request.revealed_secret != [0u8; 32], WrapSynthError::InvalidStatus);
+    require!(
+        request.status == BurnStatus::Committed,
+        WrapSynthError::InvalidStatus
+    );
+    require!(
+        request.revealed_secret != [0u8; 32],
+        WrapSynthError::InvalidStatus
+    );
 
+    let vault_info = ctx.accounts.vault.to_account_info();
     settle_burn_internal(
         request,
         &mut ctx.accounts.vault,
+        &vault_info,
         &mut *ctx.accounts.global_state.load_mut()?,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
-        &ctx.accounts.pyth_susde_rr,
+        &ctx.accounts.collateral_mint,
+        &ctx.accounts.vault_collateral_ata,
+        &ctx.accounts.program_collateral_ata,
+        &ctx.accounts.token_program,
         &mut ctx.accounts.user_pending_returns,
     )
 }
@@ -315,7 +366,10 @@ pub fn settle_burn(ctx: Context<SettleBurn>) -> Result<()> {
 pub fn finalize_burn(ctx: Context<FinalizeBurn>, secret: [u8; 32]) -> Result<()> {
     require!(secret != [0u8; 32], WrapSynthError::InvalidSecret);
     let request = &mut ctx.accounts.burn_request;
-    require!(request.status == BurnStatus::Committed, WrapSynthError::InvalidStatus);
+    require!(
+        request.status == BurnStatus::Committed,
+        WrapSynthError::InvalidStatus
+    );
 
     let clock = Clock::get()?;
     require!(
@@ -330,13 +384,18 @@ pub fn finalize_burn(ctx: Context<FinalizeBurn>, secret: [u8; 32]) -> Result<()>
     );
 
     request.revealed_secret = secret;
+    let vault_info = ctx.accounts.vault.to_account_info();
     settle_burn_internal(
         request,
         &mut ctx.accounts.vault,
+        &vault_info,
         &mut *ctx.accounts.global_state.load_mut()?,
         &ctx.accounts.pyth_xmr,
         &ctx.accounts.pyth_collateral,
-        &ctx.accounts.pyth_susde_rr,
+        &ctx.accounts.collateral_mint,
+        &ctx.accounts.vault_collateral_ata,
+        &ctx.accounts.program_collateral_ata,
+        &ctx.accounts.token_program,
         &mut ctx.accounts.user_pending_returns,
     )
 }
@@ -348,16 +407,18 @@ pub fn finalize_burn(ctx: Context<FinalizeBurn>, secret: [u8; 32]) -> Result<()>
 fn settle_burn_internal<'a>(
     request: &mut BurnRequest,
     vault: &mut Vault,
+    vault_info: &AccountInfo<'a>,
     global: &mut GlobalState,
     pyth_xmr: &AccountInfo<'a>,
     pyth_collateral: &AccountInfo<'a>,
-    pyth_susde_rr: &AccountInfo<'a>,
+    collateral_mint: &InterfaceAccount<'a, Mint>,
+    vault_collateral_ata: &InterfaceAccount<'a, TokenAccount>,
+    program_collateral_ata: &InterfaceAccount<'a, TokenAccount>,
+    token_program: &Program<'a, Token2022>,
     user_pending_returns: &mut PendingReturns,
 ) -> Result<()> {
-    sync_vault_yield(vault, global, pyth_xmr, pyth_collateral, pyth_susde_rr)?;
-
     let xmr_price = get_xmr_price(pyth_xmr, PRICE_MAX_AGE)?;
-    let col_price = get_collateral_price(pyth_collateral, PRICE_MAX_AGE, &SUSDE_USD_FEED_ID)?;
+    let col_price = get_collateral_price(pyth_collateral, PRICE_MAX_AGE, &QQQX_USD_FEED_ID)?;
 
     let mut safe_reward = request.reward_collateral;
     let total_unlock = request.locked_collateral + request.reward_collateral;
@@ -372,23 +433,19 @@ fn settle_burn_internal<'a>(
             let other_locked = vault.locked_collateral.saturating_sub(total_unlock);
             let available_for_debt = projected_collateral.saturating_sub(other_locked);
 
-            let col_usd = collateral_to_usd(
-                available_for_debt.saturating_sub(safe_reward),
-                col_price,
-            );
-            let debt_usd = (remaining_debt as u128 * xmr_price as u128
-                / WSXMR_DECIMALS as u128) as u64;
+            let col_usd =
+                collateral_to_usd(available_for_debt.saturating_sub(safe_reward), col_price);
+            let debt_usd = remaining_debt as u128 * xmr_price / WSXMR_DECIMALS as u128;
             let ratio = calculate_collateral_ratio(col_usd, debt_usd);
 
             if ratio < LIQUIDATION_RATIO {
                 // Reduce reward to maintain vault at LIQUIDATION_RATIO
                 let debt_with_pending = remaining_debt.saturating_add(vault.pending_debt);
-                let debt_usd_full = (debt_with_pending as u128 * xmr_price as u128
-                    / WSXMR_DECIMALS as u128) as u64;
-                let min_col_usd = (debt_usd_full as u128 * LIQUIDATION_RATIO as u128
-                    / RATIO_PRECISION as u128) as u64;
-                let min_col_shares = usd_to_collateral(min_col_usd, col_price)
-                    .saturating_add(other_locked);
+                let debt_usd_full = debt_with_pending as u128 * xmr_price / WSXMR_DECIMALS as u128;
+                let min_col_usd =
+                    debt_usd_full * LIQUIDATION_RATIO as u128 / RATIO_PRECISION as u128;
+                let min_col_shares =
+                    usd_to_collateral(min_col_usd, col_price).saturating_add(other_locked);
 
                 if projected_collateral > min_col_shares {
                     safe_reward = projected_collateral - min_col_shares;
@@ -435,11 +492,28 @@ fn settle_burn_internal<'a>(
             .global_pending_collateral
             .checked_add(safe_reward)
             .ok_or(WrapSynthError::MathOverflow)?;
+        // Move the reward into the program pool so the credit is backed.
+        // global_state is not touched by this CPI (vault PDA signs), so the
+        // outstanding global borrow is fine.
+        slash_to_pool(
+            vault,
+            vault_info,
+            &vault_collateral_ata.to_account_info(),
+            &program_collateral_ata.to_account_info(),
+            &collateral_mint.to_account_info(),
+            &token_program.to_account_info(),
+            collateral_mint.decimals,
+            safe_reward,
+        )?;
     }
 
     vault.active_burn_count = vault.active_burn_count.saturating_sub(1);
     request.status = BurnStatus::Completed;
-    msg!("Burn finalized: {:?}, reward: {}", request.request_id, safe_reward);
+    msg!(
+        "Burn finalized: {:?}, reward: {}",
+        request.request_id,
+        safe_reward
+    );
     Ok(())
 }
 
@@ -452,11 +526,20 @@ pub fn claim_slashed_collateral(
     require!(user_secret != [0u8; 32], WrapSynthError::InvalidUserSecret);
 
     let request = &mut ctx.accounts.burn_request;
-    require!(request.status == BurnStatus::Committed, WrapSynthError::InvalidStatus);
+    require!(
+        request.status == BurnStatus::Committed,
+        WrapSynthError::InvalidStatus
+    );
     // If the LP already revealed, the burn is settleable — slashing would
     // double-pay the user (XMR via the public secret + collateral). Route to settle.
-    require!(request.revealed_secret == [0u8; 32], WrapSynthError::InvalidStatus);
-    require!(ctx.accounts.user.key() == request.user, WrapSynthError::Unauthorized);
+    require!(
+        request.revealed_secret == [0u8; 32],
+        WrapSynthError::InvalidStatus
+    );
+    require!(
+        ctx.accounts.user.key() == request.user,
+        WrapSynthError::Unauthorized
+    );
 
     let clock = Clock::get()?;
     require!(
@@ -472,14 +555,6 @@ pub fn claim_slashed_collateral(
         WrapSynthError::InvalidUserSecret
     );
 
-    sync_vault_yield(
-        &mut ctx.accounts.vault,
-        &mut *ctx.accounts.global_state.load_mut()?,
-        &ctx.accounts.pyth_xmr,
-        &ctx.accounts.pyth_collateral,
-        &ctx.accounts.pyth_susde_rr,
-    )?;
-
     let vault = &mut ctx.accounts.vault;
     let global = &mut ctx.accounts.global_state.load_mut()?;
 
@@ -489,13 +564,13 @@ pub fn claim_slashed_collateral(
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &SUSDE_USD_FEED_ID,
+        &QQQX_USD_FEED_ID,
     )?;
     let par_value_usd = (request.wsxmr_amount as u128)
-        .checked_mul(request.xmr_price_at_request as u128)
+        .checked_mul(request.xmr_price_at_request)
         .ok_or(WrapSynthError::MathOverflow)?
         / WSXMR_DECIMALS as u128;
-    let par_collateral = usd_to_collateral(par_value_usd as u64, col_price);
+    let par_collateral = usd_to_collateral(par_value_usd, col_price);
 
     let mut user_payout = par_collateral.min(request.locked_collateral);
     if user_payout > vault.collateral_amount {
@@ -543,6 +618,16 @@ pub fn claim_slashed_collateral(
             .global_pending_collateral
             .checked_add(user_payout)
             .ok_or(WrapSynthError::MathOverflow)?;
+        slash_to_pool(
+            vault,
+            &vault.to_account_info(),
+            &ctx.accounts.vault_collateral_ata.to_account_info(),
+            &ctx.accounts.program_collateral_ata.to_account_info(),
+            &ctx.accounts.collateral_mint.to_account_info(),
+            &ctx.accounts.token_program.to_account_info(),
+            ctx.accounts.collateral_mint.decimals,
+            user_payout,
+        )?;
     }
 
     vault.active_burn_count = vault.active_burn_count.saturating_sub(1);
@@ -559,11 +644,20 @@ pub fn claim_slashed_collateral(
 
 pub fn abort_burn(ctx: Context<AbortBurn>) -> Result<()> {
     let request = &mut ctx.accounts.burn_request;
-    require!(request.status == BurnStatus::Requested, WrapSynthError::InvalidStatus);
-    require!(ctx.accounts.caller.key() == request.user, WrapSynthError::Unauthorized);
+    require!(
+        request.status == BurnStatus::Requested,
+        WrapSynthError::InvalidStatus
+    );
+    require!(
+        ctx.accounts.caller.key() == request.user,
+        WrapSynthError::Unauthorized
+    );
 
     let clock = Clock::get()?;
-    require!(clock.unix_timestamp >= request.deadline, WrapSynthError::DeadlineNotExpired);
+    require!(
+        clock.unix_timestamp >= request.deadline,
+        WrapSynthError::DeadlineNotExpired
+    );
 
     let vault = &mut ctx.accounts.vault;
     // If the vault was liquidated since the burn was requested, the locked
@@ -610,19 +704,20 @@ pub fn abort_burn(ctx: Context<AbortBurn>) -> Result<()> {
 
 pub fn force_settle_burn(ctx: Context<ForceSettleBurn>) -> Result<()> {
     let request = &mut ctx.accounts.burn_request;
-    require!(request.status == BurnStatus::Requested, WrapSynthError::InvalidStatus);
-    require!(ctx.accounts.caller.key() == request.user, WrapSynthError::Unauthorized);
+    require!(
+        request.status == BurnStatus::Requested,
+        WrapSynthError::InvalidStatus
+    );
+    require!(
+        ctx.accounts.caller.key() == request.user,
+        WrapSynthError::Unauthorized
+    );
 
     let clock = Clock::get()?;
-    require!(clock.unix_timestamp >= request.deadline, WrapSynthError::DeadlineNotExpired);
-
-    sync_vault_yield(
-        &mut ctx.accounts.vault,
-        &mut *ctx.accounts.global_state.load_mut()?,
-        &ctx.accounts.pyth_xmr,
-        &ctx.accounts.pyth_collateral,
-        &ctx.accounts.pyth_susde_rr,
-    )?;
+    require!(
+        clock.unix_timestamp >= request.deadline,
+        WrapSynthError::DeadlineNotExpired
+    );
 
     let vault = &mut ctx.accounts.vault;
     let global = &mut ctx.accounts.global_state.load_mut()?;
@@ -633,13 +728,13 @@ pub fn force_settle_burn(ctx: Context<ForceSettleBurn>) -> Result<()> {
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &SUSDE_USD_FEED_ID,
+        &QQQX_USD_FEED_ID,
     )?;
     let par_value_usd = (request.wsxmr_amount as u128)
-        .checked_mul(request.xmr_price_at_request as u128)
+        .checked_mul(request.xmr_price_at_request)
         .ok_or(WrapSynthError::MathOverflow)?
         / WSXMR_DECIMALS as u128;
-    let par_collateral = usd_to_collateral(par_value_usd as u64, col_price);
+    let par_collateral = usd_to_collateral(par_value_usd, col_price);
 
     let user_base = par_collateral.min(request.locked_collateral);
     let total_lock = request.locked_collateral + request.reward_collateral;
@@ -680,11 +775,25 @@ pub fn force_settle_burn(ctx: Context<ForceSettleBurn>) -> Result<()> {
             .global_pending_collateral
             .checked_add(user_base)
             .ok_or(WrapSynthError::MathOverflow)?;
+        slash_to_pool(
+            vault,
+            &vault.to_account_info(),
+            &ctx.accounts.vault_collateral_ata.to_account_info(),
+            &ctx.accounts.program_collateral_ata.to_account_info(),
+            &ctx.accounts.collateral_mint.to_account_info(),
+            &ctx.accounts.token_program.to_account_info(),
+            ctx.accounts.collateral_mint.decimals,
+            user_base,
+        )?;
     }
 
     vault.active_burn_count = vault.active_burn_count.saturating_sub(1);
     request.status = BurnStatus::Slashed;
-    msg!("Burn force-settled: {:?}, payout: {}", request.request_id, user_base);
+    msg!(
+        "Burn force-settled: {:?}, payout: {}",
+        request.request_id,
+        user_base
+    );
     Ok(())
 }
 
@@ -700,13 +809,22 @@ pub fn resolve_declined_proposal(
     let late_claim = request.abandoned;
     if late_claim {
         // LP already abandoned — collateral/debt settled, only the wsXMR claim remains.
-        require!(request.status == BurnStatus::Cancelled, WrapSynthError::InvalidStatus);
+        require!(
+            request.status == BurnStatus::Cancelled,
+            WrapSynthError::InvalidStatus
+        );
     } else {
-        require!(request.status == BurnStatus::Proposed, WrapSynthError::InvalidStatus);
+        require!(
+            request.status == BurnStatus::Proposed,
+            WrapSynthError::InvalidStatus
+        );
     }
 
     let clock = Clock::get()?;
-    require!(clock.unix_timestamp >= request.deadline, WrapSynthError::DeadlineNotExpired);
+    require!(
+        clock.unix_timestamp >= request.deadline,
+        WrapSynthError::DeadlineNotExpired
+    );
 
     // Verify userSecret corresponds to the stored userPublicKey (compressed
     // Ed25519 point) — the refund always costs a key-half reveal so the LP can
@@ -764,14 +882,20 @@ pub fn resolve_declined_proposal(
 
 pub fn abandon_proposed_burn(ctx: Context<AbandonProposedBurn>) -> Result<()> {
     let request = &mut ctx.accounts.burn_request;
-    require!(request.status == BurnStatus::Proposed, WrapSynthError::InvalidStatus);
+    require!(
+        request.status == BurnStatus::Proposed,
+        WrapSynthError::InvalidStatus
+    );
     require!(
         ctx.accounts.lp.key() == ctx.accounts.vault.lp_address,
         WrapSynthError::Unauthorized
     );
 
     let clock = Clock::get()?;
-    require!(clock.unix_timestamp >= request.deadline, WrapSynthError::DeadlineNotExpired);
+    require!(
+        clock.unix_timestamp >= request.deadline,
+        WrapSynthError::DeadlineNotExpired
+    );
 
     let vault = &mut ctx.accounts.vault;
     if request.vault_liquidation_nonce == vault.liquidation_nonce {
@@ -842,8 +966,6 @@ pub struct RequestBurn<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
-    pub pyth_susde_rr: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -938,9 +1060,30 @@ pub struct SettleBurn<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
-    pub pyth_susde_rr: AccountInfo<'info>,
 
+    pub collateral_mint: InterfaceAccount<'info, Mint>,
+
+    /// Vault collateral ATA — slash source for the user reward.
+    #[account(
+        mut,
+        seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = vault,
+    )]
+    pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+
+    /// Program collateral pool ATA — slash destination.
+    #[account(
+        mut,
+        seeds = [PROGRAM_COLLATERAL_SEED],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = global_state,
+    )]
+    pub program_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
 }
 
@@ -987,9 +1130,30 @@ pub struct FinalizeBurn<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
-    pub pyth_susde_rr: AccountInfo<'info>,
 
+    pub collateral_mint: InterfaceAccount<'info, Mint>,
+
+    /// Vault collateral ATA — slash source for the user reward.
+    #[account(
+        mut,
+        seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = vault,
+    )]
+    pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+
+    /// Program collateral pool ATA — slash destination.
+    #[account(
+        mut,
+        seeds = [PROGRAM_COLLATERAL_SEED],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = global_state,
+    )]
+    pub program_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
 }
 
@@ -1036,9 +1200,30 @@ pub struct ClaimSlashedCollateral<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
-    pub pyth_susde_rr: AccountInfo<'info>,
 
+    pub collateral_mint: InterfaceAccount<'info, Mint>,
+
+    /// Vault collateral ATA — slash source for the par-capped payout.
+    #[account(
+        mut,
+        seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = vault,
+    )]
+    pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+
+    /// Program collateral pool ATA — slash destination.
+    #[account(
+        mut,
+        seeds = [PROGRAM_COLLATERAL_SEED],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = global_state,
+    )]
+    pub program_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
 }
 
@@ -1049,8 +1234,7 @@ pub struct AbortBurn<'info> {
 
     #[account(
         mut,
-        seeds = [VAULT_SEED, burn_request.lp_vault.as_ref()],
-        bump = vault.bump,
+        constraint = burn_request.lp_vault == vault.key() @ WrapSynthError::Unauthorized,
     )]
     pub vault: Box<Account<'info, Vault>>,
 
@@ -1085,8 +1269,7 @@ pub struct ForceSettleBurn<'info> {
 
     #[account(
         mut,
-        seeds = [VAULT_SEED, burn_request.lp_vault.as_ref()],
-        bump = vault.bump,
+        constraint = burn_request.lp_vault == vault.key() @ WrapSynthError::Unauthorized,
     )]
     pub vault: Box<Account<'info, Vault>>,
 
@@ -1115,9 +1298,30 @@ pub struct ForceSettleBurn<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
-    pub pyth_susde_rr: AccountInfo<'info>,
 
+    pub collateral_mint: InterfaceAccount<'info, Mint>,
+
+    /// Vault collateral ATA — slash source for the par-capped payout.
+    #[account(
+        mut,
+        seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = vault,
+    )]
+    pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+
+    /// Program collateral pool ATA — slash destination.
+    #[account(
+        mut,
+        seeds = [PROGRAM_COLLATERAL_SEED],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = global_state,
+    )]
+    pub program_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
 }
 
@@ -1129,8 +1333,7 @@ pub struct ResolveDeclinedProposal<'info> {
 
     #[account(
         mut,
-        seeds = [VAULT_SEED, burn_request.lp_vault.as_ref()],
-        bump = vault.bump,
+        constraint = burn_request.lp_vault == vault.key() @ WrapSynthError::Unauthorized,
     )]
     pub vault: Box<Account<'info, Vault>>,
 

@@ -1,6 +1,5 @@
 /// Safe math helpers mirroring the Solidity contract's arithmetic.
 /// All intermediate calculations use u128 to prevent overflow on u64 inputs.
-
 use crate::constants::*;
 
 /// Compute actual debt from normalized debt and current global debt index.
@@ -24,64 +23,63 @@ pub fn normalize_debt(actual_amount: u64, global_debt_index: u64) -> u64 {
 }
 
 /// Collateral value in USD (18 decimals).
-/// collateral_amount (9-decimal shares) * collateral_price (18-decimal USD/share) / 1e18
-pub fn collateral_to_usd(collateral_amount: u64, collateral_price: u64) -> u64 {
-    ((collateral_amount as u128)
-        .checked_mul(collateral_price as u128)
+/// collateral_amount (raw atomic, COLLATERAL_DECIMALS scale) × price (18-dec) / COLLATERAL_DECIMALS
+///
+/// USD-denominated values are u128 throughout: at 1e18 scale, u64 overflows
+/// above ~$18.4 — far below a single QQQx token (~$600).
+pub fn collateral_to_usd(collateral_amount: u64, collateral_price: u128) -> u128 {
+    (collateral_amount as u128)
+        .checked_mul(collateral_price)
         .unwrap_or(0)
-        / PRICE_PRECISION as u128) as u64
+        / COLLATERAL_DECIMALS as u128
 }
 
-/// Convert USD value (18 decimals) to collateral shares.
-pub fn usd_to_collateral(usd_value: u64, collateral_price: u64) -> u64 {
+/// Convert USD value (18 decimals) to raw collateral atomic units.
+pub fn usd_to_collateral(usd_value: u128, collateral_price: u128) -> u64 {
     if collateral_price == 0 {
         return 0;
     }
-    ((usd_value as u128)
-        .checked_mul(PRICE_PRECISION as u128)
+    (usd_value
+        .checked_mul(COLLATERAL_DECIMALS as u128)
         .unwrap_or(0)
-        / collateral_price as u128) as u64
+        / collateral_price) as u64
 }
 
 /// Collateral ratio = (collateral_usd * 100) / debt_usd.
 /// Returns u64::MAX when debt is zero (infinite health).
-pub fn calculate_collateral_ratio(collateral_usd: u64, debt_usd: u64) -> u64 {
+pub fn calculate_collateral_ratio(collateral_usd: u128, debt_usd: u128) -> u64 {
     if debt_usd == 0 {
         return u64::MAX;
     }
-    ((collateral_usd as u128)
+    (collateral_usd
         .checked_mul(RATIO_PRECISION as u128)
         .unwrap_or(0)
-        / debt_usd as u128) as u64
+        / debt_usd) as u64
 }
 
-/// USD value of debt at 150% collateral ratio (used for collateral locking checks).
+/// USD value of debt at the given collateral ratio (used for collateral locking checks).
 /// debt_amount is in wsXMR (8 decimals), xmr_price is 18-decimal USD.
 /// Returns USD value (18 decimals).
-pub fn collateral_value_for_debt(debt_amount: u64, xmr_price: u64, ratio: u64) -> u64 {
-    let debt_usd = (debt_amount as u128)
-        .checked_mul(xmr_price as u128)
-        .unwrap_or(0)
-        / WSXMR_DECIMALS as u128;
-    ((debt_usd.checked_mul(ratio as u128).unwrap_or(0)) / RATIO_PRECISION as u128) as u64
+pub fn collateral_value_for_debt(debt_amount: u64, xmr_price: u128, ratio: u64) -> u128 {
+    let debt_usd =
+        (debt_amount as u128).checked_mul(xmr_price).unwrap_or(0) / WSXMR_DECIMALS as u128;
+    debt_usd.checked_mul(ratio as u128).unwrap_or(0) / RATIO_PRECISION as u128
 }
 
 /// Full collateral ratio check combining prices.
 pub fn check_collateral_ratio(
     collateral_amount: u64,
-    collateral_price: u64,
+    collateral_price: u128,
     debt_amount: u64,
-    xmr_price: u64,
+    xmr_price: u128,
     required_ratio: u64,
 ) -> bool {
     if debt_amount == 0 {
         return true;
     }
     let col_usd = collateral_to_usd(collateral_amount, collateral_price);
-    let debt_usd = ((debt_amount as u128)
-        .checked_mul(xmr_price as u128)
-        .unwrap_or(0)
-        / WSXMR_DECIMALS as u128) as u64;
+    let debt_usd =
+        (debt_amount as u128).checked_mul(xmr_price).unwrap_or(0) / WSXMR_DECIMALS as u128;
     let ratio = calculate_collateral_ratio(col_usd, debt_usd);
     ratio >= required_ratio
 }

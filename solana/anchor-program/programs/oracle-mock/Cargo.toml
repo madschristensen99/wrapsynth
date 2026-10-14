@@ -1,0 +1,20 @@
+[package]
+name = "oracle-mock"
+version = "0.1.0"
+description = "Test-only oracle writer — lets the localnet suite update mock Pyth PriceUpdateV2 accounts mid-test (price, ema, publish_time)."
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "oracle_mock"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = "0.31.1"

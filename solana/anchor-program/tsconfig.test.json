@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist-test",
+    "rootDir": ".",
+    "resolveJsonModule": true,
+    "module": "commonjs",
+    "target": "es2020",
+    "esModuleInterop": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "types": [
+      "mocha",
+      "chai",
+      "node"
+    ]
+  },
+  "include": [
+    "tests/vault_manager.ts"
+  ]
+}

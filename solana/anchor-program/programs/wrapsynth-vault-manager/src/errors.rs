@@ -68,20 +68,6 @@ pub enum WrapSynthError {
     OnlyUserCanInitiate,
     #[msg("Burn invalidated by liquidation")]
     BurnInvalidatedByLiquidation,
-    #[msg("Buy-and-burn cooldown active")]
-    CooldownActive,
-    #[msg("XMR price has not dipped below EMA threshold")]
-    XMRNotDipped,
-    #[msg("Yield war chest is empty")]
-    WarChestEmpty,
-    #[msg("Debt wipe already in progress")]
-    WipeInProgress,
-    #[msg("Debt index migration already in progress")]
-    MigrationInProgress,
-    #[msg("No debt wipe in progress")]
-    WipeNotInProgress,
-    #[msg("No debt index migration in progress")]
-    MigrationNotInProgress,
     #[msg("Maximum vault count reached")]
     MaxVaultsReached,
     #[msg("Invalid configuration value")]
@@ -98,6 +84,6 @@ pub enum WrapSynthError {
     PriceNormalizedToZero,
     #[msg("XMR amount too small (minimum 1e4 atomic units)")]
     XmrAmountTooSmall,
-    #[msg("Collateral depegged: minting paused")]
+    #[msg("Collateral at distress discount: minting paused")]
     CollateralDepegged,
 }

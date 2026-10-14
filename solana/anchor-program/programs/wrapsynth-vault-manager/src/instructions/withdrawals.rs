@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_2022::{Token2022, TransferChecked, transfer_checked};
+use anchor_spl::token_2022::{transfer_checked, Token2022, TransferChecked};
 use anchor_spl::token_interface::{Mint, TokenAccount};
 
 use crate::constants::*;
@@ -43,11 +43,14 @@ pub fn withdraw_collateral_returns(ctx: Context<WithdrawCollateralReturns>) -> R
 
     // CEI: clear state before transfer
     returns.collateral_amount = 0;
-    let __global_pending_collateral_cur = ctx.accounts.global_state.load()?.global_pending_collateral;
-    ctx.accounts.global_state.load_mut()?.global_pending_collateral = __global_pending_collateral_cur
-        .saturating_sub(amount);
+    let __global_pending_collateral_cur =
+        ctx.accounts.global_state.load()?.global_pending_collateral;
+    ctx.accounts
+        .global_state
+        .load_mut()?
+        .global_pending_collateral = __global_pending_collateral_cur.saturating_sub(amount);
 
-    // Transfer from war_chest ATA (program-owned) to user
+    // Transfer from the program collateral pool to user
     let bump = ctx.accounts.global_state.load()?.bump;
     let seeds: &[&[u8]] = &[GLOBAL_STATE_SEED, &[bump]];
     let signer_seeds = &[seeds];
@@ -81,8 +84,8 @@ pub fn withdraw_sol_returns(ctx: Context<WithdrawSolReturns>) -> Result<()> {
 
     returns.sol_amount = 0;
     let __global_pending_sol_cur = ctx.accounts.global_state.load()?.global_pending_sol;
-    ctx.accounts.global_state.load_mut()?.global_pending_sol = __global_pending_sol_cur
-        .saturating_sub(amount);
+    ctx.accounts.global_state.load_mut()?.global_pending_sol =
+        __global_pending_sol_cur.saturating_sub(amount);
 
     // Transfer SOL lamports from escrow account to owner
     **ctx.accounts.sol_escrow.try_borrow_mut_lamports()? -= amount;
@@ -119,8 +122,12 @@ pub struct WithdrawCollateralReturns<'info> {
 
     pub collateral_mint: InterfaceAccount<'info, Mint>,
 
-    /// Program-owned collateral ATA (war chest + pending returns pool)
-    #[account(mut)]
+    /// Program-owned collateral ATA (pending returns pool)
+    #[account(
+        mut,
+        seeds = [PROGRAM_COLLATERAL_SEED],
+        bump,
+    )]
     pub program_collateral_ata: InterfaceAccount<'info, TokenAccount>,
 
     #[account(mut)]

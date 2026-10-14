@@ -1,15 +1,19 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_2022::{Token2022, MintTo, mint_to};
+use anchor_spl::token_2022::{mint_to, MintTo, Token2022};
 use anchor_spl::token_interface::{Mint, TokenAccount};
 
 use crate::constants::*;
 use crate::errors::WrapSynthError;
-use crate::state::{GlobalState, Vault, MintRequest, MintStatus, PendingReturns};
+use crate::instructions::vault_management::slash_to_pool;
+use crate::state::{GlobalState, MintRequest, MintStatus, PendingReturns, Vault};
 use crate::utils::{
-    get_xmr_price, get_collateral_price, get_collateral_redemption_rate, check_depeg_guard, mul_verify,
-    math::{get_actual_debt, normalize_debt, collateral_to_usd, usd_to_collateral, check_collateral_ratio},
+    check_discount_guard, get_collateral_ema_price, get_collateral_price, get_xmr_price,
+    math::{
+        check_collateral_ratio, collateral_to_usd, get_actual_debt, normalize_debt,
+        usd_to_collateral,
+    },
+    mul_verify,
 };
-use crate::instructions::vault_management::sync_vault_yield;
 
 /// Compute the par-value collateral lock for a mint — the key bond at
 /// provide_lp_key and the re-priced par lock at set_mint_ready. Mirrors the EVM
@@ -17,16 +21,16 @@ use crate::instructions::vault_management::sync_vault_yield;
 ///   par_value_usd = wsxmr_amount * xmr_price / 1e8
 ///   lock_usd      = par_value_usd * MINT_LOCK_RATIO / 100
 ///   lock_shares   = lock_usd * 1e18 / collateral_price
-fn compute_mint_lock(wsxmr_amount: u64, xmr_price: u64, col_price: u64) -> Result<u64> {
+fn compute_mint_lock(wsxmr_amount: u64, xmr_price: u128, col_price: u128) -> Result<u64> {
     let par_value_usd = (wsxmr_amount as u128)
-        .checked_mul(xmr_price as u128)
+        .checked_mul(xmr_price)
         .ok_or(WrapSynthError::MathOverflow)?
         / WSXMR_DECIMALS as u128;
-    let lock_usd = (par_value_usd as u128)
+    let lock_usd = par_value_usd
         .checked_mul(MINT_LOCK_RATIO as u128)
         .ok_or(WrapSynthError::MathOverflow)?
         / RATIO_PRECISION as u128;
-    Ok(usd_to_collateral(lock_usd as u64, col_price))
+    Ok(usd_to_collateral(lock_usd, col_price))
 }
 
 // ─── initiate_mint ────────────────────────────────────────────────────────────
@@ -38,21 +42,21 @@ pub fn initiate_mint(
     user_public_key: [u8; 32],
     request_id: [u8; 32],
 ) -> Result<()> {
-    require!(xmr_amount >= XMR_TO_WSXMR_DIVISOR, WrapSynthError::XmrAmountTooSmall);
-    require!(claim_commitment != [0u8; 32], WrapSynthError::InvalidCommitment);
-    require!(user_public_key != [0u8; 32], WrapSynthError::InvalidCommitment);
+    require!(
+        xmr_amount >= XMR_TO_WSXMR_DIVISOR,
+        WrapSynthError::XmrAmountTooSmall
+    );
+    require!(
+        claim_commitment != [0u8; 32],
+        WrapSynthError::InvalidCommitment
+    );
+    require!(
+        user_public_key != [0u8; 32],
+        WrapSynthError::InvalidCommitment
+    );
 
     let vault = &mut ctx.accounts.vault;
     require!(vault.active, WrapSynthError::VaultNotActive);
-
-    // Sync yield before reading collateral
-    sync_vault_yield(
-        vault,
-        &mut *ctx.accounts.global_state.load_mut()?,
-        &ctx.accounts.pyth_xmr,
-        &ctx.accounts.pyth_collateral,
-        &ctx.accounts.pyth_susde_rr,
-    )?;
 
     let global_debt_index = ctx.accounts.global_state.load()?.global_debt_index;
 
@@ -88,15 +92,17 @@ pub fn initiate_mint(
         let col_price = get_collateral_price(
             &ctx.accounts.pyth_collateral,
             PRICE_MAX_AGE,
-            &SUSDE_USD_FEED_ID,
+            &QQQX_USD_FEED_ID,
         )?;
         let col_val_usd = collateral_to_usd(vault.collateral_amount, col_price);
-        let max_debt_capacity = (col_val_usd as u128 * RATIO_PRECISION as u128)
-            / COLLATERAL_RATIO as u128;
-        let max_mint_allowed = (max_debt_capacity * vault.max_mint_bps as u128)
-            / BPS_DENOMINATOR as u128;
-        let wsxmr_val_usd = (wsxmr_amount as u128 * xmr_price as u128) / WSXMR_DECIMALS as u128;
-        require!(wsxmr_val_usd <= max_mint_allowed, WrapSynthError::InvalidValue);
+        let max_debt_capacity = (col_val_usd * RATIO_PRECISION as u128) / COLLATERAL_RATIO as u128;
+        let max_mint_allowed =
+            (max_debt_capacity * vault.max_mint_bps as u128) / BPS_DENOMINATOR as u128;
+        let wsxmr_val_usd = (wsxmr_amount as u128 * xmr_price) / WSXMR_DECIMALS as u128;
+        require!(
+            wsxmr_val_usd <= max_mint_allowed,
+            WrapSynthError::InvalidValue
+        );
     }
 
     // Capacity check — mirrors EVM initiateMint: the key bond (MINT_LOCK_RATIO of
@@ -112,12 +118,14 @@ pub fn initiate_mint(
 
     // Total collateral model: collateral_amount = total (locked included), so
     // available = collateral_amount - locked_collateral.
-    let available_collateral = vault.collateral_amount.saturating_sub(vault.locked_collateral);
+    let available_collateral = vault
+        .collateral_amount
+        .saturating_sub(vault.locked_collateral);
     let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &SUSDE_USD_FEED_ID,
+        &QQQX_USD_FEED_ID,
     )?;
     let bond_shares = compute_mint_lock(wsxmr_amount, xmr_price, col_price)?;
     require!(
@@ -137,14 +145,15 @@ pub fn initiate_mint(
         WrapSynthError::InsufficientCollateral
     );
 
-    // Depeg guard: prevent new mints if sUSDe market price diverges below its
-    // redemption value (fair value ≈ sUSDe→USDe rate, since USDe is pegged 1:1)
-    let redemption_rate = get_collateral_redemption_rate(&ctx.accounts.pyth_susde_rr)?;
-    check_depeg_guard(col_price, redemption_rate)?;
+    // Discount guard: prevent new mints if QQQx trades at a distress discount
+    // to its own EMA (issuer/custody stress or market break).
+    let col_ema = get_collateral_ema_price(&ctx.accounts.pyth_collateral, PRICE_MAX_AGE)?;
+    check_discount_guard(col_price, col_ema)?;
 
     // Increment nonce. Client pre-computed request_id = keccak(initiator, vault, amount, commitment, nonce+1).
     let gs = &mut ctx.accounts.global_state.load_mut()?;
-    gs.request_nonce = gs.request_nonce
+    gs.request_nonce = gs
+        .request_nonce
         .checked_add(1)
         .ok_or(WrapSynthError::MathOverflow)?;
     // Bind the passed request_id to the canonical hash (seed uses request_id directly)
@@ -156,7 +165,10 @@ pub fn initiate_mint(
         &gs.request_nonce.to_le_bytes(),
     ])
     .0;
-    require!(request_id == expected_id, WrapSynthError::InvalidMintRequest);
+    require!(
+        request_id == expected_id,
+        WrapSynthError::InvalidMintRequest
+    );
 
     // Extract vault key before mutable borrow.
     let vault_key = ctx.accounts.vault.key();
@@ -203,32 +215,41 @@ pub fn provide_lp_key(
     lp_commitment: [u8; 32],
 ) -> Result<()> {
     let request = &mut ctx.accounts.mint_request;
-    require!(request.status == MintStatus::Pending, WrapSynthError::InvalidStatus);
+    require!(
+        request.status == MintStatus::Pending,
+        WrapSynthError::InvalidStatus
+    );
     require!(
         ctx.accounts.lp.key() == ctx.accounts.vault.lp_address,
         WrapSynthError::Unauthorized
     );
 
     let clock = Clock::get()?;
-    require!(clock.unix_timestamp < request.timeout, WrapSynthError::DeadlineExpired);
+    require!(
+        clock.unix_timestamp < request.timeout,
+        WrapSynthError::DeadlineExpired
+    );
     require!(
         request.vault_mint_nonce == ctx.accounts.vault.mint_nonce,
         WrapSynthError::MintNonceMismatch
     );
-    require!(lp_public_spend_key != [0u8; 32], WrapSynthError::InvalidCommitment);
-    require!(lp_public_view_key != [0u8; 32], WrapSynthError::InvalidCommitment);
-    require!(lp_commitment != [0u8; 32], WrapSynthError::InvalidCommitment);
+    require!(
+        lp_public_spend_key != [0u8; 32],
+        WrapSynthError::InvalidCommitment
+    );
+    require!(
+        lp_public_view_key != [0u8; 32],
+        WrapSynthError::InvalidCommitment
+    );
+    require!(
+        lp_commitment != [0u8; 32],
+        WrapSynthError::InvalidCommitment
+    );
     // Already provided
-    require!(request.lp_commitment == [0u8; 32], WrapSynthError::InvalidStatus);
-
-    // Sync yield before reading collateral
-    sync_vault_yield(
-        &mut ctx.accounts.vault,
-        &mut *ctx.accounts.global_state.load_mut()?,
-        &ctx.accounts.pyth_xmr,
-        &ctx.accounts.pyth_collateral,
-        &ctx.accounts.pyth_susde_rr,
-    )?;
+    require!(
+        request.lp_commitment == [0u8; 32],
+        WrapSynthError::InvalidStatus
+    );
 
     // Reserve debt capacity now that the LP has engaged. Reverts if the vault
     // cannot plausibly serve this mint — prevents over-reservation.
@@ -243,14 +264,19 @@ pub fn provide_lp_key(
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &SUSDE_USD_FEED_ID,
+        &QQQX_USD_FEED_ID,
     )?;
     let bond_shares = compute_mint_lock(request.wsxmr_amount, xmr_price, col_price)?;
 
     // Total collateral model: collateral_amount = total (locked included), so
     // available = collateral_amount - locked_collateral.
-    let available_collateral = vault.collateral_amount.saturating_sub(vault.locked_collateral);
-    require!(available_collateral >= bond_shares, WrapSynthError::InsufficientCollateral);
+    let available_collateral = vault
+        .collateral_amount
+        .saturating_sub(vault.locked_collateral);
+    require!(
+        available_collateral >= bond_shares,
+        WrapSynthError::InsufficientCollateral
+    );
 
     // Re-check CR with the remaining free collateral after locking the bond
     let remaining_free = available_collateral - bond_shares;
@@ -292,27 +318,24 @@ pub fn provide_lp_key(
 
 pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
     let request = &mut ctx.accounts.mint_request;
-    require!(request.status == MintStatus::KeyProvided, WrapSynthError::InvalidStatus);
+    require!(
+        request.status == MintStatus::KeyProvided,
+        WrapSynthError::InvalidStatus
+    );
     require!(
         ctx.accounts.lp.key() == ctx.accounts.vault.lp_address,
         WrapSynthError::Unauthorized
     );
 
     let clock = Clock::get()?;
-    require!(clock.unix_timestamp < request.timeout, WrapSynthError::DeadlineExpired);
+    require!(
+        clock.unix_timestamp < request.timeout,
+        WrapSynthError::DeadlineExpired
+    );
     require!(
         request.vault_mint_nonce == ctx.accounts.vault.mint_nonce,
         WrapSynthError::MintNonceMismatch
     );
-
-    // Sync yield + re-check collateral
-    sync_vault_yield(
-        &mut ctx.accounts.vault,
-        &mut *ctx.accounts.global_state.load_mut()?,
-        &ctx.accounts.pyth_xmr,
-        &ctx.accounts.pyth_collateral,
-        &ctx.accounts.pyth_susde_rr,
-    )?;
 
     let vault = &mut ctx.accounts.vault;
 
@@ -320,7 +343,7 @@ pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &SUSDE_USD_FEED_ID,
+        &QQQX_USD_FEED_ID,
     )?;
 
     // Re-price the par-value lock at ready time
@@ -330,11 +353,16 @@ pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
     // the key bond); adding it back gives the free collateral the new lock must
     // fit within.
     let current_locked = request.locked_collateral;
-    let available_collateral = vault.collateral_amount.saturating_sub(vault.locked_collateral);
+    let available_collateral = vault
+        .collateral_amount
+        .saturating_sub(vault.locked_collateral);
     let mut remaining_free = available_collateral
         .checked_add(current_locked)
         .ok_or(WrapSynthError::MathOverflow)?;
-    require!(remaining_free >= lock_shares, WrapSynthError::InsufficientCollateral);
+    require!(
+        remaining_free >= lock_shares,
+        WrapSynthError::InsufficientCollateral
+    );
     remaining_free -= lock_shares;
 
     // Re-check CR with the remaining free collateral after adjustment
@@ -376,10 +404,6 @@ pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
         .pending_mint_count
         .checked_add(1)
         .ok_or(WrapSynthError::MathOverflow)?;
-    let __total_pending_mints_cur = ctx.accounts.global_state.load()?.total_pending_mints;
-    ctx.accounts.global_state.load_mut()?.total_pending_mints = __total_pending_mints_cur
-        .checked_add(1)
-        .ok_or(WrapSynthError::MathOverflow)?;
     msg!("Mint ready: {:?}", request.request_id);
     Ok(())
 }
@@ -388,7 +412,10 @@ pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
 
 pub fn reveal_secret(ctx: Context<RevealSecret>, secret: [u8; 32]) -> Result<()> {
     let request = &mut ctx.accounts.mint_request;
-    require!(request.status == MintStatus::Ready, WrapSynthError::InvalidStatus);
+    require!(
+        request.status == MintStatus::Ready,
+        WrapSynthError::InvalidStatus
+    );
     require!(secret != [0u8; 32], WrapSynthError::InvalidSecret);
 
     // Pure Ed25519 verification — no oracle, no yield sync, no CR check. The
@@ -410,23 +437,31 @@ pub fn reveal_secret(ctx: Context<RevealSecret>, secret: [u8; 32]) -> Result<()>
 
 pub fn finalize_mint(ctx: Context<FinalizeMint>) -> Result<()> {
     let request = &mut ctx.accounts.mint_request;
-    require!(request.status == MintStatus::SecretRevealed, WrapSynthError::InvalidStatus);
-    require!(request.revealed_secret != [0u8; 32], WrapSynthError::InvalidStatus);
+    require!(
+        request.status == MintStatus::SecretRevealed,
+        WrapSynthError::InvalidStatus
+    );
+    require!(
+        request.revealed_secret != [0u8; 32],
+        WrapSynthError::InvalidStatus
+    );
 
     // Extract bump and account_info before mutable borrows (needed for CPIs).
     let gs_bump = ctx.accounts.global_state.load()?.bump;
     let gs_info = ctx.accounts.global_state.to_account_info();
+    let vault_info = ctx.accounts.vault.to_account_info();
 
     execute_finalize(
         request,
         &mut ctx.accounts.vault,
+        &vault_info,
         &ctx.accounts.global_state,
-        &ctx.accounts.pyth_xmr,
-        &ctx.accounts.pyth_collateral,
-        &ctx.accounts.pyth_susde_rr,
         &ctx.accounts.wsxmr_mint,
         &ctx.accounts.recipient_wsxmr_ata,
         &ctx.accounts.lp_wsxmr_ata,
+        &ctx.accounts.collateral_mint,
+        &ctx.accounts.vault_collateral_ata,
+        &ctx.accounts.program_collateral_ata,
         &mut ctx.accounts.pending_returns,
         &ctx.accounts.token_program,
         gs_info,
@@ -441,13 +476,14 @@ pub fn finalize_mint(ctx: Context<FinalizeMint>) -> Result<()> {
 fn execute_finalize<'a>(
     request: &mut MintRequest,
     vault: &mut Vault,
+    vault_info: &AccountInfo<'a>,
     global_state: &AccountLoader<'a, GlobalState>,
-    pyth_xmr: &AccountInfo<'a>,
-    pyth_collateral: &AccountInfo<'a>,
-    pyth_susde_rr: &AccountInfo<'a>,
     wsxmr_mint: &InterfaceAccount<'a, Mint>,
     recipient_wsxmr_ata: &InterfaceAccount<'a, TokenAccount>,
     lp_wsxmr_ata: &InterfaceAccount<'a, TokenAccount>,
+    collateral_mint: &InterfaceAccount<'a, Mint>,
+    vault_collateral_ata: &InterfaceAccount<'a, TokenAccount>,
+    program_collateral_ata: &InterfaceAccount<'a, TokenAccount>,
     initiator_returns: &mut PendingReturns,
     token_program: &Program<'a, Token2022>,
     gs_info: AccountInfo<'a>,
@@ -461,7 +497,6 @@ fn execute_finalize<'a>(
         let global = &mut *global_state.load_mut()?;
         request.status = MintStatus::Cancelled;
         vault.pending_mint_count = vault.pending_mint_count.saturating_sub(1);
-        global.total_pending_mints = global.total_pending_mints.saturating_sub(1);
 
         // Release the debt reservation — liquidation never touches pending_debt,
         // so the reservation is still held and must be freed here. The nonce
@@ -471,7 +506,9 @@ fn execute_finalize<'a>(
         if request.locked_collateral > 0 && vault.locked_collateral >= request.locked_collateral {
             vault.locked_collateral -= request.locked_collateral;
             // Total model: the slashed bond leaves the vault to the user.
-            vault.collateral_amount = vault.collateral_amount.saturating_sub(request.locked_collateral);
+            vault.collateral_amount = vault
+                .collateral_amount
+                .saturating_sub(request.locked_collateral);
             initiator_returns.collateral_amount = initiator_returns
                 .collateral_amount
                 .checked_add(request.locked_collateral)
@@ -480,6 +517,19 @@ fn execute_finalize<'a>(
                 .global_pending_collateral
                 .checked_add(request.locked_collateral)
                 .ok_or(WrapSynthError::MathOverflow)?;
+            // Physically move the slashed bond into the program pool so the
+            // pending-returns credit is backed. The CPI is signed by the vault
+            // PDA, so holding the global_state borrow across it is safe.
+            slash_to_pool(
+                vault,
+                vault_info,
+                &vault_collateral_ata.to_account_info(),
+                &program_collateral_ata.to_account_info(),
+                &collateral_mint.to_account_info(),
+                &token_program.to_account_info(),
+                collateral_mint.decimals,
+                request.locked_collateral,
+            )?;
         }
         if request.griefing_deposit > 0 {
             initiator_returns.sol_amount = initiator_returns
@@ -491,17 +541,19 @@ fn execute_finalize<'a>(
                 .checked_add(request.griefing_deposit)
                 .ok_or(WrapSynthError::MathOverflow)?;
         }
-        msg!("Mint cancelled (vault liquidated): {:?}", request.request_id);
+        msg!(
+            "Mint cancelled (vault liquidated): {:?}",
+            request.request_id
+        );
         return Ok(());
     }
 
-    // Sync yield + debt/collateral accounting — scope the global borrow so the
-    // RefMut is dropped before the mint_to CPIs reuse gs_info (global_state's
+    // Debt/collateral accounting — scope the global borrow so the RefMut is
+    // dropped before the mint_to CPIs reuse gs_info (global_state's
     // AccountInfo). invoke_signed borrows the account data to serialize, so we
     // must not hold a load_mut() across the CPI.
     {
         let global = &mut *global_state.load_mut()?;
-        sync_vault_yield(vault, global, pyth_xmr, pyth_collateral, pyth_susde_rr)?;
 
         // Release locked collateral — mint succeeded, reservation no longer needed.
         // Total model: only the reservation is released; collateral stays in the vault.
@@ -541,6 +593,7 @@ fn execute_finalize<'a>(
         mint_to(cpi_ctx, net_amount)?;
     }
 
+    // Mint the LP's full fee to lp_wsxmr_ata — the protocol takes no cut.
     if request.fee_amount > 0 {
         let cpi_ctx = CpiContext::new_with_signer(
             token_program.to_account_info(),
@@ -571,7 +624,6 @@ fn execute_finalize<'a>(
                 .checked_add(request.griefing_deposit)
                 .ok_or(WrapSynthError::MathOverflow)?;
         }
-        global.total_pending_mints = global.total_pending_mints.saturating_sub(1);
     }
     vault.pending_mint_count = vault.pending_mint_count.saturating_sub(1);
     request.status = MintStatus::Completed;
@@ -592,7 +644,10 @@ pub fn cancel_mint(ctx: Context<CancelMint>) -> Result<()> {
     );
 
     let clock = Clock::get()?;
-    require!(clock.unix_timestamp >= request.timeout, WrapSynthError::TimeoutNotReached);
+    require!(
+        clock.unix_timestamp >= request.timeout,
+        WrapSynthError::TimeoutNotReached
+    );
 
     let vault = &mut ctx.accounts.vault;
     let original_status = request.status;
@@ -633,16 +688,18 @@ pub fn cancel_mint(ctx: Context<CancelMint>) -> Result<()> {
         // Secret already public via reveal_secret — mint anyway (see execute_finalize).
         let gs_bump = ctx.accounts.global_state.load()?.bump;
         let gs_info = ctx.accounts.global_state.to_account_info();
+        let vault_info = vault.to_account_info();
         execute_finalize(
             request,
             vault,
+            &vault_info,
             &ctx.accounts.global_state,
-            &ctx.accounts.pyth_xmr,
-            &ctx.accounts.pyth_collateral,
-            &ctx.accounts.pyth_susde_rr,
             &ctx.accounts.wsxmr_mint,
             &ctx.accounts.recipient_wsxmr_ata,
             &ctx.accounts.lp_wsxmr_ata,
+            &ctx.accounts.collateral_mint,
+            &ctx.accounts.vault_collateral_ata,
+            &ctx.accounts.program_collateral_ata,
             &mut ctx.accounts.initiator_returns,
             &ctx.accounts.token_program,
             gs_info,
@@ -681,13 +738,19 @@ pub fn abandon_key_provided_mint(
     if request.status == MintStatus::KeyProvided {
         // Direct abandon — only after the mint timeout so the LP cannot key-then-
         // instant-abandon to farm griefing deposits from users about to send XMR.
-        require!(clock.unix_timestamp >= request.timeout, WrapSynthError::TimeoutNotReached);
+        require!(
+            clock.unix_timestamp >= request.timeout,
+            WrapSynthError::TimeoutNotReached
+        );
         // Release the debt reservation unconditionally — liquidation never touches
         // pending_debt, so it is still held even when the nonce no longer matches.
         vault.pending_debt = vault.pending_debt.saturating_sub(request.wsxmr_amount);
     } else {
         // KEY_CANCELLED — must claim within the parked-deposit window.
-        require!(clock.unix_timestamp < request.timeout, WrapSynthError::DeadlineExpired);
+        require!(
+            clock.unix_timestamp < request.timeout,
+            WrapSynthError::DeadlineExpired
+        );
     }
 
     // Verify the LP secret matches the commitment
@@ -727,10 +790,16 @@ pub fn abandon_key_provided_mint(
 
 pub fn reclaim_parked_deposit(ctx: Context<ReclaimParkedDeposit>) -> Result<()> {
     let request = &mut ctx.accounts.mint_request;
-    require!(request.status == MintStatus::KeyCancelled, WrapSynthError::InvalidStatus);
+    require!(
+        request.status == MintStatus::KeyCancelled,
+        WrapSynthError::InvalidStatus
+    );
 
     let clock = Clock::get()?;
-    require!(clock.unix_timestamp >= request.timeout, WrapSynthError::TimeoutNotReached);
+    require!(
+        clock.unix_timestamp >= request.timeout,
+        WrapSynthError::TimeoutNotReached
+    );
 
     request.status = MintStatus::Cancelled;
 
@@ -744,17 +813,33 @@ pub fn reclaim_parked_deposit(ctx: Context<ReclaimParkedDeposit>) -> Result<()> 
                 vault.locked_collateral -= request.locked_collateral;
             }
             // Total model: the slashed bond leaves the vault to the user.
-            vault.collateral_amount = vault.collateral_amount.saturating_sub(request.locked_collateral);
+            vault.collateral_amount = vault
+                .collateral_amount
+                .saturating_sub(request.locked_collateral);
             ctx.accounts.initiator_returns.collateral_amount = ctx
                 .accounts
                 .initiator_returns
                 .collateral_amount
                 .checked_add(request.locked_collateral)
                 .ok_or(WrapSynthError::MathOverflow)?;
-            let __global_pending_collateral_cur = ctx.accounts.global_state.load()?.global_pending_collateral;
-            ctx.accounts.global_state.load_mut()?.global_pending_collateral = __global_pending_collateral_cur
+            let __global_pending_collateral_cur =
+                ctx.accounts.global_state.load()?.global_pending_collateral;
+            ctx.accounts
+                .global_state
+                .load_mut()?
+                .global_pending_collateral = __global_pending_collateral_cur
                 .checked_add(request.locked_collateral)
                 .ok_or(WrapSynthError::MathOverflow)?;
+            slash_to_pool(
+                vault,
+                &vault.to_account_info(),
+                &ctx.accounts.vault_collateral_ata.to_account_info(),
+                &ctx.accounts.program_collateral_ata.to_account_info(),
+                &ctx.accounts.collateral_mint.to_account_info(),
+                &ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.collateral_mint.decimals,
+                request.locked_collateral,
+            )?;
         } else if vault.locked_collateral >= request.locked_collateral {
             vault.locked_collateral -= request.locked_collateral;
         }
@@ -773,22 +858,34 @@ pub fn reclaim_parked_deposit(ctx: Context<ReclaimParkedDeposit>) -> Result<()> 
             .ok_or(WrapSynthError::MathOverflow)?;
     }
 
-    msg!("Parked deposit reclaimed for mint: {:?}", request.request_id);
+    msg!(
+        "Parked deposit reclaimed for mint: {:?}",
+        request.request_id
+    );
     Ok(())
 }
 
 // ─── claim_griefing_deposit ───────────────────────────────────────────────────
 
-pub fn claim_griefing_deposit(ctx: Context<ClaimGriefingDeposit>, lp_secret: [u8; 32]) -> Result<()> {
+pub fn claim_griefing_deposit(
+    ctx: Context<ClaimGriefingDeposit>,
+    lp_secret: [u8; 32],
+) -> Result<()> {
     let request = &mut ctx.accounts.mint_request;
-    require!(request.status == MintStatus::ExpiredReady, WrapSynthError::InvalidStatus);
+    require!(
+        request.status == MintStatus::ExpiredReady,
+        WrapSynthError::InvalidStatus
+    );
     require!(
         ctx.accounts.lp.key() == ctx.accounts.vault.lp_address,
         WrapSynthError::Unauthorized
     );
 
     let clock = Clock::get()?;
-    require!(clock.unix_timestamp < request.timeout, WrapSynthError::DeadlineExpired);
+    require!(
+        clock.unix_timestamp < request.timeout,
+        WrapSynthError::DeadlineExpired
+    );
 
     // Verify the LP secret matches the commitment — proves the LP was ready to
     // finalize and the user abandoned the mint.
@@ -800,9 +897,6 @@ pub fn claim_griefing_deposit(ctx: Context<ClaimGriefingDeposit>, lp_secret: [u8
     let vault = &mut ctx.accounts.vault;
     request.status = MintStatus::Cancelled;
     vault.pending_mint_count = vault.pending_mint_count.saturating_sub(1);
-    let __total_pending_mints_cur = ctx.accounts.global_state.load()?.total_pending_mints;
-    ctx.accounts.global_state.load_mut()?.total_pending_mints = __total_pending_mints_cur
-        .saturating_sub(1);
 
     // Release locked collateral back to vault — LP revealed their secret, user
     // can recover XMR from the shared address. Total model: reservation only.
@@ -823,7 +917,10 @@ pub fn claim_griefing_deposit(ctx: Context<ClaimGriefingDeposit>, lp_secret: [u8
             .ok_or(WrapSynthError::MathOverflow)?;
     }
 
-    msg!("Griefing deposit claimed by LP for mint: {:?}", request.request_id);
+    msg!(
+        "Griefing deposit claimed by LP for mint: {:?}",
+        request.request_id
+    );
     Ok(())
 }
 
@@ -831,17 +928,20 @@ pub fn claim_griefing_deposit(ctx: Context<ClaimGriefingDeposit>, lp_secret: [u8
 
 pub fn sweep_unclaimed_expired_mint(ctx: Context<SweepUnclaimedExpiredMint>) -> Result<()> {
     let request = &mut ctx.accounts.mint_request;
-    require!(request.status == MintStatus::ExpiredReady, WrapSynthError::InvalidStatus);
+    require!(
+        request.status == MintStatus::ExpiredReady,
+        WrapSynthError::InvalidStatus
+    );
 
     let clock = Clock::get()?;
-    require!(clock.unix_timestamp >= request.timeout, WrapSynthError::TimeoutNotReached);
+    require!(
+        clock.unix_timestamp >= request.timeout,
+        WrapSynthError::TimeoutNotReached
+    );
 
     let vault = &mut ctx.accounts.vault;
     request.status = MintStatus::Cancelled;
     vault.pending_mint_count = vault.pending_mint_count.saturating_sub(1);
-    let __total_pending_mints_cur = ctx.accounts.global_state.load()?.total_pending_mints;
-    ctx.accounts.global_state.load_mut()?.total_pending_mints = __total_pending_mints_cur
-        .saturating_sub(1);
 
     // Release the par-value lock. If the vault was not liquidated, slash it to
     // the user — the LP ghosted. If liquidated (nonce changed), release it back
@@ -852,17 +952,33 @@ pub fn sweep_unclaimed_expired_mint(ctx: Context<SweepUnclaimedExpiredMint>) -> 
                 vault.locked_collateral -= request.locked_collateral;
             }
             // Total model: the slashed lock leaves the vault to the user.
-            vault.collateral_amount = vault.collateral_amount.saturating_sub(request.locked_collateral);
+            vault.collateral_amount = vault
+                .collateral_amount
+                .saturating_sub(request.locked_collateral);
             ctx.accounts.initiator_returns.collateral_amount = ctx
                 .accounts
                 .initiator_returns
                 .collateral_amount
                 .checked_add(request.locked_collateral)
                 .ok_or(WrapSynthError::MathOverflow)?;
-            let __global_pending_collateral_cur = ctx.accounts.global_state.load()?.global_pending_collateral;
-            ctx.accounts.global_state.load_mut()?.global_pending_collateral = __global_pending_collateral_cur
+            let __global_pending_collateral_cur =
+                ctx.accounts.global_state.load()?.global_pending_collateral;
+            ctx.accounts
+                .global_state
+                .load_mut()?
+                .global_pending_collateral = __global_pending_collateral_cur
                 .checked_add(request.locked_collateral)
                 .ok_or(WrapSynthError::MathOverflow)?;
+            slash_to_pool(
+                vault,
+                &vault.to_account_info(),
+                &ctx.accounts.vault_collateral_ata.to_account_info(),
+                &ctx.accounts.program_collateral_ata.to_account_info(),
+                &ctx.accounts.collateral_mint.to_account_info(),
+                &ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.collateral_mint.decimals,
+                request.locked_collateral,
+            )?;
         } else if vault.locked_collateral >= request.locked_collateral {
             vault.locked_collateral -= request.locked_collateral;
         }
@@ -934,10 +1050,8 @@ pub struct InitiateMint<'info> {
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth collateral price feed (sUSDe/USD) — validated by oracle.rs
+    /// CHECK: Pyth QQQX/USD price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
-    pub pyth_susde_rr: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
 }
@@ -970,10 +1084,8 @@ pub struct SetMintReady<'info> {
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth collateral price feed — validated by oracle.rs
+    /// CHECK: Pyth QQQX/USD price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
-    pub pyth_susde_rr: AccountInfo<'info>,
 }
 
 #[derive(Accounts)]
@@ -1019,12 +1131,27 @@ pub struct FinalizeMint<'info> {
     )]
     pub pending_returns: Account<'info, crate::state::PendingReturns>,
 
-    /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
-    pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth collateral price feed — validated by oracle.rs
-    pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
-    pub pyth_susde_rr: AccountInfo<'info>,
+    pub collateral_mint: InterfaceAccount<'info, Mint>,
+
+    /// Vault collateral ATA — slash source for the liquidated-vault branch.
+    #[account(
+        mut,
+        seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = vault,
+    )]
+    pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+
+    /// Program collateral pool ATA — slash destination.
+    #[account(
+        mut,
+        seeds = [PROGRAM_COLLATERAL_SEED],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = global_state,
+    )]
+    pub program_collateral_ata: InterfaceAccount<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -1058,10 +1185,8 @@ pub struct ProvideLPKey<'info> {
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth collateral price feed — validated by oracle.rs
+    /// CHECK: Pyth QQQX/USD price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
-    pub pyth_susde_rr: AccountInfo<'info>,
 }
 
 #[derive(Accounts)]
@@ -1148,6 +1273,29 @@ pub struct ReclaimParkedDeposit<'info> {
     )]
     pub initiator_returns: Box<Account<'info, PendingReturns>>,
 
+    pub collateral_mint: InterfaceAccount<'info, Mint>,
+
+    /// Vault collateral ATA — slash source.
+    #[account(
+        mut,
+        seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = vault,
+    )]
+    pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+
+    /// Program collateral pool ATA — slash destination.
+    #[account(
+        mut,
+        seeds = [PROGRAM_COLLATERAL_SEED],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = global_state,
+    )]
+    pub program_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
 }
 
@@ -1221,6 +1369,29 @@ pub struct SweepUnclaimedExpiredMint<'info> {
     )]
     pub initiator_returns: Box<Account<'info, PendingReturns>>,
 
+    pub collateral_mint: InterfaceAccount<'info, Mint>,
+
+    /// Vault collateral ATA — slash source.
+    #[account(
+        mut,
+        seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = vault,
+    )]
+    pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+
+    /// Program collateral pool ATA — slash destination.
+    #[account(
+        mut,
+        seeds = [PROGRAM_COLLATERAL_SEED],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = global_state,
+    )]
+    pub program_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
 }
 
@@ -1275,12 +1446,27 @@ pub struct CancelMint<'info> {
     #[account(mut)]
     pub lp_wsxmr_ata: InterfaceAccount<'info, TokenAccount>,
 
-    /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
-    pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth collateral price feed — validated by oracle.rs
-    pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
-    pub pyth_susde_rr: AccountInfo<'info>,
+    pub collateral_mint: InterfaceAccount<'info, Mint>,
+
+    /// Vault collateral ATA — slash source for the liquidated-vault branch.
+    #[account(
+        mut,
+        seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = vault,
+    )]
+    pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+
+    /// Program collateral pool ATA — slash destination.
+    #[account(
+        mut,
+        seeds = [PROGRAM_COLLATERAL_SEED],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = global_state,
+    )]
+    pub program_collateral_ata: InterfaceAccount<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,

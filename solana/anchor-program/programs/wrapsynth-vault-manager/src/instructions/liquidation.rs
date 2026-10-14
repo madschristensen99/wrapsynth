@@ -1,21 +1,20 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_2022::{
-    Token2022, Burn as BurnCpi, burn as burn_tokens,
-    TransferChecked, transfer_checked,
+    burn as burn_tokens, transfer_checked, Burn as BurnCpi, Token2022, TransferChecked,
 };
 use anchor_spl::token_interface::{Mint, TokenAccount};
 
 use crate::constants::*;
 use crate::errors::WrapSynthError;
-use crate::state::{GlobalState, Vault, BurnRequest, BurnStatus, PendingReturns};
+use crate::instructions::vault_management::slash_to_pool;
+use crate::state::{BurnRequest, BurnStatus, GlobalState, PendingReturns, Vault};
 use crate::utils::{
-    get_xmr_price, get_collateral_price,
+    get_collateral_price, get_xmr_price,
     math::{
-        get_actual_debt, normalize_debt, collateral_value_for_debt,
-        usd_to_collateral, collateral_to_usd, calculate_collateral_ratio,
+        calculate_collateral_ratio, collateral_to_usd, collateral_value_for_debt, get_actual_debt,
+        normalize_debt, usd_to_collateral,
     },
 };
-use crate::instructions::vault_management::sync_vault_yield;
 
 // ─── resolve_burn_for_liquidation ─────────────────────────────────────────────
 // Phase 1: Called once per active burn request on a to-be-liquidated vault.
@@ -23,18 +22,20 @@ use crate::instructions::vault_management::sync_vault_yield;
 
 pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> Result<()> {
     let vault = &ctx.accounts.vault;
-    let global = &ctx.accounts.global_state.load()?;
+    // Extract the index — the shared borrow must end before branches below
+    // call load_mut() (a live `load()` Ref held across load_mut() aborts the tx).
+    let global_debt_index = ctx.accounts.global_state.load()?.global_debt_index;
 
     // Verify the vault is actually liquidatable before resolving burns
-    let actual_debt = get_actual_debt(vault.normalized_debt, global.global_debt_index);
+    let actual_debt = get_actual_debt(vault.normalized_debt, global_debt_index);
     let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &SUSDE_USD_FEED_ID,
+        &QQQX_USD_FEED_ID,
     )?;
     let col_usd = collateral_to_usd(vault.collateral_amount, col_price);
-    let debt_usd = (actual_debt as u128 * xmr_price as u128 / WSXMR_DECIMALS as u128) as u64;
+    let debt_usd = actual_debt as u128 * xmr_price / WSXMR_DECIMALS as u128;
     let ratio = calculate_collateral_ratio(col_usd, debt_usd);
     require!(ratio < LIQUIDATION_RATIO, WrapSynthError::VaultHealthy);
 
@@ -89,7 +90,10 @@ pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> 
             anchor_spl::token_interface::mint_to(cpi_ctx, request.wsxmr_amount)?;
 
             request.status = BurnStatus::Cancelled;
-            msg!("Burn {:?} re-minted to user (pre-liquidation)", request.request_id);
+            msg!(
+                "Burn {:?} re-minted to user (pre-liquidation)",
+                request.request_id
+            );
         }
         BurnStatus::Committed => {
             if request.revealed_secret != [0u8; 32] {
@@ -112,7 +116,8 @@ pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> 
                 vault.collateral_amount -= reward;
 
                 // Debt reduction happens here at settlement
-                let normalized_burn = normalize_debt(request.wsxmr_amount, global.global_debt_index);
+                let normalized_burn =
+                    normalize_debt(request.wsxmr_amount, global.global_debt_index);
                 let normalized_burn = normalized_burn.min(vault.normalized_debt);
                 vault.normalized_debt -= normalized_burn;
                 global.global_total_debt = global
@@ -136,11 +141,26 @@ pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> 
                         .global_pending_collateral
                         .checked_add(reward)
                         .ok_or(WrapSynthError::MathOverflow)?;
+                    // Move the reward into the program pool so the credit is
+                    // backed. Vault PDA signs, so the global borrow is safe.
+                    slash_to_pool(
+                        vault,
+                        &vault.to_account_info(),
+                        &ctx.accounts.vault_collateral_ata.to_account_info(),
+                        &ctx.accounts.program_collateral_ata.to_account_info(),
+                        &ctx.accounts.collateral_mint.to_account_info(),
+                        &ctx.accounts.token_program.to_account_info(),
+                        ctx.accounts.collateral_mint.decimals,
+                        reward,
+                    )?;
                 }
 
                 vault.active_burn_count = vault.active_burn_count.saturating_sub(1);
                 request.status = BurnStatus::Completed;
-                msg!("Burn {:?} settled (revealed, liquidation)", request.request_id);
+                msg!(
+                    "Burn {:?} settled (revealed, liquidation)",
+                    request.request_id
+                );
             } else {
                 // User confirmed Monero lock, LP never revealed — par-capped slash:
                 // user receives min(par, locked) + reward; excess returns to vault
@@ -149,10 +169,10 @@ pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> 
                 let global = &mut ctx.accounts.global_state.load_mut()?;
 
                 let par_value_usd = (request.wsxmr_amount as u128)
-                    .checked_mul(request.xmr_price_at_request as u128)
+                    .checked_mul(request.xmr_price_at_request)
                     .ok_or(WrapSynthError::MathOverflow)?
                     / WSXMR_DECIMALS as u128;
-                let par_collateral = usd_to_collateral(par_value_usd as u64, col_price);
+                let par_collateral = usd_to_collateral(par_value_usd, col_price);
 
                 let user_base = par_collateral.min(request.locked_collateral);
                 let user_payout = user_base.saturating_add(request.reward_collateral);
@@ -169,7 +189,8 @@ pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> 
                 }
 
                 // Debt reduction happens here at settlement
-                let normalized_burn = normalize_debt(request.wsxmr_amount, global.global_debt_index);
+                let normalized_burn =
+                    normalize_debt(request.wsxmr_amount, global.global_debt_index);
                 let normalized_burn = normalized_burn.min(vault.normalized_debt);
                 vault.normalized_debt -= normalized_burn;
                 global.global_total_debt = global
@@ -193,11 +214,24 @@ pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> 
                         .global_pending_collateral
                         .checked_add(user_payout)
                         .ok_or(WrapSynthError::MathOverflow)?;
+                    slash_to_pool(
+                        vault,
+                        &vault.to_account_info(),
+                        &ctx.accounts.vault_collateral_ata.to_account_info(),
+                        &ctx.accounts.program_collateral_ata.to_account_info(),
+                        &ctx.accounts.collateral_mint.to_account_info(),
+                        &ctx.accounts.token_program.to_account_info(),
+                        ctx.accounts.collateral_mint.decimals,
+                        user_payout,
+                    )?;
                 }
 
                 vault.active_burn_count = vault.active_burn_count.saturating_sub(1);
                 request.status = BurnStatus::Slashed;
-                msg!("Burn {:?} slashed to user (liquidation)", request.request_id);
+                msg!(
+                    "Burn {:?} slashed to user (liquidation)",
+                    request.request_id
+                );
             }
         }
         _ => return err!(WrapSynthError::InvalidStatus),
@@ -214,39 +248,39 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
 
     let vault = &mut ctx.accounts.vault;
     require!(vault.active, WrapSynthError::VaultNotActive);
-    require!(vault.active_burn_count == 0, WrapSynthError::UnresolvedBurns);
+    require!(
+        vault.active_burn_count == 0,
+        WrapSynthError::UnresolvedBurns
+    );
     // Co-LP positions must be unwound first (EVM _unwindAllVaultPositions parity —
     // Solana unwinds via unwind_co_lp, one position at a time).
-    require!(vault.deployed_collateral == 0, WrapSynthError::UnresolvedBurns);
+    require!(
+        vault.deployed_collateral == 0,
+        WrapSynthError::UnresolvedBurns
+    );
     // NOTE: locked_collateral may be > 0 from in-flight mint key bonds / par
     // locks. Liquidation never seizes locked collateral — the seizure below caps
     // at the liquid balance, and the mint's cancel/finalize paths resolve the
     // bond against the bumped mint_nonce (EVM parity).
 
-    sync_vault_yield(
-        vault,
-        &mut *ctx.accounts.global_state.load_mut()?,
-        &ctx.accounts.pyth_xmr,
-        &ctx.accounts.pyth_collateral,
-        &ctx.accounts.pyth_susde_rr,
-    )?;
-
-    let global = &ctx.accounts.global_state.load()?;
+    // Extract the index — a `load()` Ref held across the load_mut() below would
+    // abort the tx with AccountBorrowFailed.
+    let global_debt_index = ctx.accounts.global_state.load()?.global_debt_index;
     let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &SUSDE_USD_FEED_ID,
+        &QQQX_USD_FEED_ID,
     )?;
 
-    let actual_debt = get_actual_debt(vault.normalized_debt, global.global_debt_index);
+    let actual_debt = get_actual_debt(vault.normalized_debt, global_debt_index);
     require!(actual_debt > 0, WrapSynthError::InsufficientDebt);
 
     // Verify vault is liquidatable (unlocked collateral vs actual debt).
-    // Uses market sUSDe/USD price so depegs are already marked down.
+    // Uses market QQQX/USD price so discounts are already marked down.
     // Depeg-pause only blocks minting; liquidations remain permissionless.
     let col_usd = collateral_to_usd(vault.collateral_amount, col_price);
-    let debt_usd = (actual_debt as u128 * xmr_price as u128 / WSXMR_DECIMALS as u128) as u64;
+    let debt_usd = actual_debt as u128 * xmr_price / WSXMR_DECIMALS as u128;
     let ratio = calculate_collateral_ratio(col_usd, debt_usd);
     require!(ratio < LIQUIDATION_RATIO, WrapSynthError::VaultHealthy);
 
@@ -258,7 +292,9 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
 
     // Cap at available (unlocked) collateral — total model: locked collateral
     // (mint bonds / burn locks) is never seized.
-    let available_collateral = vault.collateral_amount.saturating_sub(vault.locked_collateral);
+    let available_collateral = vault
+        .collateral_amount
+        .saturating_sub(vault.locked_collateral);
     if collateral_amount > available_collateral {
         // Scale down proportionally to maintain liquidator's bonus
         debt_to_clear = (debt_to_clear as u128 * available_collateral as u128
@@ -266,27 +302,10 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
         collateral_amount = available_collateral;
     }
 
-    // Update principal tracking proportionally
-    let total_before = vault.collateral_amount;
-    if vault.principal_deposits > 0 && total_before > 0 {
-        let principal_reduction = (vault.principal_deposits as u128 * collateral_amount as u128
-            / total_before as u128) as u64;
-        vault.principal_deposits = vault.principal_deposits.saturating_sub(principal_reduction);
-        let global_mut = &mut ctx.accounts.global_state.load_mut()?;
-        global_mut.global_lp_principal = global_mut.global_lp_principal.saturating_sub(principal_reduction);
-    }
-    if vault.principal_shares > 0 && total_before > 0 {
-        let shares_reduction = (vault.principal_shares as u128 * collateral_amount as u128
-            / total_before as u128) as u64;
-        vault.principal_shares = vault.principal_shares.saturating_sub(shares_reduction);
-        let global_mut = &mut ctx.accounts.global_state.load_mut()?;
-        global_mut.global_lp_principal_shares = global_mut.global_lp_principal_shares.saturating_sub(shares_reduction);
-    }
-
     vault.collateral_amount = vault.collateral_amount.saturating_sub(collateral_amount);
 
     // Clear normalized debt
-    let normalized_clear = normalize_debt(debt_to_clear, ctx.accounts.global_state.load()?.global_debt_index);
+    let normalized_clear = normalize_debt(debt_to_clear, global_debt_index);
     let normalized_clear = normalized_clear.min(vault.normalized_debt);
     vault.normalized_debt = vault.normalized_debt.saturating_sub(normalized_clear);
 
@@ -346,7 +365,11 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
         },
         signer_seeds,
     );
-    transfer_checked(cpi_ctx, collateral_amount, ctx.accounts.collateral_mint.decimals)?;
+    transfer_checked(
+        cpi_ctx,
+        collateral_amount,
+        ctx.accounts.collateral_mint.decimals,
+    )?;
 
     msg!(
         "Vault {} liquidated: {} debt cleared, {} collateral seized",
@@ -369,50 +392,35 @@ pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
     let new = &mut ctx.accounts.new_vault;
     require!(old.active, WrapSynthError::VaultNotActive);
     // Co-LP positions must be unwound first (EVM _unwindAllVaultPositions parity)
-    require!(old.deployed_collateral == 0, WrapSynthError::UnresolvedBurns);
+    require!(
+        old.deployed_collateral == 0,
+        WrapSynthError::UnresolvedBurns
+    );
     require!(new.active, WrapSynthError::VaultNotActive);
     require!(old.key() != new.key(), WrapSynthError::InvalidValue);
     require!(old.active_burn_count == 0, WrapSynthError::UnresolvedBurns);
 
-    // Extract yield from both vaults (EVM parity — yield is harvested before takeover)
-    sync_vault_yield(
-        old,
-        &mut *ctx.accounts.global_state.load_mut()?,
-        &ctx.accounts.pyth_xmr,
-        &ctx.accounts.pyth_collateral,
-        &ctx.accounts.pyth_susde_rr,
-    )?;
-    sync_vault_yield(
-        new,
-        &mut *ctx.accounts.global_state.load_mut()?,
-        &ctx.accounts.pyth_xmr,
-        &ctx.accounts.pyth_collateral,
-        &ctx.accounts.pyth_susde_rr,
-    )?;
-
-    let global = &ctx.accounts.global_state.load()?;
+    // Extract the index — a `load()` Ref held across the load_mut() below would
+    // abort the tx with AccountBorrowFailed.
+    let global_debt_index = ctx.accounts.global_state.load()?.global_debt_index;
     let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &SUSDE_USD_FEED_ID,
+        &QQQX_USD_FEED_ID,
     )?;
 
-    let old_debt = get_actual_debt(old.normalized_debt, global.global_debt_index);
+    let old_debt = get_actual_debt(old.normalized_debt, global_debt_index);
     require!(old_debt > 0, WrapSynthError::InsufficientDebt);
 
     // Old vault must be underwater (total collateral model — locked included)
     let col_usd = collateral_to_usd(old.collateral_amount, col_price);
-    let debt_usd = (old_debt as u128 * xmr_price as u128 / WSXMR_DECIMALS as u128) as u64;
+    let debt_usd = old_debt as u128 * xmr_price / WSXMR_DECIMALS as u128;
     let ratio = calculate_collateral_ratio(col_usd, debt_usd);
     require!(ratio < LIQUIDATION_RATIO, WrapSynthError::VaultHealthy);
 
-    // Absorb old vault's collateral (after yield extraction)
+    // Absorb old vault's collateral — raw QQQx, no yield/receipt accounting.
     let absorbed = old.collateral_amount;
-    let redemption_rate = crate::utils::get_collateral_redemption_rate(&ctx.accounts.pyth_susde_rr)?;
-    let absorbed_value = ((absorbed as u128)
-        .saturating_mul(redemption_rate as u128)
-        / PRICE_PRECISION as u128) as u64;
 
     // Transfer state: new vault assumes old vault's debt and collateral.
     // The discount is implicit — new LP gets collateral worth less than debt at market.
@@ -425,54 +433,32 @@ pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
         .checked_add(absorbed)
         .ok_or(WrapSynthError::MathOverflow)?;
 
-    // C2: Track absorbed collateral as principal to prevent yield extraction.
-    // Must update BOTH principal_shares (used in withdrawals) AND principal_deposits
-    // (used by calculate_extractable_yield as the yield threshold).
-    new.principal_shares = new
-        .principal_shares
-        .checked_add(absorbed)
-        .ok_or(WrapSynthError::MathOverflow)?;
-    new.principal_deposits = new
-        .principal_deposits
-        .checked_add(absorbed)
-        .ok_or(WrapSynthError::MathOverflow)?;
-    new.principal_value = new
-        .principal_value
-        .checked_add(absorbed_value)
-        .ok_or(WrapSynthError::MathOverflow)?;
+    // Physically migrate the collateral balance to the new vault's ATA so the
+    // accounting matches token custody.
+    if absorbed > 0 {
+        let old_lp_key = old.lp_address;
+        let old_bump = old.bump;
+        let seeds: &[&[u8]] = &[VAULT_SEED, old_lp_key.as_ref(), &[old_bump]];
+        let signer_seeds = &[seeds];
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.old_vault_collateral_ata.to_account_info(),
+                mint: ctx.accounts.collateral_mint.to_account_info(),
+                to: ctx.accounts.new_vault_collateral_ata.to_account_info(),
+                authority: old.to_account_info(),
+            },
+            signer_seeds,
+        );
+        transfer_checked(cpi_ctx, absorbed, ctx.accounts.collateral_mint.decimals)?;
+    }
 
     let global = &mut ctx.accounts.global_state.load_mut()?;
-    global.global_lp_principal_shares = global
-        .global_lp_principal_shares
-        .checked_add(absorbed)
-        .ok_or(WrapSynthError::MathOverflow)?;
-    global.global_lp_principal = global
-        .global_lp_principal
-        .checked_add(absorbed)
-        .ok_or(WrapSynthError::MathOverflow)?;
-    global.global_lp_principal_value = global
-        .global_lp_principal_value
-        .checked_add(absorbed_value)
-        .ok_or(WrapSynthError::MathOverflow)?;
-
-    // Remove old vault principal from globals
-    global.global_lp_principal_shares = global
-        .global_lp_principal_shares
-        .saturating_sub(old.principal_shares);
-    global.global_lp_principal = global
-        .global_lp_principal
-        .saturating_sub(old.principal_deposits);
-    global.global_lp_principal_value = global
-        .global_lp_principal_value
-        .saturating_sub(old.principal_value);
 
     // Zero out old vault — must clear ALL state to prevent phantom locked collateral
     old.normalized_debt = 0;
     old.collateral_amount = 0;
     old.locked_collateral = 0;
-    old.principal_shares = 0;
-    old.principal_deposits = 0;
-    old.principal_value = 0;
     old.liquidation_nonce = old
         .liquidation_nonce
         .checked_add(1)
@@ -487,9 +473,12 @@ pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
     // Verify new vault is healthy after takeover
     let new_debt = get_actual_debt(new.normalized_debt, global.global_debt_index);
     let new_col_usd = collateral_to_usd(new.collateral_amount, col_price);
-    let new_debt_usd = (new_debt as u128 * xmr_price as u128 / WSXMR_DECIMALS as u128) as u64;
+    let new_debt_usd = new_debt as u128 * xmr_price / WSXMR_DECIMALS as u128;
     let new_ratio = calculate_collateral_ratio(new_col_usd, new_debt_usd);
-    require!(new_ratio >= COLLATERAL_RATIO, WrapSynthError::InsufficientCollateral);
+    require!(
+        new_ratio >= COLLATERAL_RATIO,
+        WrapSynthError::InsufficientCollateral
+    );
 
     msg!(
         "Vault backstopped: old {} → new {}, {} debt, {} collateral absorbed",
@@ -539,17 +528,37 @@ pub struct ResolveBurnForLiquidation<'info> {
     pub user_pending_returns: Box<Account<'info, PendingReturns>>,
 
     #[account(mut)]
-    pub wsxmr_mint: InterfaceAccount<'info, Mint>,
+    pub wsxmr_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(mut)]
-    pub user_wsxmr_ata: InterfaceAccount<'info, TokenAccount>,
+    pub user_wsxmr_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
-    pub pyth_susde_rr: AccountInfo<'info>,
+
+    pub collateral_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    /// Vault collateral ATA — slash source for revealed/committed burn payouts.
+    #[account(
+        mut,
+        seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = vault,
+    )]
+    pub vault_collateral_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    /// Program collateral pool ATA — slash destination.
+    #[account(
+        mut,
+        seeds = [PROGRAM_COLLATERAL_SEED],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = global_state,
+    )]
+    pub program_collateral_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -589,6 +598,8 @@ pub struct ExecuteLiquidation<'info> {
         mut,
         seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
         bump,
+        token::mint = collateral_mint,
+        token::authority = vault,
     )]
     pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
 
@@ -596,8 +607,6 @@ pub struct ExecuteLiquidation<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
-    pub pyth_susde_rr: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -634,8 +643,29 @@ pub struct BackstopVault<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
-    pub pyth_susde_rr: AccountInfo<'info>,
 
+    pub collateral_mint: InterfaceAccount<'info, Mint>,
+
+    /// Old vault's collateral ATA — source of the absorbed balance.
+    #[account(
+        mut,
+        seeds = [VAULT_COLLATERAL_SEED, old_vault.key().as_ref()],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = old_vault,
+    )]
+    pub old_vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+
+    /// New vault's collateral ATA — destination of the absorbed balance.
+    #[account(
+        mut,
+        seeds = [VAULT_COLLATERAL_SEED, new_vault.key().as_ref()],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = new_vault,
+    )]
+    pub new_vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
 }

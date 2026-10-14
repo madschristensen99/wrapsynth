@@ -1,27 +1,16 @@
 use anchor_lang::prelude::*;
-use anchor_lang::system_program::{CreateAccount, create_account};
 use anchor_spl::associated_token::AssociatedToken;
-use anchor_spl::token_2022::{
-    Token2022, MintTo, mint_to, TransferChecked, transfer_checked,
-    InitializeMint2, initialize_mint2,
-    SetAuthority, set_authority,
-};
-use anchor_spl::token_2022_extensions::{
-    metadata_pointer::metadata_pointer_initialize,
-    token_metadata::token_metadata_initialize,
-};
+use anchor_spl::token_2022::{transfer_checked, Token2022, TransferChecked};
 use anchor_spl::token_interface::{Mint, TokenAccount};
 
 use crate::constants::*;
 use crate::errors::WrapSynthError;
-use crate::state::{GlobalState, Vault, CoLPPosition};
+use crate::state::{CoLPPosition, GlobalState, Vault};
 use crate::utils::{
-    get_xmr_price, get_collateral_price,
-    math::{get_actual_debt, collateral_to_usd, usd_to_collateral, calculate_collateral_ratio},
+    get_collateral_price, get_xmr_price,
+    math::{calculate_collateral_ratio, collateral_to_usd, get_actual_debt, usd_to_collateral},
     whirlpool::*,
 };
-use crate::instructions::vault_management::sync_vault_yield;
-
 // ─── set_max_co_lp_range ─────────────────────────────────────────────────────
 
 pub fn set_max_co_lp_range(ctx: Context<SetMaxCoLPRange>, bps: u16) -> Result<()> {
@@ -35,7 +24,7 @@ pub fn set_max_co_lp_range(ctx: Context<SetMaxCoLPRange>, bps: u16) -> Result<()
 }
 
 // ─── user_open_co_lp ─────────────────────────────────────────────────────────
-// User pairs wsXMR with the vault's idle sUSDe collateral to open a concentrated
+// User pairs wsXMR with the vault's idle QQQx collateral to open a concentrated
 // position on Orca Whirlpools. The vault manager (GlobalState PDA) is the
 // position authority; the position NFT is held in a program-owned ATA.
 
@@ -53,19 +42,11 @@ pub fn user_open_co_lp<'info>(
         WrapSynthError::InvalidValue
     );
 
-    sync_vault_yield(
-        vault,
-        &mut *ctx.accounts.global_state.load_mut()?,
-        &ctx.accounts.pyth_xmr,
-        &ctx.accounts.pyth_collateral,
-        &ctx.accounts.pyth_susde_rr,
-    )?;
-
     let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &SUSDE_USD_FEED_ID,
+        &QQQX_USD_FEED_ID,
     )?;
 
     // Whirlpool-internal CPI accounts are passed via remaining_accounts (kept out
@@ -79,16 +60,19 @@ pub fn user_open_co_lp<'info>(
     let metadata_update_auth = ra[2].clone();
     let memo_program = ra[4].clone();
 
-    // sUSDe needed = wsXMR value in USD → shares
-    let wsxmr_usd = (wsxmr_amount as u128 * xmr_price as u128 / WSXMR_DECIMALS as u128) as u64;
-    let susde_needed = usd_to_collateral(wsxmr_usd, col_price);
+    // QQQx needed = wsXMR value in USD → shares
+    let wsxmr_usd = wsxmr_amount as u128 * xmr_price / WSXMR_DECIMALS as u128;
+    let collateral_needed = usd_to_collateral(wsxmr_usd, col_price);
 
     // Idle collateral check (total model: available = collateral - locked - deployed)
     let available = vault
         .collateral_amount
         .saturating_sub(vault.locked_collateral)
         .saturating_sub(vault.deployed_collateral);
-    require!(available >= susde_needed, WrapSynthError::InsufficientCollateral);
+    require!(
+        available >= collateral_needed,
+        WrapSynthError::InsufficientCollateral
+    );
 
     // Read the whirlpool to derive the range + vaults
     let whirlpool_data = read_whirlpool(&ctx.accounts.whirlpool)?;
@@ -103,7 +87,7 @@ pub fn user_open_co_lp<'info>(
         whirlpool_data.tick_spacing,
     );
 
-    // Verify the whirlpool is the sUSDe/wsXMR pool
+    // Verify the whirlpool is the QQQx/wsXMR pool
     require!(
         whirlpool_data.token_mint_a == ctx.accounts.collateral_mint.key()
             || whirlpool_data.token_mint_b == ctx.accounts.collateral_mint.key(),
@@ -114,13 +98,19 @@ pub fn user_open_co_lp<'info>(
             || whirlpool_data.token_mint_b == ctx.accounts.wsxmr_mint.key(),
         WrapSynthError::InvalidValue
     );
-    let susde_is_a = whirlpool_data.token_mint_a == ctx.accounts.collateral_mint.key();
+    let collateral_is_a = whirlpool_data.token_mint_a == ctx.accounts.collateral_mint.key();
 
     // Compute liquidity from the token amounts (centered range → both legs in range)
     let sqrt_price = whirlpool_data.sqrt_price;
     let sqrt_lower = sqrt_price_at_tick(tick_lower);
     let sqrt_upper = sqrt_price_at_tick(tick_upper);
-    let liquidity = compute_liquidity(susde_needed, wsxmr_amount, sqrt_price, sqrt_lower, sqrt_upper);
+    let liquidity = compute_liquidity(
+        collateral_needed,
+        wsxmr_amount,
+        sqrt_price,
+        sqrt_lower,
+        sqrt_upper,
+    );
 
     // The whirlpool program creates + initializes the position NFT mint and its
     // token account inside open_position_with_token_extensions — we only pass a
@@ -147,7 +137,7 @@ pub fn user_open_co_lp<'info>(
         ctx.accounts.wsxmr_mint.decimals,
     )?;
 
-    // Vault sUSDe → position_susde_ata (program-owned)
+    // Vault QQQx → position_collateral_ata (program-owned)
     let vault_bump = vault.bump;
     let vault_key = vault.lp_address;
     let vault_seeds: &[&[u8]] = &[VAULT_SEED, vault_key.as_ref(), &[vault_bump]];
@@ -158,12 +148,12 @@ pub fn user_open_co_lp<'info>(
             TransferChecked {
                 from: ctx.accounts.vault_collateral_ata.to_account_info(),
                 mint: ctx.accounts.collateral_mint.to_account_info(),
-                to: ctx.accounts.position_susde_ata.to_account_info(),
+                to: ctx.accounts.position_collateral_ata.to_account_info(),
                 authority: ctx.accounts.vault.to_account_info(),
             },
             vault_signer,
         ),
-        susde_needed,
+        collateral_needed,
         ctx.accounts.collateral_mint.decimals,
     )?;
 
@@ -204,17 +194,17 @@ pub fn user_open_co_lp<'info>(
     msg!("dbg: open_position done");
 
     // ── CPI: increase_liquidity_v2 ──
-    // ModifyLiquidityV2 takes 15 named accounts; sUSDe/wsXMR have no transfer hooks
+    // ModifyLiquidityV2 takes 15 named accounts; QQQx/wsXMR have no transfer hooks
     // so no remaining_accounts are needed. Order mints/owner/vault in pool A/B order
     // (a = token_mint_a).
     let (mint_a_info, mint_b_info, owner_a_info, owner_b_info, owner_a, owner_b) =
-        if susde_is_a {
+        if collateral_is_a {
             (
                 ctx.accounts.collateral_mint.to_account_info(),
                 ctx.accounts.wsxmr_mint.to_account_info(),
-                ctx.accounts.position_susde_ata.to_account_info(),
+                ctx.accounts.position_collateral_ata.to_account_info(),
                 ctx.accounts.position_wsxmr_ata.to_account_info(),
-                ctx.accounts.position_susde_ata.key(),
+                ctx.accounts.position_collateral_ata.key(),
                 ctx.accounts.position_wsxmr_ata.key(),
             )
         } else {
@@ -222,9 +212,9 @@ pub fn user_open_co_lp<'info>(
                 ctx.accounts.wsxmr_mint.to_account_info(),
                 ctx.accounts.collateral_mint.to_account_info(),
                 ctx.accounts.position_wsxmr_ata.to_account_info(),
-                ctx.accounts.position_susde_ata.to_account_info(),
+                ctx.accounts.position_collateral_ata.to_account_info(),
                 ctx.accounts.position_wsxmr_ata.key(),
-                ctx.accounts.position_susde_ata.key(),
+                ctx.accounts.position_collateral_ata.key(),
             )
         };
     let inc_ix = increase_liquidity_ix(
@@ -244,7 +234,7 @@ pub fn user_open_co_lp<'info>(
         &ctx.accounts.tick_array_lower.key(),
         &ctx.accounts.tick_array_upper.key(),
         liquidity,
-        susde_needed,
+        collateral_needed,
         wsxmr_amount,
     );
     anchor_lang::solana_program::program::invoke_signed(
@@ -270,13 +260,13 @@ pub fn user_open_co_lp<'info>(
     )?;
 
     // ── Sweep leftovers back ──
-    sweep_leftovers(&mut ctx, susde_needed, wsxmr_amount, susde_is_a)?;
+    sweep_leftovers(&mut ctx, collateral_needed, wsxmr_amount, collateral_is_a)?;
 
     // ── Record the position ──
     let co_lp = &mut ctx.accounts.co_lp_position;
     co_lp.vault = ctx.accounts.vault.key();
     co_lp.user = ctx.accounts.user.key();
-    co_lp.collateral_original = susde_needed;
+    co_lp.collateral_original = collateral_needed;
     co_lp.wsxmr_original = wsxmr_amount;
     co_lp.tick_lower = tick_lower;
     co_lp.tick_upper = tick_upper;
@@ -291,7 +281,7 @@ pub fn user_open_co_lp<'info>(
     let vault = &mut ctx.accounts.vault;
     vault.deployed_collateral = vault
         .deployed_collateral
-        .checked_add(susde_needed)
+        .checked_add(collateral_needed)
         .ok_or(WrapSynthError::MathOverflow)?;
 
     // Vault health check after deployment
@@ -302,13 +292,16 @@ pub fn user_open_co_lp<'info>(
         .saturating_sub(vault.locked_collateral)
         .saturating_sub(vault.deployed_collateral);
     let col_usd = collateral_to_usd(available_after, col_price);
-    let debt_usd = (actual_debt as u128 * xmr_price as u128 / WSXMR_DECIMALS as u128) as u64;
+    let debt_usd = actual_debt as u128 * xmr_price / WSXMR_DECIMALS as u128;
     let ratio = calculate_collateral_ratio(col_usd, debt_usd);
-    require!(ratio >= COLLATERAL_RATIO, WrapSynthError::InsufficientCollateral);
+    require!(
+        ratio >= COLLATERAL_RATIO,
+        WrapSynthError::InsufficientCollateral
+    );
 
     msg!(
-        "Co-LP opened: {} sUSDe + {} wsXMR, ticks [{}, {}]",
-        susde_needed,
+        "Co-LP opened: {} QQQx + {} wsXMR, ticks [{}, {}]",
+        collateral_needed,
         wsxmr_amount,
         tick_lower,
         tick_upper
@@ -317,54 +310,54 @@ pub fn user_open_co_lp<'info>(
 }
 
 /// Sweep any leftover tokens from the program-owned position ATAs back to the
-/// vault (sUSDe) and user (wsXMR).
+/// vault (QQQx) and user (wsXMR).
 #[allow(clippy::too_many_arguments)]
 fn sweep_leftovers(
     ctx: &mut Context<UserOpenCoLP>,
-    susde_needed: u64,
+    collateral_needed: u64,
     wsxmr_amount: u64,
-    susde_is_a: bool,
+    collateral_is_a: bool,
 ) -> Result<()> {
     let gs_bump = ctx.accounts.global_state.load()?.bump;
     let gs_seeds: &[&[u8]] = &[GLOBAL_STATE_SEED, &[gs_bump]];
     let gs_signer = &[gs_seeds];
 
-    // position_susde_ata always holds sUSDe and position_wsxmr_ata always holds
+    // position_collateral_ata always holds QQQx and position_wsxmr_ata always holds
     // wsXMR — the pool's a/b ordering does NOT change which ATA holds which token,
     // so there is no swap here (the a/b ordering only matters for the whirlpool
     // increase/decrease_liquidity account ordering, handled by owner_a/b above).
-    let susde_ata = ctx.accounts.position_susde_ata.to_account_info();
+    let collateral_ata = ctx.accounts.position_collateral_ata.to_account_info();
     let wsxmr_ata = ctx.accounts.position_wsxmr_ata.to_account_info();
-    let _ = susde_is_a;
+    let _ = collateral_is_a;
 
     // Read balances and sweep
-    let susde_balance = susde_ata.try_borrow_data()?;
-    let susde_amt = if susde_balance.len() >= 64 {
-        u64::from_le_bytes(susde_balance[64..72].try_into().unwrap())
+    let collateral_balance = collateral_ata.try_borrow_data()?;
+    let collateral_amt = if collateral_balance.len() >= 64 {
+        u64::from_le_bytes(collateral_balance[64..72].try_into().unwrap())
     } else {
         0
     };
-    drop(susde_balance);
-    if susde_amt > 0 {
+    drop(collateral_balance);
+    if collateral_amt > 0 {
         transfer_checked(
             CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
                 TransferChecked {
-                    from: susde_ata,
+                    from: collateral_ata,
                     mint: ctx.accounts.collateral_mint.to_account_info(),
                     to: ctx.accounts.vault_collateral_ata.to_account_info(),
                     authority: ctx.accounts.global_state.to_account_info(),
                 },
                 gs_signer,
             ),
-            susde_amt,
+            collateral_amt,
             ctx.accounts.collateral_mint.decimals,
         )?;
         ctx.accounts.vault.collateral_amount = ctx
             .accounts
             .vault
             .collateral_amount
-            .saturating_sub(susde_needed.saturating_sub(susde_amt));
+            .saturating_sub(collateral_needed.saturating_sub(collateral_amt));
     }
 
     let wsxmr_balance = wsxmr_ata.try_borrow_data()?;
@@ -395,15 +388,14 @@ fn sweep_leftovers(
 }
 
 // ─── collect_co_lp_fees ──────────────────────────────────────────────────────
-// LP or user collects accrued fees: sUSDe → vault collateral ATA, wsXMR → user.
+// LP or user collects accrued fees: QQQx → vault collateral ATA, wsXMR → user.
 
 pub fn collect_co_lp_fees<'info>(
     ctx: Context<'_, '_, '_, 'info, CollectCoLPFees<'info>>,
 ) -> Result<()> {
     let co_lp = &ctx.accounts.co_lp_position;
     require!(
-        ctx.accounts.caller.key() == co_lp.vault
-            || ctx.accounts.caller.key() == co_lp.user,
+        ctx.accounts.caller.key() == co_lp.vault || ctx.accounts.caller.key() == co_lp.user,
         WrapSynthError::Unauthorized
     );
 
@@ -420,21 +412,21 @@ pub fn collect_co_lp_fees<'info>(
     let tick_array_upper = ra[5].clone();
 
     let whirlpool_data = read_whirlpool(&ctx.accounts.whirlpool)?;
-    let susde_is_a = whirlpool_data.token_mint_a == ctx.accounts.collateral_mint.key();
+    let collateral_is_a = whirlpool_data.token_mint_a == ctx.accounts.collateral_mint.key();
 
     let gs_bump = ctx.accounts.global_state.load()?.bump;
     let gs_seeds: &[&[u8]] = &[GLOBAL_STATE_SEED, &[gs_bump]];
     let gs_signer = &[gs_seeds];
 
-    let (owner_a, owner_b) = if susde_is_a {
+    let (owner_a, owner_b) = if collateral_is_a {
         (
-            ctx.accounts.position_susde_ata.key(),
+            ctx.accounts.position_collateral_ata.key(),
             ctx.accounts.position_wsxmr_ata.key(),
         )
     } else {
         (
             ctx.accounts.position_wsxmr_ata.key(),
-            ctx.accounts.position_susde_ata.key(),
+            ctx.accounts.position_collateral_ata.key(),
         )
     };
 
@@ -481,7 +473,7 @@ pub fn collect_co_lp_fees<'info>(
             ctx.accounts.position_token_account.to_account_info(),
             ctx.accounts.collateral_mint.to_account_info(),
             ctx.accounts.wsxmr_mint.to_account_info(),
-            ctx.accounts.position_susde_ata.to_account_info(),
+            ctx.accounts.position_collateral_ata.to_account_info(),
             token_vault_a.clone(),
             ctx.accounts.position_wsxmr_ata.to_account_info(),
             token_vault_b.clone(),
@@ -492,28 +484,28 @@ pub fn collect_co_lp_fees<'info>(
         gs_signer,
     )?;
 
-    // Distribute: sUSDe fees → vault collateral ATA, wsXMR fees → user ATA
-    let susde_balance = read_token_balance(&ctx.accounts.position_susde_ata)?;
-    if susde_balance > 0 {
+    // Distribute: QQQx fees → vault collateral ATA, wsXMR fees → user ATA
+    let collateral_balance = read_token_balance(&ctx.accounts.position_collateral_ata)?;
+    if collateral_balance > 0 {
         transfer_checked(
             CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
                 TransferChecked {
-                    from: ctx.accounts.position_susde_ata.to_account_info(),
+                    from: ctx.accounts.position_collateral_ata.to_account_info(),
                     mint: ctx.accounts.collateral_mint.to_account_info(),
                     to: ctx.accounts.vault_collateral_ata.to_account_info(),
                     authority: ctx.accounts.global_state.to_account_info(),
                 },
                 gs_signer,
             ),
-            susde_balance,
+            collateral_balance,
             ctx.accounts.collateral_mint.decimals,
         )?;
         ctx.accounts.vault.collateral_amount = ctx
             .accounts
             .vault
             .collateral_amount
-            .checked_add(susde_balance)
+            .checked_add(collateral_balance)
             .ok_or(WrapSynthError::MathOverflow)?;
     }
 
@@ -536,8 +528,8 @@ pub fn collect_co_lp_fees<'info>(
     }
 
     msg!(
-        "Co-LP fees collected: {} sUSDe, {} wsXMR",
-        susde_balance,
+        "Co-LP fees collected: {} QQQx, {} wsXMR",
+        collateral_balance,
         wsxmr_balance
     );
     Ok(())
@@ -546,13 +538,10 @@ pub fn collect_co_lp_fees<'info>(
 // ─── unwind_co_lp ────────────────────────────────────────────────────────────
 // LP or user closes the position: decrease liquidity, collect fees, close.
 
-pub fn unwind_co_lp<'info>(
-    ctx: Context<'_, '_, '_, 'info, UnwindCoLP<'info>>,
-) -> Result<()> {
+pub fn unwind_co_lp<'info>(ctx: Context<'_, '_, '_, 'info, UnwindCoLP<'info>>) -> Result<()> {
     let co_lp = &ctx.accounts.co_lp_position;
     require!(
-        ctx.accounts.caller.key() == co_lp.vault
-            || ctx.accounts.caller.key() == co_lp.user,
+        ctx.accounts.caller.key() == co_lp.vault || ctx.accounts.caller.key() == co_lp.user,
         WrapSynthError::Unauthorized
     );
 
@@ -566,21 +555,21 @@ pub fn unwind_co_lp<'info>(
 
     let whirlpool_data = read_whirlpool(&ctx.accounts.whirlpool)?;
     let position_data = read_position(&ctx.accounts.position)?;
-    let susde_is_a = whirlpool_data.token_mint_a == ctx.accounts.collateral_mint.key();
+    let collateral_is_a = whirlpool_data.token_mint_a == ctx.accounts.collateral_mint.key();
 
     let gs_bump = ctx.accounts.global_state.load()?.bump;
     let gs_seeds: &[&[u8]] = &[GLOBAL_STATE_SEED, &[gs_bump]];
     let gs_signer = &[gs_seeds];
 
-    let (owner_a, owner_b) = if susde_is_a {
+    let (owner_a, owner_b) = if collateral_is_a {
         (
-            ctx.accounts.position_susde_ata.key(),
+            ctx.accounts.position_collateral_ata.key(),
             ctx.accounts.position_wsxmr_ata.key(),
         )
     } else {
         (
             ctx.accounts.position_wsxmr_ata.key(),
-            ctx.accounts.position_susde_ata.key(),
+            ctx.accounts.position_collateral_ata.key(),
         )
     };
 
@@ -618,7 +607,7 @@ pub fn unwind_co_lp<'info>(
                 ctx.accounts.position_token_account.to_account_info(),
                 ctx.accounts.collateral_mint.to_account_info(),
                 ctx.accounts.wsxmr_mint.to_account_info(),
-                ctx.accounts.position_susde_ata.to_account_info(),
+                ctx.accounts.position_collateral_ata.to_account_info(),
                 ctx.accounts.position_wsxmr_ata.to_account_info(),
                 token_vault_a.clone(),
                 token_vault_b.clone(),
@@ -654,7 +643,7 @@ pub fn unwind_co_lp<'info>(
             ctx.accounts.position_token_account.to_account_info(),
             ctx.accounts.collateral_mint.to_account_info(),
             ctx.accounts.wsxmr_mint.to_account_info(),
-            ctx.accounts.position_susde_ata.to_account_info(),
+            ctx.accounts.position_collateral_ata.to_account_info(),
             token_vault_a.clone(),
             ctx.accounts.position_wsxmr_ata.to_account_info(),
             token_vault_b.clone(),
@@ -687,28 +676,28 @@ pub fn unwind_co_lp<'info>(
         gs_signer,
     )?;
 
-    // 4. Distribute proceeds: sUSDe → vault, wsXMR → user
-    let susde_balance = read_token_balance(&ctx.accounts.position_susde_ata)?;
-    if susde_balance > 0 {
+    // 4. Distribute proceeds: QQQx → vault, wsXMR → user
+    let collateral_balance = read_token_balance(&ctx.accounts.position_collateral_ata)?;
+    if collateral_balance > 0 {
         transfer_checked(
             CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
                 TransferChecked {
-                    from: ctx.accounts.position_susde_ata.to_account_info(),
+                    from: ctx.accounts.position_collateral_ata.to_account_info(),
                     mint: ctx.accounts.collateral_mint.to_account_info(),
                     to: ctx.accounts.vault_collateral_ata.to_account_info(),
                     authority: ctx.accounts.global_state.to_account_info(),
                 },
                 gs_signer,
             ),
-            susde_balance,
+            collateral_balance,
             ctx.accounts.collateral_mint.decimals,
         )?;
         ctx.accounts.vault.collateral_amount = ctx
             .accounts
             .vault
             .collateral_amount
-            .checked_add(susde_balance)
+            .checked_add(collateral_balance)
             .ok_or(WrapSynthError::MathOverflow)?;
     }
 
@@ -740,8 +729,8 @@ pub fn unwind_co_lp<'info>(
     co_lp.liquidity = 0;
 
     msg!(
-        "Co-LP unwound: {} sUSDe, {} wsXMR returned",
-        susde_balance,
+        "Co-LP unwound: {} QQQx, {} wsXMR returned",
+        collateral_balance,
         wsxmr_balance
     );
     Ok(())
@@ -775,21 +764,21 @@ pub fn rebalance_co_lp<'info>(
     let co_lp = &ctx.accounts.co_lp_position;
     let whirlpool_data = read_whirlpool(&ctx.accounts.whirlpool)?;
     let position_data = read_position(&ctx.accounts.position)?;
-    let susde_is_a = whirlpool_data.token_mint_a == ctx.accounts.collateral_mint.key();
+    let collateral_is_a = whirlpool_data.token_mint_a == ctx.accounts.collateral_mint.key();
 
     let gs_bump = ctx.accounts.global_state.load()?.bump;
     let gs_seeds: &[&[u8]] = &[GLOBAL_STATE_SEED, &[gs_bump]];
     let gs_signer = &[gs_seeds];
 
-    let (owner_a, owner_b) = if susde_is_a {
+    let (owner_a, owner_b) = if collateral_is_a {
         (
-            ctx.accounts.position_susde_ata.key(),
+            ctx.accounts.position_collateral_ata.key(),
             ctx.accounts.position_wsxmr_ata.key(),
         )
     } else {
         (
             ctx.accounts.position_wsxmr_ata.key(),
-            ctx.accounts.position_susde_ata.key(),
+            ctx.accounts.position_collateral_ata.key(),
         )
     };
 
@@ -826,7 +815,7 @@ pub fn rebalance_co_lp<'info>(
                 ctx.accounts.position_token_account.to_account_info(),
                 ctx.accounts.collateral_mint.to_account_info(),
                 ctx.accounts.wsxmr_mint.to_account_info(),
-                ctx.accounts.position_susde_ata.to_account_info(),
+                ctx.accounts.position_collateral_ata.to_account_info(),
                 ctx.accounts.position_wsxmr_ata.to_account_info(),
                 token_vault_a.clone(),
                 token_vault_b.clone(),
@@ -838,27 +827,27 @@ pub fn rebalance_co_lp<'info>(
     }
 
     // Distribute drained proceeds
-    let susde_balance = read_token_balance(&ctx.accounts.position_susde_ata)?;
-    if susde_balance > 0 {
+    let collateral_balance = read_token_balance(&ctx.accounts.position_collateral_ata)?;
+    if collateral_balance > 0 {
         transfer_checked(
             CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
                 TransferChecked {
-                    from: ctx.accounts.position_susde_ata.to_account_info(),
+                    from: ctx.accounts.position_collateral_ata.to_account_info(),
                     mint: ctx.accounts.collateral_mint.to_account_info(),
                     to: ctx.accounts.vault_collateral_ata.to_account_info(),
                     authority: ctx.accounts.global_state.to_account_info(),
                 },
                 gs_signer,
             ),
-            susde_balance,
+            collateral_balance,
             ctx.accounts.collateral_mint.decimals,
         )?;
         ctx.accounts.vault.collateral_amount = ctx
             .accounts
             .vault
             .collateral_amount
-            .checked_add(susde_balance)
+            .checked_add(collateral_balance)
             .ok_or(WrapSynthError::MathOverflow)?;
     }
     let wsxmr_balance = read_token_balance(&ctx.accounts.position_wsxmr_ata)?;
@@ -889,8 +878,8 @@ pub fn rebalance_co_lp<'info>(
     co_lp.liquidity = 0;
 
     msg!(
-        "Co-LP drained for rebalance: {} sUSDe, {} wsXMR",
-        susde_balance,
+        "Co-LP drained for rebalance: {} QQQx, {} wsXMR",
+        collateral_balance,
         wsxmr_balance
     );
     Ok(())
@@ -931,15 +920,6 @@ fn compute_liquidity(
     let liq_a = (amount_a as f64) * p * pu / (pu - p);
     let liq_b = (amount_b as f64) * (pu - p) / (pu - pl);
     liq_a.min(liq_b) as u128
-}
-
-/// Token-2022 mint space for a mint with metadata_pointer + token_metadata
-/// extensions (name/symbol/uri).
-fn position_mint_space(name: &str, symbol: &str, uri: &str) -> usize {
-    // Base mint: 82
-    // MetadataPointer ext: 4 (type) + 4 (len) + 33 (authority) + 33 (metadata addr) = 74
-    // TokenMetadata ext: 4 + 4 + 33 (update auth) + 32 (mint) + 4 + name + 4 + symbol + 4 + uri + 4 (empty additional_metadata) = 89 + name + symbol + uri
-    82 + 74 + 89 + name.len() + symbol.len() + uri.len()
 }
 
 // ─── Accounts ────────────────────────────────────────────────────────────────
@@ -1012,14 +992,16 @@ pub struct UserOpenCoLP<'info> {
     /// passed via ctx.remaining_accounts — keeping them out of the struct avoids a
     /// ~4KB try_accounts stack frame overflow.
     #[account(mut)]
+    /// CHECK: Whirlpool tick array — verified inside the Orca CPI.
     pub tick_array_lower: UncheckedAccount<'info>,
     #[account(mut)]
+    /// CHECK: Whirlpool tick array — verified inside the Orca CPI.
     pub tick_array_upper: UncheckedAccount<'info>,
 
-    /// Program-owned sUSDe ATA (position token_owner_account_a)
+    /// Program-owned QQQx ATA (position token_owner_account_a)
     /// CHECK: created by the caller or program
     #[account(mut)]
-    pub position_susde_ata: UncheckedAccount<'info>,
+    pub position_collateral_ata: UncheckedAccount<'info>,
 
     /// Program-owned wsXMR ATA (position token_owner_account_b)
     /// CHECK: created by the caller or program
@@ -1043,8 +1025,6 @@ pub struct UserOpenCoLP<'info> {
     pub pyth_xmr: AccountInfo<'info>,
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// CHECK: Pyth sUSDe→USDe redemption rate feed — validated by oracle.rs
-    pub pyth_susde_rr: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub associated_token_program: Program<'info, AssociatedToken>,
@@ -1088,11 +1068,14 @@ pub struct CollectCoLPFees<'info> {
     pub whirlpool: UncheckedAccount<'info>,
 
     #[account(mut)]
+    /// CHECK: Whirlpool position token account — verified inside the Orca CPI.
     pub position_token_account: UncheckedAccount<'info>,
 
     #[account(mut)]
-    pub position_susde_ata: UncheckedAccount<'info>,
+    /// CHECK: Position collateral vault ATA — verified inside the Orca CPI.
+    pub position_collateral_ata: UncheckedAccount<'info>,
     #[account(mut)]
+    /// CHECK: Position wsXMR vault ATA — verified inside the Orca CPI.
     pub position_wsxmr_ata: UncheckedAccount<'info>,
 
     #[account(mut)]
@@ -1149,16 +1132,21 @@ pub struct UnwindCoLP<'info> {
     pub position_mint: UncheckedAccount<'info>,
 
     #[account(mut)]
+    /// CHECK: Whirlpool position token account — verified inside the Orca CPI.
     pub position_token_account: UncheckedAccount<'info>,
 
     #[account(mut)]
+    /// CHECK: Whirlpool tick array — verified inside the Orca CPI.
     pub tick_array_lower: UncheckedAccount<'info>,
     #[account(mut)]
+    /// CHECK: Whirlpool tick array — verified inside the Orca CPI.
     pub tick_array_upper: UncheckedAccount<'info>,
 
     #[account(mut)]
-    pub position_susde_ata: UncheckedAccount<'info>,
+    /// CHECK: Position collateral vault ATA — verified inside the Orca CPI.
+    pub position_collateral_ata: UncheckedAccount<'info>,
     #[account(mut)]
+    /// CHECK: Position wsXMR vault ATA — verified inside the Orca CPI.
     pub position_wsxmr_ata: UncheckedAccount<'info>,
 
     #[account(mut)]
@@ -1210,16 +1198,21 @@ pub struct RebalanceCoLP<'info> {
     pub whirlpool: UncheckedAccount<'info>,
 
     #[account(mut)]
+    /// CHECK: Whirlpool position token account — verified inside the Orca CPI.
     pub position_token_account: UncheckedAccount<'info>,
 
     #[account(mut)]
+    /// CHECK: Whirlpool tick array — verified inside the Orca CPI.
     pub tick_array_lower: UncheckedAccount<'info>,
     #[account(mut)]
+    /// CHECK: Whirlpool tick array — verified inside the Orca CPI.
     pub tick_array_upper: UncheckedAccount<'info>,
 
     #[account(mut)]
-    pub position_susde_ata: UncheckedAccount<'info>,
+    /// CHECK: Position collateral vault ATA — verified inside the Orca CPI.
+    pub position_collateral_ata: UncheckedAccount<'info>,
     #[account(mut)]
+    /// CHECK: Position wsXMR vault ATA — verified inside the Orca CPI.
     pub position_wsxmr_ata: UncheckedAccount<'info>,
 
     #[account(mut)]

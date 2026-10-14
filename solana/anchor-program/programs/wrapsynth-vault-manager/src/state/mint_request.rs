@@ -52,8 +52,8 @@ pub struct MintRequest {
     pub griefing_deposit: u64,
     /// Collateral shares locked as the key bond (provide_lp_key) / par lock (set_mint_ready)
     pub locked_collateral: u64,
-    /// XMR price snapshot at set_mint_ready (par settlement)
-    pub xmr_price_at_ready: u64,
+    /// XMR price snapshot at set_mint_ready (par settlement), 1e18-scaled USD
+    pub xmr_price_at_ready: u128,
     /// Normalized debt amount stored for consistent accounting
     pub normalized_debt_amount: u64,
     /// Snapshot of vault's mint_nonce at creation (for liquidation invalidation)

@@ -42,8 +42,8 @@ pub struct BurnRequest {
     pub user_public_key: [u8; 32],
     /// User's Ed25519 public view key (x-coordinate)
     pub user_view_key: [u8; 32],
-    /// XMR price snapshot at request time (par settlement for slashes)
-    pub xmr_price_at_request: u64,
+    /// XMR price snapshot at request time (par settlement for slashes), 1e18-scaled USD
+    pub xmr_price_at_request: u128,
     /// Hash of LP's secret (set in propose_hash)
     pub secret_hash: [u8; 32],
     /// LP's Ed25519 public spend key (x-coordinate) — set at propose_hash

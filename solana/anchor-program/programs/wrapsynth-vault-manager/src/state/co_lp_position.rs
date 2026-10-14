@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-/// A co-LP position: a user pairs wsXMR with an LP vault's idle sUSDe collateral
+/// A co-LP position: a user pairs wsXMR with an LP vault's idle QQQx collateral
 /// to open a concentrated-liquidity position on Orca Whirlpools (EVM
 /// PositionMetadata parity). The vault manager program is the position authority;
 /// the Orca Position account is referenced by `position_address`.
@@ -10,7 +10,7 @@ pub struct CoLPPosition {
     pub vault: Pubkey,
     /// User that supplied the wsXMR leg
     pub user: Pubkey,
-    /// sUSDe shares deployed from the vault (9 decimals)
+    /// Raw QQQx deployed from the vault (8 decimals)
     pub collateral_original: u64,
     /// wsXMR deployed by the user (8 decimals)
     pub wsxmr_original: u64,

@@ -6,9 +6,10 @@ use crate::constants::MAX_WHITELISTED_MINTERS;
 pub struct Vault {
     /// LP owner of this vault
     pub lp_address: Pubkey,
-    /// Collateral token shares held (excludes locked_collateral — locked is deducted here)
+    /// Raw QQQx collateral held — TOTAL model: includes locked_collateral, so
+    /// available = collateral_amount - locked_collateral - deployed_collateral
     pub collateral_amount: u64,
-    /// Collateral reserved for pending burns (physically deducted from collateral_amount)
+    /// Collateral reserved for pending burns/mints (still inside collateral_amount)
     pub locked_collateral: u64,
     /// Normalized debt: actual_debt = normalized_debt * global_debt_index / 1e18
     pub normalized_debt: u64,
@@ -28,14 +29,6 @@ pub struct Vault {
     pub mint_nonce: u64,
     /// LP-configurable minimum burn amount (0 = use global default)
     pub min_burn_amount: u64,
-    /// Original deposit value (for yield tracking)
-    pub principal_deposits: u64,
-    /// Original deposit shares (for yield tracking)
-    pub principal_shares: u64,
-    /// Principal value in USDe terms (9 decimals) for sUSDe yield detection.
-    /// Tracks the USDe-equivalent value at deposit time via the sUSDe→USDe
-    /// redemption rate (Pyth SUSDE/USDE.RR)
-    pub principal_value: u64,
     /// Number of currently active (non-terminal) burn requests
     pub active_burn_count: u32,
     /// Number of mints in READY state — blocks state-changing vault ops until resolved
@@ -48,7 +41,7 @@ pub struct Vault {
     pub whitelisted_minters: [Pubkey; MAX_WHITELISTED_MINTERS],
     /// Number of entries in whitelisted_minters
     pub whitelisted_minter_count: u32,
-    /// sUSDe shares deployed into co-LP positions (excluded from liquid balance)
+    /// QQQx deployed into co-LP positions (excluded from liquid balance)
     pub deployed_collateral: u64,
     /// LP's preferred max co-LP range width in basis points (EVM maxCoLPRangeBps parity)
     pub max_co_lp_range_bps: u16,
@@ -57,7 +50,7 @@ pub struct Vault {
 }
 
 impl Vault {
-    /// 8 disc + 32 + 11*8 + 3*2 + 3*4 + 2*8 (timeouts) + 32*32 (whitelist)
-    /// + 8 (deployed) + 2 (max range) + 1 + 1 = 1198 → pad to 1216
-    pub const LEN: usize = 1216;
+    /// 8 disc + 32 + 8*8 + 2*2 + 3*4 + 2*8 (timeouts) + 32*32 (whitelist)
+    /// + 8 (deployed) + 2 (max range) + 1 + 1 = 1176 → pad to 1184
+    pub const LEN: usize = 1184;
 }

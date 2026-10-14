@@ -31,7 +31,6 @@
 ///
 /// NOTE: CPI account layouts must be re-verified against the live program before
 /// mainnet deployment — they cannot be unit-tested without the target program.
-
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::Instruction;
 use anchor_lang::solana_program::pubkey::Pubkey;
@@ -46,8 +45,7 @@ pub fn whirlpool_program_id() -> Pubkey {
 
 /// Whirlpool's fixed position-NFT metadata update authority — required for
 /// `open_position_with_token_extensions` (constrained via `address` in the ix).
-pub const WHIRLPOOLS_METADATA_UPDATE_AUTH: &str =
-    "3axbTs2z5GBy6usVbNVoqEgZMng3vZvMnAoX29BFfwhr";
+pub const WHIRLPOOLS_METADATA_UPDATE_AUTH: &str = "3axbTs2z5GBy6usVbNVoqEgZMng3vZvMnAoX29BFfwhr";
 
 /// Anchor instruction discriminator: sha256("global:<name>")[0..8]
 fn discriminator(name: &str) -> [u8; 8] {
@@ -142,11 +140,7 @@ pub fn tick_from_sqrt_price(sqrt_price_x64: u128) -> i32 {
 
 /// Compute the lower/upper ticks for a range of `range_bps` (e.g. 2500 = ±12.5%)
 /// centered on the current tick.
-pub fn compute_range_ticks(
-    current_tick: i32,
-    range_bps: u16,
-    tick_spacing: u16,
-) -> (i32, i32) {
+pub fn compute_range_ticks(current_tick: i32, range_bps: u16, tick_spacing: u16) -> (i32, i32) {
     let half_range = (range_bps as f64) / 20000.0; // 2500 bps → ±12.5%
     let price = 1.0001f64.powi(current_tick);
     let lower_price = price * (1.0 - half_range);
@@ -248,7 +242,7 @@ pub fn open_position_ix(
             AccountMeta::new(*funder, true),
             AccountMeta::new_readonly(*owner, false),
             AccountMeta::new(*position, false),
-            AccountMeta::new(*position_mint, true),   // whirlpool inits it → must sign
+            AccountMeta::new(*position_mint, true), // whirlpool inits it → must sign
             AccountMeta::new(*position_token_account, false),
             AccountMeta::new_readonly(*whirlpool, false),
             AccountMeta::new_readonly(*token2022_program, false),
@@ -283,7 +277,9 @@ pub fn increase_liquidity_ix(
     token_max_b: u64,
 ) -> Instruction {
     // increase_liquidity_v2 (ModifyLiquidityV2): 15 named accounts + optional
-    // transfer-hook remaining_accounts (none needed for sUSDe/wsXMR).
+    // transfer-hook remaining_accounts (none active on QQQx/wsXMR today — if
+    // Backed ever enables QQQx's transferHook extension, hook accounts must be
+    // appended here).
     let mut data = Vec::with_capacity(8 + 16 + 8 + 8 + 1);
     data.extend_from_slice(&discriminator("increase_liquidity_v2"));
     data.extend_from_slice(&liquidity.to_le_bytes());

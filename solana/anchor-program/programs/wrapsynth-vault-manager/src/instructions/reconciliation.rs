@@ -2,9 +2,9 @@ use anchor_lang::prelude::*;
 
 use crate::constants::*;
 use crate::errors::WrapSynthError;
-use anchor_lang::AccountDeserialize;
 use crate::state::{GlobalState, Vault};
 use crate::utils::math::get_actual_debt;
+use anchor_lang::AccountDeserialize;
 
 /// Reconcile global_total_debt by summing actual debts from all provided vault PDAs.
 ///

@@ -1,20 +1,25 @@
 /**
- * WrapSynth VaultManager — Complete Integration Test Suite
+ * WrapSynth VaultManager — Integration Test Suite (QQQx-collateral variant)
  *
  * Covers:
  *   1. Protocol initialization
- *   2. Vault creation + collateral deposit
- *   3. Full mint flow:  initiate → set_ready → finalize (with Ed25519 secret)
- *   4. Full burn flow:  request → propose_hash → confirm_monero_lock → finalize
- *   5. Cancel paths:   cancel_mint (timeout), cancel_burn (pre-commit)
- *   6. Slash path:     burn reaches Committed, LP never reveals → claim_slashed_collateral
- *   7. Liquidation:    resolve_burn_for_liquidation → execute_liquidation
- *   8. Buy-and-burn:   trigger_buy_and_burn (war-chest -> deflation)
- *   9. Withdrawal:     withdraw_collateral_returns, withdraw_sol_returns
- *  10. Reconciliation: reconcile_global_debt
+ *   2. Vault creation + config + collateral deposit
+ *   3. Oracle rejection paths (stale / wide-conf / discount-guard / wrong feed)
+ *   4. Full mint flow:  initiate → provide_lp_key → set_mint_ready → reveal → finalize
+ *   5. Mint negatives: bad request_id, unwhitelisted + unfunded griefing escrow
+ *   6. Full burn flow:  request → propose_hash → confirm_monero_lock → finalize_burn
+ *   7. Burn negatives: bad request_id, below minimum, non-LP propose_hash
+ *   8. Abort burn (pre-commit)
+ *   9. Liquidation: crash oracle → execute_liquidation → backstop_vault
+ *  10. Withdrawals: pending-returns claims backed by the program collateral pool
+ *  11. Reconciliation, deactivation, multi-vault isolation
+ *  12. Invariants: pool backing, vault ATA == vault.collateral_amount
  *
- * Pyth oracle accounts are stubbed with custom byte-encoded mock accounts written
- * directly into the test validator via BanksClient/set_account so no live RPC is needed.
+ * Oracle model: mock PriceUpdateV2 accounts are pre-loaded into the test
+ * validator via Anchor.toml fixtures (scripts/gen-mock-pyth.js). Freshness uses
+ * a far-future publish_time (age saturates to 0); the program validates feed_id
+ * rather than account address, so crash/stale/discount fixtures share the QQQX
+ * feed ID and are swapped in per-call.
  */
 
 import * as anchor from "@coral-xyz/anchor";
@@ -35,8 +40,10 @@ import {
   createAssociatedTokenAccountInstruction,
   getAssociatedTokenAddressSync,
   ASSOCIATED_TOKEN_PROGRAM_ID,
+  createInitializeMint2Instruction,
   createMintToInstruction,
-  getMint,
+  createTransferInstruction,
+  getMintLen,
   getAccount,
 } from "@solana/spl-token";
 import { assert } from "chai";
@@ -44,1875 +51,1192 @@ import * as crypto from "crypto";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { Point } from "@noble/ed25519";
 
-// ─── IDL import (generated after anchor build) ───────────────────────────────
-import { WrapsynthVaultManager, IDL } from "../types/wrapsynth_vault_manager";
+// Resolve from the project root — __dirname shifts when tests run precompiled
+// from dist-test/. anchor test always runs with cwd = project root.
+const idl = JSON.parse(
+  fs.readFileSync(path.join(process.cwd(), "target/idl/wrapsynth_vault_manager.json"), "utf8")
+);
+const oracleMockIdl = JSON.parse(
+  fs.readFileSync(path.join(process.cwd(), "target/idl/oracle_mock.json"), "utf8")
+);
 
 // ─── Constants mirrored from constants.rs ────────────────────────────────────
-const GLOBAL_STATE_SEED    = Buffer.from("global_state");
-const VAULT_SEED           = Buffer.from("vault");
-const WSXMR_MINT_SEED      = Buffer.from("wsxmr_mint");
-const MINT_REQUEST_SEED    = Buffer.from("mint_request");
-const BURN_REQUEST_SEED    = Buffer.from("burn_request");
-const PENDING_RETURNS_SEED = Buffer.from("pending_returns");
-const VAULT_COLLATERAL_SEED = Buffer.from("vault_collateral");
+const GLOBAL_STATE_SEED      = Buffer.from("global_state");
+const VAULT_SEED             = Buffer.from("vault");
+const WSXMR_MINT_SEED        = Buffer.from("wsxmr_mint");
+const MINT_REQUEST_SEED      = Buffer.from("mint_request");
+const BURN_REQUEST_SEED      = Buffer.from("burn_request");
+const PENDING_RETURNS_SEED   = Buffer.from("pending_returns");
+const VAULT_COLLATERAL_SEED  = Buffer.from("vault_collateral");
+const PROGRAM_COLLATERAL_SEED = Buffer.from("program_collateral");
+const SOL_ESCROW_SEED        = Buffer.from("sol_escrow");
 
-const COLLATERAL_RATIO     = 150n;
-const PRICE_PRECISION      = 1_000_000_000_000_000_000n; // 1e18
-const WSXMR_DECIMALS       = 100_000_000n;               // 1e8
-const BPS_DENOMINATOR      = 10_000n;
-const MIN_BURN_AMOUNT      = 1_000_000n;                 // 0.01 wsXMR
+const COLLATERAL_RATIO  = 200n;
+const LIQUIDATION_RATIO = 150n;
+const LIQUIDATION_BONUS = 110n;
+const BURN_LOCK_RATIO   = 160n;
+const MINT_LOCK_RATIO   = 160n;
+const RATIO_PRECISION   = 100n;
+const PRICE_PRECISION   = 1_000_000_000_000_000_000n; // 1e18
+const WSXMR_DECIMALS    = 100_000_000n;               // 1e8
+const COLLATERAL_DECIMALS = 100_000_000n;             // 1e8 (raw QQQx atomic)
+const BPS_DENOMINATOR   = 10_000n;
+const MIN_BURN_AMOUNT   = 1_000_000n;                 // 0.01 wsXMR
+const XMR_TO_WSXMR_DIVISOR = 10_000n;
+const DEBT_INDEX = 1_000_000_000_000_000_000n;
 
-// ─── XMR price constants for mock oracle ─────────────────────────────────────
-// XMR = $150, exponent = -8  →  price = 15_000_000_000  (1.5e10)
-// Collateral (sDAI) = $1.00, exponent = -8 → price = 100_000_000
-const XMR_USD_PRICE_RAW    = 15_000_000_000n;   // 150 USD at exp -8
-const COL_USD_PRICE_RAW    = 100_000_000n;       // 1 USD  at exp -8
-const PRICE_EXPONENT       = -8;
+// Mock oracle prices (raw, exp -8) — must match scripts/gen-mock-pyth.js
+const XMR_USD      = 15n;    // $15
+const QQQX_USD     = 600n;   // $600
+const QQQX_CRASH   = 200n;   // $200
 
-// XMR USD feed ID from constants.rs
-const XMR_USD_FEED_ID = Buffer.from([
-  0x46, 0xb8, 0xcc, 0x93, 0x47, 0xf0, 0x43, 0x91,
-  0x76, 0x4a, 0x03, 0x61, 0xe0, 0xb1, 0x7c, 0x3b,
-  0xa3, 0x94, 0xb0, 0x01, 0xe7, 0xc3, 0x04, 0xf7,
-  0x65, 0x0f, 0x63, 0x76, 0xe3, 0x7c, 0x32, 0x1d,
-]);
-// Collateral feed ID must match the feed_id embedded in the mock oracle account (gen-mock-pyth.js)
-const COL_USD_FEED_ID = Buffer.from([
-  0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-  0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-  0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-  0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
-]);
+const usdE18 = (rawAtomic: bigint, priceUsd: bigint) =>
+  (rawAtomic * priceUsd * PRICE_PRECISION) / COLLATERAL_DECIMALS; // collateral 8dec
+const wsxmrUsdE18 = (wsxmr: bigint) =>
+  (wsxmr * XMR_USD * PRICE_PRECISION) / WSXMR_DECIMALS;
 
-// ─── Helper: encode a mock Pyth PriceUpdateV2 account ────────────────────────
-// Layout (after 8-byte anchor disc):
-//   write_authority [32]       @ 8
-//   verification_level [2]     @ 40
-//   feed_id [32]               @ 42
-//   price i64                  @ 74
-//   conf  u64                  @ 82
-//   exponent i32               @ 90
-//   publish_time i64           @ 94
-//   prev_publish_time i64      @ 102
-//   ema_price i64              @ 110
-//   ema_conf  u64              @ 118
-//   posted_slot u64            @ 126
-function buildMockPythAccount(
-  feedId: Buffer,
-  priceRaw: bigint,
-  emaRaw: bigint,
-  exponent: number,
-  publishTime: bigint
+// ─── keccak request IDs (must match on-chain hashv exactly) ──────────────────
+function le64(v: bigint): Buffer {
+  const b = Buffer.alloc(8);
+  b.writeBigUInt64LE(v);
+  return b;
+}
+// Mint: keccak(initiator, vault, xmr_amount, claim_commitment, nonce)
+function mintRequestId(
+  initiator: PublicKey, vault: PublicKey, xmrAmount: bigint, commitment: Buffer, nonce: bigint
 ): Buffer {
-  const buf = Buffer.alloc(200, 0);
-  // 8-byte discriminator (arbitrary, not checked by our oracle.rs)
-  buf.write("pythpric", 0, "ascii");
-  // write_authority — zero
-  // verification_level — zero (2 bytes)
-  // feed_id @ 42
-  feedId.copy(buf, 42);
-  // price @ 74 (i64 LE)
-  buf.writeBigInt64LE(priceRaw, 74);
-  // conf @ 82 (u64 LE) — 1% of price
-  buf.writeBigUInt64LE(priceRaw / 1000n, 82);
-  // exponent @ 90 (i32 LE)
-  buf.writeInt32LE(exponent, 90);
-  // publish_time @ 94 (i64 LE)
-  buf.writeBigInt64LE(publishTime, 94);
-  // prev_publish_time @ 102
-  buf.writeBigInt64LE(publishTime - 10n, 102);
-  // ema_price @ 110
-  buf.writeBigInt64LE(emaRaw, 110);
-  // ema_conf @ 118
-  buf.writeBigUInt64LE(emaRaw / 1000n, 118);
-  return buf;
+  return Buffer.from(keccak_256(Buffer.concat([
+    initiator.toBuffer(), vault.toBuffer(), le64(xmrAmount), commitment, le64(nonce),
+  ])));
 }
-
-// ─── Helper: write a mock account into the test validator ────────────────────
-async function writeMockAccount(
-  provider: AnchorProvider,
-  keypair: Keypair,
-  data: Buffer,
-  owner: PublicKey = SystemProgram.programId
-): Promise<void> {
-  // Fund the account with enough lamports for rent exemption
-  const lamports = await provider.connection.getMinimumBalanceForRentExemption(data.length);
-  await provider.connection.confirmTransaction(
-    await provider.connection.requestAirdrop(keypair.publicKey, lamports + LAMPORTS_PER_SOL)
-  );
-  // The simplest way to inject account data on localnet is to use the
-  // connection's simulateTransaction-based workaround, or deploy the account
-  // via a system program transfer + setAccountInfo if using BanksClient.
-  // For anchor localnet we instead keep oracle accounts as signers with correct data.
-  // This function just airdrops SOL; real Pyth data injection uses `program.provider.simulate`.
-}
-
-// ─── Helper: keccak256 request_id (matches keccak::hashv in Rust) ───────────
-function computeRequestId(
-  user: PublicKey,
-  vault: PublicKey,
-  amount: bigint,
-  nonce: bigint
+// Burn: keccak(user, vault, wsxmr_amount, nonce)
+function burnRequestId(
+  user: PublicKey, vault: PublicKey, wsxmrAmount: bigint, nonce: bigint
 ): Buffer {
-  const data = Buffer.concat([
-    user.toBuffer(),
-    vault.toBuffer(),
-    Buffer.from(bigintToLeBytes(amount, 8)),
-    Buffer.from(bigintToLeBytes(nonce, 8)),
-  ]);
-  return Buffer.from(keccak_256(data));
+  return Buffer.from(keccak_256(Buffer.concat([
+    user.toBuffer(), vault.toBuffer(), le64(wsxmrAmount), le64(nonce),
+  ])));
 }
 
-function computeMintRequestId(
-  initiator: PublicKey,
-  vault: PublicKey,
-  xmrAmount: bigint,
-  commitment: Buffer,
-  nonce: bigint
-): Buffer {
-  const data = Buffer.concat([
-    initiator.toBuffer(),
-    vault.toBuffer(),
-    Buffer.from(bigintToLeBytes(xmrAmount, 8)),
-    commitment,
-    Buffer.from(bigintToLeBytes(nonce, 8)),
-  ]);
-  return Buffer.from(keccak_256(data));
+// ─── Ed25519 commitment (matches on-chain mul_verify / compute_commitment) ───
+const ED25519_L = 2n ** 252n + 27742317777372353535851937790883648493n;
+function leScalar(secret: Buffer): bigint {
+  let s = 0n;
+  for (let i = 0; i < 32; i++) s |= BigInt(secret[i]) << BigInt(i * 8);
+  return s % ED25519_L;
 }
-
-function bigintToLeBytes(value: bigint, length: number): Uint8Array {
-  const arr = new Uint8Array(length);
-  let v = value;
-  for (let i = 0; i < length; i++) {
-    arr[i] = Number(v & 0xffn);
-    v >>= 8n;
-  }
-  return arr;
-}
-
-// ─── Helper: Ed25519 commitment (curve25519-dalek scheme) ───────────────────
-// Matches the on-chain verifier exactly:
-//   commitment = keccak256(compress(secret · G))
-// where compress yields a 32-byte little-endian CompressedEdwardsY.
-// This is the same canonical format Monero uses for public keys.
-const ED25519_L = 2n**252n + 27742317777372353535851937790883648493n;
-
-function computeCommitment(secret: Buffer): Buffer {
-  // Interpret bytes as little-endian scalar (matching Rust Scalar::from_bytes_mod_order)
-  let scalar = 0n;
-  for (let i = 0; i < 32; i++) {
-    scalar |= BigInt(secret[i]) << BigInt(i * 8);
-  }
-  const reduced = scalar % ED25519_L;
-  const publicKeyPoint = Point.BASE.multiply(reduced);
-  const compressed = Buffer.from(publicKeyPoint.toRawBytes());
-  return Buffer.from(keccak_256(compressed));
-}
-
-function makeSecretAndCommitment(): { secret: Buffer; commitment: Buffer } {
-  const secret = crypto.randomBytes(32);
-  const commitment = computeCommitment(secret);
-  return { secret, commitment };
-}
-
-// Compressed Ed25519 public point (32 bytes) — the userPublicKey / LP public keys
-// stored on-chain. Matches the Rust scheme: compress(secret · G) little-endian.
 function computePublicKey(secret: Buffer): Buffer {
-  let scalar = 0n;
-  for (let i = 0; i < 32; i++) {
-    scalar |= BigInt(secret[i]) << BigInt(i * 8);
-  }
-  const reduced = scalar % ED25519_L;
-  const publicKeyPoint = Point.BASE.multiply(reduced);
-  return Buffer.from(publicKeyPoint.toRawBytes());
+  return Buffer.from(Point.BASE.multiply(leScalar(secret)).toRawBytes());
+}
+function computeCommitment(secret: Buffer): Buffer {
+  return Buffer.from(keccak_256(computePublicKey(secret)));
+}
+function makeSecret() {
+  const secret = crypto.randomBytes(32);
+  // Keep the scalar canonical (< L): Monero scalars are reduced mod L by
+  // convention, and sol_curve_multiscalar_mul rejects non-canonical input.
+  secret[31] &= 0x0f;
+  return { secret, commitment: computeCommitment(secret), pubKey: computePublicKey(secret) };
 }
 
-// ─── Helper: derive PDA ───────────────────────────────────────────────────────
-function deriveGlobalState(programId: PublicKey): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync([GLOBAL_STATE_SEED], programId);
-}
-function deriveWsxmrMint(programId: PublicKey): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync([WSXMR_MINT_SEED], programId);
-}
-function deriveVault(lp: PublicKey, programId: PublicKey): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync([VAULT_SEED, lp.toBuffer()], programId);
-}
-function deriveMintRequest(requestId: Buffer, programId: PublicKey): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync([MINT_REQUEST_SEED, requestId], programId);
-}
-function deriveBurnRequest(requestId: Buffer, programId: PublicKey): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync([BURN_REQUEST_SEED, requestId], programId);
-}
-function derivePendingReturns(owner: PublicKey, programId: PublicKey): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync([PENDING_RETURNS_SEED, owner.toBuffer()], programId);
-}
-function deriveVaultCollateral(vault: PublicKey, programId: PublicKey): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync([VAULT_COLLATERAL_SEED, vault.toBuffer()], programId);
-}
+// ─── PDA helpers ─────────────────────────────────────────────────────────────
+const findPda = (seeds: Buffer[], pid: PublicKey) =>
+  PublicKey.findProgramAddressSync(seeds, pid);
 
-// ─── Helper: create ATA ─────────────────────────────────────────────────────
-async function createAta(
-  provider: AnchorProvider,
-  payer: Keypair,
-  mint: PublicKey,
-  owner: PublicKey
-): Promise<PublicKey> {
-  const ata = getAssociatedTokenAddressSync(mint, owner, true, TOKEN_2022_PROGRAM_ID);
+async function expectReject(promise: Promise<any>, needle?: string): Promise<Error> {
   try {
-    await getAccount(provider.connection, ata, "confirmed", TOKEN_2022_PROGRAM_ID);
-    return ata; // already exists
-  } catch {
+    await promise;
+  } catch (e: any) {
+    const msg = (e.message ?? "") + JSON.stringify(e.logs ?? []);
+    if (needle) {
+      assert.include(msg, needle, `expected rejection containing "${needle}", got: ${msg.slice(0, 300)}`);
+    }
+    return e;
+  }
+  assert.fail("expected transaction to be rejected");
+}
+
+describe("WrapSynth VaultManager — Integration (QQQx collateral)", () => {
+  const provider = anchor.AnchorProvider.env();
+  anchor.setProvider(provider);
+  const program = new Program(idl as any, provider) as any;
+  const programId: PublicKey = program.programId;
+  const conn = provider.connection;
+
+  // Actors — admin is the provider wallet (authority)
+  const admin      = (provider.wallet as any).payer as Keypair;
+  const lp         = Keypair.generate();
+  const lp2        = Keypair.generate();
+  const lp3        = Keypair.generate();
+  const user       = Keypair.generate();
+  const liquidator = Keypair.generate();
+  const keeper     = Keypair.generate();
+
+  // Fixture oracle accounts (preloaded by Anchor.toml)
+  const oracleMock = new Program(oracleMockIdl as any, provider) as any;
+
+  const fixturesDir = path.join(process.cwd(), "tests", "fixtures");
+  const fxKey = (f: string) =>
+    Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(path.join(fixturesDir, f), "utf8")))).publicKey;
+  const PYTH_XMR = fxKey("pyth_xmr_keypair.json");
+  const PYTH_COL = fxKey("pyth_col_keypair.json");
+
+  // ─── Live oracle writer ──────────────────────────────────────────────────
+  // Both oracle accounts are owned by the oracle-mock program; write_account
+  // overwrites the whole 200-byte PriceUpdateV2 blob. publishTs defaults to
+  // "now" so the freshness check (<=120s) always passes for normal prices.
+  const EXP = -8;
+  function pythBlob(feedId: Buffer, priceRaw: bigint, emaRaw: bigint, publishTs: bigint, confRaw?: bigint): Buffer {
+    const b = Buffer.alloc(200, 0);
+    Buffer.from([0xc8, 0x8c, 0x29, 0x47, 0x6e, 0x23, 0x15, 0x1c]).copy(b, 0);
+    feedId.copy(b, 42);
+    b.writeBigInt64LE(priceRaw, 74);
+    b.writeBigUInt64LE(confRaw ?? priceRaw / 1000n, 82);
+    b.writeInt32LE(EXP, 90);
+    b.writeBigInt64LE(publishTs, 94);
+    b.writeBigInt64LE(publishTs - 10n, 102);
+    b.writeBigInt64LE(emaRaw, 110);
+    b.writeBigUInt64LE(emaRaw / 1000n, 118);
+    return b;
+  }
+  const XMR_FEED_BUF = Buffer.from([
+    0x46, 0xb8, 0xcc, 0x93, 0x47, 0xf0, 0x43, 0x91, 0x76, 0x4a, 0x03, 0x61, 0xe0, 0xb1, 0x7c, 0x3b,
+    0xa3, 0x94, 0xb0, 0x01, 0xe7, 0xc3, 0x04, 0xf7, 0x65, 0x0f, 0x63, 0x76, 0xe3, 0x7c, 0x32, 0x1d,
+  ]);
+  const QQQX_FEED_BUF = Buffer.from([
+    0x17, 0x8a, 0x6f, 0x73, 0xa5, 0xae, 0xde, 0x9d, 0x0d, 0x68, 0x2e, 0x86, 0xb0, 0x04, 0x7c, 0x9f,
+    0x33, 0x3e, 0xd0, 0xef, 0xe5, 0xc6, 0x53, 0x7c, 0xa9, 0x37, 0x56, 0x52, 0x19, 0xc4, 0x05, 0x4d,
+  ]);
+  // IMPORTANT: use the *validator's* clock, not wall time — solana-test-validator
+  // slots can tick ahead of real time, so wall-clock publish_time reads stale.
+  async function nowSec(): Promise<bigint> {
+    const slot = await conn.getSlot();
+    const t = await conn.getBlockTime(slot);
+    return BigInt(t ?? Math.floor(Date.now() / 1000));
+  }
+  // Prices are raw i64 at exp -8: $600 → 60_000_000_000n
+  async function setOracle(acct: PublicKey, feed: Buffer, usd: bigint, opts: {
+    emaUsd?: bigint; publishTs?: bigint; confBps?: bigint;
+  } = {}): Promise<void> {
+    const priceRaw = usd * 100_000_000n;
+    const emaRaw = (opts.emaUsd ?? usd) * 100_000_000n;
+    const confRaw = opts.confBps != null ? (priceRaw * opts.confBps) / 10_000n : undefined;
+    const blob = pythBlob(feed, priceRaw, emaRaw, opts.publishTs ?? (await nowSec()), confRaw);
+    await oracleMock.methods
+      .writeAccount(new BN(0), blob)
+      .accounts({ target: acct, payer: admin.publicKey })
+      .signers([admin])
+      .rpc();
+  }
+  const setXmr = (usd: bigint = XMR_USD, o = {}) => setOracle(PYTH_XMR, XMR_FEED_BUF, usd, o);
+  const setCol = (usd: bigint = QQQX_USD, o = {}) => setOracle(PYTH_COL, QQQX_FEED_BUF, usd, o);
+  // publish_time freshness window is 120s — refresh both feeds before any test
+  // that exercises an oracle-reading instruction.
+  const refreshOracles = async () => { await setXmr(); await setCol(); };
+
+  // Test collateral mint (Token-2022, 8 dec — stands in for QQQx)
+  const collateralMintKeypair = Keypair.generate();
+  const collateralMint = collateralMintKeypair.publicKey;
+
+  // PDAs
+  const [globalState]         = findPda([GLOBAL_STATE_SEED], programId);
+  const [wsxmrMint]           = findPda([WSXMR_MINT_SEED], programId);
+  const [vaultPda]            = findPda([VAULT_SEED, lp.publicKey.toBuffer()], programId);
+  const [vault2Pda]           = findPda([VAULT_SEED, lp2.publicKey.toBuffer()], programId);
+  const [vault3Pda]           = findPda([VAULT_SEED, lp3.publicKey.toBuffer()], programId);
+  const [vaultCollateralAta]  = findPda([VAULT_COLLATERAL_SEED, vaultPda.toBuffer()], programId);
+  const [vault2CollateralAta] = findPda([VAULT_COLLATERAL_SEED, vault2Pda.toBuffer()], programId);
+  const [vault3CollateralAta] = findPda([VAULT_COLLATERAL_SEED, vault3Pda.toBuffer()], programId);
+  const [programCollateralAta] = findPda([PROGRAM_COLLATERAL_SEED], programId);
+  const [solEscrow]           = findPda([SOL_ESCROW_SEED], programId);
+
+  // Token accounts
+  let lpCollateralAta: PublicKey, lp2CollateralAta: PublicKey, lp3CollateralAta: PublicKey;
+  let lpWsxmrAta: PublicKey, lp2WsxmrAta: PublicKey, userWsxmrAta: PublicKey, liquidatorWsxmrAta: PublicKey;
+  let liquidatorCollateralAta: PublicKey, userCollateralAta: PublicKey;
+
+  const ataOf = (mint: PublicKey, owner: PublicKey) =>
+    getAssociatedTokenAddressSync(mint, owner, true, TOKEN_2022_PROGRAM_ID);
+
+  async function createAta(mint: PublicKey, owner: PublicKey, payer = admin): Promise<PublicKey> {
+    const ata = ataOf(mint, owner);
     const tx = new Transaction().add(
       createAssociatedTokenAccountInstruction(
-        payer.publicKey, ata, owner, mint,
-        TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
+        payer.publicKey, ata, owner, mint, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
       )
     );
     await provider.sendAndConfirm(tx, [payer]);
     return ata;
   }
-}
 
-// ─── Main test suite ──────────────────────────────────────────────────────────
-describe("WrapSynth VaultManager — Full Integration", () => {
-  const provider = anchor.AnchorProvider.env();
-  anchor.setProvider(provider);
-
-  const PROGRAM_ID = new PublicKey("EZ1hsgYwmqmCY5Gzw9mwnJnJE4PJcKX5hHw5MZXk2ssy");
-  const program = new (Program as any)(IDL, provider) as any;
-  const programId = PROGRAM_ID;
-  const conn = provider.connection;
-
-  // Actors — admin uses the provider wallet so authority is stable across test runs
-  const admin   = (provider.wallet as any).payer as Keypair;
-  const lp      = Keypair.generate();
-  const user    = Keypair.generate();
-  const keeper  = Keypair.generate();
-
-  // Fixed Pyth oracle keypairs loaded from fixtures — pre-loaded into validator via --account
-  const fixturesDir = path.join(__dirname, "fixtures");
-  const pythXmrKeypair = Keypair.fromSecretKey(
-    Uint8Array.from(JSON.parse(fs.readFileSync(path.join(fixturesDir, "pyth_xmr_keypair.json"), "utf8")))
-  );
-  const pythColKeypair = Keypair.fromSecretKey(
-    Uint8Array.from(JSON.parse(fs.readFileSync(path.join(fixturesDir, "pyth_col_keypair.json"), "utf8")))
-  );
-
-  // Collateral mint (simulates sDAI — we control it in tests)
-  const collateralMintKeypair = Keypair.generate();
-  let collateralMint: PublicKey;
-
-  // PDA addresses
-  let [globalState]   = deriveGlobalState(programId);
-  let [wsxmrMint]     = deriveWsxmrMint(programId);
-  let [vaultPda]      = deriveVault(lp.publicKey, programId);
-
-  // Token accounts
-  let lpCollateralAta: PublicKey;
-  let vaultCollateralAta: PublicKey;
-  let lpWsxmrAta: PublicKey;
-  let userWsxmrAta: PublicKey;
-  let keeperWsxmrAta: PublicKey;
-
-  // PendingReturns PDAs
-  let [lpPendingReturns]   = derivePendingReturns(lp.publicKey, programId);
-  let [userPendingReturns] = derivePendingReturns(user.publicKey, programId);
-  let [keeperPendingReturns] = derivePendingReturns(keeper.publicKey, programId);
-
-  // Collateral feed ID = collateralMintKeypair pubkey bytes (arbitrary, just needs to match GlobalState)
-  let collateralFeedId: Buffer;
-
-  // ─── Utility: inject mock Pyth data ────────────────────────────────────────
-  async function injectPythData(nowTs: bigint): Promise<void> {
-    // We can't write arbitrary account data on a vanilla test validator without
-    // solana-test-validator's --account flag. Instead, we use the "account impersonation"
-    // pattern: create real accounts owned by our oracle stub program and ensure oracle.rs
-    // parses them. Since parse_pyth_price only checks data layout, we craft the buffer
-    // and store it via a dedicated helper instruction IF we had one, OR we accept that
-    // oracle calls will fail in unit tests without live Pyth data and skip them.
-    //
-    // STRATEGY: Because Anchor localnet doesn't support arbitrary account injection from
-    // TypeScript without a custom program, we instead bypass Pyth validation by using
-    // a special "test mode" approach: we set max_age_secs to u64::MAX in constants,
-    // and deploy a mock account that has valid byte layout. We write to it by creating
-    // the account via SystemProgram and then writing its data through a CPI to a
-    // tiny helper (or via `set_account` if using BanksClient).
-    //
-    // For this test suite we use the solana test validator's `--clone` capability and
-    // note that full end-to-end tests requiring oracle reads should be run against devnet
-    // or a validator with `--account` flags. Internal state-machine tests (below) work
-    // fully on localnet by verifying account state after each instruction.
-    console.log(`    [oracle] Mock timestamp: ${nowTs}`);
-  }
-
-  // ─── Airdrop helper ─────────────────────────────────────────────────────────
   async function airdrop(to: PublicKey, sol = 10): Promise<void> {
-    const sig = await conn.requestAirdrop(to, sol * LAMPORTS_PER_SOL);
-    await conn.confirmTransaction(sig, "confirmed");
+    await conn.confirmTransaction(
+      await conn.requestAirdrop(to, sol * LAMPORTS_PER_SOL), "confirmed"
+    );
   }
 
-  // ─── Setup: fund actors ─────────────────────────────────────────────────────
+  async function globalReqNonce(): Promise<bigint> {
+    const gs = await program.account.globalState.fetch(globalState);
+    return BigInt(gs.requestNonce.toString());
+  }
+
+  const tokenBal = async (ata: PublicKey): Promise<bigint> =>
+    BigInt((await getAccount(conn, ata, undefined, TOKEN_2022_PROGRAM_ID)).amount.toString());
+
+  // ─── 0. Setup ──────────────────────────────────────────────────────────────
   before(async () => {
-    await Promise.all([
-      // admin is the wallet keypair — already funded, no airdrop needed
-      airdrop(lp.publicKey, 20),
-      airdrop(user.publicKey, 20),
-      airdrop(keeper.publicKey, 20),
-    ]);
-    collateralMint = collateralMintKeypair.publicKey;
-    // Collateral feed ID matches mock oracle data in gen-mock-pyth.js
-    collateralFeedId = COL_USD_FEED_ID;
+    await Promise.all([lp, lp2, lp3, user, liquidator, keeper].map(k => airdrop(k.publicKey)));
+
+    // Token-2022 collateral mint (8 decimals), authority = admin
+    const mintLen = getMintLen([]);
+    const rent = await conn.getMinimumBalanceForRentExemption(mintLen);
+    const tx = new Transaction().add(
+      SystemProgram.createAccount({
+        fromPubkey: admin.publicKey,
+        newAccountPubkey: collateralMint,
+        space: mintLen,
+        lamports: rent,
+        programId: TOKEN_2022_PROGRAM_ID,
+      }),
+      createInitializeMint2Instruction(
+        collateralMint, 8, admin.publicKey, null, TOKEN_2022_PROGRAM_ID
+      )
+    );
+    await provider.sendAndConfirm(tx, [admin, collateralMintKeypair]);
+    lpCollateralAta  = await createAta(collateralMint, lp.publicKey);
+    lp2CollateralAta = await createAta(collateralMint, lp2.publicKey);
+    lp3CollateralAta = await createAta(collateralMint, lp3.publicKey);
+    liquidatorCollateralAta = await createAta(collateralMint, liquidator.publicKey);
+    userCollateralAta = await createAta(collateralMint, user.publicKey);
+
+    const mintTx = new Transaction().add(
+      createMintToInstruction(collateralMint, lpCollateralAta, admin.publicKey,
+        40_0000_0000n, [], TOKEN_2022_PROGRAM_ID), // 40 tokens
+      createMintToInstruction(collateralMint, lp2CollateralAta, admin.publicKey,
+        10_0000_0000n, [], TOKEN_2022_PROGRAM_ID), // 10 tokens
+      createMintToInstruction(collateralMint, lp3CollateralAta, admin.publicKey,
+        10_0000_0000n, [], TOKEN_2022_PROGRAM_ID),
+    );
+    await provider.sendAndConfirm(mintTx, [admin]);
   });
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // 1. INITIALIZE
-  // ══════════════════════════════════════════════════════════════════════════════
+  // Oracle freshness: every instruction that reads a price feed requires
+  // publish_time within 120s of the validator clock. Refresh both feeds before
+  // each test — tests that want a stale/bad feed overwrite it themselves.
+  beforeEach(async () => {
+    await refreshOracles();
+  });
+
+  // ─── 1. Initialize ─────────────────────────────────────────────────────────
   describe("1. Initialize", () => {
     it("initializes the protocol", async () => {
-      // Create collateral mint (Token-2022)
-      const lamports = await conn.getMinimumBalanceForRentExemption(82);
-      const createMintTx = new Transaction().add(
-        SystemProgram.createAccount({
-          fromPubkey: admin.publicKey,
-          newAccountPubkey: collateralMintKeypair.publicKey,
-          lamports,
-          space: 82,
-          programId: TOKEN_2022_PROGRAM_ID,
-        }),
-        // initialize_mint2 done via spl-token helper
-      );
-      // Use spl-token to initialize a simple collateral mint controlled by admin
-      const { createInitializeMint2Instruction } = await import("@solana/spl-token");
-      createMintTx.add(
-        createInitializeMint2Instruction(
-          collateralMintKeypair.publicKey,
-          18, // 18 decimals - program assumes collateral has same decimals as price precision
-          admin.publicKey,
-          admin.publicKey,
-          TOKEN_2022_PROGRAM_ID
-        )
-      );
-      await provider.sendAndConfirm(createMintTx, [admin, collateralMintKeypair]);
-
-      // Initialize the vault manager.
-      // pyth_xmr_feed arg = XMR_USD_FEED_ID (the feed_id embedded in mock oracle data)
-      // pyth_collateral_feed arg = zeros pubkey (the feed_id embedded in mock col oracle data)
-      // These are feed IDs stored in GlobalState and validated against oracle account data.
-      // Feed IDs stored in GlobalState must match bytes embedded in mock oracle accounts
-      const xmrFeedIdPubkey = new PublicKey(XMR_USD_FEED_ID);
-      const colFeedIdPubkey = new PublicKey(COL_USD_FEED_ID);
       await program.methods
-        .initialize(
-          xmrFeedIdPubkey,
-          colFeedIdPubkey,
-          collateralMint,
-        )
+        .initialize(PYTH_XMR, collateralMint)
         .accounts({
-          authority:   admin.publicKey,
+          authority: admin.publicKey,
           globalState,
           wsxmrMint,
+          collateralMint,
+          programCollateralAta,
           tokenProgram: TOKEN_2022_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
           rent: SYSVAR_RENT_PUBKEY,
-        } as any)
+        })
         .signers([admin])
         .rpc();
 
-      const gs = await (program.account as any).globalState.fetch(globalState);
+      const gs = await program.account.globalState.fetch(globalState);
       assert.equal(gs.authority.toBase58(), admin.publicKey.toBase58());
-      assert.equal(gs.globalDebtIndex.toString(), "1000000000000000000");
-      assert.equal(gs.vaultCount, 0);
-      assert.equal(gs.requestNonce.toString(), "0");
-      console.log("    ✓ GlobalState initialized, wsXMR mint:", wsxmrMint.toBase58());
+      assert.equal(gs.wsxmrMint.toBase58(), wsxmrMint.toBase58());
+      assert.equal(gs.collateralMint.toBase58(), collateralMint.toBase58());
+      assert.equal(gs.pythXmrFeed.toBase58(), PYTH_XMR.toBase58());
+      assert.equal(gs.globalTotalDebt.toString(), "0");
+      assert.equal(gs.globalDebtIndex.toString(), DEBT_INDEX.toString());
+
+      // wsXMR mint exists, is Token-2022, 8 decimals, mint authority = global PDA
+      const mintInfo = await conn.getAccountInfo(wsxmrMint);
+      assert.equal(mintInfo!.owner.toBase58(), TOKEN_2022_PROGRAM_ID.toBase58());
+
+      // Program collateral pool ATA exists and is empty
+      const pool = await getAccount(conn, programCollateralAta, undefined, TOKEN_2022_PROGRAM_ID);
+      assert.equal(pool.amount.toString(), "0");
+      assert.equal(pool.mint.toBase58(), collateralMint.toBase58());
+    });
+
+    it("rejects re-initialization", async () => {
+      await expectReject(
+        program.methods.initialize(PYTH_XMR, collateralMint).accounts({
+          authority: admin.publicKey, globalState, wsxmrMint, collateralMint,
+          programCollateralAta, tokenProgram: TOKEN_2022_PROGRAM_ID,
+          systemProgram: SystemProgram.programId, rent: SYSVAR_RENT_PUBKEY,
+        }).signers([admin]).rpc()
+      );
+    });
+
+    it("rejects set_liquidity_router from non-authority", async () => {
+      await expectReject(
+        program.methods.setLiquidityRouter(keeper.publicKey).accounts({
+          authority: lp.publicKey, globalState,
+        }).signers([lp]).rpc()
+      );
     });
   });
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // 2. VAULT MANAGEMENT
-  // ══════════════════════════════════════════════════════════════════════════════
-  describe("2. Vault Management", () => {
+  // ─── 2. Vault management ──────────────────────────────────────────────────
+  describe("2. Vault management", () => {
     it("creates a vault for LP", async () => {
-      await program.methods
-        .createVault()
-        .accounts({
-          lp: lp.publicKey,
-          vault: vaultPda,
-          globalState,
-          systemProgram: SystemProgram.programId,
-        } as any)
-        .signers([lp])
-        .rpc();
+      await program.methods.createVault().accounts({
+        lp: lp.publicKey, vault: vaultPda, globalState,
+        systemProgram: SystemProgram.programId,
+      }).signers([lp]).rpc();
 
-      const vault = await (program.account as any).vault.fetch(vaultPda);
-      assert.equal(vault.lpAddress.toBase58(), lp.publicKey.toBase58());
-      assert.isTrue(vault.active);
-      assert.equal(vault.collateralAmount.toString(), "0");
-      console.log("    ✓ Vault created:", vaultPda.toBase58());
+      const v = await program.account.vault.fetch(vaultPda);
+      assert.equal(v.lpAddress.toBase58(), lp.publicKey.toBase58());
+      assert.isTrue(v.active);
+      assert.equal(v.collateralAmount.toString(), "0");
     });
 
-    it("configures vault market metrics", async () => {
-      await program.methods
-        .setVaultMarketMetrics(50, 100) // 0.5% mint fee, 1% burn reward
-        .accounts({
-          lp: lp.publicKey,
-          vault: vaultPda,
-        } as any)
-        .signers([lp])
-        .rpc();
-
-      const vault = await (program.account as any).vault.fetch(vaultPda);
-      assert.equal(vault.mintFeeBps, 50);
-      assert.equal(vault.burnRewardBps, 100);
+    it("configures vault market metrics (1% mint fee, 0.5% burn reward)", async () => {
+      await program.methods.setVaultMarketMetrics(100, 50).accounts({
+        lp: lp.publicKey, vault: vaultPda,
+      }).signers([lp]).rpc();
+      const v = await program.account.vault.fetch(vaultPda);
+      assert.equal(v.mintFeeBps, 100);
+      assert.equal(v.burnRewardBps, 50);
     });
 
-    it("sets max mint bps", async () => {
-      await program.methods
-        .setMaxMintBps(0) // 0 = no limit (temporarily disabled to test)
-        .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
-        .signers([lp])
-        .rpc();
-      const vault = await (program.account as any).vault.fetch(vaultPda);
-      assert.equal(vault.maxMintBps, 0);
-    });
-
-    it("sets per-vault mint and burn timeouts", async () => {
-      await program.methods
-        .setMintTimeout(new BN(7200))
-        .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
-        .signers([lp])
-        .rpc();
-      await program.methods
-        .setBurnTimeout(new BN(5400))
-        .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
-        .signers([lp])
-        .rpc();
-
-      const vault = await (program.account as any).vault.fetch(vaultPda);
-      assert.equal(vault.mintTimeoutSeconds.toString(), "7200");
-      assert.equal(vault.burnTimeoutSeconds.toString(), "5400");
-      console.log("    ✓ Per-vault timeouts configured");
+    it("rejects vault config from non-LP", async () => {
+      await expectReject(
+        program.methods.setVaultMarketMetrics(50, 50).accounts({
+          lp: user.publicKey, vault: vaultPda,
+        }).signers([user]).rpc()
+      );
     });
 
     it("rejects out-of-range timeout config", async () => {
-      try {
-        await program.methods
-          .setMintTimeout(new BN(60)) // below MIN_MINT_TIMEOUT_SECONDS (1800)
-          .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
-          .signers([lp])
-          .rpc();
-        assert.fail("Should have rejected out-of-range timeout");
-      } catch (e: any) {
-        assert.ok(
-          e.message && !e.message.includes("panicked"),
-          "Should fail gracefully"
-        );
-        console.log("    ✓ Out-of-range timeout rejected:", e.message.split("\n")[0].substring(0, 60));
-      }
+      await expectReject(
+        program.methods.setMintTimeout(new BN(60)).accounts({
+          lp: lp.publicKey, vault: vaultPda,
+        }).signers([lp]).rpc()
+      );
+      await expectReject(
+        program.methods.setBurnTimeout(new BN(1_000_000)).accounts({
+          lp: lp.publicKey, vault: vaultPda,
+        }).signers([lp]).rpc()
+      );
     });
 
     it("whitelists and un-whitelists a minter", async () => {
-      await program.methods
-        .setMinterWhitelist(user.publicKey, true)
-        .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
-        .signers([lp])
-        .rpc();
+      await program.methods.setMinterWhitelist(user.publicKey, true).accounts({
+        lp: lp.publicKey, vault: vaultPda,
+      }).signers([lp]).rpc();
+      let v = await program.account.vault.fetch(vaultPda);
+      assert.equal(v.whitelistedMinterCount, 1);
+      assert.equal(v.whitelistedMinters[0].toBase58(), user.publicKey.toBase58());
 
-      let vault = await (program.account as any).vault.fetch(vaultPda);
-      assert.equal(vault.whitelistedMinterCount, 1, "One minter whitelisted");
-      assert.equal(
-        vault.whitelistedMinters[0].toBase58(),
-        user.publicKey.toBase58(),
-        "User should be in whitelist"
+      await program.methods.setMinterWhitelist(user.publicKey, false).accounts({
+        lp: lp.publicKey, vault: vaultPda,
+      }).signers([lp]).rpc();
+      v = await program.account.vault.fetch(vaultPda);
+      assert.equal(v.whitelistedMinterCount, 0);
+    });
+
+    it("initializes vault collateral ATA and deposits collateral", async () => {
+      await program.methods.initializeVaultCollateral().accounts({
+        lp: lp.publicKey, vault: vaultPda, collateralMint,
+        vaultCollateralAta, tokenProgram: TOKEN_2022_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      }).signers([lp]).rpc();
+
+      const amount = 30_0000_0000n; // 30 QQQx = $18,000
+      await program.methods.depositCollateral(new BN(amount.toString())).accounts({
+        lp: lp.publicKey, vault: vaultPda, globalState,
+        collateralMint, lpCollateralAta, vaultCollateralAta,
+        tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+      }).signers([lp]).rpc();
+
+      const v = await program.account.vault.fetch(vaultPda);
+      assert.equal(v.collateralAmount.toString(), amount.toString());
+      assert.equal(await tokenBal(vaultCollateralAta), amount);
+    });
+
+    it("rejects deposit from non-LP", async () => {
+      await expectReject(
+        program.methods.depositCollateral(new BN(1_0000_0000n.toString())).accounts({
+          lp: user.publicKey, vault: vaultPda, globalState,
+          collateralMint, lpCollateralAta, vaultCollateralAta,
+          tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        }).signers([user]).rpc()
       );
-
-      await program.methods
-        .setMinterWhitelist(user.publicKey, false)
-        .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
-        .signers([lp])
-        .rpc();
-
-      vault = await (program.account as any).vault.fetch(vaultPda);
-      assert.equal(vault.whitelistedMinterCount, 0, "Whitelist cleared");
-      console.log("    ✓ Minter whitelist add/remove works");
     });
+  });
 
-    it("batch whitelists minters", async () => {
-      const minters = [user.publicKey, keeper.publicKey];
-      await program.methods
-        .batchSetMinterWhitelist(minters, true)
-        .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
-        .signers([lp])
-        .rpc();
-
-      const vault = await (program.account as any).vault.fetch(vaultPda);
-      assert.equal(vault.whitelistedMinterCount, 2, "Two minters whitelisted");
-
-      // Clean up: remove both
-      await program.methods
-        .batchSetMinterWhitelist(minters, false)
-        .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
-        .signers([lp])
-        .rpc();
-      console.log("    ✓ Batch whitelist works");
-    });
-
-    it("sets max co-LP range", async () => {
-      await program.methods
-        .setMaxCoLPRange(3000)
-        .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
-        .signers([lp])
-        .rpc();
-
-      const vault = await (program.account as any).vault.fetch(vaultPda);
-      assert.equal(vault.maxCoLPRangeBps, 3000, "Max co-LP range should be 3000 bps");
-      console.log("    ✓ Max co-LP range set");
-    });
-
-    it("rejects out-of-range co-LP range config", async () => {
-      try {
-        await program.methods
-          .setMaxCoLPRange(100) // below MIN_CO_LP_RANGE_BPS (1000)
-          .accounts({ lp: lp.publicKey, vault: vaultPda } as any)
-          .signers([lp])
-          .rpc();
-        assert.fail("Should have rejected out-of-range co-LP range");
-      } catch (e: any) {
-        assert.ok(
-          e.message && !e.message.includes("panicked"),
-          "Should fail gracefully"
-        );
-        console.log("    ✓ Out-of-range co-LP range rejected:", e.message.split("\n")[0].substring(0, 60));
-      }
-    });
-
-    it("initializes vault collateral ATA", async () => {
-      [vaultCollateralAta] = deriveVaultCollateral(vaultPda, programId);
-      await program.methods
-        .initializeVaultCollateral()
-        .accounts({
-          lp: lp.publicKey,
-          vault: vaultPda,
-          collateralMint,
-          vaultCollateralAta,
-          tokenProgram: TOKEN_2022_PROGRAM_ID,
+  // ─── 3. PendingReturns init ────────────────────────────────────────────────
+  describe("3. PendingReturns", () => {
+    it("creates PendingReturns for lp, user, liquidator", async () => {
+      for (const owner of [lp, user, liquidator]) {
+        const [pda] = findPda([PENDING_RETURNS_SEED, owner.publicKey.toBuffer()], programId);
+        await program.methods.initializePendingReturns().accounts({
+          owner: owner.publicKey, pendingReturns: pda,
           systemProgram: SystemProgram.programId,
-        } as any)
-        .signers([lp])
-        .rpc();
-      console.log("    ✓ Vault collateral ATA initialized:", vaultCollateralAta.toBase58());
-    });
-
-    it("deposits collateral into the vault", async () => {
-      // Mint collateral to LP
-      lpCollateralAta = await createAta(provider, admin, collateralMint, lp.publicKey);
-      const mintColTx = new Transaction().add(
-        createMintToInstruction(
-          collateralMint,
-          lpCollateralAta,
-          admin.publicKey,
-          BigInt("10000000000000000000"), // 10 collateral (18 decimals)
-          [],
-          TOKEN_2022_PROGRAM_ID
-        )
-      );
-      await provider.sendAndConfirm(mintColTx, [admin]);
-
-      // Note: deposit_collateral_shares calls sync_vault_yield which reads pyth.
-      // Since we have no real Pyth data, this will fail if oracle validation is strict.
-      // We test the account state by verifying the vault's collateral_amount is updated.
-      // If oracle reads short-circuit when no price data (first deposit, yield=0),
-      // the instruction should succeed with collateral_amount > 0.
-      try {
-        await program.methods
-          .depositCollateralShares(new BN("5000000000000000000")) // deposit 5 collateral (18 decimals)
-          .accounts({
-            lp: lp.publicKey,
-            vault: vaultPda,
-            globalState,
-            collateralMint,
-            lpCollateralAta,
-            vaultCollateralAta,
-            pythXmr: pythXmrKeypair.publicKey,
-            pythCollateral: pythColKeypair.publicKey,
-            tokenProgram: TOKEN_2022_PROGRAM_ID,
-            systemProgram: SystemProgram.programId,
-          } as any)
-          .signers([lp])
-          .rpc();
-
-        const vault = await (program.account as any).vault.fetch(vaultPda);
-        assert.isTrue(
-          vault.collateralAmount.gtn(0),
-          "Collateral amount should be positive after deposit"
-        );
-        console.log("    ✓ Collateral deposited:", vault.collateralAmount.toString());
-      } catch (e: any) {
-        // Oracle failure is expected without live Pyth; skip and inject state manually.
-        if (e.message?.includes("StalePrice") || e.message?.includes("AccountBorrowFailed")) {
-          console.log("    ⚠ Oracle unavailable on localnet — skipping deposit oracle check");
-        } else {
-          throw e;
-        }
+        }).signers([owner]).rpc();
       }
     });
-  });
-
-  // ══════════════════════════════════════════════════════════════════════════════
-  // 3. PENDING RETURNS INITIALIZATION
-  // ══════════════════════════════════════════════════════════════════════════════
-  describe("3. Initialize PendingReturns", () => {
-    it("creates PendingReturns for LP, user, and keeper", async () => {
-      for (const [actor, name] of [
-        [lp, "LP"],
-        [user, "user"],
-        [keeper, "keeper"],
-      ] as [Keypair, string][]) {
-        const [pendingReturns] = derivePendingReturns(actor.publicKey, programId);
-        await program.methods
-          .initializePendingReturns()
-          .accounts({
-            owner: actor.publicKey,
-            pendingReturns,
-            systemProgram: SystemProgram.programId,
-          } as any)
-          .signers([actor])
-          .rpc();
-
-        const pr = await (program.account as any).pendingReturns.fetch(pendingReturns);
-        assert.equal(pr.owner.toBase58(), actor.publicKey.toBase58());
-        assert.equal(pr.collateralAmount.toString(), "0");
-        assert.equal(pr.solAmount.toString(), "0");
-        console.log(`    ✓ PendingReturns initialized for ${name}`);
-      }
-    });
-
     it("rejects duplicate PendingReturns creation", async () => {
-      try {
-        await program.methods
-          .initializePendingReturns()
-          .accounts({
-            owner: lp.publicKey,
-            pendingReturns: lpPendingReturns,
-            systemProgram: SystemProgram.programId,
-          } as any)
-          .signers([lp])
-          .rpc();
-        assert.fail("Should have rejected duplicate");
-      } catch (e: any) {
-        // Expected: account already initialized
-        assert.ok(
-          e.message.includes("already in use") || e.logs?.some((l: string) => l.includes("already")),
-          "Expected duplicate rejection"
-        );
-        console.log("    ✓ Duplicate PendingReturns rejected");
-      }
-    });
-  });
-
-  // ══════════════════════════════════════════════════════════════════════════════
-  // 4. MINT FLOW — Full happy path
-  // ══════════════════════════════════════════════════════════════════════════════
-  describe("4. Mint Flow (happy path)", () => {
-    const xmrAmount  = 100_000_000_000n;  // 0.1 XMR in atomic units (12 dec)
-    const wsxmrAmt   = 10_000_000n;         // 0.1 wsXMR (8 dec)
-    const { secret, commitment } = makeSecretAndCommitment();
-    const userPublicKey = computePublicKey(secret);
-    // LP key material for provide_lp_key (view = spend is the canonical scheme)
-    const lpSecret = crypto.randomBytes(32);
-    const lpCommitment = computeCommitment(lpSecret);
-    const lpSpendKey = computePublicKey(lpSecret);
-    const lpViewKey = computePublicKey(lpSecret);
-
-    let requestId: Buffer;
-    let mintRequestPda: PublicKey;
-    let currentNonce: bigint;
-
-    before(async () => {
-      userWsxmrAta = await createAta(provider, user, wsxmrMint, user.publicKey);
-      lpWsxmrAta   = await createAta(provider, lp, wsxmrMint, lp.publicKey);
-    });
-
-    it("4.1 initiates a mint request", async () => {
-      const gs = await (program.account as any).globalState.fetch(globalState);
-      currentNonce = BigInt(gs.requestNonce.toString());
-      const nextNonce = currentNonce + 1n;
-
-      requestId = computeMintRequestId(
-        user.publicKey, vaultPda, xmrAmount, commitment, nextNonce
+      const [pda] = findPda([PENDING_RETURNS_SEED, lp.publicKey.toBuffer()], programId);
+      await expectReject(
+        program.methods.initializePendingReturns().accounts({
+          owner: lp.publicKey, pendingReturns: pda,
+          systemProgram: SystemProgram.programId,
+        }).signers([lp]).rpc()
       );
-      [mintRequestPda] = deriveMintRequest(requestId, programId);
-
-      try {
-        await program.methods
-          .initiateMint(
-            new BN(xmrAmount.toString()),
-            Array.from(commitment),
-            Array.from(userPublicKey),
-            Array.from(requestId),
-          )
-          .accounts({
-            initiator:               user.publicKey,
-            recipient:               user.publicKey,
-            vault:                   vaultPda,
-            globalState,
-            mintRequest:             mintRequestPda,
-            griefingEscrow:          user.publicKey, // simplified: same as initiator
-            initiatorPendingReturns: userPendingReturns,
-            pythXmr:                 pythXmrKeypair.publicKey,
-            pythCollateral:          pythColKeypair.publicKey,
-            pythSusdeRr:             pythColKeypair.publicKey,
-            systemProgram:           SystemProgram.programId,
-          } as any)
-          .signers([user])
-          .rpc();
-
-        const mr = await (program.account as any).mintRequest.fetch(mintRequestPda);
-        assert.equal(mr.initiator.toBase58(), user.publicKey.toBase58());
-        assert.equal(mr.xmrAmount.toString(), xmrAmount.toString());
-        assert.deepEqual(Array.from(mr.claimCommitment), Array.from(commitment));
-        assert.deepEqual(Array.from(mr.userPublicKey), Array.from(userPublicKey));
-        assert.isDefined(mr.status.pending, "Status should be Pending");
-        console.log("    ✓ MintRequest created:", mintRequestPda.toBase58());
-      } catch (e: any) {
-        if (e.message?.includes("StalePrice")) {
-          console.log("    ⚠ Skipping: oracle unavailable");
-        } else {
-          throw e;
-        }
-      }
-    });
-
-    it("4.2 LP provides keys and locks the key bond", async () => {
-      if (!mintRequestPda) return;
-      try {
-        await (program.account as any).mintRequest.fetch(mintRequestPda);
-      } catch {
-        console.log("    ⚠ Skipping provide_lp_key: mintRequest not created");
-        return;
-      }
-
-      try {
-        await program.methods
-          .provideLpKey(
-            Array.from(lpSpendKey),
-            Array.from(lpViewKey),
-            Array.from(lpCommitment),
-          )
-          .accounts({
-            lp:            lp.publicKey,
-            vault:         vaultPda,
-            globalState,
-            mintRequest:   mintRequestPda,
-            pythXmr:       pythXmrKeypair.publicKey,
-            pythCollateral: pythColKeypair.publicKey,
-            pythSusdeRr: pythColKeypair.publicKey,
-          } as any)
-          .signers([lp])
-          .rpc();
-
-        const mr = await (program.account as any).mintRequest.fetch(mintRequestPda);
-        assert.isDefined(mr.status.keyProvided, "Mint request should be KeyProvided");
-        assert.deepEqual(Array.from(mr.lpCommitment), Array.from(lpCommitment));
-        assert.isTrue(mr.lockedCollateral.gtn(0), "Key bond should be locked");
-        console.log("    ✓ LP key provided, bond locked:", mr.lockedCollateral.toString());
-      } catch (e: any) {
-        if (e.message?.includes("StalePrice") || e.message?.includes("InsufficientCollateral")) {
-          console.log("    ⚠ Skipping provide_lp_key:", e.message.split("\n")[0]);
-        } else {
-          throw e;
-        }
-      }
-    });
-
-    it("4.3 LP marks mint as ready", async () => {
-      if (!mintRequestPda) return;
-      let mr: any;
-      try {
-        mr = await (program.account as any).mintRequest.fetch(mintRequestPda);
-        if (!JSON.stringify(mr.status).includes("KeyProvided")) {
-          console.log("    ⚠ Skipping set_mint_ready: request not KeyProvided");
-          return;
-        }
-      } catch {
-        console.log("    ⚠ Skipping set_mint_ready: mintRequest not found");
-        return;
-      }
-
-      try {
-        await program.methods
-          .setMintReady()
-          .accounts({
-            lp:            lp.publicKey,
-            vault:         vaultPda,
-            globalState,
-            mintRequest:   mintRequestPda,
-            pythXmr:       pythXmrKeypair.publicKey,
-            pythCollateral: pythColKeypair.publicKey,
-            pythSusdeRr: pythColKeypair.publicKey,
-          } as any)
-          .signers([lp])
-          .rpc();
-
-        const mr2 = await (program.account as any).mintRequest.fetch(mintRequestPda);
-        assert.isDefined(mr2.status.ready, "Mint request should be Ready");
-        console.log("    ✓ MintRequest marked Ready");
-      } catch (e: any) {
-        if (e.message?.includes("StalePrice")) {
-          console.log("    ⚠ Skipping: oracle unavailable");
-        } else {
-          throw e;
-        }
-      }
-    });
-
-    it("4.4 user reveals secret (pure verification)", async () => {
-      if (!mintRequestPda) return;
-      let mr: any;
-      try {
-        mr = await (program.account as any).mintRequest.fetch(mintRequestPda);
-        if (!JSON.stringify(mr.status).includes("Ready")) {
-          console.log("    ⚠ Skipping reveal_secret: request not Ready");
-          return;
-        }
-      } catch {
-        console.log("    ⚠ Skipping reveal_secret: mintRequest not found");
-        return;
-      }
-
-      try {
-        await program.methods
-          .revealSecret(Array.from(secret))
-          .accounts({
-            caller:      user.publicKey,
-            mintRequest: mintRequestPda,
-          } as any)
-          .signers([user])
-          .rpc();
-
-        const mr2 = await (program.account as any).mintRequest.fetch(mintRequestPda);
-        assert.isDefined(mr2.status.secretRevealed, "Mint request should be SecretRevealed");
-        assert.deepEqual(Array.from(mr2.revealedSecret), Array.from(secret));
-        console.log("    ✓ Secret revealed, status: SecretRevealed");
-      } catch (e: any) {
-        if (e.message?.includes("InvalidSecret")) {
-          console.log("    ⚠ Skipping reveal_secret:", e.message.split("\n")[0]);
-        } else {
-          throw e;
-        }
-      }
-    });
-
-    it("4.5 finalizes mint (permissionless, reads stored secret)", async () => {
-      if (!mintRequestPda) return;
-      let mr: any;
-      try {
-        mr = await (program.account as any).mintRequest.fetch(mintRequestPda);
-        if (!JSON.stringify(mr.status).includes("SecretRevealed")) {
-          console.log("    ⚠ Skipping finalize: request not SecretRevealed");
-          return;
-        }
-      } catch {
-        console.log("    ⚠ Skipping finalize: mintRequest not found");
-        return;
-      }
-
-      try {
-        await program.methods
-          .finalizeMint()
-          .accounts({
-            caller:           user.publicKey,
-            vault:            vaultPda,
-            globalState,
-            mintRequest:      mintRequestPda,
-            wsxmrMint,
-            recipientWsxmrAta: userWsxmrAta,
-            lpWsxmrAta,
-            pendingReturns:   userPendingReturns,
-            pythXmr:          pythXmrKeypair.publicKey,
-            pythCollateral:   pythColKeypair.publicKey,
-            pythSusdeRr: pythColKeypair.publicKey,
-            tokenProgram:     TOKEN_2022_PROGRAM_ID,
-            systemProgram:    SystemProgram.programId,
-          } as any)
-          .preInstructions([
-            ComputeBudgetProgram.setComputeUnitLimit({ units: 150_000 }),
-          ])
-          .signers([user])
-          .rpc();
-
-        const finalMr = await (program.account as any).mintRequest.fetch(mintRequestPda);
-        assert.ok(
-          JSON.stringify(finalMr.status).includes("Completed"),
-          "Mint request should be Completed"
-        );
-
-        // Verify wsXMR was minted to user
-        const userBal = await conn.getTokenAccountBalance(userWsxmrAta);
-        assert.isTrue(Number(userBal.value.amount) > 0, "User should have wsXMR");
-        console.log("    ✓ Mint finalized, user wsXMR balance:", userBal.value.uiAmountString);
-      } catch (e: any) {
-        if (e.message?.includes("StalePrice") || e.message?.includes("InvalidSecret")) {
-          console.log("    ⚠ Skipping finalize:", e.message.split("\n")[0]);
-        } else {
-          throw e;
-        }
-      }
     });
   });
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // 5. BURN FLOW — Full happy path (3-step handshake)
-  // ══════════════════════════════════════════════════════════════════════════════
-  describe("5. Burn Flow (happy path)", () => {
-    const wsxmrToBurn = 10_000_000n; // 0.1 wsXMR
+  // Shared mint params — 40 XMR @ $15 → 40 wsXMR = $600 debt
+  const XMR_AMOUNT = 40n * 10n ** 12n; // 40 XMR (12 decimals)
+  const WSXMR_AMOUNT = XMR_AMOUNT / XMR_TO_WSXMR_DIVISOR; // 4e9
+  const FEE_AMOUNT = (WSXMR_AMOUNT * 100n) / BPS_DENOMINATOR; // 1% fee → 4e7
+  const mint1 = makeSecret();
+  const lpKey1 = makeSecret();
+  let mint1Id: Buffer, mint1Pda: PublicKey;
 
-    let burnRequestId: Buffer;
-    let burnRequestPda: PublicKey;
+  // ─── 4. Oracle negatives (via initiate_mint) ───────────────────────────────
+  // Each test mutates the live oracle via oracle-mock, then restores the normal
+  // fresh price so later sections always see $600 QQQx / $15 XMR.
+  describe("4. Oracle rejection paths", () => {
+    const initMintCall = (colAcct: PublicKey, reqId: Buffer) =>
+      program.methods.initiateMint(
+        new BN(XMR_AMOUNT.toString()),
+        Array.from(mint1.commitment),
+        Array.from(mint1.pubKey),
+        Array.from(reqId)
+      ).accounts({
+        initiator: user.publicKey, recipient: user.publicKey,
+        vault: vaultPda, globalState,
+        mintRequest: findPda([MINT_REQUEST_SEED, reqId], programId)[0],
+        griefingEscrow: keeper.publicKey,
+        initiatorPendingReturns: findPda([PENDING_RETURNS_SEED, user.publicKey.toBuffer()], programId)[0],
+        pythXmr: PYTH_XMR, pythCollateral: colAcct,
+        systemProgram: SystemProgram.programId,
+      }).signers([user]);
+    const freshId = async () =>
+      mintRequestId(user.publicKey, vaultPda, XMR_AMOUNT, mint1.commitment, await globalReqNonce() + 1n);
 
-    // LP's secret for the burn handshake
-    const lpBurnSecret = crypto.randomBytes(32);
-    const lpSecretHash = computeCommitment(lpBurnSecret);
-    const lpBurnSpendKey = computePublicKey(lpBurnSecret);
-    const lpBurnViewKey = computePublicKey(lpBurnSecret);
-
-    // User's key material for the burn request
-    const userBurnSecret = crypto.randomBytes(32);
-    const userClaimCommitment = computeCommitment(userBurnSecret);
-    const userBurnPublicKey = computePublicKey(userBurnSecret);
-    const userBurnViewKey = computePublicKey(userBurnSecret);
-
-    it("5.1 user requests a burn", async () => {
-      const gs = await (program.account as any).globalState.fetch(globalState);
-      const nonce = BigInt(gs.requestNonce.toString()) + 1n;
-
-      burnRequestId = computeRequestId(user.publicKey, vaultPda, wsxmrToBurn, nonce);
-      [burnRequestPda] = deriveBurnRequest(burnRequestId, programId);
-
-      // Ensure user has enough wsXMR — mint some to user for testing
-      // wsXMR balance comes from step 4 finalize_mint. If that was skipped, request_burn
-      // will fail with InsufficientFunds which we catch below.
-
-      try {
-        await program.methods
-          .requestBurn(
-            new BN(wsxmrToBurn.toString()),
-            Array.from(userClaimCommitment),
-            Array.from(userBurnPublicKey),
-            Array.from(userBurnViewKey),
-            Array.from(burnRequestId),
-          )
-          .accounts({
-            user:          user.publicKey,
-            vault:         vaultPda,
-            globalState,
-            burnRequest:   burnRequestPda,
-            wsxmrMint,
-            userWsxmrAta,
-            pythXmr:       pythXmrKeypair.publicKey,
-            pythCollateral: pythColKeypair.publicKey,
-            tokenProgram:  TOKEN_2022_PROGRAM_ID,
-            systemProgram: SystemProgram.programId,
-          } as any)
-          .signers([user])
-          .rpc();
-
-        const br = await (program.account as any).burnRequest.fetch(burnRequestPda);
-        assert.equal(br.user.toBase58(), user.publicKey.toBase58());
-        assert.equal(br.wsxmrAmount.toString(), wsxmrToBurn.toString());
-        assert.ok(JSON.stringify(br.status).includes("Requested"), "Should be Requested");
-
-        // Vault should have locked collateral
-        const vault = await (program.account as any).vault.fetch(vaultPda);
-        assert.isTrue(vault.lockedCollateral.gtn(0), "Collateral should be locked");
-        console.log("    ✓ BurnRequest created:", burnRequestPda.toBase58());
-        console.log("      Locked collateral:", vault.lockedCollateral.toString());
-      } catch (e: any) {
-        if (
-          e.message?.includes("StalePrice") ||
-          e.message?.includes("InsufficientDebt") ||
-          e.message?.includes("InsufficientCollateral") ||
-          e.message?.includes("0x1770") // token insufficient funds
-        ) {
-          console.log("    ⚠ Skipping request_burn:", e.message.split("\n")[0]);
-        } else {
-          throw e;
-        }
-      }
+    it("rejects stale collateral price", async () => {
+      await setCol(QQQX_USD, { publishTs: (await nowSec()) - 3600n });
+      await expectReject(initMintCall(PYTH_COL, await freshId()).rpc(), "Stale");
+      await setCol();
     });
 
-    it("5.2 LP proposes secret hash", async () => {
-      let br: any;
-      try {
-        br = await (program.account as any).burnRequest.fetch(burnRequestPda);
-        if (!JSON.stringify(br.status).includes("Requested")) {
-          console.log("    ⚠ Skipping propose_hash: request not in Requested state");
-          return;
-        }
-      } catch {
-        console.log("    ⚠ Skipping propose_hash: burnRequest not found");
-        return;
-      }
-
-      await program.methods
-        .proposeHash(
-          Array.from(lpSecretHash),
-          Array.from(lpBurnSpendKey),
-          Array.from(lpBurnViewKey),
-        )
-        .accounts({
-          lp:          lp.publicKey,
-          vault:       vaultPda,
-          burnRequest: burnRequestPda,
-        } as any)
-        .signers([lp])
-        .rpc();
-
-      const updatedBr = await (program.account as any).burnRequest.fetch(burnRequestPda);
-      assert.ok(JSON.stringify(updatedBr.status).includes("Proposed"), "Should be Proposed");
-      assert.deepEqual(Array.from(updatedBr.secretHash), Array.from(lpSecretHash));
-      console.log("    ✓ LP proposed secret hash");
+    it("rejects wide-confidence price", async () => {
+      await setCol(QQQX_USD, { confBps: 1500n }); // conf = 15% of price > 10% bound
+      await expectReject(initMintCall(PYTH_COL, await freshId()).rpc());
+      await setCol();
     });
 
-    it("5.3 user confirms Monero lock", async () => {
-      let br: any;
-      try {
-        br = await (program.account as any).burnRequest.fetch(burnRequestPda);
-        if (!JSON.stringify(br.status).includes("Proposed")) {
-          console.log("    ⚠ Skipping confirm: request not in Proposed state");
-          return;
-        }
-      } catch {
-        console.log("    ⚠ Skipping confirm: burnRequest not found");
-        return;
-      }
-
-      await program.methods
-        .confirmMoneroLock()
-        .accounts({
-          user:        user.publicKey,
-          burnRequest: burnRequestPda,
-        } as any)
-        .signers([user])
-        .rpc();
-
-      const updatedBr = await (program.account as any).burnRequest.fetch(burnRequestPda);
-      assert.ok(JSON.stringify(updatedBr.status).includes("Committed"), "Should be Committed");
-      console.log("    ✓ User confirmed Monero lock, status: Committed");
+    it("rejects when spot < 97% of EMA (discount guard)", async () => {
+      await setCol(550n, { emaUsd: 600n }); // spot $550 < 0.97 * $600 = $582
+      await expectReject(initMintCall(PYTH_COL, await freshId()).rpc());
+      await setCol();
     });
 
-    it("5.4 LP finalizes burn by revealing secret", async () => {
-      let br: any;
-      try {
-        br = await (program.account as any).burnRequest.fetch(burnRequestPda);
-        if (!JSON.stringify(br.status).includes("Committed")) {
-          console.log("    ⚠ Skipping finalize_burn: request not Committed");
-          return;
-        }
-      } catch {
-        console.log("    ⚠ Skipping finalize_burn: burnRequest not found");
-        return;
-      }
+    it("accepts spot inside the 3% EMA band (guard boundary)", async () => {
+      const s2 = makeSecret(); // independent commitment — leaves a Pending request
+      const id2 = mintRequestId(user.publicKey, vaultPda, XMR_AMOUNT, s2.commitment, await globalReqNonce() + 1n);
+      await setCol(590n, { emaUsd: 600n }); // $590 > $582 → guard passes
+      await program.methods.initiateMint(
+        new BN(XMR_AMOUNT.toString()), Array.from(s2.commitment),
+        Array.from(s2.pubKey), Array.from(id2)
+      ).accounts({
+        initiator: user.publicKey, recipient: user.publicKey,
+        vault: vaultPda, globalState,
+        mintRequest: findPda([MINT_REQUEST_SEED, id2], programId)[0],
+        griefingEscrow: keeper.publicKey,
+        initiatorPendingReturns: findPda([PENDING_RETURNS_SEED, user.publicKey.toBuffer()], programId)[0],
+        pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+        systemProgram: SystemProgram.programId,
+      }).signers([user]).rpc();
+      await setCol();
+    });
 
-      try {
-        await program.methods
-          .finalizeBurn(Array.from(lpBurnSecret))
-          .accounts({
-            caller:             lp.publicKey,
-            vaultLp:            lp.publicKey,
-            vault:              vaultPda,
-            globalState,
-            burnRequest:        burnRequestPda,
-            userPendingReturns,
-            pythXmr:            pythXmrKeypair.publicKey,
-            pythCollateral:     pythColKeypair.publicKey,
-            jitosolStakePool:   new PublicKey("Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb"),
-            systemProgram:      SystemProgram.programId,
-          } as any)
-          .preInstructions([
-            ComputeBudgetProgram.setComputeUnitLimit({ units: 150_000 }),
-          ])
-          .signers([lp])
-          .rpc();
-
-        const finalBr = await (program.account as any).burnRequest.fetch(burnRequestPda);
-        assert.ok(JSON.stringify(finalBr.status).includes("Completed"), "Should be Completed");
-
-        // Vault should have released locked collateral
-        const vault = await (program.account as any).vault.fetch(vaultPda);
-        console.log("    ✓ Burn finalized. Vault locked collateral:", vault.lockedCollateral.toString());
-      } catch (e: any) {
-        if (e.message?.includes("StalePrice")) {
-          console.log("    ⚠ Skipping finalize_burn: oracle unavailable");
-        } else {
-          throw e;
-        }
-      }
+    it("rejects a bogus oracle account (wrong feed id)", async () => {
+      // Pass the XMR account as the collateral oracle — feed id mismatch
+      await expectReject(initMintCall(PYTH_XMR, await freshId()).rpc());
     });
   });
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // 6. CANCEL MINT (timeout path)
-  // ══════════════════════════════════════════════════════════════════════════════
-  describe("6. Cancel Mint (timeout path)", () => {
-    const { commitment: c2, secret: s2 } = makeSecretAndCommitment();
-    const userPublicKey2 = computePublicKey(s2);
-    const xmrAmt = 500_000_000_000n; // 0.5 XMR
-    let cancelMintRequestId: Buffer;
-    let cancelMintPda: PublicKey;
+  // ─── 5. Mint flow (happy path) ─────────────────────────────────────────────
+  describe("5. Mint flow", () => {
+    it("whitelist-bypasses griefing deposit (user whitelisted)", async () => {
+      await program.methods.setMinterWhitelist(user.publicKey, true).accounts({
+        lp: lp.publicKey, vault: vaultPda,
+      }).signers([lp]).rpc();
+    });
 
-    it("creates a second mint request", async () => {
-      const gs = await (program.account as any).globalState.fetch(globalState);
-      const nonce = BigInt(gs.requestNonce.toString()) + 1n;
-      cancelMintRequestId = computeMintRequestId(
-        user.publicKey, vaultPda, xmrAmt, c2, nonce
+    it("rejects a bad request_id", async () => {
+      const bad = Buffer.alloc(32, 0xaa);
+      await expectReject(
+        program.methods.initiateMint(
+          new BN(XMR_AMOUNT.toString()), Array.from(mint1.commitment),
+          Array.from(mint1.pubKey), Array.from(bad)
+        ).accounts({
+          initiator: user.publicKey, recipient: user.publicKey,
+          vault: vaultPda, globalState,
+          mintRequest: findPda([MINT_REQUEST_SEED, bad], programId)[0],
+          griefingEscrow: keeper.publicKey,
+          initiatorPendingReturns: findPda([PENDING_RETURNS_SEED, user.publicKey.toBuffer()], programId)[0],
+          pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+          systemProgram: SystemProgram.programId,
+        }).signers([user]).rpc()
       );
-      [cancelMintPda] = deriveMintRequest(cancelMintRequestId, programId);
-
-      try {
-        await program.methods
-          .initiateMint(
-            new BN(xmrAmt.toString()),
-            Array.from(c2),
-            Array.from(userPublicKey2),
-            Array.from(cancelMintRequestId),
-          )
-          .accounts({
-            initiator:               user.publicKey,
-            recipient:               user.publicKey,
-            vault:                   vaultPda,
-            globalState,
-            mintRequest:             cancelMintPda,
-            griefingEscrow:          user.publicKey,
-            initiatorPendingReturns: userPendingReturns,
-            pythXmr:                 pythXmrKeypair.publicKey,
-            pythCollateral:          pythColKeypair.publicKey,
-            pythSusdeRr:             pythColKeypair.publicKey,
-            systemProgram:           SystemProgram.programId,
-          } as any)
-          .signers([user])
-          .rpc();
-        console.log("    ✓ Second mint request created for cancel test");
-      } catch (e: any) {
-        if (e.message?.includes("StalePrice") || e.message?.includes("InsufficientCollateral")) {
-          console.log("    ⚠ Skipping cancel_mint test:", e.message.split("\n")[0]);
-        } else {
-          throw e;
-        }
-      }
     });
 
-    it("anyone can cancel an expired mint request", async () => {
-      if (!cancelMintPda) return;
-      let mr: any;
-      try {
-        mr = await (program.account as any).mintRequest.fetch(cancelMintPda);
-      } catch {
-        console.log("    ⚠ Skipping cancel: mintRequest not found");
-        return;
-      }
+    it("initiates a mint request", async () => {
+      mint1Id = mintRequestId(user.publicKey, vaultPda, XMR_AMOUNT, mint1.commitment, await globalReqNonce() + 1n);
+      mint1Pda = findPda([MINT_REQUEST_SEED, mint1Id], programId)[0];
+      await program.methods.initiateMint(
+        new BN(XMR_AMOUNT.toString()), Array.from(mint1.commitment),
+        Array.from(mint1.pubKey), Array.from(mint1Id)
+      ).accounts({
+        initiator: user.publicKey, recipient: user.publicKey,
+        vault: vaultPda, globalState,
+        mintRequest: mint1Pda,
+        griefingEscrow: keeper.publicKey,
+        initiatorPendingReturns: findPda([PENDING_RETURNS_SEED, user.publicKey.toBuffer()], programId)[0],
+        pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+        systemProgram: SystemProgram.programId,
+      }).signers([user]).rpc();
 
-      // Wait for timeout (10 seconds in test)
-      await new Promise((r) => setTimeout(r, 12_000));
-
-      try {
-        await program.methods
-          .cancelMint()
-          .accounts({
-            caller:          admin.publicKey,
-            vault:           vaultPda,
-            globalState,
-            mintRequest:     cancelMintPda,
-            initiatorReturns: userPendingReturns,
-            lpReturns:       lpPendingReturns,
-            wsxmrMint,
-            recipientWsxmrAta: userWsxmrAta,
-            lpWsxmrAta,
-            pythXmr:         pythXmrKeypair.publicKey,
-            pythCollateral:  pythColKeypair.publicKey,
-            pythSusdeRr: pythColKeypair.publicKey,
-            tokenProgram:    TOKEN_2022_PROGRAM_ID,
-            systemProgram:   SystemProgram.programId,
-          } as any)
-          .signers([admin])
-          .rpc();
-
-        const cancelled = await (program.account as any).mintRequest.fetch(cancelMintPda);
-        assert.ok(JSON.stringify(cancelled.status).includes("Cancelled"), "Should be Cancelled");
-        console.log("    ✓ Expired mint request cancelled by third party");
-      } catch (e: any) {
-        if (e.message?.includes("StalePrice") || e.message?.includes("NotExpired")) {
-          console.log("    ⚠ Cancel failed:", e.message.split("\n")[0]);
-        } else {
-          throw e;
-        }
-      }
-    });
-  });
-
-  // ══════════════════════════════════════════════════════════════════════════════
-  // 7. CANCEL BURN (pre-commit path)
-  // ══════════════════════════════════════════════════════════════════════════════
-  describe("7. Abort Burn (pre-commit path)", () => {
-    const wsxmrAmt = 2_000_000n; // 0.02 wsXMR
-    let cancelBurnId: Buffer;
-    let cancelBurnPda: PublicKey;
-
-    // User key material for the burn request
-    const abortUserSecret = crypto.randomBytes(32);
-    const abortClaimCommitment = computeCommitment(abortUserSecret);
-    const abortUserPublicKey = computePublicKey(abortUserSecret);
-    const abortUserViewKey = computePublicKey(abortUserSecret);
-
-    it("creates a burn request to abort", async () => {
-      const gs = await (program.account as any).globalState.fetch(globalState);
-      const nonce = BigInt(gs.requestNonce.toString()) + 1n;
-      cancelBurnId = computeRequestId(user.publicKey, vaultPda, wsxmrAmt, nonce);
-      [cancelBurnPda] = deriveBurnRequest(cancelBurnId, programId);
-
-      try {
-        await program.methods
-          .requestBurn(
-            new BN(wsxmrAmt.toString()),
-            Array.from(abortClaimCommitment),
-            Array.from(abortUserPublicKey),
-            Array.from(abortUserViewKey),
-            Array.from(cancelBurnId),
-          )
-          .accounts({
-            user:          user.publicKey,
-            vault:         vaultPda,
-            globalState,
-            burnRequest:   cancelBurnPda,
-            wsxmrMint,
-            userWsxmrAta,
-            pythXmr:       pythXmrKeypair.publicKey,
-            pythCollateral: pythColKeypair.publicKey,
-            tokenProgram:  TOKEN_2022_PROGRAM_ID,
-            systemProgram: SystemProgram.programId,
-          } as any)
-          .signers([user])
-          .rpc();
-        console.log("    ✓ Burn request created for cancel test");
-      } catch (e: any) {
-        console.log("    ⚠ Could not create burn for cancel test:", e.message.split("\n")[0]);
-      }
+      const req = await program.account.mintRequest.fetch(mint1Pda);
+      assert.equal(req.wsxmrAmount.toString(), WSXMR_AMOUNT.toString());
+      assert.equal(req.feeAmount.toString(), FEE_AMOUNT.toString());
+      assert.equal(req.status.pending !== undefined, true);
     });
 
-    it("aborts burn before user commits (Requested → Cancelled)", async () => {
-      let br: any;
-      try {
-        br = await (program.account as any).burnRequest.fetch(cancelBurnPda);
-        if (!JSON.stringify(br.status).includes("Requested")) {
-          console.log("    ⚠ Skipping abort: burn not in Requested state");
-          return;
-        }
-      } catch {
-        console.log("    ⚠ Skipping abort: burnRequest not found");
-        return;
-      }
+    it("rejects provide_lp_key from non-LP", async () => {
+      await expectReject(
+        program.methods.provideLpKey(
+          Array.from(lpKey1.pubKey), Array.from(lpKey1.pubKey), Array.from(lpKey1.commitment)
+        ).accounts({
+          lp: user.publicKey, vault: vaultPda, globalState, mintRequest: mint1Pda,
+          pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+        }).signers([user]).rpc()
+      );
+    });
 
-      try {
-        await program.methods
-          .abortBurn()
-          .accounts({
-            caller:            user.publicKey,
-            vault:             vaultPda,
-            globalState,
-            burnRequest:       cancelBurnPda,
-            wsxmrMint,
-            userWsxmrAta,
-            tokenProgram:      TOKEN_2022_PROGRAM_ID,
-            systemProgram:     SystemProgram.programId,
-          } as any)
-          .signers([user])
-          .rpc();
+    it("LP provides keys — key bond locks collateral", async () => {
+      const before = await program.account.vault.fetch(vaultPda);
+      await program.methods.provideLpKey(
+        Array.from(lpKey1.pubKey), Array.from(lpKey1.pubKey), Array.from(lpKey1.commitment)
+      ).accounts({
+        lp: lp.publicKey, vault: vaultPda, globalState, mintRequest: mint1Pda,
+        pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+      }).signers([lp]).rpc();
 
-        const cancelled = await (program.account as any).burnRequest.fetch(cancelBurnPda);
-        assert.ok(JSON.stringify(cancelled.status).includes("Cancelled"), "Should be Cancelled");
-        console.log("    ✓ Burn aborted before commit");
-      } catch (e: any) {
-        if (e.message?.includes("NotExpired") || e.message?.includes("StalePrice")) {
-          console.log("    ⚠ Abort burn failed:", e.message.split("\n")[0]);
-        } else {
-          throw e;
-        }
-      }
+      const v = await program.account.vault.fetch(vaultPda);
+      const lockedDelta = BigInt(v.lockedCollateral.toString()) - BigInt(before.lockedCollateral.toString());
+      // Key bond = MINT_LOCK_RATIO (160%) of mint value: $600*1.6 = $960 = 1.6 QQQx
+      const expectedBond = usdE18(0n, 0n); // computed below
+      const mintUsd = wsxmrUsdE18(WSXMR_AMOUNT);
+      const bondUsd = (mintUsd * MINT_LOCK_RATIO) / RATIO_PRECISION;
+      const expected = (bondUsd * COLLATERAL_DECIMALS) / (QQQX_USD * PRICE_PRECISION);
+      assert.approximately(Number(lockedDelta), Number(expected), Number(expected) / 100);
+    });
+
+    it("LP marks mint ready — par lock re-priced, pending_mint_count=1", async () => {
+      await program.methods.setMintReady().accounts({
+        lp: lp.publicKey, vault: vaultPda, globalState, mintRequest: mint1Pda,
+        pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+      }).signers([lp]).rpc();
+      const v = await program.account.vault.fetch(vaultPda);
+      assert.equal(v.pendingMintCount, 1);
+      const req = await program.account.mintRequest.fetch(mint1Pda);
+      assert.notEqual(req.status.ready, undefined);
+    });
+
+    it("blocks withdraw_collateral while a READY mint is pending", async () => {
+      await expectReject(
+        program.methods.withdrawCollateral(new BN(1)).accounts({
+          lp: lp.publicKey, vault: vaultPda, globalState,
+          collateralMint, lpCollateralAta, vaultCollateralAta,
+          pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
+        }).signers([lp]).rpc()
+      );
+    });
+
+    it("rejects cancel_mint before timeout", async () => {
+      await expectReject(
+        program.methods.cancelMint().accounts({
+          caller: keeper.publicKey, vault: vaultPda, globalState, mintRequest: mint1Pda,
+          initiatorReturns: findPda([PENDING_RETURNS_SEED, user.publicKey.toBuffer()], programId)[0],
+          lpReturns: findPda([PENDING_RETURNS_SEED, lp.publicKey.toBuffer()], programId)[0],
+          wsxmrMint,
+          recipientWsxmrAta: ataOf(wsxmrMint, user.publicKey),
+          lpWsxmrAta: ataOf(wsxmrMint, lp.publicKey),
+          collateralMint, vaultCollateralAta, programCollateralAta,
+          tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        }).signers([keeper]).rpc()
+      );
+    });
+
+    it("user reveals secret — pure Ed25519 verification", async () => {
+      await program.methods.revealSecret(Array.from(mint1.secret)).accounts({
+        caller: user.publicKey, mintRequest: mint1Pda,
+      }).signers([user]).rpc();
+      const req = await program.account.mintRequest.fetch(mint1Pda);
+      assert.notEqual(req.status.secretRevealed, undefined);
+    });
+
+    it("rejects finalize with a wrong secret committed earlier (sanity: stored secret verified)", async () => {
+      // status is SecretRevealed — finalize uses the stored verified secret
+      // (a fresh wrong-secret finalize isn't possible; covered by reveal path)
+      const bad = makeSecret();
+      // revealing a second secret must fail (already revealed)
+      await expectReject(
+        program.methods.revealSecret(Array.from(bad.secret)).accounts({
+          caller: user.publicKey, mintRequest: mint1Pda,
+        }).signers([user]).rpc()
+      );
+    });
+
+    it("finalizes mint — full fee to LP, no protocol split", async () => {
+      userWsxmrAta = await createAta(wsxmrMint, user.publicKey);
+      lpWsxmrAta = await createAta(wsxmrMint, lp.publicKey);
+      const supplyBefore = BigInt((await conn.getTokenSupply(wsxmrMint)).value.amount);
+      await program.methods.finalizeMint()
+        .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
+        .accounts({
+          caller: keeper.publicKey, vault: vaultPda, globalState, mintRequest: mint1Pda,
+          wsxmrMint, recipientWsxmrAta: userWsxmrAta, lpWsxmrAta,
+          pendingReturns: findPda([PENDING_RETURNS_SEED, user.publicKey.toBuffer()], programId)[0],
+          collateralMint, vaultCollateralAta, programCollateralAta,
+          tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        }).signers([keeper]).rpc();
+
+      assert.equal(await tokenBal(userWsxmrAta), WSXMR_AMOUNT - FEE_AMOUNT);
+      assert.equal(await tokenBal(lpWsxmrAta), FEE_AMOUNT); // 100% of fee → LP
+
+      const supplyAfter = BigInt((await conn.getTokenSupply(wsxmrMint)).value.amount);
+      assert.equal(supplyAfter - supplyBefore, WSXMR_AMOUNT); // net + fee == full mint
+
+      const v = await program.account.vault.fetch(vaultPda);
+      assert.equal(v.normalizedDebt.toString(), WSXMR_AMOUNT.toString());
+      assert.equal(v.pendingMintCount, 0);
+      const gs = await program.account.globalState.fetch(globalState);
+      assert.equal(gs.globalTotalDebt.toString(), WSXMR_AMOUNT.toString());
     });
   });
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // 8. SLASH PATH — LP fails to reveal secret after commit
-  // ══════════════════════════════════════════════════════════════════════════════
-  describe("8. Slash Path (LP fails to reveal)", () => {
-    const wsxmrAmt = 3_000_000n;
-    let slashBurnId: Buffer;
-    let slashBurnPda: PublicKey;
-    const fakeLpSecret = crypto.randomBytes(32);
-    const fakeLpHash   = computeCommitment(fakeLpSecret);
-    const fakeLpSpendKey = computePublicKey(fakeLpSecret);
-    const fakeLpViewKey = computePublicKey(fakeLpSecret);
+  // ─── 6. Burn flow ──────────────────────────────────────────────────────────
+  const BURN_WSXMR = 10_0000_0000n; // 10 wsXMR = $150
+  const burn1 = makeSecret();  // user claim secret
+  const lpBurn = makeSecret(); // lp hash secret
+  let burn1Id: Buffer, burn1Pda: PublicKey;
 
-    // User key material — the slash claim requires revealing the user's spend key half
-    const slashUserSecret = crypto.randomBytes(32);
-    const slashClaimCommitment = computeCommitment(slashUserSecret);
-    const slashUserPublicKey = computePublicKey(slashUserSecret);
-    const slashUserViewKey = computePublicKey(slashUserSecret);
-
-    it("creates and commits a burn request (reaching Committed)", async () => {
-      const gs = await (program.account as any).globalState.fetch(globalState);
-      const nonce = BigInt(gs.requestNonce.toString()) + 1n;
-      slashBurnId = computeRequestId(user.publicKey, vaultPda, wsxmrAmt, nonce);
-      [slashBurnPda] = deriveBurnRequest(slashBurnId, programId);
-
-      try {
-        // Step 1: request_burn
-        await program.methods
-          .requestBurn(
-            new BN(wsxmrAmt.toString()),
-            Array.from(slashClaimCommitment),
-            Array.from(slashUserPublicKey),
-            Array.from(slashUserViewKey),
-            Array.from(slashBurnId),
-          )
-          .accounts({
-            user: user.publicKey, vault: vaultPda, globalState,
-            burnRequest: slashBurnPda, wsxmrMint, userWsxmrAta,
-            pythXmr: pythXmrKeypair.publicKey,
-            pythCollateral: pythColKeypair.publicKey,
-            tokenProgram: TOKEN_2022_PROGRAM_ID,
-            systemProgram: SystemProgram.programId,
-          } as any)
-          .signers([user])
-          .rpc();
-
-        // Step 2: propose_hash
-        await program.methods
-          .proposeHash(
-            Array.from(fakeLpHash),
-            Array.from(fakeLpSpendKey),
-            Array.from(fakeLpViewKey),
-          )
-          .accounts({ lp: lp.publicKey, vault: vaultPda, burnRequest: slashBurnPda } as any)
-          .signers([lp])
-          .rpc();
-
-        // Step 3: confirm_monero_lock
-        await program.methods
-          .confirmMoneroLock()
-          .accounts({ user: user.publicKey, burnRequest: slashBurnPda } as any)
-          .signers([user])
-          .rpc();
-
-        const br = await (program.account as any).burnRequest.fetch(slashBurnPda);
-        assert.ok(JSON.stringify(br.status).includes("Committed"));
-        console.log("    ✓ Burn reached Committed state (slash scenario ready)");
-      } catch (e: any) {
-        console.log("    ⚠ Slash setup failed:", e.message.split("\n")[0]);
-      }
+  describe("6. Burn flow", () => {
+    it("rejects a burn below the minimum", async () => {
+      const tiny = 1000n;
+      const id = burnRequestId(user.publicKey, vaultPda, tiny, await globalReqNonce() + 1n);
+      await expectReject(
+        program.methods.requestBurn(
+          new BN(tiny.toString()), Array.from(burn1.commitment),
+          Array.from(burn1.pubKey), Array.from(burn1.pubKey), Array.from(id)
+        ).accounts({
+          user: user.publicKey, vault: vaultPda, globalState,
+          burnRequest: findPda([BURN_REQUEST_SEED, id], programId)[0],
+          wsxmrMint, userWsxmrAta,
+          pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+          tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        }).signers([user]).rpc()
+      );
     });
 
-    it("user claims slashed collateral after LP timeout", async () => {
-      let br: any;
-      try {
-        br = await (program.account as any).burnRequest.fetch(slashBurnPda);
-        if (!JSON.stringify(br.status).includes("Committed")) {
-          console.log("    ⚠ Skipping slash claim: not in Committed state");
-          return;
-        }
-      } catch {
-        console.log("    ⚠ Skipping slash claim: burnRequest not found");
-        return;
-      }
+    it("rejects a bad burn request_id", async () => {
+      const bad = Buffer.alloc(32, 0xbb);
+      await expectReject(
+        program.methods.requestBurn(
+          new BN(BURN_WSXMR.toString()), Array.from(burn1.commitment),
+          Array.from(burn1.pubKey), Array.from(burn1.pubKey), Array.from(bad)
+        ).accounts({
+          user: user.publicKey, vault: vaultPda, globalState,
+          burnRequest: findPda([BURN_REQUEST_SEED, bad], programId)[0],
+          wsxmrMint, userWsxmrAta,
+          pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+          tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        }).signers([user]).rpc()
+      );
+    });
 
-      // In production: wait BURN_COMMIT_TIMEOUT (2 hours). On localnet we'd need
-      // to warp clock. We verify the instruction is callable and check revert behavior.
-      try {
-        await program.methods
-          .claimSlashedCollateral(Array.from(slashUserSecret))
+    it("user requests a burn — wsXMR burned, collateral locked", async () => {
+      burn1Id = burnRequestId(user.publicKey, vaultPda, BURN_WSXMR, await globalReqNonce() + 1n);
+      burn1Pda = findPda([BURN_REQUEST_SEED, burn1Id], programId)[0];
+      const balBefore = await tokenBal(userWsxmrAta);
+      const supplyBefore = BigInt((await conn.getTokenSupply(wsxmrMint)).value.amount);
+
+      await program.methods.requestBurn(
+        new BN(BURN_WSXMR.toString()), Array.from(burn1.commitment),
+        Array.from(burn1.pubKey), Array.from(burn1.pubKey), Array.from(burn1Id)
+      ).accounts({
+        user: user.publicKey, vault: vaultPda, globalState,
+        burnRequest: burn1Pda, wsxmrMint, userWsxmrAta,
+        pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+        tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+      }).signers([user]).rpc();
+
+      assert.equal(await tokenBal(userWsxmrAta), balBefore - BURN_WSXMR);
+      const supplyAfter = BigInt((await conn.getTokenSupply(wsxmrMint)).value.amount);
+      assert.equal(supplyBefore - supplyAfter, BURN_WSXMR);
+
+      const req = await program.account.burnRequest.fetch(burn1Pda);
+      assert.notEqual(req.status.requested, undefined);
+      assert.isTrue(BigInt(req.lockedCollateral.toString()) > 0n);
+    });
+
+    it("rejects propose_hash from non-LP", async () => {
+      await expectReject(
+        program.methods.proposeHash(
+          Array.from(lpBurn.commitment), Array.from(lpBurn.pubKey), Array.from(lpBurn.pubKey)
+        ).accounts({
+          lp: user.publicKey, vault: vaultPda, burnRequest: burn1Pda,
+        }).signers([user]).rpc()
+      );
+    });
+
+    it("LP proposes secret hash", async () => {
+      await program.methods.proposeHash(
+        Array.from(lpBurn.commitment), Array.from(lpBurn.pubKey), Array.from(lpBurn.pubKey)
+      ).accounts({
+        lp: lp.publicKey, vault: vaultPda, burnRequest: burn1Pda,
+      }).signers([lp]).rpc();
+      const req = await program.account.burnRequest.fetch(burn1Pda);
+      assert.notEqual(req.status.proposed, undefined);
+    });
+
+    it("user confirms Monero lock", async () => {
+      await program.methods.confirmMoneroLock().accounts({
+        user: user.publicKey, burnRequest: burn1Pda,
+      }).signers([user]).rpc();
+      const req = await program.account.burnRequest.fetch(burn1Pda);
+      assert.notEqual(req.status.committed, undefined);
+    });
+
+    it("rejects finalize_burn with wrong secret", async () => {
+      const bad = makeSecret();
+      await expectReject(
+        program.methods.finalizeBurn(Array.from(bad.secret))
+          .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
           .accounts({
-            user:              user.publicKey,
-            vaultLp:           lp.publicKey,
-            vault:             vaultPda,
-            globalState,
-            burnRequest:       slashBurnPda,
-            userPendingReturns,
-            pythXmr:           pythXmrKeypair.publicKey,
-            pythCollateral:    pythColKeypair.publicKey,
-            systemProgram:     SystemProgram.programId,
-          } as any)
-          .signers([user])
-          .rpc();
+            caller: lp.publicKey, vaultLp: lp.publicKey, vault: vaultPda, globalState,
+            burnRequest: burn1Pda,
+            userPendingReturns: findPda([PENDING_RETURNS_SEED, user.publicKey.toBuffer()], programId)[0],
+            pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+            collateralMint, vaultCollateralAta, programCollateralAta,
+            tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          }).signers([lp]).rpc()
+      );
+    });
 
-        const br2 = await (program.account as any).burnRequest.fetch(slashBurnPda);
-        assert.ok(JSON.stringify(br2.status).includes("Slashed"), "Should be Slashed");
+    it("LP finalizes burn — reward credited to user pending returns, base lock released to vault", async () => {
+      const [userPR] = findPda([PENDING_RETURNS_SEED, user.publicKey.toBuffer()], programId);
+      const reqBefore = await program.account.burnRequest.fetch(burn1Pda);
+      const locked = BigInt(reqBefore.lockedCollateral.toString());
+      const reward = BigInt(reqBefore.rewardCollateral.toString());
+      const poolBefore = await tokenBal(programCollateralAta);
+      const vBefore = await program.account.vault.fetch(vaultPda);
 
-        const pr = await (program.account as any).pendingReturns.fetch(userPendingReturns);
-        assert.isTrue(pr.collateralAmount.gtn(0), "User should have pending collateral returns");
-        console.log("    ✓ LP slashed. User pending returns:", pr.collateralAmount.toString());
-      } catch (e: any) {
-        // Expected: NotExpired if we can't advance clock
-        if (e.message?.includes("NotExpired") || e.message?.includes("StalePrice")) {
-          console.log("    ⚠ Slash claim rejected (expected — clock not advanced):", e.message.split("\n")[0]);
-        } else {
-          throw e;
-        }
-      }
+      await program.methods.finalizeBurn(Array.from(lpBurn.secret))
+        .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
+        .accounts({
+          caller: lp.publicKey, vaultLp: lp.publicKey, vault: vaultPda, globalState,
+          burnRequest: burn1Pda, userPendingReturns: userPR,
+          pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+          collateralMint, vaultCollateralAta, programCollateralAta,
+          tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        }).signers([lp]).rpc();
+
+      const req = await program.account.burnRequest.fetch(burn1Pda);
+      assert.notEqual(req.status.completed, undefined);
+
+      // Only the (health-capped) reward leaves the vault: credited to pending
+      // returns and physically moved into the program pool ATA.
+      const pr = await program.account.pendingReturns.fetch(userPR);
+      assert.equal(pr.collateralAmount.toString(), reward.toString());
+      assert.equal(await tokenBal(programCollateralAta), poolBefore + reward);
+
+      const v = await program.account.vault.fetch(vaultPda);
+      // Vault equity drops by the reward only; the base lock stays in the vault.
+      const colDelta = BigInt(vBefore.collateralAmount.toString()) - BigInt(v.collateralAmount.toString());
+      assert.equal(colDelta, reward);
+      // The full reservation (base + reward) is released.
+      const lockDelta = BigInt(vBefore.lockedCollateral.toString()) - BigInt(v.lockedCollateral.toString());
+      assert.equal(lockDelta, locked + reward);
+      // Burned debt cleared from the vault's normalized debt.
+      const debtDelta = BigInt(vBefore.normalizedDebt.toString()) - BigInt(v.normalizedDebt.toString());
+      assert.equal(debtDelta, BURN_WSXMR);
     });
   });
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // 9. LIQUIDATION FLOW
-  // ══════════════════════════════════════════════════════════════════════════════
-  describe("9. Liquidation Flow", () => {
-    it("verifies global state consistency before liquidation test", async () => {
-      const gs = await (program.account as any).globalState.fetch(globalState);
-      const vault = await (program.account as any).vault.fetch(vaultPda);
+  // ─── 7. Abort burn (pre-commit) ────────────────────────────────────────────
+  // abort_burn is a post-deadline escape hatch: caller must be the burn's user
+  // and clock.unix_timestamp >= request.deadline (burn_timeout_seconds ≥ 1800).
+  // test-validator can't warp time, so only the rejection paths are exercised.
+  describe("7. Abort burn", () => {
+    const abort1 = makeSecret();
+    let abortPda: PublicKey;
+    it("creates a Requested burn", async () => {
+      const amt = 1_0000_0000n; // 1 wsXMR
+      const id = burnRequestId(user.publicKey, vaultPda, amt, await globalReqNonce() + 1n);
+      abortPda = findPda([BURN_REQUEST_SEED, id], programId)[0];
+      await program.methods.requestBurn(
+        new BN(amt.toString()), Array.from(abort1.commitment),
+        Array.from(abort1.pubKey), Array.from(abort1.pubKey), Array.from(id)
+      ).accounts({
+        user: user.publicKey, vault: vaultPda, globalState, burnRequest: abortPda,
+        wsxmrMint, userWsxmrAta, pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+        tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+      }).signers([user]).rpc();
 
-      console.log("    Global debt index:", gs.globalDebtIndex.toString());
-      console.log("    Vault collateral:", vault.collateralAmount.toString());
-      console.log("    Vault normalized_debt:", vault.normalizedDebt.toString());
-      console.log("    Vault active_burn_count:", vault.activeBurnCount);
-
-      // Liquidation requires collateral_ratio < 120%.
-      // On localnet without oracle, we can't trigger it naturally.
-      // We verify the instruction exists and would reject healthy vaults.
-      assert.isTrue(gs.globalDebtIndex.gtn(0), "Debt index should be positive");
-      console.log("    ✓ Liquidation preconditions verified");
+      const req = await program.account.burnRequest.fetch(abortPda);
+      assert.notEqual(req.status.requested, undefined);
     });
 
-    it("resolve_burn_for_liquidation rejects healthy vault", async () => {
-      // Create a dummy burn request PDA for this test
-      const dummyBurnId = crypto.randomBytes(32);
-      const [dummyBurnPda] = deriveBurnRequest(dummyBurnId, programId);
-
-      // The instruction should fail because the vault is not under-collateralized
-      // or because the burn request doesn't exist — either way we test the path
-      try {
-        await program.methods
-          .resolveBurnForLiquidation()
-          .accounts({
-            caller:          admin.publicKey,
-            vaultLp:         lp.publicKey,
-            vault:           vaultPda,
-            globalState,
-            burnRequest:     dummyBurnPda,
-            userPendingReturns,
-            wsxmrMint,
-            userWsxmrAta,
-            pythXmr:         pythXmrKeypair.publicKey,
-            pythCollateral:  pythColKeypair.publicKey,
-            tokenProgram:    TOKEN_2022_PROGRAM_ID,
-            systemProgram:   SystemProgram.programId,
-          } as any)
-          .signers([admin])
-          .rpc();
-        // If it somehow succeeds (no oracle data to check ratio), that's also OK
-        console.log("    ⚠ resolve_burn_for_liquidation succeeded unexpectedly");
-      } catch (e: any) {
-        // Any program error is expected (not InternalError)
-        assert.ok(
-          e.message && !e.message.includes("panicked"),
-          "Should fail gracefully"
-        );
-        console.log("    ✓ resolve_burn_for_liquidation rejected correctly:", e.message.split("\n")[0].substring(0, 80));
-      }
+    it("rejects abort from a non-user caller", async () => {
+      await expectReject(
+        program.methods.abortBurn().accounts({
+          caller: keeper.publicKey, vault: vaultPda, globalState, burnRequest: abortPda,
+          wsxmrMint, userWsxmrAta,
+          tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        }).signers([keeper]).rpc()
+      );
     });
 
-    it("backstop_vault rejects when old vault == new vault", async () => {
-      // Deterministic rejection: same vault as both old and new → InvalidValue.
-      // (A real backstop needs an underwater second vault + oracle data, which
-      // localnet smoke tests cannot set up.)
-      try {
-        await program.methods
-          .backstopVault()
-          .accounts({
-            newLp:            lp.publicKey,
-            oldVault:         vaultPda,
-            newVault:         vaultPda,
-            globalState,
-            pythXmr:          pythXmrKeypair.publicKey,
-            pythCollateral:   pythColKeypair.publicKey,
-            pythSusdeRr: pythColKeypair.publicKey,
-            systemProgram:    SystemProgram.programId,
-          } as any)
-          .signers([lp])
-          .rpc();
-        assert.fail("Should have rejected backstop with same vault");
-      } catch (e: any) {
-        assert.ok(
-          e.message && !e.message.includes("panicked"),
-          "Should fail gracefully"
-        );
-        console.log("    ✓ backstop_vault rejected correctly:", e.message.split("\n")[0].substring(0, 80));
-      }
+    it("rejects abort before the deadline (DeadlineNotExpired)", async () => {
+      await expectReject(
+        program.methods.abortBurn().accounts({
+          caller: user.publicKey, vault: vaultPda, globalState, burnRequest: abortPda,
+          wsxmrMint, userWsxmrAta,
+          tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        }).signers([user]).rpc()
+      );
+    });
+
+    // Resolve the leftover Requested burn through the normal handshake so vault1's
+    // locked collateral doesn't leak into the withdrawal/invariant tests.
+    const abortLp = makeSecret();
+    it("resolves the burn via propose → confirm → finalize", async () => {
+      await program.methods.proposeHash(
+        Array.from(abortLp.commitment), Array.from(abortLp.pubKey), Array.from(abortLp.pubKey)
+      ).accounts({
+        lp: lp.publicKey, vault: vaultPda, burnRequest: abortPda,
+      }).signers([lp]).rpc();
+
+      await program.methods.confirmMoneroLock().accounts({
+        user: user.publicKey, burnRequest: abortPda,
+      }).signers([user]).rpc();
+
+      await program.methods.finalizeBurn(Array.from(abortLp.secret))
+        .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
+        .accounts({
+          caller: lp.publicKey, vaultLp: lp.publicKey, vault: vaultPda, globalState,
+          burnRequest: abortPda,
+          userPendingReturns: findPda([PENDING_RETURNS_SEED, user.publicKey.toBuffer()], programId)[0],
+          pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+          collateralMint, vaultCollateralAta, programCollateralAta,
+          tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        }).signers([lp]).rpc();
+
+      const req = await program.account.burnRequest.fetch(abortPda);
+      assert.notEqual(req.status.completed, undefined);
     });
   });
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // 10. BUY-AND-BURN
-  // ══════════════════════════════════════════════════════════════════════════════
-  describe("10. Buy-and-Burn", () => {
-    it("rejects buy-and-burn when war chest is empty", async () => {
-      const gs = await (program.account as any).globalState.fetch(globalState);
-      if (gs.yieldWarChest.gtn(0)) {
-        console.log("    ⚠ War chest not empty, skipping empty-check test");
-        return;
-      }
+  // ─── 8. Liquidation ────────────────────────────────────────────────────────
+  describe("8. Liquidation", () => {
+    const liqMint = makeSecret();
+    const liqLpKey = makeSecret();
+    const LIQ_XMR = 35n * 10n ** 12n;      // 35 XMR → 35 wsXMR = $525 debt
+    const LIQ_WSXMR = LIQ_XMR / XMR_TO_WSXMR_DIVISOR;
+    let liqMintPda: PublicKey;
+    const LIQ_DEPOSIT = 3_5000_0000n;      // 3.5 QQQx = $2100 → mint: (3.5-1.4 bond)*600/525 = 240%;
+                                          // at $200 crash: 3.5*200/525 = 133% → liquidatable
 
+    it("sets up an underwater-able vault (lp2)", async () => {
+      await program.methods.createVault().accounts({
+        lp: lp2.publicKey, vault: vault2Pda, globalState,
+        systemProgram: SystemProgram.programId,
+      }).signers([lp2]).rpc();
+      await program.methods.setVaultMarketMetrics(100, 50).accounts({
+        lp: lp2.publicKey, vault: vault2Pda,
+      }).signers([lp2]).rpc();
+      await program.methods.initializeVaultCollateral().accounts({
+        lp: lp2.publicKey, vault: vault2Pda, collateralMint,
+        vaultCollateralAta: vault2CollateralAta,
+        tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+      }).signers([lp2]).rpc();
+      await program.methods.depositCollateral(new BN(LIQ_DEPOSIT.toString())).accounts({
+        lp: lp2.publicKey, vault: vault2Pda, globalState,
+        collateralMint, lpCollateralAta: lp2CollateralAta, vaultCollateralAta: vault2CollateralAta,
+        tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+      }).signers([lp2]).rpc();
+      await program.methods.setMinterWhitelist(user.publicKey, true).accounts({
+        lp: lp2.publicKey, vault: vault2Pda,
+      }).signers([lp2]).rpc();
+    });
+
+    it("mints 35 wsXMR against the lp2 vault (CR 228%)", async () => {
+      const id = mintRequestId(user.publicKey, vault2Pda, LIQ_XMR, liqMint.commitment, await globalReqNonce() + 1n);
+      liqMintPda = findPda([MINT_REQUEST_SEED, id], programId)[0];
+      await program.methods.initiateMint(
+        new BN(LIQ_XMR.toString()), Array.from(liqMint.commitment),
+        Array.from(liqMint.pubKey), Array.from(id)
+      ).accounts({
+        initiator: user.publicKey, recipient: liquidator.publicKey,
+        vault: vault2Pda, globalState, mintRequest: liqMintPda,
+        griefingEscrow: keeper.publicKey,
+        initiatorPendingReturns: findPda([PENDING_RETURNS_SEED, user.publicKey.toBuffer()], programId)[0],
+        pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+        systemProgram: SystemProgram.programId,
+      }).signers([user]).rpc();
+
+      await program.methods.provideLpKey(
+        Array.from(liqLpKey.pubKey), Array.from(liqLpKey.pubKey), Array.from(liqLpKey.commitment)
+      ).accounts({
+        lp: lp2.publicKey, vault: vault2Pda, globalState, mintRequest: liqMintPda,
+        pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+      }).signers([lp2]).rpc();
+      await program.methods.setMintReady().accounts({
+        lp: lp2.publicKey, vault: vault2Pda, globalState, mintRequest: liqMintPda,
+        pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+      }).signers([lp2]).rpc();
+      await program.methods.revealSecret(Array.from(liqMint.secret)).accounts({
+        caller: user.publicKey, mintRequest: liqMintPda,
+      }).signers([user]).rpc();
+
+      liquidatorWsxmrAta = await createAta(wsxmrMint, liquidator.publicKey);
+      lp2WsxmrAta = await createAta(wsxmrMint, lp2.publicKey);
+      await program.methods.finalizeMint()
+        .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
+        .accounts({
+          caller: keeper.publicKey, vault: vault2Pda, globalState, mintRequest: liqMintPda,
+          wsxmrMint, recipientWsxmrAta: liquidatorWsxmrAta, lpWsxmrAta: lp2WsxmrAta,
+          pendingReturns: findPda([PENDING_RETURNS_SEED, user.publicKey.toBuffer()], programId)[0],
+          collateralMint, vaultCollateralAta: vault2CollateralAta, programCollateralAta,
+          tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        }).signers([keeper]).rpc();
+
+      assert.equal(await tokenBal(liquidatorWsxmrAta), LIQ_WSXMR - (LIQ_WSXMR * 100n) / BPS_DENOMINATOR);
+      const v = await program.account.vault.fetch(vault2Pda);
+      assert.equal(v.normalizedDebt.toString(), LIQ_WSXMR.toString());
+    });
+
+    it("rejects liquidation while oracle price is healthy", async () => {
+      await expectReject(
+        program.methods.executeLiquidation(new BN(1_0000_0000n.toString())).accounts({
+          liquidator: liquidator.publicKey, vault: vault2Pda, globalState,
+          wsxmrMint, collateralMint,
+          liquidatorWsxmrAta, liquidatorCollateralAta,
+          vaultCollateralAta: vault2CollateralAta,
+          pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+          tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        }).signers([liquidator]).rpc()
+      );
+    });
+
+    it("executes a partial liquidation at the crashed price", async () => {
+      const DEBT_TO_CLEAR = 10_0000_0000n; // 10 wsXMR ($150)
+      const vBefore = await program.account.vault.fetch(vault2Pda);
+      const liqColBefore = await tokenBal(liquidatorCollateralAta);
+      const liqWsxmrBefore = await tokenBal(liquidatorWsxmrAta);
+
+      await setCol(QQQX_CRASH); // $200 — CR drops to ~76%, liquidatable
       try {
-        await program.methods
-          .triggerBuyAndBurn(new BN(1_000_000))
+        await program.methods.executeLiquidation(new BN(DEBT_TO_CLEAR.toString()))
+          .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
           .accounts({
-            keeper:           keeper.publicKey,
-            globalState,
-            wsxmrMint,
-            burnWsxmrAta:     keeperWsxmrAta ?? userWsxmrAta,
-            keeperPendingReturns,
-            pythXmr:          pythXmrKeypair.publicKey,
-            pythCollateral:   pythColKeypair.publicKey,
-            tokenProgram:     TOKEN_2022_PROGRAM_ID,
-            systemProgram:    SystemProgram.programId,
-          } as any)
-          .signers([keeper])
-          .rpc();
-        assert.fail("Should have rejected empty war chest");
-      } catch (e: any) {
-        // Buy-and-burn can fail for multiple reasons: WarChestEmpty, XMRNotDipped, CooldownActive
-        const isValidRejection = e.message && (
-          e.message.includes("WarChestEmpty") || 
-          e.message.includes("XMRNotDipped") ||
-          e.message.includes("CooldownActive") ||
-          e.message.includes("6023") || // WarChestEmpty error code
-          e.message.includes("6031") || // XMRNotDipped error code
-          e.message.includes("custom program error")
-        );
-        assert.ok(isValidRejection, `Expected valid rejection, got: ${e.message?.substring(0, 200)}`);
-        console.log("    ✓ Buy-and-burn correctly rejected");
+            liquidator: liquidator.publicKey, vault: vault2Pda, globalState,
+            wsxmrMint, collateralMint,
+            liquidatorWsxmrAta, liquidatorCollateralAta,
+            vaultCollateralAta: vault2CollateralAta,
+            pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+            tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          }).signers([liquidator]).rpc();
+      } finally {
+        await setCol(); // restore $600
       }
+
+      const v = await program.account.vault.fetch(vault2Pda);
+      assert.equal(
+        BigInt(vBefore.normalizedDebt.toString()) - BigInt(v.normalizedDebt.toString()),
+        DEBT_TO_CLEAR
+      );
+      // Seized = debt_usd * 1.10 / col_price → $150*1.1/$200 = 0.825 QQQx
+      const debtUsd = wsxmrUsdE18(DEBT_TO_CLEAR);
+      const expectedSeized = (debtUsd * LIQUIDATION_BONUS * COLLATERAL_DECIMALS)
+        / (RATIO_PRECISION * QQQX_CRASH * PRICE_PRECISION);
+      const seized = (await tokenBal(liquidatorCollateralAta)) - liqColBefore;
+      assert.approximately(Number(seized), Number(expectedSeized), Number(expectedSeized) / 50);
+      assert.equal(await tokenBal(liquidatorWsxmrAta), liqWsxmrBefore - DEBT_TO_CLEAR);
     });
 
-    it("rejects buy-and-burn when cooldown active", async () => {
-      // If we somehow have war chest balance (from yield), the cooldown blocks repeated calls
-      const gs = await (program.account as any).globalState.fetch(globalState);
-      console.log("    Last buy timestamp:", gs.lastBuyTimestamp.toString());
-      console.log("    War chest balance:", gs.yieldWarChest.toString());
-      // Verify state is accessible; actual buy-and-burn needs XMR price dip + war chest
-      assert.ok(true, "State accessible");
+    it("backstop_vault rejects same-vault migration", async () => {
+      await expectReject(
+        program.methods.backstopVault().accounts({
+          newLp: lp2.publicKey, oldVault: vault2Pda, newVault: vault2Pda,
+          globalState, pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+          collateralMint,
+          oldVaultCollateralAta: vault2CollateralAta, newVaultCollateralAta: vault2CollateralAta,
+          tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        }).signers([lp2]).rpc()
+      );
     });
 
-    it("continue_debt_wipe rejects when no wipe in progress", async () => {
-      // Deterministic rejection: debtWipeBatchStart == 0 → WipeNotInProgress.
-      // (A real wipe requires a full buy-and-burn, which needs oracle + war chest.)
-      try {
-        await program.methods
-          .continueDebtWipe(new BN(10))
-          .accounts({ globalState } as any)
-          .signers([admin])
-          .rpc();
-        assert.fail("Should have rejected wipe with no wipe in progress");
-      } catch (e: any) {
-        assert.ok(
-          e.message && !e.message.includes("panicked"),
-          "Should fail gracefully"
-        );
-        console.log("    ✓ continue_debt_wipe rejected correctly:", e.message.split("\n")[0].substring(0, 80));
-      }
-    });
-
-    it("continue_debt_migration rejects when no migration in progress", async () => {
-      // Deterministic rejection: migrationBatchStart == 0 → MigrationNotInProgress.
-      try {
-        await program.methods
-          .continueDebtMigration(new BN(10))
-          .accounts({ globalState } as any)
-          .signers([admin])
-          .rpc();
-        assert.fail("Should have rejected migration with no migration in progress");
-      } catch (e: any) {
-        assert.ok(
-          e.message && !e.message.includes("panicked"),
-          "Should fail gracefully"
-        );
-        console.log("    ✓ continue_debt_migration rejected correctly:", e.message.split("\n")[0].substring(0, 80));
-      }
+    it("resolve_burn_for_liquidation rejects a healthy vault's burn", async () => {
+      // burn1Pda is Completed (terminal) — still expect rejection, path exercised
+      await expectReject(
+        program.methods.resolveBurnForLiquidation().accounts({
+          caller: keeper.publicKey, vault: vaultPda, globalState, burnRequest: burn1Pda,
+          userPendingReturns: findPda([PENDING_RETURNS_SEED, user.publicKey.toBuffer()], programId)[0],
+          wsxmrMint, userWsxmrAta,
+          pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+          collateralMint, vaultCollateralAta, programCollateralAta,
+          tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        }).signers([keeper]).rpc()
+      );
     });
   });
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // 11. WITHDRAWALS
-  // ══════════════════════════════════════════════════════════════════════════════
-  describe("11. Withdrawals", () => {
+  // ─── 9. Withdrawals ────────────────────────────────────────────────────────
+  describe("9. Withdrawals", () => {
+    it("user withdraws pending collateral — drains from program pool", async () => {
+      const [userPR] = findPda([PENDING_RETURNS_SEED, user.publicKey.toBuffer()], programId);
+      const pr = await program.account.pendingReturns.fetch(userPR);
+      const amount = BigInt(pr.collateralAmount.toString());
+      assert.isTrue(amount > 0n);
+
+      const poolBefore = await tokenBal(programCollateralAta);
+      const userBefore = await tokenBal(userCollateralAta);
+
+      await program.methods.withdrawCollateralReturns().accounts({
+        owner: user.publicKey, pendingReturns: userPR, globalState,
+        collateralMint, programCollateralAta,
+        userCollateralAta,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+      }).signers([user]).rpc();
+
+      assert.equal((await tokenBal(userCollateralAta)) - userBefore, amount);
+      assert.equal(await tokenBal(programCollateralAta), poolBefore - amount);
+      const prAfter = await program.account.pendingReturns.fetch(userPR);
+      assert.equal(prAfter.collateralAmount.toString(), "0");
+    });
+
     it("rejects withdraw_collateral_returns when balance is zero", async () => {
-      const pr = await (program.account as any).pendingReturns.fetch(userPendingReturns);
-      if (pr.collateralAmount.gtn(0)) {
-        console.log("    ⚠ User has pending returns, skipping zero-balance test");
-        return;
-      }
-      // ZeroAmount check: just verify the account exists and has zero balance
-      assert.equal(pr.collateralAmount.toString(), "0", "collateral returns should be zero");
-      console.log("    ✓ Confirmed zero collateral returns balance (ZeroAmount guard verified by state)");
+      const [userPR] = findPda([PENDING_RETURNS_SEED, user.publicKey.toBuffer()], programId);
+      await expectReject(
+        program.methods.withdrawCollateralReturns().accounts({
+          owner: user.publicKey, pendingReturns: userPR, globalState,
+          collateralMint, programCollateralAta, userCollateralAta,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
+        }).signers([user]).rpc()
+      );
     });
 
     it("rejects withdraw_sol_returns when balance is zero", async () => {
-      const pr = await (program.account as any).pendingReturns.fetch(userPendingReturns);
-      if (pr.solAmount.gtn(0)) {
-        console.log("    ⚠ User has SOL returns, skipping zero-balance test");
-        return;
-      }
-
-      const [solEscrow] = PublicKey.findProgramAddressSync([Buffer.from("sol_escrow")], programId);
-
-      try {
-        await program.methods
-          .withdrawSolReturns()
-          .accounts({
-            owner:          user.publicKey,
-            pendingReturns: userPendingReturns,
-            globalState,
-            solEscrow,
-            systemProgram:  SystemProgram.programId,
-          } as any)
-          .signers([user])
-          .rpc();
-        assert.fail("Should have rejected zero balance");
-      } catch (e: any) {
-        assert.ok(
-          e.message?.includes("ZeroAmount") || e.message?.includes("0x"),
-          "Expected ZeroAmount error"
-        );
-        console.log("    ✓ SOL withdraw correctly rejected: zero balance");
-      }
+      const [userPR] = findPda([PENDING_RETURNS_SEED, user.publicKey.toBuffer()], programId);
+      await expectReject(
+        program.methods.withdrawSolReturns().accounts({
+          owner: user.publicKey, pendingReturns: userPR, globalState,
+          solEscrow, systemProgram: SystemProgram.programId,
+        }).signers([user]).rpc()
+      );
     });
   });
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // 12. RECONCILIATION
-  // ══════════════════════════════════════════════════════════════════════════════
-  describe("12. Reconciliation", () => {
-    it("reconcile_global_debt with vault as remaining_account", async () => {
-      const gsBefore = await (program.account as any).globalState.fetch(globalState);
+  // ─── 10. Reconciliation ────────────────────────────────────────────────────
+  describe("10. Reconciliation", () => {
+    it("reconciles global_total_debt from remaining_account vaults", async () => {
+      const v1 = await program.account.vault.fetch(vaultPda);
+      const v2 = await program.account.vault.fetch(vault2Pda);
+      const expected = BigInt(v1.normalizedDebt.toString()) + BigInt(v2.normalizedDebt.toString());
+      await program.methods.reconcileGlobalDebt().accounts({
+        authority: keeper.publicKey, globalState,
+      }).remainingAccounts([
+        { pubkey: vaultPda, isSigner: false, isWritable: false },
+        { pubkey: vault2Pda, isSigner: false, isWritable: false },
+      ]).signers([keeper]).rpc();
+      const gs = await program.account.globalState.fetch(globalState);
+      assert.equal(gs.globalTotalDebt.toString(), expected.toString());
+    });
+  });
 
-      await program.methods
-        .reconcileGlobalDebt()
-        .accounts({
-          authority:   admin.publicKey,
-          globalState,
-        } as any)
-        .remainingAccounts([{ pubkey: vaultPda, isSigner: false, isWritable: false }])
-        .signers([admin])
-        .rpc();
-
-      const gsAfter = await (program.account as any).globalState.fetch(globalState);
-      console.log(
-        "    ✓ Reconciled global debt:",
-        gsBefore.globalTotalDebt.toString(), "→",
-        gsAfter.globalTotalDebt.toString()
-      );
-      // Reconciled debt should reflect the vault's actual computed debt
-      assert.ok(
-        gsAfter.globalTotalDebt.gte(new BN(0)),
-        "Global debt should be non-negative after reconciliation"
+  // ─── 11. Deactivation + multi-vault ────────────────────────────────────────
+  describe("11. Deactivation & multi-vault", () => {
+    it("rejects deactivation with outstanding debt", async () => {
+      await expectReject(
+        program.methods.deactivateVault().accounts({
+          lp: lp2.publicKey, vault: vault2Pda, globalState,
+        }).signers([lp2]).rpc()
       );
     });
 
-    it("reconcile with empty remaining_accounts zeroes global debt", async () => {
-      await program.methods
-        .reconcileGlobalDebt()
-        .accounts({ authority: admin.publicKey, globalState } as any)
-        .remainingAccounts([])
-        .signers([admin])
-        .rpc();
-
-      const gs = await (program.account as any).globalState.fetch(globalState);
-      assert.equal(gs.globalTotalDebt.toString(), "0", "No vaults → zero debt");
-      console.log("    ✓ Empty reconciliation zeroes global debt correctly");
-    });
-  });
-
-  // ══════════════════════════════════════════════════════════════════════════════
-  // 13. VAULT DEACTIVATION
-  // ══════════════════════════════════════════════════════════════════════════════
-  describe("13. Vault Deactivation", () => {
-    it("LP deactivates vault", async () => {
-      const vaultData = await (program.account as any).vault.fetch(vaultPda);
-      const hasDebt = vaultData.normalizedDebt.gtn(0) || vaultData.pendingDebt.gtn(0);
-      const hasCollateral = vaultData.collateralAmount.gtn(0);
-      
-      // Vault can only be deactivated if it has no debt, no collateral, and no active burns
-      if (hasDebt || hasCollateral) {
-        console.log(`    ⚠ Skipping deactivation: vault has ${hasDebt ? 'debt' : 'collateral'}`);
-        return;
-      }
-
-      await program.methods
-        .deactivateVault()
-        .accounts({
-          lp:          lp.publicKey,
-          vault:       vaultPda,
-          globalState,
-        } as any)
-        .signers([lp])
-        .rpc();
-
-      const vault = await (program.account as any).vault.fetch(vaultPda);
-      assert.isFalse(vault.active, "Vault should be inactive");
-      console.log("    ✓ Vault deactivated");
+    it("creates a third vault and deactivates it cleanly", async () => {
+      await program.methods.createVault().accounts({
+        lp: lp3.publicKey, vault: vault3Pda, globalState,
+        systemProgram: SystemProgram.programId,
+      }).signers([lp3]).rpc();
+      await program.methods.deactivateVault().accounts({
+        lp: lp3.publicKey, vault: vault3Pda, globalState,
+      }).signers([lp3]).rpc();
+      const v = await program.account.vault.fetch(vault3Pda);
+      assert.isFalse(v.active);
     });
 
-    it("rejects new mint requests on deactivated vault", async () => {
-      const { commitment } = makeSecretAndCommitment();
-      const gs = await (program.account as any).globalState.fetch(globalState);
-      const nonce = BigInt(gs.requestNonce.toString()) + 1n;
-      const reqId = computeMintRequestId(user.publicKey, vaultPda, 1_000_000_000_000n, commitment, nonce);
-      const [mintReqPda] = deriveMintRequest(reqId, programId);
-
-      try {
-        await program.methods
-          .initiateMint(
-            new BN("1000000000000"),
-            Array.from(commitment),
-            Array.from(reqId),
-          )
-          .accounts({
-            initiator:               user.publicKey,
-            recipient:               user.publicKey,
-            vault:                   vaultPda,
-            globalState,
-            mintRequest:             mintReqPda,
-            griefingEscrow:          user.publicKey,
-            initiatorPendingReturns: userPendingReturns,
-            pythXmr:                 pythXmrKeypair.publicKey,
-            pythCollateral:          pythColKeypair.publicKey,
-            pythSusdeRr:             pythColKeypair.publicKey,
-            systemProgram:           SystemProgram.programId,
-          } as any)
-          .signers([user])
-          .rpc();
-        assert.fail("Should have rejected mint on deactivated vault");
-      } catch (e: any) {
-        assert.ok(
-          e.message && !e.message.includes("panicked"),
-          "Expected program error for mint on deactivated vault"
-        );
-        console.log("    ✓ Mint rejected on deactivated vault:", e.message.split("\n")[0].substring(0, 60));
-      }
-    });
-  });
-
-  // ══════════════════════════════════════════════════════════════════════════════
-  // 14. MULTI-VAULT SCENARIO (Two LPs, parallel mints)
-  // ══════════════════════════════════════════════════════════════════════════════
-  describe("14. Multi-Vault Scenario", () => {
-    const lp2 = Keypair.generate();
-    let vault2Pda: PublicKey;
-    let [lp2PendingReturns] = [PublicKey.default];
-
-    before(async () => {
-      await airdrop(lp2.publicKey, 10);
-      [vault2Pda] = deriveVault(lp2.publicKey, programId);
-      [lp2PendingReturns] = derivePendingReturns(lp2.publicKey, programId);
-    });
-
-    it("creates a second vault for LP2", async () => {
-      await program.methods
-        .createVault()
-        .accounts({
-          lp: lp2.publicKey,
-          vault: vault2Pda,
-          globalState,
+    it("rejects initiate_mint on a deactivated vault", async () => {
+      const s = makeSecret();
+      const id = mintRequestId(user.publicKey, vault3Pda, XMR_AMOUNT, s.commitment, await globalReqNonce() + 1n);
+      await expectReject(
+        program.methods.initiateMint(
+          new BN(XMR_AMOUNT.toString()), Array.from(s.commitment),
+          Array.from(s.pubKey), Array.from(id)
+        ).accounts({
+          initiator: user.publicKey, recipient: user.publicKey,
+          vault: vault3Pda, globalState,
+          mintRequest: findPda([MINT_REQUEST_SEED, id], programId)[0],
+          griefingEscrow: keeper.publicKey,
+          initiatorPendingReturns: findPda([PENDING_RETURNS_SEED, user.publicKey.toBuffer()], programId)[0],
+          pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
           systemProgram: SystemProgram.programId,
-        } as any)
-        .signers([lp2])
-        .rpc();
-
-      const vault = await (program.account as any).vault.fetch(vault2Pda);
-      assert.equal(vault.lpAddress.toBase58(), lp2.publicKey.toBase58());
-      assert.isTrue(vault.active);
-
-      const gs = await (program.account as any).globalState.fetch(globalState);
-      assert.isTrue(gs.vaultCount >= 1, `Should have at least 1 active vault, got ${gs.vaultCount}`);
-      console.log("    ✓ Second vault created:", vault2Pda.toBase58());
-      console.log("      Total vaults:", gs.vaultCount);
-    });
-
-    it("creates PendingReturns for LP2", async () => {
-      await program.methods
-        .initializePendingReturns()
-        .accounts({
-          owner: lp2.publicKey,
-          pendingReturns: lp2PendingReturns,
-          systemProgram: SystemProgram.programId,
-        } as any)
-        .signers([lp2])
-        .rpc();
-      console.log("    ✓ LP2 PendingReturns initialized");
-    });
-
-    it("reconcile_global_debt with both vaults", async () => {
-      await program.methods
-        .reconcileGlobalDebt()
-        .accounts({ authority: admin.publicKey, globalState } as any)
-        .remainingAccounts([
-          { pubkey: vaultPda,  isSigner: false, isWritable: false },
-          { pubkey: vault2Pda, isSigner: false, isWritable: false },
-        ])
-        .signers([admin])
-        .rpc();
-
-      const gs = await (program.account as any).globalState.fetch(globalState);
-      console.log("    ✓ Reconciled with 2 vaults. Global debt:", gs.globalTotalDebt.toString());
+        }).signers([user]).rpc()
+      );
     });
   });
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // 15. STATE INVARIANT ASSERTIONS
-  // ══════════════════════════════════════════════════════════════════════════════
-  describe("15. State Invariant Checks", () => {
-    it("global debt index never goes below minimum", async () => {
-      const gs = await (program.account as any).globalState.fetch(globalState);
-      const MIN_DEBT_INDEX = new BN("10000000000"); // 1e10 from constants
-      assert.isTrue(
-        gs.globalDebtIndex.gte(MIN_DEBT_INDEX),
-        `debt_index ${gs.globalDebtIndex} must be >= MIN_DEBT_INDEX`
-      );
-      console.log("    ✓ Debt index:", gs.globalDebtIndex.toString(), ">= MIN_DEBT_INDEX");
+  // ─── 12. Invariants ────────────────────────────────────────────────────────
+  describe("12. Invariants", () => {
+    it("program collateral pool backs all pending collateral returns", async () => {
+      const gs = await program.account.globalState.fetch(globalState);
+      const pool = await tokenBal(programCollateralAta);
+      assert.isTrue(pool >= BigInt(gs.globalPendingCollateral.toString()),
+        `pool ${pool} < pending ${gs.globalPendingCollateral}`);
     });
 
-    it("pending collateral and sol are non-negative", async () => {
-      const gs = await (program.account as any).globalState.fetch(globalState);
-      assert.isTrue(gs.globalPendingCollateral.gten(0));
-      assert.isTrue(gs.globalPendingSol.gten(0));
-      console.log(
-        "    ✓ Pending collateral:", gs.globalPendingCollateral.toString(),
-        " SOL:", gs.globalPendingSol.toString()
-      );
+    it("vault collateral_amount equals vault ATA balance (raw accounting)", async () => {
+      for (const [pda, ata] of [[vaultPda, vaultCollateralAta], [vault2Pda, vault2CollateralAta]]) {
+        const v = await program.account.vault.fetch(pda as PublicKey);
+        const bal = await tokenBal(ata as PublicKey);
+        assert.equal(bal.toString(), v.collateralAmount.toString(),
+          `vault ${pda} tracking ${v.collateralAmount} != ATA ${bal}`);
+      }
     });
 
-    it("vault locked_collateral does not exceed collateral_amount", async () => {
-      // For vault 1 (deactivated, may have residual locked)
-      try {
-        const vault = await (program.account as any).vault.fetch(vaultPda);
+    it("locked_collateral never exceeds collateral_amount", async () => {
+      for (const pda of [vaultPda, vault2Pda, vault3Pda]) {
+        const v = await program.account.vault.fetch(pda);
         assert.isTrue(
-          vault.lockedCollateral.lte(vault.collateralAmount.add(vault.lockedCollateral)),
-          "locked_collateral cannot exceed total collateral"
+          BigInt(v.lockedCollateral.toString()) <= BigInt(v.collateralAmount.toString())
         );
-        console.log(
-          "    ✓ Vault1 collateral:", vault.collateralAmount.toString(),
-          " locked:", vault.lockedCollateral.toString()
-        );
-      } catch (e: any) {
-        console.log("    ⚠ Vault fetch failed:", e.message.split("\n")[0]);
       }
-    });
-
-    it("request_nonce is monotonically increasing", async () => {
-      const gs1 = await (program.account as any).globalState.fetch(globalState);
-      const nonce1 = gs1.requestNonce;
-
-      // Try to create any state-changing transaction that increments nonce
-      // (mint request creation). Here we just assert it's positive.
-      assert.isTrue(nonce1.gten(0), "Nonce should be non-negative");
-      console.log("    ✓ Request nonce:", nonce1.toString());
     });
   });
 });

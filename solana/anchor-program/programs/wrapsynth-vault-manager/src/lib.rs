@@ -2,9 +2,9 @@ use anchor_lang::prelude::*;
 
 pub mod constants;
 pub mod errors;
+pub mod instructions;
 pub mod state;
 pub mod utils;
-pub mod instructions;
 
 use instructions::*;
 
@@ -24,10 +24,7 @@ pub mod wrapsynth_vault_manager {
         initialize::handler(ctx, pyth_xmr_feed, collateral_mint)
     }
 
-    pub fn set_liquidity_router(
-        ctx: Context<SetLiquidityRouter>,
-        router: Pubkey,
-    ) -> Result<()> {
+    pub fn set_liquidity_router(ctx: Context<SetLiquidityRouter>, router: Pubkey) -> Result<()> {
         initialize::set_liquidity_router(ctx, router)
     }
 
@@ -41,24 +38,15 @@ pub mod wrapsynth_vault_manager {
         vault_management::initialize_vault_collateral(ctx)
     }
 
-    pub fn deposit_collateral_shares(
-        ctx: Context<DepositCollateral>,
-        amount: u64,
-    ) -> Result<()> {
-        vault_management::deposit_collateral_shares(ctx, amount)
+    pub fn deposit_collateral(ctx: Context<DepositCollateral>, amount: u64) -> Result<()> {
+        vault_management::deposit_collateral(ctx, amount)
     }
 
-    pub fn withdraw_collateral(
-        ctx: Context<WithdrawCollateral>,
-        amount: u64,
-    ) -> Result<()> {
+    pub fn withdraw_collateral(ctx: Context<WithdrawCollateral>, amount: u64) -> Result<()> {
         vault_management::withdraw_collateral(ctx, amount)
     }
 
-    pub fn set_mint_griefing_deposit(
-        ctx: Context<UpdateVaultConfig>,
-        deposit: u64,
-    ) -> Result<()> {
+    pub fn set_mint_griefing_deposit(ctx: Context<UpdateVaultConfig>, deposit: u64) -> Result<()> {
         vault_management::set_mint_griefing_deposit(ctx, deposit)
     }
 
@@ -70,17 +58,11 @@ pub mod wrapsynth_vault_manager {
         vault_management::set_vault_market_metrics(ctx, mint_fee_bps, burn_reward_bps)
     }
 
-    pub fn set_max_mint_bps(
-        ctx: Context<UpdateVaultConfig>,
-        max_mint_bps: u16,
-    ) -> Result<()> {
+    pub fn set_max_mint_bps(ctx: Context<UpdateVaultConfig>, max_mint_bps: u16) -> Result<()> {
         vault_management::set_max_mint_bps(ctx, max_mint_bps)
     }
 
-    pub fn set_min_burn_amount(
-        ctx: Context<UpdateVaultConfig>,
-        min_amount: u64,
-    ) -> Result<()> {
+    pub fn set_min_burn_amount(ctx: Context<UpdateVaultConfig>, min_amount: u64) -> Result<()> {
         vault_management::set_min_burn_amount(ctx, min_amount)
     }
 
@@ -270,17 +252,12 @@ pub mod wrapsynth_vault_manager {
 
     /// Phase 1: resolve a single active burn on a liquidatable vault.
     /// Call once per active burn. Permissionless.
-    pub fn resolve_burn_for_liquidation(
-        ctx: Context<ResolveBurnForLiquidation>,
-    ) -> Result<()> {
+    pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> Result<()> {
         liquidation::resolve_burn_for_liquidation(ctx)
     }
 
     /// Phase 2: execute the actual liquidation after all burns are resolved.
-    pub fn execute_liquidation(
-        ctx: Context<ExecuteLiquidation>,
-        debt_to_clear: u64,
-    ) -> Result<()> {
+    pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64) -> Result<()> {
         liquidation::execute_liquidation(ctx, debt_to_clear)
     }
 
@@ -296,7 +273,7 @@ pub mod wrapsynth_vault_manager {
         co_lp::set_max_co_lp_range(ctx, bps)
     }
 
-    /// User pairs wsXMR with vault idle sUSDe collateral to open a position.
+    /// User pairs wsXMR with vault idle QQQx collateral to open a position.
     pub fn user_open_co_lp<'info>(
         ctx: Context<'_, '_, '_, 'info, UserOpenCoLP<'info>>,
         wsxmr_amount: u64,
@@ -313,9 +290,7 @@ pub mod wrapsynth_vault_manager {
     }
 
     /// LP or user closes a co-LP position and distributes proceeds.
-    pub fn unwind_co_lp<'info>(
-        ctx: Context<'_, '_, '_, 'info, UnwindCoLP<'info>>,
-    ) -> Result<()> {
+    pub fn unwind_co_lp<'info>(ctx: Context<'_, '_, '_, 'info, UnwindCoLP<'info>>) -> Result<()> {
         co_lp::unwind_co_lp(ctx)
     }
 
@@ -327,41 +302,13 @@ pub mod wrapsynth_vault_manager {
         co_lp::rebalance_co_lp(ctx, new_range_bps)
     }
 
-    // ── Buy-and-Burn ──────────────────────────────────────────────────────────
-
-    pub fn trigger_buy_and_burn(
-        ctx: Context<TriggerBuyAndBurn>,
-        wsxmr_bought: u64,
-    ) -> Result<()> {
-        buy_and_burn::trigger_buy_and_burn(ctx, wsxmr_bought)
-    }
-
-    /// Continue zeroing vault normalized debts after a full buy-and-burn wipe.
-    /// Pass the vault accounts for the batch range as remaining accounts.
-    pub fn continue_debt_wipe(ctx: Context<ContinueDebtWipe>, batch_size: u64) -> Result<()> {
-        buy_and_burn::continue_debt_wipe(ctx, batch_size)
-    }
-
-    /// Continue rescaling vault normalized debts after a debt-index migration.
-    /// Pass the vault accounts for the batch range as remaining accounts.
-    pub fn continue_debt_migration(
-        ctx: Context<ContinueDebtMigration>,
-        batch_size: u64,
-    ) -> Result<()> {
-        buy_and_burn::continue_debt_migration(ctx, batch_size)
-    }
-
     // ── Withdrawals ───────────────────────────────────────────────────────────
 
-    pub fn initialize_pending_returns(
-        ctx: Context<InitializePendingReturns>,
-    ) -> Result<()> {
+    pub fn initialize_pending_returns(ctx: Context<InitializePendingReturns>) -> Result<()> {
         withdrawals::initialize_pending_returns(ctx)
     }
 
-    pub fn withdraw_collateral_returns(
-        ctx: Context<WithdrawCollateralReturns>,
-    ) -> Result<()> {
+    pub fn withdraw_collateral_returns(ctx: Context<WithdrawCollateralReturns>) -> Result<()> {
         withdrawals::withdraw_collateral_returns(ctx)
     }
 
@@ -377,6 +324,4 @@ pub mod wrapsynth_vault_manager {
 }
 
 #[cfg(test)]
-pub mod tests {
-    pub mod cascade;
-}
+pub mod tests;

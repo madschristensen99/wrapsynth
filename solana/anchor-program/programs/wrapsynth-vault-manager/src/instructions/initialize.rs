@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
-use anchor_lang::system_program::{CreateAccount, create_account};
-use anchor_spl::token_2022::{self, Token2022, InitializeMint2};
+use anchor_lang::system_program::{create_account, CreateAccount};
+use anchor_spl::token_2022::{self, InitializeMint2, Token2022};
+use anchor_spl::token_interface::{Mint, TokenAccount};
 
 use crate::constants::*;
 use crate::errors::WrapSynthError;
@@ -18,8 +19,14 @@ pub fn handler(
     pyth_xmr_feed: Pubkey,
     collateral_mint: Pubkey,
 ) -> Result<()> {
-    require!(pyth_xmr_feed != Pubkey::default(), WrapSynthError::ZeroAddress);
-    require!(collateral_mint != Pubkey::default(), WrapSynthError::ZeroAddress);
+    require!(
+        pyth_xmr_feed != Pubkey::default(),
+        WrapSynthError::ZeroAddress
+    );
+    require!(
+        collateral_mint != Pubkey::default(),
+        WrapSynthError::ZeroAddress
+    );
 
     let global = &mut ctx.accounts.global_state.load_init()?;
     global.authority = ctx.accounts.authority.key();
@@ -29,20 +36,10 @@ pub fn handler(
     global.pyth_xmr_feed = pyth_xmr_feed;
     global.global_total_debt = 0;
     global.global_debt_index = INITIAL_DEBT_INDEX;
-    global.yield_war_chest = 0;
-    global.global_lp_principal = 0;
-    global.global_lp_principal_shares = 0;
-    global.global_lp_principal_value = 0;
     global.global_pending_collateral = 0;
     global.global_pending_sol = 0;
     global.global_bad_debt = 0;
     global.global_pending_burn_debt = 0;
-    global.last_buy_timestamp = 0;
-    global.vault_count = 0;
-    global.vault_list = [Pubkey::default(); MAX_VAULTS];
-    global.debt_wipe_batch_start = 0;
-    global.migration_batch_start = 0;
-    global.migration_old_index = 0;
     global.request_nonce = 0;
     global.bump = ctx.bumps.global_state;
 
@@ -60,7 +57,7 @@ pub fn handler(
             ctx.accounts.system_program.to_account_info(),
             CreateAccount {
                 from: ctx.accounts.authority.to_account_info(),
-                to:   ctx.accounts.wsxmr_mint.to_account_info(),
+                to: ctx.accounts.wsxmr_mint.to_account_info(),
             },
             mint_signer,
         ),
@@ -74,14 +71,19 @@ pub fn handler(
     token_2022::initialize_mint2(
         CpiContext::new(
             ctx.accounts.token_program.to_account_info(),
-            InitializeMint2 { mint: ctx.accounts.wsxmr_mint.to_account_info() },
+            InitializeMint2 {
+                mint: ctx.accounts.wsxmr_mint.to_account_info(),
+            },
         ),
-        8,              // decimals
-        &global_key,    // mint authority = GlobalState PDA
-        None,           // freeze authority — must be None: whirlpools reject freezable mints
+        8,           // decimals
+        &global_key, // mint authority = GlobalState PDA
+        None,        // freeze authority — must be None: whirlpools reject freezable mints
     )?;
 
-    msg!("WrapSynth initialized. wsXMR mint: {}", ctx.accounts.wsxmr_mint.key());
+    msg!(
+        "WrapSynth initialized. wsXMR mint: {}",
+        ctx.accounts.wsxmr_mint.key()
+    );
     Ok(())
 }
 
@@ -92,7 +94,10 @@ pub fn set_liquidity_router(ctx: Context<SetLiquidityRouter>, router: Pubkey) ->
         ctx.accounts.authority.key() == global.authority,
         WrapSynthError::OnlyDeployer
     );
-    require!(global.liquidity_router == Pubkey::default(), WrapSynthError::RouterAlreadySet);
+    require!(
+        global.liquidity_router == Pubkey::default(),
+        WrapSynthError::RouterAlreadySet
+    );
     require!(router != Pubkey::default(), WrapSynthError::ZeroAddress);
     global.liquidity_router = router;
     msg!("Liquidity router set: {}", router);
@@ -124,6 +129,22 @@ pub struct Initialize<'info> {
     )]
     /// CHECK: allocated and initialized as a Token-2022 mint inside the handler
     pub wsxmr_mint: UncheckedAccount<'info>,
+
+    /// Program collateral ATA — the pending-returns pool backing all slashed
+    /// collateral credits. The mint is supplied via argument so initialize is
+    /// collateral-agnostic.
+    pub collateral_mint: InterfaceAccount<'info, Mint>,
+
+    #[account(
+        init,
+        payer = authority,
+        seeds = [PROGRAM_COLLATERAL_SEED],
+        bump,
+        token::mint = collateral_mint,
+        token::authority = global_state,
+        token::token_program = token_program,
+    )]
+    pub program_collateral_ata: InterfaceAccount<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,

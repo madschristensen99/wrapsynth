@@ -14,12 +14,20 @@ cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
-idl-build = ["anchor-lang/idl-build"]
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 
 [dependencies]
-anchor-lang = { version = "0.30.1", features = ["init-if-needed"] }
-anchor-spl = { version = "0.30.1", features = ["token_2022"] }
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
+anchor-spl = { version = "0.31.1", features = ["token_2022"] }
 bytemuck = { version = "1.13", features = ["derive"] }
-curve25519-dalek = { version = "4", default-features = false, features = ["alloc"] }
 sha2 = { version = "0.10", default-features = false }
 sha3 = { version = "0.10", default-features = false }
+# Force span-locations for anchor-syn's IDL build (proc-macro2 feature
+# unification — anchor-syn 0.30.1 expects Span::source_file()).
+proc-macro2 = { version = "1", features = ["span-locations"] }
+
+# Host-only: Ed25519 scalar-mul for tests/tools. On-chain the program uses the
+# sol_curve_multiscalar_mul syscall — shipping dalek to SBF exceeds the 4KB
+# stack limit in its windowed-mul tables.
+[target.'cfg(not(target_os = "solana"))'.dependencies]
+curve25519-dalek = { version = "4", default-features = false, features = ["alloc"] }

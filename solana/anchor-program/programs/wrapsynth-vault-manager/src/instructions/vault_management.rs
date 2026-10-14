@@ -1,14 +1,11 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_2022::{Token2022, TransferChecked, transfer_checked};
+use anchor_spl::token_2022::{transfer_checked, Token2022, TransferChecked};
 use anchor_spl::token_interface::{Mint, TokenAccount};
 
 use crate::constants::*;
 use crate::errors::WrapSynthError;
 use crate::state::{GlobalState, Vault};
-use crate::utils::{
-    get_collateral_price, get_xmr_price, get_collateral_redemption_rate,
-    calculate_extractable_yield, check_collateral_ratio, collateral_to_usd,
-};
+use crate::utils::{check_collateral_ratio, get_collateral_price, get_xmr_price};
 
 // ─── create_vault ────────────────────────────────────────────────────────────
 
@@ -28,9 +25,6 @@ pub fn create_vault(ctx: Context<CreateVault>) -> Result<()> {
     vault.liquidation_nonce = 0;
     vault.mint_nonce = 0;
     vault.min_burn_amount = 0;
-    vault.principal_deposits = 0;
-    vault.principal_shares = 0;
-    vault.principal_value = 0;
     vault.active_burn_count = 0;
     vault.pending_mint_count = 0;
     vault.mint_timeout_seconds = DEFAULT_MINT_TIMEOUT_SECONDS;
@@ -42,47 +36,21 @@ pub fn create_vault(ctx: Context<CreateVault>) -> Result<()> {
     vault.active = true;
     vault.bump = ctx.bumps.vault;
 
-    let global = &mut ctx.accounts.global_state.load_mut()?;
-    require!(
-        (global.vault_count as usize) < MAX_VAULTS,
-        WrapSynthError::MaxVaultsReached
-    );
-    let idx = global.vault_count as usize;
-    global.vault_list[idx] = ctx.accounts.lp.key();
-    global.vault_count = global
-        .vault_count
-        .checked_add(1)
-        .ok_or(WrapSynthError::MathOverflow)?;
-
     msg!("Vault created for LP: {}", ctx.accounts.lp.key());
     Ok(())
 }
 
-// ─── deposit_collateral_shares ───────────────────────────────────────────────
-// Direct receipt-token deposit (equivalent to depositSDAI in VaultManager.sol).
+// ─── deposit_collateral ──────────────────────────────────────────────────────
+// Raw QQQx deposit (equivalent to depositSDAI in VaultManager.sol). No yield
+// wrapper: the amount transferred is the amount tracked 1:1.
 
-pub fn deposit_collateral_shares(ctx: Context<DepositCollateral>, amount: u64) -> Result<()> {
+pub fn deposit_collateral(ctx: Context<DepositCollateral>, amount: u64) -> Result<()> {
     require!(amount > 0, WrapSynthError::ZeroAmount);
 
     let vault = &mut ctx.accounts.vault;
     require!(vault.active, WrapSynthError::VaultNotActive);
 
-    // Sync yield before modifying balances
-    sync_vault_yield(
-        vault,
-        &mut *ctx.accounts.global_state.load_mut()?,
-        &ctx.accounts.pyth_xmr,
-        &ctx.accounts.pyth_collateral,
-        &ctx.accounts.pyth_susde_rr,
-    )?;
-
-    // Read current sUSDe→USDe redemption rate to track principal in USDe terms
-    let redemption_rate = get_collateral_redemption_rate(&ctx.accounts.pyth_susde_rr)?;
-    let value_deposited = ((amount as u128)
-        .saturating_mul(redemption_rate as u128)
-        / PRICE_PRECISION as u128) as u64;
-
-    // Transfer collateral shares from LP to vault ATA
+    // Transfer collateral from LP to vault ATA
     let cpi_ctx = CpiContext::new(
         ctx.accounts.token_program.to_account_info(),
         TransferChecked {
@@ -98,34 +66,12 @@ pub fn deposit_collateral_shares(ctx: Context<DepositCollateral>, amount: u64) -
         .collateral_amount
         .checked_add(amount)
         .ok_or(WrapSynthError::MathOverflow)?;
-    vault.principal_shares = vault
-        .principal_shares
-        .checked_add(amount)
-        .ok_or(WrapSynthError::MathOverflow)?;
-    vault.principal_deposits = vault
-        .principal_deposits
-        .checked_add(amount)
-        .ok_or(WrapSynthError::MathOverflow)?;
-    vault.principal_value = vault
-        .principal_value
-        .checked_add(value_deposited)
-        .ok_or(WrapSynthError::MathOverflow)?;
 
-    let global = &mut ctx.accounts.global_state.load_mut()?;
-    global.global_lp_principal_shares = global
-        .global_lp_principal_shares
-        .checked_add(amount)
-        .ok_or(WrapSynthError::MathOverflow)?;
-    global.global_lp_principal = global
-        .global_lp_principal
-        .checked_add(amount)
-        .ok_or(WrapSynthError::MathOverflow)?;
-    global.global_lp_principal_value = global
-        .global_lp_principal_value
-        .checked_add(value_deposited)
-        .ok_or(WrapSynthError::MathOverflow)?;
-
-    msg!("Deposited {} collateral shares into vault {}", amount, ctx.accounts.lp.key());
+    msg!(
+        "Deposited {} collateral into vault {}",
+        amount,
+        ctx.accounts.lp.key()
+    );
     Ok(())
 }
 
@@ -138,22 +84,16 @@ pub fn withdraw_collateral(ctx: Context<WithdrawCollateral>, amount: u64) -> Res
     require!(vault.active, WrapSynthError::VaultNotActive);
     // Block withdrawals while READY mints are pending — the par lock must stay
     // reserved until the mint is finalized or cancelled (EVM parity).
-    require!(vault.pending_mint_count == 0, WrapSynthError::PendingMintLock);
-
-    // Sync yield FIRST before reading state
-    sync_vault_yield(
-        vault,
-        &mut *ctx.accounts.global_state.load_mut()?,
-        &ctx.accounts.pyth_xmr,
-        &ctx.accounts.pyth_collateral,
-        &ctx.accounts.pyth_susde_rr,
-    )?;
+    require!(
+        vault.pending_mint_count == 0,
+        WrapSynthError::PendingMintLock
+    );
 
     let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &SUSDE_USD_FEED_ID,
+        &QQQX_USD_FEED_ID,
     )?;
 
     // Cannot withdraw locked collateral
@@ -167,7 +107,8 @@ pub fn withdraw_collateral(ctx: Context<WithdrawCollateral>, amount: u64) -> Res
 
     // Health check after withdrawal
     let global = &ctx.accounts.global_state.load()?;
-    let actual_debt = crate::utils::math::get_actual_debt(vault.normalized_debt, global.global_debt_index);
+    let actual_debt =
+        crate::utils::math::get_actual_debt(vault.normalized_debt, global.global_debt_index);
     let total_obligations = actual_debt.saturating_add(vault.pending_debt);
 
     if total_obligations > 0 {
@@ -182,30 +123,6 @@ pub fn withdraw_collateral(ctx: Context<WithdrawCollateral>, amount: u64) -> Res
             ),
             WrapSynthError::InsufficientCollateral
         );
-    }
-
-    // Update principal tracking proportionally
-    if vault.collateral_amount > 0 {
-        let proportion = (amount as u128)
-            .checked_mul(1_000_000_000_000_000_000u128)
-            .unwrap_or(0)
-            / vault.collateral_amount as u128;
-
-        let principal_to_deduct = ((vault.principal_deposits as u128 * proportion)
-            / 1_000_000_000_000_000_000u128) as u64;
-        let shares_to_deduct = ((vault.principal_shares as u128 * proportion)
-            / 1_000_000_000_000_000_000u128) as u64;
-        let value_to_deduct = ((vault.principal_value as u128 * proportion)
-            / 1_000_000_000_000_000_000u128) as u64;
-
-        vault.principal_deposits = vault.principal_deposits.saturating_sub(principal_to_deduct);
-        vault.principal_shares = vault.principal_shares.saturating_sub(shares_to_deduct);
-        vault.principal_value = vault.principal_value.saturating_sub(value_to_deduct);
-
-        let global_mut = &mut ctx.accounts.global_state.load_mut()?;
-        global_mut.global_lp_principal = global_mut.global_lp_principal.saturating_sub(principal_to_deduct);
-        global_mut.global_lp_principal_shares = global_mut.global_lp_principal_shares.saturating_sub(shares_to_deduct);
-        global_mut.global_lp_principal_value = global_mut.global_lp_principal_value.saturating_sub(value_to_deduct);
     }
 
     vault.collateral_amount = new_collateral;
@@ -228,7 +145,7 @@ pub fn withdraw_collateral(ctx: Context<WithdrawCollateral>, amount: u64) -> Res
     );
     transfer_checked(cpi_ctx, amount, ctx.accounts.collateral_mint.decimals)?;
 
-    msg!("Withdrew {} collateral shares from vault {}", amount, lp_key);
+    msg!("Withdrew {} collateral from vault {}", amount, lp_key);
     Ok(())
 }
 
@@ -254,7 +171,10 @@ pub fn set_vault_market_metrics(
 }
 
 pub fn set_max_mint_bps(ctx: Context<UpdateVaultConfig>, max_mint_bps: u16) -> Result<()> {
-    require!((max_mint_bps as u64) <= BPS_DENOMINATOR, WrapSynthError::InvalidValue);
+    require!(
+        (max_mint_bps as u64) <= BPS_DENOMINATOR,
+        WrapSynthError::InvalidValue
+    );
     ctx.accounts.vault.max_mint_bps = max_mint_bps;
     Ok(())
 }
@@ -344,75 +264,52 @@ pub fn deactivate_vault(ctx: Context<DeactivateVault>) -> Result<()> {
     let vault = &mut ctx.accounts.vault;
     require!(vault.active, WrapSynthError::VaultNotActive);
     require!(vault.normalized_debt == 0, WrapSynthError::InsufficientDebt);
-    require!(vault.collateral_amount == 0, WrapSynthError::InsufficientCollateral);
-    require!(vault.active_burn_count == 0, WrapSynthError::UnresolvedBurns);
+    require!(
+        vault.collateral_amount == 0,
+        WrapSynthError::InsufficientCollateral
+    );
+    require!(
+        vault.active_burn_count == 0,
+        WrapSynthError::UnresolvedBurns
+    );
     vault.active = false;
-    let global = &mut ctx.accounts.global_state.load_mut()?;
-    // Swap-remove from the vault list (EVM _removeFromVaultList parity)
-    let count = global.vault_count as usize;
-    let mut idx = None;
-    for i in 0..count {
-        if global.vault_list[i] == vault.lp_address {
-            idx = Some(i);
-            break;
-        }
-    }
-    if let Some(i) = idx {
-        if i != count - 1 {
-            global.vault_list[i] = global.vault_list[count - 1];
-        }
-        global.vault_list[count - 1] = Pubkey::default();
-        global.vault_count = global.vault_count.saturating_sub(1);
-    }
     msg!("Vault deactivated: {}", ctx.accounts.lp.key());
     Ok(())
 }
 
-// ─── Internal: sync vault yield ──────────────────────────────────────────────
+// ─── Internal: slash collateral to the program pool ─────────────────────────
 
-pub fn sync_vault_yield(
-    vault: &mut Vault,
-    global: &mut GlobalState,
-    pyth_xmr: &AccountInfo,
-    pyth_collateral: &AccountInfo,
-    pyth_susde_rr: &AccountInfo,
+/// Physically move slashed collateral from a vault ATA to the program
+/// collateral pool ATA. Called at credit time whenever collateral is owed to a
+/// PendingReturns account so the pool is always fully backed.
+/// The vault PDA signs the transfer.
+pub fn slash_to_pool<'a>(
+    vault: &Vault,
+    vault_info: &AccountInfo<'a>,
+    vault_collateral_ata: &AccountInfo<'a>,
+    program_collateral_ata: &AccountInfo<'a>,
+    collateral_mint: &AccountInfo<'a>,
+    token_program: &AccountInfo<'a>,
+    decimals: u8,
+    amount: u64,
 ) -> Result<()> {
-    if vault.collateral_amount == 0 {
+    if amount == 0 {
         return Ok(());
     }
-
-    let xmr_price = get_xmr_price(pyth_xmr, PRICE_MAX_AGE)?;
-    let col_price = get_collateral_price(pyth_collateral, PRICE_MAX_AGE, &SUSDE_USD_FEED_ID)?;
-    let redemption_rate = get_collateral_redemption_rate(pyth_susde_rr)?;
-
-    let actual_debt = crate::utils::math::get_actual_debt(vault.normalized_debt, global.global_debt_index);
-
-    // EVM parity: yield is only extractable when the vault has debt obligations.
-    // A debt-free vault's excess stays with the LP (no war-chest siphon).
-    if actual_debt == 0 && vault.pending_debt == 0 {
-        return Ok(());
-    }
-
-    let yield_shares = calculate_extractable_yield(
-        vault.collateral_amount,
-        vault.locked_collateral,
-        vault.principal_value,
-        redemption_rate,
-        actual_debt,
-        vault.pending_debt,
-        xmr_price,
-        col_price,
+    let lp_key = vault.lp_address;
+    let seeds: &[&[u8]] = &[VAULT_SEED, lp_key.as_ref(), &[vault.bump]];
+    let signer_seeds = &[seeds];
+    let cpi_ctx = CpiContext::new_with_signer(
+        token_program.clone(),
+        TransferChecked {
+            from: vault_collateral_ata.clone(),
+            mint: collateral_mint.clone(),
+            to: program_collateral_ata.clone(),
+            authority: vault_info.clone(),
+        },
+        signer_seeds,
     );
-
-    if yield_shares > 0 {
-        vault.collateral_amount = vault.collateral_amount.saturating_sub(yield_shares);
-        global.yield_war_chest = global
-            .yield_war_chest
-            .checked_add(yield_shares)
-            .ok_or(WrapSynthError::MathOverflow)?;
-        msg!("Yield harvested: {} shares", yield_shares);
-    }
-    Ok(())
+    transfer_checked(cpi_ctx, amount, decimals)
 }
 
 // ─── Accounts ────────────────────────────────────────────────────────────────
@@ -475,11 +372,6 @@ pub struct DepositCollateral<'info> {
     )]
     pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
 
-    pub pyth_xmr: AccountInfo<'info>,
-    pub pyth_collateral: AccountInfo<'info>,
-    /// Pyth sUSDe→USDe redemption rate feed for yield accounting
-    pub pyth_susde_rr: AccountInfo<'info>,
-
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
 }
@@ -487,7 +379,10 @@ pub struct DepositCollateral<'info> {
 // ─── initialize_vault_collateral ─────────────────────────────────────────────
 
 pub fn initialize_vault_collateral(ctx: Context<InitializeVaultCollateral>) -> Result<()> {
-    msg!("Vault collateral ATA initialized for vault: {}", ctx.accounts.vault.key());
+    msg!(
+        "Vault collateral ATA initialized for vault: {}",
+        ctx.accounts.vault.key()
+    );
     Ok(())
 }
 
@@ -554,10 +449,10 @@ pub struct WithdrawCollateral<'info> {
     )]
     pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
 
+    /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
+    /// CHECK: Pyth QQQX/USD price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
-    /// Pyth sUSDe→USDe redemption rate feed for yield accounting
-    pub pyth_susde_rr: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -579,6 +474,7 @@ pub struct UpdateVaultConfig<'info> {
 
 #[derive(Accounts)]
 pub struct DeactivateVault<'info> {
+    #[account(mut)]
     pub lp: Signer<'info>,
 
     #[account(
