@@ -1,7 +1,7 @@
 // Recent Activity Feed - Shows recent mints and burns from all users
 
-import { getPublicClient, getContractEventsChunked } from './viemClient.js?v=3.21';
-import { CONTRACTS } from './config.js?v=3.21';
+import { getPublicClient, getContractEventsChunked } from './viemClient.js?v=3.22';
+import { CONTRACTS } from './config.js?v=3.22';
 import { parseAbi } from 'https://esm.sh/viem@2.7.0';
 
 // Event ABI strings matching the deployed contract exactly

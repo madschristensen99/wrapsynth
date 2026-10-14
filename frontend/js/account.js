@@ -10,8 +10,8 @@ import {
   readHub,
   getPastEvents,
   onAccountsChanged
-} from './viemClient.js?v=3.21';
-import { CONTRACTS, DECIMALS, NETWORKS } from './config.js?v=3.21';
+} from './viemClient.js?v=3.22';
+import { CONTRACTS, DECIMALS, NETWORKS } from './config.js?v=3.22';
 import { parseAbi, formatUnits } from 'https://esm.sh/viem@2.7.0';
 
 const EXPLORER = NETWORKS.hyperevm.blockExplorer;
@@ -447,12 +447,12 @@ function renderHistory() {
     btn.textContent = 'Loading keys…';
     try {
       const { buildBurnClaimKeys } = await import('./burnSweep.js?v=3.12');
-      const { showBurnKeysFallback } = await import('./ui.js?v=3.21');
+      const { showBurnKeysFallback } = await import('./ui.js?v=3.22');
       const { keys, sharedAddress, restoreHeight } = await buildBurnClaimKeys(requestId);
       showBurnKeysFallback(keys, restoreHeight, sharedAddress);
     } catch (err) {
       console.error('Claim failed:', err);
-      const { showError } = await import('./ui.js?v=3.21');
+      const { showError } = await import('./ui.js?v=3.22');
       showError('Cannot Claim XMR', err.message || 'Could not rebuild your claim keys.');
     } finally {
       btn.disabled = false;

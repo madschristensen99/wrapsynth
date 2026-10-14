@@ -8,7 +8,7 @@
  * sweep the XMR manually — there is no in-browser WASM sweep.
  */
 
-import { readHub } from './viemClient.js?v=3.21';
+import { readHub } from './viemClient.js?v=3.22';
 import { computeBurnAddress } from './moneroCrypto.js?v=3.12';
 
 const ED25519_L = 2n ** 252n + 27742317777372353535851937790883648493n;

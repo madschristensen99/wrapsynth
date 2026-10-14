@@ -2,7 +2,7 @@
 // Uses createPublicClient and createWalletClient as required
 
 import { createPublicClient, createWalletClient, custom, http, fallback, parseAbi, defineChain } from 'https://esm.sh/viem@2.7.0';
-import { NETWORKS, CONTRACTS, ABIS, RAW_ABIS } from './config.js?v=3.21';
+import { NETWORKS, CONTRACTS, ABIS, RAW_ABIS } from './config.js?v=3.22';
 
 // HyperEVM mainnet (chainId 999) — not a built-in viem chain, so define it.
 export const hyperevm = defineChain({
@@ -124,6 +124,28 @@ async function switchToHyperEvmChain() {
         } else {
             throw switchError;
         }
+    }
+}
+
+/**
+ * Disconnect the wallet — clears local session state and asks the wallet to
+ * revoke this site's account permission (MetaMask honors wallet_revokePermissions;
+ * wallets that don't support it still get a clean local disconnect).
+ */
+export async function disconnectWallet() {
+    try {
+        await window.ethereum?.request({
+            method: 'wallet_revokePermissions',
+            params: [{ eth_accounts: {} }]
+        });
+    } catch { /* wallet doesn't support revoke — local disconnect is enough */ }
+    userAddress = null;
+    localStorage.removeItem('wrapsynth-wallet-connected');
+    if (typeof window.ethereum !== 'undefined') {
+        walletClient = createWalletClient({
+            chain: hyperevm,
+            transport: custom(window.ethereum)
+        });
     }
 }
 
@@ -287,6 +309,19 @@ export async function readHub(functionName, args = []) {
  * @param {bigint} value - ETH value to send (default: 0n)
  * @param {bigint} gas - Optional gas limit override
  */
+/**
+ * Wait for a mined receipt and throw if the tx reverted on-chain.
+ * waitForTransactionReceipt returns a receipt for reverted txs too —
+ * without this check, every caller treats a failed tx as success.
+ */
+async function waitMinedOrThrow(hash, label) {
+    const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
+    if (receipt.status !== 'success') {
+        throw new Error(`${label || 'Transaction'} reverted on-chain (tx ${hash})`);
+    }
+    return receipt;
+}
+
 export async function writeHub(functionName, args = [], value = 0n, gas = undefined) {
     const account = await ensureAuthorizedAccount();
     const { encodeFunctionData } = await import('https://esm.sh/viem@2.7.0');
@@ -299,7 +334,10 @@ export async function writeHub(functionName, args = [], value = 0n, gas = undefi
 
     const gasHex = gas ? '0x' + gas.toString(16) : undefined;
 
-    // Send directly via wallet provider to bypass viem transport InternalRpcError
+    // Send directly via wallet provider to bypass viem transport InternalRpcError.
+    // Only the SEND is wrapped — the receipt wait stays outside so a wait-time
+    // RPC flake or a mined-and-reverted tx can't trigger a duplicate submission.
+    let hash;
     try {
         const txParams = {
             from: account,
@@ -309,13 +347,10 @@ export async function writeHub(functionName, args = [], value = 0n, gas = undefi
         if (gasHex) txParams.gas = gasHex;
         if (value > 0n) txParams.value = '0x' + value.toString(16);
 
-        const hash = await window.ethereum.request({
+        hash = await window.ethereum.request({
             method: 'eth_sendTransaction',
             params: [txParams]
         });
-
-        const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
-        return receipt;
     } catch (directErr) {
         // Fall back to viem simulate + writeContract
         console.warn('[writeHub] Direct send failed, falling back to simulate:', directErr.message);
@@ -330,10 +365,10 @@ export async function writeHub(functionName, args = [], value = 0n, gas = undefi
         };
         if (gas !== undefined) simOpts.gas = gas;
         const { request } = await getPublicClient().simulateContract(simOpts);
-        const hash = await client.writeContract({ ...request, account: userAddress });
-        const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
-        return receipt;
+        hash = await client.writeContract({ ...request, account: userAddress });
     }
+
+    return waitMinedOrThrow(hash, functionName);
 }
 
 /**
@@ -389,8 +424,7 @@ export async function writeHubUnsafe(functionName, args = [], value = 0n, gas = 
     }
     if (!hash) throw lastErr;
 
-    const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
-    return receipt;
+    return waitMinedOrThrow(hash, functionName);
 }
 
 /**
@@ -422,9 +456,7 @@ export async function writeWsxmr(functionName, args = []) {
     });
     
     const hash = await client.writeContract({ ...request, account: userAddress });
-    const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
-    
-    return receipt;
+    return waitMinedOrThrow(hash, functionName);
 }
 
 /**
@@ -475,8 +507,7 @@ export async function writeWsxmrUnsafe(functionName, args = [], gas = 200000n) {
     }
     if (!hash) throw lastErr;
 
-    const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
-    return receipt;
+    return waitMinedOrThrow(hash, functionName);
 }
 
 /**

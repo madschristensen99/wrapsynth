@@ -108,6 +108,7 @@ if ('serviceWorker' in navigator) {
           <span id="user-balance" class="wallet-balance"></span>
         </div>
       </a>
+      <button class="connect hidden" id="disconnect-wallet" title="Disconnect wallet" style="margin-left:6px;padding:6px 10px">✕</button>
     </div>
   </nav>
 
@@ -491,6 +492,6 @@ if ('serviceWorker' in navigator) {
   if (hub) { hub.textContent = short(DC.wsXmrHub); hub.href = `https://hyperevmscan.io/address/${DC.wsXmrHub}`; }
   if (router) { router.textContent = short(DC.liquidityRouter); router.href = `https://hyperevmscan.io/address/${DC.liquidityRouter}`; }
 </script>
-<script type="module" src="./js/main.js?v=3.21"></script>
+<script type="module" src="./js/main.js?v=3.22"></script>
 </body>
 </html>

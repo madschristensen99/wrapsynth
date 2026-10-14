@@ -1,7 +1,7 @@
 // UI Controller
 // Manages all DOM interactions and updates
 
-import { DECIMALS } from './config.js?v=3.21';
+import { DECIMALS } from './config.js?v=3.22';
 import { getIconSVG } from './icons.js?v=3.12';
 import { launchMintCelebration, launchBurnAnimation } from './animations.js?v=3.12';
 
@@ -82,6 +82,7 @@ const elements = {
 export function initUI() {
     // Wallet
     elements.connectWallet = document.getElementById('connect-wallet');
+    elements.disconnectWallet = document.getElementById('disconnect-wallet');
     elements.connectedInfo = document.getElementById('connected-info');
     elements.userAddress = document.getElementById('user-address');
     elements.userBalance = document.getElementById('user-balance');
@@ -164,6 +165,7 @@ export function initUI() {
  */
 export function showWalletConnected(address, balance) {
     elements.connectWallet.classList.add('hidden');
+    if (elements.disconnectWallet) elements.disconnectWallet.classList.remove('hidden');
     elements.connectedInfo.classList.remove('hidden');
     elements.userAddress.textContent = formatAddress(address);
     updateBalance(balance);
@@ -197,6 +199,7 @@ export function setWithdrawReturnsVisible(visible, label) {
  */
 export function showWalletDisconnected() {
     elements.connectWallet.classList.remove('hidden');
+    if (elements.disconnectWallet) elements.disconnectWallet.classList.add('hidden');
     elements.connectedInfo.classList.add('hidden');
     setWithdrawReturnsVisible(false);
     // Disable action buttons since wallet is required
@@ -452,7 +455,7 @@ export function showResumeCountdown(requestId, deadlineBlock, currentBlock, onRe
     // Poll block number every 5s to update countdown
     const intervalId = setInterval(async () => {
         try {
-            const { getPublicClient } = await import('./viemClient.js?v=3.21');
+            const { getPublicClient } = await import('./viemClient.js?v=3.22');
             const client = getPublicClient();
             cachedCurrent = Number(await client.getBlockNumber());
             updateMsg();
@@ -531,7 +534,7 @@ export async function showBurnTab() {
     saveActiveTab('burn');
 
     // Update balance when showing burn tab
-    const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js?v=3.21');
+    const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js?v=3.22');
     const address = getUserAddress();
     if (address) {
         try {

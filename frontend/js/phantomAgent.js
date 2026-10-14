@@ -17,7 +17,7 @@
  */
 
 import { toHex } from 'https://esm.sh/viem@2.7.0';
-import { getUserAddress } from './viemClient.js?v=3.21';
+import { getUserAddress } from './viemClient.js?v=3.22';
 import { createKeySet } from './seedManager.js?v=3.12';
 import { storeSeed, loadSeed, hasStoredSeed } from './seedStorage.js?v=3.12';
 import { showSeedGenerationModal } from './seedUI.js?v=3.12';

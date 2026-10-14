@@ -1,8 +1,8 @@
 // RedStone Oracle Price Update Helper
 // Manually builds calldata to avoid viem v1 / connector selector bugs with bytes[] params
 
-import { CONTRACTS, ABIS } from './config.js?v=3.21';
-import { getWalletClient, getPublicClient, getUserAddress, ensureAuthorizedAccount } from './viemClient.js?v=3.21';
+import { CONTRACTS, ABIS } from './config.js?v=3.22';
+import { getWalletClient, getPublicClient, getUserAddress, ensureAuthorizedAccount } from './viemClient.js?v=3.22';
 
 /**
  * Update oracle prices using RedStone
