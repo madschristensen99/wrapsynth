@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WrapSynth — Solana Devnet</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --fg:#e6edf3; --dim:#8b949e; --accent:#58a6ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 ui-monospace,Menlo,monospace; }
+  header { display:flex; align-items:center; gap:12px; padding:14px 20px; border-bottom:1px solid var(--border); }
+  header h1 { font-size:16px; margin:0; }
+  main { max-width:960px; margin:0 auto; padding:20px; display:grid; gap:14px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; }
+  .card h2 { margin:0 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); }
+  button { background:var(--accent); color:#06101d; border:0; border-radius:6px; padding:8px 14px; font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--border); }
+  input, select { background:#0d1117; color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:7px 10px; font:inherit; width:160px; }
+  select { width:auto; max-width:100%; }
+  .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .stat { color:var(--dim); }
+  .status { color:var(--accent); margin-top:8px; min-height:1.4em; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  td, th { padding:5px 8px; text-align:left; border-bottom:1px solid var(--border); color:var(--dim); }
+  td:first-child { color:var(--fg); }
+  #log { background:#0a0d12; border:1px solid var(--border); border-radius:6px; padding:10px; height:180px; overflow-y:auto; white-space:pre-wrap; font-size:12px; color:var(--dim); }
+  .spacer { flex:1; }
+  .warn { color:#d29922; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>WrapSynth <span class="stat">solana devnet</span></h1>
+  <div class="spacer"></div>
+  <span id="solBal" class="stat"></span>
+  <span id="wsxmrBal" class="stat"></span>
+  <button id="airdrop" class="ghost">airdrop</button>
+  <button id="connect">connect phantom</button>
+</header>
+<main>
+  <div class="card">
+    <h2>LP vault</h2>
+    <div class="row">
+      <select id="vaultSel"></select>
+      <button id="refreshVaults" class="ghost">refresh</button>
+      <button id="refresh" class="ghost">refresh balances</button>
+    </div>
+    <div id="vaultStats" class="status"></div>
+  </div>
+
+  <div class="card">
+    <h2>Mint wsXMR <span class="stat">— deposit XMR, get synthetic</span></h2>
+    <div class="row">
+      <input id="mintAmt" type="number" step="0.1" min="0" placeholder="4.0" value="4.0"> <span class="stat">XMR</span>
+      <button id="mintBtn">initiate mint</button>
+    </div>
+    <div id="mintStatus" class="status"></div>
+  </div>
+
+  <div class="card">
+    <h2>Burn wsXMR <span class="stat">— redeem for XMR</span></h2>
+    <div class="row">
+      <input id="burnAmt" type="number" step="0.1" min="0" placeholder="1.0" value="1.0"> <span class="stat">wsXMR</span>
+      <button id="burnBtn">request burn</button>
+    </div>
+    <div id="burnStatus" class="status"></div>
+  </div>
+
+  <div class="card">
+    <h2>Pending returns</h2>
+    <div class="row">
+      <span id="pendingBal" class="stat">—</span>
+      <button id="withdrawBtn">withdraw</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>My requests</h2>
+    <table><thead><tr><th>type</th><th>amount</th><th>status</th><th>pda</th></tr></thead>
+    <tbody id="history"><tr><td colspan="4">connect wallet</td></tr></tbody></table>
+  </div>
+
+  <div class="card">
+    <h2>Log</h2>
+    <div class="row warn">lp-server: <input id="lpServer" style="width:220px"></div>
+    <div id="log"></div>
+  </div>
+</main>
+<script type="module" src="./dist/bundle.js"></script>
+</body>
+</html>

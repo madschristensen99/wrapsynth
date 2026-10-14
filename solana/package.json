@@ -1,0 +1,29 @@
+{
+  "name": "wrapsynth-solana",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared Solana client lib + LP server workspace",
+  "scripts": {
+    "lp": "node lp-server/server.js",
+    "liquidate": "node lp-server/scripts/liquidator.js",
+    "e2e": "node lp-server/scripts/lp-e2e.js",
+    "build:frontend": "esbuild frontend/app.js --bundle --format=esm --inject:frontend/buffer-shim.js --outfile=frontend/dist/bundle.js",
+    "frontend": "node frontend/serve.mjs"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.31.1",
+    "@noble/ed25519": "^2.1.0",
+    "@noble/hashes": "^1.8.0",
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.98.0",
+    "bs58": "^6.0.0",
+    "buffer": "^6.0.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "process": "^0.11.10"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

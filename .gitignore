@@ -315,3 +315,10 @@ wallet-rpc.out
 *.out
 
 test-ledger/
+
+# solana lp-server runtime state
+solana/lp-server/lp-*.json
+solana/lp-server/lp-server.log
+solana/frontend/dist/
+solana/frontend/idl.json
+solana/frontend/devnet-config.json

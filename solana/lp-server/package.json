@@ -1,0 +1,14 @@
+{
+  "name": "wrapsynth-lp-server-solana",
+  "version": "0.1.0",
+  "description": "Solana LP node for WrapSynth — auto-processes mints and burns on devnet",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
