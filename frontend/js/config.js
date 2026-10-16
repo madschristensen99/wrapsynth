@@ -14,9 +14,12 @@ export const CHAINS = {
         chainId: 56,
         name: 'BNB Chain',
         rpcUrls: [
+            'https://bsc-dataseed.binance.org',
             'https://bsc-dataseed.bnbchain.org',
-            'https://bsc.publicnode.com',
-            'https://binance.llamarpc.com'
+            'https://bsc-rpc.publicnode.com',
+            'https://rpc.ankr.com/bsc',
+            'https://bnb.api.onfinality.io/public',
+            'https://bsc-mainnet.public.blastapi.io'
         ],
         explorer: 'https://bscscan.com',
         explorerName: 'BscScan',
