@@ -17,11 +17,11 @@
  */
 
 import { toHex } from 'https://esm.sh/viem@2.7.0';
-import { getUserAddress } from './viemClient.js?v=3.30';
-import { createKeySet } from './seedManager.js?v=3.30';
-import { storeSeed, loadSeed, hasStoredSeed } from './seedStorage.js?v=3.30';
-import { showSeedGenerationModal } from './seedUI.js?v=3.30';
-import { computeDepositAddress } from './moneroCrypto.js?v=3.30';
+import { getUserAddress } from './viemClient.js?v=3.31';
+import { createKeySet } from './seedManager.js?v=3.31';
+import { storeSeed, loadSeed, hasStoredSeed } from './seedStorage.js?v=3.31';
+import { showSeedGenerationModal } from './seedUI.js?v=3.31';
+import { computeDepositAddress } from './moneroCrypto.js?v=3.31';
 
 /**
  * Phantom Agent State
@@ -64,7 +64,7 @@ class PhantomAgent {
         } else if (autoGenerate) {
             // Auto-generate wallet silently (MoneroSwap style)
             console.log('Auto-generating wallet...');
-            const { generateSeedPhrase } = await import('./seedManager.js?v=3.30');
+            const { generateSeedPhrase } = await import('./seedManager.js?v=3.31');
             this.seed = generateSeedPhrase(12);
             this.keySet = createKeySet(this.seed);
             seedData = { seed: this.seed, keySet: this.keySet };
@@ -238,7 +238,7 @@ class PhantomAgent {
         console.log('Note: LP server will provide actual deposit address');
         
         // Import Monero RPC client for read-only operations
-        const { getMoneroRpc } = await import('./moneroRpc.js?v=3.30');
+        const { getMoneroRpc } = await import('./moneroRpc.js?v=3.31');
         const rpc = getMoneroRpc();
         
         // Store wallet instance with helper methods

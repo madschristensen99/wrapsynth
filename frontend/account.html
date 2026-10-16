@@ -11,7 +11,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="app-styles.css?v=3.30">
+<link rel="stylesheet" href="app-styles.css?v=3.31">
 <style>
   .account-page{max-width:680px;margin:0 auto;padding:44px 18px 60px}
   .account-back{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);text-decoration:none;margin-bottom:20px;transition:color .15s}
@@ -160,8 +160,8 @@
 </div>
 
 <script type="module">
-  const { bootChain } = await import('./js/chainPicker.js?v=3.30');
-  const { getActiveChain } = await import('./js/config.js?v=3.30');
+  const { bootChain } = await import('./js/chainPicker.js?v=3.31');
+  const { getActiveChain } = await import('./js/config.js?v=3.31');
   const key = await bootChain();
   const cfg = getActiveChain();
   if (cfg) {
@@ -171,6 +171,6 @@
     document.getElementById('chain-pill').textContent = 'No chain';
   }
 </script>
-<script type="module" src="./js/account.js?v=3.30"></script>
+<script type="module" src="./js/account.js?v=3.31"></script>
 </body>
 </html>
