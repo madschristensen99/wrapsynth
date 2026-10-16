@@ -4,7 +4,7 @@
 
 🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/USDe Pool on DexScreener](https://dexscreener.com/hyperevm/0xfa529dc1b245b3228a172ceb886f47f2127af401)**
 
-WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Users swap XMR for wsXMR through atomic-swap mechanics enforced on-chain: LPs post USDe collateral (supplied to HyperLend), mint/burn settlement is gated by Ed25519 secret reveals verified on-chain, and timeout-based slashing protects both sides. No custodian, no federation, no trusted intermediary — every swap settles peer-to-peer between a user and an LP vault.
+WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Users swap XMR for wsXMR through atomic-swap mechanics enforced on-chain: LPs post collateral (sUSDe on HyperEVM; the collateral asset is per-deployment — see [Roadmap](#-roadmap)), mint/burn settlement is gated by Ed25519 secret reveals verified on-chain, and timeout-based slashing protects both sides. No custodian, no federation, no trusted intermediary — every swap settles peer-to-peer between a user and an LP vault.
 
 ---
 
@@ -211,15 +211,21 @@ wrapsynth/
 
 ## 🔮 Roadmap
 
-- ✅ HyperEVM mainnet deployment + verified contracts
-- ✅ Live wsXMR/USDe HyperSwap V3 pool
-- ✅ Co-LP concentrated liquidity router
-- ✅ Gnosis beta deployment (superseded)
-- 🔄 Solana port (Meteora DLMM liquidity, JitoSOL collateral, Pyth oracle)
+The strategy is parallel collateral experiments across chains — deploy everywhere, let the market decide which venues get traction. Each deployment pairs wsXMR with a different collateral asset, spanning the censorship-resistance spectrum from native gas tokens to issuer-custodied tokenized equities.
+
+| Chain | Collateral | Collateral type | Status |
+|---|---|---|---|
+| HyperEVM | sUSDe (HyperLend) | Yield-bearing stablecoin | ✅ Live on mainnet |
+| Gnosis | sDAI | Yield-bearing stablecoin | ✅ Beta (superseded) |
+| Solana | Native SOL | Maximal censorship resistance — no issuer | 🔄 In development |
+| BNB Chain | QQQB (bStocks tokenized Nasdaq) | Tokenized equity | ✅ Built + fork-tested, not deployed |
+| Base | cbBTC (Coinbase Wrapped BTC) | Custodial wrapped asset | ✅ Built + fork-tested, not deployed |
+| Robinhood Chain | SPY (Robinhood tokenized S&P 500) | Tokenized equity | ✅ Built + fork-tested, not deployed |
+
 - 🔄 Additional LP onboarding + deeper liquidity
-- ⏳ HIP-1 wsXMR/USDC on HyperCore CLOB + HIP-3 wsXMR/USD perp
 - ⏳ Third-party audit + bug bounty ahead of broader scaling
-- ⏳ Multi-chain expansion
+
+The oracle model minimizes external dependencies: XMR/USD comes from RedStone (or native precompiles on HyperEVM), and collateral prices are computed fully on-chain from V3 TWAP pools — no second oracle provider per deployment.
 
 ---
 
