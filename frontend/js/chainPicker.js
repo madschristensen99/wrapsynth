@@ -9,8 +9,8 @@
 // it resolves the active chain and populates CONTRACTS from the chain's
 // deployment manifest.
 
-import { CHAINS, setActiveChain, getActiveChain, getActiveChainKey, loadDeployment } from './config.js?v=3.31';
-import { switchToActiveChain, getUserAddress } from './viemClient.js?v=3.31';
+import { CHAINS, setActiveChain, getActiveChain, getActiveChainKey, loadDeployment } from './config.js?v=3.32';
+import { switchToActiveChain, getUserAddress } from './viemClient.js?v=3.32';
 
 const STORAGE_KEY = 'wrapsynth-active-chain';
 
@@ -57,6 +57,14 @@ export async function bootChain() {
     return key;
 }
 
+/** Chain logo + collateral-token logo as overlapping round badges. */
+function iconPair(c, size = 20) {
+    const badge = (src, letter, off) => src
+        ? `<img src="${src}" alt="" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;${off}background:#222" onerror="this.outerHTML='<span style=&quot;display:inline-flex;width:${size}px;height:${size}px;border-radius:50%;background:#444;color:#fff;align-items:center;justify-content:center;font-size:${size * .55}px;font-weight:700;${off}&quot;>${letter}</span>'">`
+        : `<span style="display:inline-flex;width:${size}px;height:${size}px;border-radius:50%;background:#444;color:#fff;align-items:center;justify-content:center;font-size:${size * .55}px;font-weight:700;${off}">${letter}</span>`;
+    return `<span style="display:inline-flex;align-items:center;flex:none">${badge(c.chainIcon, c.name[0], '')}${badge(c.collateral.icon, c.collateral.symbol[0], 'margin-left:-8px;border:2px solid var(--card,#14181f);')}</span>`;
+}
+
 /** Modal picker — resolves when the user clicks a chain.
  *  Cards explain each deployment: the wsXMR pair, what the collateral is,
  *  and which gas token the user needs to fund. Undeployed chains are shown
@@ -72,8 +80,8 @@ function showChainModal(deployed) {
             const coll = c.collateral;
             return `
                 <button data-chain="${k}" ${live ? '' : 'disabled'} style="display:block;width:100%;margin:8px 0;padding:14px;border-radius:10px;border:1px solid var(--border,#2a2f3a);background:var(--bg2,#1a1f2a);color:inherit;${live ? 'cursor:pointer' : 'opacity:.45;cursor:not-allowed'};text-align:left">
-                    <div style="display:flex;justify-content:space-between;align-items:baseline">
-                        <span style="font-size:15px;font-weight:700">${c.name}</span>
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+                        <span style="display:flex;align-items:center;gap:10px">${iconPair(c)}<span style="font-size:15px;font-weight:700">${c.name}</span></span>
                         <span style="font-size:12px;font-weight:600;color:var(--accent,#f7931a)">wsXMR ⇄ ${coll.symbol}</span>
                     </div>
                     <div style="color:var(--muted,#8a94a6);font-size:12px;margin-top:4px">${coll.whatItIs || coll.name}</div>
@@ -111,29 +119,61 @@ export async function initChainPicker(selectEl) {
     if (!selectEl) return;
     const deployed = await deployedChains();
 
-    selectEl.innerHTML = Object.keys(CHAINS).map(k => {
-        const c = CHAINS[k];
-        const live = deployed.includes(k);
-        return `<option value="${k}" ${live ? '' : 'disabled'}>${c.name} · ${c.collateral.symbol}${live ? '' : ' (soon)'}</option>`;
-    }).join('');
+    // A native <select> can't render images — build a custom dropdown and
+    // hide the select (kept in DOM as a semantic fallback).
+    selectEl.style.display = 'none';
+    const wrap = document.createElement('div');
+    wrap.className = 'pill chain-picker';
+    wrap.style.cssText = 'position:relative;cursor:pointer;display:inline-flex;align-items:center';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.style.cssText = 'background:transparent;color:inherit;border:none;font:inherit;cursor:pointer;display:flex;align-items:center;gap:8px;padding:0';
+    const menu = document.createElement('div');
+    menu.style.cssText = 'display:none;position:absolute;top:calc(100% + 8px);right:0;min-width:220px;background:var(--card,#14181f);border:1px solid var(--border,#2a2f3a);border-radius:12px;padding:6px;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.4)';
+    wrap.append(btn, menu);
+    selectEl.replaceWith(wrap);
 
-    const sync = () => { selectEl.value = getActiveChainKey() || ''; };
-    sync();
-    window.addEventListener('wrapsynth:chainChanged', sync);
+    const render = () => {
+        const active = CHAINS[getActiveChainKey()];
+        btn.innerHTML = active
+            ? `${iconPair(active, 18)}<span>${active.name}</span><span style="color:var(--muted,#8a94a6);font-size:11px">▾</span>`
+            : 'Select chain';
+        menu.innerHTML = Object.keys(CHAINS).map(k => {
+            const c = CHAINS[k];
+            const live = deployed.includes(k);
+            const isActive = k === getActiveChainKey();
+            return `<div data-chain="${k}" role="option" aria-disabled="${!live}" style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;${live ? 'cursor:pointer' : 'opacity:.45;cursor:not-allowed'};${isActive ? 'background:var(--bg2,#1a1f2a);font-weight:600' : ''}">
+                ${iconPair(c, 18)}
+                <span style="flex:1">${c.name} · ${c.collateral.symbol}</span>
+                ${live ? '' : '<span style="font-size:10px;color:var(--muted,#8a94a6)">soon</span>'}
+            </div>`;
+        }).join('');
+    };
+    render();
+    window.addEventListener('wrapsynth:chainChanged', render);
 
-    selectEl.addEventListener('change', async () => {
-        const key = selectEl.value;
+    const close = () => { menu.style.display = 'none'; };
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    });
+    document.addEventListener('click', close);
+    menu.addEventListener('click', async (e) => {
+        const row = e.target.closest('[data-chain]');
+        if (!row || row.getAttribute('aria-disabled') === 'true') return;
+        close();
+        const key = row.dataset.chain;
         if (!key || key === getActiveChainKey()) return;
         try {
             localStorage.setItem(STORAGE_KEY, key);
             await setActiveChain(key);
             if (getUserAddress()) {
                 try { await switchToActiveChain(); }
-                catch (e) { console.warn('[CHAIN] wallet refused chain switch:', e.message); }
+                catch (err) { console.warn('[CHAIN] wallet refused chain switch:', err.message); }
             }
-        } catch (e) {
-            console.error('[CHAIN] switch failed:', e.message);
-            sync();
+        } catch (err) {
+            console.error('[CHAIN] switch failed:', err.message);
+            render();
         }
     });
 }

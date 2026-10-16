@@ -3,8 +3,8 @@
 
 import { keccak256, hexToBytes, bytesToHex } from 'https://esm.sh/viem@2.7.0';
 import * as ed25519 from 'https://esm.sh/@noble/ed25519@2.1.0';
-import { createKeySet } from './seedManager.js?v=3.31';
-import { loadSeed } from './seedStorage.js?v=3.31';
+import { createKeySet } from './seedManager.js?v=3.32';
+import { loadSeed } from './seedStorage.js?v=3.32';
 
 const Point = ed25519.ExtendedPoint || ed25519.Point;
 

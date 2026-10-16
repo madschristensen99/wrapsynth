@@ -17,7 +17,7 @@
  * private view key for the deposit wallet is lpSecret verbatim.
  */
 
-import { combineSpendKeys, reverseHexBytes } from './burnSweep.js?v=3.31';
+import { combineSpendKeys, reverseHexBytes } from './burnSweep.js?v=3.32';
 
 /**
  * Derive the expected mint deposit address from the combined keys, so the user can
@@ -45,7 +45,7 @@ export async function deriveMintDepositAddress(userSecretHex, lpSecretHex) {
     const lpSpendPub = Point.BASE.multiply(lpSecret).toRawBytes();         // view pub
     const combinedSpend = Point.BASE.multiply(combined).toRawBytes();    // spend pub
 
-    const { deriveMoneroAddress } = await import('./moneroCrypto.js?v=3.31');
+    const { deriveMoneroAddress } = await import('./moneroCrypto.js?v=3.32');
     return deriveMoneroAddress(combinedSpend, lpSpendPub, true);
 }
 

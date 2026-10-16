@@ -13,6 +13,7 @@ export const CHAINS = {
         key: 'bnb',
         chainId: 56,
         name: 'BNB Chain',
+        chainIcon: 'assets/chains/bnb.png',
         // Verified against browser-context getLogs (2026-10). Removed:
         // ankr (getLogs requires API key), onfinality/blastapi (429),
         // meowrpc (no getLogs), llamarpc (dead DNS), publicnode (Cloudflare
@@ -34,6 +35,7 @@ export const CHAINS = {
             decimals: 18,
             shareDecimals: 18,
             name: 'Invesco QQQ (bStocks)',
+            icon: 'assets/tokens/qqqb.png',
             address: '0x205812CdBed920aFf76C6580abD681a46D11efc7',
             whatItIs: 'Tokenized Invesco QQQ — tracks the Nasdaq-100 ETF (bStocks)',
             note: 'Securities-linked token; availability varies by jurisdiction.',
@@ -65,6 +67,7 @@ export const CHAINS = {
         key: 'base',
         chainId: 8453,
         name: 'Base',
+        chainIcon: 'assets/chains/base.png',
         rpcUrls: [
             'https://mainnet.base.org',
             'https://base.publicnode.com',
@@ -81,6 +84,7 @@ export const CHAINS = {
             decimals: 8,
             shareDecimals: 8,
             name: 'Coinbase Wrapped BTC',
+            icon: 'assets/tokens/cbbtc.png',
             address: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf',
             whatItIs: 'Coinbase Wrapped BTC — Bitcoin held 1:1 by Coinbase',
             note: null,
@@ -107,6 +111,7 @@ export const CHAINS = {
         key: 'robinhood',
         chainId: 4663,
         name: 'Robinhood Chain',
+        chainIcon: 'assets/chains/robinhood.ico',
         rpcUrls: [
             'https://rpc.mainnet.chain.robinhood.com'
         ],
@@ -122,6 +127,7 @@ export const CHAINS = {
             decimals: 18,
             shareDecimals: 18,
             name: 'SPDR S&P 500 (Robinhood Token)',
+            icon: null,
             address: '0x117cc2133c37B721F49dE2A7a74833232B3B4C0C',
             whatItIs: 'Robinhood stock token tracking SPDR S&P 500 (RH Assets, Jersey)',
             note: 'Robinhood stock tokens are not offered to US persons — check your jurisdiction.',
