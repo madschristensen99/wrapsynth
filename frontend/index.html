@@ -898,7 +898,7 @@ function copyAddr(btn){
 (async function fetchProtocolStats(){
   try {
     const {createPublicClient,http,formatUnits,parseAbi,fallback}=await import('https://esm.sh/viem@2.21.54');
-    const {CHAINS,loadDeployment}=await import('./js/config.js?v=3.33');
+    const {CHAINS,loadDeployment}=await import('./js/config.js?v=3.34');
 
     const getVaultAbi=[{
       name:'getVault',type:'function',stateMutability:'view',

@@ -1,7 +1,7 @@
 // Seed Phrase UI Components for Wrapsynth
 
-import { generateSeedPhrase, validateSeedPhrase, createKeySet } from './seedManager.js?v=3.33';
-import { storeSeed, hasStoredSeed, loadSeed } from './seedStorage.js?v=3.33';
+import { generateSeedPhrase, validateSeedPhrase, createKeySet } from './seedManager.js?v=3.34';
+import { storeSeed, hasStoredSeed, loadSeed } from './seedStorage.js?v=3.34';
 
 /**
  * Show seed generation modal

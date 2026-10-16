@@ -7,9 +7,11 @@
       "manifest": "../frontend/deployment.bnb.json",
       "rpcEnv": "BNB_RPC_URLS",
       "rpcUrls": [
-        "https://bsc-dataseed.bnbchain.org",
         "https://bsc.publicnode.com",
-        "https://binance.llamarpc.com"
+        "https://bsc-dataseed.binance.org",
+        "https://bsc-dataseed.bnbchain.org",
+        "https://rpc-bsc.48.club",
+        "https://bsc.drpc.org"
       ],
       "redstoneFeeds": ["XMR"],
       "logChunkSize": 900

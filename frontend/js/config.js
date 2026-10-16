@@ -60,7 +60,7 @@ export const CHAINS = {
         // RedStone feeds appended to updateOraclePrices calldata.
         // Collateral price is on-chain TWAP — only XMR needs a signed feed.
         redstoneFeeds: ['XMR'],
-        blockTimeSec: 0.75,  // BSC ~0.75s blocks
+        blockTimeSec: 0.45,  // BSC measured ~0.45s/block post-Fermi (was 0.75)
         logChunkSize: 5000   // BSC public RPCs allow ~5k-block getLogs
     },
     base: {

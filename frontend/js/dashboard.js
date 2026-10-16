@@ -1,7 +1,7 @@
 // Dashboard - Global stats and vault health monitoring
 
-import { CONTRACTS, ABIS, DECIMALS, getActiveChain } from './config.js?v=3.33';
-import { readHub, readWsxmr, getUserAddress } from './viemClient.js?v=3.33';
+import { CONTRACTS, ABIS, DECIMALS, getActiveChain } from './config.js?v=3.34';
+import { readHub, readWsxmr, getUserAddress } from './viemClient.js?v=3.34';
 import { formatUnits } from 'https://esm.sh/viem@2.7.0';
 
 export class Dashboard {

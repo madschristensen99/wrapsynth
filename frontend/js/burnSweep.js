@@ -8,8 +8,8 @@
  * sweep the XMR manually — there is no in-browser WASM sweep.
  */
 
-import { readHub } from './viemClient.js?v=3.33';
-import { computeBurnAddress } from './moneroCrypto.js?v=3.33';
+import { readHub } from './viemClient.js?v=3.34';
+import { computeBurnAddress } from './moneroCrypto.js?v=3.34';
 
 const ED25519_L = 2n ** 252n + 27742317777372353535851937790883648493n;
 
@@ -147,7 +147,7 @@ export async function buildBurnClaimKeys(requestId) {
     //    Never block the claim on a slow daemon: time out and fall back to 0.
     let restoreHeight = 0;
     try {
-        const { getMoneroRpc } = await import('./moneroRpc.js?v=3.33');
+        const { getMoneroRpc } = await import('./moneroRpc.js?v=3.34');
         const height = await Promise.race([
             getMoneroRpc().getHeight(),
             new Promise((_, reject) => setTimeout(() => reject(new Error('daemon height timed out')), 4000))
