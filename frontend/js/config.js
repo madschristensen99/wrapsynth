@@ -201,6 +201,9 @@ function _applyDeployment(key) {
     const DE = flat ? D : (D.externalContracts || {});
     const DP = flat ? { uniswapV3Pool: D.pool } : (D.pool || {});
     const DLC = flat ? {} : (D.lpConfig || {});
+    // Flat forge manifests carry no lpConfig — the deployer account is the
+    // first (usually only) LP vault in a fresh deployment.
+    const defaultVault = DLC.defaultLpVault || D.deployer || null;
 
     CONTRACTS.hub = DC.wsXmrHub;
     CONTRACTS.wsxmrToken = DC.wsXMR;
@@ -211,7 +214,7 @@ function _applyDeployment(key) {
     CONTRACTS.uniswapV3Pool = DP.uniswapV3Pool;
     CONTRACTS.nfpm = DE.PancakeV3PositionManager || DE.UniswapV3PositionManager || DE.pcsV3NFPM || DE.uniV3NFPM;
     // Default LP vault to use for mints (the active LP running the LP node)
-    CONTRACTS.defaultLpVault = DLC.defaultLpVault;
+    CONTRACTS.defaultLpVault = defaultVault;
 }
 
 /**

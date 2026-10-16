@@ -1,7 +1,7 @@
 // LP Operator Panel - Vault management for liquidity providers
 
-import { CONTRACTS, ABIS, DECIMALS, getActiveChain } from './config.js?v=3.32';
-import { readHub, writeHub, getUserAddress } from './viemClient.js?v=3.32';
+import { CONTRACTS, ABIS, DECIMALS, getActiveChain } from './config.js?v=3.33';
+import { readHub, writeHub, getUserAddress } from './viemClient.js?v=3.33';
 import { formatUnits, parseUnits } from 'https://esm.sh/viem@2.7.0';
 
 export class LPPanel {
