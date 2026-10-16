@@ -92,7 +92,8 @@ export async function renderFundingPanel(el, mode, opts = {}) {
             label: 'wsXMR',
             balance: wsxmrBal === null ? null : `${fmt(wsxmrBal, 8)} wsXMR`,
             links: acq.wsxmr,
-            emptyNote: 'Mint with XMR or buy on the pool.',
+            // Minting is the primary path — the pool is only useful once seeded.
+            emptyNote: 'Mint it with XMR on the Mint tab, or buy on the pool:',
         });
     }
     if (mode === 'lp') {
