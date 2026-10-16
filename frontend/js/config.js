@@ -15,11 +15,11 @@ export const CHAINS = {
         name: 'BNB Chain',
         // Verified against browser-context getLogs (2026-10). Removed:
         // ankr (getLogs requires API key), onfinality/blastapi (429),
-        // meowrpc (no getLogs), llamarpc (dead DNS).
+        // meowrpc (no getLogs), llamarpc (dead DNS), publicnode (Cloudflare
+        // 403s on browser origins despite passing curl).
         rpcUrls: [
             'https://bsc-dataseed.binance.org',
             'https://bsc-dataseed.bnbchain.org',
-            'https://bsc-rpc.publicnode.com',
             'https://rpc-bsc.48.club',
             'https://bsc.drpc.org'
         ],
