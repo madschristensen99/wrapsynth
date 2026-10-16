@@ -6,7 +6,7 @@ export async function startDeadlineTimer(mintFlow) {
     // If we don't have the on-chain timeout yet, query it now
     if (!mintFlow.timeout) {
         try {
-            const { readHub } = await import('./viemClient.js?v=3.22');
+            const { readHub } = await import('./viemClient.js?v=3.30');
             const mintReq = await readHub('getMintRequest', [mintFlow.requestId]);
             mintFlow.timeout = mintReq.timeout;
             console.log('[Timer] Queried on-chain timeout (block):', mintFlow.timeout.toString());
@@ -56,7 +56,7 @@ export async function startDeadlineTimer(mintFlow) {
     const updateTimer = async () => {
         if (!running) return;
         try {
-            const { getPublicClient } = await import('./viemClient.js?v=3.22');
+            const { getPublicClient } = await import('./viemClient.js?v=3.30');
             const publicClient = getPublicClient();
             const currentBlock = await publicClient.getBlockNumber();
             
@@ -88,7 +88,7 @@ export async function startDeadlineTimer(mintFlow) {
                         refundBtn.disabled = true;
                         refundBtn.textContent = 'Checking status...';
                         try {
-                            const { readHub, writeHub } = await import('./viemClient.js?v=3.22');
+                            const { readHub, writeHub } = await import('./viemClient.js?v=3.30');
                             
                             // Check current on-chain status before deciding action
                             const mintReq = await readHub('getMintRequest', [mintFlow.requestId]);
@@ -102,14 +102,14 @@ export async function startDeadlineTimer(mintFlow) {
                                 console.log('withdrawReturns tx:', receipt.transactionHash);
                                 timerElement.innerHTML = '<strong style="color:var(--success-color);">Refunded</strong>';
                                 refundBtn.remove();
-                                const { clearActiveSwap } = await import('./storage.js?v=3.12');
+                                const { clearActiveSwap } = await import('./storage.js?v=3.30');
                                 clearActiveSwap();
-                                const { resetMintUI } = await import('./ui.js?v=3.22');
+                                const { resetMintUI } = await import('./ui.js?v=3.30');
                                 resetMintUI();
                             } else if (status === 7) {
                                 // EXPIRED_READY — LP has a claim window
                                 const claimWindowEnd = Number(mintReq.timeout);
-                                const { getPublicClient } = await import('./viemClient.js?v=3.22');
+                                const { getPublicClient } = await import('./viemClient.js?v=3.30');
                                 const pubClient = getPublicClient();
                                 const currentBlock = await pubClient.getBlockNumber();
                                 if (currentBlock >= claimWindowEnd) {
@@ -119,19 +119,19 @@ export async function startDeadlineTimer(mintFlow) {
                                     await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
                                     // Also withdraw slashed collateral (active chain's share token)
                                     try {
-                                        const { CONTRACTS } = await import('./config.js?v=3.22');
+                                        const { CONTRACTS } = await import('./config.js?v=3.30');
                                         await writeHub('withdrawReturns', [CONTRACTS.stataUSDe]);
                                     } catch (e) { /* may have no collateral returns */ }
                                     timerElement.innerHTML = '<strong style="color:var(--success-color);">Deposit + Collateral Recovered</strong>';
                                     refundBtn.remove();
-                                    const { clearActiveSwap } = await import('./storage.js?v=3.12');
+                                    const { clearActiveSwap } = await import('./storage.js?v=3.30');
                                     clearActiveSwap();
-                                    const { resetMintUI } = await import('./ui.js?v=3.22');
+                                    const { resetMintUI } = await import('./ui.js?v=3.30');
                                     resetMintUI();
                                 } else {
                                     // LP still has time to claim
                                     const blocksRemaining = claimWindowEnd - Number(currentBlock);
-                                    const { getActiveChain } = await import('./config.js?v=3.22');
+                                    const { getActiveChain } = await import('./config.js?v=3.30');
                                     const minutes = Math.ceil(blocksRemaining * (getActiveChain()?.blockTimeSec || 1) / 60);
                                     refundBtn.disabled = true;
                                     refundBtn.textContent = `Waiting for LP claim window (~${minutes} min)`;
@@ -156,17 +156,17 @@ export async function startDeadlineTimer(mintFlow) {
                                 } catch (e) { /* may have none */ }
                                 timerElement.innerHTML = `<strong style="color:var(--success-color);">Cancelled & Refunded${slashedMsg}</strong>`;
                                 refundBtn.remove();
-                                const { clearActiveSwap } = await import('./storage.js?v=3.12');
+                                const { clearActiveSwap } = await import('./storage.js?v=3.30');
                                 clearActiveSwap();
-                                const { resetMintUI } = await import('./ui.js?v=3.22');
+                                const { resetMintUI } = await import('./ui.js?v=3.30');
                                 resetMintUI();
                             } else if (status === 5) {
                                 // Already completed
                                 timerElement.innerHTML = '<strong style="color:var(--success-color);">Mint Completed</strong>';
                                 refundBtn.remove();
-                                const { clearActiveSwap } = await import('./storage.js?v=3.12');
+                                const { clearActiveSwap } = await import('./storage.js?v=3.30');
                                 clearActiveSwap();
-                                const { resetMintUI } = await import('./ui.js?v=3.22');
+                                const { resetMintUI } = await import('./ui.js?v=3.30');
                                 resetMintUI();
                             } else {
                                 throw new Error(`Unexpected mint status: ${status}`);
@@ -190,7 +190,7 @@ export async function startDeadlineTimer(mintFlow) {
             }
             
             // Calculate time remaining (block time is per-chain)
-            const { getActiveChain } = await import('./config.js?v=3.22');
+            const { getActiveChain } = await import('./config.js?v=3.30');
             const secondsRemaining = Math.round(blocksRemaining * (getActiveChain()?.blockTimeSec || 1));
             const hours = Math.floor(secondsRemaining / 3600);
             const minutes = Math.floor((secondsRemaining % 3600) / 60);
