@@ -1,7 +1,7 @@
 // Recent Activity Feed - Shows recent mints and burns from all users
 
 import { getPublicClient, getContractEventsChunked } from './viemClient.js?v=3.22';
-import { CONTRACTS } from './config.js?v=3.22';
+import { CONTRACTS, ASSET, getActiveChain } from './config.js?v=3.22';
 import { parseAbi } from 'https://esm.sh/viem@2.7.0';
 
 // Event ABI strings matching the deployed contract exactly
@@ -32,9 +32,10 @@ export async function loadRecentActivity() {
         const publicClient = getPublicClient();
         const currentBlock = await publicClient.getBlockNumber();
 
-        // Look back ~2.8 hours (~10000 blocks at ~1s/block on HyperEVM)
-        // Must stay under RPC provider limits (typically 10k-50k blocks)
-        const lookbackBlocks = 10000n;
+        // Look back ~2.8 hours in wall-clock time, converted to blocks for
+        // the active chain (block times differ: ~0.75s BNB, ~2s Base).
+        const blockTime = getActiveChain()?.blockTimeSec || 1;
+        const lookbackBlocks = BigInt(Math.round(2.8 * 3600 / blockTime));
         let fromBlock = currentBlock > lookbackBlocks ? currentBlock - lookbackBlocks : 0n;
 
         console.log('Fetching activity from block', fromBlock.toString(), 'to', currentBlock.toString());
@@ -243,9 +244,9 @@ function renderActivityItem(event, currentBlock) {
         case 'burnSlashed': {
             const user = args.user || 'Unknown';
             const shortUser = user !== 'Unknown' ? `${user.slice(0, 6)}...${user.slice(-4)}` : 'Unknown';
-            const seized = args.totalSeized ? (Number(args.totalSeized) / 1e18).toFixed(2) : '?';
+            const seized = args.totalSeized ? (Number(args.totalSeized) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18)).toFixed(2) : '?';
             title = 'Burn Slashed';
-            detail = `${seized} USDe seized from ${shortUser}`;
+            detail = `${seized} ${ASSET.collateral} seized from ${shortUser}`;
             break;
         }
         case 'burnCancelled': {
@@ -264,17 +265,17 @@ function renderActivityItem(event, currentBlock) {
         case 'collateralDeposited': {
             const lp = args.lp || 'Unknown';
             const shortLp = lp !== 'Unknown' ? `${lp.slice(0, 6)}...${lp.slice(-4)}` : 'Unknown';
-            const amount = args.amount ? (Number(args.amount) / 1e18).toFixed(2) : '?';
+            const amount = args.amount ? (Number(args.amount) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18)).toFixed(2) : '?';
             title = 'Collateral Deposited';
-            detail = `${amount} USDe by ${shortLp}`;
+            detail = `${amount} ${ASSET.collateral} by ${shortLp}`;
             break;
         }
         case 'collateralWithdrawn': {
             const lp = args.lp || 'Unknown';
             const shortLp = lp !== 'Unknown' ? `${lp.slice(0, 6)}...${lp.slice(-4)}` : 'Unknown';
-            const amount = args.amount ? (Number(args.amount) / 1e18).toFixed(2) : '?';
+            const amount = args.amount ? (Number(args.amount) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18)).toFixed(2) : '?';
             title = 'Collateral Withdrawn';
-            detail = `${amount} USDe by ${shortLp}`;
+            detail = `${amount} ${ASSET.collateral} by ${shortLp}`;
             break;
         }
         case 'coLPDeployed': {
@@ -282,11 +283,11 @@ function renderActivityItem(event, currentBlock) {
             const shortVault = vault !== 'Unknown' ? `${vault.slice(0, 6)}...${vault.slice(-4)}` : 'Unknown';
             const user = args.user || 'Unknown';
             const shortUser = user !== 'Unknown' ? `${user.slice(0, 6)}...${user.slice(-4)}` : 'Unknown';
-            const usde = args.usdeShares ? (Number(args.usdeShares) / 1e18).toFixed(2) : '?';
+            const usde = args.usdeShares ? (Number(args.usdeShares) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18)).toFixed(2) : '?';
             const wsxmr = args.wsxmrAmount ? (Number(args.wsxmrAmount) / 1e8).toFixed(4) : '?';
             const tokenId = args.tokenId?.toString() || '?';
             title = 'Co-LP Position Opened';
-            detail = `Token #${tokenId} — ${usde} USDe + ${wsxmr} wsXMR (${shortUser} + ${shortVault})`;
+            detail = `Token #${tokenId} — ${usde} ${ASSET.collateral} + ${wsxmr} wsXMR (${shortUser} + ${shortVault})`;
             break;
         }
         case 'coLPUnwound': {
@@ -295,11 +296,11 @@ function renderActivityItem(event, currentBlock) {
             const shortVault = vault !== 'Unknown' ? `${vault.slice(0, 6)}...${vault.slice(-4)}` : 'Unknown';
             const user = args.user || 'Unknown';
             const shortUser = user !== 'Unknown' ? `${user.slice(0, 6)}...${user.slice(-4)}` : 'Unknown';
-            const usdeRet = args.usdeReturned ? (Number(args.usdeReturned) / 1e18).toFixed(2) : '?';
+            const usdeRet = args.usdeReturned ? (Number(args.usdeReturned) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18)).toFixed(2) : '?';
             const wsxmrRet = args.wsxmrReturned ? (Number(args.wsxmrReturned) / 1e8).toFixed(4) : '?';
             const liq = args.liquidationTriggered ? ' (liquidation)' : '';
             title = 'Co-LP Position Unwound';
-            detail = `Token #${tokenId} — ${usdeRet} USDe + ${wsxmrRet} wsXMR${liq}`;
+            detail = `Token #${tokenId} — ${usdeRet} ${ASSET.collateral} + ${wsxmrRet} wsXMR${liq}`;
             break;
         }
         case 'coLPRebalanced': {
@@ -433,7 +434,7 @@ function formatBlocksAgo(blocks) {
     if (blocks === 1) return '1 block ago';
     if (blocks < 60) return `${blocks} blocks ago`; // < 1 min
     
-    const minutes = Math.floor(blocks / 60); // ~1s per block on HyperEVM
+    const minutes = Math.floor(blocks * (getActiveChain()?.blockTimeSec || 1) / 60);
     if (minutes < 60) return `${minutes}m ago`;
     
     const hours = Math.floor(minutes / 60);

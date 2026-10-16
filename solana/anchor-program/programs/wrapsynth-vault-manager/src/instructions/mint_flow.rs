@@ -92,7 +92,7 @@ pub fn initiate_mint(
         let col_price = get_collateral_price(
             &ctx.accounts.pyth_collateral,
             PRICE_MAX_AGE,
-            &QQQX_USD_FEED_ID,
+            &SOL_USD_FEED_ID,
         )?;
         let col_val_usd = collateral_to_usd(vault.collateral_amount, col_price);
         let max_debt_capacity = (col_val_usd * RATIO_PRECISION as u128) / COLLATERAL_RATIO as u128;
@@ -125,7 +125,7 @@ pub fn initiate_mint(
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &QQQX_USD_FEED_ID,
+        &SOL_USD_FEED_ID,
     )?;
     let bond_shares = compute_mint_lock(wsxmr_amount, xmr_price, col_price)?;
     require!(
@@ -264,7 +264,7 @@ pub fn provide_lp_key(
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &QQQX_USD_FEED_ID,
+        &SOL_USD_FEED_ID,
     )?;
     let bond_shares = compute_mint_lock(request.wsxmr_amount, xmr_price, col_price)?;
 
@@ -343,7 +343,7 @@ pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &QQQX_USD_FEED_ID,
+        &SOL_USD_FEED_ID,
     )?;
 
     // Re-price the par-value lock at ready time
@@ -449,21 +449,19 @@ pub fn finalize_mint(ctx: Context<FinalizeMint>) -> Result<()> {
     // Extract bump and account_info before mutable borrows (needed for CPIs).
     let gs_bump = ctx.accounts.global_state.load()?.bump;
     let gs_info = ctx.accounts.global_state.to_account_info();
-    let vault_info = ctx.accounts.vault.to_account_info();
 
     execute_finalize(
         request,
         &mut ctx.accounts.vault,
-        &vault_info,
         &ctx.accounts.global_state,
         &ctx.accounts.wsxmr_mint,
         &ctx.accounts.recipient_wsxmr_ata,
         &ctx.accounts.lp_wsxmr_ata,
-        &ctx.accounts.collateral_mint,
-        &ctx.accounts.vault_collateral_ata,
-        &ctx.accounts.program_collateral_ata,
+        &ctx.accounts.vault_collateral_escrow,
+        &ctx.accounts.collateral_escrow,
         &mut ctx.accounts.pending_returns,
         &ctx.accounts.token_program,
+        &ctx.accounts.system_program,
         gs_info,
         gs_bump,
     )
@@ -476,16 +474,15 @@ pub fn finalize_mint(ctx: Context<FinalizeMint>) -> Result<()> {
 fn execute_finalize<'a>(
     request: &mut MintRequest,
     vault: &mut Vault,
-    vault_info: &AccountInfo<'a>,
     global_state: &AccountLoader<'a, GlobalState>,
     wsxmr_mint: &InterfaceAccount<'a, Mint>,
     recipient_wsxmr_ata: &InterfaceAccount<'a, TokenAccount>,
     lp_wsxmr_ata: &InterfaceAccount<'a, TokenAccount>,
-    collateral_mint: &InterfaceAccount<'a, Mint>,
-    vault_collateral_ata: &InterfaceAccount<'a, TokenAccount>,
-    program_collateral_ata: &InterfaceAccount<'a, TokenAccount>,
+    vault_collateral_escrow: &AccountInfo<'a>,
+    collateral_escrow: &AccountInfo<'a>,
     initiator_returns: &mut PendingReturns,
     token_program: &Program<'a, Token2022>,
+    system_program: &Program<'a, System>,
     gs_info: AccountInfo<'a>,
     gs_bump: u8,
 ) -> Result<()> {
@@ -518,16 +515,14 @@ fn execute_finalize<'a>(
                 .checked_add(request.locked_collateral)
                 .ok_or(WrapSynthError::MathOverflow)?;
             // Physically move the slashed bond into the program pool so the
-            // pending-returns credit is backed. The CPI is signed by the vault
-            // PDA, so holding the global_state borrow across it is safe.
+            // pending-returns credit is backed. The system transfer is signed
+            // by the vault escrow PDA, so holding the global_state borrow
+            // across it is safe.
             slash_to_pool(
                 vault,
-                vault_info,
-                &vault_collateral_ata.to_account_info(),
-                &program_collateral_ata.to_account_info(),
-                &collateral_mint.to_account_info(),
-                &token_program.to_account_info(),
-                collateral_mint.decimals,
+                vault_collateral_escrow,
+                collateral_escrow,
+                &system_program.to_account_info(),
                 request.locked_collateral,
             )?;
         }
@@ -688,20 +683,18 @@ pub fn cancel_mint(ctx: Context<CancelMint>) -> Result<()> {
         // Secret already public via reveal_secret — mint anyway (see execute_finalize).
         let gs_bump = ctx.accounts.global_state.load()?.bump;
         let gs_info = ctx.accounts.global_state.to_account_info();
-        let vault_info = vault.to_account_info();
         execute_finalize(
             request,
             vault,
-            &vault_info,
             &ctx.accounts.global_state,
             &ctx.accounts.wsxmr_mint,
             &ctx.accounts.recipient_wsxmr_ata,
             &ctx.accounts.lp_wsxmr_ata,
-            &ctx.accounts.collateral_mint,
-            &ctx.accounts.vault_collateral_ata,
-            &ctx.accounts.program_collateral_ata,
+            &ctx.accounts.vault_collateral_escrow,
+            &ctx.accounts.collateral_escrow,
             &mut ctx.accounts.initiator_returns,
             &ctx.accounts.token_program,
+            &ctx.accounts.system_program,
             gs_info,
             gs_bump,
         )?;
@@ -832,12 +825,9 @@ pub fn reclaim_parked_deposit(ctx: Context<ReclaimParkedDeposit>) -> Result<()> 
                 .ok_or(WrapSynthError::MathOverflow)?;
             slash_to_pool(
                 vault,
-                &vault.to_account_info(),
-                &ctx.accounts.vault_collateral_ata.to_account_info(),
-                &ctx.accounts.program_collateral_ata.to_account_info(),
-                &ctx.accounts.collateral_mint.to_account_info(),
-                &ctx.accounts.token_program.to_account_info(),
-                ctx.accounts.collateral_mint.decimals,
+                &ctx.accounts.vault_collateral_escrow,
+                &ctx.accounts.collateral_escrow,
+                &ctx.accounts.system_program.to_account_info(),
                 request.locked_collateral,
             )?;
         } else if vault.locked_collateral >= request.locked_collateral {
@@ -971,12 +961,9 @@ pub fn sweep_unclaimed_expired_mint(ctx: Context<SweepUnclaimedExpiredMint>) -> 
                 .ok_or(WrapSynthError::MathOverflow)?;
             slash_to_pool(
                 vault,
-                &vault.to_account_info(),
-                &ctx.accounts.vault_collateral_ata.to_account_info(),
-                &ctx.accounts.program_collateral_ata.to_account_info(),
-                &ctx.accounts.collateral_mint.to_account_info(),
-                &ctx.accounts.token_program.to_account_info(),
-                ctx.accounts.collateral_mint.decimals,
+                &ctx.accounts.vault_collateral_escrow,
+                &ctx.accounts.collateral_escrow,
+                &ctx.accounts.system_program.to_account_info(),
                 request.locked_collateral,
             )?;
         } else if vault.locked_collateral >= request.locked_collateral {
@@ -1050,7 +1037,7 @@ pub struct InitiateMint<'info> {
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth QQQX/USD price feed — validated by oracle.rs
+    /// CHECK: Pyth SOL/USD price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
@@ -1084,7 +1071,7 @@ pub struct SetMintReady<'info> {
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth QQQX/USD price feed — validated by oracle.rs
+    /// CHECK: Pyth SOL/USD price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
 }
 
@@ -1131,27 +1118,21 @@ pub struct FinalizeMint<'info> {
     )]
     pub pending_returns: Account<'info, crate::state::PendingReturns>,
 
-    pub collateral_mint: InterfaceAccount<'info, Mint>,
-
-    /// Vault collateral ATA — slash source for the liquidated-vault branch.
+    /// CHECK: lamport-only vault collateral escrow PDA — validated by seeds
     #[account(
         mut,
         seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
         bump,
-        token::mint = collateral_mint,
-        token::authority = vault,
     )]
-    pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+    pub vault_collateral_escrow: AccountInfo<'info>,
 
-    /// Program collateral pool ATA — slash destination.
+    /// CHECK: lamport-only program collateral pool PDA — validated by seeds
     #[account(
         mut,
         seeds = [PROGRAM_COLLATERAL_SEED],
         bump,
-        token::mint = collateral_mint,
-        token::authority = global_state,
     )]
-    pub program_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+    pub collateral_escrow: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -1185,7 +1166,7 @@ pub struct ProvideLPKey<'info> {
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth QQQX/USD price feed — validated by oracle.rs
+    /// CHECK: Pyth SOL/USD price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
 }
 
@@ -1273,27 +1254,21 @@ pub struct ReclaimParkedDeposit<'info> {
     )]
     pub initiator_returns: Box<Account<'info, PendingReturns>>,
 
-    pub collateral_mint: InterfaceAccount<'info, Mint>,
-
-    /// Vault collateral ATA — slash source.
+    /// CHECK: lamport-only vault collateral escrow PDA — validated by seeds
     #[account(
         mut,
         seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
         bump,
-        token::mint = collateral_mint,
-        token::authority = vault,
     )]
-    pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+    pub vault_collateral_escrow: AccountInfo<'info>,
 
-    /// Program collateral pool ATA — slash destination.
+    /// CHECK: lamport-only program collateral pool PDA — validated by seeds
     #[account(
         mut,
         seeds = [PROGRAM_COLLATERAL_SEED],
         bump,
-        token::mint = collateral_mint,
-        token::authority = global_state,
     )]
-    pub program_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+    pub collateral_escrow: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -1369,27 +1344,21 @@ pub struct SweepUnclaimedExpiredMint<'info> {
     )]
     pub initiator_returns: Box<Account<'info, PendingReturns>>,
 
-    pub collateral_mint: InterfaceAccount<'info, Mint>,
-
-    /// Vault collateral ATA — slash source.
+    /// CHECK: lamport-only vault collateral escrow PDA — validated by seeds
     #[account(
         mut,
         seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
         bump,
-        token::mint = collateral_mint,
-        token::authority = vault,
     )]
-    pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+    pub vault_collateral_escrow: AccountInfo<'info>,
 
-    /// Program collateral pool ATA — slash destination.
+    /// CHECK: lamport-only program collateral pool PDA — validated by seeds
     #[account(
         mut,
         seeds = [PROGRAM_COLLATERAL_SEED],
         bump,
-        token::mint = collateral_mint,
-        token::authority = global_state,
     )]
-    pub program_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+    pub collateral_escrow: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -1446,27 +1415,21 @@ pub struct CancelMint<'info> {
     #[account(mut)]
     pub lp_wsxmr_ata: InterfaceAccount<'info, TokenAccount>,
 
-    pub collateral_mint: InterfaceAccount<'info, Mint>,
-
-    /// Vault collateral ATA — slash source for the liquidated-vault branch.
+    /// CHECK: lamport-only vault collateral escrow PDA — validated by seeds
     #[account(
         mut,
         seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
         bump,
-        token::mint = collateral_mint,
-        token::authority = vault,
     )]
-    pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+    pub vault_collateral_escrow: AccountInfo<'info>,
 
-    /// Program collateral pool ATA — slash destination.
+    /// CHECK: lamport-only program collateral pool PDA — validated by seeds
     #[account(
         mut,
         seeds = [PROGRAM_COLLATERAL_SEED],
         bump,
-        token::mint = collateral_mint,
-        token::authority = global_state,
     )]
-    pub program_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+    pub collateral_escrow: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,

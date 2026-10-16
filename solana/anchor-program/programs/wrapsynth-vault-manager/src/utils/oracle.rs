@@ -5,24 +5,21 @@
 ///
 /// # DUAL-SOURCE ORACLE DESIGN: SOURCE-OF-TRUTH RULES
 ///
-/// This module implements a two-source oracle design for QQQx collateral:
+/// This module implements a two-source oracle design for native SOL collateral:
 ///
-/// 1. **Market Price (Pyth Crypto.QQQX/USD)** — THE SOLVENCY SOURCE OF TRUTH
+/// 1. **Market Price (Pyth Crypto.SOL/USD)** — THE SOLVENCY SOURCE OF TRUTH
 ///    - Used for: mint collateralization checks, burn health checks, liquidation
 ///      thresholds, co-LP sizing
-///    - Function: `get_collateral_price(&pyth_account, max_age, &QQQX_USD_FEED_ID)`
-///    - Why: Reflects real market conditions 24/7 (crypto-class feed, no market
-///      hours). This is the price at which the protocol can actually realize
-///      collateral value, including issuer/distress discounts.
+///    - Function: `get_collateral_price(&pyth_account, max_age, &SOL_USD_FEED_ID)`
+///    - Why: Reflects real market conditions 24/7 — the price at which the
+///      protocol can actually realize collateral value.
 ///
-/// 2. **Fair Value (Pyth QQQX/USD EMA)** — DISCOUNT GUARD ONLY
-///    - Used for: mint-time discount guard (QQQx trading sharply below its own
-///      EMA signals issuer/custody distress or a market break)
+/// 2. **Fair Value (Pyth SOL/USD EMA)** — DISCOUNT GUARD ONLY
+///    - Used for: mint-time discount guard (spot sharply below its own EMA
+///      signals a flash crash or oracle anomaly)
 ///    - Function: `get_collateral_ema_price(&pyth_collateral_account)`
-///    - Why: Pyth's EMA is published inside the same QQQX/USD message, so no
-///      second feed account is needed. It is a robust smoothed fair-value
-///      proxy and — unlike an underlying-QQQ feed — it already reflects the
-///      Token-2022 scaledUiAmount multiplier (dividends/splits).
+///    - Why: Pyth's EMA is published inside the same SOL/USD message, so no
+///      second feed account is needed.
 ///
 /// **CRITICAL**: Never use the EMA for any solvency/health calculation. It is
 /// purely a fair-value reference for the discount guard. All debt safety
@@ -30,7 +27,7 @@
 ///
 /// # DISCOUNT GUARD
 ///
-/// - Fair value = QQQX/USD EMA (24/7, multiplier-aware)
+/// - Fair value = SOL/USD EMA (24/7)
 /// - Threshold = EMA × (10000 - DEPEG_TOLERANCE_BPS) / 10000
 /// - If spot < threshold → acute discount → pause new mints
 ///   (liquidations/burns still settle at market spot)
@@ -168,30 +165,30 @@ pub fn get_collateral_price(
     normalize_pyth_price(parsed.price, parsed.exponent)
 }
 
-/// Fetch the QQQx EMA price from the same QQQX/USD message.
+/// Fetch the SOL EMA price from the same SOL/USD message.
 ///
 /// Used as the fair-value reference for the discount guard: Pyth's EMA is a
 /// 24/7 available smoothed price that captures the scaledUiAmount fair value
-/// without depending on the slower QQQX/QQQ.RR redemption-rate feed.
+/// without depending on a second feed account.
 pub fn get_collateral_ema_price(price_account: &AccountInfo, max_age_secs: u64) -> Result<u128> {
     let parsed = parse_pyth_price(price_account)?;
-    validate_price(&parsed, max_age_secs, &QQQX_USD_FEED_ID)?;
+    validate_price(&parsed, max_age_secs, &SOL_USD_FEED_ID)?;
     normalize_pyth_price(parsed.ema_price, parsed.exponent)
 }
 
 /// Check for QQQx market discount (distress) condition.
 ///
-/// Compares the market QQQX/USD spot price against its own EMA (fair-value
+/// Compares the market SOL/USD spot price against its own EMA (fair-value
 /// proxy). If spot trades more than DEPEG_TOLERANCE_BPS below the EMA, QQQx is
 /// under acute discount pressure — likely issuer/custody distress — and new
 /// mints must pause. Liquidations and burns stay permissionless (they use the
 /// market price regardless).
 ///
 /// # Arguments
-/// * `qqqx_market_price` - QQQX/USD spot from Pyth (18 decimals)
-/// * `qqqx_ema_price` - QQQX/USD EMA from Pyth (18 decimals)
-pub fn check_discount_guard(qqqx_market_price: u128, qqqx_ema_price: u128) -> Result<()> {
-    let threshold = qqqx_ema_price
+/// * `sol_market_price` - SOL/USD spot from Pyth (18 decimals)
+/// * `sol_ema_price` - SOL/USD EMA from Pyth (18 decimals)
+pub fn check_discount_guard(sol_market_price: u128, sol_ema_price: u128) -> Result<()> {
+    let threshold = sol_ema_price
         .checked_mul((BPS_DENOMINATOR - DEPEG_TOLERANCE_BPS) as u128)
         .ok_or(WrapSynthError::MathOverflow)?
         .checked_div(BPS_DENOMINATOR as u128)
@@ -199,7 +196,7 @@ pub fn check_discount_guard(qqqx_market_price: u128, qqqx_ema_price: u128) -> Re
 
     // If market spot < threshold, distress discount detected
     require!(
-        qqqx_market_price >= threshold,
+        sol_market_price >= threshold,
         WrapSynthError::CollateralDepegged
     );
 

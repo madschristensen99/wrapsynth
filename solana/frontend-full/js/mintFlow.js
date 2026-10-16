@@ -453,7 +453,7 @@ export class MintFlow {
             // getXmrPrice enforces the 2-minute staleness check on-chain
             const xmrPrice = await readHub('getXmrPrice', []);
             const collateralPrice = await readHub('getCollateralPrice', []);
-            console.log('Oracle prices are fresh — XMR:', xmrPrice.toString(), 'QQQx:', collateralPrice.toString());
+            console.log('Oracle prices are fresh — XMR:', xmrPrice.toString(), 'SOL:', collateralPrice.toString());
             return;
         } catch (error) {
             // StalePrice() or any other revert means we need to update
@@ -1182,9 +1182,9 @@ export class MintFlow {
                         try {
                             const { CONTRACTS } = await import('./config.js?v=3.22');
                             await writeHub('withdrawReturns', [CONTRACTS.stataUSDe]);
-                            console.log('Slashed QQQx key bond claimed via withdrawReturns');
+                            console.log('Slashed SOL key bond claimed via withdrawReturns');
                         } catch (usdeErr) {
-                            console.warn('Could not withdraw QQQx returns (may have none):', usdeErr.message);
+                            console.warn('Could not withdraw SOL returns (may have none):', usdeErr.message);
                         }
                     } else {
                         const blocksRemaining = claimWindowEnd - Number(currentBlock);
@@ -1215,9 +1215,9 @@ export class MintFlow {
                         try {
                             const { CONTRACTS } = await import('./config.js?v=3.22');
                             await writeHub('withdrawReturns', [CONTRACTS.stataUSDe]);
-                            console.log('Slashed QQQx collateral claimed via withdrawReturns');
+                            console.log('Slashed SOL collateral claimed via withdrawReturns');
                         } catch (usdeErr) {
-                            console.warn('Could not withdraw QQQx returns (may have none):', usdeErr.message);
+                            console.warn('Could not withdraw SOL returns (may have none):', usdeErr.message);
                         }
                     } else {
                         const blocksRemaining = claimWindowEnd - Number(currentBlock);
@@ -1256,9 +1256,9 @@ export class MintFlow {
                         try {
                             const { CONTRACTS } = await import('./config.js?v=3.22');
                             await writeHub('withdrawReturns', [CONTRACTS.stataUSDe]);
-                            console.log('Slashed QQQx collateral claimed via withdrawReturns');
+                            console.log('Slashed SOL collateral claimed via withdrawReturns');
                         } catch (usdeErr) {
-                            console.warn('Could not withdraw QQQx returns (may have none):', usdeErr.message);
+                            console.warn('Could not withdraw SOL returns (may have none):', usdeErr.message);
                         }
                     }
                     // Withdraw griefing deposit

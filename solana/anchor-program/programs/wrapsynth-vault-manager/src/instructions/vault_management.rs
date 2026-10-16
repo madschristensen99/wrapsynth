@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_2022::{transfer_checked, Token2022, TransferChecked};
-use anchor_spl::token_interface::{Mint, TokenAccount};
+use anchor_lang::solana_program::program::invoke_signed;
+use anchor_lang::solana_program::system_instruction;
 
 use crate::constants::*;
 use crate::errors::WrapSynthError;
@@ -41,8 +41,8 @@ pub fn create_vault(ctx: Context<CreateVault>) -> Result<()> {
 }
 
 // ─── deposit_collateral ──────────────────────────────────────────────────────
-// Raw QQQx deposit (equivalent to depositSDAI in VaultManager.sol). No yield
-// wrapper: the amount transferred is the amount tracked 1:1.
+// Native SOL deposit (equivalent to depositSDAI in VaultManager.sol). No yield
+// wrapper: the lamports transferred are tracked 1:1 in collateral_amount.
 
 pub fn deposit_collateral(ctx: Context<DepositCollateral>, amount: u64) -> Result<()> {
     require!(amount > 0, WrapSynthError::ZeroAmount);
@@ -50,17 +50,18 @@ pub fn deposit_collateral(ctx: Context<DepositCollateral>, amount: u64) -> Resul
     let vault = &mut ctx.accounts.vault;
     require!(vault.active, WrapSynthError::VaultNotActive);
 
-    // Transfer collateral from LP to vault ATA
-    let cpi_ctx = CpiContext::new(
-        ctx.accounts.token_program.to_account_info(),
-        TransferChecked {
-            from: ctx.accounts.lp_collateral_ata.to_account_info(),
-            mint: ctx.accounts.collateral_mint.to_account_info(),
-            to: ctx.accounts.vault_collateral_ata.to_account_info(),
-            authority: ctx.accounts.lp.to_account_info(),
-        },
-    );
-    transfer_checked(cpi_ctx, amount, ctx.accounts.collateral_mint.decimals)?;
+    // Transfer SOL from LP wallet to the vault collateral escrow PDA
+    // (auto-creates the account on first deposit).
+    anchor_lang::system_program::transfer(
+        CpiContext::new(
+            ctx.accounts.system_program.to_account_info(),
+            anchor_lang::system_program::Transfer {
+                from: ctx.accounts.lp.to_account_info(),
+                to: ctx.accounts.vault_collateral_escrow.to_account_info(),
+            },
+        ),
+        amount,
+    )?;
 
     vault.collateral_amount = vault
         .collateral_amount
@@ -93,7 +94,7 @@ pub fn withdraw_collateral(ctx: Context<WithdrawCollateral>, amount: u64) -> Res
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &QQQX_USD_FEED_ID,
+        &SOL_USD_FEED_ID,
     )?;
 
     // Cannot withdraw locked collateral
@@ -127,25 +128,26 @@ pub fn withdraw_collateral(ctx: Context<WithdrawCollateral>, amount: u64) -> Res
 
     vault.collateral_amount = new_collateral;
 
-    // Transfer collateral from vault ATA to LP
-    let bump = vault.bump;
+    // Transfer SOL from the vault collateral escrow PDA to the LP
     let lp_key = vault.lp_address;
-    let seeds: &[&[u8]] = &[VAULT_SEED, lp_key.as_ref(), &[bump]];
-    let signer_seeds = &[seeds];
+    let vault_key = ctx.accounts.vault.key();
+    let escrow_bump = ctx.bumps.vault_collateral_escrow;
+    let seeds: &[&[u8]] = &[VAULT_COLLATERAL_SEED, vault_key.as_ref(), &[escrow_bump]];
+    invoke_signed(
+        &system_instruction::transfer(
+            &ctx.accounts.vault_collateral_escrow.key(),
+            &ctx.accounts.lp.key(),
+            amount,
+        ),
+        &[
+            ctx.accounts.vault_collateral_escrow.to_account_info(),
+            ctx.accounts.lp.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+        ],
+        &[seeds],
+    )?;
 
-    let cpi_ctx = CpiContext::new_with_signer(
-        ctx.accounts.token_program.to_account_info(),
-        TransferChecked {
-            from: ctx.accounts.vault_collateral_ata.to_account_info(),
-            mint: ctx.accounts.collateral_mint.to_account_info(),
-            to: ctx.accounts.lp_collateral_ata.to_account_info(),
-            authority: ctx.accounts.vault.to_account_info(),
-        },
-        signer_seeds,
-    );
-    transfer_checked(cpi_ctx, amount, ctx.accounts.collateral_mint.decimals)?;
-
-    msg!("Withdrew {} collateral from vault {}", amount, lp_key);
+    msg!("Withdrew {} lamports from vault {}", amount, lp_key);
     Ok(())
 }
 
@@ -279,37 +281,43 @@ pub fn deactivate_vault(ctx: Context<DeactivateVault>) -> Result<()> {
 
 // ─── Internal: slash collateral to the program pool ─────────────────────────
 
-/// Physically move slashed collateral from a vault ATA to the program
-/// collateral pool ATA. Called at credit time whenever collateral is owed to a
-/// PendingReturns account so the pool is always fully backed.
-/// The vault PDA signs the transfer.
+/// Physically move slashed collateral (lamports) from a vault escrow to the
+/// program collateral pool escrow. Called at credit time whenever collateral
+/// is owed to a PendingReturns account so the pool is always fully backed.
+/// The vault escrow PDA signs the system transfer with its own seeds.
 pub fn slash_to_pool<'a>(
     vault: &Vault,
-    vault_info: &AccountInfo<'a>,
-    vault_collateral_ata: &AccountInfo<'a>,
-    program_collateral_ata: &AccountInfo<'a>,
-    collateral_mint: &AccountInfo<'a>,
-    token_program: &AccountInfo<'a>,
-    decimals: u8,
+    vault_collateral_escrow: &AccountInfo<'a>,
+    collateral_escrow: &AccountInfo<'a>,
+    system_program: &AccountInfo<'a>,
     amount: u64,
 ) -> Result<()> {
     if amount == 0 {
         return Ok(());
     }
-    let lp_key = vault.lp_address;
-    let seeds: &[&[u8]] = &[VAULT_SEED, lp_key.as_ref(), &[vault.bump]];
-    let signer_seeds = &[seeds];
-    let cpi_ctx = CpiContext::new_with_signer(
-        token_program.clone(),
-        TransferChecked {
-            from: vault_collateral_ata.clone(),
-            mint: collateral_mint.clone(),
-            to: program_collateral_ata.clone(),
-            authority: vault_info.clone(),
-        },
-        signer_seeds,
+    let (vault_pda, _) = Pubkey::find_program_address(
+        &[VAULT_SEED, vault.lp_address.as_ref()],
+        &crate::ID,
     );
-    transfer_checked(cpi_ctx, amount, decimals)
+    let (_, escrow_bump) = Pubkey::find_program_address(
+        &[VAULT_COLLATERAL_SEED, vault_pda.as_ref()],
+        &crate::ID,
+    );
+    let seeds: &[&[u8]] = &[VAULT_COLLATERAL_SEED, vault_pda.as_ref(), &[escrow_bump]];
+    invoke_signed(
+        &system_instruction::transfer(
+            &vault_collateral_escrow.key(),
+            &collateral_escrow.key(),
+            amount,
+        ),
+        &[
+            vault_collateral_escrow.clone(),
+            collateral_escrow.clone(),
+            system_program.clone(),
+        ],
+        &[seeds],
+    )?;
+    Ok(())
 }
 
 // ─── Accounts ────────────────────────────────────────────────────────────────
@@ -358,60 +366,14 @@ pub struct DepositCollateral<'info> {
     )]
     pub global_state: AccountLoader<'info, GlobalState>,
 
-    pub collateral_mint: InterfaceAccount<'info, Mint>,
-
-    #[account(mut)]
-    pub lp_collateral_ata: InterfaceAccount<'info, TokenAccount>,
-
+    /// CHECK: lamport-only vault collateral escrow PDA — validated by seeds
     #[account(
         mut,
         seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
         bump,
-        token::mint = collateral_mint,
-        token::authority = vault,
     )]
-    pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+    pub vault_collateral_escrow: AccountInfo<'info>,
 
-    pub token_program: Program<'info, Token2022>,
-    pub system_program: Program<'info, System>,
-}
-
-// ─── initialize_vault_collateral ─────────────────────────────────────────────
-
-pub fn initialize_vault_collateral(ctx: Context<InitializeVaultCollateral>) -> Result<()> {
-    msg!(
-        "Vault collateral ATA initialized for vault: {}",
-        ctx.accounts.vault.key()
-    );
-    Ok(())
-}
-
-#[derive(Accounts)]
-pub struct InitializeVaultCollateral<'info> {
-    #[account(mut)]
-    pub lp: Signer<'info>,
-
-    #[account(
-        seeds = [VAULT_SEED, lp.key().as_ref()],
-        bump = vault.bump,
-        constraint = vault.lp_address == lp.key() @ WrapSynthError::Unauthorized,
-    )]
-    pub vault: Box<Account<'info, Vault>>,
-
-    pub collateral_mint: InterfaceAccount<'info, Mint>,
-
-    #[account(
-        init,
-        payer = lp,
-        seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
-        bump,
-        token::mint = collateral_mint,
-        token::authority = vault,
-        token::token_program = token_program,
-    )]
-    pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
-
-    pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
 }
 
@@ -435,26 +397,19 @@ pub struct WithdrawCollateral<'info> {
     )]
     pub global_state: AccountLoader<'info, GlobalState>,
 
-    pub collateral_mint: InterfaceAccount<'info, Mint>,
-
-    #[account(mut)]
-    pub lp_collateral_ata: InterfaceAccount<'info, TokenAccount>,
-
+    /// CHECK: lamport-only vault collateral escrow PDA — validated by seeds
     #[account(
         mut,
         seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
         bump,
-        token::mint = collateral_mint,
-        token::authority = vault,
     )]
-    pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+    pub vault_collateral_escrow: AccountInfo<'info>,
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth QQQX/USD price feed — validated by oracle.rs
+    /// CHECK: Pyth SOL/USD price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
 
-    pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
 }
 

@@ -1,23 +1,24 @@
 // RedStone Oracle Price Update Helper
 // Manually builds calldata to avoid viem v1 / connector selector bugs with bytes[] params
 
-import { CONTRACTS, ABIS } from './config.js?v=3.22';
-import { getWalletClient, getPublicClient, getUserAddress, ensureAuthorizedAccount } from './viemClient.js?v=3.22';
+import { CONTRACTS, ABIS, getActiveChain } from './config.js?v=3.22';
+import { getWalletClient, getPublicClient, getUserAddress, ensureAuthorizedAccount, getViemChain } from './viemClient.js?v=3.22';
 
 /**
  * Update oracle prices using RedStone
  * Manually constructs transaction data: viem v2 encodeFunctionData + RedStone payload
  */
 /**
- * Fetch current XMR and USDe prices from RedStone API (off-chain, no wallet needed).
+ * Fetch current prices for the active chain's RedStone feeds (off-chain, no wallet needed).
  * Returns human-readable prices for UI display.
  */
 export async function fetchRedStonePrices() {
     console.log('Fetching RedStone prices...');
 
+    const feeds = (getActiveChain()?.redstoneFeeds || ['XMR']).join(',');
     try {
         const resp = await fetch(
-            'https://api.redstone.finance/prices?symbol=XMR,USDe&provider=redstone-primary-prod&limit=1',
+            `https://api.redstone.finance/prices?symbol=${feeds}&provider=redstone-primary-prod&limit=1`,
             { headers: { 'Accept': 'application/json' } }
         );
         if (!resp.ok) {
@@ -29,19 +30,22 @@ export async function fetchRedStonePrices() {
         // The API returns an array of price objects
         const prices = Array.isArray(data) ? data : (data.prices || []);
 
-        const xmrEntry = prices.find(p => p.symbol === 'XMR' || p.symbol === 'XMR' );
-        const usdeEntry = prices.find(p => p.symbol === 'USDe' || p.symbol === 'USDE');
+        const feedList = getActiveChain()?.redstoneFeeds || ['XMR'];
+        const entry = (sym) => prices.find(p => p.symbol === sym || p.symbol === sym.toUpperCase());
+        const xmrEntry = entry('XMR');
+        const collSym = feedList.find(s => s !== 'XMR');
+        const collEntry = collSym ? entry(collSym) : null;
 
         return {
             xmrPrice: xmrEntry ? Number(xmrEntry.value) : null,
-            usdePrice: usdeEntry ? Number(usdeEntry.value) : null,
+            collateralPrice: collEntry ? Number(collEntry.value) : null,
             xmrTimestamp: xmrEntry ? xmrEntry.timestamp : null,
-            usdeTimestamp: usdeEntry ? usdeEntry.timestamp : null
+            collateralTimestamp: collEntry ? collEntry.timestamp : null
         };
     } catch (error) {
         console.warn('Could not fetch RedStone prices from API:', error.message);
         // Fallback: return nulls so caller can still proceed with payload-based update
-        return { xmrPrice: null, usdePrice: null, xmrTimestamp: null, usdeTimestamp: null };
+        return { xmrPrice: null, collateralPrice: null, xmrTimestamp: null, collateralTimestamp: null };
     }
 }
 
@@ -53,7 +57,7 @@ export async function buildRedStonePayload() {
     const { getWalletClientRs } = await import('https://esm.sh/@kreskolabs/viem-redstone-connector@latest');
     const { custom } = await import('https://esm.sh/viem@2.7.0');
     const { parseAbi, encodeFunctionData } = await import('https://esm.sh/viem@2.7.0');
-    const hyperevm = { id: 999, name: 'HyperEVM', nativeCurrency: { name: 'HYPE', symbol: 'HYPE', decimals: 18 }, rpcUrls: { default: { http: ['https://rpc.hyperliquid.xyz/evm'] } } };
+    const chain = getViemChain();
 
     const account = getUserAddress();
 
@@ -62,10 +66,10 @@ export async function buildRedStonePayload() {
         uniqueSignersCount: 3,
         urls: ['https://oracle-gateway-1.a.redstone.finance']
     };
-    const dataFeeds = ['XMR', 'USDe'];
+    const dataFeeds = getActiveChain()?.redstoneFeeds || ['XMR'];
 
     const rsWalletClient = getWalletClientRs(
-        { chain: hyperevm, transport: custom(window.ethereum), account },
+        { chain, transport: custom(window.ethereum), account },
         dataServiceConfig,
         dataFeeds
     );
@@ -99,10 +103,11 @@ export async function sendPriceUpdate({ functionData, redstonePayload }) {
 
     const data = functionData + redstonePayload;
 
-    // Verify wallet is on HyperEVM before signing
+    // Verify wallet is on the selected chain before signing
+    const chainCfg = getActiveChain();
     const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
-    if (currentChainId !== '0x3e7') {
-        throw new Error('Please switch your wallet to HyperEVM (Chain ID 999) to continue.');
+    if (parseInt(currentChainId, 16) !== chainCfg.chainId) {
+        throw new Error(`Please switch your wallet to ${chainCfg.name} (Chain ID ${chainCfg.chainId}) to continue.`);
     }
 
     // Send directly via the wallet provider — bypasses viem transport entirely

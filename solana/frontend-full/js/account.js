@@ -327,7 +327,7 @@ async function fetchBurnHistory(address) {
         details: [
           { label: 'Request ID', value: formatAddr(id) },
           { label: 'LP Vault', value: formatAddr(req.lpVault) },
-          { label: 'Locked Collateral', value: formatToken(req.lockedCollateral, 18) + ' QQQx' }
+          { label: 'Locked Collateral', value: formatToken(req.lockedCollateral, 18) + ' SOL' }
         ]
       });
     } catch (e) {

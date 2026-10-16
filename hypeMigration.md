@@ -1,6 +1,15 @@
 # WrapSynth HyperEVM Migration Spec
 
-**Status:** Draft · September 2026
+> **DEPRECATED — October 2026.** The HyperEVM deployment is retired and this
+> migration plan is superseded. The protocol now deploys per-chain stacks on
+> BNB Chain (QQQB collateral), Base (cbBTC), and Robinhood Chain (SPY), served
+> by a single multi-chain frontend. HyperEVM remains in git history and its
+> contracts stay live on-chain (immutable, no admin keys), but it is no longer
+> a supported venue. See `docs/HYPERLIQUID_RISKS.md` for why deeper
+> Hyperliquid integration (CLOB / HIP-3 perps) is deferred pending further
+> investigation.
+
+**Status:** ~~Draft~~ **Superseded** · September 2026
 **Target chain:** HyperEVM (Hyperliquid L1), ChainID `999`, RPC `https://rpc.hyperliquid.xyz/evm`
 **Canonical deployment:** replaces the Gnosis Chain beta as the primary venue once live
 

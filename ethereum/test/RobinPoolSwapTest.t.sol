@@ -4,6 +4,7 @@ pragma solidity ^0.8.19;
 import {console} from "forge-std/Test.sol";
 import {RobinhoodMockTestBase} from "./RobinhoodTestBase.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
+import {CoLPFacet} from "../contracts/facets/CoLPFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IUniswapV3Pool} from "../contracts/interfaces/external/IUniswapV3Pool.sol";
@@ -236,7 +237,7 @@ contract PoolSwapTestRobin is RobinhoodMockTestBase, IUniswapV3SwapCallbackRobin
         wsxmr.approve(address(hub), type(uint256).max);
 
         vm.prank(user);
-        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
         assertTrue(tokenId > 0, "Co-LP should return valid tokenId");
 
         console.log("Co-LP created, tokenId:", tokenId);
@@ -317,7 +318,7 @@ contract PoolSwapTestRobin is RobinhoodMockTestBase, IUniswapV3SwapCallbackRobin
         vm.prank(user);
         wsxmr.approve(address(hub), type(uint256).max);
         vm.prank(user);
-        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
         assertTrue(tokenId > 0, "Co-LP should return valid tokenId");
 
         // 4. Trade against the position to generate fees
@@ -338,7 +339,7 @@ contract PoolSwapTestRobin is RobinhoodMockTestBase, IUniswapV3SwapCallbackRobin
         uint256 wsxmrPendingBefore = _getPendingReturns(user, address(wsxmr));
 
         vm.prank(user);
-        VaultFacet(address(hub)).collectCoLPFees(tokenId);
+        CoLPFacet(address(hub)).collectCoLPFees(tokenId);
 
         uint256 daiPendingAfter = _getPendingReturns(lp, address(stata));
         uint256 wsxmrPendingAfter = _getPendingReturns(user, address(wsxmr));
@@ -372,7 +373,7 @@ contract PoolSwapTestRobin is RobinhoodMockTestBase, IUniswapV3SwapCallbackRobin
         vm.prank(user);
         wsxmr.approve(address(hub), type(uint256).max);
         vm.prank(user);
-        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
         assertTrue(tokenId > 0, "Co-LP should return valid tokenId");
 
         console.log("Co-LP tokenId:", tokenId);

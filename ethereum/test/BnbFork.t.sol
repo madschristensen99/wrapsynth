@@ -6,6 +6,7 @@ import {BnbTestBase} from "./BnbTestBase.sol";
 import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
 import {BnbOracleFacet} from "../contracts/facets/BnbOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
+import {CoLPFacet} from "../contracts/facets/CoLPFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
 import {wsXMR} from "../contracts/wsXMR.sol";
@@ -196,7 +197,7 @@ contract BnbForkTest is BnbTestBase {
 
         vm.startPrank(user);
         wsxmr.approve(address(hub), amount);
-        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, amount, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, amount, block.timestamp + 1 hours);
         vm.stopPrank();
 
         assertGt(tokenId, 0, "no NFT position minted");

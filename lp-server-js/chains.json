@@ -1,0 +1,44 @@
+{
+  "chains": [
+    {
+      "key": "bnb",
+      "name": "BNB Chain",
+      "chainId": 56,
+      "manifest": "../frontend/deployment.bnb.json",
+      "rpcEnv": "BNB_RPC_URLS",
+      "rpcUrls": [
+        "https://bsc-dataseed.bnbchain.org",
+        "https://bsc.publicnode.com",
+        "https://binance.llamarpc.com"
+      ],
+      "redstoneFeeds": ["XMR"],
+      "logChunkSize": 900
+    },
+    {
+      "key": "base",
+      "name": "Base",
+      "chainId": 8453,
+      "manifest": "../frontend/deployment.base.json",
+      "rpcEnv": "BASE_RPC_URLS",
+      "rpcUrls": [
+        "https://mainnet.base.org",
+        "https://base.publicnode.com",
+        "https://base.llamarpc.com"
+      ],
+      "redstoneFeeds": ["XMR"],
+      "logChunkSize": 900
+    },
+    {
+      "key": "robinhood",
+      "name": "Robinhood Chain",
+      "chainId": 4663,
+      "manifest": "../frontend/deployment.robinhood.json",
+      "rpcEnv": "ROBINHOOD_RPC_URLS",
+      "rpcUrls": [
+        "https://rpc.mainnet.chain.robinhood.com"
+      ],
+      "redstoneFeeds": ["XMR"],
+      "logChunkSize": 900
+    }
+  ]
+}

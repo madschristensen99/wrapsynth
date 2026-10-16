@@ -1,0 +1,10 @@
+# Keep GitHub language stats focused on first-party code.
+
+# Foundry deps are deliberately vendored (see ethereum/patch-redstone.sh).
+ethereum/vendor/** linguist-vendored
+
+# Generated / vendored JS — currently gitignored, rules kept in case
+# they are ever committed.
+solana/frontend/dist/** linguist-generated
+solana/frontend-full/js/vendor/** linguist-vendored
+solana/anchor-program/dist-test/** linguist-generated

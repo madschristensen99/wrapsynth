@@ -1,5 +1,9 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::program::invoke_signed;
+use anchor_lang::solana_program::system_instruction;
 use anchor_spl::associated_token::AssociatedToken;
+use anchor_spl::token::spl_token as spl_token_crate;
+use anchor_spl::token::{self as spl_token, Token};
 use anchor_spl::token_2022::{transfer_checked, Token2022, TransferChecked};
 use anchor_spl::token_interface::{Mint, TokenAccount};
 
@@ -24,9 +28,10 @@ pub fn set_max_co_lp_range(ctx: Context<SetMaxCoLPRange>, bps: u16) -> Result<()
 }
 
 // ─── user_open_co_lp ─────────────────────────────────────────────────────────
-// User pairs wsXMR with the vault's idle QQQx collateral to open a concentrated
-// position on Orca Whirlpools. The vault manager (GlobalState PDA) is the
-// position authority; the position NFT is held in a program-owned ATA.
+// User pairs wsXMR with the vault's idle SOL collateral (wrapped to wSOL for
+// the pool leg) to open a concentrated position on Orca Whirlpools. The vault
+// manager (GlobalState PDA) is the position authority; the position NFT is held
+// in a program-owned ATA.
 
 pub fn user_open_co_lp<'info>(
     mut ctx: Context<'_, '_, '_, 'info, UserOpenCoLP<'info>>,
@@ -46,7 +51,7 @@ pub fn user_open_co_lp<'info>(
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &QQQX_USD_FEED_ID,
+        &SOL_USD_FEED_ID,
     )?;
 
     // Whirlpool-internal CPI accounts are passed via remaining_accounts (kept out
@@ -87,7 +92,7 @@ pub fn user_open_co_lp<'info>(
         whirlpool_data.tick_spacing,
     );
 
-    // Verify the whirlpool is the QQQx/wsXMR pool
+    // Verify the whirlpool is the wSOL/wsXMR pool (collateral deploys as wSOL)
     require!(
         whirlpool_data.token_mint_a == ctx.accounts.collateral_mint.key()
             || whirlpool_data.token_mint_b == ctx.accounts.collateral_mint.key(),
@@ -137,16 +142,57 @@ pub fn user_open_co_lp<'info>(
         ctx.accounts.wsxmr_mint.decimals,
     )?;
 
-    // Vault QQQx → position_collateral_ata (program-owned)
+    // Vault escrow SOL → wSOL → position_collateral_ata (program-owned).
+    // 1) lamports vault escrow → vault_wsol_ata (PDA signs via its own seeds)
+    require!(
+        ctx.accounts.collateral_mint.key() == WSOL_MINT.parse::<Pubkey>().unwrap(),
+        WrapSynthError::InvalidValue
+    );
+    let vault_lp_tmp = vault.lp_address;
+    let (vault_key_for_seeds, _) = Pubkey::find_program_address(
+        &[VAULT_SEED, vault_lp_tmp.as_ref()],
+        &crate::ID,
+    );
+    let (_, escrow_bump) = Pubkey::find_program_address(
+        &[VAULT_COLLATERAL_SEED, vault_key_for_seeds.as_ref()],
+        &crate::ID,
+    );
+    let escrow_seeds: &[&[u8]] = &[
+        VAULT_COLLATERAL_SEED,
+        vault_key_for_seeds.as_ref(),
+        &[escrow_bump],
+    ];
+    invoke_signed(
+        &system_instruction::transfer(
+            &ctx.accounts.vault_collateral_escrow.key(),
+            &ctx.accounts.vault_wsol_ata.key(),
+            collateral_needed,
+        ),
+        &[
+            ctx.accounts.vault_collateral_escrow.to_account_info(),
+            ctx.accounts.vault_wsol_ata.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+        ],
+        &[escrow_seeds],
+    )?;
+    // 2) sync_native wraps the lamports into the wSOL token balance
+    anchor_lang::solana_program::program::invoke(
+        &spl_token_crate::instruction::sync_native(
+            &spl_token::ID,
+            &ctx.accounts.vault_wsol_ata.key(),
+        )?,
+        &[ctx.accounts.vault_wsol_ata.to_account_info()],
+    )?;
+    // 3) wSOL vault ATA → position collateral ATA (vault PDA signs)
     let vault_bump = vault.bump;
     let vault_key = vault.lp_address;
     let vault_seeds: &[&[u8]] = &[VAULT_SEED, vault_key.as_ref(), &[vault_bump]];
     let vault_signer = &[vault_seeds];
-    transfer_checked(
+    spl_token::transfer_checked(
         CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            TransferChecked {
-                from: ctx.accounts.vault_collateral_ata.to_account_info(),
+            ctx.accounts.collateral_token_program.to_account_info(),
+            spl_token::TransferChecked {
+                from: ctx.accounts.vault_wsol_ata.to_account_info(),
                 mint: ctx.accounts.collateral_mint.to_account_info(),
                 to: ctx.accounts.position_collateral_ata.to_account_info(),
                 authority: ctx.accounts.vault.to_account_info(),
@@ -217,10 +263,22 @@ pub fn user_open_co_lp<'info>(
                 ctx.accounts.position_collateral_ata.key(),
             )
         };
+    // Per-side token programs: wSOL leg runs on spl-token, wsXMR on Token-2022
+    let (tp_a_key, tp_b_key) = if collateral_is_a {
+        (
+            ctx.accounts.collateral_token_program.key(),
+            ctx.accounts.token_program.key(),
+        )
+    } else {
+        (
+            ctx.accounts.token_program.key(),
+            ctx.accounts.collateral_token_program.key(),
+        )
+    };
     let inc_ix = increase_liquidity_ix(
         &ctx.accounts.whirlpool.key(),
-        &ctx.accounts.token_program.key(),
-        &ctx.accounts.token_program.key(),
+        &tp_a_key,
+        &tp_b_key,
         memo_program.key,
         &gs_key,
         &position_pda,
@@ -241,8 +299,16 @@ pub fn user_open_co_lp<'info>(
         &inc_ix,
         &[
             ctx.accounts.whirlpool.to_account_info(),
-            ctx.accounts.token_program.to_account_info(),
-            ctx.accounts.token_program.to_account_info(),
+            if collateral_is_a {
+                ctx.accounts.collateral_token_program.to_account_info()
+            } else {
+                ctx.accounts.token_program.to_account_info()
+            },
+            if collateral_is_a {
+                ctx.accounts.token_program.to_account_info()
+            } else {
+                ctx.accounts.collateral_token_program.to_account_info()
+            },
             memo_program.clone(),
             ctx.accounts.global_state.to_account_info(),
             ctx.accounts.position.to_account_info(),
@@ -300,7 +366,7 @@ pub fn user_open_co_lp<'info>(
     );
 
     msg!(
-        "Co-LP opened: {} QQQx + {} wsXMR, ticks [{}, {}]",
+        "Co-LP opened: {} lamports(wSOL) + {} wsXMR, ticks [{}, {}]",
         collateral_needed,
         wsxmr_amount,
         tick_lower,
@@ -322,10 +388,10 @@ fn sweep_leftovers(
     let gs_seeds: &[&[u8]] = &[GLOBAL_STATE_SEED, &[gs_bump]];
     let gs_signer = &[gs_seeds];
 
-    // position_collateral_ata always holds QQQx and position_wsxmr_ata always holds
-    // wsXMR — the pool's a/b ordering does NOT change which ATA holds which token,
-    // so there is no swap here (the a/b ordering only matters for the whirlpool
-    // increase/decrease_liquidity account ordering, handled by owner_a/b above).
+    // position_collateral_ata always holds wSOL and position_wsxmr_ata always
+    // holds wsXMR — the pool's a/b ordering does NOT change which ATA holds
+    // which token, so there is no swap here (the a/b ordering only matters for
+    // the whirlpool increase/decrease_liquidity account ordering above).
     let collateral_ata = ctx.accounts.position_collateral_ata.to_account_info();
     let wsxmr_ata = ctx.accounts.position_wsxmr_ata.to_account_info();
     let _ = collateral_is_a;
@@ -339,13 +405,13 @@ fn sweep_leftovers(
     };
     drop(collateral_balance);
     if collateral_amt > 0 {
-        transfer_checked(
+        spl_token::transfer_checked(
             CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                TransferChecked {
+                ctx.accounts.collateral_token_program.to_account_info(),
+                spl_token::TransferChecked {
                     from: collateral_ata,
                     mint: ctx.accounts.collateral_mint.to_account_info(),
-                    to: ctx.accounts.vault_collateral_ata.to_account_info(),
+                    to: ctx.accounts.vault_wsol_ata.to_account_info(),
                     authority: ctx.accounts.global_state.to_account_info(),
                 },
                 gs_signer,
@@ -359,6 +425,21 @@ fn sweep_leftovers(
             .collateral_amount
             .saturating_sub(collateral_needed.saturating_sub(collateral_amt));
     }
+    // Unwrap: close the vault wSOL ATA → lamports return to the escrow PDA.
+    let vault_bump2 = ctx.accounts.vault.bump;
+    let vault_lp2 = ctx.accounts.vault.lp_address;
+    let vs2: &[&[u8]] = &[VAULT_SEED, vault_lp2.as_ref(), &[vault_bump2]];
+    spl_token::close_account(
+        CpiContext::new_with_signer(
+            ctx.accounts.collateral_token_program.to_account_info(),
+            spl_token::CloseAccount {
+                account: ctx.accounts.vault_wsol_ata.to_account_info(),
+                destination: ctx.accounts.vault_collateral_escrow.to_account_info(),
+                authority: ctx.accounts.vault.to_account_info(),
+            },
+            &[vs2],
+        ),
+    )?;
 
     let wsxmr_balance = wsxmr_ata.try_borrow_data()?;
     let wsxmr_amt = if wsxmr_balance.len() >= 64 {
@@ -449,6 +530,17 @@ pub fn collect_co_lp_fees<'info>(
         ],
     )?;
 
+    let (tp_a_key, tp_b_key) = if collateral_is_a {
+        (
+            ctx.accounts.collateral_token_program.key(),
+            ctx.accounts.token_program.key(),
+        )
+    } else {
+        (
+            ctx.accounts.token_program.key(),
+            ctx.accounts.collateral_token_program.key(),
+        )
+    };
     let collect_ix = collect_fees_ix(
         &ctx.accounts.whirlpool.key(),
         &ctx.accounts.global_state.key(),
@@ -460,8 +552,8 @@ pub fn collect_co_lp_fees<'info>(
         &whirlpool_data.token_vault_a,
         &owner_b,
         &whirlpool_data.token_vault_b,
-        &ctx.accounts.token_program.key(),
-        &ctx.accounts.token_program.key(),
+        &tp_a_key,
+        &tp_b_key,
         memo_program.key,
     );
     anchor_lang::solana_program::program::invoke_signed(
@@ -477,8 +569,16 @@ pub fn collect_co_lp_fees<'info>(
             token_vault_a.clone(),
             ctx.accounts.position_wsxmr_ata.to_account_info(),
             token_vault_b.clone(),
-            ctx.accounts.token_program.to_account_info(),
-            ctx.accounts.token_program.to_account_info(),
+            if collateral_is_a {
+                ctx.accounts.collateral_token_program.to_account_info()
+            } else {
+                ctx.accounts.token_program.to_account_info()
+            },
+            if collateral_is_a {
+                ctx.accounts.token_program.to_account_info()
+            } else {
+                ctx.accounts.collateral_token_program.to_account_info()
+            },
             memo_program.clone(),
         ],
         gs_signer,
@@ -487,13 +587,13 @@ pub fn collect_co_lp_fees<'info>(
     // Distribute: QQQx fees → vault collateral ATA, wsXMR fees → user ATA
     let collateral_balance = read_token_balance(&ctx.accounts.position_collateral_ata)?;
     if collateral_balance > 0 {
-        transfer_checked(
+        spl_token::transfer_checked(
             CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                TransferChecked {
+                ctx.accounts.collateral_token_program.to_account_info(),
+                spl_token::TransferChecked {
                     from: ctx.accounts.position_collateral_ata.to_account_info(),
                     mint: ctx.accounts.collateral_mint.to_account_info(),
-                    to: ctx.accounts.vault_collateral_ata.to_account_info(),
+                    to: ctx.accounts.vault_wsol_ata.to_account_info(),
                     authority: ctx.accounts.global_state.to_account_info(),
                 },
                 gs_signer,
@@ -527,8 +627,25 @@ pub fn collect_co_lp_fees<'info>(
         )?;
     }
 
+
+    // Unwrap: close the vault wSOL ATA → lamports return to the vault escrow.
+    let vb = ctx.accounts.vault.bump;
+    let vlp = ctx.accounts.vault.lp_address;
+    let vseeds: &[&[u8]] = &[VAULT_SEED, vlp.as_ref(), &[vb]];
+    spl_token::close_account(
+        CpiContext::new_with_signer(
+            ctx.accounts.collateral_token_program.to_account_info(),
+            spl_token::CloseAccount {
+                account: ctx.accounts.vault_wsol_ata.to_account_info(),
+                destination: ctx.accounts.vault_collateral_escrow.to_account_info(),
+                authority: ctx.accounts.vault.to_account_info(),
+            },
+            &[vseeds],
+        ),
+    )?;
+
     msg!(
-        "Co-LP fees collected: {} QQQx, {} wsXMR",
+        "Co-LP fees collected: {} lamports(wSOL), {} wsXMR",
         collateral_balance,
         wsxmr_balance
     );
@@ -575,10 +692,21 @@ pub fn unwind_co_lp<'info>(ctx: Context<'_, '_, '_, 'info, UnwindCoLP<'info>>) -
 
     // 1. Decrease liquidity to zero
     if position_data.liquidity > 0 {
+        let (tp_a_key, tp_b_key) = if collateral_is_a {
+            (
+                ctx.accounts.collateral_token_program.key(),
+                ctx.accounts.token_program.key(),
+            )
+        } else {
+            (
+                ctx.accounts.token_program.key(),
+                ctx.accounts.collateral_token_program.key(),
+            )
+        };
         let dec_ix = decrease_liquidity_ix(
             &ctx.accounts.whirlpool.key(),
-            &ctx.accounts.token_program.key(),
-            &ctx.accounts.token_program.key(),
+            &tp_a_key,
+            &tp_b_key,
             memo_program.key,
             &ctx.accounts.global_state.key(),
             &co_lp.position_address,
@@ -599,8 +727,16 @@ pub fn unwind_co_lp<'info>(ctx: Context<'_, '_, '_, 'info, UnwindCoLP<'info>>) -
             &dec_ix,
             &[
                 ctx.accounts.whirlpool.to_account_info(),
-                ctx.accounts.token_program.to_account_info(),
-                ctx.accounts.token_program.to_account_info(),
+                if collateral_is_a {
+                    ctx.accounts.collateral_token_program.to_account_info()
+                } else {
+                    ctx.accounts.token_program.to_account_info()
+                },
+                if collateral_is_a {
+                    ctx.accounts.token_program.to_account_info()
+                } else {
+                    ctx.accounts.collateral_token_program.to_account_info()
+                },
                 memo_program.clone(),
                 ctx.accounts.global_state.to_account_info(),
                 ctx.accounts.position.to_account_info(),
@@ -619,6 +755,17 @@ pub fn unwind_co_lp<'info>(ctx: Context<'_, '_, '_, 'info, UnwindCoLP<'info>>) -
     }
 
     // 2. Collect remaining fees
+    let (tp_a_key, tp_b_key) = if collateral_is_a {
+        (
+            ctx.accounts.collateral_token_program.key(),
+            ctx.accounts.token_program.key(),
+        )
+    } else {
+        (
+            ctx.accounts.token_program.key(),
+            ctx.accounts.collateral_token_program.key(),
+        )
+    };
     let collect_ix = collect_fees_ix(
         &ctx.accounts.whirlpool.key(),
         &ctx.accounts.global_state.key(),
@@ -630,8 +777,8 @@ pub fn unwind_co_lp<'info>(ctx: Context<'_, '_, '_, 'info, UnwindCoLP<'info>>) -
         &whirlpool_data.token_vault_a,
         &owner_b,
         &whirlpool_data.token_vault_b,
-        &ctx.accounts.token_program.key(),
-        &ctx.accounts.token_program.key(),
+        &tp_a_key,
+        &tp_b_key,
         memo_program.key,
     );
     anchor_lang::solana_program::program::invoke_signed(
@@ -647,8 +794,16 @@ pub fn unwind_co_lp<'info>(ctx: Context<'_, '_, '_, 'info, UnwindCoLP<'info>>) -
             token_vault_a.clone(),
             ctx.accounts.position_wsxmr_ata.to_account_info(),
             token_vault_b.clone(),
-            ctx.accounts.token_program.to_account_info(),
-            ctx.accounts.token_program.to_account_info(),
+            if collateral_is_a {
+                ctx.accounts.collateral_token_program.to_account_info()
+            } else {
+                ctx.accounts.token_program.to_account_info()
+            },
+            if collateral_is_a {
+                ctx.accounts.token_program.to_account_info()
+            } else {
+                ctx.accounts.collateral_token_program.to_account_info()
+            },
             memo_program.clone(),
         ],
         gs_signer,
@@ -679,13 +834,13 @@ pub fn unwind_co_lp<'info>(ctx: Context<'_, '_, '_, 'info, UnwindCoLP<'info>>) -
     // 4. Distribute proceeds: QQQx → vault, wsXMR → user
     let collateral_balance = read_token_balance(&ctx.accounts.position_collateral_ata)?;
     if collateral_balance > 0 {
-        transfer_checked(
+        spl_token::transfer_checked(
             CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                TransferChecked {
+                ctx.accounts.collateral_token_program.to_account_info(),
+                spl_token::TransferChecked {
                     from: ctx.accounts.position_collateral_ata.to_account_info(),
                     mint: ctx.accounts.collateral_mint.to_account_info(),
-                    to: ctx.accounts.vault_collateral_ata.to_account_info(),
+                    to: ctx.accounts.vault_wsol_ata.to_account_info(),
                     authority: ctx.accounts.global_state.to_account_info(),
                 },
                 gs_signer,
@@ -725,11 +880,28 @@ pub fn unwind_co_lp<'info>(ctx: Context<'_, '_, '_, 'info, UnwindCoLP<'info>>) -
         .deployed_collateral
         .saturating_sub(co_lp.collateral_original);
 
+
+    // Unwrap: close the vault wSOL ATA → lamports return to the vault escrow.
+    let vb = ctx.accounts.vault.bump;
+    let vlp = ctx.accounts.vault.lp_address;
+    let vseeds: &[&[u8]] = &[VAULT_SEED, vlp.as_ref(), &[vb]];
+    spl_token::close_account(
+        CpiContext::new_with_signer(
+            ctx.accounts.collateral_token_program.to_account_info(),
+            spl_token::CloseAccount {
+                account: ctx.accounts.vault_wsol_ata.to_account_info(),
+                destination: ctx.accounts.vault_collateral_escrow.to_account_info(),
+                authority: ctx.accounts.vault.to_account_info(),
+            },
+            &[vseeds],
+        ),
+    )?;
+
     let co_lp = &mut ctx.accounts.co_lp_position;
     co_lp.liquidity = 0;
 
     msg!(
-        "Co-LP unwound: {} QQQx, {} wsXMR returned",
+        "Co-LP unwound: {} lamports(wSOL), {} wsXMR returned",
         collateral_balance,
         wsxmr_balance
     );
@@ -783,10 +955,21 @@ pub fn rebalance_co_lp<'info>(
     };
 
     if position_data.liquidity > 0 {
+        let (tp_a_key, tp_b_key) = if collateral_is_a {
+            (
+                ctx.accounts.collateral_token_program.key(),
+                ctx.accounts.token_program.key(),
+            )
+        } else {
+            (
+                ctx.accounts.token_program.key(),
+                ctx.accounts.collateral_token_program.key(),
+            )
+        };
         let dec_ix = decrease_liquidity_ix(
             &ctx.accounts.whirlpool.key(),
-            &ctx.accounts.token_program.key(),
-            &ctx.accounts.token_program.key(),
+            &tp_a_key,
+            &tp_b_key,
             memo_program.key,
             &ctx.accounts.global_state.key(),
             &co_lp.position_address,
@@ -807,8 +990,16 @@ pub fn rebalance_co_lp<'info>(
             &dec_ix,
             &[
                 ctx.accounts.whirlpool.to_account_info(),
-                ctx.accounts.token_program.to_account_info(),
-                ctx.accounts.token_program.to_account_info(),
+                if collateral_is_a {
+                    ctx.accounts.collateral_token_program.to_account_info()
+                } else {
+                    ctx.accounts.token_program.to_account_info()
+                },
+                if collateral_is_a {
+                    ctx.accounts.token_program.to_account_info()
+                } else {
+                    ctx.accounts.collateral_token_program.to_account_info()
+                },
                 memo_program.clone(),
                 ctx.accounts.global_state.to_account_info(),
                 ctx.accounts.position.to_account_info(),
@@ -829,13 +1020,13 @@ pub fn rebalance_co_lp<'info>(
     // Distribute drained proceeds
     let collateral_balance = read_token_balance(&ctx.accounts.position_collateral_ata)?;
     if collateral_balance > 0 {
-        transfer_checked(
+        spl_token::transfer_checked(
             CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                TransferChecked {
+                ctx.accounts.collateral_token_program.to_account_info(),
+                spl_token::TransferChecked {
                     from: ctx.accounts.position_collateral_ata.to_account_info(),
                     mint: ctx.accounts.collateral_mint.to_account_info(),
-                    to: ctx.accounts.vault_collateral_ata.to_account_info(),
+                    to: ctx.accounts.vault_wsol_ata.to_account_info(),
                     authority: ctx.accounts.global_state.to_account_info(),
                 },
                 gs_signer,
@@ -874,11 +1065,28 @@ pub fn rebalance_co_lp<'info>(
         .vault
         .deployed_collateral
         .saturating_sub(co_lp.collateral_original);
+
+    // Unwrap: close the vault wSOL ATA → lamports return to the vault escrow.
+    let vb = ctx.accounts.vault.bump;
+    let vlp = ctx.accounts.vault.lp_address;
+    let vseeds: &[&[u8]] = &[VAULT_SEED, vlp.as_ref(), &[vb]];
+    spl_token::close_account(
+        CpiContext::new_with_signer(
+            ctx.accounts.collateral_token_program.to_account_info(),
+            spl_token::CloseAccount {
+                account: ctx.accounts.vault_wsol_ata.to_account_info(),
+                destination: ctx.accounts.vault_collateral_escrow.to_account_info(),
+                authority: ctx.accounts.vault.to_account_info(),
+            },
+            &[vseeds],
+        ),
+    )?;
+
     let co_lp = &mut ctx.accounts.co_lp_position;
     co_lp.liquidity = 0;
 
     msg!(
-        "Co-LP drained for rebalance: {} QQQx, {} wsXMR",
+        "Co-LP drained for rebalance: {} lamports(wSOL), {} wsXMR",
         collateral_balance,
         wsxmr_balance
     );
@@ -1011,13 +1219,27 @@ pub struct UserOpenCoLP<'info> {
     #[account(mut)]
     pub user_wsxmr_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
+    /// CHECK: lamport-only vault collateral escrow PDA — validated by seeds
     #[account(
         mut,
         seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
         bump,
     )]
-    pub vault_collateral_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub vault_collateral_escrow: AccountInfo<'info>,
 
+    /// wSOL ATA owned by the vault PDA — staging account for wrapping escrow
+    /// SOL into pool-deployable wSOL. Opened fresh and closed (unwrapped back
+    /// to the escrow) within each co-LP instruction.
+    #[account(
+        init_if_needed,
+        payer = user,
+        associated_token::mint = collateral_mint,
+        associated_token::authority = vault,
+        associated_token::token_program = collateral_token_program,
+    )]
+    pub vault_wsol_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    /// wSOL mint (spl-token program)
     pub collateral_mint: Box<InterfaceAccount<'info, Mint>>,
     pub wsxmr_mint: Box<InterfaceAccount<'info, Mint>>,
 
@@ -1027,6 +1249,8 @@ pub struct UserOpenCoLP<'info> {
     pub pyth_collateral: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
+    /// SPL Token (legacy) program for the wSOL leg
+    pub collateral_token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
@@ -1078,15 +1302,37 @@ pub struct CollectCoLPFees<'info> {
     /// CHECK: Position wsXMR vault ATA — verified inside the Orca CPI.
     pub position_wsxmr_ata: UncheckedAccount<'info>,
 
-    #[account(mut)]
-    pub vault_collateral_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    /// CHECK: lamport-only vault collateral escrow PDA — receives unwrapped SOL
+    #[account(
+        mut,
+        seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
+        bump,
+    )]
+    pub vault_collateral_escrow: AccountInfo<'info>,
+
+    /// wSOL ATA owned by the vault PDA — staging for unwrap-back-to-escrow.
+    /// Caller pays rent if it must be created; it is closed again before the
+    /// instruction returns.
+    #[account(
+        init_if_needed,
+        payer = caller,
+        associated_token::mint = collateral_mint,
+        associated_token::authority = vault,
+        associated_token::token_program = collateral_token_program,
+    )]
+    pub vault_wsol_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+
     #[account(mut)]
     pub user_wsxmr_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
+    /// wSOL mint (spl-token program)
     pub collateral_mint: Box<InterfaceAccount<'info, Mint>>,
     pub wsxmr_mint: Box<InterfaceAccount<'info, Mint>>,
 
     pub token_program: Program<'info, Token2022>,
+    /// SPL Token (legacy) program for the wSOL leg
+    pub collateral_token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
 
@@ -1149,15 +1395,37 @@ pub struct UnwindCoLP<'info> {
     /// CHECK: Position wsXMR vault ATA — verified inside the Orca CPI.
     pub position_wsxmr_ata: UncheckedAccount<'info>,
 
-    #[account(mut)]
-    pub vault_collateral_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    /// CHECK: lamport-only vault collateral escrow PDA — receives unwrapped SOL
+    #[account(
+        mut,
+        seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
+        bump,
+    )]
+    pub vault_collateral_escrow: AccountInfo<'info>,
+
+    /// wSOL ATA owned by the vault PDA — staging for unwrap-back-to-escrow.
+    /// Caller pays rent if it must be created; it is closed again before the
+    /// instruction returns.
+    #[account(
+        init_if_needed,
+        payer = caller,
+        associated_token::mint = collateral_mint,
+        associated_token::authority = vault,
+        associated_token::token_program = collateral_token_program,
+    )]
+    pub vault_wsol_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+
     #[account(mut)]
     pub user_wsxmr_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
+    /// wSOL mint (spl-token program)
     pub collateral_mint: Box<InterfaceAccount<'info, Mint>>,
     pub wsxmr_mint: Box<InterfaceAccount<'info, Mint>>,
 
     pub token_program: Program<'info, Token2022>,
+    /// SPL Token (legacy) program for the wSOL leg
+    pub collateral_token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
 
@@ -1215,14 +1483,36 @@ pub struct RebalanceCoLP<'info> {
     /// CHECK: Position wsXMR vault ATA — verified inside the Orca CPI.
     pub position_wsxmr_ata: UncheckedAccount<'info>,
 
-    #[account(mut)]
-    pub vault_collateral_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    /// CHECK: lamport-only vault collateral escrow PDA — receives unwrapped SOL
+    #[account(
+        mut,
+        seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
+        bump,
+    )]
+    pub vault_collateral_escrow: AccountInfo<'info>,
+
+    /// wSOL ATA owned by the vault PDA — staging for unwrap-back-to-escrow.
+    /// Caller pays rent if it must be created; it is closed again before the
+    /// instruction returns.
+    #[account(
+        init_if_needed,
+        payer = caller,
+        associated_token::mint = collateral_mint,
+        associated_token::authority = vault,
+        associated_token::token_program = collateral_token_program,
+    )]
+    pub vault_wsol_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+
     #[account(mut)]
     pub user_wsxmr_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
+    /// wSOL mint (spl-token program)
     pub collateral_mint: Box<InterfaceAccount<'info, Mint>>,
     pub wsxmr_mint: Box<InterfaceAccount<'info, Mint>>,
 
     pub token_program: Program<'info, Token2022>,
+    /// SPL Token (legacy) program for the wSOL leg
+    pub collateral_token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }

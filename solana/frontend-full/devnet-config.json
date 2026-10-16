@@ -1,22 +1,21 @@
 {
   "cluster": "devnet",
   "rpc": "https://solana-devnet.g.alchemy.com/v2/alch_7wDL_t8oR_BiXDbZIsCEc",
-  "programId": "k4TC3sLs4feJfuMYBf8piyRQMU1WENM2LbQoKJNWbmx",
+  "programId": "C9kVasKgQiUX1BCngBjorvMA8QaFyERHvdkYdwPyy3H1",
   "oracleMockProgramId": "AWKqcPUtpsaPr19XpCq2ZD6Bk4HRGXnsYy9DUrZkLixY",
-  "globalState": "3YUc4BSFVxjJX5X6fw8KTp5R9Xt17ngXie41JH99BXfv",
-  "wsxmrMint": "83wienN4RnKHFzSjPFXRpV8KuGYy9fyXMrekoXN6y9A6",
-  "collateralMint": "8e62Xp2pwgGQZdxNPZk2aU6WugM3guKQEufQQUgGA4ts",
-  "programCollateralAta": "3V9NAuTr8uvUHyGuSrzoucdAH9KVe9ChdXuYBfFm4KL1",
-  "solEscrow": "95hByA3RUv7kVTgFLYuMK4RU3KwHxGSa7U9kQybTRJ8Z",
+  "globalState": "EcgLYo58FNexi75Z49U3H6UArxSGQE9y8ExY6mENEMyz",
+  "wsxmrMint": "9GSvgkfSrXaJ8YHniszXUk4cUFaqGLNeZU4iQSNEwqAz",
+  "collateralMint": "So11111111111111111111111111111111111111112",
+  "collateralEscrow": "CkgT15xbtYZWTt5exggwfXNRE5od5H5oHogChPJvf1sf",
+  "solEscrow": "H51PCHYqzyvSQ3G4KCJAK4BKHdZtmMybuCeyKE13J2QK",
   "oracle": {
     "xmr": "481BF25ySxDqLQvuL5nE3PQKfKwQDeM3U8VgaLWuN3gS",
-    "qqqx": "5TYNXaxuMpjmnYo6b2W5LxG98EkJydmGiSRfQyNcS6AY",
+    "sol": "CwnHXw93eRYyZstR3mXNbvVVJ5C2BebNeYKDDVh1pqYs",
     "xmrFeedId": "0x46b8cc9347f04391764a0361e0b17c3ba394b001e7c304f7650f6376e37c321d",
-    "qqqxFeedId": "0x178a6f73a5aede9d0d682e86b0047c9f333ed0efe5c6537ca937565219c4054d",
-    "note": "MOCKED \u2014 owned by oracle-mock, refreshed by scripts/oracle-refresh.js. NOT real Pyth."
+    "solFeedId": "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d",
+    "note": "MOCKED — owned by oracle-mock, refreshed by scripts/oracle-refresh.js. NOT real Pyth."
   },
   "authority": "7FvX1WSggPmLNVsoQSWkYabEFHGSzetYJGfbz4vwyowU",
-  "adminCollateralAta": "53CjrCPArcFeLngUb34YsJm98V31PXSUxcaqQ1vGxZ5n",
   "seeds": {
     "globalState": "global_state",
     "wsxmrMint": "wsxmr_mint",
@@ -28,18 +27,5 @@
     "burnRequest": "burn_request",
     "solEscrow": "sol_escrow"
   },
-  "generatedAt": "2026-10-14T19:15:34.857Z",
-  "contracts": {
-    "wsXMR": "83wienN4RnKHFzSjPFXRpV8KuGYy9fyXMrekoXN6y9A6",
-    "wsXmrHub": "k4TC3sLs4feJfuMYBf8piyRQMU1WENM2LbQoKJNWbmx",
-    "liquidityRouter": "k4TC3sLs4feJfuMYBf8piyRQMU1WENM2LbQoKJNWbmx"
-  },
-  "externalContracts": {
-    "stataUSDe": "8e62Xp2pwgGQZdxNPZk2aU6WugM3guKQEufQQUgGA4ts",
-    "sDAI": "8e62Xp2pwgGQZdxNPZk2aU6WugM3guKQEufQQUgGA4ts"
-  },
-  "pool": {},
-  "lpConfig": {
-    "defaultLpVault": null
-  }
+  "generatedAt": "2026-10-16T15:57:34.809Z"
 }

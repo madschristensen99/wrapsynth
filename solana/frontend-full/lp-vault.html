@@ -139,7 +139,7 @@
         <div>
           <div class="stat-label">Total Collateral</div>
           <div class="stat-value" id="total-collateral">--</div>
-          <div class="stat-sub">QQQx</div>
+          <div class="stat-sub">SOL</div>
         </div>
         <div>
           <div class="stat-label">Total Debt</div>
@@ -231,7 +231,7 @@ async function loadVaultDetails(address) {
     const vault = await readHub('getVault', [address]);
     const debt = await readHub('getVaultDebt', [address]);
 
-    // collateralShares comes back 18-dec-scaled (raw QQQx is 9-dec)
+    // collateralShares comes back 18-dec-scaled (raw SOL is 9-dec)
     const collateral = fU(vault.collateralShares, 18);
     const debtAmount = fU(debt, 8);
 

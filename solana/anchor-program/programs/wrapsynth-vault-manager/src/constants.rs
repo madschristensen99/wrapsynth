@@ -1,8 +1,8 @@
-/// Protocol constants — QQQx-collateral variant (no yield, no protocol fees).
+/// Protocol constants — native-SOL-collateral variant (no yield, no protocol fees).
 
 // Collateral ratios (percentage, precision 100) — retuned for VOLATILE
-// collateral: both legs now move (XMR vs Nasdaq-100), so margins are wider
-// than the stable-collateral sUSDe deployment.
+// collateral: both legs move (XMR vs SOL), so margins are wider than the
+// stable-collateral sUSDe deployment.
 pub const COLLATERAL_RATIO: u64 = 200; // mint floor
 pub const LIQUIDATION_RATIO: u64 = 150; // liquidate below this
 pub const LIQUIDATION_BONUS: u64 = 110; // liquidator incentive (gross, pre-split)
@@ -29,10 +29,10 @@ const _: () = assert!(
 // Precision constants
 pub const PRICE_PRECISION: u64 = 1_000_000_000_000_000_000; // 1e18
 pub const WSXMR_DECIMALS: u64 = 100_000_000; // 1e8
-/// QQQx collateral decimals scale (8 decimals — raw atomic units).
-/// collateral_amount / locked_collateral are stored in raw atomic QQQx so
-/// vault bookkeeping equals the vault ATA balance exactly.
-pub const COLLATERAL_DECIMALS: u64 = 100_000_000; // 1e8
+/// Native SOL collateral decimals scale (9 decimals — raw lamports).
+/// collateral_amount / locked_collateral are stored in raw lamports so
+/// vault bookkeeping equals the vault collateral escrow balance exactly.
+pub const COLLATERAL_DECIMALS: u64 = 1_000_000_000; // 1e9
 pub const DEBT_INDEX_PRECISION: u64 = 1_000_000_000_000_000_000; // 1e18
 pub const XMR_TO_WSXMR_DIVISOR: u64 = 10_000; // 1e4 (12 dec → 8 dec)
 
@@ -80,24 +80,19 @@ pub const XMR_USD_FEED_ID: [u8; 32] = [
     0xa3, 0x94, 0xb0, 0x01, 0xe7, 0xc3, 0x04, 0xf7, 0x65, 0x0f, 0x63, 0x76, 0xe3, 0x7c, 0x32, 0x1d,
 ];
 
-// QQQx/USD Pyth feed ID (Crypto.QQQX/USD — 24/7 publishing, verified 2026-10-14)
-pub const QQQX_USD_FEED_ID: [u8; 32] = [
-    0x17, 0x8a, 0x6f, 0x73, 0xa5, 0xae, 0xde, 0x9d, 0x0d, 0x68, 0x2e, 0x86, 0xb0, 0x04, 0x7c, 0x9f,
-    0x33, 0x3e, 0xd0, 0xef, 0xe5, 0xc6, 0x53, 0x7c, 0xa9, 0x37, 0x56, 0x52, 0x19, 0xc4, 0x05, 0x4d,
+// SOL/USD Pyth feed ID (Crypto.SOL/USD — 24/7 publishing)
+pub const SOL_USD_FEED_ID: [u8; 32] = [
+    0xef, 0x0d, 0x8b, 0x6f, 0xda, 0x2c, 0xeb, 0xa4, 0x1d, 0xa1, 0x5d, 0x40, 0x95, 0xd1, 0xda, 0x39,
+    0x2a, 0x0d, 0x2f, 0x8e, 0xd0, 0xc6, 0xc7, 0xbc, 0x0f, 0x4c, 0xfa, 0xc8, 0xc2, 0x80, 0xb5, 0x6d,
 ];
 
-// (Reserved for future use: Pyth also publishes Crypto.QQQX/QQQ.RR, the
-// redemption-rate feed id 5fe0ad9f…38c7ca, if a NAV-based guard is wanted.)
-
-// Discount guard tolerance: pause minting if market QQQX/USD < QQQ fair value
-// × (10000 - tolerance) / 10000 (QQQx trading at a steep discount = distress).
+// Discount guard tolerance: pause minting if market SOL/USD falls sharply
+// below its own EMA (flash-crash / oracle anomaly guard).
 pub const DEPEG_TOLERANCE_BPS: u64 = 300; // 3%
 
-// QQQx mainnet mint (Backed Assets Nasdaq xStock, verified 2026-10-14).
-// Token-2022, 8 decimals. NOTE: the mint carries permanentDelegate, pausable
-// and freeze extensions — the issuer (Backed) can freeze/claw back collateral.
-// This is accepted issuer risk for this deployment.
-pub const QQQX_MINT: &str = "Xs8S1uUs1zvS2p7iwtsG3b6fkhpvmwz4GYU3gWAmWHZ";
+// Wrapped SOL mint — the SPL representation of the native collateral used by
+// co-LP whirlpool positions (Orca pools pair tokens, so SOL deploys as wSOL).
+pub const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
 
 // PDA seeds
 pub const GLOBAL_STATE_SEED: &[u8] = b"global_state";
@@ -109,6 +104,7 @@ pub const WSXMR_MINT_SEED: &[u8] = b"wsxmr_mint";
 pub const VAULT_COLLATERAL_SEED: &[u8] = b"vault_collateral";
 pub const CO_LP_POSITION_SEED: &[u8] = b"co_lp_position";
 pub const CO_LP_POSITION_MINT_SEED: &[u8] = b"co_lp_position_mint";
-/// Program-owned collateral ATA — the pending collateral returns pool backing
-/// all slashed-collateral credits (invariant: balance >= global_pending_collateral).
+/// Program-owned collateral escrow (lamport PDA) — the pending collateral
+/// returns pool backing all slashed-collateral credits
+/// (invariant: balance >= global_pending_collateral).
 pub const PROGRAM_COLLATERAL_SEED: &[u8] = b"program_collateral";

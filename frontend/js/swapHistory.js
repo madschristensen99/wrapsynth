@@ -3,7 +3,7 @@
 import { loadSwapHistory } from './storage.js?v=3.12';
 import { getIconSVG } from './icons.js?v=3.12';
 import { getPastEvents, getUserAddress, getPublicClient } from './viemClient.js?v=3.22';
-import { CONTRACTS, DECIMALS, NETWORKS } from './config.js?v=3.22';
+import { CONTRACTS, DECIMALS, explorerTxUrl, getActiveChainKey, getDeployment } from './config.js?v=3.22';
 
 const TRANSFER_EVENT_ABI = ['event Transfer(address indexed from, address indexed to, uint256 value)'];
 
@@ -100,12 +100,14 @@ export async function displaySwapHistory() {
 }
 
 async function fetchWsXmrTransfers(userAddress) {
+    // Scan from the active deployment's deploy block, not genesis.
+    const deployBlock = BigInt(getDeployment(getActiveChainKey())?.deployedAtBlock ?? 0);
     const [outEvents, inEvents] = await Promise.all([
         getPastEvents(
             CONTRACTS.wsxmrToken,
             TRANSFER_EVENT_ABI,
             'Transfer',
-            'earliest',
+            deployBlock,
             'latest',
             { from: userAddress }
         ).catch(() => []),
@@ -113,7 +115,7 @@ async function fetchWsXmrTransfers(userAddress) {
             CONTRACTS.wsxmrToken,
             TRANSFER_EVENT_ABI,
             'Transfer',
-            'earliest',
+            deployBlock,
             'latest',
             { to: userAddress }
         ).catch(() => [])
@@ -176,7 +178,6 @@ function renderTransferItem(item) {
     const direction = item.type === 'transfer-out' ? 'Sent wsXMR' : 'Received wsXMR';
     const icon = item.type === 'transfer-out' ? getIconSVG('arrowUpRight') : getIconSVG('arrowDownLeft');
     const counterpartyLabel = item.type === 'transfer-out' ? 'To' : 'From';
-    const explorer = NETWORKS.hyperevm.blockExplorer;
     const timestamp = formatTimestamp(item.timestamp);
     const shortAddr = `${item.counterparty.slice(0, 6)}...${item.counterparty.slice(-4)}`;
     const shortTx = `${item.txHash.slice(0, 6)}...${item.txHash.slice(-4)}`;
@@ -199,7 +200,7 @@ function renderTransferItem(item) {
                 <div class="history-detail">
                     <span class="detail-label">Tx:</span>
                     <span class="detail-value" style="font-family: 'JetBrains Mono', monospace; font-size: 0.85em;">
-                        <a href="${explorer}/tx/${item.txHash}" target="_blank" rel="noopener noreferrer" style="color: var(--accent-orange); text-decoration: none;">${shortTx} ↗</a>
+                        <a href="${explorerTxUrl(item.txHash)}" target="_blank" rel="noopener noreferrer" style="color: var(--accent-orange); text-decoration: none;">${shortTx} ↗</a>
                     </span>
                 </div>
                 <div class="history-detail">

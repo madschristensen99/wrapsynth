@@ -1,60 +1,248 @@
-// Configuration for Phantom Agent
-// Contract addresses are loaded from the canonical root deployment.json (window.DEPLOYMENT).
+// Wrapsynth multi-chain configuration.
+//
+// Each chain runs an INDEPENDENT wsXMR deployment — separate hub, token,
+// collateral asset, LP vaults, and pool. There is no bridging between them.
+// The user picks a chain explicitly; there is no default chain.
+//
+// Per-chain contract addresses come from deployment.<key>.json manifests
+// (written by the forge deploy scripts, copied into frontend/). Manifests
+// are fetched lazily on chain selection and cached.
 
-// The HTML loader sets window.DEPLOYMENT, but module evaluation can race it.
-// Top-level await guarantees every importer reads a populated manifest.
-if (!window.DEPLOYMENT) {
-    try {
-        const res = await fetch('./deployment.json?t=' + Date.now());
-        if (res.ok) window.DEPLOYMENT = await res.json();
-        else console.error('config.js: deployment.json returned ' + res.status);
-    } catch (e) {
-        console.error('config.js: failed to load deployment.json', e);
+export const CHAINS = {
+    bnb: {
+        key: 'bnb',
+        chainId: 56,
+        name: 'BNB Chain',
+        rpcUrls: [
+            'https://bsc-dataseed.bnbchain.org',
+            'https://bsc.publicnode.com',
+            'https://binance.llamarpc.com'
+        ],
+        explorer: 'https://bscscan.com',
+        explorerName: 'BscScan',
+        nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 },
+        manifestUrl: './deployment.bnb.json',
+        dexscreenerSlug: 'bsc',
+        collateral: {
+            symbol: 'QQQB',
+            shareSymbol: 'stataQQQB',
+            decimals: 18,
+            shareDecimals: 18,
+            name: 'Invesco QQQ (bStocks)',
+            address: '0x205812CdBed920aFf76C6580abD681a46D11efc7',
+            whatItIs: 'Tokenized Invesco QQQ — tracks the Nasdaq-100 ETF (bStocks)',
+            note: 'Securities-linked token; availability varies by jurisdiction.',
+        },
+        // Where users can get each asset this chain requires.
+        // {wsxmr} in a url is replaced with the deployed wsXMR address.
+        acquire: {
+            gas: [
+                { label: 'Buy BNB (Binance)', url: 'https://www.binance.com/en/buy/bnb' },
+                { label: 'Swap on PancakeSwap', url: 'https://pancakeswap.finance/swap?chain=bsc&outputCurrency=BNB' },
+            ],
+            collateral: [
+                { label: 'Buy QQQB on PancakeSwap', url: 'https://pancakeswap.finance/swap?chain=bsc&outputCurrency=0x205812CdBed920aFf76C6580abD681a46D11efc7' },
+            ],
+            wsxmr: [
+                { label: 'Buy wsXMR on PancakeSwap', url: 'https://pancakeswap.finance/swap?chain=bsc&outputCurrency={wsxmr}' },
+            ],
+            // Rough guide: mint needs griefing deposit (vault-set, ~0.001 BNB
+            // suggested) plus gas. Displayed in the funding panel.
+            gasHint: 'Minting needs BNB for gas plus the vault\'s griefing deposit (~0.001 BNB typical).',
+        },
+        // RedStone feeds appended to updateOraclePrices calldata.
+        // Collateral price is on-chain TWAP — only XMR needs a signed feed.
+        redstoneFeeds: ['XMR'],
+        blockTimeSec: 0.75,  // BSC ~0.75s blocks
+        logChunkSize: 5000   // BSC public RPCs allow ~5k-block getLogs
+    },
+    base: {
+        key: 'base',
+        chainId: 8453,
+        name: 'Base',
+        rpcUrls: [
+            'https://mainnet.base.org',
+            'https://base.publicnode.com',
+            'https://base.llamarpc.com'
+        ],
+        explorer: 'https://basescan.org',
+        explorerName: 'BaseScan',
+        nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+        manifestUrl: './deployment.base.json',
+        dexscreenerSlug: 'base',
+        collateral: {
+            symbol: 'cbBTC',
+            shareSymbol: 'stataCbBTC',
+            decimals: 8,
+            shareDecimals: 8,
+            name: 'Coinbase Wrapped BTC',
+            address: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf',
+            whatItIs: 'Coinbase Wrapped BTC — Bitcoin held 1:1 by Coinbase',
+            note: null,
+        },
+        acquire: {
+            gas: [
+                { label: 'Buy ETH (Coinbase)', url: 'https://www.coinbase.com/how-to-buy/ethereum' },
+                { label: 'Bridge to Base', url: 'https://bridge.base.org' },
+            ],
+            collateral: [
+                { label: 'Buy cbBTC on Uniswap', url: 'https://app.uniswap.org/swap?chain=base&outputCurrency=0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf' },
+                { label: 'Wrap BTC on Coinbase', url: 'https://www.coinbase.com/cbbtc' },
+            ],
+            wsxmr: [
+                { label: 'Buy wsXMR on Uniswap', url: 'https://app.uniswap.org/swap?chain=base&outputCurrency={wsxmr}' },
+            ],
+            gasHint: 'Minting needs ETH on Base for gas plus the vault\'s griefing deposit.',
+        },
+        redstoneFeeds: ['XMR'],
+        blockTimeSec: 2,     // Base 2s blocks
+        logChunkSize: 9000   // Base public RPCs allow ~10k-block getLogs
+    },
+    robinhood: {
+        key: 'robinhood',
+        chainId: 4663,
+        name: 'Robinhood Chain',
+        rpcUrls: [
+            'https://rpc.mainnet.chain.robinhood.com'
+        ],
+        explorer: 'https://robinhoodchain.blockscout.com',
+        explorerName: 'Robinhood Chain Explorer',
+        nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+        manifestUrl: './deployment.robinhood.json',
+        // DexScreener doesn't index Robinhood Chain — fall back to explorer links.
+        dexscreenerSlug: null,
+        collateral: {
+            symbol: 'SPY',
+            shareSymbol: 'stataSPY',
+            decimals: 18,
+            shareDecimals: 18,
+            name: 'SPDR S&P 500 (Robinhood Token)',
+            address: '0x117cc2133c37B721F49dE2A7a74833232B3B4C0C',
+            whatItIs: 'Robinhood stock token tracking SPDR S&P 500 (RH Assets, Jersey)',
+            note: 'Robinhood stock tokens are not offered to US persons — check your jurisdiction.',
+        },
+        acquire: {
+            gas: [
+                { label: 'Robinhood Chain bridging', url: 'https://docs.robinhood.com/chain/' },
+                { label: 'Bridge via Rift', url: 'https://www.rift.trade' },
+            ],
+            collateral: [
+                { label: 'Buy SPY on Gifted Stock', url: 'https://www.giftedstock.com' },
+                { label: 'Swap via Rift', url: 'https://www.rift.trade' },
+            ],
+            // No hosted Uniswap-style UI indexes this chain yet — the
+            // wsXMR/SPY pool exists on-chain but minting is the primary path.
+            wsxmr: [],
+            gasHint: 'Minting needs ETH bridged to Robinhood Chain for gas plus the vault\'s griefing deposit.',
+        },
+        redstoneFeeds: ['XMR'],
+        blockTimeSec: 0.25,  // Arbitrum Orbit ~250ms blocks
+        logChunkSize: 5000   // conservative until RH RPC limits are known
     }
+};
+
+// ─── Active chain state ─────────────────────────────────────────────────────
+
+const _manifests = {};          // chainKey -> parsed deployment manifest
+let _activeChainKey = null;     // set by setActiveChain() — no default
+
+export function getChainConfig(key) { return CHAINS[key] || null; }
+export function getActiveChainKey() { return _activeChainKey; }
+export function getActiveChain() { return CHAINS[_activeChainKey] || null; }
+export function getDeployment(key) { return _manifests[key] || null; }
+export function chainKeyForId(chainId) {
+    const id = Number(chainId);
+    return Object.keys(CHAINS).find(k => CHAINS[k].chainId === id) || null;
 }
 
-const D = window.DEPLOYMENT || {};
-const DC = D.contracts || {};
-const DE = D.externalContracts || {};
-const DP = D.pool || {};
-const DLC = D.lpConfig || {};
+/**
+ * Fetch (once) and cache a chain's deployment manifest.
+ * Returns null when the manifest doesn't exist yet (chain not deployed).
+ */
+export async function loadDeployment(key) {
+    if (!CHAINS[key]) throw new Error(`Unknown chain: ${key}`);
+    if (_manifests[key]) return _manifests[key];
+    const res = await fetch(CHAINS[key].manifestUrl + '?t=' + Date.now());
+    if (!res.ok) return null;
+    _manifests[key] = await res.json();
+    return _manifests[key];
+}
 
-export const NETWORKS = {
-    hyperevm: {
-        id: D.chainId || 999,
-        name: 'HyperEVM',
-        rpcUrls: [
-            // hypurrscan serves eth_getLogs most reliably; the official RPC is
-            // aggressively rate-limited — keep it LAST so reads don't pay a
-            // failed roundtrip before falling back.
-            // NOTE: hyperliquid-json-rpc.stakely.io is CORS-blocked in browsers — do not re-add.
-            'https://rpc.hypurrscan.io',
-            'https://hyperliquid.drpc.org',
-            'https://rpc.hyperliquid.xyz/evm'
-        ],
-        blockExplorer: D.explorer || 'https://hyperevmscan.io',
-        nativeCurrency: {
-            name: 'HYPE',
-            symbol: 'HYPE',
-            decimals: 18
-        }
-    }
-};
+/** True when a chain's manifest is already cached or fetchable. */
+export async function isChainDeployed(key) {
+    return (await loadDeployment(key)) !== null;
+}
 
-// Contract addresses - source of truth: ../../deployment.json
+// Contract addresses for the ACTIVE chain. Mutated in place by
+// setActiveChain() so importers holding the object see live values.
 export const CONTRACTS = {
-    hub: DC.wsXmrHub,
-    wsxmrToken: DC.wsXMR,
-    liquidityRouter: DC.liquidityRouter,
-    // Collateral share token (stataUSDe on HyperEVM; sDAI on legacy Gnosis deployment)
-    stataUSDe: DE.stataUSDe || DE.sDAI || DC.StataUSDe,
-    uniswapV3Pool: DP.uniswapV3Pool,
-    nfpm: DE.UniswapV3PositionManager,
-    // Default LP vault to use for mints (the active LP running the LP node)
-    defaultLpVault: DLC.defaultLpVault,
-    // Event topic hashes for log parsing
+    // Event topic hashes for log parsing (chain-independent)
     MintCancelledWithSecretSig: '0xabfd3b3a7e454869f42e528d99f9f2c2c1ad4aa49c0927059dda28aa4e99093d'
 };
+
+function _applyDeployment(key) {
+    const D = _manifests[key];
+    // Accept both shapes:
+    //  - curated:  { contracts: {...}, externalContracts: {...}, pool: {...} }
+    //  - raw forge output: flat map of addresses (deploy scripts write this)
+    const flat = !D.contracts;
+    const DC = flat ? D : D.contracts;
+    const DE = flat ? D : (D.externalContracts || {});
+    const DP = flat ? { uniswapV3Pool: D.pool } : (D.pool || {});
+    const DLC = flat ? {} : (D.lpConfig || {});
+
+    CONTRACTS.hub = DC.wsXmrHub;
+    CONTRACTS.wsxmrToken = DC.wsXMR;
+    CONTRACTS.liquidityRouter = DC.liquidityRouter;
+    // Collateral share token — stataQQQB on BNB, stataCbBTC on Base,
+    // stataSPY on Robinhood. Key name kept for call-site compatibility.
+    CONTRACTS.stataUSDe = DE.stataQQQB || DE.stataCbBTC || DE.stataSPY || DE.stataUSDe || DE.sDAI || DC.StataUSDe;
+    CONTRACTS.uniswapV3Pool = DP.uniswapV3Pool;
+    CONTRACTS.nfpm = DE.PancakeV3PositionManager || DE.UniswapV3PositionManager || DE.pcsV3NFPM || DE.uniV3NFPM;
+    // Default LP vault to use for mints (the active LP running the LP node)
+    CONTRACTS.defaultLpVault = DLC.defaultLpVault;
+}
+
+/**
+ * Select the active chain. Loads its manifest (first time), repopulates
+ * CONTRACTS, and fires 'wrapsynth:chainChanged' so modules can re-render.
+ * Throws when the chain isn't deployed yet.
+ */
+export async function setActiveChain(key) {
+    if (!CHAINS[key]) throw new Error(`Unknown chain: ${key}`);
+    const manifest = await loadDeployment(key);
+    if (!manifest) throw new Error(`Chain ${key} has no deployment manifest yet`);
+    _activeChainKey = key;
+    _applyDeployment(key);
+    window.dispatchEvent(new CustomEvent('wrapsynth:chainChanged', { detail: { chain: key } }));
+    return manifest;
+}
+
+/**
+ * Asset labels for the active chain — use these for all user-visible
+ * collateral/gas token strings (e.g. QQQB on BNB, cbBTC on Base, SPY on
+ * Robinhood). Fallbacks keep pre-selection renders sane.
+ */
+export const ASSET = {
+    get collateral() { return getActiveChain()?.collateral.symbol ?? 'collateral'; },
+    get share() { return getActiveChain()?.collateral.shareSymbol ?? 'shares'; },
+    get gas() { return getActiveChain()?.nativeCurrency.symbol ?? 'ETH'; },
+};
+
+/** Per-chain localStorage key — keeps swaps/history/preferences isolated. */
+export function chainScopedKey(base) {
+    return `${base}:${_activeChainKey || 'unchained'}`;
+}
+
+/** Explorer URL builders for the active chain. */
+export function explorerAddressUrl(address) {
+    const c = getActiveChain();
+    return c ? `${c.explorer}/address/${address}` : '#';
+}
+export function explorerTxUrl(txHash) {
+    const c = getActiveChain();
+    return c ? `${c.explorer}/tx/${txHash}` : '#';
+}
 
 // Token decimals
 export const DECIMALS = {
@@ -195,6 +383,13 @@ export const RAW_ABIS = {
         stateMutability: 'view',
         type: 'function'
     },
+    getUserPositions: {
+        inputs: [{ name: 'user', type: 'address' }],
+        name: 'getUserPositions',
+        outputs: [{ name: '', type: 'uint256[]' }],
+        stateMutability: 'view',
+        type: 'function'
+    },
     getBurnRequest: {
         inputs: [{ name: 'requestId', type: 'bytes32' }],
         name: 'getBurnRequest',
@@ -288,6 +483,7 @@ export const ABIS = {
         'function collectCoLPFees(uint256 tokenId) external',
         'function rebalanceCoLP(uint256 tokenId, uint16 newRangeBps, uint256 deadline) external',
         'function getCoLPCapacity(address lpVault) external view returns (uint256 maxWsxmrAcceptable)',
+        'function getUserPositions(address user) external view returns (uint256[])',
         'function setMaxCoLPRange(uint16 newMaxBps) external',
 
         // Errors (so viem can decode reverts instead of showing "internal error")

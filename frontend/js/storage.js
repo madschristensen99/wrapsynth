@@ -1,9 +1,13 @@
 // LocalStorage manager for persisting swap state
 // Supports multiple concurrent active swaps
 
-import { STORAGE_KEYS } from './config.js?v=3.22';
+import { STORAGE_KEYS, chainScopedKey } from './config.js?v=3.22';
 
-const ACTIVE_SWAPS_KEY = 'wrapsynth_active_swaps_v2';
+// Keys are namespaced by the active chain so swaps/history on one
+// deployment never surface on another.
+const swapsKey = () => chainScopedKey('wrapsynth_active_swaps_v2');
+const historyKey = () => chainScopedKey(STORAGE_KEYS.swapHistory);
+const prefsKey = () => chainScopedKey(STORAGE_KEYS.userPreferences);
 
 // ─── Internal helpers ───────────────────────────────────────────────────────
 
@@ -14,7 +18,7 @@ function getSwapsArray() {
         if (oldData) {
             try {
                 const oldSwap = JSON.parse(oldData);
-                localStorage.setItem(ACTIVE_SWAPS_KEY, JSON.stringify([oldSwap]));
+                localStorage.setItem(swapsKey(), JSON.stringify([oldSwap]));
                 localStorage.removeItem(STORAGE_KEYS.activeSwap);
                 console.log('[STORAGE] Migrated old single-swap to multi-swap array');
                 return [oldSwap];
@@ -22,7 +26,7 @@ function getSwapsArray() {
                 localStorage.removeItem(STORAGE_KEYS.activeSwap);
             }
         }
-        const data = localStorage.getItem(ACTIVE_SWAPS_KEY);
+        const data = localStorage.getItem(swapsKey());
         return data ? JSON.parse(data) : [];
     } catch {
         return [];
@@ -30,7 +34,7 @@ function getSwapsArray() {
 }
 
 export function setSwapsArray(swaps) {
-    localStorage.setItem(ACTIVE_SWAPS_KEY, JSON.stringify(swaps));
+    localStorage.setItem(swapsKey(), JSON.stringify(swaps));
 }
 
 // ─── Multi-swap API (new) ───────────────────────────────────────────────────
@@ -141,7 +145,7 @@ export function loadActiveSwap() {
  */
 export function clearActiveSwap() {
     try {
-        localStorage.removeItem(ACTIVE_SWAPS_KEY);
+        localStorage.removeItem(swapsKey());
         localStorage.removeItem(STORAGE_KEYS.activeSwap);
         console.log('[STORAGE] All active swaps cleared');
     } catch (error) {
@@ -212,7 +216,7 @@ export function saveToHistory(swap) {
             completedAt: Date.now()
         });
         const trimmedHistory = history.slice(0, 50);
-        localStorage.setItem(STORAGE_KEYS.swapHistory, JSON.stringify(trimmedHistory));
+        localStorage.setItem(historyKey(), JSON.stringify(trimmedHistory));
         console.log('[STORAGE] Swap saved to history');
     } catch (error) {
         console.error('[STORAGE] Error saving to history:', error);
@@ -225,7 +229,7 @@ export function saveToHistory(swap) {
  */
 export function getSwapHistory() {
     try {
-        const data = localStorage.getItem(STORAGE_KEYS.swapHistory);
+        const data = localStorage.getItem(historyKey());
         return data ? JSON.parse(data) : [];
     } catch (error) {
         console.error('[STORAGE] Error loading swap history:', error);
@@ -246,7 +250,7 @@ export function loadSwapHistory() {
  */
 export function clearSwapHistory() {
     try {
-        localStorage.removeItem(STORAGE_KEYS.swapHistory);
+        localStorage.removeItem(historyKey());
         console.log('[STORAGE] Swap history cleared');
     } catch (error) {
         console.error('[STORAGE] Error clearing swap history:', error);
@@ -259,7 +263,7 @@ export function clearSwapHistory() {
  */
 export function savePreferences(preferences) {
     try {
-        localStorage.setItem(STORAGE_KEYS.userPreferences, JSON.stringify(preferences));
+        localStorage.setItem(prefsKey(), JSON.stringify(preferences));
         console.log('[STORAGE] Preferences saved');
     } catch (error) {
         console.error('[STORAGE] Error saving preferences:', error);
@@ -272,7 +276,7 @@ export function savePreferences(preferences) {
  */
 export function loadPreferences() {
     try {
-        const data = localStorage.getItem(STORAGE_KEYS.userPreferences);
+        const data = localStorage.getItem(prefsKey());
         return data ? JSON.parse(data) : {
             defaultVault: null,
             slippageTolerance: 0.5,

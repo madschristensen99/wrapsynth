@@ -19,9 +19,9 @@ The server starts on `http://localhost:3001` (configurable via `PORT`).
 ### Prerequisites
 
 - Node.js v18+
-- A HyperEVM wallet with HYPE for gas (this is the LP vault wallet)
-- `monero-wallet-rpc` running locally (for XMR deposit scanning and burn sends)
-- The wallet must have an active vault on wsXmrHub with deposited USDe collateral
+- The LP vault wallet funded with each chain's native gas token (BNB on BNB Chain, ETH on Base / Robinhood Chain)
+- `monero-wallet-rpc` running locally (for XMR deposit scanning and burn sends) — shared across all chains
+- The wallet must have an active vault on each chain's wsXmrHub with deposited collateral (QQQB on BNB, cbBTC on Base, SPY on Robinhood)
 
 ### Starting monero-wallet-rpc
 
@@ -43,8 +43,34 @@ All configuration is via environment variables (`.env` file). See `.env.example`
 
 | Variable | Description |
 |----------|-------------|
-| `PRIVATE_KEY` | LP vault wallet private key (0x-prefixed) |
-| `RPC_URL` | HyperEVM RPC endpoint (default: `https://rpc.hyperliquid.xyz/evm`) |
+| `PRIVATE_KEY` | LP vault wallet private key (0x-prefixed) — the same key is used on every configured chain |
+
+### Chains (`chains.json`)
+
+The server is multi-chain: `chains.json` lists every chain to run. Each entry
+points at that chain's deployment manifest (e.g. `../frontend/deployment.bnb.json`)
+and an optional env var overriding its RPC list:
+
+| Entry field | Description |
+|-------------|-------------|
+| `key` | Short chain label used in logs, secrets files, and `/chains/<key>/` routes |
+| `chainId` | EVM chain id |
+| `manifest` | Path to the deployment manifest (flat forge output or curated nested shape) |
+| `rpcEnv` | Env var holding comma-separated RPC URLs (e.g. `BNB_RPC_URLS`) |
+| `rpcUrls` | Fallback RPC URLs when `rpcEnv` is unset |
+| `redstoneFeeds` | Feed ids appended to oracle-update payloads (default `["XMR"]`) |
+| `logChunkSize` | `eth_getLogs` block-range cap for event scans |
+
+A chain whose manifest file doesn't exist is skipped with a warning, so
+`chains.json` can list BNB, Base, and Robinhood ahead of their deployments —
+each activates once its manifest lands. Per-chain state is fully isolated:
+provider, nonce manager, `pendingMints`, `pendingBurns`, and secrets files
+(`lp-secrets-<key>.json`, `lp-burn-secrets-<key>.json`).
+
+HTTP chain selection: manual endpoints (`/mint/key`, `/mint/scan`, burn routes)
+accept a `chain` body/query param, and burn routes are also mounted under
+`/chains/<key>/...`. When exactly one chain is running, unprefixed routes keep
+working for backward compatibility.
 
 ### Monero
 
@@ -78,13 +104,16 @@ All configuration is via environment variables (`.env` file). See `.env.example`
 
 ```
 lp-server-js/
-├── server.js              # Main entry — Express server, mint processing, event listener
-├── burnHandler.js         # Burn state machine — proposeHash, finalizeBurn, slash resolution
-├── moneroWallet.js        # monero-wallet-rpc wrapper — deposit scanning, XMR sends, sweeping
+├── server.js              # Main entry — Express server, per-chain mint processing + listeners
+├── chains.json            # Multi-chain registry: manifests, RPC env vars, feeds, log chunking
+├── burnHandler.js         # Per-chain burn handler factory — proposeHash, finalizeBurn, slashes
+├── nonceManager.js        # Per-chain nonce manager factory + withTimeout helper
+├── oracleUpdate.js        # Per-chain RedStone oracle updater factory
+├── moneroWallet.js        # monero-wallet-rpc wrapper — deposit scanning, XMR sends, sweeping (shared)
 ├── moneroCrypto.js        # Ed25519 key generation + shared address computation
 ├── commitment.js          # Secret hash computation for PTLC commitments
-├── oracleUpdate.js        # RedStone oracle price update helper
-├── lp-secrets.json        # Persisted LP secrets for mint sweeping (auto-generated)
+├── lp-secrets-<chain>.json      # Persisted LP mint secrets per chain (auto-generated)
+├── lp-burn-secrets-<chain>.json # Persisted LP burn secrets per chain (auto-generated)
 ├── processPastBurns.js    # Script: re-process burns from recent blocks
 ├── cancel-mint.js         # Script: manually cancel a stuck mint
 ├── list-mints.js          # Script: list on-chain mint status for this vault
@@ -97,14 +126,17 @@ lp-server-js/
 
 ### Startup Sequence
 
-1. **Load config** — reads `.env`, loads `deployment.json` for contract addresses
+1. **Load config** — reads `.env` + `chains.json`
 2. **Start HTTP server** — Express on configured port
-3. **Start event listener** — polls `MintInitiated` events every 15s
-4. **Open Monero wallet** — connects to `monero-wallet-rpc`, fetches LP address
-5. **Recover mints** — scans last 10,000 blocks for active mints needing `setMintReady`
-6. **Resolve stale** — cancels timed-out mints, resolves stuck burn proposals
-7. **Sweep finalized** — sweeps XMR from finalized mints where LP secret is persisted
-8. **Attach burn handler** — starts listening for `BurnRequested` events
+3. **Spawn deposit wallet-rpc** — dedicated `monero-wallet-rpc` for per-mint view-only wallets (shared by all chains)
+4. **Open Monero wallet** — connects to main `monero-wallet-rpc`, fetches LP address (shared)
+5. **Per chain** (independently, so one stalled chain never blocks the others):
+   - Build context — provider/fallback RPCs, wallet binding, hub contract, nonce manager, oracle updater, burn handler
+   - Start event listener — polls `MintInitiated`/`BurnRequested` events every 15s
+   - Recover mints — scans from `deployedAtBlock` (bounded) for active mints needing `setMintReady`
+   - Resolve stale — cancels timed-out mints, resolves stuck burn proposals
+   - Sweep finalized — sweeps XMR from finalized mints where LP secret is persisted
+   - Start periodic jobs — stale-burn check (60s), mint auto-retry (5min)
 
 ### Mint Processing Flow
 
@@ -179,6 +211,14 @@ BurnRequested event detected
 ---
 
 ## Operational Notes
+
+### Griefing deposit
+
+Each vault's `mintGriefingDeposit` (set via `setMintGriefingDeposit`) is paid
+by minters in the chain's **native gas token** — it's the bond that deters
+abandoned mints. Keep it small enough not to be a UX barrier: the suggested
+setting on BNB Chain is **0.001 BNB** (~$0.60). On ETH-gas chains prefer
+something in the same dollar range, not 0.001 ETH.
 
 ### Crash Recovery
 

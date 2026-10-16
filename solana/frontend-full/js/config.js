@@ -47,12 +47,13 @@ export const CONTRACTS = {
     hub: D.programId,                      // wrapsynth vault-manager program
     programId: D.programId,
     wsxmrToken: D.wsxmrMint,               // wsXMR SPL mint (Token-2022)
-    stataUSDe: D.collateralMint,           // raw QQQx collateral mint
+    stataUSDe: D.collateralMint,           // wSOL mint — SPL identity of native SOL collateral
     globalState: D.globalState,
-    programCollateralAta: D.programCollateralAta,
+    programCollateralAta: D.collateralEscrow ?? D.programCollateralAta,
+    collateralEscrow: D.collateralEscrow,
     solEscrow: D.solEscrow,
     pythXmr: ORACLE.xmr,
-    pythCollateral: ORACLE.qqqx,
+    pythCollateral: ORACLE.sol ?? ORACLE.qqqx,
     oracleMockProgram: D.oracleMockProgramId,
     // Vault serviced by the running LP server — the only vault users should mint against.
     defaultLpVault: lpServerVault,
@@ -70,7 +71,7 @@ export const DECIMALS = {
     XMR: 12,       // Monero atomic units decimals
     ETH: 9,        // SOL lamports decimals (native-balance displays)
     USD: 18,       // oracle prices scaled to 1e18 on-chain
-    COLLATERAL: 9  // QQQx SPL decimals
+    COLLATERAL: 9  // native SOL decimals
 };
 
 // Monero Network Configuration — stagenet for devnet testing.

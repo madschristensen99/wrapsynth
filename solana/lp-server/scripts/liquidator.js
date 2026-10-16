@@ -3,7 +3,7 @@
 // Scans every Vault account, computes the collateral ratio off-chain from the
 // (mock) oracle prices, and calls execute_liquidation on underwater vaults.
 // The liquidator pays wsXMR (burned against vault debt) and receives vault
-// collateral at the LIQUIDATION_BONUS discount.
+// collateral (native SOL) at the LIQUIDATION_BONUS discount.
 //
 //   node scripts/liquidator.js            # single pass
 //   node scripts/liquidator.js --loop 60  # every 60s
@@ -14,16 +14,15 @@
 //   debt_usd    = actual_debt      * xmr_price_18 / 1e8
 //   ratio       = col_usd * 100 / debt_usd   →  liquidate when < 150
 
-import { SystemProgram, Transaction } from '@solana/web3.js';
+import { SystemProgram } from '@solana/web3.js';
 import {
   TOKEN_2022_PROGRAM_ID,
   getAssociatedTokenAddressSync,
-  createAssociatedTokenAccountInstruction,
   getAccount,
 } from '@solana/spl-token';
 import BN from 'bn.js';
 import { WrapSynthClient } from '../../client/client.js';
-import { vaultCollateralAtaPda } from '../../client/pdas.js';
+import { vaultCollateralEscrowPda } from '../../client/pdas.js';
 import { sendAndConfirm } from '../../client/connection.js';
 
 const LIQUIDATION_RATIO = 150n;
@@ -51,7 +50,7 @@ async function pass() {
   const xmrPrice = readMockPrice(xmrAcc.data);
   const gs = await c.fetchRetry(() => c.program.account.globalState.fetch(c.globalState));
   const debtIndex = BigInt(gs.globalDebtIndex.toString());
-  console.log(`prices: QQQX $${Number(colPrice) / 1e18} | XMR $${Number(xmrPrice) / 1e18} | debtIndex ${debtIndex}`);
+  console.log(`prices: SOL $${Number(colPrice) / 1e18} | XMR $${Number(xmrPrice) / 1e18} | debtIndex ${debtIndex}`);
 
   const vaults = await c.fetchRetry(() => c.program.account.vault.all());
   console.log(`scanning ${vaults.length} vault(s)`);
@@ -68,11 +67,6 @@ async function pass() {
 
     // Liquidate as much debt as our wsXMR balance covers.
     const liqWsxmrAta = getAssociatedTokenAddressSync(c.wsxmrMint, lp.publicKey, true, TOKEN_2022_PROGRAM_ID);
-    const liqColAta = getAssociatedTokenAddressSync(c.collateralMint, lp.publicKey, true, TOKEN_2022_PROGRAM_ID);
-    if (!(await c.conn.getAccountInfo(liqColAta))) {
-      await sendAndConfirm(c.conn, new Transaction().add(createAssociatedTokenAccountInstruction(
-        lp.publicKey, liqColAta, lp.publicKey, c.collateralMint, TOKEN_2022_PROGRAM_ID)), [lp]);
-    }
     const bal = await getAccount(c.conn, liqWsxmrAta, undefined, TOKEN_2022_PROGRAM_ID)
       .then((a) => BigInt(a.amount.toString())).catch(() => 0n);
     const debtToClear = bal < actualDebt ? bal : actualDebt;
@@ -87,10 +81,8 @@ async function pass() {
           vault: vaultPda,
           globalState: c.globalState,
           wsxmrMint: c.wsxmrMint,
-          collateralMint: c.collateralMint,
           liquidatorWsxmrAta: liqWsxmrAta,
-          liquidatorCollateralAta: liqColAta,
-          vaultCollateralAta: vaultCollateralAtaPda(vaultPda, c.programId),
+          vaultCollateralEscrow: vaultCollateralEscrowPda(vaultPda, c.programId),
           ...c.oracleAccounts(),
           tokenProgram: TOKEN_2022_PROGRAM_ID,
           systemProgram: SystemProgram.programId,

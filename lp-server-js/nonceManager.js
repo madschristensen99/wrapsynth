@@ -1,12 +1,8 @@
-// nonceManager.js — Shared nonce manager for serializing EVM transactions
+// nonceManager.js — Per-chain nonce managers for serializing EVM transactions
 // Prevents nonce conflicts between concurrent mint and burn operations.
+// Each chain context gets its own manager via createNonceManager().
 
 import * as ethers from 'ethers';
-
-let _provider = null;
-let _walletAddress = null;
-let _nonceLock = Promise.resolve();
-let _cachedNonce = null;
 
 // Rejects `p` after `ms` so a hung RPC/fetch call can't stall the caller forever.
 // The underlying promise keeps running in the background; we just stop awaiting it.
@@ -17,37 +13,56 @@ export function withTimeout(p, ms, label = 'operation') {
   ]);
 }
 
+/**
+ * Create an independent nonce manager bound to one provider + sender.
+ * Nonce state (cache + serialization lock) is fully isolated per chain —
+ * a stuck RPC on one chain cannot stall tx signing on another.
+ */
+export function createNonceManager(provider, walletAddress) {
+  let nonceLock = Promise.resolve();
+  let cachedNonce = null;
+
+  async function getNextNonce() {
+    const run = nonceLock.then(async () => {
+      if (cachedNonce === null) {
+        // Timeout prevents a hung getTransactionCount from deadlocking the shared
+        // lock chain (which would stall every subsequent transaction).
+        cachedNonce = await withTimeout(
+          provider.getTransactionCount(walletAddress, 'latest'),
+          15000,
+          'getTransactionCount'
+        );
+      }
+      const nonce = cachedNonce;
+      cachedNonce++;
+      return nonce;
+    });
+    nonceLock = run.catch(() => {});
+    return run;
+  }
+
+  function withNonceLock(fn) {
+    const run = nonceLock.then(fn, fn);
+    nonceLock = run.catch(() => {});
+    return run;
+  }
+
+  function resetNonceCache() {
+    cachedNonce = null;
+  }
+
+  return { getNextNonce, withNonceLock, resetNonceCache };
+}
+
+// ─── Legacy single-chain singleton ──────────────────────────────────────────
+// Kept so the one-off scripts (cancel-mint.js, manual-setMintReady.js, …) keep
+// working unchanged. New multi-chain code must use createNonceManager().
+let _default = null;
+
 export function initNonceManager(provider, walletAddress) {
-  _provider = provider;
-  _walletAddress = walletAddress;
-  _cachedNonce = null;
+  _default = createNonceManager(provider, walletAddress);
 }
 
-export async function getNextNonce() {
-  const run = _nonceLock.then(async () => {
-    if (_cachedNonce === null) {
-      // Timeout prevents a hung getTransactionCount from deadlocking the shared
-      // _nonceLock chain (which would stall every subsequent transaction).
-      _cachedNonce = await withTimeout(
-        _provider.getTransactionCount(_walletAddress, 'latest'),
-        15000,
-        'getTransactionCount'
-      );
-    }
-    const nonce = _cachedNonce;
-    _cachedNonce++;
-    return nonce;
-  });
-  _nonceLock = run.catch(() => {});
-  return run;
-}
-
-export function withNonceLock(fn) {
-  const run = _nonceLock.then(fn, fn);
-  _nonceLock = run.catch(() => {});
-  return run;
-}
-
-export function resetNonceCache() {
-  _cachedNonce = null;
-}
+export function getNextNonce() { return _default.getNextNonce(); }
+export function withNonceLock(fn) { return _default.withNonceLock(fn); }
+export function resetNonceCache() { _default.resetNonceCache(); }

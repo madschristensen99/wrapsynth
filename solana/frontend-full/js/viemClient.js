@@ -151,10 +151,10 @@ const cfgPk = (k) => toPubkey(window.DEPLOYMENT[k]);
 const GLOBAL_STATE = () => cfgPk('globalState');
 const WSXMR_MINT = () => cfgPk('wsxmrMint');
 const COLLATERAL_MINT = () => cfgPk('collateralMint');
-const PROGRAM_COLLATERAL_ATA = () => cfgPk('programCollateralAta');
+const COLLATERAL_ESCROW = () => cfgPk('collateralEscrow') ?? cfgPk('programCollateralAta');
 const SOL_ESCROW = () => cfgPk('solEscrow');
 const PYTH_XMR = () => toPubkey(window.DEPLOYMENT.oracle.xmr);
-const PYTH_QQQX = () => toPubkey(window.DEPLOYMENT.oracle.qqqx);
+const PYTH_SOL = () => toPubkey(window.DEPLOYMENT.oracle.sol ?? window.DEPLOYMENT.oracle.qqqx);
 
 const nowSecs = () => BigInt(Math.floor(Date.now() / 1000));
 export const getBlockNumber = async () => nowSecs();
@@ -268,7 +268,7 @@ async function vaultToEvm(vaultPdaKey, v) {
     const debt = BigInt(v.normalizedDebt.toString());
     let xmrPrice = 0, collPrice = 0, maxMintCapacityXmr, capacityEstimated = false;
     try {
-        const [x, c] = await Promise.all([readOracle(PYTH_XMR()), readOracle(PYTH_QQQX())]);
+        const [x, c] = await Promise.all([readOracle(PYTH_XMR()), readOracle(PYTH_SOL())]);
         xmrPrice = Number(x.price) / 1e18;
         collPrice = Number(c.price) / 1e18;
         const bps = Number(v.maxMintBps) || 10000; // 0 = uncapped on-chain
@@ -278,7 +278,7 @@ async function vaultToEvm(vaultPdaKey, v) {
         maxMintCapacityXmr = Math.max(0, maxDebtUsd - curDebtUsd) / xmrPrice;
         capacityEstimated = true;
     } catch (_) { maxMintCapacityXmr = undefined; }
-    // EVM collateral was 18-dec USDe; QQQx is 9-dec — scale ×1e9 so the UI's
+    // EVM collateral was 18-dec USDe; SOL is 9-dec — scale ×1e9 so the UI's
     // /1e18 display math produces correct values. Write paths divide back.
     const S = 10n ** 9n;
     return {
@@ -713,11 +713,11 @@ export async function readHub(functionName, args = []) {
             return raw * (10n ** 9n); // 9-dec → 18-dec so /1e18 displays correctly
         }
         case 'getXmrPrice': return (await readOracle(PYTH_XMR())).price;
-        case 'getCollateralPrice': return (await readOracle(PYTH_QQQX())).price;
+        case 'getCollateralPrice': return (await readOracle(PYTH_SOL())).price;
         case 'getXmrPriceWithAge': { const { price, age } = await readOracle(PYTH_XMR(), Number(args[0] ?? 1e9)); return { price, age: BigInt(age) }; }
-        case 'getCollateralPriceWithAge': { const { price, age } = await readOracle(PYTH_QQQX(), Number(args[0] ?? 1e9)); return { price, age: BigInt(age) }; }
+        case 'getCollateralPriceWithAge': { const { price, age } = await readOracle(PYTH_SOL(), Number(args[0] ?? 1e9)); return { price, age: BigInt(age) }; }
         case 'lastXmrPrice': return (await readOracle(PYTH_XMR(), 1e9)).priceRaw; // 8-dec, matching EVM int192
-        case 'lastCollateralPrice': return (await readOracle(PYTH_QQQX(), 1e9)).priceRaw;
+        case 'lastCollateralPrice': return (await readOracle(PYTH_SOL(), 1e9)).priceRaw;
         case 'lpPublicKeys': return (await readHub('getMintRequest', [args[0]])).lpPublicSpendKey || ZERO32;
         case 'lpPublicViewKeys': return (await readHub('getMintRequest', [args[0]])).lpPublicViewKey || ZERO32;
         case 'burnLpPublicKeys': return (await readHub('getBurnRequest', [args[0]])).lpPublicSpendKey || ZERO32;
@@ -818,7 +818,7 @@ export async function readHub(functionName, args = []) {
             const debt = BigInt(v.normalizedDebt.toString());
             if (debt === 0n) return 10n ** 22n;
             try {
-                const [x, c] = await Promise.all([readOracle(PYTH_XMR()), readOracle(PYTH_QQQX())]);
+                const [x, c] = await Promise.all([readOracle(PYTH_XMR()), readOracle(PYTH_SOL())]);
                 const collUsd = coll * c.price / 10n ** 9n;
                 const debtUsd = debt * x.price / 10n ** 8n;
                 return debtUsd === 0n ? 10n ** 22n : collUsd * 10n ** 18n / debtUsd;
@@ -834,10 +834,10 @@ export async function readHub(functionName, args = []) {
             const wsxmr = BigInt(args[1] ?? args[0]);
             const vaultKey = args.length > 1 ? args[0] : (CONTRACTS.defaultLpVault || null);
             try {
-                const [x, c] = await Promise.all([readOracle(PYTH_XMR()), readOracle(PYTH_QQQX())]);
+                const [x, c] = await Promise.all([readOracle(PYTH_XMR()), readOracle(PYTH_SOL())]);
                 const v = vaultKey ? await fetchAcc('vault', await resolveVaultPda(vaultKey)) : null;
                 const rewardBps = v ? BigInt(v.burnRewardBps.toString()) : 50n;
-                // base lock: wsxmr(8dec)*xmrUsd/qqqxUsd → collateral raw(9dec)
+                // base lock: wsxmr(8dec)*xmrUsd/solUsd → collateral raw(9dec)
                 const base = wsxmr * x.price * 10n / c.price;
                 const reward = base * rewardBps / 10_000n;
                 const S = 10n ** 9n;
@@ -900,7 +900,7 @@ async function _writeHub(functionName, args, value) {
                 griefingEscrow: payer, // any funded account; program checks lamports only
                 initiatorPendingReturns: prPda,
                 pythXmr: PYTH_XMR(),
-                pythCollateral: PYTH_QQQX(),
+                pythCollateral: PYTH_SOL(),
                 systemProgram: SystemProgram.programId,
             }).instruction();
             const sig = await signSendIxs([...prIxs, ix], { computeUnits: 350_000 });
@@ -931,7 +931,7 @@ async function _writeHub(functionName, args, value) {
                 wsxmrMint: WSXMR_MINT(),
                 userWsxmrAta: splATA(payer),
                 pythXmr: PYTH_XMR(),
-                pythCollateral: PYTH_QQQX(),
+                pythCollateral: PYTH_SOL(),
                 tokenProgram: TOKEN_2022,
                 systemProgram: SystemProgram.programId,
             }).instruction();
@@ -982,9 +982,8 @@ async function _writeHub(functionName, args, value) {
                     wsxmrMint: WSXMR_MINT(),
                     recipientWsxmrAta: splATA(toPubkey(b58(mr.recipient))),
                     lpWsxmrAta: splATA(toPubkey(b58(v.lpAddress))),
-                    collateralMint: COLLATERAL_MINT(),
-                    vaultCollateralAta: vaultCollAta,
-                    programCollateralAta: PROGRAM_COLLATERAL_ATA(),
+                    vaultCollateralEscrow: vaultCollAta,
+                    collateralEscrow: COLLATERAL_ESCROW(),
                     tokenProgram: TOKEN_2022,
                     systemProgram: SystemProgram.programId,
                 }).instruction();
@@ -1037,10 +1036,9 @@ async function _writeHub(functionName, args, value) {
                     burnRequest: reqPda,
                     userPendingReturns: pdas.pendingReturnsPda(toPubkey(b58(br.user)), program.programId),
                     pythXmr: PYTH_XMR(),
-                    pythCollateral: PYTH_QQQX(),
-                    collateralMint: COLLATERAL_MINT(),
-                    vaultCollateralAta: pdas.vaultCollateralAtaPda(br.lpVault, program.programId),
-                    programCollateralAta: PROGRAM_COLLATERAL_ATA(),
+                    pythCollateral: PYTH_SOL(),
+                    vaultCollateralEscrow: pdas.vaultCollateralEscrowPda(br.lpVault, program.programId),
+                    collateralEscrow: COLLATERAL_ESCROW(),
                     tokenProgram: TOKEN_2022,
                     systemProgram: SystemProgram.programId,
                 }).instruction();
@@ -1060,10 +1058,9 @@ async function _writeHub(functionName, args, value) {
                     burnRequest: reqPda,
                     userPendingReturns: pdas.pendingReturnsPda(payer, program.programId),
                     pythXmr: PYTH_XMR(),
-                    pythCollateral: PYTH_QQQX(),
-                    collateralMint: COLLATERAL_MINT(),
-                    vaultCollateralAta: pdas.vaultCollateralAtaPda(br.lpVault, program.programId),
-                    programCollateralAta: PROGRAM_COLLATERAL_ATA(),
+                    pythCollateral: PYTH_SOL(),
+                    vaultCollateralEscrow: pdas.vaultCollateralEscrowPda(br.lpVault, program.programId),
+                    collateralEscrow: COLLATERAL_ESCROW(),
                     tokenProgram: TOKEN_2022,
                     systemProgram: SystemProgram.programId,
                 }).instruction();
@@ -1080,9 +1077,8 @@ async function _writeHub(functionName, args, value) {
                     globalState: GLOBAL_STATE(),
                     mintRequest: reqPda,
                     initiatorReturns: pdas.pendingReturnsPda(toPubkey(b58(mr.initiator)), program.programId),
-                    collateralMint: COLLATERAL_MINT(),
-                    vaultCollateralAta: pdas.vaultCollateralAtaPda(mr.lpVault, program.programId),
-                    programCollateralAta: PROGRAM_COLLATERAL_ATA(),
+                    vaultCollateralEscrow: pdas.vaultCollateralEscrowPda(mr.lpVault, program.programId),
+                    collateralEscrow: COLLATERAL_ESCROW(),
                     tokenProgram: TOKEN_2022,
                     systemProgram: SystemProgram.programId,
                 }).instruction();
@@ -1099,9 +1095,8 @@ async function _writeHub(functionName, args, value) {
                     globalState: GLOBAL_STATE(),
                     mintRequest: reqPda,
                     initiatorReturns: pdas.pendingReturnsPda(toPubkey(b58(mr.initiator)), program.programId),
-                    collateralMint: COLLATERAL_MINT(),
-                    vaultCollateralAta: pdas.vaultCollateralAtaPda(mr.lpVault, program.programId),
-                    programCollateralAta: PROGRAM_COLLATERAL_ATA(),
+                    vaultCollateralEscrow: pdas.vaultCollateralEscrowPda(mr.lpVault, program.programId),
+                    collateralEscrow: COLLATERAL_ESCROW(),
                     tokenProgram: TOKEN_2022,
                     systemProgram: SystemProgram.programId,
                 }).instruction();
@@ -1121,18 +1116,15 @@ async function _writeHub(functionName, args, value) {
                     }).instruction();
                 return makeReceipt(await signSendIxs([ix]));
             }
-            const { ata: userCollAta, ixs: ataPre } = await ensureAtaIxs(COLLATERAL_MINT(), payer);
             const ix = await program.methods.withdrawCollateralReturns()
                 .accountsStrict({
                     owner: payer,
                     pendingReturns: prPda,
                     globalState: GLOBAL_STATE(),
-                    collateralMint: COLLATERAL_MINT(),
-                    programCollateralAta: PROGRAM_COLLATERAL_ATA(),
-                    userCollateralAta: userCollAta,
-                    tokenProgram: TOKEN_2022,
+                    collateralEscrow: COLLATERAL_ESCROW(),
+                    systemProgram: SystemProgram.programId,
                 }).instruction();
-            return makeReceipt(await signSendIxs([...ataPre, ix]));
+            return makeReceipt(await signSendIxs([ix]));
         }
 
         case 'createVault': {
@@ -1143,41 +1135,41 @@ async function _writeHub(functionName, args, value) {
                     globalState: GLOBAL_STATE(),
                     systemProgram: SystemProgram.programId,
                 }).instruction();
-            return makeReceipt(await signSendIxs([ix]));
+            // Floor-fund the vault's SOL escrow — a data-less PDA left with
+            // sub-rent lamports violates rent; tracked deposits sit on top.
+            const rentFloor = await connection.getMinimumBalanceForRentExemption(0);
+            const fundIx = SystemProgram.transfer({
+                fromPubkey: payer,
+                toPubkey: pdas.vaultCollateralEscrowPda(vaultPda, program.programId),
+                lamports: rentFloor,
+            });
+            return makeReceipt(await signSendIxs([ix, fundIx]));
         }
 
         case 'depositCollateral': {
             const vaultPda = pdas.vaultPda(payer, program.programId);
-            const { ata: lpCollAta, ixs: ataPre } = await ensureAtaIxs(COLLATERAL_MINT(), payer);
-            // UI passes 18-dec-scaled value → scale down to raw 9-dec
+            // UI passes 18-dec-scaled value → scale down to raw 9-dec lamports
             const amt = BigInt(args[0].toString()) / (10n ** 9n);
             const ix = await program.methods.depositCollateral(new BN(amt.toString()))
                 .accountsStrict({
                     lp: payer, vault: vaultPda, globalState: GLOBAL_STATE(),
-                    collateralMint: COLLATERAL_MINT(),
-                    lpCollateralAta: lpCollAta,
-                    vaultCollateralAta: pdas.vaultCollateralAtaPda(vaultPda, program.programId),
-                    tokenProgram: TOKEN_2022,
+                    vaultCollateralEscrow: pdas.vaultCollateralEscrowPda(vaultPda, program.programId),
                     systemProgram: SystemProgram.programId,
                 }).instruction();
-            return makeReceipt(await signSendIxs([...ataPre, ix]));
+            return makeReceipt(await signSendIxs([ix]));
         }
 
         case 'withdrawCollateral': {
             const vaultPda = pdas.vaultPda(payer, program.programId);
-            const { ata: lpCollAta, ixs: ataPre } = await ensureAtaIxs(COLLATERAL_MINT(), payer);
             const amt = BigInt(args[0].toString()) / (10n ** 9n);
             const ix = await program.methods.withdrawCollateral(new BN(amt.toString()))
                 .accountsStrict({
                     lp: payer, vault: vaultPda, globalState: GLOBAL_STATE(),
-                    collateralMint: COLLATERAL_MINT(),
-                    lpCollateralAta: lpCollAta,
-                    vaultCollateralAta: pdas.vaultCollateralAtaPda(vaultPda, program.programId),
-                    pythXmr: PYTH_XMR(), pythCollateral: PYTH_QQQX(),
-                    tokenProgram: TOKEN_2022,
+                    vaultCollateralEscrow: pdas.vaultCollateralEscrowPda(vaultPda, program.programId),
+                    pythXmr: PYTH_XMR(), pythCollateral: PYTH_SOL(),
                     systemProgram: SystemProgram.programId,
                 }).instruction();
-            return makeReceipt(await signSendIxs([...ataPre, ix]));
+            return makeReceipt(await signSendIxs([ix]));
         }
 
         case 'setVaultMarketMetrics':
@@ -1209,7 +1201,7 @@ async function _writeHub(functionName, args, value) {
             const ts = BigInt(Math.floor(Date.now() / 1000));
             const O = window.DEPLOYMENT.oracle;
             const ixs = [];
-            for (const [feed, feedId] of [[PYTH_XMR(), O.xmrFeedId], [PYTH_QQQX(), O.qqqxFeedId]]) {
+            for (const [feed, feedId] of [[PYTH_XMR(), O.xmrFeedId], [PYTH_SOL(), O.solFeedId ?? O.qqqxFeedId]]) {
                 // Preserve the current mock price — just bump publish_time.
                 const info = await connection.getAccountInfo(feed);
                 if (!info) throw new Error('oracle feed account missing');

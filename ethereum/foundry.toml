@@ -22,9 +22,16 @@ fs_permissions = [{ access = "read-write", path = "./deployments" }]
 [rpc_endpoints]
 gnosis = "${GNOSIS_RPC_URL}"
 hyperevm = "${HYPEREVM_RPC_URL}"
+bnb = "${BNB_RPC_URL}"
+base = "${BASE_RPC_URL}"
+robinhood = "${ROBINHOOD_RPC_URL}"
 
 # Etherscan API keys for verification
 [etherscan]
 gnosis = { key = "${GNOSISSCAN_API_KEY}", url = "https://api.gnosisscan.io/api" }
+bnb = { key = "${BSCSCAN_API_KEY}", url = "https://api.bscscan.com/api" }
+base = { key = "${BASESCAN_API_KEY}", url = "https://api.basescan.org/api" }
+# robinhood: verify via `forge verify-contract --verifier blockscout` once the
+# RobinScan/Blockscout endpoint is confirmed — no etherscan-family API key yet.
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

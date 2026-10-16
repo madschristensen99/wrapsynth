@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_2022::{transfer_checked, Token2022, TransferChecked};
-use anchor_spl::token_interface::{Mint, TokenAccount};
+use anchor_lang::solana_program::program::invoke_signed;
+use anchor_lang::solana_program::system_instruction;
 
 use crate::constants::*;
 use crate::errors::WrapSynthError;
@@ -35,7 +35,7 @@ pub struct InitializePendingReturns<'info> {
 }
 
 /// Withdraw pending collateral returns (pull-pattern, prevents DoS).
-/// Equivalent to withdrawReturns(SDAI) in VaultManager.sol.
+/// Collateral is native SOL — pays lamports from the program collateral pool.
 pub fn withdraw_collateral_returns(ctx: Context<WithdrawCollateralReturns>) -> Result<()> {
     let returns = &mut ctx.accounts.pending_returns;
     let amount = returns.collateral_amount;
@@ -50,25 +50,25 @@ pub fn withdraw_collateral_returns(ctx: Context<WithdrawCollateralReturns>) -> R
         .load_mut()?
         .global_pending_collateral = __global_pending_collateral_cur.saturating_sub(amount);
 
-    // Transfer from the program collateral pool to user
-    let bump = ctx.accounts.global_state.load()?.bump;
-    let seeds: &[&[u8]] = &[GLOBAL_STATE_SEED, &[bump]];
-    let signer_seeds = &[seeds];
-
-    let cpi_ctx = CpiContext::new_with_signer(
-        ctx.accounts.token_program.to_account_info(),
-        TransferChecked {
-            from: ctx.accounts.program_collateral_ata.to_account_info(),
-            mint: ctx.accounts.collateral_mint.to_account_info(),
-            to: ctx.accounts.user_collateral_ata.to_account_info(),
-            authority: ctx.accounts.global_state.to_account_info(),
-        },
-        signer_seeds,
-    );
-    transfer_checked(cpi_ctx, amount, ctx.accounts.collateral_mint.decimals)?;
+    // Transfer lamports from the program collateral pool escrow to owner
+    let bump = ctx.bumps.collateral_escrow;
+    let seeds: &[&[u8]] = &[PROGRAM_COLLATERAL_SEED, &[bump]];
+    invoke_signed(
+        &system_instruction::transfer(
+            &ctx.accounts.collateral_escrow.key(),
+            &ctx.accounts.owner.key(),
+            amount,
+        ),
+        &[
+            ctx.accounts.collateral_escrow.to_account_info(),
+            ctx.accounts.owner.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+        ],
+        &[seeds],
+    )?;
 
     msg!(
-        "Withdrew {} collateral returns for {}",
+        "Withdrew {} lamports of collateral returns for {}",
         amount,
         ctx.accounts.owner.key()
     );
@@ -88,8 +88,21 @@ pub fn withdraw_sol_returns(ctx: Context<WithdrawSolReturns>) -> Result<()> {
         __global_pending_sol_cur.saturating_sub(amount);
 
     // Transfer SOL lamports from escrow account to owner
-    **ctx.accounts.sol_escrow.try_borrow_mut_lamports()? -= amount;
-    **ctx.accounts.owner.try_borrow_mut_lamports()? += amount;
+    let bump = ctx.bumps.sol_escrow;
+    let seeds: &[&[u8]] = &[b"sol_escrow", &[bump]];
+    invoke_signed(
+        &system_instruction::transfer(
+            &ctx.accounts.sol_escrow.key(),
+            &ctx.accounts.owner.key(),
+            amount,
+        ),
+        &[
+            ctx.accounts.sol_escrow.to_account_info(),
+            ctx.accounts.owner.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+        ],
+        &[seeds],
+    )?;
 
     msg!(
         "Withdrew {} lamports for {}",
@@ -103,6 +116,7 @@ pub fn withdraw_sol_returns(ctx: Context<WithdrawSolReturns>) -> Result<()> {
 
 #[derive(Accounts)]
 pub struct WithdrawCollateralReturns<'info> {
+    #[account(mut)]
     pub owner: Signer<'info>,
 
     #[account(
@@ -120,20 +134,15 @@ pub struct WithdrawCollateralReturns<'info> {
     )]
     pub global_state: AccountLoader<'info, GlobalState>,
 
-    pub collateral_mint: InterfaceAccount<'info, Mint>,
-
-    /// Program-owned collateral ATA (pending returns pool)
+    /// CHECK: lamport-only program collateral escrow (pending returns pool)
     #[account(
         mut,
         seeds = [PROGRAM_COLLATERAL_SEED],
         bump,
     )]
-    pub program_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+    pub collateral_escrow: AccountInfo<'info>,
 
-    #[account(mut)]
-    pub user_collateral_ata: InterfaceAccount<'info, TokenAccount>,
-
-    pub token_program: Program<'info, Token2022>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]

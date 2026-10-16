@@ -8,7 +8,7 @@ pub mod utils;
 
 use instructions::*;
 
-declare_id!("k4TC3sLs4feJfuMYBf8piyRQMU1WENM2LbQoKJNWbmx");
+declare_id!("C9kVasKgQiUX1BCngBjorvMA8QaFyERHvdkYdwPyy3H1");
 
 #[program]
 pub mod wrapsynth_vault_manager {
@@ -16,12 +16,8 @@ pub mod wrapsynth_vault_manager {
 
     // ── Initialization ────────────────────────────────────────────────────────
 
-    pub fn initialize(
-        ctx: Context<Initialize>,
-        pyth_xmr_feed: Pubkey,
-        collateral_mint: Pubkey,
-    ) -> Result<()> {
-        initialize::handler(ctx, pyth_xmr_feed, collateral_mint)
+    pub fn initialize(ctx: Context<Initialize>, pyth_xmr_feed: Pubkey) -> Result<()> {
+        initialize::handler(ctx, pyth_xmr_feed)
     }
 
     pub fn set_liquidity_router(ctx: Context<SetLiquidityRouter>, router: Pubkey) -> Result<()> {
@@ -34,9 +30,6 @@ pub mod wrapsynth_vault_manager {
         vault_management::create_vault(ctx)
     }
 
-    pub fn initialize_vault_collateral(ctx: Context<InitializeVaultCollateral>) -> Result<()> {
-        vault_management::initialize_vault_collateral(ctx)
-    }
 
     pub fn deposit_collateral(ctx: Context<DepositCollateral>, amount: u64) -> Result<()> {
         vault_management::deposit_collateral(ctx, amount)

@@ -28,13 +28,17 @@ export const findPda = (seeds, programId) =>
 
 export const globalStatePda = (pid) => findPda([SEEDS.globalState], pid);
 export const wsxmrMintPda = (pid) => findPda([SEEDS.wsxmrMint], pid);
-export const programCollateralAtaPda = (pid) =>
+export const collateralEscrowPda = (pid) =>
   findPda([SEEDS.programCollateral], pid);
+// Alias retained for call sites that still say "program collateral ata"
+export const programCollateralAtaPda = collateralEscrowPda;
 export const solEscrowPda = (pid) => findPda([SEEDS.solEscrow], pid);
 export const vaultPda = (lp, pid) =>
   findPda([SEEDS.vault, lp.toBuffer()], pid);
-export const vaultCollateralAtaPda = (vault, pid) =>
+export const vaultCollateralEscrowPda = (vault, pid) =>
   findPda([SEEDS.vaultCollateral, vault.toBuffer()], pid);
+// Alias retained for call sites that still say "vault collateral ata"
+export const vaultCollateralAtaPda = vaultCollateralEscrowPda;
 export const pendingReturnsPda = (owner, pid) =>
   findPda([SEEDS.pendingReturns, owner.toBuffer()], pid);
 export const mintRequestPda = (requestId, pid) =>

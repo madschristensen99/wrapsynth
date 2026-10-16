@@ -12,15 +12,15 @@
  * the LP reveals their secret to finalize. The user combines secrets to sweep XMR.
  */
 
-import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG, MONERO_CONFIG } from './config.js?v=3.22';
-import { readHub, writeHub, writeHubUnsafe, readWsxmr, writeWsxmr, writeWsxmrUnsafe, watchContractEvent, getUserAddress, getPublicClient } from './viemClient.js?v=3.22';
+import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG, MONERO_CONFIG, ASSET, getActiveChain } from './config.js?v=3.22';
+import { readHub, writeHub, writeHubUnsafe, readWsxmr, writeWsxmr, writeWsxmrUnsafe, watchContractEvent, getUserAddress, getPublicClient, getNativeBalance } from './viemClient.js?v=3.22';
 import { getPhantomAgent } from './phantomAgent.js?v=3.12';
 import { derivePerBurnKeySet } from './seedManager.js?v=3.12';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory } from './storage.js?v=3.12';
 import { updateBurnProgress, showBurnVerificationLoading, showBurnVerificationDetails, showBurnVerificationManual, showBurnAddressPanel, showBurnKeysFallback, showBurnScanProgress, showBurnXmrFound, updateCancelBurnButton } from './ui.js?v=3.22';
 import { getMoneroRpc } from './moneroRpc.js?v=3.12';
 import { getCombinedKeysForImport, toLeHex } from './burnSweep.js?v=3.12';
-import { keccak256, toHex } from 'https://esm.sh/viem@2.7.0';
+import { keccak256, toHex, formatUnits } from 'https://esm.sh/viem@2.7.0';
 
 export class BurnFlow {
     constructor() {
@@ -174,9 +174,48 @@ export class BurnFlow {
         console.log('Per-burn public spend key:', userPublicKey);
         console.log('Per-burn public view key:', userViewKey);
 
+        // Preflight funding check — wsXMR balance + gas. Surfaces a clear
+        // message with acquire links instead of an opaque wallet revert.
+        try {
+            const [wsxmrBal, nativeBal] = await Promise.all([
+                readWsxmr('balanceOf', [userAddress]).catch(() => null),
+                getNativeBalance(userAddress).catch(() => null),
+            ]);
+            const chain = getActiveChain();
+            const gasSym = chain?.nativeCurrency.symbol || 'ETH';
+            const linkify = list => (list || [])
+                .map(l => `<a href="${l.url.replace('{wsxmr}', CONTRACTS.wsxmrToken || '')}" target="_blank" rel="noopener" style="color:var(--accent,#f7931a)">${l.label} ↗</a>`)
+                .join(' · ');
+            if (wsxmrBal !== null && wsxmrBal < wsxmrAmountAtomic) {
+                const { showError } = await import('./ui.js?v=3.22');
+                const links = linkify(chain?.acquire?.wsxmr);
+                showError('Not enough wsXMR',
+                    `You have ${formatUnits(wsxmrBal, 8)} wsXMR but tried to burn ${formatUnits(wsxmrAmountAtomic, 8)}.` +
+                    (links ? `<br><br>Get wsXMR: ${links}` : '<br><br>Get wsXMR by minting with XMR first.'));
+                throw new Error('Insufficient wsXMR balance');
+            }
+            const gasBuffer = 500000000000000n; // ~0.0005 native
+            if (nativeBal !== null && nativeBal < gasBuffer) {
+                const { showError } = await import('./ui.js?v=3.22');
+                const links = linkify(chain?.acquire?.gas);
+                showError(`Not enough ${gasSym}`,
+                    `Burning needs a small amount of ${gasSym} for gas; the wallet holds ${formatUnits(nativeBal, 18)} ${gasSym}.` +
+                    (links ? `<br><br>Get ${gasSym}: ${links}` : ''));
+                throw new Error(`Insufficient ${gasSym} for gas`);
+            }
+        } catch (err) {
+            if (err.message?.includes('Insufficient')) throw err;
+            console.warn('[Burn] Funding preflight failed — continuing:', err.message);
+        }
+
         let receipt;
         const attemptRequestBurn = async () => {
             updateBurnProgress('evm-request', 'Step 3/3: Submitting burn request (check wallet)...');
+            // Explicit padded gas — requestBurn's cost varies with vault state
+            // (yield sync, pending-debt branch, request-array loops) and
+            // wallet estimation can land below the real need → mined OOG,
+            // funds burned but request unregistered. 1.5M ≈ 2.5x observed use
+            // and still fits small-block chains (~2M/block on Orbit-style chains).
             return await writeHub('requestBurn', [
                 wsxmrAmountAtomic,
                 this.lpVault,
@@ -184,7 +223,7 @@ export class BurnFlow {
                 claimCommitment,
                 userPublicKey,
                 userViewKey
-            ]);
+            ], 0n, 1500000n);
         };
 
         try {
@@ -302,7 +341,7 @@ export class BurnFlow {
             this.deadlineBlock = Number(burnReq.deadline);
             const currentBlock = Number(await getPublicClient().getBlockNumber());
             const blocksRemaining = Math.max(0, this.deadlineBlock - currentBlock);
-            this.lpProposeTimeout = blocksRemaining * 1000; // ~1s per block on HyperEVM
+            this.lpProposeTimeout = blocksRemaining * (getActiveChain()?.blockTimeSec || 1) * 1000;
             console.log(`[Burn] On-chain deadline: block ${this.deadlineBlock}, current: ${currentBlock}, ${blocksRemaining} blocks remaining (~${Math.ceil(this.lpProposeTimeout / 60000)} min)`);
         } catch (err) {
             console.warn('[Burn] Could not fetch on-chain deadline, using fallback:', err.message);
@@ -559,7 +598,7 @@ export class BurnFlow {
                 const currentBlock = Number(await getPublicClient().getBlockNumber());
                 const blocksRemaining = deadlineBlock - currentBlock;
                 if (blocksRemaining > 0) {
-                    const mins = Math.ceil(blocksRemaining / 60); // ~1s blocks on HyperEVM
+                    const mins = Math.ceil(blocksRemaining * (getActiveChain()?.blockTimeSec || 1) / 60);
                     updateBurnProgress('confirm-lock', `Verifying XMR receipt... ${mins} min remaining to confirm`);
                 } else {
                     updateBurnProgress('confirm-lock', 'Deadline passed — LP did not send XMR. Click Cancel to restore your wsXMR.');
@@ -1036,7 +1075,7 @@ export class BurnFlow {
                                 try {
                                     await this.claimSlashed();
                                     const { showSuccess } = await import('./ui.js?v=3.22');
-                                    showSuccess('Slashed Collateral Claimed', 'Your USDe has been queued. Withdraw it via Pending Returns.');
+                                    showSuccess('Slashed Collateral Claimed', `Your ${ASSET.collateral} has been queued. Withdraw it via Pending Returns.`);
                                     resolve(null);
                                     return;
                                 } catch (claimErr) {
@@ -1232,7 +1271,7 @@ export class BurnFlow {
                         const blocksRemaining = deadlineBlock - currentBlock;
                         if (blocksRemaining > 0) {
                             deadlinePassed = false;
-                            const minsRemaining = Math.ceil(blocksRemaining / 60); // ~1s blocks on HyperEVM
+                            const minsRemaining = Math.ceil(blocksRemaining * (getActiveChain()?.blockTimeSec || 1) / 60);
                             if (status === 1) {
                                 showError('Cannot Cancel Yet', `The burn deadline has not been reached. Approximately ${minsRemaining} minute(s) remaining until you can abort. The LP may still respond before then.`);
                             } else if (status === 2) {

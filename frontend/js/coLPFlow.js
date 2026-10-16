@@ -8,9 +8,9 @@
  * Also includes helpers for querying active positions via on-chain event history.
  */
 
-import { CONTRACTS, ABIS, DECIMALS } from './config.js?v=3.22';
+import { CONTRACTS, ABIS, DECIMALS, getActiveChainKey, getDeployment } from './config.js?v=3.23';
 import { readHub, writeHub, readWsxmr, writeWsxmr, getUserAddress, getPublicClient, getWalletClient } from './viemClient.js?v=3.22';
-import { formatUnits, parseUnits, parseAbi, decodeEventLog, toEventSelector, encodeFunctionData, decodeFunctionResult } from 'https://esm.sh/viem@2.7.0';
+import { formatUnits, parseUnits, parseAbi, decodeEventLog, toEventSelector, encodeFunctionData, decodeFunctionResult, keccak256, encodeAbiParameters, toHex } from 'https://esm.sh/viem@2.7.0';
 
 // Co-LP event signatures — a single eth_getLogs query matches all three by
 // OR'ing topic0. User binding differs per event (deployed: indexed topic2,
@@ -22,6 +22,14 @@ const COLP_EVENT_ABI = parseAbi([
     'event CoLPRebalanced(uint256 indexed oldTokenId, uint256 indexed newTokenId, address indexed vault, address user, address caller, uint16 newRangeBps)'
 ]);
 const COLP_EVENT_TOPICS = COLP_EVENT_ABI.map(item => toEventSelector(item));
+
+// Storage slot of `_userPositions` (mapping(address => uint256[])) in wsXmrHub.
+// The hub keeps this index in sync on open/unwind/rebalance, so reading the
+// array via eth_getStorageAt enumerates a user's live positions exactly — no
+// block-window event scan required. Verified against the deployed hub's
+// storage layout (slot 43). Sanity-bound the length before trusting it.
+const USER_POSITIONS_SLOT = 43n;
+const MAX_POSITIONS_ENUM = 500;
 
 export class CoLPFlow {
     constructor() {
@@ -344,29 +352,139 @@ export class CoLPFlow {
     }
 
     /**
-     * @notice Query user's active Co-LP positions from chain events.
-     * Uses ONE chunked eth_getLogs for all three Co-LP signatures (previous
-     * version ran three sequential 48k-block scans = 160+ RPC calls and sat
-     * on "Loading positions..." for minutes). Decoded events are persisted to
-     * localStorage so refreshes only scan new blocks.
+    /**
+     * @notice Read the user's live co-LP token IDs. Prefers the public
+     *         getUserPositions getter (present on newer deployments); the
+     *         older hub deployments lack it, so fall back to reading the
+     *         _userPositions storage array directly — the hub keeps that
+     *         index in sync on open/unwind/rebalance, so it is authoritative.
+     */
+    async _userPositionTokenIds() {
+        try {
+            const ids = await readHub('getUserPositions', [this.userAddress]);
+            return ids.map(x => BigInt(x));
+        } catch { /* getter absent on this deployment — storage fallback below */ }
+
+        const publicClient = getPublicClient();
+        const lenSlot = keccak256(encodeAbiParameters(
+            [{ type: 'address' }, { type: 'uint256' }],
+            [this.userAddress, USER_POSITIONS_SLOT]
+        ));
+        const lenWord = await publicClient.getStorageAt({ address: CONTRACTS.hub, slot: lenSlot });
+        const n = lenWord ? Number(BigInt(lenWord)) : 0;
+        if (n === 0) return [];
+        if (n > MAX_POSITIONS_ENUM) {
+            throw new Error(`implausible _userPositions length ${n} — storage layout may differ from slot ${USER_POSITIONS_SLOT}`);
+        }
+
+        // Solidity dynamic array: elements at keccak256(lenSlot) + i
+        const base = BigInt(keccak256(lenSlot));
+        return Promise.all(
+            Array.from({ length: n }, (_, i) =>
+                publicClient.getStorageAt({
+                    address: CONTRACTS.hub,
+                    slot: toHex(base + BigInt(i), { size: 32 })
+                }).then(word => BigInt(word))
+            )
+        );
+    }
+
+    /**
+     * @notice Enumerate the user's live co-LP positions from on-chain state —
+     *         no block-window event scan required. Returns [] when empty;
+     *         throws on read failure.
+     */
+    async _positionsFromStorage() {
+        const tokenIds = await this._userPositionTokenIds();
+        if (tokenIds.length === 0) return [];
+
+        const metas = await Promise.allSettled(
+            tokenIds.map(t => readHub('getPositionMetadata', [t]))
+        );
+        return tokenIds.map((tokenId, i) => {
+            const r = metas[i];
+            if (r.status !== 'fulfilled' || !r.value) return null;
+            const meta = r.value;
+            if (!meta.vaultOwner || meta.vaultOwner === '0x0000000000000000000000000000000000000000') return null;
+            // PositionMetadata has no rangeBps — approximate from the tick
+            // span (~1 tick ≈ 1 bp, symmetric range → span/2). Cached deploy
+            // events override this where known.
+            const approxRangeBps = Math.round((Number(meta.tickUpper) - Number(meta.tickLower)) / 2);
+            return {
+                tokenId: tokenId.toString(),
+                vault: meta.vaultOwner,
+                wsxmrAmount: (Number(meta.wsxmrOriginal) / 1e8).toFixed(4),
+                rangeBps: approxRangeBps,
+                blockNumber: Number(meta.createdAt) // used for sort ordering only
+            };
+        }).filter(Boolean);
+    }
+
+    /**
      * @returns {Promise<Array<{tokenId: string, vault: string, wsxmrAmount: string, rangeBps: number}>>}
      */
     async getUserActivePositions() {
         if (!this.userAddress) return [];
 
-        const publicClient = getPublicClient();
-        const currentBlock = await publicClient.getBlockNumber();
-        // Scan last ~2.75 days max (48,000 blocks) to stay within RPC provider limits
-        const MAX_SCAN_BLOCKS = 48000n;
-        let fromBlock = currentBlock > MAX_SCAN_BLOCKS ? currentBlock - MAX_SCAN_BLOCKS : 0n;
-
-        const cache = this._loadScanCache();
-        if (cache.lastBlock > 0) {
-            // Resume where the last scan stopped, overlapping 100 blocks for
-            // reorg safety (HyperEVM reorgs are rare and shallow).
-            const resume = BigInt(cache.lastBlock) - 100n;
-            if (resume > fromBlock) fromBlock = resume;
+        // Fast path: enumerate _userPositions from hub storage — complete and
+        // independent of event-scan depth. Enrich rangeBps/txHash from the
+        // event cache where it has coverage.
+        try {
+            const positions = await this._positionsFromStorage();
+            const cache = this._loadScanCache();
+            if (cache.events.length) {
+                const known = new Map(
+                    this._buildActivePositions(cache.events).map(p => [String(p.tokenId), p])
+                );
+                for (const p of positions) {
+                    const k = known.get(String(p.tokenId));
+                    if (k) { p.rangeBps = k.rangeBps; p.txHash = k.txHash; p.blockNumber = k.blockNumber; }
+                }
+            }
+            positions.sort((a, b) => b.blockNumber - a.blockNumber);
+            // Keep the event cache warm in the background for future
+            // enrichment — never blocks rendering.
+            this._scanCoLPEvents().catch(() => {});
+            return positions;
+        } catch (err) {
+            console.warn('[coLPFlow] storage enumeration failed, falling back to event scan:', err.shortMessage || err.message);
         }
+
+        const events = await this._scanCoLPEvents();
+        const active = this._buildActivePositions(events);
+        if (active.length === 0) return active;
+
+        // Verify each candidate against on-chain metadata. Cached deploy
+        // events can outlive their position — a missed unwind event or a
+        // cache written while pointed at a previous hub leaves a phantom
+        // that renders forever. A tokenId with empty metadata is dead.
+        const ZERO = '0x0000000000000000000000000000000000000000';
+        const checks = await Promise.allSettled(
+            active.map(p => readHub('getPositionMetadata', [BigInt(p.tokenId)]))
+        );
+        return active.filter((p, i) => {
+            const r = checks[i];
+            // RPC flake → keep the position rather than hide a real one.
+            if (r.status !== 'fulfilled') return true;
+            return r.value.vaultOwner && r.value.vaultOwner.toLowerCase() !== ZERO;
+        });
+    }
+
+    /**
+     * @notice Chunked eth_getLogs scan of Co-LP events, persisted per chunk to
+     *         the localStorage cache. Fresh caches deep-scan from genesis —
+     *         positions older than any recent-block window still surface;
+     *         populated caches resume from lastBlock (minus a reorg overlap).
+     *         @returns {Array} merged event list (cache + fresh results)
+     */
+    async _scanCoLPEvents() {
+        const cache = this._loadScanCache();
+        // Fresh cache → deep history. A fixed recent-window would hide older
+        // live positions; resuming caches only need the tail. FLOOR bounds the
+        // one-time backfill at the active deployment's deploy block.
+        const DEEP_SCAN_FLOOR = BigInt(getDeployment(getActiveChainKey())?.deployedAtBlock ?? 0);
+        let fromBlock = cache.lastBlock > 0 ? BigInt(cache.lastBlock) - 100n : DEEP_SCAN_FLOOR;
+        if (fromBlock < DEEP_SCAN_FLOOR) fromBlock = DEEP_SCAN_FLOOR;
 
         const me = this.userAddress.toLowerCase();
         const seen = new Set(cache.events.map(e => e.key));
@@ -397,24 +515,7 @@ export class CoLPFlow {
             // the RPC is just being flaky.
             console.warn('[coLPFlow] Event scan failed (using cached results):', err.shortMessage || err.message);
         }
-
-        const active = this._buildActivePositions(cache.events.concat(freshEvents));
-        if (active.length === 0) return active;
-
-        // Verify each candidate against on-chain metadata. Cached deploy
-        // events can outlive their position — a missed unwind event or a
-        // cache written while pointed at a previous hub leaves a phantom
-        // that renders forever. A tokenId with empty metadata is dead.
-        const ZERO = '0x0000000000000000000000000000000000000000';
-        const checks = await Promise.allSettled(
-            active.map(p => readHub('getPositionMetadata', [BigInt(p.tokenId)]))
-        );
-        return active.filter((p, i) => {
-            const r = checks[i];
-            // RPC flake → keep the position rather than hide a real one.
-            if (r.status !== 'fulfilled') return true;
-            return r.value.vaultOwner && r.value.vaultOwner.toLowerCase() !== ZERO;
-        });
+        return cache.events.concat(freshEvents);
     }
 
     /** localStorage key for the per-user Co-LP event scan cache. */

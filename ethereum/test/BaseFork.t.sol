@@ -6,6 +6,7 @@ import {BaseTestBase} from "./BaseTestBase.sol";
 import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
 import {BaseOracleFacet} from "../contracts/facets/BaseOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
+import {CoLPFacet} from "../contracts/facets/CoLPFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
 import {wsXMR} from "../contracts/wsXMR.sol";
@@ -203,7 +204,7 @@ contract BaseForkTest is BaseTestBase {
 
         vm.startPrank(user);
         wsxmr.approve(address(hub), amount);
-        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, amount, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, amount, block.timestamp + 1 hours);
         vm.stopPrank();
 
         assertGt(tokenId, 0, "no NFT position minted");

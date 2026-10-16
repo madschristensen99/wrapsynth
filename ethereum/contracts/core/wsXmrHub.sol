@@ -156,6 +156,17 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         }
     }
     
+    /// @inheritdoc IwsXmrHub
+    /// @dev Used for facets beyond the six core slots (e.g. CoLPFacet). The
+    ///      deployer can only add facets before lockDeployer() is called.
+    function addFacet(address facet) external onlyDeployer {
+        if (facet == address(0)) revert ZeroAddress();
+        if (facets[facet]) revert AlreadyInitialized();
+        facets[facet] = true;
+        _registerFacetSelectors(facet);
+        emit FacetAdded(facet);
+    }
+
     /// @notice Add new selectors to the routing table
     /// @dev Only deployer can modify selector table
     function addSelectors(address facet, bytes4[] calldata selectors) external onlyDeployer {

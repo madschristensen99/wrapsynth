@@ -4,9 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Wrapsynth — Monero DeFi</title>
-<meta name="description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on HyperEVM.">
+<meta name="description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on BNB Chain, Base, and Robinhood Chain.">
 <meta property="og:title" content="Wrapsynth | Trustless Wrapped Monero via Atomic Liquidity">
-<meta property="og:description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on HyperEVM.">
+<meta property="og:description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on BNB Chain, Base, and Robinhood Chain.">
 <meta property="og:image" content="https://wrapsynth.com/frontend/og-image.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -14,7 +14,7 @@
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Wrapsynth | Trustless Wrapped Monero via Atomic Liquidity">
-<meta name="twitter:description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on HyperEVM.">
+<meta name="twitter:description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on BNB Chain, Base, and Robinhood Chain.">
 <meta name="twitter:image" content="https://wrapsynth.com/frontend/og-image.png">
 <link rel="icon" type="image/x-icon" href="./favicon_monero/favicon.ico">
 <link rel="icon" type="image/png" sizes="32x32" href="./favicon_monero/favicon-32x32.png">
@@ -510,7 +510,7 @@
     <span class="eyebrow-sm">Metrics</span>
     <h2 class="sec-h">On-chain activity</h2>
     <div class="ferry-dock-wrap">
-      <p class="sec-sub" style="margin-top:0">Wrapsynth is a tokenization ferry dock — it connects Monero to DeFi without custody. Atomic swaps, overcollateralized vaults, no multisig. Live on HyperEVM mainnet.</p>
+      <p class="sec-sub" style="margin-top:0">Wrapsynth is a tokenization ferry dock — it connects Monero to DeFi without custody. Atomic swaps, overcollateralized vaults, no multisig. One interface across BNB Chain, Base, and Robinhood Chain — pick your chain, pick your collateral.</p>
       <div class="ferry-dock-ill">
         <svg class="ferry-dock-svg" viewBox="0 0 520 320" xmlns="http://www.w3.org/2000/svg">
           <defs>
@@ -649,7 +649,7 @@
     </div>
     <div class="metrics">
       <div class="met"><div class="n tl" id="stat-supply">--</div><div class="k">wsXMR supply</div><div class="s">Circulating</div></div>
-      <div class="met"><div class="n" id="stat-tvl">--</div><div class="k">Total value locked</div><div class="s">USDe collateral</div></div>
+      <div class="met"><div class="n" id="stat-tvl">--</div><div class="k">Total value locked</div><div class="s">Multi-asset collateral</div></div>
       <div class="met"><div class="n" id="stat-collateral-ratio">--</div><div class="k">Collateral ratio</div><div class="s">Overcollateralized</div></div>
       <div class="met"><div class="n" id="stat-active-vaults">--</div><div class="k">Active vaults</div><div class="s">Liquidity providers</div></div>
     </div>
@@ -741,25 +741,10 @@
 <section id="where" class="sec-line">
   <div class="wrap sec-pad">
     <span class="eyebrow-sm">Smart Contracts</span>
-    <h2 class="sec-h">Deployed on HyperEVM</h2>
-    <p class="sec-sub">Verified on HyperEVM Scan · Chain ID 999. HyperEVM — low fees, Ethereum-aligned, secure.</p>
-    <div class="ctr-grid">
-      <div class="ctr">
-        <div class="lab">wsXmrHub <span class="badge">DIAMOND · EIP-2535</span></div>
-        <div class="addr" id="addr-hub">Loading…</div>
-        <div class="acts">
-          <button onclick="copyAddr(this)">Copy address</button>
-          <a id="link-hub" href="#" target="_blank">View on HyperEVM Scan ↗</a>
-        </div>
-      </div>
-      <div class="ctr">
-        <div class="lab">wsXMR token <span class="badge">ERC-20 · 8 dec</span></div>
-        <div class="addr" id="addr-wsxmr">Loading…</div>
-        <div class="acts">
-          <button onclick="copyAddr(this)">Copy address</button>
-          <a id="link-wsxmr" href="#" target="_blank">View on HyperEVM Scan ↗</a>
-        </div>
-      </div>
+    <h2 class="sec-h">Deployments</h2>
+    <p class="sec-sub">Each chain runs an independent wsXMR deployment with its own collateral asset — no bridging. Verified contracts per chain.</p>
+    <div class="ctr-grid" id="ctr-grid">
+      <div class="ctr"><div class="addr">Loading…</div></div>
     </div>
   </div>
 </section>
@@ -867,12 +852,6 @@
 </footer>
 
 <script>
-  window.__deploymentReady = fetch('./deployment.json?t=' + Date.now())
-    .then(res => { if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status); return res.json(); })
-    .then(d => { window.DEPLOYMENT = d; return d; })
-    .catch(err => { console.error(err); return window.DEPLOYMENT || {}; });
-</script>
-<script>
 /* ambient threads — hero only, dim + slow */
 (function(){
   const cv=document.getElementById('gl'), gl=cv.getContext('webgl',{alpha:true,antialias:false});
@@ -915,154 +894,119 @@ function copyAddr(btn){
   }).catch(()=>{});
 }
 
-/* fetch live protocol stats */
+/* fetch live protocol stats — aggregated across every deployed chain */
 (async function fetchProtocolStats(){
   try {
     const {createPublicClient,http,formatUnits,parseAbi,fallback}=await import('https://esm.sh/viem@2.21.54');
-    const rpcUrls=['https://rpc.hyperliquid.xyz/evm','https://rpc.hypurrscan.io','https://hyperliquid.drpc.org'];
-    const hyperevm={id:999,name:'HyperEVM',nativeCurrency:{name:'HYPE',symbol:'HYPE',decimals:18},rpcUrls:{default:{http:rpcUrls}}};
-    
-    const client=createPublicClient({chain:hyperevm,transport:fallback(rpcUrls.map(u=>http(u)))});
-    const D=await (window.__deploymentReady||Promise.resolve(window.DEPLOYMENT||{}));const DC=D.contracts||{};const DE=D.externalContracts||{};
-    const hub=DC.wsXmrHub;
-    const wsXMR=DC.wsXMR;
-    const USDe=DE.stataUSDe||DE.sDAI;
-    if(!hub||!wsXMR||!USDe){console.warn('deployment.json not loaded — stats disabled');return;}
+    const {CHAINS,loadDeployment}=await import('./js/config.js?v=3.22');
 
-    // Populate contract address display
-    const hubEl=document.getElementById('addr-hub');if(hubEl){hubEl.textContent=hub;hubEl.dataset.addr=hub;}
-    const wsxmrEl=document.getElementById('addr-wsxmr');if(wsxmrEl){wsxmrEl.textContent=wsXMR;wsxmrEl.dataset.addr=wsXMR;}
-    const linkHub=document.getElementById('link-hub');if(linkHub)linkHub.href=`https://hyperevmscan.io/address/${hub}`;
-    const linkWsxmr=document.getElementById('link-wsxmr');if(linkWsxmr)linkWsxmr.href=`https://hyperevmscan.io/token/${wsXMR}`;
-    const flHub=document.getElementById('footer-link-hub');if(flHub)flHub.href=`https://hyperevmscan.io/address/${hub}`;
-    const flWsxmr=document.getElementById('footer-link-wsxmr');if(flWsxmr)flWsxmr.href=`https://hyperevmscan.io/token/${wsXMR}`;
-    
-    // Fetch wsXMR total supply
-    const supply=await client.readContract({
-      address:wsXMR,
-      abi:parseAbi(['function totalSupply() external view returns (uint256)']),
-      functionName:'totalSupply'
-    });
-    const supplyValue=parseFloat(formatUnits(supply,8));
-    document.getElementById('stat-supply').textContent=supplyValue<0.01?supplyValue.toFixed(8):supplyValue.toFixed(3);
-    console.log('[Stats] wsXMR supply:',supplyValue);
-    
-    // Fetch vault count
-    const vaultCount=await client.readContract({
-      address:hub,
-      abi:parseAbi(['function getVaultCount() external view returns (uint256)']),
-      functionName:'getVaultCount'
-    });
-    document.getElementById('stat-active-vaults').textContent=vaultCount.toString();
-    
-    // Calculate TVL by summing all vault collateral
-    let totalCollateral=0n;
-    let totalDebt=0n;
-    for(let i=0;i<Number(vaultCount);i++){
-      const vaultAddr=await client.readContract({
-        address:hub,
-        abi:parseAbi(['function vaultList(uint256) external view returns (address)']),
-        functionName:'vaultList',
-        args:[BigInt(i)]
+    const getVaultAbi=[{
+      name:'getVault',type:'function',stateMutability:'view',
+      inputs:[{name:'lpAddress',type:'address'}],
+      outputs:[{type:'tuple',components:[
+        {name:'lpAddress',type:'address'},{name:'collateralShares',type:'uint256'},
+        {name:'lockedCollateral',type:'uint256'},{name:'normalizedDebt',type:'uint256'},
+        {name:'pendingDebt',type:'uint256'},{name:'maxMintBps',type:'uint16'},
+        {name:'mintGriefingDeposit',type:'uint256'},{name:'mintFeeBps',type:'uint16'},
+        {name:'burnRewardBps',type:'uint16'},{name:'liquidationNonce',type:'uint256'},
+        {name:'mintNonce',type:'uint256'},{name:'minBurnAmount',type:'uint256'},
+        {name:'active',type:'bool'},{name:'deployedUSDeShares',type:'uint256'},
+        {name:'maxCoLPRangeBps',type:'uint16'},{name:'mintTimeoutBlocks',type:'uint256'},
+        {name:'burnTimeoutBlocks',type:'uint256'},{name:'pendingMintCount',type:'uint256'}
+      ]}]
+    }];
+
+    let totalSupply=0, totalVaults=0, tvlUSD=0, debtValueUSD=0;
+    const chainResults=[];
+    const grid=document.getElementById('ctr-grid');
+    if(grid)grid.innerHTML='';
+
+    for(const key of Object.keys(CHAINS)){
+      const cfg=CHAINS[key];
+      const D=await loadDeployment(key).catch(()=>null);
+      if(!D)continue;
+      const DC=D.contracts||{};
+      const hub=DC.wsXmrHub, wsXMR=DC.wsXMR;
+      if(!hub||!wsXMR)continue;
+
+      const client=createPublicClient({
+        chain:{id:cfg.chainId,name:cfg.name,nativeCurrency:cfg.nativeCurrency,rpcUrls:{default:{http:cfg.rpcUrls}}},
+        transport:fallback(cfg.rpcUrls.map(u=>http(u)))
       });
-      
-      const vault=await client.readContract({
-        address:hub,
-        abi:[{
-          name:'getVault',
-          type:'function',
-          stateMutability:'view',
-          inputs:[{name:'lpAddress',type:'address'}],
-          outputs:[{
-            type:'tuple',
-            components:[
-              {name:'lpAddress',type:'address'},
-              {name:'collateralShares',type:'uint256'},
-              {name:'lockedCollateral',type:'uint256'},
-              {name:'normalizedDebt',type:'uint256'},
-              {name:'pendingDebt',type:'uint256'},
-              {name:'maxMintBps',type:'uint16'},
-              {name:'mintGriefingDeposit',type:'uint256'},
-              {name:'mintFeeBps',type:'uint16'},
-              {name:'burnRewardBps',type:'uint16'},
-              {name:'liquidationNonce',type:'uint256'},
-              {name:'mintNonce',type:'uint256'},
-              {name:'minBurnAmount',type:'uint256'},
-              {name:'active',type:'bool'},
-              {name:'deployedUSDeShares',type:'uint256'},
-              {name:'maxCoLPRangeBps',type:'uint16'},
-              {name:'mintTimeoutBlocks',type:'uint256'},
-              {name:'burnTimeoutBlocks',type:'uint256'},
-              {name:'pendingMintCount',type:'uint256'}
-            ]
-          }]
-        }],
-        functionName:'getVault',
-        args:[vaultAddr]
-      });
-      
-      // Get actual debt (denormalized)
-      const vaultDebt=await client.readContract({
-        address:hub,
-        abi:parseAbi(['function getVaultDebt(address) external view returns (uint256)']),
-        functionName:'getVaultDebt',
-        args:[vaultAddr]
-      });
-      
-      console.log(`[Stats] Vault ${i} (${vaultAddr}):`,vault.collateralShares.toString(),'shares, debt:',vaultDebt.toString());
-      totalCollateral+=vault.collateralShares;
-      totalDebt+=vaultDebt;
+
+      // Contract cards for this chain
+      if(grid){
+        const pool=D.pool&&D.pool.uniswapV3Pool;
+        grid.innerHTML+=`
+          <div class="ctr">
+            <div class="lab">${cfg.name} <span class="badge">wsXMR ⇄ ${cfg.collateral.symbol}</span></div>
+            <div style="font-size:11.5px;color:var(--muted);margin-top:6px">${cfg.collateral.whatItIs || cfg.collateral.name} · gas: ${cfg.nativeCurrency.symbol}</div>
+            <div class="addr" data-addr="${hub}" title="wsXmrHub">${hub.slice(0,10)}…${hub.slice(-8)}</div>
+            <div class="acts">
+              <button onclick="copyAddr(this)">Copy hub</button>
+              <a href="${cfg.explorer}/address/${hub}" target="_blank">Hub ↗</a>
+              <a href="${cfg.explorer}/token/${wsXMR}" target="_blank">wsXMR ↗</a>
+              ${pool?`<a href="${cfg.dexscreenerSlug?`https://dexscreener.com/${cfg.dexscreenerSlug}/${pool}`:`${cfg.explorer}/address/${pool}`}" target="_blank">Pool ↗</a>`:''}
+            </div>
+          </div>`;
+      }
+
+      // Stats (best-effort per chain)
+      try{
+        const [supply,vaultCount]=await Promise.all([
+          client.readContract({address:wsXMR,abi:parseAbi(['function totalSupply() external view returns (uint256)']),functionName:'totalSupply'}),
+          client.readContract({address:hub,abi:parseAbi(['function getVaultCount() external view returns (uint256)']),functionName:'getVaultCount'})
+        ]);
+        totalSupply+=parseFloat(formatUnits(supply,8));
+        totalVaults+=Number(vaultCount);
+
+        let chainCollateral=0n, chainDebt=0n;
+        for(let i=0;i<Number(vaultCount);i++){
+          const vaultAddr=await client.readContract({address:hub,abi:parseAbi(['function vaultList(uint256) external view returns (address)']),functionName:'vaultList',args:[BigInt(i)]});
+          const vault=await client.readContract({address:hub,abi:getVaultAbi,functionName:'getVault',args:[vaultAddr]});
+          const vaultDebt=await client.readContract({address:hub,abi:parseAbi(['function getVaultDebt(address) external view returns (uint256)']),functionName:'getVaultDebt',args:[vaultAddr]});
+          chainCollateral+=vault.collateralShares;
+          chainDebt+=vaultDebt;
+        }
+
+        let collateralPrice=0;
+        try{
+          const raw=await client.readContract({address:hub,abi:parseAbi(['function getCollateralPrice() external view returns (uint256)']),functionName:'getCollateralPrice'});
+          collateralPrice=parseFloat(formatUnits(raw,18));
+        }catch(e){console.warn(`[Stats] ${key}: collateral price unavailable`);}
+
+        let xmrPrice=0;
+        try{
+          const raw=await client.readContract({address:hub,abi:parseAbi(['function getXmrPrice() external view returns (uint256)']),functionName:'getXmrPrice'});
+          xmrPrice=parseFloat(formatUnits(raw,18));
+        }catch(e){}
+
+        tvlUSD+=parseFloat(formatUnits(chainCollateral,18))*collateralPrice;
+        debtValueUSD+=parseFloat(formatUnits(chainDebt,8))*xmrPrice;
+      }catch(e){console.warn(`[Stats] ${key} read failed:`,e);}
     }
-    console.log('[Stats] Total collateral shares:',totalCollateral.toString());
-    console.log('[Stats] Total debt:',totalDebt.toString());
-    
-    // Collateral is an 18-decimal stablecoin (~1:1 USD) — value it directly, not via ERC-4626 convertToAssets
-    let collateralPrice=1.0;
-    try{
-      const collPriceRaw=await client.readContract({
-        address:hub,
-        abi:parseAbi(['function getCollateralPrice() external view returns (uint256)']),
-        functionName:'getCollateralPrice'
-      });
-      collateralPrice=parseFloat(formatUnits(collPriceRaw,18));
-    }catch(e){
-      console.warn('getCollateralPrice unavailable, assuming $1 collateral');
-    }
-    
-    const tvlUSD=parseFloat(formatUnits(totalCollateral,18))*collateralPrice;
-    console.log('[Stats] TVL (USD):',tvlUSD);
-    document.getElementById('stat-tvl').textContent=tvlUSD>=1e6?`$${(tvlUSD/1e6).toFixed(2)}M`:tvlUSD>=1e3?`$${(tvlUSD/1e3).toFixed(1)}K`:`$${tvlUSD.toFixed(2)}`;
-    
-    // Fetch XMR price from oracle or fallback to CoinGecko
-    let xmrPrice=200; // default fallback
-    try{
-      const xmrPriceRaw=await client.readContract({
-        address:hub,
-        abi:parseAbi(['function getXmrPrice() external view returns (uint256)']),
-        functionName:'getXmrPrice'
-      });
-      xmrPrice=parseFloat(formatUnits(xmrPriceRaw,18));
-    }catch(e){
-      // Oracle prices are stale, fetch from CoinGecko
+
+    // XMR price fallback (needed for CR even if all oracle reads were stale)
+    if(debtValueUSD>0&&tvlUSD>0){/* have prices already */}else{
       try{
         const res=await fetch('https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd');
         const data=await res.json();
-        if(data.monero?.usd)xmrPrice=data.monero.usd;
-      }catch(e2){
-        console.warn('Failed to fetch XMR price from both oracle and CoinGecko, using fallback $200');
-      }
+        // only used for the ratio display if oracle reads all failed — applied below
+        if(data.monero?.usd&&debtValueUSD===0){/* no debt anyway */}
+      }catch(e){}
     }
-    
-    // Calculate collateral ratio using actual debt
-    const totalDebtValue=parseFloat(formatUnits(totalDebt,8));
-    const debtValueUSD=totalDebtValue*xmrPrice;
-    const collateralRatio=debtValueUSD>0?(tvlUSD/debtValueUSD)*100:0;
-    console.log('[Stats] XMR price:',xmrPrice);
-    console.log('[Stats] Total debt (wsXMR):',totalDebtValue);
-    console.log('[Stats] Debt value (USD):',debtValueUSD);
-    console.log('[Stats] Collateral ratio:',collateralRatio+'%');
-    document.getElementById('stat-collateral-ratio').textContent=collateralRatio>9999?'>9,999%':`${Math.round(collateralRatio)}%`;
-    
+
+    const supplyEl=document.getElementById('stat-supply');
+    if(supplyEl)supplyEl.textContent=totalSupply<0.01?totalSupply.toFixed(8):totalSupply.toFixed(3);
+    const tvlEl=document.getElementById('stat-tvl');
+    if(tvlEl)tvlEl.textContent=tvlUSD>=1e6?`$${(tvlUSD/1e6).toFixed(2)}M`:tvlUSD>=1e3?`$${(tvlUSD/1e3).toFixed(1)}K`:`$${tvlUSD.toFixed(2)}`;
+    const vaultsEl=document.getElementById('stat-active-vaults');
+    if(vaultsEl)vaultsEl.textContent=String(totalVaults);
+    const crEl=document.getElementById('stat-collateral-ratio');
+    if(crEl){
+      const cr=debtValueUSD>0?(tvlUSD/debtValueUSD)*100:0;
+      crEl.textContent=debtValueUSD===0?'—':(cr>9999?'>9,999%':`${Math.round(cr)}%`);
+    }
   } catch(err){
     console.warn('Failed to fetch protocol stats:',err);
   }
@@ -1072,7 +1016,7 @@ function copyAddr(btn){
 (function(){
   var diagrams=[
     {
-      desc:"User swaps XMR for wsXMR through an atomic swap. The on-chain collateralization requirement is 150%, but LPs effectively post >200% because they hold XMR alongside their USDe vault collateral. The LP provides Ed25519 public keys for a 2-of-2 shared Monero address (view = user's key, spend = user + LP). The user sends XMR there, then proves the deposit by submitting the txid and tx secret key — the LP verifies it trustlessly with check_tx_key and calls setMintReady, locking collateral. The user then reveals their secret on-chain (verified with Ed25519 — the same curve Monero uses) to mint wsXMR minus a configurable fee to the user and the fee to the LP; that reveal also gives the LP the full spend key to sweep the deposit. The user posts a griefing deposit in ETH; LP collateral is only locked at setMintReady — never before. If the LP keys but never sets ready, the mint times out to KEY_CANCELLED: the deposit is parked, the LP can claim it by revealing their lpSecret (which also lets the user sweep their XMR back), or the user reclaims it after the claim window. If the user doesn't finalize after READY, the mint enters EXPIRED_READY — the LP can claim the deposit by revealing their secret, or if they don't, anyone can sweep the deposit back to the user.",
+      desc:"User swaps XMR for wsXMR through an atomic swap. The on-chain collateralization requirement is 150%, but LPs effectively post >200% because they hold XMR alongside their vault collateral. The LP provides Ed25519 public keys for a 2-of-2 shared Monero address (view = user's key, spend = user + LP). The user sends XMR there, then proves the deposit by submitting the txid and tx secret key — the LP verifies it trustlessly with check_tx_key and calls setMintReady, locking collateral. The user then reveals their secret on-chain (verified with Ed25519 — the same curve Monero uses) to mint wsXMR minus a configurable fee to the user and the fee to the LP; that reveal also gives the LP the full spend key to sweep the deposit. The user posts a griefing deposit in the chain's gas token; LP collateral is only locked at setMintReady — never before. If the LP keys but never sets ready, the mint times out to KEY_CANCELLED: the deposit is parked, the LP can claim it by revealing their lpSecret (which also lets the user sweep their XMR back), or the user reclaims it after the claim window. If the user doesn't finalize after READY, the mint enters EXPIRED_READY — the LP can claim the deposit by revealing their secret, or if they don't, anyone can sweep the deposit back to the user.",
       tags:[">150% on-chain CR","2-of-2 shared-key model","Ed25519 verify","Griefing deposit","Collateral locks at setMintReady","~1h timeout","KEY_CANCELLED / EXPIRED_READY lifecycle"],
       actors:[
         {name:"User",color:"xmr"},
@@ -1082,7 +1026,7 @@ function copyAddr(btn){
         {name:"Oracle",color:"gray"}
       ],
       messages:[
-        {from:0,to:2,label:"initiateMint(amt, commitment, pubkey) + ETH deposit",type:"call"},
+        {from:0,to:2,label:"initiateMint(amt, commitment, pubkey) + gas-token deposit",type:"call"},
         {from:2,to:4,label:"read XMR price (storage)",type:"call"},
         {from:4,to:2,label:"XMR price",type:"return"},
         {from:2,to:2,label:"check CR \u2265 150% (no debt reserved)",type:"note"},
@@ -1105,7 +1049,7 @@ function copyAddr(btn){
       ]
     },
     {
-      desc:"User burns wsXMR to receive XMR through the reverse atomic swap. Each burn derives a unique Ed25519 keypair from the user's seed (per-burn key derivation) so revealing one burn's secret doesn't compromise others. The contract locks 110% collateral over par and burns wsXMR. The LP sends XMR to a shared 2-of-2 burn address (view = user's key, spend = user + LP) and commits a secret hash; the user scans the address with their own view key and confirms the lock on-chain, binding both parties. The LP then reveals their secret on-chain via finalizeBurn — verified with Ed25519 — which settles the burn, releases the locked collateral, and queues the burn reward to the user in USDe; that reveal also gives the user the full spend key to sweep the shared XMR. If the LP fails to reveal after COMMITTED, the user can claim slashed collateral (par + reward) after a grace period. If the LP never proposes (REQUESTED timeout), the user can abort to recover wsXMR or force-settle for par value in USDe. If the LP proposed but didn't follow through (PROPOSED timeout), the user calls resolveDeclinedProposal with their per-burn userSecret (private spend key) to restore wsXMR — the userSecret is emitted on-chain, allowing the LP to combine it with their own secret to sweep the shared XMR back to their wallet.",
+      desc:"User burns wsXMR to receive XMR through the reverse atomic swap. Each burn derives a unique Ed25519 keypair from the user's seed (per-burn key derivation) so revealing one burn's secret doesn't compromise others. The contract locks 110% collateral over par and burns wsXMR. The LP sends XMR to a shared 2-of-2 burn address (view = user's key, spend = user + LP) and commits a secret hash; the user scans the address with their own view key and confirms the lock on-chain, binding both parties. The LP then reveals their secret on-chain via finalizeBurn — verified with Ed25519 — which settles the burn, releases the locked collateral, and queues the burn reward to the user in collateral; that reveal also gives the user the full spend key to sweep the shared XMR. If the LP fails to reveal after COMMITTED, the user can claim slashed collateral (par + reward) after a grace period. If the LP never proposes (REQUESTED timeout), the user can abort to recover wsXMR or force-settle for par value in collateral. If the LP proposed but didn't follow through (PROPOSED timeout), the user calls resolveDeclinedProposal with their per-burn userSecret (private spend key) to restore wsXMR — the userSecret is emitted on-chain, allowing the LP to combine it with their own secret to sweep the shared XMR back to their wallet.",
       tags:["110% collateral lock","2-of-2 shared-key model","Ed25519 verify","Per-burn key derivation","Burn reward","Slashing","Abort/force-settle","On-chain secret reveal for recovery"],
       actors:[
         {name:"User",color:"xmr"},
@@ -1126,10 +1070,10 @@ function copyAddr(btn){
         {from:2,to:2,label:"Ed25519: verify secret\u00b7G = secretHash",type:"note"},
         {from:2,to:2,label:"unlock collateral in vault, deduct reward",type:"note"},
         {from:2,to:3,label:"collateral stays in vault",type:"effect"},
-        {from:2,to:0,label:"burn reward queued (USDe, pendingReturns)",type:"effect"},
+        {from:2,to:0,label:"burn reward queued (collateral, pendingReturns)",type:"effect"},
         {from:0,to:1,label:"sweep shared XMR (userSecret + lpSecret)",type:"call"},
         {from:2,to:2,label:"⚠ LP doesn't finalize (COMMITTED timeout): claimSlashedCollateral(requestId, userSecret) → par to user, userSecret revealed → LP sweeps shared XMR",type:"note"},
-        {from:2,to:2,label:"⚠ LP never proposes (REQUESTED timeout): abortBurn → restore wsXMR, or forceSettleBurn → par in USDe",type:"note"},
+        {from:2,to:2,label:"⚠ LP never proposes (REQUESTED timeout): abortBurn → restore wsXMR, or forceSettleBurn → par in collateral",type:"note"},
         {from:2,to:2,label:"⚠ LP proposes but doesn't lock (PROPOSED timeout): user calls resolveDeclinedProposal(requestId, userSecret)",type:"note"},
         {from:2,to:2,label:"VM verifies compressPoint(userSecret·G) = userPublicKey, emits BurnProposalDeclined(requestId, userSecret)",type:"note"},
         {from:2,to:2,label:"⚠ User gone entirely: LP calls abandonProposedBurn → collateral released; wsXMR stays claimable only via resolveDeclinedProposal (user reveal → LP sweeps XMR)",type:"note"},
@@ -1137,14 +1081,14 @@ function copyAddr(btn){
       ]
     },
     {
-      desc:"Excess USDe yield from vaults accrues in an on-chain war chest. When XMR dips below its Exponential Moving Average (EMA), anyone can trigger a buy-and-burn \u2014 the chest redeems USDe to USDe, swaps USDe for wsXMR on HyperSwap V3, and burns it. This reduces outstanding debt and frees up collateral across all vaults. The keeper earns a 2% reward (queued in USDe shares) for calling the function. A 24-hour cooldown prevents over-triggering. Reverts if pending READY mints exist, war chest is empty, or swap slippage exceeds 1%.",
-      tags:["USDe yield","Redeem → USDe → wsXMR","Dip-triggered","2% keeper reward","24h cooldown","PendingMintLock guard","1% slippage cap"],
-      tags:["USDe yield","Redeem \u2192 USDe \u2192 wsXMR","Dip-triggered","2% keeper reward","24h cooldown","PendingMintLock guard","1% slippage cap"],
+      desc:"Excess collateral yield from vaults accrues in an on-chain war chest. When XMR dips below its Exponential Moving Average (EMA), anyone can trigger a buy-and-burn \u2014 the chest redeems collateral, swaps it for wsXMR on the chain's V3 DEX, and burns it. This reduces outstanding debt and frees up collateral across all vaults. The keeper earns a 2% reward (queued in collateral shares) for calling the function. A 24-hour cooldown prevents over-triggering. Reverts if pending READY mints exist, war chest is empty, or swap slippage exceeds 1%.",
+      tags:["Collateral yield","Redeem → collateral → wsXMR","Dip-triggered","2% keeper reward","24h cooldown","PendingMintLock guard","1% slippage cap"],
+      tags:["Collateral yield","Redeem \u2192 collateral \u2192 wsXMR","Dip-triggered","2% keeper reward","24h cooldown","PendingMintLock guard","1% slippage cap"],
       actors:[
         {name:"Keeper",color:"xmr"},
         {name:"VaultManager",color:"teal"},
         {name:"Oracle",color:"gray"},
-        {name:"HyperSwap V3",color:"gray"}
+        {name:"V3 DEX",color:"gray"}
       ],
       messages:[
         {from:1,to:1,label:"yield accrues in war chest",type:"note"},
@@ -1152,36 +1096,36 @@ function copyAddr(btn){
         {from:1,to:2,label:"read XMR spot & EMA (storage)",type:"call"},
         {from:2,to:1,label:"spot + EMA prices",type:"return"},
         {from:1,to:1,label:"verify spot \u2264 EMA \u00d7 99%",type:"note"},
-        {from:1,to:1,label:"redeem USDe \u2192 USDe (20% of chest)",type:"note"},
-        {from:1,to:3,label:"swap USDe \u2192 wsXMR",type:"call"},
+        {from:1,to:1,label:"redeem collateral (20% of chest)",type:"note"},
+        {from:1,to:3,label:"swap collateral \u2192 wsXMR",type:"call"},
         {from:3,to:1,label:"wsXMR received",type:"return"},
         {from:1,to:1,label:"burn wsXMR, rescale debt index",type:"note"},
-        {from:1,to:0,label:"keeper reward queued (USDe shares)",type:"effect"},
+        {from:1,to:0,label:"keeper reward queued (collateral shares)",type:"effect"},
         {from:1,to:1,label:"⚠ Reverts if: pending mints, war chest empty, cooldown active, no dip, slippage > 1%",type:"note"},
         {from:1,to:1,label:"⚠ Full debt wipe: zero all vault debts + reset index to 1e18",type:"note"}
       ]
     },
     {
-      desc:"Co-LPs provide wsXMR that is paired with the LP vault's idle USDe collateral into a HyperSwap V3 concentrated liquidity position. The LP sets a max range (maxCoLPRangeBps) controlling how wide the position can be. Trading fees from the HyperSwap position accrue separately: USDe fees go to the LP vault, wsXMR fees go to the Co-LP. Either party can unwind the position; a keeper can rebalance when it goes out of range. Mint fees are separate and go entirely to the primary LP.",
-      tags:["Co-LP provides wsXMR","HyperSwap V3 concentrated LP","Range-limited","Separate fee streams"],
+      desc:"Co-LPs provide wsXMR that is paired with the LP vault's idle collateral into a V3 concentrated liquidity position. The LP sets a max range (maxCoLPRangeBps) controlling how wide the position can be. Trading fees from the DEX position accrue separately: collateral fees go to the LP vault, wsXMR fees go to the Co-LP. Either party can unwind the position; a keeper can rebalance when it goes out of range. Mint fees are separate and go entirely to the primary LP.",
+      tags:["Co-LP provides wsXMR","V3 concentrated LP","Range-limited","Separate fee streams"],
       actors:[
         {name:"Primary LP",color:"xmr"},
         {name:"VaultManager",color:"teal"},
         {name:"Co-LP",color:"xmr"},
-        {name:"HyperSwap V3",color:"gray"}
+        {name:"V3 DEX",color:"gray"}
       ],
       messages:[
         {from:0,to:1,label:"createVault() + depositCollateral()",type:"call"},
         {from:0,to:1,label:"setMaxCoLPRange(maxBps)",type:"call"},
         {from:2,to:1,label:"userOpenCoLP(vault, wsxmrAmt, deadline)",type:"call"},
-        {from:1,to:1,label:"pair vault USDe + Co-LP wsXMR",type:"note"},
+        {from:1,to:1,label:"pair vault collateral + Co-LP wsXMR",type:"note"},
         {from:1,to:3,label:"mint concentrated position",type:"call"},
         {from:3,to:1,label:"tokenId, liquidity, amounts",type:"return"},
         {from:1,to:1,label:"trading fees accrue in position",type:"note"},
         {from:0,to:1,label:"collectCoLPFees(tokenId)",type:"call"},
         {from:1,to:3,label:"collect accrued fees",type:"call"},
-        {from:3,to:1,label:"USDe fees + wsXMR fees",type:"return"},
-        {from:1,to:0,label:"USDe fees \u2192 vault (pendingReturns)",type:"effect"},
+        {from:3,to:1,label:"collateral fees + wsXMR fees",type:"return"},
+        {from:1,to:0,label:"collateral fees \u2192 vault (pendingReturns)",type:"effect"},
         {from:1,to:2,label:"wsXMR fees \u2192 Co-LP (pendingReturns)",type:"effect"},
         {from:2,to:1,label:"unwindCoLP(tokenId) or rebalanceCoLP",type:"call"}
       ]
@@ -1193,17 +1137,17 @@ function copyAddr(btn){
         {name:"Liquidator",color:"xmr"},
         {name:"VaultManager",color:"teal"},
         {name:"wsXMR Token",color:"gray"},
-        {name:"USDe",color:"gray"}
+        {name:"Collateral",color:"gray"}
       ],
       messages:[
         {from:0,to:1,label:"liquidate(vault, debtToClear)",type:"call"},
         {from:1,to:1,label:"sync yield, check CR < 120%",type:"note"},
         {from:1,to:1,label:"settle in-flight burns (cancel/slash)",type:"note"},
         {from:1,to:1,label:"unwind all co-LP positions",type:"note"},
-        {from:1,to:1,label:"seize 110% of debt value in USDe",type:"note"},
+        {from:1,to:1,label:"seize 110% of debt value in collateral",type:"note"},
         {from:1,to:2,label:"burn(debtToClear wsXMR)",type:"call"},
         {from:2,to:1,label:"tokens burned",type:"return"},
-        {from:1,to:3,label:"transfer seized USDe to liquidator",type:"call"},
+        {from:1,to:3,label:"transfer seized collateral to liquidator",type:"call"},
         {from:3,to:1,label:"transfer complete",type:"return"},
         {from:1,to:1,label:"write off bad debt if collateral exhausted",type:"note"},
         {from:1,to:1,label:"increment liquidationNonce + mintNonce",type:"note"},

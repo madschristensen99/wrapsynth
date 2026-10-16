@@ -9,6 +9,7 @@ import "../contracts/facets/MintFacet.sol";
 import "../contracts/facets/BurnFacet.sol";
 import "../contracts/facets/LiquidationFacet.sol";
 import "../contracts/facets/YieldFacet.sol";
+import "../contracts/facets/CoLPFacet.sol";
 import "../contracts/wsXMR.sol";
 import "../contracts/StataUSDe.sol";
 import "../contracts/Ed25519Helper.sol";
@@ -97,12 +98,14 @@ contract DeployHyperEVM is Script {
         BurnFacet burnFacet = new BurnFacet(address(wsxmr), VERIFIER);
         LiquidationFacet liquidationFacet = new LiquidationFacet(address(wsxmr), VERIFIER);
         YieldFacet yieldFacet = new YieldFacet(address(wsxmr), VERIFIER);
+        CoLPFacet coLPFacet = new CoLPFacet(address(wsxmr), VERIFIER);
         console.log("HyperCoreOracleFacet:", address(oracleFacet));
         console.log("VaultFacet:", address(vaultFacet));
         console.log("MintFacet:", address(mintFacet));
         console.log("BurnFacet:", address(burnFacet));
         console.log("LiquidationFacet:", address(liquidationFacet));
         console.log("YieldFacet:", address(yieldFacet));
+        console.log("CoLPFacet:", address(coLPFacet));
 
         // ---- STEP 5: register facets + set hub as minter ----
         hub.registerFacets(
@@ -113,6 +116,7 @@ contract DeployHyperEVM is Script {
             address(yieldFacet),
             address(oracleFacet)
         );
+        hub.addFacet(address(coLPFacet));
         wsxmr.setHub(address(hub));
         console.log("Facets registered; hub set as wsXMR minter");
 
@@ -194,7 +198,7 @@ contract DeployHyperEVM is Script {
         console.log("============================================================");
 
         _writeManifest(deployer, wsxmr, hub, stata, router, pool,
-            oracleFacet, vaultFacet, mintFacet, burnFacet, liquidationFacet, yieldFacet,
+            oracleFacet, vaultFacet, mintFacet, burnFacet, liquidationFacet, yieldFacet, coLPFacet,
             ed25519Helper, swapHelper);
     }
 
@@ -224,6 +228,7 @@ contract DeployHyperEVM is Script {
         BurnFacet burnFacet,
         LiquidationFacet liquidationFacet,
         YieldFacet yieldFacet,
+        CoLPFacet coLPFacet,
         Ed25519Helper ed25519Helper,
         SwapHelper swapHelper
     ) internal {
@@ -241,6 +246,7 @@ contract DeployHyperEVM is Script {
         vm.serializeAddress(json, "burnFacet", address(burnFacet));
         vm.serializeAddress(json, "liquidationFacet", address(liquidationFacet));
         vm.serializeAddress(json, "yieldFacet", address(yieldFacet));
+        vm.serializeAddress(json, "coLPFacet", address(coLPFacet));
         vm.serializeAddress(json, "usde", USDE);
         vm.serializeAddress(json, "hyperlendPool", HYPERLEND_POOL);
         vm.serializeAddress(json, "hyperlendAToken", HYPERLEND_ATOKEN);

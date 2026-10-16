@@ -9,6 +9,7 @@ import "../contracts/facets/MintFacet.sol";
 import "../contracts/facets/BurnFacet.sol";
 import "../contracts/facets/LiquidationFacet.sol";
 import "../contracts/facets/YieldFacet.sol";
+import "../contracts/facets/CoLPFacet.sol";
 import "../contracts/wsXMR.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IVaultFacet} from "../contracts/interfaces/facets/IVaultFacet.sol";
@@ -37,6 +38,7 @@ contract DeployAndTestRedStoneOracle is Script {
         BurnFacet burnFacet = new BurnFacet(address(wsxmr), address(0));
         LiquidationFacet liquidationFacet = new LiquidationFacet(address(wsxmr), address(0));
         YieldFacet yieldFacet = new YieldFacet(address(wsxmr), address(0));
+        CoLPFacet coLPFacet = new CoLPFacet(address(wsxmr), address(0));
         
         hub.registerFacets(
             address(vaultFacet),
@@ -46,6 +48,7 @@ contract DeployAndTestRedStoneOracle is Script {
             address(yieldFacet),
             address(oracleFacet)
         );
+        hub.addFacet(address(coLPFacet));
         
         wsxmr.setHub(address(hub));
         

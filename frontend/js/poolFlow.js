@@ -1,6 +1,6 @@
 // Co-LP Pairing Flow - Liquidity Router Integration
 
-import { CONTRACTS, ABIS, DECIMALS } from './config.js?v=3.22';
+import { CONTRACTS, ABIS, DECIMALS, getActiveChain } from './config.js?v=3.22';
 import { readHub, writeHub, readWsxmr, writeWsxmr, getUserAddress, getPublicClient, getWalletClient } from './viemClient.js?v=3.22';
 import { formatUnits, parseUnits, parseAbi } from 'https://esm.sh/viem@2.7.0';
 
@@ -27,7 +27,7 @@ export class PoolFlow {
     }
 
     async allocateLiquidity(usdeAmount) {
-        const amount = parseUnits(usdeAmount.toString(), DECIMALS.ETH);
+        const amount = parseUnits(usdeAmount.toString(), getActiveChain()?.collateral.decimals ?? 18);
         
         const client = getWalletClient();
         const publicClient = getPublicClient();
@@ -71,7 +71,7 @@ export class PoolFlow {
     }
 
     async createPosition(lpAddress, usdeAmount, wsxmrAmount, deadline) {
-        const usde = parseUnits(usdeAmount.toString(), DECIMALS.ETH);
+        const usde = parseUnits(usdeAmount.toString(), getActiveChain()?.collateral.decimals ?? 18);
         const wsxmr = parseUnits(wsxmrAmount.toString(), DECIMALS.wsXMR);
         
         const client = getWalletClient();

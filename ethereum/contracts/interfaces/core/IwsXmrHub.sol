@@ -38,6 +38,7 @@ interface IwsXmrHub {
     );
     event LiquidityRouterSet(address router);
     event LiquidityRouterMigrated(address indexed oldRouter, address indexed newRouter);
+    event FacetAdded(address indexed facet);
     
     // ========== ERRORS ==========
     
@@ -64,6 +65,11 @@ interface IwsXmrHub {
         address oracleFacet
     ) external;
     
+    /// @notice Register an additional facet after the six core facets
+    /// @dev Marks the facet trusted and routes every selector it reports
+    /// @param facet Address of the facet contract to add
+    function addFacet(address facet) external;
+
     /// @notice Set the liquidity router address (one-time setup)
     /// @param router Address of wsXmrLiquidityRouter
     function setLiquidityRouter(address router) external;

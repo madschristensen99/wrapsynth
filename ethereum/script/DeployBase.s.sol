@@ -9,10 +9,10 @@ import "../contracts/facets/MintFacet.sol";
 import "../contracts/facets/BurnFacet.sol";
 import "../contracts/facets/LiquidationFacet.sol";
 import "../contracts/facets/YieldFacet.sol";
+import "../contracts/facets/CoLPFacet.sol";
 import "../contracts/wsXMR.sol";
 import "../contracts/StataCbBTC.sol";
 import "../contracts/router/wsXMRLiquidityRouter.sol";
-import "../contracts/test/SwapHelper.sol";
 import "../contracts/interfaces/external/IUniswapV3Factory.sol";
 import "../contracts/interfaces/external/IUniswapV3Pool.sol";
 import "../contracts/BaseAddresses.sol";
@@ -99,6 +99,8 @@ contract DeployBase is Script {
         // signature, so the plain YieldFacet works unmodified.
         YieldFacet yieldFacet = new YieldFacet(address(wsxmr), VERIFIER);
         console.log("YieldFacet deployed to:", address(yieldFacet));
+        CoLPFacet coLPFacet = new CoLPFacet(address(wsxmr), VERIFIER);
+        console.log("CoLPFacet deployed to:", address(coLPFacet));
         console.log("");
 
         console.log("============================================================");
@@ -112,6 +114,7 @@ contract DeployBase is Script {
             address(yieldFacet),
             address(oracleFacet)
         );
+        hub.addFacet(address(coLPFacet));
         console.log("All facets registered");
         console.log("");
 
@@ -210,14 +213,7 @@ contract DeployBase is Script {
         console.log("");
 
         console.log("============================================================");
-        console.log("STEP 9: Deploying SwapHelper");
-        console.log("============================================================");
-        SwapHelper swapHelper = new SwapHelper();
-        console.log("SwapHelper deployed to:", address(swapHelper));
-        console.log("");
-
-        console.log("============================================================");
-        console.log("STEP 10: Locking Deployer Powers (IRREVERSIBLE)");
+        console.log("STEP 9: Locking Deployer Powers (IRREVERSIBLE)");
         console.log("============================================================");
         // Removes the two admin backdoors from the live system:
         //  - wsXMR.replaceHub(): deployer could repoint the token at an arbitrary
@@ -245,7 +241,6 @@ contract DeployBase is Script {
         console.log("  wsXmrHub:         ", address(hub));
         console.log("  StataCbBTC:       ", address(stata));
         console.log("  LiquidityRouter:  ", address(router));
-        console.log("  SwapHelper:       ", address(swapHelper));
         console.log("");
         console.log("Facets:");
         console.log("  OracleFacet:      ", address(oracleFacet));
@@ -254,6 +249,7 @@ contract DeployBase is Script {
         console.log("  BurnFacet:        ", address(burnFacet));
         console.log("  LiquidationFacet: ", address(liquidationFacet));
         console.log("  YieldFacet:       ", address(yieldFacet));
+        console.log("  CoLPFacet:        ", address(coLPFacet));
         console.log("");
         console.log("External Contracts:");
         console.log("  cbBTC:            ", BaseAddresses.CBBTC);

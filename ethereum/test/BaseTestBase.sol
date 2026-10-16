@@ -12,6 +12,7 @@ import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
 import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
 import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
+import {CoLPFacet} from "../contracts/facets/CoLPFacet.sol";
 import {wsXMR} from "../contracts/wsXMR.sol";
 import {wsXMRLiquidityRouter} from "../contracts/router/wsXMRLiquidityRouter.sol";
 import {StataQQQB} from "../contracts/StataQQQB.sol";
@@ -103,6 +104,7 @@ abstract contract BaseTestBase is Test {
     BurnFacet public burnFacet;
     LiquidationFacet public liquidationFacet;
     YieldFacet public yieldFacet;
+    CoLPFacet public coLPFacet;
 
     // Mock precompiles (etched at the real precompile addresses)
     MockL1Read public mockMark;
@@ -183,6 +185,8 @@ abstract contract BaseTestBase is Test {
             address(yieldFacet),
             address(oracleFacet)
         );
+        coLPFacet = new CoLPFacet(address(wsxmr), address(verifier));
+        hub.addFacet(address(coLPFacet));
         wsxmr.setHub(address(hub));
 
         // collateralToken = stata shares, underlying = USDE (cbBTC or mock),

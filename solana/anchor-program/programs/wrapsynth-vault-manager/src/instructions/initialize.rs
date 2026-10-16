@@ -1,7 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program::{create_account, CreateAccount};
 use anchor_spl::token_2022::{self, InitializeMint2, Token2022};
-use anchor_spl::token_interface::{Mint, TokenAccount};
 
 use crate::constants::*;
 use crate::errors::WrapSynthError;
@@ -17,21 +16,18 @@ use crate::state::GlobalState;
 pub fn handler(
     ctx: Context<Initialize>,
     pyth_xmr_feed: Pubkey,
-    collateral_mint: Pubkey,
 ) -> Result<()> {
     require!(
         pyth_xmr_feed != Pubkey::default(),
-        WrapSynthError::ZeroAddress
-    );
-    require!(
-        collateral_mint != Pubkey::default(),
         WrapSynthError::ZeroAddress
     );
 
     let global = &mut ctx.accounts.global_state.load_init()?;
     global.authority = ctx.accounts.authority.key();
     global.wsxmr_mint = ctx.accounts.wsxmr_mint.key();
-    global.collateral_mint = collateral_mint;
+    // Collateral is native SOL; record the wSOL mint as the SPL identity of the
+    // collateral asset (co-LP whirlpool pairs pair wSOL, not raw lamports).
+    global.collateral_mint = WSOL_MINT.parse().unwrap();
     global.liquidity_router = Pubkey::default();
     global.pyth_xmr_feed = pyth_xmr_feed;
     global.global_total_debt = 0;
@@ -130,21 +126,11 @@ pub struct Initialize<'info> {
     /// CHECK: allocated and initialized as a Token-2022 mint inside the handler
     pub wsxmr_mint: UncheckedAccount<'info>,
 
-    /// Program collateral ATA — the pending-returns pool backing all slashed
-    /// collateral credits. The mint is supplied via argument so initialize is
-    /// collateral-agnostic.
-    pub collateral_mint: InterfaceAccount<'info, Mint>,
-
-    #[account(
-        init,
-        payer = authority,
-        seeds = [PROGRAM_COLLATERAL_SEED],
-        bump,
-        token::mint = collateral_mint,
-        token::authority = global_state,
-        token::token_program = token_program,
-    )]
-    pub program_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+    // Collateral escrows are lamport-only PDAs — no init needed. The per-vault
+    // escrow (VAULT_COLLATERAL_SEED + vault) is created by the first
+    // deposit_collateral system-transfer; the program pool
+    // (PROGRAM_COLLATERAL_SEED) by the first slash. Both spend via
+    // invoke_signed system_program::transfer.
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,

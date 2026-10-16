@@ -778,7 +778,7 @@ export function populateVaults(vaults) {
                       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">collateral ratio</div>
                     </div>
                     <div class="vrow" style="border-top:1px solid var(--line-2);padding-top:12px">
-                      <span class="l"><span style="opacity:.6">collateral</span><b style="color:var(--fg)">${collateral.toFixed(4)} QQQx</b></span>
+                      <span class="l"><span style="opacity:.6">collateral</span><b style="color:var(--fg)">${collateral.toFixed(4)} SOL</b></span>
                       <span class="l"><span style="opacity:.6">debt</span><b style="color:var(--fg)">${debt.toFixed(4)} wsXMR</b></span>
                     </div>
                     <div class="vrow" style="font-size:12px;gap:10px;margin-top:14px;display:grid;grid-template-columns:1fr 1fr;row-gap:10px">
@@ -804,7 +804,7 @@ export function showVaultInfo(vaultData, isMint = true) {
     
     const html = `
         <p><strong>Total XMR Locked:</strong> ${formatBalance(vaultData.totalXmrLocked, DECIMALS.wsXMR)} XMR</p>
-        <p><strong>Collateral:</strong> ${formatBalance(vaultData.totalCollateral, DECIMALS.ETH)} ${vaultData.collateralToken === '0x0000000000000000000000000000000000000000' ? 'QQQx' : 'Token'}</p>
+        <p><strong>Collateral:</strong> ${formatBalance(vaultData.totalCollateral, DECIMALS.ETH)} ${vaultData.collateralToken === '0x0000000000000000000000000000000000000000' ? 'SOL' : 'Token'}</p>
         <p><strong>Collateralization:</strong> ${vaultData.collateralizationRatio / 100}%</p>
         <p><strong>Griefing Deposit:</strong> ${formatBalance(vaultData.mintGriefingDeposit, DECIMALS.ETH)} SOL</p>
         <p><strong>Status:</strong> ${vaultData.isActive ? '✅ Active' : '❌ Inactive'}</p>
@@ -863,7 +863,7 @@ export function renderLPDetailCard(isMint, vault) {
     const set = (id, val) => { const el = document.getElementById(`${prefix}-lp-${id}`); if (el) el.innerHTML = val; };
 
     set('cr', `<span style="color:${crColor};text-shadow:0 0 16px ${crColor}40">${crDisplay}</span>`);
-    set('collateral', `${collateral.toFixed(4)} QQQx`);
+    set('collateral', `${collateral.toFixed(4)} SOL`);
     set('debt', `${debt.toFixed(4)} wsXMR`);
 
     if (isMint) {

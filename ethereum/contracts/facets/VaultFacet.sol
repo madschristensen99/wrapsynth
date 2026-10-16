@@ -22,41 +22,6 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
     // ========== ERRORS ==========
     
     error InvalidConfig();
-    error InvalidRange();
-    error PositionNotFound();
-    error PositionInRange();
-    error UnbalancedPair();
-    error DeploymentTooAggressive();
-    error InsufficientLPBuffer();
-    
-    // ========== EVENTS ==========
-    
-    event CoLPDeployed(
-        address indexed vault,
-        address indexed user,
-        uint256 indexed tokenId,
-        uint256 sDAIShares,
-        uint256 wsxmrAmount,
-        uint16 rangeBps
-    );
-    event CoLPUnwound(
-        uint256 indexed tokenId,
-        address indexed vault,
-        address indexed user,
-        uint256 daiReturned,
-        uint256 wsxmrReturned,
-        bool liquidationTriggered
-    );
-    event CoLPRebalanced(
-        uint256 indexed oldTokenId,
-        uint256 indexed newTokenId,
-        address indexed vault,
-        address user,
-        address keeper,
-        uint16 newRangeBps
-    );
-    event CoLPRangePreferenceUpdated(address indexed vault, uint16 maxRangeBps);
-    event CoLPFeesCollected(uint256 indexed tokenId, uint256 daiFees, uint256 wsxmrFees);
     
     // ========== CONSTRUCTOR ==========
     
@@ -316,200 +281,6 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         emit BurnTimeoutBlocksUpdated(msg.sender, blocks);
     }
     
-    // ========== CO-LP OPERATIONS ==========
-    
-    /// @notice Set the LP's preferred max range width for co-LP positions
-    function setMaxCoLPRange(uint16 newMaxBps) external nonReentrant {
-        if (!_vaults[msg.sender].active) revert VaultDoesNotExist();
-        if (newMaxBps < MIN_COLP_RANGE_BPS || newMaxBps > MAX_COLP_RANGE_BPS) {
-            revert InvalidConfig();
-        }
-        _vaults[msg.sender].maxCoLPRangeBps = newMaxBps;
-        emit CoLPRangePreferenceUpdated(msg.sender, newMaxBps);
-    }
-    
-    /// @notice User opens a co-LP position by pairing their wsXMR against an LP vault's idle collateral
-    function userOpenCoLP(
-        address lpVault,
-        uint256 wsxmrAmount,
-        uint256 deadline
-    ) external nonReentrant returns (uint256 tokenId) {
-        if (block.timestamp > deadline) revert DeadlineExpired();
-        if (!_vaults[lpVault].active) revert VaultDoesNotExist();
-        if (wsxmrAmount == 0) revert ZeroAmount();
-        
-        Vault storage vault = _vaults[lpVault];
-        _tryRefreshOracle();
-        uint256 xmrPrice = _getXmrPriceFromStorage();
-        uint256 collateralPrice = _getCollateralPriceFromStorage();
-        
-        uint256 wsxmrUsd = (wsxmrAmount * xmrPrice) / WSXMR_DECIMALS;
-        uint256 daiNeeded = (wsxmrUsd * _underlyingUnit()) / collateralPrice;
-        uint256 sharesNeeded = IERC4626(collateralToken).convertToShares(daiNeeded);
-        
-        uint256 availableIdle = vault.collateralShares > vault.lockedCollateral
-            ? vault.collateralShares - vault.lockedCollateral
-            : 0;
-        if (availableIdle < sharesNeeded) revert InsufficientLPBuffer();
-        
-        IERC20(wsxmrToken).safeTransferFrom(msg.sender, address(this), wsxmrAmount);
-        
-        vault.collateralShares -= sharesNeeded;
-        
-        uint16 rangeBps = vault.maxCoLPRangeBps > 0
-            ? vault.maxCoLPRangeBps
-            : uint16(DEFAULT_COLP_RANGE_BPS);
-        
-        // Pool trades wsXMR/USDe — redeem shares to USDe before deploying
-        uint256 usdeForPosition = ISavingsDAI(collateralToken).redeem(sharesNeeded, address(this), address(this));
-        IERC20(underlyingToken).safeTransfer(liquidityRouter, usdeForPosition);
-        IERC20(wsxmrToken).safeTransfer(liquidityRouter, wsxmrAmount);
-        
-        (uint256 _tokenId, uint128 liquidity, int24 tickLower, int24 tickUpper, uint256 daiConsumed, uint256 wsxmrConsumed) =
-            IwsXmrLiquidityRouter(liquidityRouter).mintConcentratedPosition(
-                usdeForPosition, wsxmrAmount, rangeBps, xmrPrice, deadline, uint16(DEFAULT_COLP_SLIPPAGE_BPS)
-            );
-        tokenId = _tokenId;
-
-        // M2: Reconcile accounting with actual consumed amounts. Leftover tokens swept back to hub.
-        uint256 leftoverDai = usdeForPosition > daiConsumed ? usdeForPosition - daiConsumed : 0;
-        uint256 leftoverWsxmr = wsxmrAmount > wsxmrConsumed ? wsxmrAmount - wsxmrConsumed : 0;
-        if (leftoverDai > 0) {
-            // Re-wrap leftover USDe into shares for the vault
-            IERC20(underlyingToken).forceApprove(collateralToken, leftoverDai);
-            vault.collateralShares += ISavingsDAI(collateralToken).deposit(leftoverDai, address(this));
-        }
-        if (leftoverWsxmr > 0) {
-            pendingReturns[msg.sender][wsxmrToken] += leftoverWsxmr;
-        }
-
-        vault.deployedSDAIShares += daiConsumed;
-        _positionMetadata[tokenId] = PositionMetadata({
-            vaultOwner: lpVault,
-            user: msg.sender,
-            sDAISharesOriginal: daiConsumed,
-            wsxmrOriginal: wsxmrConsumed,
-            tickLower: tickLower,
-            tickUpper: tickUpper,
-            liquidity: liquidity,
-            createdAt: block.timestamp
-        });
-        _vaultPositions[lpVault].push(tokenId);
-        _userPositions[msg.sender].push(tokenId);
-
-        // Verify vault remains healthy after co-LP deployment
-        uint256 postDeployDebt = _denormalizeDebt(vault.normalizedDebt);
-        uint256 postDeployRatio = _calculateCRWithPositions(lpVault, postDeployDebt);
-        if (postDeployRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
-
-        emit CoLPDeployed(lpVault, msg.sender, tokenId, daiConsumed, wsxmrConsumed, rangeBps);
-    }
-
-    /// @notice Collect accumulated fees from a co-LP position.
-    ///         Fees go to pending returns: sDAI to LP vault, wsXMR to user.
-    function collectCoLPFees(uint256 tokenId) external nonReentrant {
-        PositionMetadata memory meta = _positionMetadata[tokenId];
-        if (meta.vaultOwner == address(0)) revert PositionNotFound();
-        if (meta.vaultOwner != msg.sender && meta.user != msg.sender) revert Unauthorized();
-
-        (uint256 daiFees, uint256 wsxmrFees) = IwsXmrLiquidityRouter(liquidityRouter).collectFees(tokenId);
-
-        if (daiFees > 0) {
-            // Fees arrive as USDe — wrap to shares so pendingReturns stays
-            // denominated in the collateral share token like every other flow.
-            IERC20(underlyingToken).forceApprove(collateralToken, daiFees);
-            uint256 feeShares = ISavingsDAI(collateralToken).deposit(daiFees, address(this));
-            pendingReturns[meta.vaultOwner][collateralToken] += feeShares;
-            globalPendingSDAI += feeShares;
-        }
-        if (wsxmrFees > 0) {
-            pendingReturns[meta.user][wsxmrToken] += wsxmrFees;
-        }
-
-        emit CoLPFeesCollected(tokenId, daiFees, wsxmrFees);
-    }
-
-    /// @notice Either LP or user can close a co-LP position
-    function unwindCoLP(uint256 tokenId, uint256 deadline) external nonReentrant {
-        if (block.timestamp > deadline) revert DeadlineExpired();
-        PositionMetadata memory meta = _positionMetadata[tokenId];
-        if (meta.vaultOwner != msg.sender && meta.user != msg.sender) revert Unauthorized();
-        
-        _unwindAndDistribute(tokenId, false);
-    }
-    
-    /// @notice Get the max wsXMR a vault can accept for co-LP
-    function getCoLPCapacity(address lpVault) external view returns (uint256 maxWsxmrAcceptable) {
-        Vault memory vault = _vaults[lpVault];
-        if (!vault.active) return 0;
-        
-        uint256 availableIdle = vault.collateralShares > vault.lockedCollateral
-            ? vault.collateralShares - vault.lockedCollateral
-            : 0;
-        if (availableIdle == 0) return 0;
-        
-        uint256 xmrPrice = _getXmrPriceFromStorage();
-        uint256 collateralPrice = _getCollateralPriceFromStorage();
-        
-        uint256 daiAmount = IERC4626(collateralToken).convertToAssets(availableIdle);
-        uint256 daiUsd = (daiAmount * collateralPrice) / _underlyingUnit();
-        maxWsxmrAcceptable = (daiUsd * WSXMR_DECIMALS) / xmrPrice;
-    }
-    
-    /// @notice Keeper-callable rebalance when a position goes out of range
-    function rebalanceCoLP(uint256 tokenId, uint16 newRangeBps, uint256 deadline) 
-        external nonReentrant 
-    {
-        if (block.timestamp > deadline) revert DeadlineExpired();
-        PositionMetadata memory meta = _positionMetadata[tokenId];
-        if (meta.vaultOwner == address(0)) revert PositionNotFound();
-        
-        Vault storage vault = _vaults[meta.vaultOwner];
-        if (newRangeBps < MIN_COLP_RANGE_BPS || newRangeBps > vault.maxCoLPRangeBps) {
-            revert InvalidRange();
-        }
-        
-        uint256 xmrPrice = _getXmrPriceFromStorage();
-        uint256 collateralPrice = _getCollateralPriceFromStorage();
-        bool outOfRange = IwsXmrLiquidityRouter(liquidityRouter).isPositionOutOfRange(tokenId, xmrPrice, collateralPrice);
-        bool isOwner = msg.sender == meta.vaultOwner;
-        if (!outOfRange && !isOwner) revert PositionInRange();
-        
-        address user = meta.user;
-        (uint256 daiOut, uint256 wsxmrOut) = IwsXmrLiquidityRouter(liquidityRouter)
-            .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS), xmrPrice, collateralPrice);
-
-        uint256 keeperFee = 0;
-        if (!isOwner) {
-            keeperFee = (daiOut * COLP_REBALANCE_FEE_BPS) / BPS_DENOMINATOR;
-            IERC20(underlyingToken).safeTransfer(msg.sender, keeperFee);
-            daiOut -= keeperFee;
-        }
-        
-        _removePositionFromArrays(tokenId, meta.vaultOwner, user);
-        if (vault.deployedSDAIShares >= meta.sDAISharesOriginal) {
-            vault.deployedSDAIShares -= meta.sDAISharesOriginal;
-        } else {
-            vault.deployedSDAIShares = 0;
-        }
-        delete _positionMetadata[tokenId];
-        
-        if (daiOut > 0 && wsxmrOut > 0) {
-            uint256 newTokenId = _deployToNewPosition(meta.vaultOwner, user, daiOut, wsxmrOut, newRangeBps, deadline);
-            emit CoLPRebalanced(tokenId, newTokenId, meta.vaultOwner, user, msg.sender, newRangeBps);
-        } else {
-            if (daiOut > 0) {
-                // daiOut is USDe — wrap to shares before crediting the vault
-                IERC20(underlyingToken).forceApprove(collateralToken, daiOut);
-                vault.collateralShares += ISavingsDAI(collateralToken).deposit(daiOut, address(this));
-            }
-            if (wsxmrOut > 0) {
-                pendingReturns[user][wsxmrToken] += wsxmrOut;
-            }
-            emit CoLPUnwound(tokenId, meta.vaultOwner, user, daiOut, wsxmrOut, false);
-        }
-    }
-    
     // ========== PENDING RETURNS ==========
     
     /// @inheritdoc IVaultFacet
@@ -650,11 +421,6 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         return _vaults[lpAddress].active;
     }
     
-    /// @notice Get position metadata for a co-LP position
-    function getPositionMetadata(uint256 tokenId) external view returns (PositionMetadata memory) {
-        return _positionMetadata[tokenId];
-    }
-    
     /// @notice Check if a minter is whitelisted for a vault
     function isMinterWhitelisted(address vault, address minter) external view returns (bool) {
         return whitelistedMinters[vault][minter];
@@ -665,7 +431,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
     /// @notice Returns all function selectors implemented by this facet
     /// @dev Used by Diamond to build selector → facet routing table
     function selectors() external pure returns (bytes4[] memory) {
-        bytes4[] memory sels = new bytes4[](32);
+        bytes4[] memory sels = new bytes4[](25);
         sels[0] = this.createVault.selector;
         sels[1] = this.deactivateVault.selector;
         sels[2] = this.depositCollateral.selector;
@@ -685,19 +451,12 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         sels[16] = this.getVaultAtIndex.selector;
         sels[17] = this.getPendingReturns.selector;
         sels[18] = this.hasActiveVault.selector;
-        sels[19] = this.getPositionMetadata.selector;
-        sels[20] = this.isMinterWhitelisted.selector;
-        sels[21] = this.selectors.selector;
-        sels[22] = this.setMaxCoLPRange.selector;
-        sels[23] = this.userOpenCoLP.selector;
-        sels[24] = this.collectCoLPFees.selector;
-        sels[25] = this.unwindCoLP.selector;
-        sels[26] = this.rebalanceCoLP.selector;
-        sels[27] = this.getCoLPCapacity.selector;
-        sels[28] = this.setMintTimeoutBlocks.selector;
-        sels[29] = this.setBurnTimeoutBlocks.selector;
-        sels[30] = this.getMaxVaultCollateral.selector;
-        sels[31] = this.calculateCollateralRatio.selector;
+        sels[19] = this.isMinterWhitelisted.selector;
+        sels[20] = this.selectors.selector;
+        sels[21] = this.setMintTimeoutBlocks.selector;
+        sels[22] = this.setBurnTimeoutBlocks.selector;
+        sels[23] = this.getMaxVaultCollateral.selector;
+        sels[24] = this.calculateCollateralRatio.selector;
         return sels;
     }
     
@@ -797,106 +556,6 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         }
     }
     
-    function _unwindAndDistribute(uint256 tokenId, bool fromLiquidation) internal {
-        PositionMetadata memory meta = _positionMetadata[tokenId];
-        Vault storage vault = _vaults[meta.vaultOwner];
-        uint256 xmrPrice = _getXmrPriceFromStorage();
-        
-        (uint256 daiOut, uint256 wsxmrOut) = IwsXmrLiquidityRouter(liquidityRouter)
-            .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS), xmrPrice, _getCollateralPriceFromStorage());
-        
-        if (vault.deployedSDAIShares >= meta.sDAISharesOriginal) {
-            vault.deployedSDAIShares -= meta.sDAISharesOriginal;
-        } else {
-            vault.deployedSDAIShares = 0;
-        }
-        
-        if (daiOut > 0) {
-            // daiOut is USDe — wrap to shares before crediting the vault
-            IERC20(underlyingToken).forceApprove(collateralToken, daiOut);
-            vault.collateralShares += ISavingsDAI(collateralToken).deposit(daiOut, address(this));
-        }
-        
-        if (wsxmrOut > 0) {
-            pendingReturns[meta.user][wsxmrToken] += wsxmrOut;
-        }
-        
-        _removePositionFromArrays(tokenId, meta.vaultOwner, meta.user);
-        delete _positionMetadata[tokenId];
-        
-        emit CoLPUnwound(tokenId, meta.vaultOwner, meta.user, daiOut, wsxmrOut, fromLiquidation);
-    }
-    
-    function _removePositionFromArrays(uint256 tokenId, address vaultAddr, address userAddr) internal {
-        uint256[] storage vpos = _vaultPositions[vaultAddr];
-        for (uint256 i = 0; i < vpos.length; i++) {
-            if (vpos[i] == tokenId) {
-                vpos[i] = vpos[vpos.length - 1];
-                vpos.pop();
-                break;
-            }
-        }
-        uint256[] storage upos = _userPositions[userAddr];
-        for (uint256 i = 0; i < upos.length; i++) {
-            if (upos[i] == tokenId) {
-                upos[i] = upos[upos.length - 1];
-                upos.pop();
-                break;
-            }
-        }
-    }
-    
-    function _deployToNewPosition(
-        address lpVault,
-        address user,
-        uint256 daiAmount,
-        uint256 wsxmrAmount,
-        uint16 rangeBps,
-        uint256 deadline
-    ) internal returns (uint256 tokenId) {
-        Vault storage vault = _vaults[lpVault];
-        uint256 xmrPrice = _getXmrPriceFromStorage();
-        
-        // daiAmount is USDe — the pool's quote token
-        IERC20(underlyingToken).safeTransfer(liquidityRouter, daiAmount);
-        IERC20(wsxmrToken).safeTransfer(liquidityRouter, wsxmrAmount);
-        
-        (uint256 _tokenId, uint128 liquidity, int24 tickLower, int24 tickUpper, uint256 daiConsumed, uint256 wsxmrConsumed) =
-            IwsXmrLiquidityRouter(liquidityRouter).mintConcentratedPosition(
-                daiAmount, wsxmrAmount, rangeBps, xmrPrice, deadline, uint16(DEFAULT_COLP_SLIPPAGE_BPS)
-            );
-        tokenId = _tokenId;
-
-        // M2: Reconcile accounting with actual consumed amounts
-        uint256 leftoverDai = daiAmount > daiConsumed ? daiAmount - daiConsumed : 0;
-        uint256 leftoverWsxmr = wsxmrAmount > wsxmrConsumed ? wsxmrAmount - wsxmrConsumed : 0;
-        if (leftoverDai > 0) {
-            // Re-wrap leftover USDe into shares for the vault
-            IERC20(underlyingToken).forceApprove(collateralToken, leftoverDai);
-            vault.collateralShares += ISavingsDAI(collateralToken).deposit(leftoverDai, address(this));
-        }
-        if (leftoverWsxmr > 0) {
-            pendingReturns[user][wsxmrToken] += leftoverWsxmr;
-        }
-
-        vault.deployedSDAIShares += daiConsumed;
-
-        _positionMetadata[tokenId] = PositionMetadata({
-            vaultOwner: lpVault,
-            user: user,
-            sDAISharesOriginal: daiConsumed,
-            wsxmrOriginal: wsxmrConsumed,
-            tickLower: tickLower,
-            tickUpper: tickUpper,
-            liquidity: liquidity,
-            createdAt: block.timestamp
-        });
-        _vaultPositions[lpVault].push(tokenId);
-        _userPositions[user].push(tokenId);
-
-        emit CoLPDeployed(lpVault, user, tokenId, daiConsumed, wsxmrConsumed, rangeBps);
-    }
-
     // ========== VAULT EVICTION INTERNALS ==========
 
     function _removeFromVaultList(address vaultAddr) internal {

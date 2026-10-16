@@ -1,23 +1,58 @@
 # ⛴️ WrapSynth
 
-**A trustless cross-chain ferry for Monero. wsXMR is live on HyperEVM (Hyperliquid L1), backed by overcollateralized LP vaults and Ed25519 atomic swap commitments.**
+**A trustless cross-chain ferry for Monero. wsXMR deploys per-chain on BNB Chain (QQQB collateral), Base (cbBTC), and Robinhood Chain (SPY), backed by overcollateralized LP vaults and Ed25519 atomic swap commitments — one interface, pick your chain.**
 
-🌐 **[wrapsynth.com](https://wrapsynth.com)** · 📊 **[wsXMR/USDe Pool on DexScreener](https://dexscreener.com/hyperevm/0xfa529dc1b245b3228a172ceb886f47f2127af401)**
+🌐 **[wrapsynth.com](https://wrapsynth.com)**
 
-WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Users swap XMR for wsXMR through atomic-swap mechanics enforced on-chain: LPs post collateral (sUSDe on HyperEVM; the collateral asset is per-deployment — see [Roadmap](#-roadmap)), mint/burn settlement is gated by Ed25519 secret reveals verified on-chain, and timeout-based slashing protects both sides. No custodian, no federation, no trusted intermediary — every swap settles peer-to-peer between a user and an LP vault.
+WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Users swap XMR for wsXMR through atomic-swap mechanics enforced on-chain: LPs post collateral (the collateral asset is per-deployment — see [Roadmap](#-roadmap)), mint/burn settlement is gated by Ed25519 secret reveals verified on-chain, and timeout-based slashing protects both sides. No custodian, no federation, no trusted intermediary — every swap settles peer-to-peer between a user and an LP vault. Each chain runs an independent wsXMR deployment; there is no bridging between them.
 
 ---
 
-## 🚀 Status: Live on HyperEVM
+## 🚀 Status: Multi-chain rollout in progress
 
-- ✅ Full hub + facet system deployed and **verified on hyperevmscan**
-- ✅ **wsXMR/USDe HyperSwap V3 pool live**
-- ✅ Complete mint → trade → burn cycle executed end-to-end on mainnet
+- ✅ **Live on BNB Chain** — deployed, verified on BscScan, and exercised end-to-end on mainnet (mint → co-LP → pool swap → burn)
+- ✅ Full hub + facet system built and fork-tested on **Base** and **Robinhood Chain** (deployments queued)
+- ✅ Complete mint → trade → burn cycle executed end-to-end on mainnet (former HyperEVM deployment)
 - ✅ Two rounds of security review completed; all critical findings resolved (see [Security](#-security))
-- ✅ 633-line solvency invariant test suite + audit regression suite
+- ✅ 633-line solvency invariant test suite + audit regression suite, replicated per chain (~900 fork tests)
 -  Solana port in development (`solana/`)
 
-### Deployed Contracts (HyperEVM, ChainID 999)
+### Live: BNB Chain (ChainID 56)
+
+Deployed at block `128040249`. All contracts verified on BscScan; deployer powers permanently locked (`deployerOperationsLocked` / `hubLocked` verified on-chain).
+
+| Contract | Address |
+|---|---|
+| wsXMR Token | [`0x9B8d1851bCc06ac265c1c1ACaBD0F71E69DD312c`](https://bscscan.com/address/0x9B8d1851bCc06ac265c1c1ACaBD0F71E69DD312c) |
+| wsXmrHub | [`0x15bb9ba8236De055090a262F45a7e213F6040320`](https://bscscan.com/address/0x15bb9ba8236De055090a262F45a7e213F6040320) |
+| Liquidity Router | [`0x1034259f355566fcE4571F792d239a99BBa1b9b4`](https://bscscan.com/address/0x1034259f355566fcE4571F792d239a99BBa1b9b4) |
+| StataQQQB (collateral share token) | [`0xd821A7D919e007b6b39925f672f1219dB4865Fba`](https://bscscan.com/address/0xd821A7D919e007b6b39925f672f1219dB4865Fba) |
+| wsXMR/QQQB PancakeSwap V3 Pool (0.05%) | [`0x9711698489150C9Fbc377C7d5aBC735D6198A845`](https://bscscan.com/address/0x9711698489150C9Fbc377C7d5aBC735D6198A845) |
+
+<details>
+<summary>Facet addresses</summary>
+
+| Facet | Address |
+|---|---|
+| BnbOracleFacet | [`0xb694120Ecdc69fbbEe3Ae21831d7B76ab8a9169B`](https://bscscan.com/address/0xb694120Ecdc69fbbEe3Ae21831d7B76ab8a9169B) |
+| VaultFacet | [`0x6ABAEB70c9BA9EA497Ff5e20D08bd20Ca1E02139`](https://bscscan.com/address/0x6ABAEB70c9BA9EA497Ff5e20D08bd20Ca1E02139) |
+| MintFacet | [`0xb6251797386a8C5a2a4A8783f430Ef2ED5c63BeF`](https://bscscan.com/address/0xb6251797386a8C5a2a4A8783f430Ef2ED5c63BeF) |
+| BurnFacet | [`0xCE92E887d225D06c21a16d845D88E980d536FA2b`](https://bscscan.com/address/0xCE92E887d225D06c21a16d845D88E980d536FA2b) |
+| LiquidationFacet | [`0xd6Ee29f9ae035aDB0f2741228eD55F0fC6dBb6c2`](https://bscscan.com/address/0xd6Ee29f9ae035aDB0f2741228eD55F0fC6dBb6c2) |
+| BnbYieldFacet | [`0xD1f77F73Ca47a726875D884cc45EFf289f6176E3`](https://bscscan.com/address/0xD1f77F73Ca47a726875D884cc45EFf289f6176E3) |
+| CoLPFacet | [`0x8e3EF1e28262E351EB066374df1bEd36CC704dDA`](https://bscscan.com/address/0x8e3EF1e28262E351EB066374df1bEd36CC704dDA) |
+
+Machine-readable manifest: [`frontend/deployment.bnb.json`](./frontend/deployment.bnb.json) · [`ethereum/deployments/bnb-deployment.json`](./ethereum/deployments/bnb-deployment.json)
+</details>
+
+### Deprecated: former HyperEVM deployment (ChainID 999)
+
+> HyperEVM is deprecated. The contracts remain live and immutable on-chain
+> (deployer powers were permanently locked at launch), but it is no longer a
+> supported venue and is not selectable in the frontend. Deeper Hyperliquid
+> integration (CLOB listing, HIP-3 perps) is deferred — see
+> [docs/HYPERLIQUID_RISKS.md](./docs/HYPERLIQUID_RISKS.md) for the risk
+> analysis behind that decision.
 
 | Contract | Address |
 |---|---|
@@ -61,17 +96,17 @@ All protocol state and collateral live in a single contract, **wsXmrHub**, which
                       │  state · collateral · token │
                       │  selector → facet dispatch  │
                       └──────────┬─────────────────┘
-        ┌──────────┬─────────┬──┴──────┬───────────┬──────────┐
-   VaultFacet  MintFacet  BurnFacet  Liquidation  YieldFacet  OracleFacet
-   (LP vaults) (XMR→wsXMR)(wsXMR→XMR)  Facet   (USDe yield)(HyperCore)
+        ┌──────────┬─────────┬──┴──────┬───────────┬──────────┬─────────┐
+   VaultFacet  MintFacet  BurnFacet  Liquidation  YieldFacet  OracleFacet  CoLPFacet
+   (LP vaults) (XMR→wsXMR)(wsXMR→XMR)  Facet  (per-chain) (RedStone + TWAP) (co-LP)
 ```
 
 ### Key components
 
 - **Ed25519 on-chain verification** — atomic swap secrets are Ed25519 scalars; the contract computes `scalarMultBase(secret)` and checks it against the user's commitment, binding settlement to the same key material used on the Monero side
-- **USDe collateral** — LP vaults are denominated in USDe supplied to HyperLend (Aave v3.6 fork), so idle collateral earns supply APY; **YieldFacet** harvests and accounts for vault yield
-- **Co-LP liquidity router** — `wsXMRLiquidityRouter` deploys vault collateral as HyperSwap V3 concentrated liquidity paired against user-supplied wsXMR, putting backing capital to work instead of letting it sit idle
-- **Oracle facet** — `HyperCoreOracleFacet` reads the native XMR perp's `oraclePx` via the L1-read precompile — validator-maintained, no off-chain price pusher
+- **Per-chain collateral** — LP vaults are denominated in the chain's collateral asset (QQQB on BNB, cbBTC on Base, SPY on Robinhood) through a `Stata*` share adapter; **YieldFacet** harvests and accounts for vault yield
+- **Co-LP liquidity router** — `wsXMRLiquidityRouter` deploys vault collateral as V3 concentrated liquidity (PancakeSwap on BNB, Uniswap on Base/Robinhood) paired against user-supplied wsXMR, putting backing capital to work instead of letting it sit idle
+- **Oracle facet** — per-chain oracle facets read XMR/USD from RedStone signed calldata and compute the collateral price fully on-chain from V3 TWAP pools; the only external input is a signed XMR price
 - **LP node** (`ethereum/lp-node/`, Rust) — monitors events, manages Monero RPC, prices quotes, runs arbitrage, and exposes a REST API for the frontend
 
 ---
@@ -96,10 +131,10 @@ All protocol state and collateral live in a single contract, **wsXmrHub**, which
 
 ### For Liquidity Providers
 
-1. Create a vault and deposit USDe via **VaultFacet** (minimum 150% collateral ratio; 180% target)
-2. Optionally deploy collateral into the co-LP HyperSwap V3 position via the router
+1. Create a vault and deposit the chain's collateral asset via **VaultFacet** (minimum 150% collateral ratio; 180% target)
+2. Optionally deploy collateral into the co-LP V3 position via the router
 3. Run the LP node to serve mint/burn flow automatically
-4. Earn mint/burn fees + USDe yield + LP fees; keep ratio above the 120% liquidation threshold
+4. Earn mint/burn fees + collateral yield + LP fees; keep ratio above the 120% liquidation threshold
 
 ---
 
@@ -124,13 +159,14 @@ The protocol has been through **two rounds of security review**, with all critic
 | Power | Holder | Reachable after `lockDeployer()` / `lockHub()` |
 |---|---|---|
 | `registerFacets` | hub `deployer` | ❌ no (and already one-time) |
+| `addFacet` (non-core facets e.g. CoLPFacet) | hub `deployer` | ❌ no |
 | `addSelectors` / `removeSelectors` | hub `deployer` | ❌ no |
 | `setLiquidityRouter` | hub `deployer` | ❌ no |
 | `setPriceUpdater` (oracle) | hub `deployer` | ❌ no |
 | `wsXMR.replaceHub` / `setHub` | token `_deployer` | ❌ no |
 | `updatePrices` | `priceUpdater` only | ✅ yes (required for oracle liveness) |
 
-✅ **The live HyperEVM deployment has executed `lockHub()` / `lockDeployer()`** — the
+✅ **Every deployment executes `lockHub()` / `lockDeployer()` as its final step** — the
 deployer key can no longer repoint the minter or alter facet routes. Verified on-chain at
 deploy time (`hubLocked() == true`, `deployerOperationsLocked() == true`).
 
@@ -146,9 +182,9 @@ deploy time (`hubLocked() == true`, `deployerOperationsLocked() == true`).
 ⚠️ This is early-stage protocol software. Reviews to date do not eliminate risk:
 
 - No formal verification yet
-- Oracle reads the native XMR perp via L1-read precompile (validator-maintained; no off-chain pusher)
+- XMR/USD comes from RedStone signed calldata pushed by callers/LP; collateral price is computed on-chain from a V3 TWAP pool — a stale XMR push or a shallow TWAP pool are the main oracle risks
 - LP-side Monero payment confirmation is an off-chain step; the protocol's protection is economic (collateral slashing), not cryptographic proof of XMR transfer
-- **LP liveness is assumed.** Only the LP can attest a Monero deposit (`setMintReady`) or release a user's XMR from the shared 2-of-2 address (by revealing `lpSecret`). After a mint timeout the LP has `LP_CLAIM_WINDOW_BLOCKS` (~1 hour on HyperEVM) to reveal; a live LP always will — it earns the parked griefing deposit and loses nothing. If the LP is unresponsive past the window, the key bond is slashed to the user (`reclaimParkedDeposit` / `sweepUnclaimedExpiredMint`). This means an LP outage longer than the window forfeits the bond even for mints where the user never sent XMR — the chain cannot distinguish a real deposit from a phantom one
+- **LP liveness is assumed.** Only the LP can attest a Monero deposit (`setMintReady`) or release a user's XMR from the shared 2-of-2 address (by revealing `lpSecret`). After a mint timeout the LP has `LP_CLAIM_WINDOW_BLOCKS` (~1 hour at the deployment's block time) to reveal; a live LP always will — it earns the parked griefing deposit and loses nothing. If the LP is unresponsive past the window, the key bond is slashed to the user (`reclaimParkedDeposit` / `sweepUnclaimedExpiredMint`). This means an LP outage longer than the window forfeits the bond even for mints where the user never sent XMR — the chain cannot distinguish a real deposit from a phantom one
 - Use amounts you can afford to lose
 
 ---
@@ -163,7 +199,7 @@ Node.js v18+, Foundry, Rust (for the LP node), Hardhat (via npm).
 git clone https://github.com/madschristensen99/wrapsynth.git
 cd wrapsynth/ethereum
 npm install
-cp .env.example .env   # add PRIVATE_KEY and RPC_URL (HyperEVM: https://rpc.hyperliquid.xyz/evm)
+cp .env.example .env   # add PRIVATE_KEY and per-chain RPC URLs (BNB_RPC_URL, BASE_RPC_URL, ROBINHOOD_RPC_URL)
 
 # Compile + test
 npx hardhat compile
@@ -192,12 +228,12 @@ anchor build && anchor test
 
 ```
 wrapsynth/
-├── deployment.json           # Live HyperEVM mainnet deployment manifest
+├── deployment.json           # Per-chain deployment manifests (bnb / base / robinhood)
 ├── ethereum/
 │   ├── contracts/
 │   │   ├── core/             # wsXmrHub, wsXmrStorage
 │   │   ├── facets/           # Vault, Mint, Burn, Liquidation, Yield, Oracle
-│   │   ├── router/           # wsXMRLiquidityRouter (co-LP HyperSwap V3)
+│   │   ├── router/           # wsXMRLiquidityRouter (co-LP V3)
 │   │   ├── Ed25519.sol       # On-chain Ed25519 scalar mult
 │   │   └── wsXMR.sol         # ERC-20 (8 decimals, matching XMR)
 │   ├── test/                 # Foundry invariant/E2E + Hardhat suites
@@ -215,23 +251,25 @@ The strategy is parallel collateral experiments across chains — deploy everywh
 
 | Chain | Collateral | Collateral type | Status |
 |---|---|---|---|
-| HyperEVM | sUSDe (HyperLend) | Yield-bearing stablecoin | ✅ Live on mainnet |
-| Gnosis | sDAI | Yield-bearing stablecoin | ✅ Beta (superseded) |
+| BNB Chain | QQQB (bStocks tokenized Nasdaq) | Tokenized equity | ✅ **Live** — deployed, verified, end-to-end tested on mainnet |
+| Base | cbBTC (Coinbase Wrapped BTC) | Custodial wrapped asset | ✅ Built + fork-tested, queued after BNB |
+| Robinhood Chain | SPY (Robinhood tokenized S&P 500) | Tokenized equity | ✅ Built + fork-tested, queued after Base |
 | Solana | Native SOL | Maximal censorship resistance — no issuer | 🔄 In development |
-| BNB Chain | QQQB (bStocks tokenized Nasdaq) | Tokenized equity | ✅ Built + fork-tested, not deployed |
-| Base | cbBTC (Coinbase Wrapped BTC) | Custodial wrapped asset | ✅ Built + fork-tested, not deployed |
-| Robinhood Chain | SPY (Robinhood tokenized S&P 500) | Tokenized equity | ✅ Built + fork-tested, not deployed |
+| HyperEVM | sUSDe (HyperLend) | Yield-bearing stablecoin | ⛔ Deprecated — see [Hyperliquid risks](./docs/HYPERLIQUID_RISKS.md) |
+| Gnosis | sDAI | Yield-bearing stablecoin | ⛔ Beta (superseded) |
 
 - 🔄 Additional LP onboarding + deeper liquidity
 - ⏳ Third-party audit + bug bounty ahead of broader scaling
 
-The oracle model minimizes external dependencies: XMR/USD comes from RedStone (or native precompiles on HyperEVM), and collateral prices are computed fully on-chain from V3 TWAP pools — no second oracle provider per deployment.
+The oracle model minimizes external dependencies: XMR/USD comes from RedStone signed calldata, and collateral prices are computed fully on-chain from V3 TWAP pools — no second oracle provider per deployment. (The deprecated HyperEVM build read a native perp precompile instead; see [Hyperliquid risks](./docs/HYPERLIQUID_RISKS.md).)
 
 ---
 
 ## 📚 Documentation
 
+- [Funding guide](./docs/FUNDING.md) — what assets each chain needs and where to get them
 - [Sequence diagrams](./docs/sequenceDiagrams.md) — mint/burn/liquidation flows
+- [Hyperliquid integration risks](./docs/HYPERLIQUID_RISKS.md) — why HyperEVM is deprecated and what deeper perp integration would require
 - [Seed storage design](./docs/SEED_STORAGE_IMPLEMENTATION.md)
 - [LP node README](./ethereum/lp-node/)
 - [Solana program](./solana/anchor-program/)

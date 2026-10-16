@@ -38,14 +38,15 @@ export function loadConfig(configPath = process.env.DEVNET_CONFIG || DEFAULT_CON
     programId: new PublicKey(cfg.programId),
     globalState: new PublicKey(cfg.globalState),
     wsxmrMint: new PublicKey(cfg.wsxmrMint),
-    collateralMint: new PublicKey(cfg.collateralMint),
-    programCollateralAta: new PublicKey(cfg.programCollateralAta),
+    // Native SOL collateral — the wSOL mint address is its SPL identity.
+    collateralMint: new PublicKey(cfg.collateralMint ?? 'So11111111111111111111111111111111111111112'),
+    collateralEscrow: new PublicKey(cfg.collateralEscrow ?? cfg.programCollateralAta),
+    programCollateralAta: new PublicKey(cfg.collateralEscrow ?? cfg.programCollateralAta),
     solEscrow: new PublicKey(cfg.solEscrow),
     oracleXmr: new PublicKey(cfg.oracle.xmr),
-    oracleQqqx: new PublicKey(cfg.oracle.qqqx),
+    oracleSol: new PublicKey(cfg.oracle.sol ?? cfg.oracle.qqqx),
     oracleMockProgramId: new PublicKey(cfg.oracleMockProgramId),
     authority: new PublicKey(cfg.authority),
-    adminCollateralAta: new PublicKey(cfg.adminCollateralAta),
   };
 }
 

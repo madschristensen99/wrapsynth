@@ -64,8 +64,8 @@ async function getOrCreateEncryptionKey() {
  * Generate storage key for a seed based on user address and public key
  */
 function getStorageKey(userAddress, publicSpendKey) {
-    // Format: chainId/contractAddress/publicKey/userAddress
-    // For Wrapsynth, we use a simplified version since we don't have multiple contracts
+    // Format: wrapsynth/publicKey/userAddress — intentionally NOT chain-scoped:
+    // the seed derives per-request keypairs and is safe to reuse across chains.
     // Normalize address to lowercase because localStorage is case-sensitive and
     // wallets may return checksummed or lowercase inconsistently.
     return `wrapsynth/${publicSpendKey}/${userAddress.toLowerCase()}`;

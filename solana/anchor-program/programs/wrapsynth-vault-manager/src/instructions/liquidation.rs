@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_2022::{
-    burn as burn_tokens, transfer_checked, Burn as BurnCpi, Token2022, TransferChecked,
+    burn as burn_tokens, Burn as BurnCpi, Token2022,
 };
 use anchor_spl::token_interface::{Mint, TokenAccount};
 
@@ -32,7 +32,7 @@ pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> 
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &QQQX_USD_FEED_ID,
+        &SOL_USD_FEED_ID,
     )?;
     let col_usd = collateral_to_usd(vault.collateral_amount, col_price);
     let debt_usd = actual_debt as u128 * xmr_price / WSXMR_DECIMALS as u128;
@@ -145,12 +145,9 @@ pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> 
                     // backed. Vault PDA signs, so the global borrow is safe.
                     slash_to_pool(
                         vault,
-                        &vault.to_account_info(),
-                        &ctx.accounts.vault_collateral_ata.to_account_info(),
-                        &ctx.accounts.program_collateral_ata.to_account_info(),
-                        &ctx.accounts.collateral_mint.to_account_info(),
-                        &ctx.accounts.token_program.to_account_info(),
-                        ctx.accounts.collateral_mint.decimals,
+                        &ctx.accounts.vault_collateral_escrow,
+                        &ctx.accounts.collateral_escrow,
+                        &ctx.accounts.system_program.to_account_info(),
                         reward,
                     )?;
                 }
@@ -216,12 +213,9 @@ pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> 
                         .ok_or(WrapSynthError::MathOverflow)?;
                     slash_to_pool(
                         vault,
-                        &vault.to_account_info(),
-                        &ctx.accounts.vault_collateral_ata.to_account_info(),
-                        &ctx.accounts.program_collateral_ata.to_account_info(),
-                        &ctx.accounts.collateral_mint.to_account_info(),
-                        &ctx.accounts.token_program.to_account_info(),
-                        ctx.accounts.collateral_mint.decimals,
+                        &ctx.accounts.vault_collateral_escrow,
+                        &ctx.accounts.collateral_escrow,
+                        &ctx.accounts.system_program.to_account_info(),
                         user_payout,
                     )?;
                 }
@@ -270,14 +264,14 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &QQQX_USD_FEED_ID,
+        &SOL_USD_FEED_ID,
     )?;
 
     let actual_debt = get_actual_debt(vault.normalized_debt, global_debt_index);
     require!(actual_debt > 0, WrapSynthError::InsufficientDebt);
 
     // Verify vault is liquidatable (unlocked collateral vs actual debt).
-    // Uses market QQQX/USD price so discounts are already marked down.
+    // Uses market SOL/USD price so discounts are already marked down.
     // Depeg-pause only blocks minting; liquidations remain permissionless.
     let col_usd = collateral_to_usd(vault.collateral_amount, col_price);
     let debt_usd = actual_debt as u128 * xmr_price / WSXMR_DECIMALS as u128;
@@ -350,25 +344,23 @@ pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64)
     );
     burn_tokens(cpi_ctx, debt_to_clear)?;
 
-    // Transfer seized collateral to liquidator
+    // Transfer seized collateral (lamports) to the liquidator
     let vault_key = vault.lp_address;
-    let vault_bump = vault.bump;
-    let seeds: &[&[u8]] = &[VAULT_SEED, vault_key.as_ref(), &[vault_bump]];
-    let signer_seeds = &[seeds];
-    let cpi_ctx = CpiContext::new_with_signer(
-        ctx.accounts.token_program.to_account_info(),
-        TransferChecked {
-            from: ctx.accounts.vault_collateral_ata.to_account_info(),
-            mint: ctx.accounts.collateral_mint.to_account_info(),
-            to: ctx.accounts.liquidator_collateral_ata.to_account_info(),
-            authority: ctx.accounts.vault.to_account_info(),
-        },
-        signer_seeds,
-    );
-    transfer_checked(
-        cpi_ctx,
-        collateral_amount,
-        ctx.accounts.collateral_mint.decimals,
+    let vault_pda_key = ctx.accounts.vault.key();
+    let escrow_bump = ctx.bumps.vault_collateral_escrow;
+    let seeds: &[&[u8]] = &[VAULT_COLLATERAL_SEED, vault_pda_key.as_ref(), &[escrow_bump]];
+    anchor_lang::solana_program::program::invoke_signed(
+        &anchor_lang::solana_program::system_instruction::transfer(
+            &ctx.accounts.vault_collateral_escrow.key(),
+            &ctx.accounts.liquidator.key(),
+            collateral_amount,
+        ),
+        &[
+            ctx.accounts.vault_collateral_escrow.to_account_info(),
+            ctx.accounts.liquidator.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+        ],
+        &[seeds],
     )?;
 
     msg!(
@@ -407,7 +399,7 @@ pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
     let col_price = get_collateral_price(
         &ctx.accounts.pyth_collateral,
         PRICE_MAX_AGE,
-        &QQQX_USD_FEED_ID,
+        &SOL_USD_FEED_ID,
     )?;
 
     let old_debt = get_actual_debt(old.normalized_debt, global_debt_index);
@@ -433,24 +425,36 @@ pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
         .checked_add(absorbed)
         .ok_or(WrapSynthError::MathOverflow)?;
 
-    // Physically migrate the collateral balance to the new vault's ATA so the
-    // accounting matches token custody.
+    // Physically migrate the collateral lamports to the new vault's escrow so
+    // the accounting matches custody.
     if absorbed > 0 {
-        let old_lp_key = old.lp_address;
-        let old_bump = old.bump;
-        let seeds: &[&[u8]] = &[VAULT_SEED, old_lp_key.as_ref(), &[old_bump]];
-        let signer_seeds = &[seeds];
-        let cpi_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            TransferChecked {
-                from: ctx.accounts.old_vault_collateral_ata.to_account_info(),
-                mint: ctx.accounts.collateral_mint.to_account_info(),
-                to: ctx.accounts.new_vault_collateral_ata.to_account_info(),
-                authority: old.to_account_info(),
-            },
-            signer_seeds,
+        let escrow_bump = ctx.bumps.old_vault_collateral_escrow;
+        let old_vault_key = ctx.accounts.old_vault_collateral_escrow.key();
+        // Re-derive the old vault PDA key for the escrow seeds (old_vault is
+        // already mut-borrowed above).
+        let (old_pda_key, _) = Pubkey::find_program_address(
+            &[VAULT_SEED, old.lp_address.as_ref()],
+            &crate::ID,
         );
-        transfer_checked(cpi_ctx, absorbed, ctx.accounts.collateral_mint.decimals)?;
+        let _ = old_vault_key;
+        let seeds: &[&[u8]] = &[
+            VAULT_COLLATERAL_SEED,
+            old_pda_key.as_ref(),
+            &[escrow_bump],
+        ];
+        anchor_lang::solana_program::program::invoke_signed(
+            &anchor_lang::solana_program::system_instruction::transfer(
+                &ctx.accounts.old_vault_collateral_escrow.key(),
+                &ctx.accounts.new_vault_collateral_escrow.key(),
+                absorbed,
+            ),
+            &[
+                ctx.accounts.old_vault_collateral_escrow.to_account_info(),
+                ctx.accounts.new_vault_collateral_escrow.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            &[seeds],
+        )?;
     }
 
     let global = &mut ctx.accounts.global_state.load_mut()?;
@@ -538,27 +542,21 @@ pub struct ResolveBurnForLiquidation<'info> {
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
 
-    pub collateral_mint: Box<InterfaceAccount<'info, Mint>>,
-
-    /// Vault collateral ATA — slash source for revealed/committed burn payouts.
+    /// CHECK: lamport-only vault collateral escrow PDA — validated by seeds
     #[account(
         mut,
         seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
         bump,
-        token::mint = collateral_mint,
-        token::authority = vault,
     )]
-    pub vault_collateral_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub vault_collateral_escrow: AccountInfo<'info>,
 
-    /// Program collateral pool ATA — slash destination.
+    /// CHECK: lamport-only program collateral pool PDA — validated by seeds
     #[account(
         mut,
         seeds = [PROGRAM_COLLATERAL_SEED],
         bump,
-        token::mint = collateral_mint,
-        token::authority = global_state,
     )]
-    pub program_collateral_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub collateral_escrow: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -586,22 +584,16 @@ pub struct ExecuteLiquidation<'info> {
     #[account(mut)]
     pub wsxmr_mint: InterfaceAccount<'info, Mint>,
 
-    pub collateral_mint: InterfaceAccount<'info, Mint>,
-
     #[account(mut)]
     pub liquidator_wsxmr_ata: InterfaceAccount<'info, TokenAccount>,
 
-    #[account(mut)]
-    pub liquidator_collateral_ata: InterfaceAccount<'info, TokenAccount>,
-
+    /// CHECK: lamport-only vault collateral escrow PDA — validated by seeds
     #[account(
         mut,
         seeds = [VAULT_COLLATERAL_SEED, vault.key().as_ref()],
         bump,
-        token::mint = collateral_mint,
-        token::authority = vault,
     )]
-    pub vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+    pub vault_collateral_escrow: AccountInfo<'info>,
 
     /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
     pub pyth_xmr: AccountInfo<'info>,
@@ -644,27 +636,21 @@ pub struct BackstopVault<'info> {
     /// CHECK: Pyth collateral price feed — validated by oracle.rs
     pub pyth_collateral: AccountInfo<'info>,
 
-    pub collateral_mint: InterfaceAccount<'info, Mint>,
-
-    /// Old vault's collateral ATA — source of the absorbed balance.
+    /// CHECK: old vault's lamport collateral escrow — source of the absorbed balance
     #[account(
         mut,
         seeds = [VAULT_COLLATERAL_SEED, old_vault.key().as_ref()],
         bump,
-        token::mint = collateral_mint,
-        token::authority = old_vault,
     )]
-    pub old_vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+    pub old_vault_collateral_escrow: AccountInfo<'info>,
 
-    /// New vault's collateral ATA — destination of the absorbed balance.
+    /// CHECK: new vault's lamport collateral escrow — destination
     #[account(
         mut,
         seeds = [VAULT_COLLATERAL_SEED, new_vault.key().as_ref()],
         bump,
-        token::mint = collateral_mint,
-        token::authority = new_vault,
     )]
-    pub new_vault_collateral_ata: InterfaceAccount<'info, TokenAccount>,
+    pub new_vault_collateral_escrow: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,

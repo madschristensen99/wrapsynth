@@ -2,16 +2,25 @@
 // Uses createPublicClient and createWalletClient as required
 
 import { createPublicClient, createWalletClient, custom, http, fallback, parseAbi, defineChain } from 'https://esm.sh/viem@2.7.0';
-import { NETWORKS, CONTRACTS, ABIS, RAW_ABIS } from './config.js?v=3.22';
+import { CHAINS, CONTRACTS, ABIS, RAW_ABIS, getActiveChain, getActiveChainKey } from './config.js?v=3.22';
 
-// HyperEVM mainnet (chainId 999) — not a built-in viem chain, so define it.
-export const hyperevm = defineChain({
-    id: 999,
-    name: 'HyperEVM',
-    nativeCurrency: { name: 'HYPE', symbol: 'HYPE', decimals: 18 },
-    rpcUrls: { default: { http: ['https://rpc.hyperliquid.xyz/evm'] } },
-    blockExplorers: { default: { name: 'HyperEVM Scan', url: 'https://hyperevmscan.io' } }
-});
+// viem chain definitions, built lazily from the CHAINS registry so every
+// supported chain (including ones viem doesn't ship built-in) works.
+const _viemChains = {};
+export function getViemChain(chainKey = getActiveChainKey()) {
+    const cfg = CHAINS[chainKey];
+    if (!cfg) throw new Error(`Unknown chain: ${chainKey}`);
+    if (!_viemChains[chainKey]) {
+        _viemChains[chainKey] = defineChain({
+            id: cfg.chainId,
+            name: cfg.name,
+            nativeCurrency: cfg.nativeCurrency,
+            rpcUrls: { default: { http: cfg.rpcUrls } },
+            blockExplorers: { default: { name: cfg.explorerName, url: cfg.explorer } }
+        });
+    }
+    return _viemChains[chainKey];
+}
 
 // Parse ABIs once at module level
 // Append burn resolution functions that may be missing from cached config.js
@@ -43,7 +52,7 @@ let userAddress = null;
 function getTransport() {
     const timeout = 10000; // 10s — prevent slow RPC from blocking UI
     const retryOpts = { retryCount: 1, retryDelay: 200, timeout };
-    const httpTransports = NETWORKS.hyperevm.rpcUrls.map(url => http(url, retryOpts));
+    const httpTransports = getActiveChain().rpcUrls.map(url => http(url, retryOpts));
     // Reads go ONLY to HTTP RPCs. Never route reads through window.ethereum:
     // wallet extensions (Ambire, MetaMask) forward eth_getLogs to their own
     // RPC endpoints, which are CORS-blocked/rate-limited and spam
@@ -56,20 +65,32 @@ function getTransport() {
 export async function initializeClients() {
     // Create public client with HTTP RPCs first, MetaMask as fallback
     publicClient = createPublicClient({
-        chain: hyperevm,
+        chain: getViemChain(),
         transport: getTransport()
     });
 
     // Create wallet client using MetaMask if available
     if (typeof window.ethereum !== 'undefined') {
         walletClient = createWalletClient({
-            chain: hyperevm,
+            chain: getViemChain(),
             transport: custom(window.ethereum)
         });
     }
 
     return { publicClient, walletClient };
 }
+
+// Re-bind clients when the user picks a different chain.
+window.addEventListener('wrapsynth:chainChanged', () => {
+    publicClient = createPublicClient({ chain: getViemChain(), transport: getTransport() });
+    if (typeof window.ethereum !== 'undefined') {
+        walletClient = createWalletClient({
+            account: userAddress || undefined,
+            chain: getViemChain(),
+            transport: custom(window.ethereum)
+        });
+    }
+});
 
 /**
  * Connect to MetaMask and get user address
@@ -86,12 +107,12 @@ export async function connectWallet() {
     // Recreate wallet client with the account so writeContract works reliably
     walletClient = createWalletClient({
         account: address,
-        chain: hyperevm,
+        chain: getViemChain(),
         transport: custom(window.ethereum)
     });
 
-    // Ensure we're on the correct network
-    await switchToHyperEvmChain();
+    // Ensure we're on the selected network
+    await switchToActiveChain();
 
     // Mark that the user has explicitly connected so we can auto-reconnect next visit
     localStorage.setItem('wrapsynth-wallet-connected', 'true');
@@ -100,13 +121,16 @@ export async function connectWallet() {
 }
 
 /**
- * Switch to HyperEVM if not already connected
+ * Switch the wallet to the currently selected chain (adding it if unknown).
  */
-async function switchToHyperEvmChain() {
+export async function switchToActiveChain() {
+    const cfg = getActiveChain();
+    if (!cfg) throw new Error('No chain selected');
+    const hexId = '0x' + cfg.chainId.toString(16);
     try {
         await window.ethereum.request({
             method: 'wallet_switchEthereumChain',
-            params: [{ chainId: '0x3e7' }], // 999 in hex
+            params: [{ chainId: hexId }],
         });
     } catch (switchError) {
         // Chain not added, add it
@@ -114,11 +138,11 @@ async function switchToHyperEvmChain() {
             await window.ethereum.request({
                 method: 'wallet_addEthereumChain',
                 params: [{
-                    chainId: '0x3e7',
-                    chainName: NETWORKS.hyperevm.name,
-                    nativeCurrency: NETWORKS.hyperevm.nativeCurrency,
-                    rpcUrls: NETWORKS.hyperevm.rpcUrls,
-                    blockExplorerUrls: [NETWORKS.hyperevm.blockExplorer]
+                    chainId: hexId,
+                    chainName: cfg.name,
+                    nativeCurrency: cfg.nativeCurrency,
+                    rpcUrls: cfg.rpcUrls,
+                    blockExplorerUrls: [cfg.explorer]
                 }]
             });
         } else {
@@ -143,7 +167,7 @@ export async function disconnectWallet() {
     localStorage.removeItem('wrapsynth-wallet-connected');
     if (typeof window.ethereum !== 'undefined') {
         walletClient = createWalletClient({
-            chain: hyperevm,
+            chain: getViemChain(),
             transport: custom(window.ethereum)
         });
     }
@@ -179,7 +203,7 @@ export async function ensureAuthorizedAccount() {
         userAddress = accounts[0];
         walletClient = createWalletClient({
             account: userAddress,
-            chain: hyperevm,
+            chain: getViemChain(),
             transport: custom(window.ethereum)
         });
     }
@@ -201,7 +225,7 @@ export async function ensureConnected() {
                 userAddress = acc[0];
                 walletClient = createWalletClient({
                     account: userAddress,
-                    chain: hyperevm,
+                    chain: getViemChain(),
                     transport: custom(window.ethereum)
                 });
             }
@@ -221,11 +245,11 @@ export async function ensureConnected() {
             userAddress = accounts[0];
             walletClient = createWalletClient({
                 account: userAddress,
-                chain: hyperevm,
+                chain: getViemChain(),
                 transport: custom(window.ethereum)
             });
-            // Ensure wallet is on HyperEVM after silent reconnect
-            await switchToHyperEvmChain();
+            // Ensure wallet is on the selected chain after silent reconnect
+            await switchToActiveChain();
             return userAddress;
         }
     } catch (e) {
@@ -392,26 +416,27 @@ export async function writeHubUnsafe(functionName, args = [], value = 0n, gas = 
     });
 
     const nonce = await getPublicClient().getTransactionCount({ address: account });
+    const gasPrice = await getPublicClient().getGasPrice();
 
     const serializedTx = await client.signTransaction({
         account,
-        chain: hyperevm,
+        chain: getViemChain(),
         to: CONTRACTS.hub,
         data,
         value,
         gas,
-        gasPrice: 1000000000n,
+        gasPrice,
         nonce,
     });
 
-    const rpcUrls = NETWORKS.hyperevm.rpcUrls;
+    const rpcUrls = getActiveChain().rpcUrls;
     let hash;
     let lastErr;
     for (const rpcUrl of rpcUrls) {
         try {
             console.log(`[writeHubUnsafe] Trying RPC: ${rpcUrl}...`);
             const altClient = createPublicClient({
-                chain: hyperevm,
+                chain: getViemChain(),
                 transport: http(rpcUrl, { retryCount: 1, timeout: 15000 })
             });
             hash = await altClient.sendRawTransaction({ serializedTransaction: serializedTx });
@@ -476,25 +501,26 @@ export async function writeWsxmrUnsafe(functionName, args = [], gas = 200000n) {
     });
 
     const nonce = await getPublicClient().getTransactionCount({ address: account });
+    const gasPrice = await getPublicClient().getGasPrice();
 
     const serializedTx = await client.signTransaction({
         account,
-        chain: hyperevm,
+        chain: getViemChain(),
         to: CONTRACTS.wsxmrToken,
         data,
         gas,
-        gasPrice: 1000000000n,
+        gasPrice,
         nonce,
     });
 
-    const rpcUrls = NETWORKS.hyperevm.rpcUrls;
+    const rpcUrls = getActiveChain().rpcUrls;
     let hash;
     let lastErr;
     for (const rpcUrl of rpcUrls) {
         try {
             console.log(`[writeWsxmrUnsafe] Trying RPC: ${rpcUrl}...`);
             const altClient = createPublicClient({
-                chain: hyperevm,
+                chain: getViemChain(),
                 transport: http(rpcUrl, { retryCount: 1, timeout: 15000 })
             });
             hash = await altClient.sendRawTransaction({ serializedTransaction: serializedTx });
@@ -523,7 +549,7 @@ export async function getWsXmrBalance(address = null) {
 }
 
 /**
- * Get user's native balance (HYPE)
+ * Get user's native gas-token balance
  */
 export async function getNativeBalance(address = null) {
     const targetAddress = address || userAddress;
@@ -555,8 +581,9 @@ export function watchContractEvent(contractAddress, abi, eventName, args = {}, c
     });
 }
 
-// HyperEVM RPCs cap eth_getLogs at ~1000-block ranges — chunk wide scans.
-const LOG_QUERY_CHUNK = 900n;
+// Public RPCs cap eth_getLogs block ranges — chunk wide scans.
+// Per-chain override via CHAINS[key].logChunkSize.
+const LOG_QUERY_CHUNK_DEFAULT = 900n;
 const LOG_CHUNK_DELAY_MS = 120;
 
 /**
@@ -566,6 +593,7 @@ const LOG_CHUNK_DELAY_MS = 120;
  */
 export async function getContractEventsChunked(params) {
     const client = getPublicClient();
+    const chunkSize = BigInt(getActiveChain()?.logChunkSize ?? LOG_QUERY_CHUNK_DEFAULT);
     const to = params.toBlock === 'latest' || params.toBlock === undefined
         ? await client.getBlockNumber()
         : BigInt(params.toBlock);
@@ -600,8 +628,8 @@ export async function getContractEventsChunked(params) {
         }
     };
 
-    for (let start = from; start <= to; start += LOG_QUERY_CHUNK) {
-        const end = start + LOG_QUERY_CHUNK - 1n > to ? to : start + LOG_QUERY_CHUNK - 1n;
+    for (let start = from; start <= to; start += chunkSize) {
+        const end = start + chunkSize - 1n > to ? to : start + chunkSize - 1n;
         events.push(...await queryRange(start, end, 0));
         await new Promise(r => setTimeout(r, LOG_CHUNK_DELAY_MS));
     }
@@ -618,6 +646,7 @@ export async function getContractEventsChunked(params) {
  */
 export async function getLogsChunked({ address, topics, fromBlock, toBlock = 'latest', onChunk = null }) {
     const client = getPublicClient();
+    const chunkSize = BigInt(getActiveChain()?.logChunkSize ?? LOG_QUERY_CHUNK_DEFAULT);
     const to = toBlock === 'latest' || toBlock === undefined
         ? await client.getBlockNumber()
         : BigInt(toBlock);
@@ -651,8 +680,8 @@ export async function getLogsChunked({ address, topics, fromBlock, toBlock = 'la
         }
     };
 
-    for (let start = from; start <= to; start += LOG_QUERY_CHUNK) {
-        const end = start + LOG_QUERY_CHUNK - 1n > to ? to : start + LOG_QUERY_CHUNK - 1n;
+    for (let start = from; start <= to; start += chunkSize) {
+        const end = start + chunkSize - 1n > to ? to : start + chunkSize - 1n;
         const chunk = await queryLogs(start, end, 0);
         logs.push(...chunk);
         if (onChunk) { try { onChunk(chunk, end); } catch {} }

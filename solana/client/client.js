@@ -39,7 +39,9 @@ export class WrapSynthClient {
 
   // ── PDAs ────────────────────────────────────────────────────────────────
   vaultPda = (lp) => pdas.vaultPda(lp, this.programId);
-  vaultCollateralAta = (vault) => pdas.vaultCollateralAtaPda(vault, this.programId);
+  vaultCollateralEscrow = (vault) => pdas.vaultCollateralEscrowPda(vault, this.programId);
+  // Legacy alias — same PDA, pre-SOL naming
+  vaultCollateralAta = (vault) => this.vaultCollateralEscrow(vault);
   pendingReturns = (owner) => pdas.pendingReturnsPda(owner, this.programId);
   mintRequestPda = (id) => pdas.mintRequestPda(id, this.programId);
   burnRequestPda = (id) => pdas.burnRequestPda(id, this.programId);
@@ -48,7 +50,7 @@ export class WrapSynthClient {
   get collateralMint() { return this.cfg.collateralMint; }
   get programCollateralAta() { return this.cfg.programCollateralAta; }
   get pythXmr() { return this.cfg.oracleXmr; }
-  get pythCol() { return this.cfg.oracleQqqx; }
+  get pythCol() { return this.cfg.oracleSol; }
 
   nextNonce = () => pdas.nextRequestNonce(this.program, this.globalState);
 
@@ -70,9 +72,8 @@ export class WrapSynthClient {
   }
   collateralAccounts(vault) {
     return {
-      collateralMint: this.collateralMint,
-      vaultCollateralAta: this.vaultCollateralAta(vault),
-      programCollateralAta: this.programCollateralAta,
+      vaultCollateralEscrow: this.vaultCollateralAta(vault),
+      collateralEscrow: this.programCollateralAta,
     };
   }
 }

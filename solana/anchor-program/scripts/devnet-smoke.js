@@ -29,7 +29,6 @@ const {
 const {
   TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
   createAssociatedTokenAccountInstruction, getAssociatedTokenAddressSync, getAccount,
-  createTransferInstruction,
 } = require("@solana/spl-token");
 const anchor = require("@coral-xyz/anchor");
 const L = require("./devnet-lib");
@@ -61,10 +60,9 @@ const burnRequestId = (user, vault, wsxmrAmt, nonce) =>
 
 const globalState = new PublicKey(cfg.globalState);
 const wsxmrMint = new PublicKey(cfg.wsxmrMint);
-const collateralMint = new PublicKey(cfg.collateralMint);
-const programCollateralAta = new PublicKey(cfg.programCollateralAta);
+const collateralEscrow = new PublicKey(cfg.collateralEscrow);
 const PYTH_XMR = new PublicKey(cfg.oracle.xmr);
-const PYTH_COL = new PublicKey(cfg.oracle.qqqx);
+const PYTH_COL = new PublicKey(cfg.oracle.sol);
 const CU = (u) => ComputeBudgetProgram.setComputeUnitLimit({ units: u });
 
 const tokenBal = async (ata) =>
@@ -102,38 +100,34 @@ async function main() {
 
   // Fund the test actors (devnet SOL + collateral from admin faucet)
   await send(new Transaction().add(
-    SystemProgram.transfer({ fromPubkey: admin.publicKey, toPubkey: lp.publicKey, lamports: 0.05 * LAMPORTS_PER_SOL }),
+    SystemProgram.transfer({ fromPubkey: admin.publicKey, toPubkey: lp.publicKey, lamports: 2.5 * LAMPORTS_PER_SOL }),
     SystemProgram.transfer({ fromPubkey: admin.publicKey, toPubkey: user.publicKey, lamports: 0.05 * LAMPORTS_PER_SOL }),
   ), [admin]);
 
   const vaultPda = L.findPda([L.VAULT_SEED, lp.publicKey.toBuffer()]);
-  const vaultCollateralAta = L.findPda([L.VAULT_COLLATERAL_SEED, vaultPda.toBuffer()]);
+  const vaultCollateralEscrow = L.findPda([L.VAULT_COLLATERAL_SEED, vaultPda.toBuffer()]);
   const pendingOf = (owner) => L.findPda([L.PENDING_RETURNS_SEED, owner.toBuffer()]);
 
-  // ── Vault: create -> configure -> collateral ATA -> deposit ───────────────
+  // ── Vault: create -> configure -> escrow floor -> deposit SOL ────────────
   console.log("\n[vault] create + configure");
-  await rpcIx(program.methods.createVault().accounts({
-    lp: lp.publicKey, vault: vaultPda, globalState, systemProgram: SystemProgram.programId,
-  }), [lp]);
+  const rentFloor = await conn.getMinimumBalanceForRentExemption(0);
+  await send(new Transaction().add(
+    await program.methods.createVault().accounts({
+      lp: lp.publicKey, vault: vaultPda, globalState, systemProgram: SystemProgram.programId,
+    }).instruction(),
+    // floor-fund the vault's SOL escrow — sub-rent balances on a data-less
+    // PDA violate rent; tracked deposits/withdrawals sit on top
+    SystemProgram.transfer({ fromPubkey: admin.publicKey, toPubkey: vaultCollateralEscrow, lamports: rentFloor }),
+  ), [admin, lp]);
   await rpcIx(program.methods.setVaultMarketMetrics(100, 50).accounts({
     lp: lp.publicKey, vault: vaultPda,
   }), [lp]); // 1% mint fee, 0.5% burn reward
-  await rpcIx(program.methods.initializeVaultCollateral().accounts({
-    lp: lp.publicKey, vault: vaultPda, collateralMint,
-    vaultCollateralAta, tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
-  }), [lp]);
 
-  const lpCollateralAta = await createAta(collateralMint, lp.publicKey);
-  // fund LP with 10 collateral from admin faucet
-  await send(new Transaction().add(createTransferInstruction(
-    new PublicKey(cfg.adminCollateralAta), lpCollateralAta, admin.publicKey,
-    10_0000_0000n, [], TOKEN_2022_PROGRAM_ID)), [admin]);
-  await rpcIx(program.methods.depositCollateral(new anchor.BN("500000000")).accounts({ // 5 QQQx = $3000
+  await rpcIx(program.methods.depositCollateral(new anchor.BN("2000000000")).accounts({ // 2 SOL = $300
     lp: lp.publicKey, vault: vaultPda, globalState,
-    collateralMint, lpCollateralAta, vaultCollateralAta,
-    tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+    vaultCollateralEscrow, systemProgram: SystemProgram.programId,
   }), [lp]);
-  console.log("[vault] deposited 5 collateral");
+  console.log("[vault] deposited 2 SOL");
 
   for (const owner of [lp, user]) {
     const pr = pendingOf(owner.publicKey);
@@ -196,7 +190,7 @@ async function main() {
       mintRequest: mintPda,
       wsxmrMint, recipientWsxmrAta: userWsxmrAta, lpWsxmrAta,
       pendingReturns: pendingOf(user.publicKey),
-      collateralMint, vaultCollateralAta, programCollateralAta,
+      vaultCollateralEscrow, collateralEscrow,
       tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
     }), [lp]);
   const userBal = await tokenBal(userWsxmrAta);
@@ -237,20 +231,18 @@ async function main() {
       caller: lp.publicKey, vaultLp: lp.publicKey, vault: vaultPda, globalState,
       burnRequest: burnPda, userPendingReturns: pendingOf(user.publicKey),
       pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
-      collateralMint, vaultCollateralAta, programCollateralAta,
+      vaultCollateralEscrow, collateralEscrow,
       tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
     }), [lp]);
   console.log("[burn] finalized — reward credited to user pending returns");
 
-  // ── Withdraw pending returns ──────────────────────────────────────────────
-  const userCollateralAta = await createAta(collateralMint, user.publicKey);
+  // ── Withdraw pending returns (native SOL) ────────────────────────────────
   const prBefore = await fetchRetry(() => program.account.pendingReturns.fetch(pendingOf(user.publicKey)));
   await rpcIx(program.methods.withdrawCollateralReturns().accounts({
     owner: user.publicKey, pendingReturns: pendingOf(user.publicKey), globalState,
-    collateralMint, programCollateralAta, userCollateralAta,
-    tokenProgram: TOKEN_2022_PROGRAM_ID,
+    collateralEscrow, systemProgram: SystemProgram.programId,
   }), [user]);
-  console.log(`[withdraw] claimed ${Number(prBefore.collateralAmount.toString()) / 1e8} collateral`);
+  console.log(`[withdraw] claimed ${Number(prBefore.collateralAmount.toString()) / 1e9} SOL`);
 
   const v = await fetchRetry(() => program.account.vault.fetch(vaultPda));
   console.log("\nDONE. Vault debt:", v.normalizedDebt.toString(),

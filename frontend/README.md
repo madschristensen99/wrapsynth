@@ -1,6 +1,6 @@
 # WrapSynth Frontend
 
-The web application for trustless XMR ⇄ wsXMR atomic swaps on HyperEVM. Live at [wrapsynth.com](https://wrapsynth.com).
+The web application for trustless XMR ⇄ wsXMR atomic swaps across multiple chains — BNB Chain (live), Base and Robinhood Chain (queued). The user picks a chain; there is no default. Live at [wrapsynth.com](https://wrapsynth.com).
 
 ---
 
@@ -15,7 +15,7 @@ npx serve .
 python3 -m http.server 8000
 ```
 
-Open `http://localhost:8000` and connect a HyperEVM-compatible wallet (MetaMask, Rabby, etc.).
+Open `http://localhost:8000`, pick a chain in the chain selector, and connect an EVM wallet (MetaMask, Rabby, etc.) — the app will prompt a network switch if needed.
 
 No build step is required. The app uses native ES modules with CDN imports for `viem`.
 
@@ -23,7 +23,7 @@ No build step is required. The app uses native ES modules with CDN imports for `
 
 - Node.js v18+ (for `npm install` of local dependencies)
 - A browser with EIP-1193 wallet support (MetaMask, Rabby, etc.)
-- Network: HyperEVM (ChainID 999)
+- Network: whichever chain you select — BNB Chain (ChainID 56) is live; Base (8453) and Robinhood Chain (46630… per `chains.json`) activate when their manifests land
 
 ---
 
@@ -57,7 +57,7 @@ frontend/
     ├── monero-ts.js        # Bundled monero-ts WASM wallet library
     ├── redstoneWrapper.js  # RedStone oracle price fetch + on-chain update helper
     ├── coLPFlow.js         # Co-LP position manager (open/unwind/fees via hub)
-    ├── poolFlow.js         # HyperSwap V3 pool swap helper
+    ├── poolFlow.js         # V3 pool swap helper (per-chain DEX)
     ├── lpPanel.js          # LP vault panel UI (deposit, withdraw, configure)
     ├── lpClient.js         # LP server REST client
     ├── storage.js          # LocalStorage swap state persistence (multi-swap)
@@ -76,7 +76,7 @@ frontend/
 ```
 User Browser
   │
-  ├── viemClient.js ──→ HyperEVM (wsXmrHub via diamond proxy)
+  ├── viemClient.js ──→ selected chain (wsXmrHub via diamond proxy)
   │                      ├── readHub()  → view calls (balances, vaults, requests)
   │                      └── writeHub() → state-changing txs (mint, burn, co-LP)
   │
@@ -111,21 +111,23 @@ User Browser
 4. LP reveals secret → `finalizeBurn` → wsXMR burned, collateral released
 5. User sweeps XMR from shared address using combined private keys
 
-**Co-LP** — Users can pair wsXMR with LP vault collateral to create HyperSwap V3 positions. The `coLPFlow.js` module handles capacity checks, position opening, fee collection, and unwinding.
+**Co-LP** — Users can pair wsXMR with LP vault collateral to create concentrated-liquidity positions on the chain's V3 DEX (PancakeSwap on BNB, Uniswap on Base/Robinhood). The `coLPFlow.js` module handles capacity checks, position opening, fee collection, and unwinding.
 
 ---
 
 ## Configuration
 
-Contract addresses and ABIs are loaded from `deployment.json` (injected as `window.DEPLOYMENT` by the HTML). The `config.js` module reads from this and provides fallback hardcoded addresses for the live HyperEVM mainnet deployment (chainId 999). The prior Gnosis deployment manifest is preserved as `deployment.gnosis.json`.
+The frontend is multi-chain: `config.js` holds a registry of supported chains, each lazily loading its own `deployment.<key>.json` manifest (e.g. `deployment.bnb.json`). A chain appears in the picker once its manifest file exists; the chain choice is persisted in localStorage and shareable via `?chain=` deep links.
 
-To point at a different deployment, replace `deployment.json` with your own manifest. The expected structure:
+Contract addresses and ABIs are injected as `window.DEPLOYMENT` by the HTML loaders and resolved per active chain. Per-chain swap state is namespaced so history doesn't bleed across deployments. The prior Gnosis manifest is preserved as `deployment.gnosis.json`; `deployment.json` is the legacy HyperEVM manifest kept for compatibility.
+
+Manifest structure (per chain):
 
 ```json
 {
-  "chainId": 999,
+  "chainId": 56,
   "contracts": { "wsXmrHub": "0x...", "wsXMR": "0x...", "liquidityRouter": "0x..." },
-  "externalContracts": { "stataUSDe": "0x...", "USDe": "0x..." },
+  "externalContracts": { "stataQQQB": "0x...", "QQQB": "0x..." },
   "pool": { "uniswapV3Pool": "0x..." },
   "lpConfig": { "defaultLpVault": "0x..." }
 }

@@ -1,6 +1,7 @@
 // Vendor entry — everything the Solana port of viemClient.js needs,
 // bundled once by esbuild so the rest of the UI keeps its URL-import style.
 
+import "./buffer-shim.js";
 export * as web3 from '@solana/web3.js';
 export { Program, AnchorProvider } from '@coral-xyz/anchor';
 export { default as BN } from 'bn.js';

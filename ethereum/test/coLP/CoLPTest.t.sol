@@ -4,6 +4,7 @@ pragma solidity ^0.8.19;
 import {console} from "forge-std/Test.sol";
 import {HyperEVMTestBase} from "../HyperEVMTestBase.sol";
 import {VaultFacet} from "../../contracts/facets/VaultFacet.sol";
+import {CoLPFacet} from "../../contracts/facets/CoLPFacet.sol";
 import {MintFacet} from "../../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../../contracts/facets/BurnFacet.sol";
 import {LiquidationFacet} from "../../contracts/facets/LiquidationFacet.sol";
@@ -93,7 +94,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
     }
 
     function _getPositionMetadata(uint256 tokenId) internal returns (wsXmrStorage.PositionMetadata memory) {
-        bytes memory result = _hubView(abi.encodeWithSelector(VaultFacet.getPositionMetadata.selector, tokenId));
+        bytes memory result = _hubView(abi.encodeWithSelector(CoLPFacet.getPositionMetadata.selector, tokenId));
         return abi.decode(result, (wsXmrStorage.PositionMetadata));
     }
 
@@ -108,7 +109,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
     }
 
     function _getCoLPCapacity(address vaultOwner) internal returns (uint256) {
-        bytes memory result = _hubView(abi.encodeWithSelector(VaultFacet.getCoLPCapacity.selector, vaultOwner));
+        bytes memory result = _hubView(abi.encodeWithSelector(CoLPFacet.getCoLPCapacity.selector, vaultOwner));
         return abi.decode(result, (uint256));
     }
 
@@ -126,7 +127,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         uint256 sharesBefore = _getVault(lp).collateralShares;
 
         vm.prank(user);
-        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
 
         assertTrue(tokenId > 0, "should return valid tokenId");
 
@@ -153,7 +154,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         uint256 wsxmrToDeposit = wsxmrBalance / 2;
 
         vm.prank(user);
-        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
 
         // Get CR via the vault health view (which uses oracle prices internally)
         uint256 healthBefore = _getVaultHealth(lp);
@@ -176,7 +177,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         uint256 wsxmrToDeposit = wsxmrBalance / 2;
 
         vm.prank(user);
-        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
 
         wsXmrStorage.Vault memory vaultBefore = _getVault(lp);
         uint256 sharesBefore = vaultBefore.collateralShares;
@@ -184,7 +185,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
 
         // LP unwinds
         vm.prank(lp);
-        VaultFacet(address(hub)).unwindCoLP(tokenId, block.timestamp + 1 hours);
+        CoLPFacet(address(hub)).unwindCoLP(tokenId, block.timestamp + 1 hours);
 
         // Vault should get sDAI back
         wsXmrStorage.Vault memory vaultAfter = _getVault(lp);
@@ -205,11 +206,11 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         uint256 wsxmrToDeposit = wsxmrBalance / 2;
 
         vm.prank(user);
-        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
 
         // User unwinds
         vm.prank(user);
-        VaultFacet(address(hub)).unwindCoLP(tokenId, block.timestamp + 1 hours);
+        CoLPFacet(address(hub)).unwindCoLP(tokenId, block.timestamp + 1 hours);
 
         uint256 pending = _getPendingReturns(user, address(wsxmr));
         assertTrue(pending > 0, "user should have pending wsXMR returns");
@@ -228,7 +229,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         uint256 wsxmrToDeposit = wsxmrBalance / 2;
 
         vm.prank(user);
-        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
 
         // Create debt to make vault liquidatable
         // LP takes on more debt via another mint
@@ -294,7 +295,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         uint256 wsxmrToDeposit = wsxmrBalance / 2;
 
         vm.prank(user);
-        VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
 
         uint256 crBefore = _getVaultHealth(lp);
 
@@ -318,7 +319,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         uint256 wsxmrToDeposit = wsxmrBalance / 2;
 
         vm.prank(user);
-        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
 
         // Move price far outside range
         _setXmrPrice8dec(800_00000000); // $800 XMR
@@ -331,7 +332,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
 
         // Keeper rebalances
         vm.prank(keeper);
-        VaultFacet(address(hub)).rebalanceCoLP(tokenId, 2500, block.timestamp + 1 hours);
+        CoLPFacet(address(hub)).rebalanceCoLP(tokenId, 2500, block.timestamp + 1 hours);
 
         console.log("PASS: out-of-range rebalance");
     }
@@ -348,7 +349,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
 
         vm.prank(user);
         vm.expectRevert();
-        VaultFacet(address(hub)).userOpenCoLP(lp, hugeAmount, block.timestamp + 1 hours);
+        CoLPFacet(address(hub)).userOpenCoLP(lp, hugeAmount, block.timestamp + 1 hours);
 
         console.log("PASS: insufficient buffer reverts");
     }
@@ -373,7 +374,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         uint256 wsxmrToDeposit = wsxmrBalance / 2;
 
         vm.prank(user);
-        VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
 
         // LP tries to withdraw a small amount — should use oracle-priced CR
         vm.prank(lp);
@@ -390,7 +391,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
 
         // Open CoLP position at current price
         vm.prank(user);
-        VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
 
         wsXmrStorage.Vault memory vaultBefore = _getVault(lp);
         uint256 deployedShares = vaultBefore.deployedSDAIShares;
@@ -431,8 +432,8 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
 
         // Open 2 positions
         vm.startPrank(user);
-        uint256 tokenId1 = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrPerPosition, block.timestamp + 1 hours);
-        uint256 tokenId2 = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrPerPosition, block.timestamp + 1 hours);
+        uint256 tokenId1 = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrPerPosition, block.timestamp + 1 hours);
+        uint256 tokenId2 = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrPerPosition, block.timestamp + 1 hours);
         vm.stopPrank();
 
         assertTrue(tokenId1 != tokenId2, "tokenIds should be different");
@@ -591,16 +592,16 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
 
     function test_SetMaxCoLPRange_ValidRange() public {
         vm.startPrank(lp);
-        VaultFacet(address(hub)).setMaxCoLPRange(3000);
+        CoLPFacet(address(hub)).setMaxCoLPRange(3000);
         wsXmrStorage.Vault memory vault = _getVault(lp);
         assertEq(vault.maxCoLPRangeBps, 3000, "maxCoLPRangeBps should be 3000");
 
-        VaultFacet(address(hub)).setMaxCoLPRange(5000);
+        CoLPFacet(address(hub)).setMaxCoLPRange(5000);
         vault = _getVault(lp);
         assertEq(vault.maxCoLPRangeBps, 5000, "maxCoLPRangeBps should be 5000");
 
         // Reset to default
-        VaultFacet(address(hub)).setMaxCoLPRange(2500);
+        CoLPFacet(address(hub)).setMaxCoLPRange(2500);
         vault = _getVault(lp);
         assertEq(vault.maxCoLPRangeBps, 2500, "maxCoLPRangeBps should be 2500");
 
@@ -612,17 +613,17 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         vm.startPrank(lp);
 
         // Min boundary (1000 = MIN_COLP_RANGE_BPS)
-        VaultFacet(address(hub)).setMaxCoLPRange(1000);
+        CoLPFacet(address(hub)).setMaxCoLPRange(1000);
         wsXmrStorage.Vault memory vault = _getVault(lp);
         assertEq(vault.maxCoLPRangeBps, 1000, "should accept min boundary");
 
         // Max boundary (10000 = MAX_COLP_RANGE_BPS)
-        VaultFacet(address(hub)).setMaxCoLPRange(10000);
+        CoLPFacet(address(hub)).setMaxCoLPRange(10000);
         vault = _getVault(lp);
         assertEq(vault.maxCoLPRangeBps, 10000, "should accept max boundary");
 
         // Reset
-        VaultFacet(address(hub)).setMaxCoLPRange(2500);
+        CoLPFacet(address(hub)).setMaxCoLPRange(2500);
         vm.stopPrank();
 
         console.log("PASS: setMaxCoLPRange boundary values");
@@ -631,7 +632,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
     function test_SetMaxCoLPRange_BelowMinReverts() public {
         vm.prank(lp);
         vm.expectRevert();
-        VaultFacet(address(hub)).setMaxCoLPRange(999);
+        CoLPFacet(address(hub)).setMaxCoLPRange(999);
 
         console.log("PASS: setMaxCoLPRange below min reverts");
     }
@@ -639,7 +640,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
     function test_SetMaxCoLPRange_AboveMaxReverts() public {
         vm.prank(lp);
         vm.expectRevert();
-        VaultFacet(address(hub)).setMaxCoLPRange(10001);
+        CoLPFacet(address(hub)).setMaxCoLPRange(10001);
 
         console.log("PASS: setMaxCoLPRange above max reverts");
     }
@@ -649,7 +650,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
 
         vm.prank(rando);
         vm.expectRevert();
-        VaultFacet(address(hub)).setMaxCoLPRange(2500);
+        CoLPFacet(address(hub)).setMaxCoLPRange(2500);
 
         console.log("PASS: non-LP cannot setMaxCoLPRange");
     }
@@ -658,11 +659,11 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         vm.prank(lp);
         vm.expectEmit(true, false, false, true);
         emit CoLPRangePreferenceUpdated(lp, 4000);
-        VaultFacet(address(hub)).setMaxCoLPRange(4000);
+        CoLPFacet(address(hub)).setMaxCoLPRange(4000);
 
         // Reset
         vm.prank(lp);
-        VaultFacet(address(hub)).setMaxCoLPRange(2500);
+        CoLPFacet(address(hub)).setMaxCoLPRange(2500);
 
         console.log("PASS: setMaxCoLPRange emits event");
     }
@@ -678,23 +679,23 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
     function test_RebalanceCoLP_ExceedsMaxRangeReverts() public {
         // Set max range to 1500 (tight)
         vm.prank(lp);
-        VaultFacet(address(hub)).setMaxCoLPRange(1500);
+        CoLPFacet(address(hub)).setMaxCoLPRange(1500);
 
         // Open a position (uses default 2500 range since we set 1500 after createVault)
         uint256 wsxmrBalance = wsxmr.balanceOf(user);
         uint256 wsxmrToDeposit = wsxmrBalance / 2;
 
         vm.prank(user);
-        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
 
         // LP tries to rebalance with 2000 bps — exceeds maxCoLPRangeBps of 1500
         vm.prank(lp);
         vm.expectRevert();
-        VaultFacet(address(hub)).rebalanceCoLP(tokenId, 2000, block.timestamp + 1 hours);
+        CoLPFacet(address(hub)).rebalanceCoLP(tokenId, 2000, block.timestamp + 1 hours);
 
         // Reset max range to default
         vm.prank(lp);
-        VaultFacet(address(hub)).setMaxCoLPRange(2500);
+        CoLPFacet(address(hub)).setMaxCoLPRange(2500);
 
         console.log("PASS: rebalanceCoLP exceeds max range reverts");
     }
@@ -706,11 +707,11 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         uint256 wsxmrToDeposit = wsxmrBalance / 2;
 
         vm.prank(user);
-        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
 
         // LP can collect fees (even if 0)
         vm.prank(lp);
-        VaultFacet(address(hub)).collectCoLPFees(tokenId);
+        CoLPFacet(address(hub)).collectCoLPFees(tokenId);
 
         console.log("PASS: LP can call collectCoLPFees");
     }
@@ -720,11 +721,11 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         uint256 wsxmrToDeposit = wsxmrBalance / 2;
 
         vm.prank(user);
-        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
 
         // User can collect fees
         vm.prank(user);
-        VaultFacet(address(hub)).collectCoLPFees(tokenId);
+        CoLPFacet(address(hub)).collectCoLPFees(tokenId);
 
         console.log("PASS: user can call collectCoLPFees");
     }
@@ -734,12 +735,12 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         uint256 wsxmrToDeposit = wsxmrBalance / 2;
 
         vm.prank(user);
-        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
 
         address rando = makeAddr("rando");
         vm.prank(rando);
         vm.expectRevert();
-        VaultFacet(address(hub)).collectCoLPFees(tokenId);
+        CoLPFacet(address(hub)).collectCoLPFees(tokenId);
 
         console.log("PASS: rando cannot call collectCoLPFees");
     }
@@ -747,7 +748,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
     function test_CollectCoLPFees_InvalidTokenIdReverts() public {
         vm.prank(lp);
         vm.expectRevert();
-        VaultFacet(address(hub)).collectCoLPFees(999999);
+        CoLPFacet(address(hub)).collectCoLPFees(999999);
 
         console.log("PASS: invalid tokenId reverts");
     }
@@ -830,7 +831,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         uint256 wsxmrToDeposit = wsxmrBalance / 2;
 
         vm.prank(user);
-        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
 
         // Track pending returns before
         uint256 daiBefore = _getPendingReturns(lp, address(stata));
@@ -838,7 +839,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
 
         // Collect fees (no trades yet, so should be 0)
         vm.prank(user);
-        VaultFacet(address(hub)).collectCoLPFees(tokenId);
+        CoLPFacet(address(hub)).collectCoLPFees(tokenId);
 
         uint256 daiAfter = _getPendingReturns(lp, address(stata));
         uint256 wsxmrAfter = _getPendingReturns(user, address(wsxmr));
@@ -903,7 +904,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         
         // Deposit all minted wsXMR into CoLP
         uint256 wsxmrToDeposit = wsxmrBalance;
-        uint256 tokenId = VaultFacet(address(hub)).userOpenCoLP(
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(
             lp, 
             wsxmrToDeposit, 
             block.timestamp + 1 hours

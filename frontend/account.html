@@ -105,6 +105,7 @@
   <nav>
     <a href="index.html" class="brand" style="text-decoration:none"><img src="./wrapsynth-symbol.png" alt="Wrapsynth" style="width:22px;height:22px;border-radius:6px">Wrapsynth</a>
     <div class="nav-right">
+      <span class="pill" id="chain-pill">…</span>
       <a href="app.html" class="pill" style="text-decoration:none;color:var(--muted)">← Back to app</a>
     </div>
   </nav>
@@ -137,7 +138,7 @@
           </div>
           <div class="account-balance">
             <div class="n" id="acct-xdai">--</div>
-            <div class="k">HYPE Balance</div>
+            <div class="k" id="acct-gas-label">Gas Balance</div>
           </div>
         </div>
       </div>
@@ -159,9 +160,16 @@
 </div>
 
 <script type="module">
-  const res = await fetch('./deployment.json');
-  if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status);
-  window.DEPLOYMENT = await res.json();
+  const { bootChain } = await import('./js/chainPicker.js?v=3.22');
+  const { getActiveChain } = await import('./js/config.js?v=3.22');
+  const key = await bootChain();
+  const cfg = getActiveChain();
+  if (cfg) {
+    document.getElementById('chain-pill').textContent = cfg.name;
+    document.getElementById('acct-gas-label').textContent = `${cfg.nativeCurrency.symbol} Balance`;
+  } else {
+    document.getElementById('chain-pill').textContent = 'No chain';
+  }
 </script>
 <script type="module" src="./js/account.js?v=3.13"></script>
 </body>

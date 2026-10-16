@@ -1,8 +1,45 @@
-# wsXMR - Wrapped Monero on HyperEVM
+# wsXMR - Wrapped Monero (multi-chain)
 
-A decentralized protocol for wrapping Monero (XMR) on HyperEVM (Hyperliquid L1) using a diamond proxy pattern with LP-backed minting and burning. Originally deployed to Gnosis Chain (beta); now live on HyperEVM.
+A decentralized protocol for wrapping Monero (XMR) using a diamond proxy pattern with LP-backed minting and burning. Live on **BNB Chain** (QQQB collateral); **Base** (cbBTC) and **Robinhood Chain** (SPY) deployments are built and fork-tested. Prior deployments: Gnosis Chain (beta) and HyperEVM (deprecated).
 
-## 🚀 HyperEVM Mainnet Deployment (primary venue)
+## 🚀 BNB Chain Mainnet Deployment (primary venue)
+
+**Deployed:** chain 56, block `128040249` — full stack live, verified on BscScan, and exercised end-to-end on mainnet (vault setup → mint → co-LP open/unwind → both-direction pool swaps via PancakeSwap Smart Router → burn). Deployer powers permanently locked (`deployerOperationsLocked` / `hubLocked` verified on-chain). Manifest: `deployments/bnb-deployment.json` / `frontend/deployment.bnb.json`.
+
+- **wsXmrHub (Diamond Proxy):** `0x15bb9ba8236De055090a262F45a7e213F6040320`
+- **wsXMR Token:** `0x9B8d1851bCc06ac265c1c1ACaBD0F71E69DD312c`
+- **LiquidityRouter:** `0x1034259f355566fcE4571F792d239a99BBa1b9b4`
+- **Ed25519Helper:** `0x85e8fc329B2C9A44e7D653f347dfA5269575f9A3`
+- **StataQQQB (collateral share token):** `0xd821A7D919e007b6b39925f672f1219dB4865Fba`
+- **wsXMR/QQQB PancakeSwap V3 Pool (500 fee):** `0x9711698489150C9Fbc377C7d5aBC735D6198A845`
+- **BnbOracleFacet:** `0xb694120Ecdc69fbbEe3Ae21831d7B76ab8a9169B`
+- **VaultFacet:** `0x6ABAEB70c9BA9EA497Ff5e20D08bd20Ca1E02139`
+- **MintFacet:** `0xb6251797386a8C5a2a4A8783f430Ef2ED5c63BeF`
+- **BurnFacet:** `0xCE92E887d225D06c21a16d845D88E980d536FA2b`
+- **LiquidationFacet:** `0xd6Ee29f9ae035aDB0f2741228eD55F0fC6dBb6c2`
+- **BnbYieldFacet:** `0xD1f77F73Ca47a726875D884cc45EFf289f6176E3`
+- **CoLPFacet:** `0x8e3EF1e28262E351EB066374df1bEd36CC704dDA`
+- **Network:** BNB Chain (ChainID 56) · **Collateral:** QQQB (bStocks tokenized Nasdaq) · **Oracle:** RedStone `XMR` feed + on-chain QQQB/WBNB→USDT TWAP
+- **Explorer:** https://bscscan.com
+
+**Mainnet validation (all executed on-chain):** `testFullCycleNow.bnb.js` (vault → mint → burn), `testCoLPNow.bnb.js` (co-LP open + unwind; `KEEP_OPEN=1` leaves the position live to seed the pool), `testPoolSwaps.bnb.js` (both-direction swaps via PancakeSwap Smart Router — the real user path). Scripts source addresses from `scripts/deploymentConfig.bnb.js`.
+
+### Deploying to BNB
+
+```shell
+forge script script/DeployBnb.s.sol --rpc-url bnb --broadcast --verify -vvvv
+cp deployments/bnb-deployment.json ../frontend/deployment.bnb.json
+```
+
+Requires `PRIVATE_KEY` (deployer needs ~0.01 BNB) and `BNB_RPC_URL`; `BSCSCAN_API_KEY` for verification. The script fetches live XMR (CoinGecko) and QQQB (DexScreener) prices to initialize the pool.
+
+### Deploying to Base / Robinhood (queued)
+
+Same pattern — `DeployBase.s.sol` (cbBTC collateral, Uniswap V3) and `DeployRobinhood.s.sol` (SPY collateral, Uniswap V3). Both are built and fork-tested; SwapHelper is no longer part of deployments (pool-swap tests route through the chain's real DEX router).
+
+## HyperEVM Mainnet Deployment (⛔ deprecated)
+
+HyperEVM is deprecated — contracts remain live and immutable (deployer powers permanently locked) but it is no longer a supported venue or selectable in the frontend. See `docs/HYPERLIQUID_RISKS.md`. The notes below are preserved as historical reference.
 
 **Deployed:** September 25, 2026 — full stack live, tested end-to-end on mainnet. See `hypeMigration.md` for the port spec and `deployments/hyperevm-deployment.json` for the manifest.
 
@@ -103,7 +140,7 @@ node scripts/testPoolSwaps.hyperevm.js
 
 ## 🚀 Gnosis Mainnet Deployment (beta — superseded)
 
-**Deployed:** September 16, 2026 (v6.1 — admin privilege lock: `lockHub()` / `lockDeployer()` executed as final deploy step, permanently disabling deployer hooks). Superseded by the HyperEVM deployment above.
+**Deployed:** September 16, 2026 (v6.1 — admin privilege lock: `lockHub()` / `lockDeployer()` executed as final deploy step, permanently disabling deployer hooks). Superseded by the BNB deployment above.
 
 - **wsXmrHub (Diamond Proxy):** `0xd3dac8cf69c2d321bdc1e479d92a1b79cd2228a9`
 - **wsXMR Token:** `0xe23d7210fe278b188144b7708e462c7dd721c436`
@@ -253,29 +290,35 @@ See `test/README.md` for detailed per-test descriptions of the legacy Hardhat te
 
 ### Mainnet JavaScript Scripts
 
-Operational scripts in `scripts/` that interact with deployed contracts on HyperEVM mainnet. These are **smoke tests** — they verify transactions broadcast successfully but lack automated pass/fail assertions. The `.hyperevm.js` variants use `hyperevmLib.js` helpers (`send`/`sendRetry`) to tolerate HyperEVM's state-propagation lag.
+Operational scripts in `scripts/` that interact with deployed contracts on mainnet. These are **smoke tests** — they verify transactions broadcast successfully but lack automated pass/fail assertions. Per-chain address config lives in `scripts/deploymentConfig.<chain>.js`.
+
+**BNB Chain (live):**
 
 | Script | What It Does |
 |--------|--------------|
-| `deployHyperEVM-bigblock.js` | **Recommended.** Resumable full-stack deploy: enables big-block routing, deploys all contracts (skips live ones), creates + initializes the pool, wires everything | 
-| `enableBigBlocks.js` | Toggle big-block routing for the deployer account (`usingBigBlocks: true`/`false`) |
-| `deployHyperEVM.js` | Original deploy script (no big-block handling — large facets will fail) |
-| `testFullCycleNow.hyperevm.js` | Vault setup → mint → collateral withdraw → co-LP open/unwind → burn → claim rewards |
-| `testCoLPNow.hyperevm.js` | Vault setup → mint if needed → co-LP open → co-LP unwind → withdraw returns |
-| `testPoolSwaps.hyperevm.js` | Pool state check → wsXMR→USDe swap → USDe→wsXMR swap → co-LP creation → fee-generating swaps → fee collection |
+| `testFullCycleNow.bnb.js` | Vault setup + QQQB deposit → mint → burn (full cycle) |
+| `testCoLPNow.bnb.js` | Mint if needed → co-LP open → unwind → withdraw returns. `KEEP_OPEN=1` leaves the position live to seed the pool |
+| `testPoolSwaps.bnb.js` | Pool state check → wsXMR→QQQB and QQQB→wsXMR swaps via the PancakeSwap Smart Router |
 
-**Run mainnet scripts:**
 ```shell
-# Individual scripts (requires PRIVATE_KEY and RPC_URL in .env)
-node scripts/testFullCycleNow.hyperevm.js
-node scripts/testCoLPNow.hyperevm.js
-node scripts/testPoolSwaps.hyperevm.js
+# requires PRIVATE_KEY in .env; RPC via BSC_RPC_URL (defaults to bsc-dataseed)
+node scripts/testFullCycleNow.bnb.js
+node scripts/testCoLPNow.bnb.js
+KEEP_OPEN=1 node scripts/testCoLPNow.bnb.js   # seed pool liquidity
+node scripts/testPoolSwaps.bnb.js
 ```
 
-**Environment variables required:**
-- `PRIVATE_KEY` — wallet with HYPE for gas
-- `RPC_URL` — HyperEVM RPC endpoint (`https://rpc.hyperliquid.xyz/evm`)
-- `MONERO_RPC_URL` — Monero node for LP operations (optional for basic tests)
+**HyperEVM (deprecated, historical):**
+
+| Script | What It Does |
+|--------|--------------|
+| `deployHyperEVM-bigblock.js` | Resumable full-stack deploy (big-block routing, deploys all contracts, creates pool) |
+| `enableBigBlocks.js` | Toggle big-block routing for the deployer account |
+| `testFullCycleNow.hyperevm.js` | Vault setup → mint → collateral withdraw → co-LP open/unwind → burn → claim rewards |
+| `testCoLPNow.hyperevm.js` | Vault setup → mint if needed → co-LP open → unwind → withdraw returns |
+| `testPoolSwaps.hyperevm.js` | Pool state check → both-direction swaps → co-LP fee generation + collection |
+
+**Environment variables:** `PRIVATE_KEY` plus the per-chain RPC var (`BSC_RPC_URL`, `BASE_RPC_URL`, `ROBINHOOD_RPC_URL`, or `RPC_URL` for legacy HyperEVM). `MONERO_RPC_URL` for LP operations (optional for basic tests).
 
 ### Coverage Gap Analysis
 

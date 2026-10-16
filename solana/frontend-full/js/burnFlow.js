@@ -1036,7 +1036,7 @@ export class BurnFlow {
                                 try {
                                     await this.claimSlashed();
                                     const { showSuccess } = await import('./ui.js?v=3.22');
-                                    showSuccess('Slashed Collateral Claimed', 'Your QQQx has been queued. Withdraw it via Pending Returns.');
+                                    showSuccess('Slashed Collateral Claimed', 'Your SOL has been queued. Withdraw it via Pending Returns.');
                                     resolve(null);
                                     return;
                                 } catch (claimErr) {

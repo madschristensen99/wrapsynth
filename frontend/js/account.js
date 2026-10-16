@@ -11,10 +11,10 @@ import {
   getPastEvents,
   onAccountsChanged
 } from './viemClient.js?v=3.22';
-import { CONTRACTS, DECIMALS, NETWORKS } from './config.js?v=3.22';
+import { CONTRACTS, DECIMALS, ASSET, explorerTxUrl } from './config.js?v=3.22';
+import { bootChain, initChainPicker } from './chainPicker.js?v=3.22';
 import { parseAbi, formatUnits } from 'https://esm.sh/viem@2.7.0';
 
-const EXPLORER = NETWORKS.hyperevm.blockExplorer;
 const TRANSFER_ABI = ['event Transfer(address indexed from, address indexed to, uint256 value)'];
 const MINT_EVENT_ABI = ['event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout)'];
 const BURN_EVENT_ABI = ['event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey)'];
@@ -24,6 +24,12 @@ let currentFilter = 'all';
 
 /* ── Init ── */
 async function init() {
+  const chainKey = await bootChain();
+  if (!chainKey) return;
+  await initChainPicker(document.getElementById('chain-select'));
+  // Simplest correct behavior for this read-only page: a chain switch
+  // re-boots everything (fresh clients, fresh history scan).
+  window.addEventListener('wrapsynth:chainChanged', () => location.reload());
   await initializeClients();
   const address = await ensureConnected();
 
@@ -159,7 +165,7 @@ async function loadAccount(address) {
 
   try {
     const xdai = await getNativeBalance(address);
-    document.getElementById('acct-xdai').textContent = formatHype(xdai) + ' HYPE';
+    document.getElementById('acct-xdai').textContent = formatHype(xdai) + ' ' + ASSET.gas;
   } catch (e) {
     document.getElementById('acct-xdai').textContent = '--';
   }
@@ -326,7 +332,7 @@ async function fetchBurnHistory(address) {
         details: [
           { label: 'Request ID', value: formatAddr(id) },
           { label: 'LP Vault', value: formatAddr(req.lpVault) },
-          { label: 'Locked Collateral', value: formatToken(req.lockedCollateral, 18) + ' USDe' }
+          { label: 'Locked Collateral', value: formatToken(req.lockedCollateral, 18) + ' ' + ASSET.collateral }
         ]
       });
     } catch (e) {
@@ -340,9 +346,10 @@ async function fetchBurnHistory(address) {
 async function fetchTransferHistory(address) {
   const client = getPublicClient();
   const currentBlock = await client.getBlockNumber();
-  // ~20000 blocks (~5.5h at ~1s blocks) — wide enough for recent activity,
-  // small enough that the chunked eth_getLogs scan finishes quickly.
-  const fromBlock = currentBlock > 20000n ? currentBlock - 20000n : 0n;
+  // ~5.5h lookback in wall time converted to blocks for the active chain —
+  // wide enough for recent activity, small enough for a chunked scan.
+  const lookback = BigInt(Math.round(5.5 * 3600 / (getActiveChain()?.blockTimeSec || 1)));
+  const fromBlock = currentBlock > lookback ? currentBlock - lookback : 0n;
 
   const [outEvents, inEvents] = await Promise.all([
     getPastEvents(CONTRACTS.wsxmrToken, TRANSFER_ABI, 'Transfer', fromBlock, 'latest', { from: address }).catch(() => []),
@@ -368,7 +375,7 @@ async function fetchTransferHistory(address) {
       timestampLabel: tsLabel(blockTimestamps.get(ev.blockNumber) || 0),
       details: [
         { label: 'To', value: formatAddr(ev.args.to) },
-        { label: 'Tx', value: `<a href="${EXPLORER}/tx/${ev.transactionHash}" target="_blank" rel="noopener">${formatAddr(ev.transactionHash)} ↗</a>` }
+        { label: 'Tx', value: `<a href="${explorerTxUrl(ev.transactionHash)}" target="_blank" rel="noopener">${formatAddr(ev.transactionHash)} ↗</a>` }
       ]
     });
   }
@@ -386,7 +393,7 @@ async function fetchTransferHistory(address) {
       timestampLabel: tsLabel(blockTimestamps.get(ev.blockNumber) || 0),
       details: [
         { label: 'From', value: formatAddr(ev.args.from) },
-        { label: 'Tx', value: `<a href="${EXPLORER}/tx/${ev.transactionHash}" target="_blank" rel="noopener">${formatAddr(ev.transactionHash)} ↗</a>` }
+        { label: 'Tx', value: `<a href="${explorerTxUrl(ev.transactionHash)}" target="_blank" rel="noopener">${formatAddr(ev.transactionHash)} ↗</a>` }
       ]
     });
   }

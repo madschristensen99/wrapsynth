@@ -783,7 +783,7 @@ async function checkPendingReturns(address) {
         const hasReturns = ethReturns > 0n || usdeReturns > 0n || wsxmrReturns > 0n;
         const parts = [];
         if (wsxmrReturns > 0n) parts.push(`${formatUnits(wsxmrReturns, 8)} wsXMR`);
-        if (usdeReturns > 0n) parts.push(`${formatUnits(usdeReturns, 18)} QQQx`);
+        if (usdeReturns > 0n) parts.push(`${formatUnits(usdeReturns, 18)} SOL`);
         if (ethReturns > 0n) parts.push(`${formatUnits(ethReturns, 18)} SOL`);
         // Show only when there's something to claim — label carries the amounts.
         // On read failure (catch) we leave the current state untouched rather
@@ -1193,7 +1193,7 @@ async function handleRefreshCoLPPositions() {
             const claimLabel = hasFees ? `Claim ${wsxmrFee.toFixed(8)}` : 'Claim 0';
             const claimDisabled = hasFees ? '' : 'disabled';
             const claimTitle = hasFees
-                ? `title="Your wsXMR share: ${wsxmrFee.toFixed(8)} · Vault QQQx share: ${parseFloat(formatUnits(fees.usde, 18)).toFixed(6)}"`
+                ? `title="Your wsXMR share: ${wsxmrFee.toFixed(8)} · Vault SOL share: ${parseFloat(formatUnits(fees.usde, 18)).toFixed(6)}"`
                 : 'title="No fees accrued yet"';
             return `
                 <div class="position-card" data-token-id="${p.tokenId}">
@@ -1558,7 +1558,7 @@ async function loadLpStats(address, vaultData) {
         console.log('Vault pending debt:', vault.pendingDebt);
         
         // Update UI with vault stats
-        document.getElementById('lp-collateral').textContent = `${(Number(vault.collateralShares) / 1e18).toFixed(2)} QQQx`;
+        document.getElementById('lp-collateral').textContent = `${(Number(vault.collateralShares) / 1e18).toFixed(2)} SOL`;
         document.getElementById('lp-debt').textContent = `${(Number(debt) / 1e8).toFixed(4)} wsXMR`;
         document.getElementById('lp-pending-debt').textContent = `${(Number(vault.pendingDebt) / 1e8).toFixed(4)} wsXMR`;
         document.getElementById('lp-health').textContent = `${(Number(health) / 1e16).toFixed(0)}%`;
@@ -1955,7 +1955,7 @@ async function handleResolveSwap(swap) {
                     console.log('cancelMint tx:', receipt.transactionHash);
                     let msg = 'Mint cancelled. Your griefing deposit has been refunded.';
                     if (status === 2) {
-                        msg = 'Mint cancelled. LP collateral was slashed and you received QQQx compensation. Claim it via Pending Returns.';
+                        msg = 'Mint cancelled. LP collateral was slashed and you received SOL compensation. Claim it via Pending Returns.';
                     }
                     showResumeSuccess(swap.requestId, msg);
                 } catch (cancelErr) {
@@ -2532,7 +2532,7 @@ export async function loadVaults() {
                 const xmrPrice = firstVault.xmrPrice || 200;
                 const collPrice = firstVault.collPrice || 1.0;
                 const cr = debt * xmrPrice > 0 ? Math.round((coll * collPrice) / (debt * xmrPrice) * 100) : 200;
-                backingEl.textContent = `QQQx · ${cr}%`;
+                backingEl.textContent = `SOL · ${cr}%`;
             }
         }
         
@@ -2691,7 +2691,7 @@ async function updateMintBackingCollateral() {
         const amountStr = document.getElementById('mint-amount')?.value || '';
         const amount = parseFloat(amountStr);
         if (isNaN(amount) || amount <= 0) {
-            backingEl.textContent = 'QQQx · 150%';
+            backingEl.textContent = 'SOL · 150%';
             return;
         }
 
@@ -2713,18 +2713,18 @@ async function updateMintBackingCollateral() {
         }
 
         if (!xmrPrice || xmrPrice <= 0) {
-            backingEl.textContent = 'QQQx · 150%';
+            backingEl.textContent = 'SOL · 150%';
             return;
         }
 
-        // Backing collateral in QQQx = XMR amount * XMR price (USD) * 150% / QQQx price
+        // Backing collateral in SOL = XMR amount * XMR price (USD) * 150% / SOL price
         let collPrice = 600;
         try {
             const { readHub } = await import('./viemClient.js?v=3.22');
             collPrice = Number(await readHub('getCollateralPrice')) / 1e18 || 600;
         } catch (_) {}
-        const qqqxAmount = amount * xmrPrice * 1.5 / collPrice;
-        backingEl.textContent = `${qqqxAmount.toFixed(4)} QQQx · 150%`;
+        const solAmount = amount * xmrPrice * 1.5 / collPrice;
+        backingEl.textContent = `${solAmount.toFixed(4)} SOL · 150%`;
     } catch (err) {
         console.warn('[BackingCollateral] Update failed:', err.message);
     }
@@ -2822,7 +2822,7 @@ async function _updateBurnRewardDisplay() {
             } catch (_) {}
             const rewardUsd = rewardQqqx * collPrice;
             const usdStr = rewardUsd < 0.01 ? rewardUsd.toFixed(4) : rewardUsd < 1 ? rewardUsd.toFixed(3) : rewardUsd.toFixed(2);
-            rewardEl.innerHTML = `${rewardQqqx.toFixed(4)} QQQx <span style="color:var(--muted);font-size:11px">≈ $${usdStr}</span>`;
+            rewardEl.innerHTML = `${rewardQqqx.toFixed(4)} SOL <span style="color:var(--muted);font-size:11px">≈ $${usdStr}</span>`;
         } else {
             rewardEl.textContent = '—';
         }
@@ -2884,7 +2884,7 @@ async function handleVaultSelect(isMint) {
             const xmrPrice = vault.xmrPrice || 200;
             const collPrice = vault.collPrice || 1.0;
             const cr = debt * xmrPrice > 0 ? Math.round((coll * collPrice) / (debt * xmrPrice) * 100) : 200;
-            backingEl.textContent = `QQQx · ${cr}%`;
+            backingEl.textContent = `SOL · ${cr}%`;
         }
     } else {
         // Fallback: fetch from RPC if not in cache

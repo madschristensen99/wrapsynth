@@ -9,7 +9,7 @@
 //   node scripts/lp-e2e.js      # terminal 2
 
 import { Keypair, PublicKey, SystemProgram, Transaction, ComputeBudgetProgram } from '@solana/web3.js';
-import { TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync, createAssociatedTokenAccountInstruction, createTransferInstruction, getAccount, ASSOCIATED_TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync, createAssociatedTokenAccountInstruction, getAccount, ASSOCIATED_TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import BN from 'bn.js';
 import { WrapSynthClient, secrets, accounts } from '../../client/client.js';
 import { mintRequestPda, mintRequestId, burnRequestPda, burnRequestId } from '../../client/pdas.js';
@@ -21,7 +21,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const c = WrapSynthClient.fromDevnet(process.env.HOME + '/.config/solana/id.json');
 const lp = c.payer;
 const vaultPda = c.vaultPda(lp.publicKey);
-const vaultCollateralAta = c.vaultCollateralAta(vaultPda);
+const vaultCollateralEscrow = c.vaultCollateralEscrow(vaultPda);
 const send = (tx, s) => sendAndConfirm(c.conn, tx, s);
 const rpcIx = (b, s) => c.rpcIx(b, s);
 const tokenBal = async (ata) =>
@@ -42,46 +42,30 @@ const statusOf = async (pda) =>
 console.log('lp:', lp.publicKey.toBase58(), 'vault:', vaultPda.toBase58());
 if (!(await c.conn.getAccountInfo(vaultPda))) {
   console.log('[vault] creating');
-  await rpcIx(c.program.methods.createVault().accounts({
+  const rentFloor = await c.conn.getMinimumBalanceForRentExemption(0);
+  const createIx = await c.program.methods.createVault().accounts({
     lp: lp.publicKey, vault: vaultPda, globalState: c.globalState,
     systemProgram: SystemProgram.programId,
-  }), []);
+  }).instruction();
+  await send(new Transaction().add(createIx, SystemProgram.transfer({
+    fromPubkey: lp.publicKey, toPubkey: vaultCollateralEscrow, lamports: rentFloor })), [lp]);
   await rpcIx(c.program.methods.setVaultMarketMetrics(100, 50).accounts({
     lp: lp.publicKey, vault: vaultPda,
   }), []);
-  await rpcIx(c.program.methods.initializeVaultCollateral().accounts({
-    lp: lp.publicKey, vault: vaultPda, collateralMint: c.collateralMint,
-    vaultCollateralAta, tokenProgram: TOKEN_2022_PROGRAM_ID,
-    systemProgram: SystemProgram.programId,
-  }), []);
-  const lpColAta = await createAta(c.collateralMint, lp.publicKey);
-  const adminColAta = c.cfg.adminCollateralAta;
-  if ((await getAccount(c.conn, lpColAta, undefined, TOKEN_2022_PROGRAM_ID).catch(() => ({ amount: 0n }))).amount < 5_0000_0000n) {
-    await send(new Transaction().add(createTransferInstruction(
-      adminColAta, lpColAta, lp.publicKey, 10_0000_0000n, [], TOKEN_2022_PROGRAM_ID)), [lp]);
-  }
-  await rpcIx(c.program.methods.depositCollateral(new BN('500000000')).accounts({
+  await rpcIx(c.program.methods.depositCollateral(new BN('2000000000')).accounts({
     lp: lp.publicKey, vault: vaultPda, globalState: c.globalState,
-    collateralMint: c.collateralMint, lpCollateralAta: lpColAta, vaultCollateralAta,
-    tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+    vaultCollateralEscrow, systemProgram: SystemProgram.programId,
   }), []);
-  console.log('[vault] configured + 5 collateral deposited');
+  console.log('[vault] configured + 2 SOL deposited');
 } else {
   const v = await c.fetchRetry(() => c.program.account.vault.fetch(vaultPda));
   console.log('[vault] exists — collateral:', v.collateralAmount.toString(), 'debt:', v.normalizedDebt.toString());
   if (v.collateralAmount.toString() === '0') {
-    const lpColAta = await createAta(c.collateralMint, lp.publicKey);
-    const bal = await getAccount(c.conn, lpColAta, undefined, TOKEN_2022_PROGRAM_ID).catch(() => ({ amount: 0n }));
-    if (bal.amount < 5_0000_0000n) {
-      await send(new Transaction().add(createTransferInstruction(
-        c.cfg.adminCollateralAta, lpColAta, lp.publicKey, 10_0000_0000n, [], TOKEN_2022_PROGRAM_ID)), [lp]);
-    }
-    await rpcIx(c.program.methods.depositCollateral(new BN('500000000')).accounts({
+    await rpcIx(c.program.methods.depositCollateral(new BN('2000000000')).accounts({
       lp: lp.publicKey, vault: vaultPda, globalState: c.globalState,
-      collateralMint: c.collateralMint, lpCollateralAta: lpColAta, vaultCollateralAta,
-      tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+      vaultCollateralEscrow, systemProgram: SystemProgram.programId,
     }), []);
-    console.log('[vault] deposited 5 collateral');
+    console.log('[vault] deposited 2 SOL');
   }
 }
 
@@ -188,4 +172,4 @@ await waitBurnStatus('completed', 60);
 
 const v = await c.fetchRetry(() => c.program.account.vault.fetch(vaultPda));
 const prAcct = await c.fetchRetry(() => c.program.account.pendingReturns.fetch(pr));
-console.log(`\nDONE — debt: ${Number(v.normalizedDebt) / 1e8} wsXMR | collateral: ${Number(v.collateralAmount) / 1e8} | locked: ${v.lockedCollateral.toString()} | user pending returns: ${prAcct.collateralAmount.toString()}`);
+console.log(`\nDONE — debt: ${Number(v.normalizedDebt) / 1e8} wsXMR | collateral: ${Number(v.collateralAmount) / 1e9} | locked: ${v.lockedCollateral.toString()} | user pending returns: ${prAcct.collateralAmount.toString()}`);

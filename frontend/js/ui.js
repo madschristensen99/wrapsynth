@@ -1,7 +1,7 @@
 // UI Controller
 // Manages all DOM interactions and updates
 
-import { DECIMALS } from './config.js?v=3.22';
+import { DECIMALS, ASSET, explorerAddressUrl, getActiveChain, getActiveChainKey } from './config.js?v=3.22';
 import { getIconSVG } from './icons.js?v=3.12';
 import { launchMintCelebration, launchBurnAnimation } from './animations.js?v=3.12';
 
@@ -435,12 +435,13 @@ export function showResumeCountdown(requestId, deadlineBlock, currentBlock, onRe
 
     item.appendChild(container);
 
-    // Update countdown every 1s (approximate block time on HyperEVM)
+    // Update countdown every 1s, estimating wall time from chain block time
     let cachedDeadline = deadlineBlock;
     let cachedCurrent = currentBlock;
+    const secPerBlock = getActiveChain()?.blockTimeSec || 1;
     function updateMsg() {
         const blocksRemaining = Math.max(0, cachedDeadline - cachedCurrent);
-        const estSeconds = blocksRemaining; // ~1s blocks on HyperEVM
+        const estSeconds = Math.round(blocksRemaining * secPerBlock);
         const mins = Math.floor(estSeconds / 60);
         const secs = estSeconds % 60;
         if (blocksRemaining > 0) {
@@ -553,11 +554,11 @@ function vaultSummary(v) {
     const collateral = v.collateralAmount || 0;
     const debt = v.actualDebt ? Number(v.actualDebt) / 1e8 : 0;
     const xmrPrice = v.xmrPrice || 200;
-    const collPrice = v.collPrice || 1.0;
+    const collPrice = v.collPrice || 0;
     const collateralUSD = collateral * collPrice;
     const debtUSD = debt * xmrPrice;
-    const cr = debtUSD > 0 ? Math.round((collateralUSD / debtUSD) * 100) : 200;
-    const crColor = cr >= 200 ? 'var(--teal)' : cr >= 150 ? 'var(--amber)' : 'var(--red)';
+    const cr = (collPrice > 0 && xmrPrice > 0) ? (debtUSD > 0 ? Math.round((collateralUSD / debtUSD) * 100) : 200) : null;
+    const crColor = cr === null ? 'var(--muted)' : (cr >= 200 ? 'var(--teal)' : cr >= 150 ? 'var(--amber)' : 'var(--red)');
     const dotColor = cr >= 200 ? '#2fe6c4' : cr >= 150 ? '#facc15' : '#ff4444';
     const cap = v.maxMintCapacityXmr || 0;
     const capPct = collateral > 0 ? Math.min(100, (cap * xmrPrice / (collateralUSD || 1)) * 100) : 0;
@@ -735,25 +736,25 @@ export function populateVaults(vaults) {
             const vaultsHtml = vaults.map(v => {
                 const shortAddr = `${v.address.slice(0, 6)}...${v.address.slice(-4)}`;
                 // Use pre-converted collateralAmount if available
-                const collateral = v.collateralAmount || (v.collateral ? Number(v.collateral) / 1e18 : 0);
+                const collateral = v.collateralAmount || (v.collateral ? Number(v.collateral) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18) : 0);
                 // Use actual debt if available, otherwise fall back to normalized debt
                 const debt = v.actualDebt ? Number(v.actualDebt) / 1e8 : (v.debt ? Number(v.debt) / 1e8 : 0);
                 
-                // Calculate ratio in USD terms (USDe ≈ $1, wsXMR needs XMR price)
+                // Calculate ratio in USD terms (collateral priced via oracle, wsXMR needs XMR price)
                 // Use stored xmrPrice and collPrice from vault data if available
                 const xmrPrice = v.xmrPrice || 200; // fallback
-                const collPrice = v.collPrice || 1.0; // USDe ≈ $1
+                const collPrice = v.collPrice || 0; // 0 when oracle unavailable — never assume $1
                 const collateralUSD = collateral * collPrice;
                 const debtUSD = debt * xmrPrice;
-                const cr = debtUSD > 0 ? Math.round((collateralUSD / debtUSD) * 100) : 200;
-                const crDisplay = cr > 9999 ? '>9,999%' : `${cr}%`;
+                const cr = (collPrice > 0 && xmrPrice > 0) ? (debtUSD > 0 ? Math.round((collateralUSD / debtUSD) * 100) : 200) : null;
+                const crDisplay = cr === null ? '—' : (cr > 9999 ? '>9,999%' : `${cr}%`);
                 
                 // Calculate collateral breakdown percentages
                 const usedColl = v.usedCollateral || 0;
                 const pendingColl = v.pendingCollateral || 0;
                 const bufferColl = v.bufferCollateral || 0;
-                const coLpColl = v.deployedUSDeShares ? Number(v.deployedUSDeShares) / 1e18 : 0;
-                const lockedColl = v.lockedCollateral ? Number(v.lockedCollateral) / 1e18 : 0;
+                const coLpColl = v.deployedUSDeShares ? Number(v.deployedUSDeShares) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18) : 0;
+                const lockedColl = v.lockedCollateral ? Number(v.lockedCollateral) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18) : 0;
                 const totalColl = collateral;
                 const freeColl = v.capacityAvailable === false && !v.capacityEstimated ? 0 : (v.freeCollateral || 0);
                 
@@ -766,9 +767,9 @@ export function populateVaults(vaults) {
                 
                 const pieChart = makePieChart(usedPct, pendingPct, bufferPct, coLpPct, lockedPct, freePct);
                 
-                const crColor = cr >= 200 ? 'var(--teal)' : cr >= 150 ? 'var(--amber)' : 'var(--red)';
+                const crColor = cr === null ? 'var(--muted)' : (cr >= 200 ? 'var(--teal)' : cr >= 150 ? 'var(--amber)' : 'var(--red)');
                 
-                return `<div class="vc" onclick="window.location.href='lp-vault.html?address=${v.address}'">
+                return `<div class="vc" onclick="window.location.href='lp-vault.html?chain=${getActiveChainKey()}&address=${v.address}'">
                     <div class="vid">${shortAddr}</div>
                     <div class="ring" style="display:flex;justify-content:center;margin:8px 0">
                       ${pieChart}
@@ -778,7 +779,7 @@ export function populateVaults(vaults) {
                       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">collateral ratio</div>
                     </div>
                     <div class="vrow" style="border-top:1px solid var(--line-2);padding-top:12px">
-                      <span class="l"><span style="opacity:.6">collateral</span><b style="color:var(--fg)">${collateral.toFixed(4)} USDe</b></span>
+                      <span class="l"><span style="opacity:.6">collateral</span><b style="color:var(--fg)">${collateral.toFixed(4)} ${ASSET.collateral}</b></span>
                       <span class="l"><span style="opacity:.6">debt</span><b style="color:var(--fg)">${debt.toFixed(4)} wsXMR</b></span>
                     </div>
                     <div class="vrow" style="font-size:12px;gap:10px;margin-top:14px;display:grid;grid-template-columns:1fr 1fr;row-gap:10px">
@@ -804,11 +805,11 @@ export function showVaultInfo(vaultData, isMint = true) {
     
     const html = `
         <p><strong>Total XMR Locked:</strong> ${formatBalance(vaultData.totalXmrLocked, DECIMALS.wsXMR)} XMR</p>
-        <p><strong>Collateral:</strong> ${formatBalance(vaultData.totalCollateral, DECIMALS.ETH)} ${vaultData.collateralToken === '0x0000000000000000000000000000000000000000' ? 'USDe' : 'Token'}</p>
+        <p><strong>Collateral:</strong> ${formatBalance(vaultData.totalCollateral, getActiveChain()?.collateral.shareDecimals ?? 18)} ${ASSET.share}</p>
         <p><strong>Collateralization:</strong> ${vaultData.collateralizationRatio / 100}%</p>
-        <p><strong>Griefing Deposit:</strong> ${formatBalance(vaultData.mintGriefingDeposit, DECIMALS.ETH)} USDe</p>
+        <p><strong>Griefing Deposit:</strong> ${formatBalance(vaultData.mintGriefingDeposit, DECIMALS.ETH)} ${ASSET.gas}</p>
         <p><strong>Status:</strong> ${vaultData.isActive ? '✅ Active' : '❌ Inactive'}</p>
-        <p class="vault-info-link"><a href="https://hyperevmscan.io/address/${vaultData.lpVault || ''}" target="_blank" rel="noopener">${getIconSVG('externalLink')}<span>View on HyperEVM Scan</span></a></p>
+        <p class="vault-info-link"><a href="${explorerAddressUrl(vaultData.lpVault || '')}" target="_blank" rel="noopener">${getIconSVG('externalLink')}<span>View on ${getActiveChain()?.explorerName || 'Explorer'}</span></a></p>
     `;
     
     infoElement.innerHTML = html;
@@ -830,19 +831,19 @@ export function renderLPDetailCard(isMint, vault) {
     const collateral = vault.collateralAmount || 0;
     const debt = vault.actualDebt ? Number(vault.actualDebt) / 1e8 : 0;
     const xmrPrice = vault.xmrPrice || 200;
-    const collPrice = vault.collPrice || 1.0;
+    const collPrice = vault.collPrice || 0;
     const collateralUSD = collateral * collPrice;
     const debtUSD = debt * xmrPrice;
-    const cr = debtUSD > 0 ? Math.round((collateralUSD / debtUSD) * 100) : 200;
-    const crDisplay = cr > 9999 ? '>9,999%' : `${cr}%`;
-    const crColor = cr >= 200 ? 'var(--teal)' : cr >= 150 ? 'var(--amber)' : 'var(--red)';
+    const cr = (collPrice > 0 && xmrPrice > 0) ? (debtUSD > 0 ? Math.round((collateralUSD / debtUSD) * 100) : 200) : null;
+    const crDisplay = cr === null ? '—' : (cr > 9999 ? '>9,999%' : `${cr}%`);
+    const crColor = cr === null ? 'var(--muted)' : (cr >= 200 ? 'var(--teal)' : cr >= 150 ? 'var(--amber)' : 'var(--red)');
 
     // Collateral breakdown
     const usedColl = vault.usedCollateral || 0;
     const pendingColl = vault.pendingCollateral || 0;
     const bufferColl = vault.bufferCollateral || 0;
-    const coLpColl = vault.deployedUSDeShares ? Number(vault.deployedUSDeShares) / 1e18 : 0;
-    const lockedColl = vault.lockedCollateral ? Number(vault.lockedCollateral) / 1e18 : 0;
+    const coLpColl = vault.deployedUSDeShares ? Number(vault.deployedUSDeShares) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18) : 0;
+    const lockedColl = vault.lockedCollateral ? Number(vault.lockedCollateral) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18) : 0;
     const totalColl = collateral;
     const freeColl = vault.capacityAvailable === false && !vault.capacityEstimated ? 0 : (vault.freeCollateral || 0);
 
@@ -863,7 +864,7 @@ export function renderLPDetailCard(isMint, vault) {
     const set = (id, val) => { const el = document.getElementById(`${prefix}-lp-${id}`); if (el) el.innerHTML = val; };
 
     set('cr', `<span style="color:${crColor};text-shadow:0 0 16px ${crColor}40">${crDisplay}</span>`);
-    set('collateral', `${collateral.toFixed(4)} USDe`);
+    set('collateral', `${collateral.toFixed(4)} ${ASSET.collateral}`);
     set('debt', `${debt.toFixed(4)} wsXMR`);
 
     if (isMint) {
@@ -876,7 +877,7 @@ export function renderLPDetailCard(isMint, vault) {
             set('capacity', `${estPrefix}${capStr} XMR${vault.capacityEstimated ? ' <span style="color:var(--muted);font-size:10px">(est.)</span>' : ''}`);
         }
         const griefing = vault.mintGriefingDeposit ? Number(vault.mintGriefingDeposit) / 1e18 : 0;
-        set('griefing', `${griefing.toFixed(3)} USDe`);
+        set('griefing', `${griefing.toFixed(3)} ${ASSET.collateral}`);
     } else {
         const rewardPct = (vault.burnRewardBps || 0) / 100;
         set('reward', `${rewardPct.toFixed(2)}%`);
@@ -886,7 +887,7 @@ export function renderLPDetailCard(isMint, vault) {
 
     // Scan link
     const scanLink = document.getElementById(`${prefix}-lp-scan-link`);
-    if (scanLink) scanLink.href = `https://hyperevmscan.io/address/${vault.address}`;
+    if (scanLink) scanLink.href = explorerAddressUrl(vault.address);
 
     // Breakdown bars
     const breakdownEl = document.getElementById(`${prefix}-lp-breakdown`);

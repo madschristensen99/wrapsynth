@@ -49,6 +49,15 @@ contract SwapHelper {
         _settle(amount0Delta, amount1Delta);
     }
 
+    // PancakeSwap V3 callback - same settlement, renamed selector on BNB Chain
+    function pancakeV3SwapCallback(
+        int256 amount0Delta,
+        int256 amount1Delta,
+        bytes calldata
+    ) external {
+        _settle(amount0Delta, amount1Delta);
+    }
+
     // HyperSwap V3 callback - same settlement, renamed selector on HyperEVM
     function hyperswapV3SwapCallback(
         int256 amount0Delta,

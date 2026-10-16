@@ -8,7 +8,7 @@ skip-lint = false
 [programs.localnet]
 oracle_mock = "AWKqcPUtpsaPr19XpCq2ZD6Bk4HRGXnsYy9DUrZkLixY"
 wrapsynth = "EyhaxbtseCcbAc7W9PhVCyAWLt9EQ1rtPdK6aFPVzGka"
-wrapsynth_vault_manager = "k4TC3sLs4feJfuMYBf8piyRQMU1WENM2LbQoKJNWbmx"
+wrapsynth_vault_manager = "C9kVasKgQiUX1BCngBjorvMA8QaFyERHvdkYdwPyy3H1"
 
 [registry]
 url = "https://api.apr.dev"

@@ -649,7 +649,7 @@
     </div>
     <div class="metrics">
       <div class="met"><div class="n tl" id="stat-supply">--</div><div class="k">wsXMR supply</div><div class="s">Circulating</div></div>
-      <div class="met"><div class="n" id="stat-tvl">--</div><div class="k">Total value locked</div><div class="s">QQQx collateral</div></div>
+      <div class="met"><div class="n" id="stat-tvl">--</div><div class="k">Total value locked</div><div class="s">SOL collateral</div></div>
       <div class="met"><div class="n" id="stat-collateral-ratio">--</div><div class="k">Collateral ratio</div><div class="s">Overcollateralized</div></div>
       <div class="met"><div class="n" id="stat-active-vaults">--</div><div class="k">Active vaults</div><div class="s">Liquidity providers</div></div>
     </div>
@@ -945,7 +945,7 @@ function copyAddr(btn){
     const vaultCount=await readHub('getVaultCount');
     document.getElementById('stat-active-vaults').textContent=vaultCount.toString();
 
-    let totalCollateral=0n; // 18-dec scaled by shim (raw QQQx is 9-dec)
+    let totalCollateral=0n; // 18-dec scaled by shim (raw SOL is 9-dec)
     let totalDebt=0n;       // wsXMR, 8 decimals
     for(let i=0;i<Number(vaultCount);i++){
       const vaultAddr=await readHub('vaultList',[BigInt(i)]);
@@ -958,7 +958,7 @@ function copyAddr(btn){
     console.log('[Stats] Total collateral shares:',totalCollateral.toString());
     console.log('[Stats] Total debt:',totalDebt.toString());
 
-    // Collateral is QQQx — value it via the mock oracle price (18-dec)
+    // Collateral is SOL — value it via the mock oracle price (18-dec)
     let collateralPrice=600;
     try{
       const collPriceRaw=await readHub('getCollateralPrice');

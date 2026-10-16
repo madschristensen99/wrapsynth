@@ -1,6 +1,6 @@
 // LP Operator Panel - Vault management for liquidity providers
 
-import { CONTRACTS, ABIS, DECIMALS } from './config.js?v=3.22';
+import { CONTRACTS, ABIS, DECIMALS, getActiveChain } from './config.js?v=3.22';
 import { readHub, writeHub, getUserAddress } from './viemClient.js?v=3.22';
 import { formatUnits, parseUnits } from 'https://esm.sh/viem@2.7.0';
 
@@ -48,7 +48,7 @@ export class LPPanel {
     }
 
     async depositCollateral(amountXDAI) {
-        const amount = parseUnits(amountXDAI.toString(), DECIMALS.ETH);
+        const amount = parseUnits(amountXDAI.toString(), getActiveChain()?.collateral.decimals ?? 18);
         const receipt = await writeHub('depositCollateral', [amount]);
         console.log('Collateral deposited:', receipt.transactionHash);
         
@@ -89,7 +89,7 @@ export class LPPanel {
     }
 
     async setGriefingDeposit(depositXDAI) {
-        const deposit = parseUnits(depositXDAI.toString(), DECIMALS.ETH);
+        const deposit = parseUnits(depositXDAI.toString(), getActiveChain()?.nativeCurrency.decimals ?? 18);
         const receipt = await writeHub('setMintGriefingDeposit', [deposit]);
         console.log('Griefing deposit updated:', receipt.transactionHash);
         
@@ -131,8 +131,8 @@ export class LPPanel {
         if (!this.vault) return null;
 
         return {
-            collateralShares: formatUnits(this.vault.collateralShares, DECIMALS.ETH),
-            lockedCollateral: formatUnits(this.vault.lockedCollateral, DECIMALS.ETH),
+            collateralShares: formatUnits(this.vault.collateralShares, getActiveChain()?.collateral.shareDecimals ?? 18),
+            lockedCollateral: formatUnits(this.vault.lockedCollateral, getActiveChain()?.collateral.shareDecimals ?? 18),
             normalizedDebt: formatUnits(this.vault.normalizedDebt, DECIMALS.wsXMR),
             pendingDebt: formatUnits(this.vault.pendingDebt, DECIMALS.wsXMR),
             maxMintBps: this.vault.maxMintBps,

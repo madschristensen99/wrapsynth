@@ -117,11 +117,11 @@ export async function startDeadlineTimer(mintFlow) {
                                     refundBtn.textContent = 'Sweeping expired mint...';
                                     await writeHub('sweepUnclaimedExpiredMint', [mintFlow.requestId]);
                                     await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
-                                    // Also withdraw USDe slashed collateral
+                                    // Also withdraw slashed collateral (active chain's share token)
                                     try {
                                         const { CONTRACTS } = await import('./config.js?v=3.22');
                                         await writeHub('withdrawReturns', [CONTRACTS.stataUSDe]);
-                                    } catch (e) { /* may have no USDe returns */ }
+                                    } catch (e) { /* may have no collateral returns */ }
                                     timerElement.innerHTML = '<strong style="color:var(--success-color);">Deposit + Collateral Recovered</strong>';
                                     refundBtn.remove();
                                     const { clearActiveSwap } = await import('./storage.js?v=3.12');
@@ -131,7 +131,8 @@ export async function startDeadlineTimer(mintFlow) {
                                 } else {
                                     // LP still has time to claim
                                     const blocksRemaining = claimWindowEnd - Number(currentBlock);
-                                    const minutes = Math.ceil(blocksRemaining / 60); // ~1s blocks on HyperEVM
+                                    const { getActiveChain } = await import('./config.js?v=3.22');
+                                    const minutes = Math.ceil(blocksRemaining * (getActiveChain()?.blockTimeSec || 1) / 60);
                                     refundBtn.disabled = true;
                                     refundBtn.textContent = `Waiting for LP claim window (~${minutes} min)`;
                                     timerElement.innerHTML += `<br><span style="font-size:0.75rem;color:var(--warning-color);">LP can claim deposit for ~${minutes} more minutes. After that, you can sweep it back.</span>`;
@@ -188,8 +189,9 @@ export async function startDeadlineTimer(mintFlow) {
                 return;
             }
             
-            // Calculate time remaining (~1s per block on HyperEVM)
-            const secondsRemaining = blocksRemaining;
+            // Calculate time remaining (block time is per-chain)
+            const { getActiveChain } = await import('./config.js?v=3.22');
+            const secondsRemaining = Math.round(blocksRemaining * (getActiveChain()?.blockTimeSec || 1));
             const hours = Math.floor(secondsRemaining / 3600);
             const minutes = Math.floor((secondsRemaining % 3600) / 60);
             const seconds = secondsRemaining % 60;

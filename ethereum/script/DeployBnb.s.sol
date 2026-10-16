@@ -10,10 +10,10 @@ import "../contracts/facets/BurnFacet.sol";
 import "../contracts/facets/LiquidationFacet.sol";
 import "../contracts/facets/YieldFacet.sol";
 import "../contracts/facets/BnbYieldFacet.sol";
+import "../contracts/facets/CoLPFacet.sol";
 import "../contracts/wsXMR.sol";
 import "../contracts/StataQQQB.sol";
 import "../contracts/router/wsXMRLiquidityRouter.sol";
-import "../contracts/test/SwapHelper.sol";
 import "../contracts/interfaces/external/IUniswapV3Factory.sol";
 import "../contracts/interfaces/external/IUniswapV3Pool.sol";
 import "../contracts/BnbAddresses.sol";
@@ -53,7 +53,7 @@ contract DeployBnb is Script {
         console.log("Fetched XMR price:", xmrPrice / 1e18, "USD");
 
         // Fetch current QQQB price from DexScreener
-        inputs[2] = "curl -s 'https://api.dexscreener.com/latest/dex/tokens/0x205812CdBed920aFf76C6580abD681a46D11efc7' | jq -r '.pairs[0].priceUsd | floor | tostring'";
+        inputs[2] = "curl -s 'https://api.dexscreener.com/latest/dex/tokens/0x205812CdBed920aFf76C6580abD681a46D11efc7' | jq -r '(.pairs | sort_by(.liquidity.usd // 0) | reverse | .[0].priceUsd | tonumber | floor | tostring)'";
         res = vm.ffi(inputs);
         uint256 qqqbPrice = vm.parseUint(string(res)) * 1e18;
         console.log("Fetched QQQB price:", qqqbPrice / 1e18, "USD");
@@ -99,6 +99,10 @@ contract DeployBnb is Script {
         // deploy the BNB-specific yield facet, not the HyperSwap-flavoured base.
         YieldFacet yieldFacet = new BnbYieldFacet(address(wsxmr), VERIFIER);
         console.log("YieldFacet deployed to:", address(yieldFacet));
+
+        // CoLPFacet — co-LP lives on its own facet to keep VaultFacet under EIP-170
+        CoLPFacet coLPFacet = new CoLPFacet(address(wsxmr), VERIFIER);
+        console.log("CoLPFacet deployed to:", address(coLPFacet));
         console.log("");
 
         console.log("============================================================");
@@ -112,6 +116,7 @@ contract DeployBnb is Script {
             address(yieldFacet),
             address(oracleFacet)
         );
+        hub.addFacet(address(coLPFacet));
         console.log("All facets registered");
         console.log("");
 
@@ -210,14 +215,7 @@ contract DeployBnb is Script {
         console.log("");
 
         console.log("============================================================");
-        console.log("STEP 9: Deploying SwapHelper");
-        console.log("============================================================");
-        SwapHelper swapHelper = new SwapHelper();
-        console.log("SwapHelper deployed to:", address(swapHelper));
-        console.log("");
-
-        console.log("============================================================");
-        console.log("STEP 10: Locking Deployer Powers (IRREVERSIBLE)");
+        console.log("STEP 9: Locking Deployer Powers (IRREVERSIBLE)");
         console.log("============================================================");
         // Removes the two admin backdoors from the live system:
         //  - wsXMR.replaceHub(): deployer could repoint the token at an arbitrary
@@ -245,7 +243,6 @@ contract DeployBnb is Script {
         console.log("  wsXmrHub:         ", address(hub));
         console.log("  StataQQQB:        ", address(stata));
         console.log("  LiquidityRouter:  ", address(router));
-        console.log("  SwapHelper:       ", address(swapHelper));
         console.log("");
         console.log("Facets:");
         console.log("  OracleFacet:      ", address(oracleFacet));
@@ -254,6 +251,7 @@ contract DeployBnb is Script {
         console.log("  BurnFacet:        ", address(burnFacet));
         console.log("  LiquidationFacet: ", address(liquidationFacet));
         console.log("  YieldFacet:       ", address(yieldFacet));
+        console.log("  CoLPFacet:        ", address(coLPFacet));
         console.log("");
         console.log("External Contracts:");
         console.log("  QQQB:             ", BnbAddresses.QQQB);
@@ -267,6 +265,38 @@ contract DeployBnb is Script {
         console.log("2. Update frontend configuration with deployment.bnb.json");
         console.log("3. Configure LP server with deployed addresses + RedStone XMR");
         console.log("4. Seed the wsXMR/QQQB pool");
+
+        // Persist a machine-readable manifest — same shape the frontend and
+        // LP server consume per chain (deployment.bnb.json).
+        string memory json = "bnb";
+        vm.serializeAddress(json, "wsXMR", address(wsxmr));
+        vm.serializeAddress(json, "wsXmrHub", address(hub));
+        vm.serializeAddress(json, "stataQQQB", address(stata));
+        vm.serializeAddress(json, "liquidityRouter", address(router));
+        vm.serializeAddress(json, "pool", pool);
+        vm.serializeAddress(json, "oracleFacet", address(oracleFacet));
+        vm.serializeAddress(json, "vaultFacet", address(vaultFacet));
+        vm.serializeAddress(json, "mintFacet", address(mintFacet));
+        vm.serializeAddress(json, "burnFacet", address(burnFacet));
+        vm.serializeAddress(json, "liquidationFacet", address(liquidationFacet));
+        vm.serializeAddress(json, "yieldFacet", address(yieldFacet));
+        vm.serializeAddress(json, "coLPFacet", address(coLPFacet));
+        vm.serializeAddress(json, "qqqb", BnbAddresses.QQQB);
+        vm.serializeAddress(json, "wbnb", BnbAddresses.WBNB);
+        vm.serializeAddress(json, "usdt", BnbAddresses.USDT);
+        vm.serializeAddress(json, "pcsV3Factory", BnbAddresses.PCS_V3_FACTORY);
+        vm.serializeAddress(json, "pcsSmartRouter", BnbAddresses.PCS_SMART_ROUTER);
+        vm.serializeAddress(json, "pcsV3NFPM", BnbAddresses.PCS_V3_POSITION_MANAGER);
+        vm.serializeAddress(json, "pcsV3QuoterV2", BnbAddresses.PCS_V3_QUOTER_V2);
+        vm.serializeAddress(json, "qqqbWbnbPool", BnbAddresses.QQQB_WBNB_POOL);
+        vm.serializeAddress(json, "wbnbUsdtPool", BnbAddresses.WBNB_USDT_POOL);
+        vm.serializeUint(json, "collateralTwapWindow", BnbAddresses.COLLATERAL_TWAP_WINDOW);
+        vm.serializeUint(json, "chainId", block.chainid);
+        // Log-scan lower bound for the frontend/LP server (protocolStats, swapHistory).
+        vm.serializeUint(json, "deployedAtBlock", block.number);
+        string memory out = vm.serializeAddress(json, "deployer", deployer);
+        vm.writeJson(out, "./deployments/bnb-deployment.json");
+        console.log("Manifest written to deployments/bnb-deployment.json");
     }
 
     /// @dev sqrtPriceX96 for token1/token0 where token0/token1 = QQQB/wsXMR in

@@ -1,6 +1,6 @@
 // Dashboard - Global stats and vault health monitoring
 
-import { CONTRACTS, ABIS, DECIMALS } from './config.js?v=3.22';
+import { CONTRACTS, ABIS, DECIMALS, getActiveChain } from './config.js?v=3.22';
 import { readHub, readWsxmr, getUserAddress } from './viemClient.js?v=3.22';
 import { formatUnits } from 'https://esm.sh/viem@2.7.0';
 
@@ -60,8 +60,8 @@ export class Dashboard {
 
                 vaults.push({
                     lpAddress,
-                    collateralShares: formatUnits(vault.collateralShares, DECIMALS.ETH),
-                    lockedCollateral: formatUnits(vault.lockedCollateral, DECIMALS.ETH),
+                    collateralShares: formatUnits(vault.collateralShares, getActiveChain()?.collateral.shareDecimals ?? 18),
+                    lockedCollateral: formatUnits(vault.lockedCollateral, getActiveChain()?.collateral.shareDecimals ?? 18),
                     debt: formatUnits(debt, DECIMALS.wsXMR),
                     health: formatUnits(health, 16),
                     mintFeeBps: vault.mintFeeBps,

@@ -1,5 +1,5 @@
 {
-  "address": "k4TC3sLs4feJfuMYBf8piyRQMU1WENM2LbQoKJNWbmx",
+  "address": "C9kVasKgQiUX1BCngBjorvMA8QaFyERHvdkYdwPyy3H1",
   "metadata": {
     "name": "wrapsynth_vault_manager",
     "version": "0.1.0",
@@ -420,13 +420,7 @@
           "name": "pyth_collateral"
         },
         {
-          "name": "collateral_mint"
-        },
-        {
-          "name": "old_vault_collateral_ata",
-          "docs": [
-            "Old vault's collateral ATA — source of the absorbed balance."
-          ],
+          "name": "old_vault_collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -459,10 +453,7 @@
           }
         },
         {
-          "name": "new_vault_collateral_ata",
-          "docs": [
-            "New vault's collateral ATA — destination of the absorbed balance."
-          ],
+          "name": "new_vault_collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -681,13 +672,7 @@
           "writable": true
         },
         {
-          "name": "collateral_mint"
-        },
-        {
-          "name": "vault_collateral_ata",
-          "docs": [
-            "Vault collateral ATA — slash source for the liquidated-vault branch."
-          ],
+          "name": "vault_collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -720,10 +705,7 @@
           }
         },
         {
-          "name": "program_collateral_ata",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -1019,13 +1001,7 @@
           "name": "pyth_collateral"
         },
         {
-          "name": "collateral_mint"
-        },
-        {
-          "name": "vault_collateral_ata",
-          "docs": [
-            "Vault collateral ATA — slash source for the par-capped payout."
-          ],
+          "name": "vault_collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -1058,10 +1034,7 @@
           }
         },
         {
-          "name": "program_collateral_ata",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -1250,15 +1223,109 @@
           "writable": true
         },
         {
-          "name": "vault_collateral_ata",
-          "writable": true
+          "name": "vault_collateral_escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_wsol_ata",
+          "docs": [
+            "wSOL ATA owned by the vault PDA — staging for unwrap-back-to-escrow.",
+            "Caller pays rent if it must be created; it is closed again before the",
+            "instruction returns."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "collateral_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "collateral_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
         },
         {
           "name": "user_wsxmr_ata",
           "writable": true
         },
         {
-          "name": "collateral_mint"
+          "name": "collateral_mint",
+          "docs": [
+            "wSOL mint (spl-token program)"
+          ]
         },
         {
           "name": "wsxmr_mint"
@@ -1266,6 +1333,17 @@
         {
           "name": "token_program",
           "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "collateral_token_program",
+          "docs": [
+            "SPL Token (legacy) program for the wSOL leg"
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
         },
         {
           "name": "system_program",
@@ -1530,14 +1608,7 @@
           }
         },
         {
-          "name": "collateral_mint"
-        },
-        {
-          "name": "lp_collateral_ata",
-          "writable": true
-        },
-        {
-          "name": "vault_collateral_ata",
+          "name": "vault_collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -1568,10 +1639,6 @@
               }
             ]
           }
-        },
-        {
-          "name": "token_program",
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
         },
         {
           "name": "system_program",
@@ -1659,18 +1726,11 @@
           "writable": true
         },
         {
-          "name": "collateral_mint"
-        },
-        {
           "name": "liquidator_wsxmr_ata",
           "writable": true
         },
         {
-          "name": "liquidator_collateral_ata",
-          "writable": true
-        },
-        {
-          "name": "vault_collateral_ata",
+          "name": "vault_collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -1836,13 +1896,7 @@
           "name": "pyth_collateral"
         },
         {
-          "name": "collateral_mint"
-        },
-        {
-          "name": "vault_collateral_ata",
-          "docs": [
-            "Vault collateral ATA — slash source for the user reward."
-          ],
+          "name": "vault_collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -1875,10 +1929,7 @@
           }
         },
         {
-          "name": "program_collateral_ata",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -2045,13 +2096,7 @@
           "writable": true
         },
         {
-          "name": "collateral_mint"
-        },
-        {
-          "name": "vault_collateral_ata",
-          "docs": [
-            "Vault collateral ATA — slash source for the liquidated-vault branch."
-          ],
+          "name": "vault_collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -2084,10 +2129,7 @@
           }
         },
         {
-          "name": "program_collateral_ata",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -2219,13 +2261,7 @@
           "name": "pyth_collateral"
         },
         {
-          "name": "collateral_mint"
-        },
-        {
-          "name": "vault_collateral_ata",
-          "docs": [
-            "Vault collateral ATA — slash source for the par-capped payout."
-          ],
+          "name": "vault_collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -2258,10 +2294,7 @@
           }
         },
         {
-          "name": "program_collateral_ata",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -2373,45 +2406,6 @@
           }
         },
         {
-          "name": "collateral_mint",
-          "docs": [
-            "Program collateral ATA — the pending-returns pool backing all slashed",
-            "collateral credits. The mint is supplied via argument so initialize is",
-            "collateral-agnostic."
-          ]
-        },
-        {
-          "name": "program_collateral_ata",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  114,
-                  111,
-                  103,
-                  114,
-                  97,
-                  109,
-                  95,
-                  99,
-                  111,
-                  108,
-                  108,
-                  97,
-                  116,
-                  101,
-                  114,
-                  97,
-                  108
-                ]
-              }
-            ]
-          }
-        },
-        {
           "name": "token_program",
           "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
         },
@@ -2427,10 +2421,6 @@
       "args": [
         {
           "name": "pyth_xmr_feed",
-          "type": "pubkey"
-        },
-        {
-          "name": "collateral_mint",
           "type": "pubkey"
         }
       ]
@@ -2484,92 +2474,6 @@
               }
             ]
           }
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": []
-    },
-    {
-      "name": "initialize_vault_collateral",
-      "discriminator": [
-        64,
-        160,
-        30,
-        204,
-        90,
-        27,
-        120,
-        130
-      ],
-      "accounts": [
-        {
-          "name": "lp",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "vault",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "lp"
-              }
-            ]
-          }
-        },
-        {
-          "name": "collateral_mint"
-        },
-        {
-          "name": "vault_collateral_ata",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116,
-                  95,
-                  99,
-                  111,
-                  108,
-                  108,
-                  97,
-                  116,
-                  101,
-                  114,
-                  97,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "vault"
-              }
-            ]
-          }
-        },
-        {
-          "name": "token_program",
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
         },
         {
           "name": "system_program",
@@ -3136,15 +3040,109 @@
           "writable": true
         },
         {
-          "name": "vault_collateral_ata",
-          "writable": true
+          "name": "vault_collateral_escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_wsol_ata",
+          "docs": [
+            "wSOL ATA owned by the vault PDA — staging for unwrap-back-to-escrow.",
+            "Caller pays rent if it must be created; it is closed again before the",
+            "instruction returns."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "collateral_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "collateral_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
         },
         {
           "name": "user_wsxmr_ata",
           "writable": true
         },
         {
-          "name": "collateral_mint"
+          "name": "collateral_mint",
+          "docs": [
+            "wSOL mint (spl-token program)"
+          ]
         },
         {
           "name": "wsxmr_mint"
@@ -3152,6 +3150,17 @@
         {
           "name": "token_program",
           "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "collateral_token_program",
+          "docs": [
+            "SPL Token (legacy) program for the wSOL leg"
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
         },
         {
           "name": "system_program",
@@ -3269,13 +3278,7 @@
           "writable": true
         },
         {
-          "name": "collateral_mint"
-        },
-        {
-          "name": "vault_collateral_ata",
-          "docs": [
-            "Vault collateral ATA — slash source."
-          ],
+          "name": "vault_collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -3308,10 +3311,7 @@
           }
         },
         {
-          "name": "program_collateral_ata",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -3867,13 +3867,7 @@
           "name": "pyth_collateral"
         },
         {
-          "name": "collateral_mint"
-        },
-        {
-          "name": "vault_collateral_ata",
-          "docs": [
-            "Vault collateral ATA — slash source for revealed/committed burn payouts."
-          ],
+          "name": "vault_collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -3906,10 +3900,7 @@
           }
         },
         {
-          "name": "program_collateral_ata",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -4830,13 +4821,7 @@
           "name": "pyth_collateral"
         },
         {
-          "name": "collateral_mint"
-        },
-        {
-          "name": "vault_collateral_ata",
-          "docs": [
-            "Vault collateral ATA — slash source for the user reward."
-          ],
+          "name": "vault_collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -4869,10 +4854,7 @@
           }
         },
         {
-          "name": "program_collateral_ata",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -5017,13 +4999,7 @@
           "writable": true
         },
         {
-          "name": "collateral_mint"
-        },
-        {
-          "name": "vault_collateral_ata",
-          "docs": [
-            "Vault collateral ATA — slash source."
-          ],
+          "name": "vault_collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -5056,10 +5032,7 @@
           }
         },
         {
-          "name": "program_collateral_ata",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -5253,15 +5226,109 @@
           "writable": true
         },
         {
-          "name": "vault_collateral_ata",
-          "writable": true
+          "name": "vault_collateral_escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_wsol_ata",
+          "docs": [
+            "wSOL ATA owned by the vault PDA — staging for unwrap-back-to-escrow.",
+            "Caller pays rent if it must be created; it is closed again before the",
+            "instruction returns."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "collateral_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "collateral_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
         },
         {
           "name": "user_wsxmr_ata",
           "writable": true
         },
         {
-          "name": "collateral_mint"
+          "name": "collateral_mint",
+          "docs": [
+            "wSOL mint (spl-token program)"
+          ]
         },
         {
           "name": "wsxmr_mint"
@@ -5269,6 +5336,17 @@
         {
           "name": "token_program",
           "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "collateral_token_program",
+          "docs": [
+            "SPL Token (legacy) program for the wSOL leg"
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
         },
         {
           "name": "system_program",
@@ -5446,7 +5524,7 @@
           "writable": true
         },
         {
-          "name": "vault_collateral_ata",
+          "name": "vault_collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -5479,7 +5557,72 @@
           }
         },
         {
-          "name": "collateral_mint"
+          "name": "vault_wsol_ata",
+          "docs": [
+            "wSOL ATA owned by the vault PDA — staging account for wrapping escrow",
+            "SOL into pool-deployable wSOL. Opened fresh and closed (unwrapped back",
+            "to the escrow) within each co-LP instruction."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "collateral_token_program"
+              },
+              {
+                "kind": "account",
+                "path": "collateral_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "collateral_mint",
+          "docs": [
+            "wSOL mint (spl-token program)"
+          ]
         },
         {
           "name": "wsxmr_mint"
@@ -5493,6 +5636,13 @@
         {
           "name": "token_program",
           "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "collateral_token_program",
+          "docs": [
+            "SPL Token (legacy) program for the wSOL leg"
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         },
         {
           "name": "associated_token_program",
@@ -5580,14 +5730,7 @@
           }
         },
         {
-          "name": "collateral_mint"
-        },
-        {
-          "name": "lp_collateral_ata",
-          "writable": true
-        },
-        {
-          "name": "vault_collateral_ata",
+          "name": "vault_collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -5626,10 +5769,6 @@
           "name": "pyth_collateral"
         },
         {
-          "name": "token_program",
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
-        },
-        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         }
@@ -5656,6 +5795,7 @@
       "accounts": [
         {
           "name": "owner",
+          "writable": true,
           "signer": true
         },
         {
@@ -5716,13 +5856,7 @@
           }
         },
         {
-          "name": "collateral_mint"
-        },
-        {
-          "name": "program_collateral_ata",
-          "docs": [
-            "Program-owned collateral ATA (pending returns pool)"
-          ],
+          "name": "collateral_escrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -5753,12 +5887,8 @@
           }
         },
         {
-          "name": "user_collateral_ata",
-          "writable": true
-        },
-        {
-          "name": "token_program",
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": []

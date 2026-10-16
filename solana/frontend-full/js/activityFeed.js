@@ -245,7 +245,7 @@ function renderActivityItem(event, currentBlock) {
             const shortUser = user !== 'Unknown' ? `${user.slice(0, 6)}...${user.slice(-4)}` : 'Unknown';
             const seized = args.totalSeized ? (Number(args.totalSeized) / 1e18).toFixed(2) : '?';
             title = 'Burn Slashed';
-            detail = `${seized} QQQx seized from ${shortUser}`;
+            detail = `${seized} SOL seized from ${shortUser}`;
             break;
         }
         case 'burnCancelled': {
@@ -266,7 +266,7 @@ function renderActivityItem(event, currentBlock) {
             const shortLp = lp !== 'Unknown' ? `${lp.slice(0, 6)}...${lp.slice(-4)}` : 'Unknown';
             const amount = args.amount ? (Number(args.amount) / 1e18).toFixed(2) : '?';
             title = 'Collateral Deposited';
-            detail = `${amount} QQQx by ${shortLp}`;
+            detail = `${amount} SOL by ${shortLp}`;
             break;
         }
         case 'collateralWithdrawn': {
@@ -274,7 +274,7 @@ function renderActivityItem(event, currentBlock) {
             const shortLp = lp !== 'Unknown' ? `${lp.slice(0, 6)}...${lp.slice(-4)}` : 'Unknown';
             const amount = args.amount ? (Number(args.amount) / 1e18).toFixed(2) : '?';
             title = 'Collateral Withdrawn';
-            detail = `${amount} QQQx by ${shortLp}`;
+            detail = `${amount} SOL by ${shortLp}`;
             break;
         }
         case 'coLPDeployed': {
@@ -286,7 +286,7 @@ function renderActivityItem(event, currentBlock) {
             const wsxmr = args.wsxmrAmount ? (Number(args.wsxmrAmount) / 1e8).toFixed(4) : '?';
             const tokenId = args.tokenId?.toString() || '?';
             title = 'Co-LP Position Opened';
-            detail = `Token #${tokenId} — ${usde} QQQx + ${wsxmr} wsXMR (${shortUser} + ${shortVault})`;
+            detail = `Token #${tokenId} — ${usde} SOL + ${wsxmr} wsXMR (${shortUser} + ${shortVault})`;
             break;
         }
         case 'coLPUnwound': {
@@ -299,7 +299,7 @@ function renderActivityItem(event, currentBlock) {
             const wsxmrRet = args.wsxmrReturned ? (Number(args.wsxmrReturned) / 1e8).toFixed(4) : '?';
             const liq = args.liquidationTriggered ? ' (liquidation)' : '';
             title = 'Co-LP Position Unwound';
-            detail = `Token #${tokenId} — ${usdeRet} QQQx + ${wsxmrRet} wsXMR${liq}`;
+            detail = `Token #${tokenId} — ${usdeRet} SOL + ${wsxmrRet} wsXMR${liq}`;
             break;
         }
         case 'coLPRebalanced': {

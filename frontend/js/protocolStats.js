@@ -1,7 +1,7 @@
 // Protocol Stats - Calculate real-time protocol metrics
 
 import { getPublicClient, getContractEventsChunked, readHub } from './viemClient.js?v=3.22';
-import { CONTRACTS } from './config.js?v=3.22';
+import { CONTRACTS, getActiveChain, getDeployment } from './config.js?v=3.22';
 import { formatUnits } from 'https://esm.sh/viem@2.7.0';
 
 // Correct inline event definitions matching the deployed contract ABI
@@ -23,18 +23,25 @@ const MINT_INITIATED_EVENT = {
     type: 'event'
 };
 
-const DEPLOYMENT_BLOCK = 46200000n; // HyperEVM hub deployment block
 const MAX_BLOCK_RANGE = 10000n; // Conservative limit to avoid RPC errors
+
+// Deploy block comes from the active chain's manifest (written by the
+// deploy script as deployedAtBlock); 0n scans from genesis when absent.
+function deploymentBlock() {
+    const D = getDeployment(getActiveChain()?.key);
+    return BigInt(D?.deployedAtBlock ?? 0);
+}
 
 export async function updateProtocolStats() {
     try {
         const publicClient = getPublicClient();
         const currentBlock = await publicClient.getBlockNumber();
-        const fromBlock = currentBlock - MAX_BLOCK_RANGE > DEPLOYMENT_BLOCK
+        const deployBlock = deploymentBlock();
+        const fromBlock = currentBlock - MAX_BLOCK_RANGE > deployBlock
             ? currentBlock - MAX_BLOCK_RANGE
-            : DEPLOYMENT_BLOCK;
+            : deployBlock;
 
-        // Fetch mint events (chunked — HyperEVM RPCs cap eth_getLogs at ~1000 blocks)
+        // Fetch mint events (chunked — public RPCs cap eth_getLogs ranges)
         const mintEvents = await getContractEventsChunked({
             address: CONTRACTS.hub,
             abi: [MINT_INITIATED_EVENT],
@@ -91,7 +98,7 @@ async function fetchVaultAggregates() {
     // Fetch oracle prices — use the public storage getters (never revert) so the
     // last logged price is always available even when the oracle is stale.
     let xmrPrice = 0;
-    let collateralPrice = 1.0;
+    let collateralPrice = 0;
     try {
         const [xmrPriceRaw, collPriceRaw] = await Promise.all([
             readHub('lastXmrPrice').catch(() => null),
@@ -136,7 +143,7 @@ async function fetchVaultAggregates() {
         activeCount++;
     }
 
-    // Collateral ratio — convert stataUSDe shares to assets (share price > 1)
+    // Collateral ratio — convert share-token units to underlying assets (share price > 1)
     let collateralAssets = totalCollateral;
     try {
         const publicClient = getPublicClient();
@@ -150,7 +157,10 @@ async function fetchVaultAggregates() {
     } catch (e) {
         console.warn('[Protocol Stats] convertToAssets failed, using shares as collateral:', e.message);
     }
-    const collateralValueUsd = Number(formatUnits(collateralAssets, 18)) * collateralPrice;
+    const collDecimals = getActiveChain()?.collateral.decimals ?? 18;
+    const collateralValueUsd = collateralPrice > 0
+        ? Number(formatUnits(collateralAssets, collDecimals)) * collateralPrice
+        : 0;
     const debtValueUsd = Number(formatUnits(totalDebt, 8)) * xmrPrice;
     const collateralRatio = debtValueUsd > 0 ? (collateralValueUsd / debtValueUsd) * 100 : 0;
 
@@ -190,8 +200,8 @@ function updateStatsUI(totalMinted, collateralRatio, avgMintFee, avgBurnReward) 
                 collateralRatioEl.style.color = '#ef4444'; // Red
             }
         } else {
-            collateralRatioEl.textContent = '>200%';
-            collateralRatioEl.style.color = '#22c55e';
+            collateralRatioEl.textContent = '—';
+            collateralRatioEl.style.color = 'var(--muted)';
         }
     }
 

@@ -6,7 +6,7 @@ const { chromium } = require('playwright');
     page.on('console', m => { const t = m.text(); if (!/429|Failed to load resource/.test(t)) logs.push(`[${m.type()}] ${t}`); });
     page.on('pageerror', e => logs.push('PAGEERROR: ' + e.message));
     await page.goto('http://localhost:8000/app.html', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(e => console.log('NAV:', e.message));
-    await page.waitForTimeout(45000);
+    await page.waitForTimeout(20000);
     const sel = await page.evaluate(() => {
         const s = document.getElementById('mint-vault-select');
         return { opts: s ? [...s.options].map(o => o.value.slice(0, 16)) : null, sel: s?.value || null };

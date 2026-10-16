@@ -12,11 +12,11 @@
  * their secret, proving they control the Monero deposit address, and wsXMR is minted.
  */
 
-import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG } from './config.js?v=3.22';
-import { readHub, writeHub, watchContractEvent, getUserAddress } from './viemClient.js?v=3.22';
+import { CONTRACTS, ABIS, DECIMALS, SWAP_CONFIG, getActiveChain } from './config.js?v=3.22';
+import { readHub, writeHub, watchContractEvent, getUserAddress, getNativeBalance } from './viemClient.js?v=3.22';
 import { getPhantomAgent } from './phantomAgent.js?v=3.12';
 import { saveActiveSwap, updateSwapState, clearActiveSwap, saveToHistory, getActiveSwapByRequestId } from './storage.js?v=3.12';
-import { keccak256, toHex, parseEther } from 'https://esm.sh/viem@2.7.0';
+import { keccak256, toHex, parseEther, formatUnits } from 'https://esm.sh/viem@2.7.0';
 import { startDeadlineTimer, startStatusPolling, stopTimers } from './mintFlowTimers.js?v=3.12';
 import { showLPVerificationStatus, updateMintProgress, showSuccess, showConfirmModal, showSuccessNotification, showMintComplete } from './ui.js?v=3.22';
 
@@ -330,7 +330,7 @@ export class MintFlow {
             if (error.message && error.message.includes('TimeoutNotReached')) {
                 const blocksRemaining = await this._getBlocksRemaining();
                 const timeMsg = blocksRemaining !== null
-                    ? ` You need to wait ~${Math.ceil(blocksRemaining / 60)} more minutes (${blocksRemaining} blocks) before you can cancel.`
+                    ? ` You need to wait ~${Math.ceil(blocksRemaining * (getActiveChain()?.blockTimeSec || 1) / 60)} more minutes (${blocksRemaining} blocks) before you can cancel.`
                     : ' The mint timeout period has not been reached yet.';
                 showError('Cannot Cancel Yet', 'The mint timeout has not been reached.' + timeMsg);
                 return;
@@ -348,7 +348,7 @@ export class MintFlow {
     async _checkTimeoutReached() {
         const blocksRemaining = await this._getBlocksRemaining();
         if (blocksRemaining !== null && blocksRemaining > 0) {
-            const minutes = Math.ceil(blocksRemaining / 60);
+            const minutes = Math.ceil(blocksRemaining * (getActiveChain()?.blockTimeSec || 1) / 60);
             const { showError } = await import('./ui.js?v=3.22');
             showError(
                 'Cannot Cancel Yet',
@@ -453,7 +453,7 @@ export class MintFlow {
             // getXmrPrice enforces the 2-minute staleness check on-chain
             const xmrPrice = await readHub('getXmrPrice', []);
             const collateralPrice = await readHub('getCollateralPrice', []);
-            console.log('Oracle prices are fresh — XMR:', xmrPrice.toString(), 'USDe:', collateralPrice.toString());
+            console.log('Oracle prices are fresh — XMR:', xmrPrice.toString(), 'collateral:', collateralPrice.toString());
             return;
         } catch (error) {
             // StalePrice() or any other revert means we need to update
@@ -519,6 +519,30 @@ export class MintFlow {
             griefingDeposit: this.griefingDeposit.toString()
         });
 
+        // Preflight funding check: the griefing deposit is paid in the native
+        // gas token (msg.value) plus the tx needs gas. Without this the wallet
+        // throws an opaque insufficient-funds error.
+        try {
+            const nativeBal = await getNativeBalance(userAddress);
+            const gasBuffer = 500000000000000n; // ~0.0005 native — padded for gas
+            const needed = (this.griefingDeposit ?? 0n) + gasBuffer;
+            if (nativeBal < needed) {
+                const chain = getActiveChain();
+                const gasSym = chain?.nativeCurrency.symbol || 'ETH';
+                const links = (chain?.acquire?.gas || [])
+                    .map(l => `<a href="${l.url}" target="_blank" rel="noopener" style="color:var(--accent,#f7931a)">${l.label} ↗</a>`)
+                    .join(' · ');
+                const { showError } = await import('./ui.js?v=3.22');
+                showError(`Not enough ${gasSym}`,
+                    `This mint needs ~${formatUnits(needed, 18)} ${gasSym} (griefing deposit + gas) but the wallet holds ${formatUnits(nativeBal, 18)} ${gasSym}.` +
+                    (links ? `<br><br>Get ${gasSym}: ${links}` : ''));
+                throw new Error(`Insufficient ${gasSym} for griefing deposit + gas`);
+            }
+        } catch (err) {
+            if (err.message?.includes('Insufficient')) throw err;
+            console.warn('[Mint] Native balance preflight failed — continuing:', err.message);
+        }
+
         let receipt;
         try {
             receipt = await writeHub(
@@ -530,7 +554,11 @@ export class MintFlow {
                     commitment,
                     userPublicKey
                 ],
-                this.griefingDeposit
+                this.griefingDeposit,
+                // Padded gas — same variable-cost profile as requestBurn
+                // (yield sync + capacity checks); wallet estimates can land
+                // under the real need → mined OOG.
+                1500000n
             );
         } catch (error) {
             // Check if it's a StalePrice error (0x19abf40e)
@@ -789,7 +817,7 @@ export class MintFlow {
         startStatusPolling(this);
 
         // First, check if MintReady event was already emitted in the past.
-        // HyperEVM RPCs cap eth_getLogs at ~1000 blocks — stay under it, and
+        // Public RPCs cap eth_getLogs ranges — stay under the chain's chunk size, and
         // don't let a failed query kill the flow (the status poll below covers us).
         let mintReadySeen = false;
         try {
@@ -817,7 +845,7 @@ export class MintFlow {
             console.log('No past MintReady event found, watching for event + polling status...');
 
             // Race the MintReady event watcher against a direct status poll.
-            // The watcher alone is unreliable on HyperEVM: filter support is spotty,
+            // The watcher alone is unreliable on some RPCs: filter support is spotty,
             // rate limits silently kill polls, and an event emitted before the
             // watcher attaches is never re-delivered.
             await new Promise((resolve, reject) => {
@@ -1182,13 +1210,13 @@ export class MintFlow {
                         try {
                             const { CONTRACTS } = await import('./config.js?v=3.22');
                             await writeHub('withdrawReturns', [CONTRACTS.stataUSDe]);
-                            console.log('Slashed USDe key bond claimed via withdrawReturns');
+                            console.log('Slashed collateral key bond claimed via withdrawReturns');
                         } catch (usdeErr) {
-                            console.warn('Could not withdraw USDe returns (may have none):', usdeErr.message);
+                            console.warn('Could not withdraw collateral returns (may have none):', usdeErr.message);
                         }
                     } else {
                         const blocksRemaining = claimWindowEnd - Number(currentBlock);
-                        const minutes = Math.ceil(blocksRemaining / 60);
+                        const minutes = Math.ceil(blocksRemaining * (getActiveChain()?.blockTimeSec || 1) / 60);
                         const { showError } = await import('./ui.js?v=3.22');
                         showError(
                             'Waiting for LP Claim Window',
@@ -1199,7 +1227,7 @@ export class MintFlow {
                 } else if (status === 7) {
                     // EXPIRED_READY — LP has a claim window to reveal secret and take deposit.
                     // If LP reveals, user can read lpSecret from the event and recover XMR from shared address.
-                    // If LP doesn't claim within the window, anyone can sweep — user gets griefing deposit + par-value USDe slash.
+                    // If LP doesn't claim within the window, anyone can sweep — user gets griefing deposit + par-value collateral slash.
                     const { getPublicClient } = await import('./viemClient.js?v=3.22');
                     const publicClient = getPublicClient();
                     const currentBlock = await publicClient.getBlockNumber();
@@ -1211,17 +1239,17 @@ export class MintFlow {
                         // Withdraw ETH returns (griefing deposit)
                         await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
                         console.log('Griefing deposit claimed via withdrawReturns');
-                        // Withdraw USDe returns (slashed collateral)
+                        // Withdraw collateral returns (slashed collateral)
                         try {
                             const { CONTRACTS } = await import('./config.js?v=3.22');
                             await writeHub('withdrawReturns', [CONTRACTS.stataUSDe]);
-                            console.log('Slashed USDe collateral claimed via withdrawReturns');
+                            console.log('Slashed collateral claimed via withdrawReturns');
                         } catch (usdeErr) {
-                            console.warn('Could not withdraw USDe returns (may have none):', usdeErr.message);
+                            console.warn('Could not withdraw collateral returns (may have none):', usdeErr.message);
                         }
                     } else {
                         const blocksRemaining = claimWindowEnd - Number(currentBlock);
-                        const minutes = Math.ceil(blocksRemaining / 60);
+                        const minutes = Math.ceil(blocksRemaining * (getActiveChain()?.blockTimeSec || 1) / 60);
                         const { showError } = await import('./ui.js?v=3.22');
                         showError(
                             'Waiting for LP Claim Window',
@@ -1233,7 +1261,7 @@ export class MintFlow {
                     // Check timeout before calling cancelMint to avoid TimeoutNotReached revert
                     const blocksRemaining = await this._getBlocksRemaining();
                     if (blocksRemaining !== null && blocksRemaining > 0) {
-                        const minutes = Math.ceil(blocksRemaining / 60);
+                        const minutes = Math.ceil(blocksRemaining * (getActiveChain()?.blockTimeSec || 1) / 60);
                         console.warn(`Cannot cancel yet: timeout not reached (${blocksRemaining} blocks, ~${minutes} min remaining)`);
                         return;
                     }
@@ -1251,14 +1279,14 @@ export class MintFlow {
                     console.log('Mint request canceled on EVM');
                     // KEY_PROVIDED cancel parks the deposit (KEY_CANCELLED) — the key bond
                     // is only slashed later via reclaimParkedDeposit if the LP never reveals.
-                    // Try withdrawing USDe returns anyway in case a slash already landed.
+                    // Try withdrawing collateral returns anyway in case a slash already landed.
                     if (status === 2) {
                         try {
                             const { CONTRACTS } = await import('./config.js?v=3.22');
                             await writeHub('withdrawReturns', [CONTRACTS.stataUSDe]);
-                            console.log('Slashed USDe collateral claimed via withdrawReturns');
+                            console.log('Slashed collateral claimed via withdrawReturns');
                         } catch (usdeErr) {
-                            console.warn('Could not withdraw USDe returns (may have none):', usdeErr.message);
+                            console.warn('Could not withdraw collateral returns (may have none):', usdeErr.message);
                         }
                     }
                     // Withdraw griefing deposit

@@ -120,7 +120,7 @@
   <nav>
     <a href="index.html" class="brand" style="text-decoration:none"><img src="./wrapsynth-symbol.png" alt="Wrapsynth" style="width:22px;height:22px;border-radius:6px">Wrapsynth</a>
     <div class="nav-right">
-      <span class="pill"><img src="./hyperliquid.png" alt="HyperEVM" style="width:14px;height:14px;margin-right:4px;border-radius:50%;vertical-align:-2px">HyperEVM</span>
+      <span class="pill" id="chain-pill">…</span>
       <a href="app.html" style="padding:8px 16px;background:linear-gradient(135deg,var(--teal),#2a8a7a);color:#000;font-weight:600;border-radius:10px;text-decoration:none;font-size:14px;transition:all .2s ease;display:inline-block" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 12px rgba(61,155,138,.3)'" onmouseout="this.style.transform='';this.style.boxShadow=''">Back to App</a>
     </div>
   </nav>
@@ -139,7 +139,7 @@
         <div>
           <div class="stat-label">Total Collateral</div>
           <div class="stat-value" id="total-collateral">--</div>
-          <div class="stat-sub">USDe</div>
+          <div class="stat-sub" id="collateral-symbol">Collateral</div>
         </div>
         <div>
           <div class="stat-label">Total Debt</div>
@@ -201,67 +201,70 @@
 </div>
 
 <script type="module">
-import { createPublicClient, http, formatUnits, parseAbi } from 'https://esm.sh/viem@2.21.54';
-const hyperevm = { id: 999, name: 'HyperEVM', nativeCurrency: { name: 'HYPE', symbol: 'HYPE', decimals: 18 }, rpcUrls: { default: { http: ['https://rpc.hyperliquid.xyz/evm'] } } };
-
-// Load deployment.json
-const depRes = await fetch('./deployment.json?t=' + Date.now());
-if (!depRes.ok) throw new Error('Failed to load deployment.json: ' + depRes.status);
-const DEPLOYMENT = await depRes.json();
-const hub = DEPLOYMENT.contracts.wsXmrHub;
+import { createPublicClient, http, fallback, formatUnits, parseAbi } from 'https://esm.sh/viem@2.21.54';
+import { CHAINS, getChainConfig, loadDeployment } from './js/config.js?v=3.22';
+import { bootChain } from './js/chainPicker.js?v=3.22';
 
 const params = new URLSearchParams(window.location.search);
 const vaultAddress = params.get('address');
+const chainParam = params.get('chain');
 
-if (!vaultAddress) {
+// Resolve the chain: explicit ?chain= param → saved/active chain via bootChain.
+let chainKey = chainParam && CHAINS[chainParam] ? chainParam : await bootChain();
+const cfg = chainKey ? getChainConfig(chainKey) : null;
+document.getElementById('chain-pill').textContent = cfg ? cfg.name : 'No chain';
+if (cfg) document.getElementById('collateral-symbol').textContent = cfg.collateral.symbol;
+
+if (!cfg) {
+  document.getElementById('lp-name').textContent = 'No chain selected';
+} else if (!vaultAddress) {
   document.getElementById('lp-name').textContent = 'No vault specified';
 } else {
   loadVaultDetails(vaultAddress);
 }
 
 async function loadVaultDetails(address) {
+  const D = await loadDeployment(chainKey);
+  if (!D) { document.getElementById('lp-name').textContent = `${cfg.name} not deployed yet`; return; }
+  const hub = D.contracts.wsXmrHub;
+  const shareToken = (D.externalContracts || {}).stataQQQB || (D.externalContracts||{}).stataCbBTC
+    || (D.externalContracts||{}).stataSPY || (D.externalContracts||{}).stataUSDe;
+
   const client = createPublicClient({
-    chain: hyperevm,
-    transport: http('https://rpc.hyperliquid.xyz/evm')
+    chain: { id: cfg.chainId, name: cfg.name, nativeCurrency: cfg.nativeCurrency, rpcUrls: { default: { http: cfg.rpcUrls } } },
+    transport: fallback(cfg.rpcUrls.map(u => http(u)))
   });
 
   const shortAddr = `${address.slice(0, 6)}...${address.slice(-4)}`;
-  
-  document.getElementById('lp-name').textContent = `LP Vault ${shortAddr}`;
+  document.getElementById('lp-name').textContent = `LP Vault ${shortAddr} · ${cfg.name}`;
   document.getElementById('lp-address').textContent = address;
 
   try {
-    // Fetch vault data
     const vault = await client.readContract({
       address: hub,
       abi: [{
-        name: 'getVault',
-        type: 'function',
-        stateMutability: 'view',
+        name: 'getVault', type: 'function', stateMutability: 'view',
         inputs: [{name: 'lpAddress', type: 'address'}],
-        outputs: [{
-          type: 'tuple',
-          components: [
-            {name: 'lpAddress', type: 'address'},
-            {name: 'collateralShares', type: 'uint256'},
-            {name: 'lockedCollateral', type: 'uint256'},
-            {name: 'normalizedDebt', type: 'uint256'},
-            {name: 'pendingDebt', type: 'uint256'},
-            {name: 'maxMintBps', type: 'uint16'},
-            {name: 'mintGriefingDeposit', type: 'uint256'},
-            {name: 'mintFeeBps', type: 'uint16'},
-            {name: 'burnRewardBps', type: 'uint16'},
-            {name: 'liquidationNonce', type: 'uint256'},
-            {name: 'mintNonce', type: 'uint256'},
-            {name: 'minBurnAmount', type: 'uint256'},
-            {name: 'active', type: 'bool'},
-            {name: 'deployedUSDeShares', type: 'uint256'},
-            {name: 'maxCoLPRangeBps', type: 'uint16'},
-            {name: 'mintTimeoutBlocks', type: 'uint256'},
-            {name: 'burnTimeoutBlocks', type: 'uint256'},
-            {name: 'pendingMintCount', type: 'uint256'}
-          ]
-        }]
+        outputs: [{ type: 'tuple', components: [
+          {name: 'lpAddress', type: 'address'},
+          {name: 'collateralShares', type: 'uint256'},
+          {name: 'lockedCollateral', type: 'uint256'},
+          {name: 'normalizedDebt', type: 'uint256'},
+          {name: 'pendingDebt', type: 'uint256'},
+          {name: 'maxMintBps', type: 'uint16'},
+          {name: 'mintGriefingDeposit', type: 'uint256'},
+          {name: 'mintFeeBps', type: 'uint16'},
+          {name: 'burnRewardBps', type: 'uint16'},
+          {name: 'liquidationNonce', type: 'uint256'},
+          {name: 'mintNonce', type: 'uint256'},
+          {name: 'minBurnAmount', type: 'uint256'},
+          {name: 'active', type: 'bool'},
+          {name: 'deployedUSDeShares', type: 'uint256'},
+          {name: 'maxCoLPRangeBps', type: 'uint16'},
+          {name: 'mintTimeoutBlocks', type: 'uint256'},
+          {name: 'burnTimeoutBlocks', type: 'uint256'},
+          {name: 'pendingMintCount', type: 'uint256'}
+        ]}]
       }],
       functionName: 'getVault',
       args: [address]
@@ -274,37 +277,60 @@ async function loadVaultDetails(address) {
       args: [address]
     });
 
-    // Calculate health manually (collateral / debt ratio in USD terms)
-    const USDe = DEPLOYMENT.externalContracts.stataUSDe || DEPLOYMENT.externalContracts.sDAI;
-    const totalAssets = await client.readContract({
-      address: USDe,
-      abi: parseAbi(['function convertToAssets(uint256 shares) external view returns (uint256)']),
-      functionName: 'convertToAssets',
-      args: [vault.collateralShares]
-    });
-    
-    const collateral = Number(formatUnits(totalAssets, 18));
-    const debtAmount = Number(formatUnits(debt, 8));
-    
-    // Fetch XMR price from CoinGecko
-    let xmrPrice = 200;
-    try {
-      const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd');
-      const data = await res.json();
-      if (data.monero?.usd) xmrPrice = data.monero.usd;
-    } catch (e) {
-      console.warn('Failed to fetch XMR price');
+    // shares -> underlying collateral via the share token's convertToAssets
+    let underlying = vault.collateralShares;
+    if (shareToken) {
+      try {
+        underlying = await client.readContract({
+          address: shareToken,
+          abi: parseAbi(['function convertToAssets(uint256 shares) external view returns (uint256)']),
+          functionName: 'convertToAssets',
+          args: [vault.collateralShares]
+        });
+      } catch (e) { console.warn('convertToAssets failed, using shares', e); }
     }
-    
-    const collateralUSD = collateral * 1.0; // USDe ≈ $1
-    const debtUSD = debtAmount * xmrPrice;
-    const healthPct = debtUSD > 0 ? (collateralUSD / debtUSD) * 100 : 200;
+    const collateral = Number(formatUnits(underlying, cfg.collateral.decimals));
+    const debtAmount = Number(formatUnits(debt, 8));
 
-    document.getElementById('health-ratio').textContent = healthPct > 9999 ? '>9,999%' : `${healthPct.toFixed(0)}%`;
+    // On-chain collateral price (1e18 USD) — do NOT assume $1
+    let collateralPrice = 0;
+    try {
+      const raw = await client.readContract({
+        address: hub,
+        abi: parseAbi(['function getCollateralPrice() external view returns (uint256)']),
+        functionName: 'getCollateralPrice'
+      });
+      collateralPrice = Number(formatUnits(raw, 18));
+    } catch (e) { console.warn('getCollateralPrice unavailable', e); }
+
+    let xmrPrice = 0;
+    try {
+      const raw = await client.readContract({
+        address: hub,
+        abi: parseAbi(['function getXmrPrice() external view returns (uint256)']),
+        functionName: 'getXmrPrice'
+      });
+      xmrPrice = Number(formatUnits(raw, 18));
+    } catch (e) { console.warn('getXmrPrice unavailable, trying CoinGecko', e); }
+    if (!xmrPrice) {
+      try {
+        const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd');
+        const data = await res.json();
+        if (data.monero?.usd) xmrPrice = data.monero.usd;
+      } catch (e) { console.warn('Failed to fetch XMR price'); }
+    }
+
+    const collateralUSD = collateral * collateralPrice;
+    const debtUSD = debtAmount * xmrPrice;
+    const healthPct = debtUSD > 0 ? (collateralUSD / debtUSD) * 100 : (collateralUSD > 0 ? Infinity : 0);
+
+    document.getElementById('health-ratio').textContent =
+      collateralPrice > 0 && xmrPrice > 0
+        ? (healthPct === Infinity ? '∞' : healthPct > 9999 ? '>9,999%' : `${healthPct.toFixed(0)}%`)
+        : '—';
     document.getElementById('total-collateral').textContent = collateral.toFixed(4);
     document.getElementById('total-debt').textContent = debtAmount.toFixed(4);
 
-    // Display fee settings
     document.getElementById('mint-fee').textContent = `${Number(vault.mintFeeBps) / 100}%`;
     document.getElementById('burn-reward').textContent = `${Number(vault.burnRewardBps) / 100}%`;
 

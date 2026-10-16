@@ -9,6 +9,7 @@ import "../contracts/facets/MintFacet.sol";
 import "../contracts/facets/BurnFacet.sol";
 import "../contracts/facets/LiquidationFacet.sol";
 import "../contracts/facets/YieldFacet.sol";
+import "../contracts/facets/CoLPFacet.sol";
 import "../contracts/wsXMR.sol";
 import "../contracts/router/wsXMRLiquidityRouter.sol";
 import "../contracts/test/SwapHelper.sol";
@@ -80,6 +81,7 @@ contract DeployGnosis is Script {
         console.log("LiquidationFacet deployed to:", address(liquidationFacet));
         
         YieldFacet yieldFacet = new YieldFacet(address(wsxmr), VERIFIER);
+        CoLPFacet coLPFacet = new CoLPFacet(address(wsxmr), VERIFIER);
         console.log("YieldFacet deployed to:", address(yieldFacet));
         console.log("");
 
@@ -94,6 +96,7 @@ contract DeployGnosis is Script {
             address(yieldFacet),
             address(oracleFacet)
         );
+        hub.addFacet(address(coLPFacet));
         console.log("All facets registered");
         console.log("");
 
