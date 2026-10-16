@@ -1,0 +1,3320 @@
+// Main Application Entry Point
+// Phantom Agent - Deterministic Ephemeral Browser Wallet for XMR ⇄ wsXMR Swaps
+console.log('🔄 Wrapsynth Frontend v2.1 - DYNAMIC FEE & RECEIVE FIX');
+
+import {
+    initializeClients,
+    connectWallet,
+    ensureConnected,
+    getUserAddress,
+    getWsXmrBalance,
+    readHub,
+    writeHub,
+    onAccountsChanged,
+    onChainChanged
+} from './viemClient.js?v=3.22';
+import { formatUnits } from 'https://esm.sh/viem@2.7.0';
+
+import { 
+    initUI,
+    showWalletConnected,
+    showWalletDisconnected,
+    updateBalance,
+    showResumeBanner,
+    hideResumeBanner,
+    showContractsBanner,
+    hideContractsBanner,
+    showMintTab,
+    showBurnTab,
+    showCoLPTab,
+    saveActiveTab,
+    populateVaults,
+    showVaultInfo,
+    updateMintProgress,
+    completeMintStep,
+    showMintDepositInfo,
+    showLPVerificationStatus,
+    updateBurnProgress,
+    completeBurnStep,
+    showSuccess,
+    showBurnComplete,
+    showError,
+    showConfirmModal,
+    showResumeError,
+    showResumeSuccess,
+    showResumeCountdown,
+    disableInputs,
+    enableInputs,
+    resetMintUI,
+    resetBurnUI,
+    setupCopyButtons,
+    getElements,
+    setWithdrawReturnsVisible,
+    setStartMintButtonText,
+    showPreviousMintBanner,
+    hidePreviousMintBanner,
+    renderLPDetailCard,
+    initLPDetailToggles,
+    initVaultPickers
+} from './ui.js?v=3.22';
+
+import { MintFlow } from './mintFlow.js?v=3.22';
+import { stopTimers } from './mintFlowTimers.js?v=3.12';
+import { BurnFlow } from './burnFlow.js?v=3.22';
+import { getLPPanel } from './lpPanel.js?v=3.12';
+import { getPoolFlow } from './poolFlow.js?v=3.12';
+import { getCoLPFlow } from './coLPFlow.js?v=3.22';
+import { getDashboard } from './dashboard.js?v=3.12';
+import { hasActiveSwap, loadActiveSwap, loadActiveSwaps, saveActiveSwap, addOrUpdateActiveSwap, removeActiveSwap, clearActiveSwap, setSwapsArray, getActiveSwapByRequestId, saveToHistory, getSwapHistory } from './storage.js?v=3.12';
+import { CONTRACTS, SWAP_CONFIG } from './config.js?v=3.22';
+import { displaySwapHistory } from './swapHistory.js?v=3.12';
+import { loadRecentActivity, startActivityFeedWatcher } from './activityFeed.js?v=3.12';
+import { updateProtocolStats } from './protocolStats.js?v=3.12';
+
+// Global state
+let currentMintFlow = null;
+let currentBurnFlow = null;
+let mintProgressInterval = null;
+let cachedVaults = [];
+
+// Price cache with TTL to avoid API rate limits
+const priceCache = {
+    value: null,
+    timestamp: 0,
+    ttlMs: 5 * 60 * 1000 // 5 minutes
+};
+
+/**
+ * Fetch XMR price with caching and fallback sources.
+ * Tries CoinGecko first, then CoinCap (better CORS support).
+ */
+async function fetchXmrPrice(forceRefresh = false) {
+    const now = Date.now();
+    if (!forceRefresh && priceCache.value && (now - priceCache.timestamp) < priceCache.ttlMs) {
+        return priceCache.value;
+    }
+
+    const updateUI = (price) => {
+        const priceElement = document.getElementById('xmrPx');
+        if (priceElement) {
+            priceElement.textContent = price != null ? `$${price.toFixed(2)}` : '$--';
+        }
+        // Refresh USD equivalent displays if user already typed an amount
+        if (price && price > 0) {
+            const mintAmount = parseFloat(document.getElementById('mint-amount')?.value);
+            if (!isNaN(mintAmount) && mintAmount > 0) updateUsdEquivalent('mint-usd-equiv', mintAmount);
+            const burnAmount = parseFloat(document.getElementById('burn-amount')?.value);
+            if (!isNaN(burnAmount) && burnAmount > 0) updateUsdEquivalent('burn-usd-equiv', burnAmount);
+        }
+    };
+
+    // Source 1: CoinGecko (may fail with CORS/429 on localhost)
+    try {
+        const response = await fetch(
+            'https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd',
+            { signal: AbortSignal.timeout(5000) }
+        );
+        if (response.ok) {
+            const data = await response.json();
+            if (data.monero?.usd) {
+                const price = data.monero.usd;
+                priceCache.value = price;
+                priceCache.timestamp = now;
+                updateUI(price);
+                console.log('[PRICE] CoinGecko:', price);
+                return price;
+            }
+        }
+    } catch (e) {
+        console.warn('[PRICE] CoinGecko failed:', e.message);
+    }
+
+    // Source 2: CoinCap (CORS-friendly fallback)
+    try {
+        const response = await fetch(
+            'https://api.coincap.io/v2/assets/monero',
+            { signal: AbortSignal.timeout(5000) }
+        );
+        if (response.ok) {
+            const data = await response.json();
+            if (data.data?.priceUsd) {
+                const price = parseFloat(data.data.priceUsd);
+                priceCache.value = price;
+                priceCache.timestamp = now;
+                updateUI(price);
+                console.log('[PRICE] CoinCap:', price);
+                return price;
+            }
+        }
+    } catch (e) {
+        console.warn('[PRICE] CoinCap failed:', e.message);
+    }
+
+    // If we have a stale cached value, return it rather than null
+    if (priceCache.value) {
+        console.warn('[PRICE] Using stale cached price:', priceCache.value);
+        updateUI(priceCache.value);
+        return priceCache.value;
+    }
+
+    updateUI(null);
+    console.error('[PRICE] All price sources failed');
+    return null;
+}
+
+// Incremental scan cache — avoids rescanning 86k blocks every refresh,
+// which rate-limits the public RPCs (429s) and floods the console.
+const volumeScanCache = { lastBlock: null, mintEvents: [], burnEvents: [] };
+
+/**
+ * Fetch 24h volume from mint/burn events
+ */
+async function fetch24hVolume() {
+    try {
+        const { getPublicClient, getContractEventsChunked } = await import('./viemClient.js?v=3.22');
+        const { CONTRACTS } = await import('./config.js?v=3.22');
+        const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
+
+        const publicClient = getPublicClient();
+        const currentBlock = await publicClient.getBlockNumber();
+        // ~24h at ~1s/block — chunked queries keep us under the 1000-block RPC cap
+        const lookbackBlocks = 86400n;
+        const windowStart = currentBlock > lookbackBlocks ? currentBlock - lookbackBlocks : 0n;
+
+        const hubAbi = parseAbi([
+            'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout)',
+            'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey)'
+        ]);
+
+        // Incremental: only scan blocks since the last refresh. On first run
+        // (or if the cache predates the window) do the full 24h scan.
+        let fromBlock = windowStart;
+        if (volumeScanCache.lastBlock !== null && volumeScanCache.lastBlock >= windowStart) {
+            fromBlock = volumeScanCache.lastBlock + 1n;
+        } else {
+            volumeScanCache.mintEvents = [];
+            volumeScanCache.burnEvents = [];
+        }
+
+        if (fromBlock <= currentBlock) {
+            const [newMints, newBurns] = await Promise.all([
+                getContractEventsChunked({
+                    address: CONTRACTS.hub,
+                    abi: hubAbi,
+                    eventName: 'MintInitiated',
+                    fromBlock,
+                    toBlock: currentBlock
+                }),
+                getContractEventsChunked({
+                    address: CONTRACTS.hub,
+                    abi: hubAbi,
+                    eventName: 'BurnRequested',
+                    fromBlock,
+                    toBlock: currentBlock
+                })
+            ]);
+            volumeScanCache.mintEvents.push(...newMints);
+            volumeScanCache.burnEvents.push(...newBurns);
+        }
+        volumeScanCache.lastBlock = currentBlock;
+
+        // Drop events that aged out of the 24h window
+        volumeScanCache.mintEvents = volumeScanCache.mintEvents.filter(e => e.blockNumber >= windowStart);
+        volumeScanCache.burnEvents = volumeScanCache.burnEvents.filter(e => e.blockNumber >= windowStart);
+
+        // Sum up wsXMR amounts from both mints and burns
+        let totalWsxmr = 0n;
+        for (const event of volumeScanCache.mintEvents) {
+            totalWsxmr += event.args.wsxmrAmount;
+        }
+        for (const event of volumeScanCache.burnEvents) {
+            totalWsxmr += event.args.wsxmrAmount;
+        }
+        
+        // Convert to float (8 decimals)
+        const wsxmrVolume = Number(totalWsxmr) / 1e8;
+        
+        // Get XMR price
+        const xmrPrice = await fetchXmrPrice();
+        const volumeUsd = wsxmrVolume * (xmrPrice || 0);
+        
+        const volumeElement = document.getElementById('volume-stat');
+        if (volumeElement) {
+            if (volumeUsd >= 1000) {
+                volumeElement.textContent = `$${(volumeUsd / 1000).toFixed(1)}K`;
+            } else if (volumeUsd >= 1) {
+                volumeElement.textContent = `$${volumeUsd.toFixed(0)}`;
+            } else if (volumeUsd > 0) {
+                volumeElement.textContent = `$${volumeUsd.toFixed(2)}`;
+            } else {
+                volumeElement.textContent = '$0';
+            }
+        }
+        
+        console.log(`24h volume: ${wsxmrVolume.toFixed(2)} wsXMR ($${volumeUsd.toFixed(2)})`);
+    } catch (error) {
+        console.error('Could not fetch 24h volume:', error);
+        const volumeElement = document.getElementById('volume-stat');
+        if (volumeElement) {
+            volumeElement.textContent = '$0';
+        }
+    }
+}
+
+/**
+ * Initialize application
+ */
+async function init() {
+    console.log('[INIT] Phantom Agent initializing...');
+    
+    // Initialize UI
+    initUI();
+    
+    // Hide progress panels by default (will show when user starts a swap)
+    resetMintUI();
+    resetBurnUI();
+
+    // Solana devnet: no DEX pool — point Trade pill at the wsXMR solscan page
+    const dexLink = document.getElementById('dexscreener-link');
+    if (dexLink && CONTRACTS.wsxmrToken) {
+        dexLink.href = `https://solscan.io/token/${CONTRACTS.wsxmrToken}?cluster=devnet`;
+    }
+
+    // Restore previously active tab IMMEDIATELY to prevent flash
+    const savedTab = localStorage.getItem('wrapsynth-active-tab');
+    console.log('[INIT] Restoring saved tab:', savedTab);
+    if (savedTab === 'burn') {
+        showBurnTab();
+    } else if (savedTab === 'co-lp') {
+        showCoLPTab();
+    } else if (savedTab === 'lp') {
+        // Switch UI immediately without async operations
+        const elements = getElements();
+        elements.mintPanel.classList.add('hidden');
+        elements.burnPanel.classList.add('hidden');
+        elements.coLPPanel.classList.add('hidden');
+        elements.lpPanel.classList.remove('hidden');
+        elements.tabMint.classList.remove('active');
+        elements.tabBurn.classList.remove('active');
+        elements.tabCoLP.classList.remove('active');
+        elements.tabLp.classList.add('active');
+    } else {
+        // Default to mint tab
+        showMintTab();
+    }
+    
+    // Mark that JavaScript has loaded and tab is restored
+    document.body.classList.add('js-loaded');
+    
+    // Display swap history
+    displaySwapHistory();
+    setupCopyButtons();
+    
+    // Initialize viem clients
+    try {
+        await initializeClients();
+        console.log('[SUCCESS] Viem clients initialized');
+    } catch (error) {
+        console.error('Error initializing clients:', error);
+        showError('Initialization Error', error.message);
+    }
+
+    // Setup event handlers first (before wallet interactions) so we catch
+    // any accountsChanged events fired by the wallet during auto-connect.
+    setupEventHandlers();
+
+    // Listen for account/chain changes early
+    onAccountsChanged(handleAccountChange);
+    onChainChanged(handleChainChange);
+
+    // Start fire-and-forget fetches after a short delay to avoid RPC contention
+    // with the critical-path reads (loadVaults, checkForActiveSwap, etc.)
+    setTimeout(() => {
+        fetchXmrPrice();
+        fetch24hVolume();
+        loadRecentActivity();
+        startActivityFeedWatcher();
+        updateProtocolStats();
+    }, 2000);
+
+    // Wire up LP detail card toggles and vault pickers
+    initLPDetailToggles();
+    initVaultPickers();
+
+    // Try to auto-connect wallet if previously authorized
+    // handleAccountChange already calls loadVaults(), so no separate call needed
+    let autoConnected = false;
+    try {
+        const autoAddress = await ensureConnected();
+        if (autoAddress) {
+            console.log('[INIT] Auto-connected wallet:', autoAddress);
+            await handleAccountChange(autoAddress);
+            autoConnected = true;
+        }
+    } catch (e) {
+        console.warn('[INIT] Auto-connect failed:', e.message);
+    }
+
+    // Load vaults only if we didn't already via handleAccountChange
+    // (public reads via HTTP fallback work even without wallet)
+    if (!autoConnected) {
+        await loadVaults();
+    }
+
+    // Check for active swap
+    checkForActiveSwap();
+
+    // Update volume / on-chain stats every 60 seconds (incremental scans —
+    // cheap after the first run). Full activity-feed rescans run every 5 min;
+    // the 4s event watcher in startActivityFeedWatcher covers live updates.
+    let activityRescanCounter = 0;
+    setInterval(() => {
+        fetch24hVolume();
+        updateProtocolStats();
+
+        if (++activityRescanCounter % 5 === 0) {
+            loadRecentActivity();
+        }
+
+        // Re-check active swap statuses on chain if wallet is connected
+        const connectedAddress = getUserAddress();
+        if (connectedAddress && hasActiveSwap()) {
+            checkForActiveSwapOnChain(connectedAddress).catch(err =>
+                console.warn('[Periodic] Active swap chain check failed:', err.message)
+            );
+        }
+    }, 60000);
+
+    // Refresh XMR price every 5 minutes (CoinGecko free-tier friendly)
+    setInterval(() => {
+        fetchXmrPrice(true);
+    }, 5 * 60 * 1000);
+
+    // Load async tab-specific data if needed
+    if (savedTab === 'co-lp') {
+        await handleCoLPTab();
+    } else if (savedTab === 'lp') {
+        // LP tab data already loaded by loadVaults()
+    }
+
+    console.log('[SUCCESS] Phantom Agent ready');
+}
+
+/**
+ * Setup all event handlers
+ */
+function setupEventHandlers() {
+    const elements = getElements();
+    
+    // Wallet connection
+    elements.connectWallet.addEventListener('click', handleConnectWallet);
+    elements.disconnectWallet?.addEventListener('click', handleDisconnectWallet);
+    if (elements.withdrawReturnsBtn) {
+        elements.withdrawReturnsBtn.addEventListener('click', handleWithdrawReturns);
+    }
+    document.getElementById('co-lp-withdraw-btn')?.addEventListener('click', handleWithdrawReturns);
+    
+    // Tab switching
+    elements.tabMint.addEventListener('click', () => showMintTab());
+    elements.tabBurn.addEventListener('click', () => showBurnTab());
+    elements.tabCoLP.addEventListener('click', () => handleCoLPTab());
+    elements.tabLp.addEventListener('click', () => handleLpTab());
+    
+    // Mint flow
+    elements.startMint.addEventListener('click', handleStartMint);
+    elements.cancelMint.addEventListener('click', handleCancelMint);
+    elements.mintVaultSelect.addEventListener('change', () => handleVaultSelect(true));
+    elements.mintAmount.addEventListener('input', () => {
+        updateMintCapacityDisplay();
+        updateMintReceiveAmount();
+    });
+
+    // Burn flow
+    elements.startBurn.addEventListener('click', handleStartBurn);
+    if (elements.cancelBurn) elements.cancelBurn.addEventListener('click', handleCancelBurn);
+    elements.burnVaultSelect.addEventListener('change', () => handleVaultSelect(false));
+    elements.burnAmount.addEventListener('input', updateBurnReceiveAmount);
+    
+    // Co-LP handlers
+    const coLpVaultSelect = document.getElementById('colp-vault-select');
+    if (coLpVaultSelect) {
+        coLpVaultSelect.addEventListener('change', handleCoLPVaultSelect);
+    }
+    const coLpAmountInput = document.getElementById('co-lp-amount');
+    if (coLpAmountInput) {
+        coLpAmountInput.addEventListener('input', validateCoLPOpenButton);
+    }
+    const coLpOpenBtn = document.getElementById('co-lp-open');
+    if (coLpOpenBtn) {
+        coLpOpenBtn.addEventListener('click', handleCoLPOpen);
+    }
+    const coLpSetRangeBtn = document.getElementById('co-lp-set-range');
+    if (coLpSetRangeBtn) {
+        coLpSetRangeBtn.addEventListener('click', handleCoLPSetRange);
+    }
+    const coLpRefreshBtn = document.getElementById('co-lp-refresh-positions');
+    if (coLpRefreshBtn) {
+        coLpRefreshBtn.addEventListener('click', handleRefreshCoLPPositions);
+    }
+
+    // Burn percentage buttons
+    document.querySelectorAll('.percentage-btn').forEach(btn => {
+        btn.addEventListener('click', handleBurnPercentage);
+    });
+
+    // Co-LP percentage buttons
+    document.querySelectorAll('.colp-percentage-btn').forEach(btn => {
+        btn.addEventListener('click', handleCoLPPercentage);
+    });
+    
+    // Manual price update button
+    const updatePricesBtn = document.getElementById('update-prices-btn');
+    if (updatePricesBtn) {
+        updatePricesBtn.addEventListener('click', handleUpdatePrices);
+    }
+}
+
+/**
+ * Handle burn percentage button clicks
+ */
+async function handleBurnPercentage(event) {
+    const percentage = parseInt(event.target.dataset.percentage);
+    const feedback = document.getElementById('burn-percentage-feedback');
+    
+    // Get actual balance from contract
+    const { readWsxmr, getUserAddress } = await import('./viemClient.js?v=3.22');
+    const userAddress = getUserAddress();
+    
+    if (!userAddress) {
+        feedback.textContent = 'Connect wallet first';
+        feedback.style.opacity = '1';
+        setTimeout(() => { feedback.style.opacity = '0'; }, 2000);
+        return;
+    }
+    
+    try {
+        const balance = await readWsxmr('balanceOf', [userAddress]);
+        const balanceNum = Number(balance) / 1e8; // wsXMR has 8 decimals
+        
+        if (balanceNum === 0) {
+            feedback.textContent = 'No balance';
+            feedback.style.opacity = '1';
+            setTimeout(() => { feedback.style.opacity = '0'; }, 2000);
+            return;
+        }
+        
+        const amount = (balanceNum * percentage) / 100;
+        const burnAmountInput = document.getElementById('burn-amount');
+        burnAmountInput.value = amount.toFixed(8);
+        burnAmountInput.dispatchEvent(new Event('input', { bubbles: true }));
+        
+        feedback.textContent = `✓ ${percentage}%`;
+        feedback.style.opacity = '1';
+        setTimeout(() => { feedback.style.opacity = '0'; }, 1500);
+    } catch (error) {
+        console.error('Failed to get balance:', error);
+        feedback.textContent = 'Error';
+        feedback.style.opacity = '1';
+        setTimeout(() => { feedback.style.opacity = '0'; }, 2000);
+    }
+}
+
+/**
+ * Handle Co-LP percentage button clicks
+ */
+async function handleCoLPPercentage(event) {
+    const percentage = parseInt(event.target.dataset.percentage);
+    const feedback = document.getElementById('colp-percentage-feedback');
+    const amountInput = document.getElementById('co-lp-amount');
+
+    if (!getUserAddress()) {
+        feedback.textContent = 'Connect wallet first';
+        feedback.style.opacity = '1';
+        setTimeout(() => { feedback.style.opacity = '0'; }, 2000);
+        return;
+    }
+
+    try {
+        const address = getUserAddress();
+        const balance = await getWsXmrBalance(address);
+        const balanceNum = Number(balance) / 1e8;
+
+        if (balanceNum === 0) {
+            feedback.textContent = 'No balance';
+            feedback.style.opacity = '1';
+            setTimeout(() => { feedback.style.opacity = '0'; }, 2000);
+            return;
+        }
+
+        const amount = (balanceNum * percentage) / 100;
+        amountInput.value = amount.toFixed(8);
+
+        feedback.textContent = `✓ ${percentage}%`;
+        feedback.style.opacity = '1';
+        setTimeout(() => { feedback.style.opacity = '0'; }, 1500);
+        validateCoLPOpenButton();
+    } catch (error) {
+        console.error('Failed to get balance:', error);
+        feedback.textContent = 'Error';
+        feedback.style.opacity = '1';
+        setTimeout(() => { feedback.style.opacity = '0'; }, 2000);
+    }
+}
+
+/**
+ * Handle manual price update
+ */
+async function handleUpdatePrices() {
+    const btn = document.getElementById('update-prices-btn');
+    const originalText = btn.innerHTML;
+    
+    try {
+        // Disable button and show loading state
+        btn.disabled = true;
+        btn.innerHTML = '<span class="btn-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg></span><span>Updating...</span>';
+        
+        console.log('Manually updating oracle prices...');
+        
+        // Import and call the update function
+        const { updateOraclePrices } = await import('./redstoneWrapper.js?v=' + Date.now());
+        await updateOraclePrices();
+        
+        // Success feedback
+        btn.innerHTML = '<span class="btn-icon">✅</span><span>Updated!</span>';
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }, 2000);
+        
+        console.log('✅ Oracle prices updated successfully');
+        const { showSuccessNotification } = await import('./ui.js?v=3.22');
+        showSuccessNotification('Prices Updated', '<p>Oracle prices have been updated with latest RedStone data.</p>');
+        
+    } catch (error) {
+        console.error('Failed to update prices:', error);
+        btn.innerHTML = '<span class="btn-icon">❌</span><span>Failed</span>';
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }, 2000);
+        
+        const { showErrorNotification } = await import('./ui.js?v=3.22');
+        showErrorNotification('Update Failed', `<p>Could not update oracle prices: ${error.message}</p>`);
+    }
+}
+
+/**
+ * Handle wallet disconnect — clears session state and reloads so every
+ * account-scoped view (positions, balances, pending returns) resets cleanly.
+ */
+async function handleDisconnectWallet() {
+    const { disconnectWallet } = await import('./viemClient.js?v=3.22');
+    await disconnectWallet();
+    location.reload();
+}
+
+/**
+ * Handle wallet connection
+ */
+async function handleConnectWallet() {
+    try {
+        const address = await connectWallet();
+        console.log('Wallet connected:', address);
+        
+        // Get user balance (with graceful fallback)
+        let balance = 0n;
+        try {
+            balance = await getWsXmrBalance(address);
+        } catch (balanceError) {
+            console.warn('Could not fetch balance (contracts may not be deployed):', balanceError.message);
+            // Show banner instead of modal
+            showContractsBanner();
+        }
+        
+        // Update UI
+        showWalletConnected(address, balance);
+        
+        // Load vaults
+        await loadVaults();
+
+        // Refresh Co-LP state
+        await refreshCoLPBalance();
+        await handleRefreshCoLPPositions();
+        validateCoLPOpenButton();
+
+        // Check for active swaps on chain
+        await checkForActiveSwapOnChain(address);
+        
+        // Auto-resume most recent swap, but keep banner visible for all
+        const allSwaps = loadActiveSwaps();
+        if (allSwaps.length > 0) {
+            const mostRecent = allSwaps[allSwaps.length - 1];
+            autoResumeSwap(mostRecent);
+        }
+        
+    } catch (error) {
+        console.error('Error connecting wallet:', error);
+        showError('Connection Error', error.message);
+    }
+}
+
+/**
+ * Auto-resume a specific swap without hiding the banner
+ */
+function autoResumeSwap(swap) {
+    if (!swap) return;
+    if (currentResumingSwapId) {
+        console.log('Manual resume in progress, skipping auto-resume');
+        return;
+    }
+
+    // Don't auto-resume swaps that can't be resumed (no stored secret)
+    if (!swap.publicSpendKey) {
+        console.log('Skipping auto-resume: swap has no publicSpendKey');
+        return;
+    }
+
+    if (swap.type === 'mint') {
+        // Pre-check: don't auto-resume if seed is missing
+        // publicSpendKey has '0x' prefix (from toHex); keep it for correct lookup
+        const pubKeyHex = swap.publicSpendKey;
+        import('./seedStorage.js?v=3.12').then(({ hasStoredSeed }) => {
+            if (!hasStoredSeed(pubKeyHex)) {
+                console.log('Auto-resume skipped: seed not found for', swap.requestId.slice(0,10));
+                return;
+            }
+            showMintTab();
+            currentResumingSwapId = swap.requestId;
+            currentMintFlow = new MintFlow();
+            setStartMintButtonText('Start New Mint');
+            trackMintProgress(currentMintFlow);
+            currentMintFlow.resume(swap).then(() => {
+                // Refresh balance and reset UI after successful auto-resume
+                currentResumingSwapId = null;
+                const address = getUserAddress();
+                if (address) {
+                    getWsXmrBalance(address).then(balance => updateBalance(balance)).catch(() => {});
+                }
+                resetMintUI();
+            }).catch(err => {
+                currentResumingSwapId = null;
+                console.error('Auto-resume mint error:', err);
+                const isStuck = (swap.state === 'lp-ready' || swap.state === 'finalize');
+                showResumeError(swap.requestId, err.message || 'Could not resume your mint. ' + (isStuck ? 'Click Dismiss to hide this swap.' : 'Please clear the swap and start fresh.'));
+                if (isStuck) {
+                    addDismissButtonToSwapItem(swap.requestId);
+                } else {
+                    addClearButtonToSwapItem(swap.requestId);
+                }
+            });
+        });
+        return;
+    } else if (swap.type === 'burn') {
+        showBurnTab();
+        currentBurnFlow = new BurnFlow();
+        trackBurnProgress(currentBurnFlow);
+        currentBurnFlow.resume(swap).catch(err => {
+            console.error('Auto-resume burn error:', err);
+            showResumeError(swap.requestId, err.message || 'Could not resume your burn. Please clear the swap and start fresh.');
+        });
+    }
+}
+
+/**
+ * Handle account change
+ */
+async function handleAccountChange(newAddress) {
+    if (newAddress) {
+        console.log('Account changed to:', newAddress);
+        let balance = 0n;
+        try {
+            balance = await getWsXmrBalance(newAddress);
+        } catch (error) {
+            console.warn('Could not fetch balance:', error.message);
+        }
+        showWalletConnected(newAddress, balance);
+
+        // Fire vault loading without blocking — UI shows immediately, vaults populate when ready
+        loadVaults().catch(e => console.warn('loadVaults failed:', e.message));
+
+        // Run remaining independent async operations in parallel
+        await Promise.all([
+            refreshCoLPBalance(balance),
+            handleRefreshCoLPPositions(),
+            checkForActiveSwapOnChain(newAddress),
+            checkPendingReturns(newAddress),
+        ]);
+
+        validateCoLPOpenButton();
+
+        // Auto-resume most recent swap, but keep banner visible for all
+        const allSwaps = loadActiveSwaps();
+        if (allSwaps.length > 0) {
+            const mostRecent = allSwaps[allSwaps.length - 1];
+            autoResumeSwap(mostRecent);
+        }
+    } else {
+        console.log('Account disconnected');
+        // Try to silently reconnect before showing disconnected state
+        const { ensureConnected } = await import('./viemClient.js?v=3.22');
+        const reconnected = await ensureConnected();
+        if (reconnected) {
+            console.log('Silently reconnected:', reconnected);
+            return handleAccountChange(reconnected);
+        }
+        localStorage.removeItem('wrapsynth-wallet-connected');
+        showWalletDisconnected();
+        setWithdrawReturnsVisible(false);
+    }
+}
+
+/**
+ * Check if user has pending returns and show/hide button
+ */
+async function checkPendingReturns(address) {
+    try {
+        const ethReturns = await readHub('getPendingReturns', [address, '0x0000000000000000000000000000000000000000']);
+        const usdeReturns = CONTRACTS.stataUSDe
+            ? await readHub('getPendingReturns', [address, CONTRACTS.stataUSDe])
+            : 0n;
+        const wsxmrReturns = CONTRACTS.wsxmrToken
+            ? await readHub('getPendingReturns', [address, CONTRACTS.wsxmrToken])
+            : 0n;
+        const hasReturns = ethReturns > 0n || usdeReturns > 0n || wsxmrReturns > 0n;
+        const parts = [];
+        if (wsxmrReturns > 0n) parts.push(`${formatUnits(wsxmrReturns, 8)} wsXMR`);
+        if (usdeReturns > 0n) parts.push(`${formatUnits(usdeReturns, 18)} QQQx`);
+        if (ethReturns > 0n) parts.push(`${formatUnits(ethReturns, 18)} SOL`);
+        // Show only when there's something to claim — label carries the amounts.
+        // On read failure (catch) we leave the current state untouched rather
+        // than hide a balance we failed to measure.
+        setWithdrawReturnsVisible(hasReturns, hasReturns ? `Withdraw ${parts.join(' + ')}` : undefined);
+
+        // Mirror into the Co-LP panel row so users see it where they claimed
+        const row = document.getElementById('co-lp-pending');
+        if (row) {
+            if (hasReturns) {
+                document.getElementById('co-lp-pending-amt').textContent = parts.join(' + ');
+                row.classList.remove('hidden');
+            } else {
+                row.classList.add('hidden');
+            }
+        }
+    } catch (error) {
+        console.warn('Could not check pending returns:', error.message);
+    }
+}
+
+/**
+ * Handle withdraw returns button click
+ */
+async function handleWithdrawReturns() {
+    const address = getUserAddress();
+    if (!address) return;
+    
+    try {
+        const ethReturns = await readHub('getPendingReturns', [address, '0x0000000000000000000000000000000000000000']);
+        const usdeReturns = await readHub('getPendingReturns', [address, CONTRACTS.stataUSDe]);
+        const wsxmrReturns = await readHub('getPendingReturns', [address, CONTRACTS.wsxmrToken]);
+        
+        const txs = [];
+        
+        if (ethReturns > 0n) {
+            const receipt = await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
+            txs.push(receipt.transactionHash);
+        }
+        
+        if (usdeReturns > 0n) {
+            const receipt = await writeHub('withdrawReturns', [CONTRACTS.stataUSDe]);
+            txs.push(receipt.transactionHash);
+        }
+
+        if (wsxmrReturns > 0n) {
+            const receipt = await writeHub('withdrawReturns', [CONTRACTS.wsxmrToken]);
+            txs.push(receipt.transactionHash);
+        }
+        
+        if (txs.length > 0) {
+            showSuccess('Returns Withdrawn', `Withdrew from ${txs.length} token(s).`);
+            checkPendingReturns(address).catch(() => {});
+        } else {
+            showError('No Returns', 'You have no pending returns to withdraw.');
+        }
+    } catch (error) {
+        console.error('Error withdrawing returns:', error);
+        showError('Withdraw Failed', error.message || 'Could not withdraw returns.');
+    }
+}
+
+/**
+ * Handle chain change
+ */
+async function handleChainChange(chainId) {
+    console.log('Chain changed to:', chainId);
+    
+    // Reinitialize clients with new chain
+    try {
+        await initializeClients();
+        
+        // If user was connected, reconnect
+        const currentAddress = getUserAddress();
+        if (currentAddress) {
+            const address = await connectWallet();
+            let balance = 0n;
+            try {
+                balance = await getWsXmrBalance(address);
+            } catch (error) {
+                console.warn('Could not fetch balance:', error.message);
+            }
+            showWalletConnected(address, balance);
+            await loadVaults();
+            await refreshCoLPBalance();
+            await handleRefreshCoLPPositions();
+            validateCoLPOpenButton();
+        }
+    } catch (error) {
+        console.error('Error handling chain change:', error);
+        showError('Network Error', 'Failed to switch network. Please try reconnecting your wallet.');
+    }
+}
+
+/**
+ * Filter active swaps for the resume banner — exclude the swap the user is
+ * currently viewing (it's already on screen; a resume prompt for it is noise).
+ */
+function getBannerSwaps(swaps) {
+    const currentId = (currentBurnFlow && currentBurnFlow.requestId) || (currentMintFlow && currentMintFlow.requestId);
+    if (!currentId) return swaps;
+    return swaps.filter(s => s.requestId !== currentId);
+}
+
+/**
+ * Check for active swap on startup (localStorage only)
+ */
+async function checkForActiveSwap() {
+    const swaps = loadActiveSwaps().filter(s => !s.dismissed);
+    if (swaps.length === 0) return;
+
+    console.log('Found saved swaps in localStorage:', swaps);
+
+    // Show banner for non-dismissed swaps - on-chain check will happen when wallet connects
+    showResumeBanner(getBannerSwaps(swaps), handleResumeSwap, handleResolveSwap);
+}
+
+/**
+ * Check for active swaps on-chain and sync to localStorage
+ */
+async function checkForActiveSwapOnChain(userAddress) {
+    console.log('========================================');
+    console.log('>>> checkForActiveSwapOnChain CALLED');
+    console.log('>>> userAddress:', userAddress);
+    console.log('========================================');
+
+    if (!userAddress) {
+        console.log('>>> ABORT: no userAddress');
+        return;
+    }
+
+    console.log('[CHAIN CHECK] Checking for active swaps on chain for', userAddress);
+
+    const foundSwaps = [];
+    const activeRequestIds = new Set();
+
+    try {
+        // Fetch mint request IDs, burn request IDs, and current block number in parallel
+        const { getPublicClient } = await import('./viemClient.js?v=3.22');
+        const publicClient = getPublicClient();
+
+        console.log('[CHAIN CHECK] Fetching mint IDs, burn IDs, and block number in parallel for', userAddress);
+        const [mintRequestIdsResult, burnRequestIdsResult, currentBlockResult] = await Promise.all([
+            readHub('getUserMintRequests', [userAddress]).catch(err => {
+                console.error('[CHAIN CHECK] getUserMintRequests FAILED:', err.message);
+                return [];
+            }),
+            readHub('getUserBurnRequests', [userAddress]).catch(err => {
+                console.error('[CHAIN CHECK] getUserBurnRequests FAILED:', err.message);
+                return [];
+            }),
+            publicClient.getBlockNumber().catch(err => {
+                console.error('[CHAIN CHECK] getBlockNumber FAILED:', err.message);
+                return 0n;
+            }),
+        ]);
+
+        const mintRequestIds = mintRequestIdsResult || [];
+        const burnRequestIds = burnRequestIdsResult || [];
+        const currentBlock = currentBlockResult;
+
+        console.log('[CHAIN CHECK] getUserMintRequests returned', mintRequestIds.length, 'request(s):', mintRequestIds);
+        console.log('[CHAIN CHECK] getUserBurnRequests returned', burnRequestIds.length, 'request(s)');
+
+        // Fetch all mint request details in parallel
+        const mintReqResults = await Promise.all(
+            mintRequestIds.map(requestId =>
+                readHub('getMintRequest', [requestId])
+                    .then(req => ({ requestId, mintReq: req }))
+                    .catch(err => {
+                        console.error('[CHAIN CHECK] getMintRequest FAILED for', requestId, ':', err.message);
+                        return { requestId, mintReq: null };
+                    })
+            )
+        );
+
+        // Process mint results and fetch lpPublicKeys in parallel for active mints
+        const activeMintEntries = [];
+        for (const { requestId, mintReq } of mintReqResults) {
+            if (!mintReq) continue;
+            // Status: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED,
+            // 5=COMPLETED, 6=CANCELLED, 7=EXPIRED_READY, 8=KEY_CANCELLED (deposit parked)
+            if (mintReq.status === 1 || mintReq.status === 2 || mintReq.status === 3 || mintReq.status === 4) {
+                const timeout = Number(mintReq.timeout);
+                if (currentBlock >= timeout) {
+                    console.log('[CHAIN CHECK] Mint expired:', { requestId, timeout, currentBlock });
+                    continue;
+                }
+                activeMintEntries.push({ requestId, mintReq });
+            }
+        }
+
+        // Fetch all lpPublicKeys for active mints in parallel
+        const lpKeyResults = await Promise.all(
+            activeMintEntries.map(({ requestId }) =>
+                readHub('lpPublicKeys', [requestId])
+                    .catch(err => {
+                        console.warn('[CHAIN CHECK] lpPublicKeys query failed:', err.message);
+                        return '0x0000000000000000000000000000000000000000000000000000000000000000';
+                    })
+            )
+        );
+
+        for (let i = 0; i < activeMintEntries.length; i++) {
+            const { requestId, mintReq } = activeMintEntries[i];
+            const lpPublicKey = lpKeyResults[i];
+            const hasLpKey = lpPublicKey !== '0x0000000000000000000000000000000000000000000000000000000000000000';
+
+            activeRequestIds.add(requestId);
+
+            let state;
+            if (mintReq.status === 3) state = 'lp-ready';  // READY - can finalize
+            else if (mintReq.status === 2) state = 'lp-verifying';  // KEY_PROVIDED - LP is verifying
+            else if (hasLpKey) state = 'deposit';  // PENDING with LP key - waiting for XMR
+            else state = 'awaiting-lp-key';  // PENDING without LP key
+
+            const xmrAmount = Number(mintReq.xmrAmount) / 1e12;
+            let swap = {
+                type: 'mint',
+                state,
+                requestId,
+                lpVault: mintReq.lpVault,
+                xmrAmount,
+                wsxmrAmount: mintReq.wsxmrAmount.toString(),
+                griefingDeposit: mintReq.griefingDeposit.toString(),
+                // Recover publicSpendKey from on-chain userPublicKey so resume works
+                // even if localStorage lost it (e.g. cleared browser data)
+                publicSpendKey: mintReq.userPublicKey,
+                lastUpdated: Date.now()
+            };
+            // Preserve local-only fields (e.g. depositAddress, lpPublicSpendKey, dismissed) from existing entry
+            const existing = getActiveSwapByRequestId(requestId);
+            if (existing) {
+                swap = { ...existing, ...swap };
+                // Don't overwrite a valid existing publicSpendKey with chain data if they differ
+                if (existing.publicSpendKey && existing.publicSpendKey !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
+                    swap.publicSpendKey = existing.publicSpendKey;
+                }
+                if (existing.dismissed) {
+                    console.log('[CHAIN CHECK] Preserving dismissed flag for', requestId.slice(0, 14));
+                }
+            }
+            addOrUpdateActiveSwap(swap);
+            foundSwaps.push(swap);
+            console.log('[CHAIN CHECK] Active mint found:', { requestId, state, xmrAmount, dismissed: swap.dismissed });
+        }
+
+        // Fetch all burn request details in parallel
+        const burnReqResults = await Promise.all(
+            burnRequestIds.map(requestId =>
+                readHub('getBurnRequest', [requestId])
+                    .then(req => ({ requestId, burnReq: req }))
+                    .catch(err => {
+                        console.error('[CHAIN CHECK] getBurnRequest FAILED for', requestId, ':', err.message);
+                        return { requestId, burnReq: null };
+                    })
+            )
+        );
+
+        for (const { requestId, burnReq } of burnReqResults) {
+            if (!burnReq) continue;
+
+            // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=FINALIZED, 5=CANCELLED, 6=SLASHED
+            if (burnReq.status === 1 || burnReq.status === 2 || burnReq.status === 3 || burnReq.status === 4) {
+                // Finalized burns already resolved locally (swept / dismissed via resume)
+                // live in history — don't resurrect them as 'sweeping' on every refresh.
+                if (burnReq.status === 4 && getSwapHistory().some(h => h.requestId === requestId)) {
+                    console.log('[CHAIN CHECK] Burn already in history, skipping:', requestId.slice(0, 14));
+                    continue;
+                }
+                // Check if burn has expired (only for REQUESTED/PROPOSED status)
+                let isExpired = false;
+                if (burnReq.status === 1 || burnReq.status === 2) {
+                    const deadline = Number(burnReq.deadline);
+                    if (currentBlock >= deadline) {
+                        console.log('[CHAIN CHECK] Burn expired:', { requestId, deadline, currentBlock });
+                        isExpired = true;
+                    }
+                }
+
+                activeRequestIds.add(requestId);
+                let state;
+                if (burnReq.status === 4) state = 'sweeping';       // finalized on-chain — XMR still claimable
+                else if (burnReq.status === 3) state = 'lp-finalize'; // committed — waiting for LP finalize
+                else if (burnReq.status === 2) state = 'lp-propose';
+                else state = 'evm-request';
+
+                const xmrAmount = Number(burnReq.xmrAmount) / 1e12;
+                const existingSwap = getActiveSwapByRequestId(requestId);
+                let swap = {
+                    type: 'burn',
+                    state,
+                    requestId,
+                    lpVault: burnReq.lpVault,
+                    // Contract may zero wsxmrAmount after finalize — keep local value
+                    wsxmrAmount: Number(burnReq.wsxmrAmount) / 1e8 || existingSwap?.wsxmrAmount || 0,
+                    xmrAmount,
+                    lastUpdated: Date.now()
+                };
+                // Preserve local-only fields from existing entry
+                const existing = getActiveSwapByRequestId(requestId);
+                if (existing) {
+                    swap = { ...existing, ...swap };
+                    // Don't resurrect a burn the user already finished sweeping
+                    if ((existing.state === 'completed' || existing.state === 'swept') && state === 'sweeping') {
+                        swap.state = existing.state;
+                    }
+                    if (existing.dismissed) {
+                        console.log('[CHAIN CHECK] Preserving dismissed flag for burn', requestId.slice(0, 14));
+                    }
+                }
+                addOrUpdateActiveSwap(swap);
+                foundSwaps.push(swap);
+                console.log('[CHAIN CHECK] Active burn found:', { requestId, state, xmrAmount, dismissed: swap.dismissed });
+            }
+        }
+
+        // ─── Prune stale localStorage entries ────────────────────────────────
+        const allSwaps = loadActiveSwaps();
+        const seen = new Map();
+        for (const swap of allSwaps) {
+            if (!swap.requestId) continue;
+            if (!activeRequestIds.has(swap.requestId)) continue;
+            const existing = seen.get(swap.requestId);
+            if (!existing) {
+                seen.set(swap.requestId, swap);
+            } else if (swap.dismissed && !existing.dismissed) {
+                // Prefer dismissed entries even if older — user explicitly hid this swap
+                seen.set(swap.requestId, swap);
+            } else if ((swap.lastUpdated || 0) > (existing.lastUpdated || 0)) {
+                seen.set(swap.requestId, swap);
+            }
+        }
+        const pruned = Array.from(seen.values());
+        const dismissedCount = pruned.filter(s => s.dismissed).length;
+        if (dismissedCount > 0) {
+            console.log('[CHAIN CHECK] Dedup preserving', dismissedCount, 'dismissed swap(s)');
+        }
+        if (pruned.length !== allSwaps.length) {
+            setSwapsArray(pruned);
+        }
+
+        // ─── Show banner ───────────────────────────────────────────────────────
+        const all = loadActiveSwaps();
+        console.log('[CHAIN CHECK] All stored swaps:', all.length, all.map(s => ({ id: s.requestId?.slice(0,14), dismissed: s.dismissed })));
+        const remaining = all.filter(s => !s.dismissed);
+        if (remaining.length > 0) {
+            showResumeBanner(getBannerSwaps(remaining), handleResumeSwap, handleResolveSwap);
+            console.log('[CHAIN CHECK] Banner shown with', remaining.length, 'active swap(s)');
+        } else {
+            hideResumeBanner();
+            console.log('[CHAIN CHECK] No active swaps found on chain');
+        }
+    } catch (error) {
+        console.error('[CHAIN CHECK] Unexpected error checking for active swaps on chain:', error);
+    }
+}
+
+/**
+ * Handle Co-LP tab click - load capacity and show appropriate view
+ */
+async function handleCoLPTab() {
+    showCoLPTab();
+    await refreshCoLPBalance();
+    await checkCoLPLPStatus();
+    await handleRefreshCoLPPositions();
+}
+
+/**
+ * Refresh and render user's active Co-LP positions
+ */
+async function handleRefreshCoLPPositions() {
+    const listEl = document.getElementById('co-lp-positions-list');
+    const refreshBtn = document.getElementById('co-lp-refresh-positions');
+    if (!listEl) return;
+
+    const address = getUserAddress();
+    if (!address) {
+        listEl.innerHTML = '<div class="positions-empty">Connect wallet to see your positions</div>';
+        return;
+    }
+
+    // Show loading state
+    if (refreshBtn) refreshBtn.classList.add('spinning');
+    listEl.innerHTML = '<div class="positions-empty">Loading positions...</div>';
+
+    try {
+        const coLPFlow = getCoLPFlow();
+        await coLPFlow.init();
+        const positions = await coLPFlow.getUserActivePositions();
+
+        if (positions.length === 0) {
+            listEl.innerHTML = '<div class="positions-empty">No active Co-LP positions yet. Open one below!</div>';
+            return;
+        }
+
+        // Preview claimable fees per position (parallel eth_calls, no tx)
+        const feeResults = await Promise.allSettled(
+            positions.map(p => coLPFlow.getClaimableFees(p.tokenId))
+        );
+
+        listEl.innerHTML = positions.map((p, i) => {
+            const vaultShort = `${p.vault.slice(0, 6)}...${p.vault.slice(-4)}`;
+            const fees = feeResults[i].status === 'fulfilled' ? feeResults[i].value : { wsxmr: 0n, usde: 0n };
+            const wsxmrFee = parseFloat(formatUnits(fees.wsxmr, 8));
+            const hasFees = fees.wsxmr > 0n || fees.usde > 0n;
+            const claimLabel = hasFees ? `Claim ${wsxmrFee.toFixed(8)}` : 'Claim 0';
+            const claimDisabled = hasFees ? '' : 'disabled';
+            const claimTitle = hasFees
+                ? `title="Your wsXMR share: ${wsxmrFee.toFixed(8)} · Vault QQQx share: ${parseFloat(formatUnits(fees.usde, 18)).toFixed(6)}"`
+                : 'title="No fees accrued yet"';
+            return `
+                <div class="position-card" data-token-id="${p.tokenId}">
+                    <div class="position-info">
+                        <span class="position-token">#${p.tokenId}</span>
+                        <span class="position-meta">Vault: ${vaultShort} · ${p.wsxmrAmount} wsXMR · Range: ${p.rangeBps} bps</span>
+                    </div>
+                    <div class="position-actions">
+                        <input class="colp-rebalance-input" type="number" placeholder="bps" min="1000" max="10000" value="${p.rangeBps}" data-token-id="${p.tokenId}" />
+                        <button class="btn-rebalance" data-token-id="${p.tokenId}">Rebalance</button>
+                        <button class="btn-claim-fees" data-token-id="${p.tokenId}" ${claimDisabled} ${claimTitle}>${claimLabel}</button>
+                        <button class="btn-unwind" data-token-id="${p.tokenId}">Close</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        // Wire up action buttons on each card
+        listEl.querySelectorAll('.btn-rebalance').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const tokenId = btn.dataset.tokenId;
+                const bpsInput = listEl.querySelector(`.colp-rebalance-input[data-token-id="${tokenId}"]`);
+                const rangeBps = Number(bpsInput?.value);
+                await handleCoLPRebalance(tokenId, rangeBps);
+            });
+        });
+        listEl.querySelectorAll('.btn-claim-fees').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const tokenId = btn.dataset.tokenId;
+                await handleCoLPClaimFees(tokenId);
+            });
+        });
+        listEl.querySelectorAll('.btn-unwind').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const tokenId = btn.dataset.tokenId;
+                await handleCoLPUnwind(tokenId);
+            });
+        });
+
+    } catch (error) {
+        console.error('Error refreshing Co-LP positions:', error);
+        listEl.innerHTML = `<div class="positions-empty">Could not load positions: ${error.message}</div>`;
+    } finally {
+        if (refreshBtn) refreshBtn.classList.remove('spinning');
+    }
+}
+
+/**
+ * Render positions list HTML from array
+ */
+function renderCoLPPositions(positions) {
+    const listEl = document.getElementById('co-lp-positions-list');
+    if (!listEl) return;
+
+    if (positions.length === 0) {
+        listEl.innerHTML = '<div class="positions-empty">No active Co-LP positions</div>';
+        return;
+    }
+}
+
+/**
+ * Refresh wsXMR balance shown in Co-LP panel
+ */
+async function refreshCoLPBalance(prefetchedBalance) {
+    try {
+        const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js?v=3.22');
+        const address = getUserAddress();
+        const balanceEl = document.getElementById('co-lp-user-balance');
+        if (address && balanceEl) {
+            const balance = prefetchedBalance !== undefined ? prefetchedBalance : await getWsXmrBalance(address);
+            balanceEl.textContent = (Number(balance) / 1e8).toFixed(4);
+        } else if (balanceEl) {
+            balanceEl.textContent = '0';
+        }
+    } catch (error) {
+        console.warn('Could not refresh Co-LP balance:', error.message);
+    }
+}
+
+/**
+ * Check if user is an LP and show LP-only settings
+ */
+async function checkCoLPLPStatus() {
+    try {
+        const coLPFlow = getCoLPFlow();
+        const isLP = await coLPFlow.isLP();
+        const settingsEl = document.getElementById('co-lp-lp-settings');
+        if (settingsEl) {
+            if (isLP) {
+                settingsEl.classList.remove('hidden');
+                // Load current max range from vault
+                const userAddress = getUserAddress();
+                if (userAddress) {
+                    const vault = await coLPFlow.getVault(userAddress);
+                    const maxRangeInput = document.getElementById('co-lp-max-range');
+                    if (maxRangeInput && vault && vault.maxCoLPRangeBps) {
+                        maxRangeInput.value = Number(vault.maxCoLPRangeBps);
+                    }
+                }
+            } else {
+                settingsEl.classList.add('hidden');
+            }
+        }
+    } catch (error) {
+        console.warn('Error checking LP status for Co-LP:', error.message);
+    }
+}
+
+/**
+ * Enable/disable the Co-LP open button based on form state
+ */
+function validateCoLPOpenButton() {
+    const btn = document.getElementById('co-lp-open');
+    if (!btn) return;
+    const amountInput = document.getElementById('co-lp-amount');
+    const vaultSelect = document.getElementById('colp-vault-select');
+    const connected = !!getUserAddress();
+    const hasVault = !!vaultSelect?.value;
+    const amount = parseFloat(amountInput?.value);
+    const hasAmount = !isNaN(amount) && amount > 0;
+    const shouldEnable = connected && hasVault && hasAmount;
+    btn.disabled = !shouldEnable;
+    console.log('[CoLP Validate]', { connected, hasVault, vaultValue: vaultSelect?.value, hasAmount, amount: amountInput?.value, shouldEnable });
+}
+
+/**
+ * Handle Co-LP vault selection - fetch and display capacity
+ */
+async function handleCoLPVaultSelect() {
+    const select = document.getElementById('colp-vault-select');
+    const capacityDiv = document.getElementById('co-lp-capacity');
+    if (!select || !capacityDiv) return;
+
+    const lpVault = select.value;
+    if (!lpVault) {
+        capacityDiv.classList.add('hidden');
+        validateCoLPOpenButton();
+        return;
+    }
+
+    try {
+        const coLPFlow = getCoLPFlow();
+        const capacity = await coLPFlow.getCoLPCapacity(lpVault);
+        const capacityWsxmr = Number(capacity) / 1e8;
+
+        capacityDiv.innerHTML = `<p><strong>Co-LP Capacity:</strong> ${capacityWsxmr.toFixed(4)} wsXMR available</p>`;
+        capacityDiv.classList.remove('hidden');
+    } catch (error) {
+        console.warn('Could not fetch Co-LP capacity:', error.message);
+        capacityDiv.classList.add('hidden');
+    }
+    validateCoLPOpenButton();
+}
+
+/**
+ * Handle open Co-LP position
+ */
+async function handleCoLPOpen() {
+    const amountInput = document.getElementById('co-lp-amount');
+    const vaultSelect = document.getElementById('colp-vault-select');
+
+    if (!getUserAddress()) {
+        showError('Wallet Required', 'Please connect your wallet');
+        return;
+    }
+
+    const amountRaw = amountInput?.value?.trim();
+    const vaultAddress = vaultSelect?.value;
+
+    if (!amountRaw || parseFloat(amountRaw) <= 0) {
+        showError('Invalid Input', 'Enter a valid wsXMR amount');
+        return;
+    }
+    if (!vaultAddress) {
+        showError('Invalid Input', 'Select an LP vault');
+        return;
+    }
+
+    try {
+        const coLPFlow = getCoLPFlow();
+        await coLPFlow.init();
+
+        // Default deadline: 10 minutes from now
+        const deadline = Math.floor(Date.now() / 1000) + 600;
+
+        const { receipt, tokenId } = await coLPFlow.userOpenCoLP(vaultAddress, amountRaw, deadline);
+
+        if (tokenId) {
+            showSuccess('Position Opened', `Co-LP position created with token ID: ${tokenId}`);
+        } else {
+            showSuccess('Position Opened', 'Co-LP position created successfully');
+        }
+
+        await refreshCoLPBalance();
+        // Refresh capacity display
+        await handleCoLPVaultSelect();
+        // Refresh active positions list
+        await handleRefreshCoLPPositions();
+    } catch (error) {
+        console.error('Open Co-LP error:', error);
+        showError('Open Co-LP Error', error.message);
+    }
+}
+
+/**
+ * Handle unwind Co-LP position
+ */
+async function handleCoLPUnwind(tokenIdParam) {
+    const tokenId = tokenIdParam?.toString().trim();
+
+    if (!getUserAddress()) {
+        showError('Wallet Required', 'Please connect your wallet');
+        return;
+    }
+    if (!tokenId || isNaN(Number(tokenId))) {
+        showError('Invalid Input', 'Invalid position token ID');
+        return;
+    }
+
+    try {
+        const coLPFlow = getCoLPFlow();
+        await coLPFlow.init();
+
+        const deadline = Math.floor(Date.now() / 1000) + 600;
+        await coLPFlow.unwindCoLP(tokenId, deadline);
+
+        showSuccess('Position Unwound', `Co-LP position ${tokenId} has been closed`);
+        await handleRefreshCoLPPositions();
+    } catch (error) {
+        console.error('Unwind Co-LP error:', error);
+        showError('Unwind Co-LP Error', error.message);
+    }
+}
+
+/**
+ * Handle claim Co-LP fees — collects accrued UniV3 fees into pendingReturns.
+ * wsXMR fees go to the user, stataUSDe share fees to the LP vault. After
+ * collecting, the user sweeps them out via the Withdraw Returns button.
+ */
+async function handleCoLPClaimFees(tokenIdParam) {
+    const tokenId = tokenIdParam?.toString().trim();
+
+    if (!getUserAddress()) {
+        showError('Wallet Required', 'Please connect your wallet');
+        return;
+    }
+    if (!tokenId || isNaN(Number(tokenId))) {
+        showError('Invalid Input', 'Invalid position token ID');
+        return;
+    }
+
+    try {
+        const coLPFlow = getCoLPFlow();
+        await coLPFlow.init();
+
+        await coLPFlow.collectCoLPFees(tokenId);
+
+        showSuccess('Fees Collected', 'Co-LP fees moved to pending returns — use Withdraw to claim them');
+        // Refresh pending-returns UI + positions so the claim amount resets to 0
+        const address = getUserAddress();
+        if (address) checkPendingReturns(address).catch(() => {});
+        handleRefreshCoLPPositions().catch(() => {});
+    } catch (error) {
+        console.error('Claim Co-LP fees error:', error);
+        showError('Claim Fees Error', error.message);
+    }
+}
+
+/**
+ * Handle rebalance Co-LP position
+ */
+async function handleCoLPRebalance(tokenIdParam, rangeBpsParam) {
+    const tokenId = tokenIdParam?.toString().trim();
+    const rangeBps = Number(rangeBpsParam);
+
+    if (!getUserAddress()) {
+        showError('Wallet Required', 'Please connect your wallet');
+        return;
+    }
+    if (!tokenId || isNaN(Number(tokenId))) {
+        showError('Invalid Input', 'Invalid position token ID');
+        return;
+    }
+    if (!rangeBps || rangeBps < 1000 || rangeBps > 10000) {
+        showError('Invalid Input', 'Range must be between 1000 and 10000 bps');
+        return;
+    }
+
+    try {
+        const coLPFlow = getCoLPFlow();
+        await coLPFlow.init();
+
+        const deadline = Math.floor(Date.now() / 1000) + 600;
+        await coLPFlow.rebalanceCoLP(tokenId, rangeBps, deadline);
+
+        showSuccess('Position Rebalanced', `Co-LP position ${tokenId} rebalanced to ${rangeBps} bps range`);
+        await handleRefreshCoLPPositions();
+    } catch (error) {
+        console.error('Rebalance Co-LP error:', error);
+        showError('Rebalance Co-LP Error', error.message);
+    }
+}
+
+/**
+ * Handle set max Co-LP range (LP only)
+ */
+async function handleCoLPSetRange() {
+    const maxRangeInput = document.getElementById('co-lp-max-range');
+    const newMaxBps = Number(maxRangeInput?.value);
+
+    if (!getUserAddress()) {
+        showError('Wallet Required', 'Please connect your wallet');
+        return;
+    }
+    if (!newMaxBps || newMaxBps < 1000 || newMaxBps > 10000) {
+        showError('Invalid Input', 'Range must be between 1000 and 10000 bps');
+        return;
+    }
+
+    try {
+        const coLPFlow = getCoLPFlow();
+        await coLPFlow.init();
+
+        await coLPFlow.setMaxCoLPRange(newMaxBps);
+        showSuccess('Range Updated', `Max Co-LP range set to ${newMaxBps} bps`);
+    } catch (error) {
+        console.error('Set range error:', error);
+        showError('Set Range Error', error.message);
+    }
+}
+
+/**
+ * Handle LP tab click - show all vaults
+ */
+async function handleLpTab() {
+    const elements = getElements();
+    
+    // Hide other panels
+    elements.mintPanel.classList.add('hidden');
+    elements.burnPanel.classList.add('hidden');
+    elements.coLPPanel.classList.add('hidden');
+    elements.lpPanel.classList.remove('hidden');
+    
+    // Update tab buttons
+    elements.tabMint.classList.remove('active');
+    elements.tabBurn.classList.remove('active');
+    elements.tabCoLP.classList.remove('active');
+    elements.tabLp.classList.add('active');
+    saveActiveTab('lp');
+
+    // Vaults are already loaded and displayed by populateVaults()
+    // No need for additional logic - just show the panel
+}
+
+/**
+ * Load LP vault stats for the connected user
+ */
+async function loadLpStats(address, vaultData) {
+    try {
+        const { vault, health, debt } = vaultData;
+        
+        console.log('Vault pending debt:', vault.pendingDebt);
+        
+        // Update UI with vault stats
+        document.getElementById('lp-collateral').textContent = `${(Number(vault.collateralShares) / 1e18).toFixed(2)} QQQx`;
+        document.getElementById('lp-debt').textContent = `${(Number(debt) / 1e8).toFixed(4)} wsXMR`;
+        document.getElementById('lp-pending-debt').textContent = `${(Number(vault.pendingDebt) / 1e8).toFixed(4)} wsXMR`;
+        document.getElementById('lp-health').textContent = `${(Number(health) / 1e16).toFixed(0)}%`;
+        
+        // Update settings inputs
+        document.getElementById('lp-mint-fee').value = Number(vault.mintFeeBps);
+        document.getElementById('lp-burn-fee').value = Number(vault.burnRewardBps);
+        document.getElementById('lp-max-mint').value = Number(vault.maxMintBps) / 100;
+        document.getElementById('lp-griefing').value = (Number(vault.mintGriefingDeposit) / 1e18).toFixed(3);
+        
+        // TODO: Fetch fees earned from events
+        document.getElementById('lp-fees').textContent = '0 SOL';
+        
+        console.log('LP stats loaded for', address);
+    } catch (error) {
+        console.error('Error loading LP stats:', error);
+    }
+}
+
+let currentResumingSwapId = null;
+
+/**
+ * Handle resume swap (called when user clicks Resume on a specific swap)
+ * @param {Object} specificSwap - Optional specific swap to resume; falls back to most recent
+ */
+async function handleResumeSwap(specificSwap) {
+    const swap = specificSwap || loadActiveSwap();
+    if (currentResumingSwapId === swap?.requestId) {
+        console.log('Resume already in progress for this swap, ignoring duplicate click');
+        return;
+    }
+
+    if (!swap) {
+        showError('Resume Error', 'No active swap found');
+        return;
+    }
+
+    if (!swap.publicSpendKey) {
+        const isStuck = swap.type === 'mint' && (swap.state === 'lp-ready' || swap.state === 'finalize');
+        if (isStuck) {
+            showResumeError(swap.requestId, 'Swap secret is missing. The LP has verified your deposit but you cannot claim wsXMR without this secret. Click Resolve to see your options.');
+            return;
+        }
+        // Burns can resume without publicSpendKey — burnFlow.resume() will try
+        // to restore the agent from seed storage, or reinitialize if needed.
+        if (swap.type !== 'burn') {
+            showResumeError(swap.requestId, 'This swap was created before auto-save. Click Resolve to cancel it on-chain and recover your deposit.');
+            return;
+        }
+    }
+
+    currentResumingSwapId = swap.requestId;
+
+    try {
+        // Ensure wallet is connected
+        let address = getUserAddress();
+        if (!address) {
+            const { ensureConnected } = await import('./viemClient.js?v=3.22');
+            address = await ensureConnected();
+            if (!address) {
+                await handleConnectWallet();
+                address = getUserAddress();
+            }
+        }
+
+        // ─── Validate on-chain status before resuming ─────────────────────────
+        if (swap.requestId) {
+            try {
+                if (swap.type === 'mint') {
+                    const mintReq = await readHub('getMintRequest', [swap.requestId]);
+                    const status = Number(mintReq.status);
+                    // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED
+                    if (status === 6) {
+                        console.log('Resume aborted: mint was cancelled on-chain');
+                        saveToHistory({ ...swap, status: 'Cancelled', completedAt: Date.now() });
+                        removeActiveSwap(swap.requestId);
+                        showResumeError(swap.requestId, 'This mint was cancelled on-chain. If you had a griefing deposit, withdraw it via Pending Returns.');
+                        currentResumingSwapId = null;
+                        return;
+                    }
+                    if (status === 5) {
+                        console.log('Resume aborted: mint already completed on-chain');
+                        saveToHistory({ ...swap, status: 'Completed', completedAt: Date.now() });
+                        removeActiveSwap(swap.requestId);
+                        showResumeSuccess(swap.requestId, 'This mint was already finalized on-chain.');
+                        currentResumingSwapId = null;
+                        return;
+                    }
+                    if (status === 0) {
+                        console.log('Resume aborted: mint is invalid on-chain');
+                        removeActiveSwap(swap.requestId);
+                        showResumeError(swap.requestId, 'This mint is no longer valid on-chain.');
+                        currentResumingSwapId = null;
+                        return;
+                    }
+                } else if (swap.type === 'burn') {
+                    const burnReq = await readHub('getBurnRequest', [swap.requestId]);
+                    const status = Number(burnReq.status);
+                    // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=FINALIZED, 5=CANCELLED, 6=SLASHED
+                    if (status === 5) {
+                        console.log('Resume aborted: burn was cancelled on-chain');
+                        saveToHistory({ ...swap, status: 'Cancelled', completedAt: Date.now() });
+                        removeActiveSwap(swap.requestId);
+                        showResumeError(swap.requestId, 'This burn was cancelled on-chain.');
+                        currentResumingSwapId = null;
+                        return;
+                    }
+                    if (status === 4 || status === 6) {
+                        console.log('Resume aborted: burn already finalized/slashed on-chain');
+                        saveToHistory({ ...swap, status: 'Completed', completedAt: Date.now() });
+                        removeActiveSwap(swap.requestId);
+                        showResumeSuccess(swap.requestId, 'This burn was already resolved on-chain.');
+                        currentResumingSwapId = null;
+                        return;
+                    }
+                    if (status === 0) {
+                        console.log('Resume aborted: burn is invalid on-chain');
+                        removeActiveSwap(swap.requestId);
+                        showResumeError(swap.requestId, 'This burn is no longer valid on-chain.');
+                        currentResumingSwapId = null;
+                        return;
+                    }
+                }
+            } catch (err) {
+                console.warn('Could not verify on-chain status before resume; continuing anyway:', err.message);
+            }
+        }
+
+        // Clean up any in-panel previous-mint banner before switching flows
+        hidePreviousMintBanner();
+
+        // Resume appropriate flow
+        if (swap.type === 'mint') {
+            const { loadSeed, hasStoredSeed } = await import('./seedStorage.js?v=3.12');
+            const { getPhantomAgent } = await import('./phantomAgent.js?v=3.12');
+
+            // publicSpendKey from storage has '0x' prefix (from toHex in initiateOnEVM).
+            // seedStorage.js uses the key as-is, so we must NOT strip the prefix.
+            const pubKeyHex = swap.publicSpendKey;
+
+            // Check seed availability BEFORE switching tabs
+            if (!hasStoredSeed(pubKeyHex)) {
+                const isStuck = (swap.state === 'lp-ready' || swap.state === 'finalize');
+                const stateHint = isStuck
+                    ? ' The LP has verified your deposit but without the secret you cannot claim wsXMR. Click Dismiss to hide this swap.'
+                    : '';
+                showResumeError(swap.requestId, 'Swap secret not found in browser storage. This swap cannot be resumed.' + stateHint);
+                if (isStuck) {
+                    addDismissButtonToSwapItem(swap.requestId);
+                } else {
+                    addClearButtonToSwapItem(swap.requestId);
+                }
+                return;
+            }
+
+            // Pre-check that seed exists before attempting resume
+            // The actual decryption will happen inside mintFlow.resume()
+            console.log('Seed found in storage, preparing to resume...');
+
+            // Switch tabs and let mintFlow.resume() handle seed loading
+            // Stop old flow's timers and event watchers before switching
+            if (currentMintFlow) {
+                stopTimers(currentMintFlow);
+                currentMintFlow.cleanup();
+            }
+            resetMintUI();
+            currentMintFlow = new MintFlow();
+            setStartMintButtonText('Start New Mint');
+            showMintTab();
+            trackMintProgress(currentMintFlow);
+            await currentMintFlow.resume(swap);
+
+            // Refresh balance and reset UI after successful mint resume
+            const address = getUserAddress();
+            if (address) {
+                const balance = await getWsXmrBalance(address);
+                updateBalance(balance);
+            }
+            resetMintUI();
+        } else if (swap.type === 'burn') {
+            currentBurnFlow = new BurnFlow();
+            showBurnTab();
+            trackBurnProgress(currentBurnFlow);
+            await currentBurnFlow.resume(swap);
+        }
+
+        // Banner stays visible so user can see other active swaps
+
+    } catch (error) {
+        console.error('Error resuming swap:', error);
+        const isStuck = swap.type === 'mint' && (swap.state === 'lp-ready' || swap.state === 'finalize');
+        showResumeError(swap.requestId, error.message || 'Could not resume swap.');
+        if (swap.type === 'burn') {
+            // The burn panel keeps stale "waiting" text — surface the failure
+            showError('Resume Failed', error.message || 'Could not resume burn.');
+        }
+        if (isStuck) {
+            addDismissButtonToSwapItem(swap.requestId);
+        } else {
+            addClearButtonToSwapItem(swap.requestId);
+        }
+    } finally {
+        currentResumingSwapId = null;
+    }
+}
+
+/**
+ * Add a "Clear" button to a resume banner swap item so users can remove broken swaps.
+ */
+function addClearButtonToSwapItem(requestId) {
+    const list = document.getElementById('resume-swap-list');
+    if (!list) return;
+    const item = list.querySelector(`.resume-swap-item[data-request-id="${requestId}"]`);
+    if (!item) return;
+
+    if (item.querySelector('.btn-clear-swap')) return;
+
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'btn btn-small btn-clear-swap';
+    clearBtn.textContent = 'Clear Swap';
+    clearBtn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.8rem; background: transparent; color: var(--text-secondary); border: 1px solid var(--border-color); margin-top: 0.25rem; align-self: flex-start;';
+    clearBtn.onclick = async () => {
+        const { removeActiveSwap } = await import('./storage.js?v=3.12');
+        removeActiveSwap(requestId);
+        item.remove();
+        const remaining = JSON.parse(localStorage.getItem('activeSwaps') || '[]');
+        if (remaining.length === 0) {
+            const banner = document.getElementById('resume-banner');
+            if (banner) banner.classList.add('hidden');
+        }
+    };
+    item.appendChild(clearBtn);
+}
+
+/**
+ * Add a "Dismiss" button that hides a swap from the banner without removing it from storage.
+ * This prevents the swap from re-appearing after refresh, since checkForActiveSwapOnChain
+ * filters out dismissed swaps. The user can still recover if they find the secret later.
+ */
+function addDismissButtonToSwapItem(requestId) {
+    const list = document.getElementById('resume-swap-list');
+    if (!list) return;
+    const item = list.querySelector(`.resume-swap-item[data-request-id="${requestId}"]`);
+    if (!item) return;
+
+    if (item.querySelector('.btn-dismiss-swap')) return;
+
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-small btn-dismiss-swap';
+    btn.textContent = 'Dismiss';
+    btn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.8rem; background: transparent; color: var(--text-secondary); border: 1px solid var(--border-color); margin-top: 0.25rem; align-self: flex-start;';
+    btn.onclick = () => {
+        const swap = getActiveSwapByRequestId(requestId);
+        if (swap) {
+            swap.dismissed = true;
+            swap.lastUpdated = Date.now();
+            addOrUpdateActiveSwap(swap);
+            console.log('[DISMISS] Swap marked dismissed:', requestId.slice(0, 14), 'dismissed=', swap.dismissed);
+        } else {
+            console.warn('[DISMISS] Swap not found in storage:', requestId.slice(0, 14));
+        }
+        item.remove();
+        const remaining = loadActiveSwaps().filter(s => !s.dismissed);
+        console.log('[DISMISS] Remaining non-dismissed swaps:', remaining.length);
+        if (remaining.length > 0) {
+            showResumeBanner(getBannerSwaps(remaining), handleResumeSwap, handleResolveSwap);
+        } else {
+            const banner = document.getElementById('resume-banner');
+            if (banner) banner.classList.add('hidden');
+        }
+    };
+    item.appendChild(btn);
+}
+
+/**
+ * Add a "Sign to Unlock" button that retries decrypting the seed.
+ */
+function addSignToUnlockButton(requestId, publicSpendKey) {
+    const list = document.getElementById('resume-swap-list');
+    if (!list) return;
+    const item = list.querySelector(`.resume-swap-item[data-request-id="${requestId}"]`);
+    if (!item) return;
+
+    if (item.querySelector('.btn-sign-unlock')) return;
+
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-small btn-sign-unlock';
+    btn.textContent = 'Sign to Unlock';
+    btn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.8rem; margin-top: 0.25rem; align-self: flex-start;';
+    btn.onclick = async () => {
+        btn.disabled = true;
+        btn.textContent = 'Unlocking...';
+        try {
+            const { loadSeed } = await import('./seedStorage.js?v=3.12');
+            const seed = await loadSeed(publicSpendKey);
+            if (!seed) {
+                btn.disabled = false;
+                btn.textContent = 'Sign to Unlock';
+                return;
+            }
+            // Remove the error and retry resume
+            const errDiv = item.querySelector('.resume-error');
+            if (errDiv) errDiv.remove();
+            const unlockBtn = item.querySelector('.btn-sign-unlock');
+            if (unlockBtn) unlockBtn.remove();
+            const clearBtn = item.querySelector('.btn-clear-swap');
+            if (clearBtn) clearBtn.remove();
+            // Trigger resume again for this specific swap
+            const swap = getActiveSwapByRequestId(requestId);
+            if (swap) handleResumeSwap(swap);
+        } catch (e) {
+            console.error('Sign to unlock failed:', e);
+            btn.disabled = false;
+            btn.textContent = 'Sign to Unlock';
+        }
+    };
+    item.appendChild(btn);
+}
+
+/**
+ * Derive the per-burn userSecret for a saved burn swap from the stored seed and
+ * burn nonce. The nonce comes from the swap state or the requestId→nonce map
+ * written by burnFlow. Returns the 0x-prefixed secret, or null if unavailable.
+ */
+async function _deriveBurnUserSecret(swap) {
+    try {
+        const { loadSeed } = await import('./seedStorage.js?v=3.12');
+        const { derivePerBurnKeySet } = await import('./seedManager.js?v=3.12');
+        const seed = await loadSeed(swap.publicSpendKey);
+        let burnNonce = swap.burnNonce;
+        if (burnNonce == null) {
+            try {
+                const map = JSON.parse(localStorage.getItem('wrapsynth_burn_nonce_map') || '{}');
+                burnNonce = map[swap.requestId] ?? null;
+            } catch (e) { /* ignore */ }
+        }
+        if (!seed || burnNonce == null) return null;
+        return derivePerBurnKeySet(seed, burnNonce).secret;
+    } catch (e) {
+        console.warn('Could not derive burn userSecret:', e.message);
+        return null;
+    }
+}
+
+/**
+ * Handle resolve swap (called when user clicks Resolve on an unresumable swap).
+ * Attempts to cancel PENDING swaps on-chain to recover deposits/tokens.
+ */
+async function handleResolveSwap(swap) {
+    if (!swap) return;
+
+    // Ensure wallet is connected before any on-chain action
+    let address = getUserAddress();
+    if (!address) {
+        try {
+            address = await handleConnectWallet();
+        } catch (e) {
+            showResumeError(swap.requestId, 'Please connect your wallet to resolve this swap.');
+            return;
+        }
+    }
+
+    try {
+        // PENDING mint: cancel on-chain to recover griefing deposit
+        if (swap.type === 'mint' && (swap.state === 'awaiting-lp-key' || swap.state === 'evm-init' || swap.state === 'initiated' || swap.state === 'deposit' || swap.state === 'lp-verifying')) {
+            console.log('Resolving stale mint on-chain:', swap.requestId);
+            const { readHub, writeHub } = await import('./viemClient.js?v=3.22');
+            const mintReq = await readHub('getMintRequest', [swap.requestId]);
+            const status = Number(mintReq.status);
+            // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED
+            if (status === 6) {
+                await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
+                showResumeSuccess(swap.requestId, 'Mint was already cancelled. Your griefing deposit has been claimed.');
+            } else if (status === 1 || status === 2 || status === 3 || status === 4) {
+                // Check timeout before calling cancelMint to avoid TimeoutNotReached revert
+                const { getPublicClient } = await import('./viemClient.js?v=3.22');
+                const publicClient = getPublicClient();
+                const currentBlock = await publicClient.getBlockNumber();
+                const timeout = mintReq.timeout;
+                if (currentBlock < timeout) {
+                    const blocksRemaining = Number(timeout - currentBlock);
+                    const estSeconds = blocksRemaining; // ~1s blocks on HyperEVM
+                    const mins = Math.floor(estSeconds / 60);
+                    const secs = estSeconds % 60;
+                    showResumeError(swap.requestId, `Mint timeout has not been reached. Please wait ~${mins}m ${secs}s more (${blocksRemaining} blocks) before you can cancel.`);
+                    return;
+                }
+                // For KEY_PROVIDED (status 2), userSecret must match claimCommitment.
+                // We don't have the PhantomAgent here, so pass zero hash.
+                // Contract will revert with InvalidSecret if it doesn't match.
+                const userSecret = '0x0000000000000000000000000000000000000000000000000000000000000000';
+                try {
+                    const receipt = await writeHub('cancelMint', [swap.requestId, userSecret]);
+                    console.log('cancelMint tx:', receipt.transactionHash);
+                    let msg = 'Mint cancelled. Your griefing deposit has been refunded.';
+                    if (status === 2) {
+                        msg = 'Mint cancelled. LP collateral was slashed and you received QQQx compensation. Claim it via Pending Returns.';
+                    }
+                    showResumeSuccess(swap.requestId, msg);
+                } catch (cancelErr) {
+                    if (status === 2 && cancelErr.message && (cancelErr.message.includes('InvalidSecret') || cancelErr.message.includes('0x'))) {
+                        showResumeError(swap.requestId, 'This mint is in KEY_PROVIDED state and requires your swap secret to cancel. Please use the active mint flow cancel button (which has access to your secret) or reconnect with the same browser profile used to start this mint.');
+                        return;
+                    }
+                    throw cancelErr;
+                }
+            } else if (status === 5) {
+                showResumeSuccess(swap.requestId, 'This mint has already completed on-chain.');
+            } else {
+                showResumeError(swap.requestId, `Unexpected mint status (${status}). Check block explorer.`);
+                return;
+            }
+        }
+        // REQUESTED burn: abort on-chain to recover wsXMR
+        else if (swap.type === 'burn' && (swap.state === 'evm-request' || swap.state === 'lp-propose')) {
+            console.log('Resolving stale burn on-chain:', swap.requestId);
+            const { getPublicClient, getWalletClient, getUserAddress } = await import('./viemClient.js?v=3.22');
+            const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
+            const publicClient = getPublicClient();
+            const walletClient = getWalletClient();
+            const userAddr = getUserAddress();
+            
+            // Inline ABIs to bypass cached viemClient.js parsedABIs
+            const burnResolveAbi = parseAbi([
+                'function abortBurn(bytes32 requestId) external',
+                'function resolveDeclinedProposal(bytes32 requestId, bytes32 userSecret) external',
+                'function claimSlashedCollateral(bytes32 requestId, bytes32 userSecret) external',
+                'function abandonedBurns(bytes32 requestId) view returns (bool)'
+            ]);
+            
+            // Check burn request status and deadline before cancelling
+            const burnReq = await readHub('getBurnRequest', [swap.requestId]);
+            const currentBlock = await publicClient.getBlockNumber();
+            
+            // BurnStatus: 0=INVALID,1=REQUESTED,2=PROPOSED,3=COMMITTED,4=COMPLETED,5=SLASHED,6=CANCELLED
+            const status = Number(burnReq.status);
+            const deadline = burnReq.deadline;
+            
+            console.log('Burn status:', status, 'deadline:', deadline, 'current block:', currentBlock);
+            
+            if (status === 4 || status === 5) {
+                // Completed or slashed — nothing left to recover
+                showResumeSuccess(swap.requestId, 'This burn has already been completed or slashed on-chain.');
+            } else if (status === 6) {
+                // CANCELLED — if the LP abandoned a PROPOSED burn, the user's wsXMR is
+                // still claimable via resolveDeclinedProposal (revealing userSecret also
+                // lets the LP sweep the shared XMR). Otherwise it's fully resolved.
+                const abandoned = await publicClient.readContract({
+                    address: CONTRACTS.hub,
+                    abi: burnResolveAbi,
+                    functionName: 'abandonedBurns',
+                    args: [swap.requestId]
+                });
+                if (!abandoned) {
+                    showResumeSuccess(swap.requestId, 'This burn has already been cancelled on-chain.');
+                } else {
+                    const userSecret = await _deriveBurnUserSecret(swap);
+                    if (!userSecret) {
+                        showResumeError(swap.requestId, 'This burn was abandoned by the LP. Your wsXMR is still claimable, but your burn secret could not be derived — restore your seed phrase to reclaim it.');
+                        return;
+                    }
+                    const { request } = await publicClient.simulateContract({
+                        address: CONTRACTS.hub,
+                        abi: burnResolveAbi,
+                        functionName: 'resolveDeclinedProposal',
+                        args: [swap.requestId, userSecret],
+                        account: userAddr
+                    });
+                    const hash = await walletClient.writeContract({ ...request, account: userAddr });
+                    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+                    console.log('late resolveDeclinedProposal tx:', receipt.transactionHash);
+                    showResumeSuccess(swap.requestId, 'wsXMR reclaimed. Your key reveal also lets the LP recover their XMR.');
+                }
+            } else if (status === 1) {
+                // REQUESTED: call abortBurn to restore wsXMR
+                if (currentBlock >= deadline) {
+                    const { request } = await publicClient.simulateContract({
+                        address: CONTRACTS.hub,
+                        abi: burnResolveAbi,
+                        functionName: 'abortBurn',
+                        args: [swap.requestId],
+                        account: userAddr
+                    });
+                    const hash = await walletClient.writeContract({ ...request, account: userAddr });
+                    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+                    console.log('abortBurn tx:', receipt.transactionHash);
+                    showResumeSuccess(swap.requestId, 'Burn aborted. Your wsXMR has been restored.');
+                } else {
+                    showResumeCountdown(swap.requestId, Number(deadline), Number(currentBlock), () => handleResumeSwap(swap));
+                    return; // Don't clear from storage
+                }
+            } else if (status === 2) {
+                // PROPOSED: call resolveDeclinedProposal to restore wsXMR — requires
+                // the user's per-burn secret (verified on-chain, emitted for the LP).
+                if (currentBlock >= deadline) {
+                    const userSecret = await _deriveBurnUserSecret(swap);
+                    if (!userSecret) {
+                        showResumeError(swap.requestId, 'Your burn secret could not be derived (seed or burn nonce missing). Restore your seed phrase to reclaim wsXMR.');
+                        return;
+                    }
+                    const { request } = await publicClient.simulateContract({
+                        address: CONTRACTS.hub,
+                        abi: burnResolveAbi,
+                        functionName: 'resolveDeclinedProposal',
+                        args: [swap.requestId, userSecret],
+                        account: userAddr
+                    });
+                    const hash = await walletClient.writeContract({ ...request, account: userAddr });
+                    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+                    console.log('resolveDeclinedProposal tx:', receipt.transactionHash);
+                    showResumeSuccess(swap.requestId, 'Burn proposal declined. Your wsXMR has been restored.');
+                } else {
+                    showResumeCountdown(swap.requestId, Number(deadline), Number(currentBlock), () => handleResumeSwap(swap));
+                    return; // Don't clear from storage
+                }
+            } else if (status === 3) {
+                // COMMITTED: user already confirmed lock. If the LP never finalizes,
+                // the user can claim slashed collateral after deadline + grace
+                // (BURN_FINALIZE_GRACE_BLOCKS = 600) — which requires revealing the
+                // per-burn secret so the LP can sweep the shared XMR.
+                const slashBlock = deadline + 600n;
+                if (currentBlock >= slashBlock) {
+                    const userSecret = await _deriveBurnUserSecret(swap);
+                    if (!userSecret) {
+                        showResumeError(swap.requestId, 'The LP did not finalize. You can claim slashed collateral, but your burn secret could not be derived — restore your seed phrase to claim.');
+                        return;
+                    }
+                    try {
+                        const { request } = await publicClient.simulateContract({
+                            address: CONTRACTS.hub,
+                            abi: burnResolveAbi,
+                            functionName: 'claimSlashedCollateral',
+                            args: [swap.requestId, userSecret],
+                            account: userAddr
+                        });
+                        const hash = await walletClient.writeContract({ ...request, account: userAddr });
+                        const receipt = await publicClient.waitForTransactionReceipt({ hash });
+                        console.log('claimSlashedCollateral tx:', receipt.transactionHash);
+                        showResumeSuccess(swap.requestId, 'Slashed collateral claimed. Your key reveal also lets the LP recover their XMR.');
+                    } catch (err) {
+                        console.warn('claimSlashedCollateral failed:', err.message);
+                        showResumeError(swap.requestId, 'Slash claim failed: ' + (err.shortMessage || err.message));
+                        return;
+                    }
+                } else {
+                    showResumeCountdown(swap.requestId, Number(slashBlock), Number(currentBlock), () => handleResumeSwap(swap));
+                    return; // Don't clear from storage
+                }
+            } else {
+                showResumeError(swap.requestId, 'This burn request has an unexpected status. Please check the block explorer.');
+                return;
+            }
+        }
+        // Mint is READY but user has no secret: try cancel (will likely revert), explain if stuck
+        else if (swap.type === 'mint' && (swap.state === 'lp-ready' || swap.state === 'finalize')) {
+            console.log('Mint is READY but secret is missing, trying cancel anyway:', swap.requestId);
+            try {
+                const { writeHub } = await import('./viemClient.js?v=3.22');
+                const receipt = await writeHub('cancelMint', [swap.requestId, '0x0000000000000000000000000000000000000000000000000000000000000000']);
+                console.log('cancelMint tx:', receipt.transactionHash);
+                showResumeSuccess(swap.requestId, 'Mint cancelled. Your griefing deposit has been refunded.');
+            } catch (e) {
+                console.warn('cancelMint failed for READY mint (expected):', e.message);
+                showResumeError(swap.requestId, 'This mint is already verified by the LP and cannot be cancelled on-chain. Without the swap secret your deposit is locked. Click Dismiss to hide this swap from your dashboard.');
+                addDismissButtonToSwapItem(swap.requestId);
+                return; // Don't auto-clear; let user decide
+            }
+        }
+        // Beyond PENDING/REQUESTED: stuck without secret, just clear locally
+        else {
+            showResumeSuccess(swap.requestId, 'Swap cleared from your browser.');
+        }
+
+        // Remove from localStorage
+        if (swap.requestId) {
+            removeActiveSwap(swap.requestId);
+        } else {
+            clearActiveSwap();
+        }
+
+        // Refresh banner
+        const remaining = loadActiveSwaps();
+        if (remaining.length > 0) {
+            showResumeBanner(getBannerSwaps(remaining), handleResumeSwap, handleResolveSwap);
+        } else {
+            hideResumeBanner();
+        }
+    } catch (error) {
+        console.error('Error resolving swap:', error);
+        showResumeError(swap.requestId, error.message || 'Could not resolve this swap on-chain.');
+    }
+}
+
+/**
+ * Load available LP vaults
+ */
+export async function loadVaults() {
+    try {
+        // Solana: enumerate all on-chain vaults; the LP-server vault goes first.
+        let knownVaults = [];
+        try {
+            const n = Number(await readHub('getVaultCount'));
+            for (let i = 0; i < n; i++) {
+                const addr = await readHub('vaultList', [i]);
+                if (addr && addr !== '0x0000000000000000000000000000000000000000') knownVaults.push(addr);
+            }
+        } catch (e) { console.warn('vault enumeration failed:', e.message); }
+        if (CONTRACTS.defaultLpVault) {
+            knownVaults = [CONTRACTS.defaultLpVault, ...knownVaults.filter(v => v !== CONTRACTS.defaultLpVault)];
+        }
+        
+        const activeVaults = [];
+        let totalCollateralWei = 0n;
+
+        // Fire ALL independent reads in a single Promise.all — no sequential round-trips
+        const { getPublicClient } = await import('./viemClient.js?v=3.22');
+        const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
+        const publicClient = getPublicClient();
+        const usdeAbi = parseAbi(['function convertToAssets(uint256 shares) view returns (uint256)']);
+        const usdeAddress = CONTRACTS.stataUSDe;
+
+        let xmrPrice = 0;
+        let collPrice = 0;
+        let globalDebtIndex = 1e18;
+        let pricesFresh = false;
+
+        // Single round-trip: all oracle reads + vault data + burn IDs in parallel.
+        // lastXmrPrice/lastCollateralPrice are public storage getters that NEVER
+        // revert — the last logged oracle price is always readable. getXmrPrice/
+        // getCollateralPrice revert when stale, so they're used only as a
+        // freshness probe (getMintCapacity reverts when stale).
+        const oracleResults = await Promise.all([
+            readHub('lastXmrPrice').catch(e => {
+                console.warn('lastXmrPrice failed:', e.message);
+                return null;
+            }),
+            readHub('lastCollateralPrice').catch(e => {
+                console.warn('lastCollateralPrice failed:', e.message);
+                return null;
+            }),
+            readHub('getXmrPrice').catch(() => null),
+            readHub('getCollateralPrice').catch(() => null),
+            readHub('globalDebtIndex').catch(e => {
+                console.warn('globalDebtIndex failed:', e.message);
+                return null;
+            }),
+        ]);
+
+        // Stored prices are 8-decimal int192
+        if (oracleResults[0] !== null) xmrPrice = Number(oracleResults[0]) / 1e8;
+        if (oracleResults[1] !== null) collPrice = Number(oracleResults[1]) / 1e8;
+        pricesFresh = oracleResults[2] !== null && oracleResults[3] !== null;
+
+        if (xmrPrice > 0 && collPrice > 0) {
+            console.log('Oracle prices (stored):', { xmrPrice, collPrice, fresh: pricesFresh });
+        } else {
+            xmrPrice = priceCache.value || 0;
+            collPrice = 1.0;
+            console.log('Using off-chain fallback prices:', { xmrPrice, collPrice, source: 'CoinGecko cache' });
+        }
+        if (oracleResults[4] !== null) {
+            globalDebtIndex = oracleResults[4];
+        }
+
+        // Only attempt getMintCapacity if oracle prices are fresh (it reverts otherwise)
+        const vaultReads = knownVaults.map(vaultAddress => {
+            const mintCapacityPromise = pricesFresh
+                ? readHub('getMintCapacity', [vaultAddress]).catch(e => {
+                    console.warn('getMintCapacity failed:', e.message);
+                    return null;
+                })
+                : Promise.resolve(null);
+
+            return Promise.all([
+                readHub('getVault', [vaultAddress]),
+                readHub('getVaultBurnRequests', [vaultAddress]).catch(e => {
+                    console.warn('[Capacity] Could not query vault burn requests:', e.message);
+                    return [];
+                }),
+                mintCapacityPromise,
+            ]).then(([vaultData, burnIdsResult, mintCapacityResult]) => ({
+                vaultAddress, vaultData, burnIdsResult, mintCapacityResult,
+            }));
+        });
+
+        const vaultResults = await Promise.all(vaultReads);
+
+        for (const { vaultAddress, vaultData, burnIdsResult, mintCapacityResult } of vaultResults) {
+            try {
+                console.log('Raw vault data:', vaultData);
+                console.log('Collateral shares:', vaultData.collateralShares?.toString());
+                console.log('Debt:', vaultData.normalizedDebt?.toString());
+                console.log('Active:', vaultData.active);
+
+                const hasCollateral = vaultData && vaultData.collateralShares && BigInt(vaultData.collateralShares.toString()) > 0n;
+
+                if (hasCollateral || vaultData.active) {
+                    const collShares = BigInt(vaultData.collateralShares.toString());
+                    const lockedShares = BigInt(vaultData.lockedCollateral.toString());
+                    const availableShares = collShares > lockedShares ? collShares - lockedShares : 0n;
+
+                    // Fetch convertToAssets calls and all burn request details in parallel
+                    const [assetsWeiResult, totalAssetsWeiResult, ...burnReqResults] = await Promise.all([
+                        publicClient.readContract({
+                            address: usdeAddress,
+                            abi: usdeAbi,
+                            functionName: 'convertToAssets',
+                            args: [availableShares]
+                        }).catch(e => {
+                            console.warn('convertToAssets failed, using shares as fallback:', e.message);
+                            return null;
+                        }),
+                        publicClient.readContract({
+                            address: usdeAddress,
+                            abi: usdeAbi,
+                            functionName: 'convertToAssets',
+                            args: [collShares]
+                        }).catch(e => {
+                            console.warn('convertToAssets for total collateral failed:', e.message);
+                            return null;
+                        }),
+                        ...burnIdsResult.map(burnId =>
+                            readHub('getBurnRequest', [burnId]).catch(e => {
+                                console.warn('[Capacity] getBurnRequest failed for', burnId, ':', e.message);
+                                return null;
+                            })
+                        ),
+                    ]);
+
+                    let collAmountUSDe = Number(availableShares) / 1e18; // fallback: assume 1:1
+                    if (assetsWeiResult !== null) {
+                        collAmountUSDe = Number(assetsWeiResult) / 1e18;
+                    }
+
+                    // Denormalize debt using globalDebtIndex (actualDebt = normalizedDebt * index / 1e18)
+                    const normalizedDebt = BigInt(vaultData.normalizedDebt.toString());
+                    const actualDebt = (normalizedDebt * BigInt(globalDebtIndex.toString())) / BigInt(1e18);
+                    const debtAmount = Number(actualDebt) / 1e8; // wsXMR has 8 decimals
+                    const pendingDebtAmount = Number(vaultData.pendingDebt) / 1e8;
+
+                    // Process burn requests to compute in-flight debt
+                    let inFlightBurnDebt = 0;
+                    for (const burnReq of burnReqResults) {
+                        if (!burnReq) continue;
+                        const status = Number(burnReq.status);
+                        // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED
+                        if (status === 1 || status === 2 || status === 3) {
+                            inFlightBurnDebt += Number(burnReq.wsxmrAmount) / 1e8;
+                        }
+                    }
+                    if (inFlightBurnDebt > 0) {
+                        console.log(`[Capacity] Found ${inFlightBurnDebt} wsXMR in active burns for vault ${vaultAddress.slice(0, 8)}`);
+                    }
+
+                    const totalDebt = debtAmount + pendingDebtAmount + inFlightBurnDebt;
+                    const debtValueUsd = debtAmount * xmrPrice;
+                    const pendingDebtValueUsd = (pendingDebtAmount + inFlightBurnDebt) * xmrPrice;
+                    const totalDebtValueUsd = totalDebt * xmrPrice;
+
+                    const usedCollateral = collPrice > 0 ? debtValueUsd / collPrice : 0;
+                    const pendingCollateral = collPrice > 0 ? pendingDebtValueUsd / collPrice : 0;
+                    // Buffer = extra 50% collateral required to maintain 150% ratio (on total debt)
+                    const bufferCollateral = (usedCollateral + pendingCollateral) * 0.5;
+                    const freeCollateral = Math.max(0, collAmountUSDe - usedCollateral - pendingCollateral - bufferCollateral);
+                    
+                    console.log('💰 CAPACITY BREAKDOWN:', {
+                        collAmountUSDe,
+                        usedCollateral,
+                        pendingCollateral,
+                        bufferCollateral,
+                        freeCollateral,
+                        calculation: `${collAmountUSDe.toFixed(4)} - ${usedCollateral.toFixed(4)} - ${pendingCollateral.toFixed(4)} - ${bufferCollateral.toFixed(4)} = ${freeCollateral.toFixed(4)}`
+                    });
+
+                    console.log('Vault capacity:', {
+                        collShares: collShares.toString(),
+                        lockedShares: lockedShares.toString(),
+                        availableShares: availableShares.toString(),
+                        collAmountUSDe,
+                        normalizedDebt: normalizedDebt.toString(),
+                        actualDebt: actualDebt.toString(),
+                        debtAmount,
+                        pendingDebtAmount,
+                        totalDebt,
+                        xmrPrice,
+                        collPrice,
+                        debtValueUsd,
+                        pendingDebtValueUsd,
+                        usedCollateral,
+                        pendingCollateral,
+                        bufferCollateral,
+                        freeCollateral
+                    });
+
+                    // Use pre-fetched mint capacity result (accounts for yield sync, same as initiateMint)
+                    let maxMintCapacityXmr = 0;
+                    let capacityAvailable = false;
+                    let capacityEstimated = false;
+                    if (mintCapacityResult !== null) {
+                        maxMintCapacityXmr = Number(mintCapacityResult) / 1e8;
+                        capacityAvailable = true;
+                        console.log('On-chain mint capacity (wsXMR):', mintCapacityResult.toString(), '=> XMR:', maxMintCapacityXmr);
+                    } else if (xmrPrice > 0 && collPrice > 0) {
+                        // Fallback: estimate matching provideLPKey's check — the
+                        // 110% key bond is reserved from free collateral BEFORE the
+                        // 150% CR check, so the divisor is 1.1 + 1.5 = 2.6, not 1.5.
+                        // (freeCollateral already excludes 1.5x existing debt.)
+                        maxMintCapacityXmr = (freeCollateral * collPrice) / (2.6 * xmrPrice);
+                        const maxMintBps = Number(vaultData.maxMintBps);
+                        if (maxMintBps > 0) {
+                            const collateralValueUsd = collAmountUSDe * collPrice;
+                            const maxTotalDebtCapacity = (collateralValueUsd * 100) / 150;
+                            const maxMintAllowedUsd = (maxTotalDebtCapacity * maxMintBps) / 10000;
+                            const maxMintBpsCapacity = maxMintAllowedUsd / xmrPrice;
+                            maxMintCapacityXmr = Math.min(maxMintCapacityXmr, maxMintBpsCapacity);
+                        }
+                        capacityEstimated = true;
+                        console.log('Estimated mint capacity (off-chain prices):', maxMintCapacityXmr, 'XMR');
+                    } else {
+                        console.warn('getMintCapacity reverted and no off-chain prices available');
+                    }
+
+                    // Use pre-fetched total collateral conversion result
+                    let totalCollateralUSDe = Number(collShares) / 1e18;
+                    if (totalAssetsWeiResult !== null) {
+                        totalCollateralUSDe = Number(totalAssetsWeiResult) / 1e18;
+                    }
+
+                    // Derive breakdown slices; free is the residual so the chart
+                    // always sums to total collateral:
+                    // - usedColl: debt value in USDe
+                    // - pendingColl: pending + in-flight burn debt in USDe
+                    // - bufferColl: 50% of (used + pending) for 150% CR safety
+                    // - coLpColl: deployedUSDeShares (co-LP deployed collateral)
+                    // - lockedColl: vault.lockedCollateral (burn escrow)
+                    // - freeColl: everything left over
+                    // NOTE: do NOT back-calc free from getMintCapacity — its divisor
+                    // is (150% CR + 110% key bond) = 2.6, not 1.5, which understates
+                    // free collateral and leaves a gap in the donut chart.
+                    const breakdownUsedColl = usedCollateral;
+                    const breakdownPendingColl = pendingCollateral;
+                    const breakdownBufferColl = bufferCollateral;
+                    const breakdownCoLpColl = Number(vaultData.deployedUSDeShares) / 1e18;
+                    const breakdownLockedColl = Number(vaultData.lockedCollateral) / 1e18;
+                    const breakdownFreeColl = Math.max(0,
+                        totalCollateralUSDe
+                        - breakdownUsedColl
+                        - breakdownPendingColl
+                        - breakdownBufferColl
+                        - breakdownCoLpColl
+                        - breakdownLockedColl
+                    );
+
+                    const vault = {
+                        address: vaultAddress,
+                        name: `LP Vault ${vaultAddress.slice(0,6)}...${vaultAddress.slice(-4)}`,
+                        collateral: vaultData.collateralShares,
+                        collateralAmount: totalCollateralUSDe, // Converted to USDe
+                        lockedCollateral: vaultData.lockedCollateral,
+                        debt: vaultData.normalizedDebt,
+                        actualDebt: actualDebt,
+                        pendingDebt: vaultData.pendingDebt,
+                        deployedUSDeShares: vaultData.deployedUSDeShares,
+                        usedCollateral: breakdownUsedColl,
+                        pendingCollateral: breakdownPendingColl,
+                        bufferCollateral: breakdownBufferColl,
+                        freeCollateral: breakdownFreeColl,
+                        maxMintCapacityXmr,
+                        capacityAvailable,
+                        capacityEstimated,
+                        xmrPrice,
+                        collPrice,
+                        pricesFresh,
+                        mintFeeBps: Number(vaultData.mintFeeBps || 0),
+                        burnRewardBps: Number(vaultData.burnRewardBps || 0),
+                        mintTimeoutBlocks: Number(vaultData.mintTimeoutBlocks || 0),
+                        burnTimeoutBlocks: Number(vaultData.burnTimeoutBlocks || 0),
+                        mintGriefingDeposit: vaultData.mintGriefingDeposit,
+                        minBurnAmount: vaultData.minBurnAmount,
+                    };
+                    console.log('Adding active vault:', vault);
+                    activeVaults.push(vault);
+
+                    totalCollateralWei += BigInt(vaultData.collateralShares.toString());
+                } else {
+                    console.warn('Vault has no collateral and is not active');
+                }
+            } catch (err) {
+                console.error(`Failed to fetch vault ${vaultAddress}:`, err);
+            }
+        }
+        
+        // Update stats bar with dynamic values
+        const vaultsStatEl = document.getElementById('vaults-stat');
+        if (vaultsStatEl) {
+            vaultsStatEl.textContent = activeVaults.length.toString();
+        }
+        
+        // Update TVL (convert stataUSDe shares to approximate USD value)
+        // stataUSDe is roughly 1:1 with USDe, so we can approximate
+        const tvlStatEl = document.getElementById('tvl-stat');
+        if (tvlStatEl && totalCollateralWei > 0n) {
+            const collateralInUsde = Number(totalCollateralWei) / 1e18;
+            // Assuming USDe ≈ $1
+            const tvlUsd = collateralInUsde;
+            if (tvlUsd >= 1000) {
+                tvlStatEl.textContent = `$${(tvlUsd / 1000).toFixed(1)}K`;
+            } else {
+                tvlStatEl.textContent = `$${tvlUsd.toFixed(2)}`;
+            }
+        } else if (tvlStatEl) {
+            tvlStatEl.textContent = '$0';
+        }
+        
+        if (activeVaults.length === 0 && CONTRACTS.defaultLpVault) {
+            // Fallback to showing the known vault even if query failed
+            const addr = CONTRACTS.defaultLpVault;
+            activeVaults.push({
+                address: addr,
+                name: `LP Vault ${addr.slice(0,6)}...${addr.slice(-4)}`
+            });
+        }
+        
+        cachedVaults = activeVaults;
+        populateVaults(activeVaults);
+        updateMintCapacityDisplay();
+
+        // Update fee/rate display from cached vault data for initially selected vault
+        if (activeVaults.length > 0) {
+            const firstVault = activeVaults[0];
+            updateSwapRateDisplay(true, firstVault.mintFeeBps, firstVault.burnRewardBps);
+            updateSwapRateDisplay(false, firstVault.mintFeeBps, firstVault.burnRewardBps);
+            // Update LP timeout window from on-chain vault data
+            const mintTimeoutBlocks = firstVault.mintTimeoutBlocks || 0;
+            const burnTimeoutBlocks = firstVault.burnTimeoutBlocks || 0;
+            if (mintTimeoutBlocks > 0) {
+                const timeoutHours = (mintTimeoutBlocks * 5) / 3600;
+                const mintTimeoutEl = document.getElementById('mint-timeout');
+                if (mintTimeoutEl) {
+                    if (timeoutHours >= 1) {
+                        mintTimeoutEl.textContent = `${timeoutHours.toFixed(1)}h · slash protected`;
+                    } else {
+                        mintTimeoutEl.textContent = `${Math.round(timeoutHours * 60)}m · slash protected`;
+                    }
+                }
+            }
+            if (burnTimeoutBlocks > 0) {
+                const timeoutHours = (burnTimeoutBlocks * 5) / 3600;
+                const burnTimeoutEl = document.getElementById('burn-timeout');
+                if (burnTimeoutEl) {
+                    if (timeoutHours >= 1) {
+                        burnTimeoutEl.textContent = `${timeoutHours.toFixed(1)}h · slash protected`;
+                    } else {
+                        burnTimeoutEl.textContent = `${Math.round(timeoutHours * 60)}m · slash protected`;
+                    }
+                }
+            }
+            // If user already typed an amount before vaults loaded, update receive box now
+            updateMintReceiveAmount();
+            updateBurnReceiveAmount();
+
+            // Render LP detail cards for the initially selected vault
+            renderLPDetailCard(true, firstVault);
+            renderLPDetailCard(false, firstVault);
+
+            // Update backing collateral display
+            const backingEl = document.getElementById('mint-backing-collateral');
+            if (backingEl) {
+                const coll = firstVault.collateralAmount || 0;
+                const debt = firstVault.actualDebt ? Number(firstVault.actualDebt) / 1e8 : 0;
+                const xmrPrice = firstVault.xmrPrice || 200;
+                const collPrice = firstVault.collPrice || 1.0;
+                const cr = debt * xmrPrice > 0 ? Math.round((coll * collPrice) / (debt * xmrPrice) * 100) : 200;
+                backingEl.textContent = `QQQx · ${cr}%`;
+            }
+        }
+        
+    } catch (error) {
+        console.error('Error loading vaults:', error);
+    }
+}
+
+/**
+ * Update the mint capacity indicator below the amount input
+ */
+function updateMintCapacityDisplay() {
+    const elements = getElements();
+    const capacityEl = document.getElementById('mint-capacity-info');
+    if (!capacityEl) return;
+
+    const vaultAddress = elements.mintVaultSelect.value;
+    const amountStr = elements.mintAmount.value;
+    const amount = parseFloat(amountStr);
+
+    if (!vaultAddress) {
+        capacityEl.classList.add('hidden');
+        if (elements.startMint) elements.startMint.disabled = true;
+        return;
+    }
+
+    const vault = cachedVaults.find(v => v.address.toLowerCase() === vaultAddress.toLowerCase());
+    if (!vault || vault.maxMintCapacityXmr === undefined) {
+        capacityEl.classList.add('hidden');
+        return;
+    }
+
+    if (vault.capacityAvailable === false && !vault.capacityEstimated) {
+        capacityEl.classList.remove('hidden');
+        capacityEl.innerHTML = `<span style="color:var(--amber)">⚠ Oracle prices stale — capacity unavailable. Click "Update Prices" to refresh.</span>`;
+        if (elements.startMint) elements.startMint.disabled = true;
+        return;
+    }
+
+    const maxCap = vault.maxMintCapacityXmr;
+    const estPrefix = vault.capacityEstimated ? '~' : '';
+    const maxCapFormatted = maxCap < 0.0001 ? maxCap.toExponential(2) : maxCap.toFixed(4).replace(/\.?0+$/, '');
+    const pctUsed = maxCap > 0 ? ((amount / maxCap) * 100) : 0;
+
+    let html = `Max capacity: <strong>${estPrefix}${maxCapFormatted} XMR</strong>${vault.capacityEstimated ? ' <span style="color:var(--muted);font-size:11px">(estimated)</span>' : ''}`;
+
+    if (!isNaN(amount) && amount > 0) {
+        if (amount > maxCap) {
+            html += ` <span style="color: var(--red);">(exceeds capacity — ${pctUsed.toFixed(1)}%)</span>`;
+            if (elements.startMint) {
+                elements.startMint.disabled = true;
+                elements.startMint.textContent = 'Exceeds LP capacity';
+            }
+        } else {
+            html += ` <span style="color: var(--muted);">(${pctUsed.toFixed(1)}% of LP's capacity)</span>`;
+            if (elements.startMint) {
+                elements.startMint.disabled = false;
+                elements.startMint.textContent = 'Start Mint';
+            }
+        }
+    } else {
+        if (elements.startMint) {
+            elements.startMint.disabled = true;
+            elements.startMint.textContent = 'Enter an amount';
+        }
+    }
+
+    capacityEl.innerHTML = html;
+    capacityEl.classList.remove('hidden');
+}
+
+/**
+ * Update fee label and rate text based on vault fees
+ */
+function updateSwapRateDisplay(isMint, mintFeeBps, burnRewardBps) {
+    const feePct = (isMint ? mintFeeBps : burnRewardBps) / 100;
+    const feeLabel = isMint ? 'LP mint fee' : 'Reward rate';
+    console.log(`[RateDisplay] isMint=${isMint} feeBps=${isMint ? mintFeeBps : burnRewardBps} feePct=${feePct}%`);
+
+    if (isMint) {
+        const rate = 1 - (feePct / 100);
+        const rateFormatted = rate.toFixed(3);
+        const rateEl = document.getElementById('mint-rate');
+        const feeLabelEl = document.getElementById('mint-fee-label');
+        const feeEl = document.getElementById('mint-fee');
+        console.log(`[RateDisplay] mint elements: rateEl=${!!rateEl} feeLabelEl=${!!feeLabelEl} feeEl=${!!feeEl}`);
+        if (rateEl) rateEl.textContent = `1 XMR = ${rateFormatted} wsXMR`;
+        if (feeLabelEl) feeLabelEl.textContent = `${feeLabel} (${feePct}%)`;
+        if (feeEl) feeEl.textContent = feePct > 0 ? `${feePct}%` : '—';
+    } else {
+        const rateEl = document.getElementById('burn-rate');
+        const feeLabelEl = document.getElementById('burn-fee-label');
+        const feeEl = document.getElementById('burn-fee');
+        console.log(`[RateDisplay] burn elements: rateEl=${!!rateEl} feeLabelEl=${!!feeLabelEl} feeEl=${!!feeEl}`);
+        if (rateEl) rateEl.textContent = '1 wsXMR = 1 XMR';
+        if (feeLabelEl) feeLabelEl.textContent = `${feeLabel} (${feePct}%)`;
+        if (feeEl) feeEl.textContent = feePct > 0 ? `${feePct}%` : '—';
+    }
+}
+
+/**
+ * Update the USD equivalent display for an amount input.
+ * Uses the cached XMR price (wsXMR ≈ XMR 1:1).
+ */
+function updateUsdEquivalent(elementId, amount) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    const price = priceCache.value;
+    if (!amount || amount <= 0 || !price || price <= 0) {
+        el.textContent = '';
+        return;
+    }
+    const usdValue = amount * price;
+    el.textContent = `≈ $${usdValue < 0.01 ? usdValue.toFixed(4) : usdValue < 1 ? usdValue.toFixed(3) : usdValue.toFixed(2)}`;
+}
+
+/**
+ * Calculate and display mint receive amount based on input and vault fee
+ */
+function updateMintReceiveAmount() {
+    try {
+        const amountStr = document.getElementById('mint-amount')?.value || '';
+        const vaultSelect = document.getElementById('mint-vault-select');
+        const receiveEl = document.getElementById('mint-receive');
+        if (!receiveEl) return;
+
+        const amount = parseFloat(amountStr);
+        if (isNaN(amount) || amount <= 0) {
+            receiveEl.value = '';
+            updateUsdEquivalent('mint-usd-equiv', 0);
+            return;
+        }
+
+        const vaultAddress = vaultSelect?.value;
+        const vault = vaultAddress ? cachedVaults.find(v => v.address.toLowerCase() === vaultAddress.toLowerCase()) : null;
+        const feeBps = vault ? (vault.mintFeeBps || 0) : 0;
+        const feePct = feeBps / 100;
+        const receiveAmount = amount * (1 - feePct / 100);
+        receiveEl.value = receiveAmount.toFixed(6);
+        updateUsdEquivalent('mint-usd-equiv', amount);
+        updateMintBackingCollateral();
+    } catch (err) {
+        console.error('[Receive] Mint receive update failed:', err);
+    }
+}
+
+/**
+ * Calculate and display the USDe backing collateral for the current mint amount.
+ * Shows 150% of the XMR value in USDe terms.
+ */
+async function updateMintBackingCollateral() {
+    try {
+        const backingEl = document.getElementById('mint-backing-collateral');
+        if (!backingEl) return;
+
+        const amountStr = document.getElementById('mint-amount')?.value || '';
+        const amount = parseFloat(amountStr);
+        if (isNaN(amount) || amount <= 0) {
+            backingEl.textContent = 'QQQx · 150%';
+            return;
+        }
+
+        // Fetch fresh XMR price from oracle, fall back to CoinGecko cache, then vault cache
+        let xmrPrice = 0;
+        try {
+            const { readHub } = await import('./viemClient.js?v=3.22');
+            const xmrPriceWei = await readHub('getXmrPrice');
+            xmrPrice = Number(xmrPriceWei) / 1e18;
+        } catch (e) {
+            // RPC failed (rate-limited etc.) — try CoinGecko price cache, then vault cache
+            xmrPrice = priceCache.value || 0;
+            if (!xmrPrice) {
+                const vaultSelect = document.getElementById('mint-vault-select');
+                const vaultAddress = vaultSelect?.value;
+                const vault = vaultAddress ? cachedVaults.find(v => v.address.toLowerCase() === vaultAddress.toLowerCase()) : null;
+                xmrPrice = vault?.xmrPrice || 0;
+            }
+        }
+
+        if (!xmrPrice || xmrPrice <= 0) {
+            backingEl.textContent = 'QQQx · 150%';
+            return;
+        }
+
+        // Backing collateral in QQQx = XMR amount * XMR price (USD) * 150% / QQQx price
+        let collPrice = 600;
+        try {
+            const { readHub } = await import('./viemClient.js?v=3.22');
+            collPrice = Number(await readHub('getCollateralPrice')) / 1e18 || 600;
+        } catch (_) {}
+        const qqqxAmount = amount * xmrPrice * 1.5 / collPrice;
+        backingEl.textContent = `${qqqxAmount.toFixed(4)} QQQx · 150%`;
+    } catch (err) {
+        console.warn('[BackingCollateral] Update failed:', err.message);
+    }
+}
+
+/**
+ * Calculate and display burn receive amount based on input and vault fee
+ */
+function updateBurnReceiveAmount() {
+    try {
+        const amountStr = document.getElementById('burn-amount')?.value || '';
+        const receiveEl = document.getElementById('burn-receive');
+        if (!receiveEl) return;
+
+        const amount = parseFloat(amountStr);
+        if (isNaN(amount) || amount <= 0) {
+            receiveEl.value = '';
+            updateUsdEquivalent('burn-usd-equiv', 0);
+            return;
+        }
+
+        // Burn is 1:1 — user receives the same XMR amount they burn
+        receiveEl.value = amount.toFixed(6);
+        updateUsdEquivalent('burn-usd-equiv', amount);
+
+        // Also update the USDe reward display
+        updateBurnRewardDisplay();
+    } catch (err) {
+        console.error('[Receive] Burn receive update failed:', err);
+    }
+}
+
+/**
+ * Calculate and display burn reward in USDe using on-chain calculateBurnCollateral.
+ * Debounced to avoid 2 RPC calls per keystroke.
+ */
+let burnRewardDebounce = null;
+function updateBurnRewardDisplay() {
+    clearTimeout(burnRewardDebounce);
+    burnRewardDebounce = setTimeout(_updateBurnRewardDisplay, 400);
+}
+
+async function _updateBurnRewardDisplay() {
+    try {
+        const amountStr = document.getElementById('burn-amount')?.value || '';
+        const vaultSelect = document.getElementById('burn-vault-select');
+        const rewardEl = document.getElementById('burn-reward-usde');
+        if (!rewardEl) return;
+
+        const amount = parseFloat(amountStr);
+        if (isNaN(amount) || amount <= 0) {
+            rewardEl.textContent = '—';
+            return;
+        }
+
+        const vaultAddress = vaultSelect?.value;
+        if (!vaultAddress) {
+            rewardEl.textContent = '—';
+            return;
+        }
+
+        const wsxmrAmount = BigInt(Math.round(amount * 1e8));
+        const { getPublicClient } = await import('./viemClient.js?v=3.22');
+        const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
+        const publicClient = getPublicClient();
+
+        // Call calculateBurnCollateral to get exact on-chain rewardLock (stataUSDe shares)
+        // Include StalePrice error in ABI so viem decodes it properly
+        const hubAbi = parseAbi([
+            'function calculateBurnCollateral(address lpVault, uint256 wsxmrAmount) external view returns (uint256 baseLock, uint256 rewardLock)',
+            'error StalePrice()'
+        ]);
+        const result = await publicClient.readContract({
+            address: CONTRACTS.hub,
+            abi: hubAbi,
+            functionName: 'calculateBurnCollateral',
+            args: [vaultAddress, wsxmrAmount]
+        });
+
+        // Convert stataUSDe shares to USDe assets for display
+        const usdeAbi = parseAbi(['function convertToAssets(uint256 shares) external view returns (uint256)']);
+        const assetsWei = await publicClient.readContract({
+            address: CONTRACTS.stataUSDe,
+            abi: usdeAbi,
+            functionName: 'convertToAssets',
+            args: [result[1]] // rewardLock
+        });
+
+        const rewardQqqx = Number(assetsWei) / 1e18;
+        if (rewardQqqx > 0) {
+            let collPrice = 0;
+            try {
+                const { readHub } = await import('./viemClient.js?v=3.22');
+                collPrice = Number(await readHub('getCollateralPrice')) / 1e18;
+            } catch (_) {}
+            const rewardUsd = rewardQqqx * collPrice;
+            const usdStr = rewardUsd < 0.01 ? rewardUsd.toFixed(4) : rewardUsd < 1 ? rewardUsd.toFixed(3) : rewardUsd.toFixed(2);
+            rewardEl.innerHTML = `${rewardQqqx.toFixed(4)} QQQx <span style="color:var(--muted);font-size:11px">≈ $${usdStr}</span>`;
+        } else {
+            rewardEl.textContent = '—';
+        }
+    } catch (err) {
+        const rewardEl = document.getElementById('burn-reward-usde');
+        if (rewardEl) {
+            if (err.errorName === 'StalePrice' || err.message?.includes('StalePrice') || err.message?.includes('0x19abf40e')) {
+                rewardEl.textContent = '— (oracle stale)';
+            } else {
+                console.warn('[Reward] Burn reward display failed:', err.message);
+                rewardEl.textContent = '—';
+            }
+        }
+    }
+}
+
+/**
+ * Handle vault selection
+ */
+async function handleVaultSelect(isMint) {
+    const elements = getElements();
+    const vaultAddress = isMint ?
+        elements.mintVaultSelect.value :
+        elements.burnVaultSelect.value;
+
+    if (!vaultAddress) return;
+
+    // Primary path: use cached vault data (already fetched by loadVaults)
+    const vault = cachedVaults.find(v => v.address.toLowerCase() === vaultAddress.toLowerCase());
+
+    if (vault) {
+        // Render the expandable LP detail card
+        renderLPDetailCard(isMint, vault);
+
+        // Update fee labels and rate text
+        const mintFeeBps = vault.mintFeeBps || 0;
+        const burnRewardBps = vault.burnRewardBps || 0;
+        updateSwapRateDisplay(isMint, mintFeeBps, burnRewardBps);
+
+        // Update timeout window display (HyperEVM ≈ 1s block time)
+        const timeoutBlocks = isMint ? (vault.mintTimeoutBlocks || 0) : (vault.burnTimeoutBlocks || 0);
+        if (timeoutBlocks > 0) {
+            const timeoutHours = (timeoutBlocks * 5) / 3600;
+            const timeoutEl = document.getElementById(isMint ? 'mint-timeout' : 'burn-timeout');
+            if (timeoutEl) {
+                if (timeoutHours >= 1) {
+                    timeoutEl.textContent = `${timeoutHours.toFixed(1)}h · slash protected`;
+                } else {
+                    timeoutEl.textContent = `${Math.round(timeoutHours * 60)}m · slash protected`;
+                }
+            }
+        }
+
+        // Update backing collateral display dynamically
+        const backingEl = document.getElementById('mint-backing-collateral');
+        if (backingEl) {
+            const coll = vault.collateralAmount || 0;
+            const debt = vault.actualDebt ? Number(vault.actualDebt) / 1e8 : 0;
+            const xmrPrice = vault.xmrPrice || 200;
+            const collPrice = vault.collPrice || 1.0;
+            const cr = debt * xmrPrice > 0 ? Math.round((coll * collPrice) / (debt * xmrPrice) * 100) : 200;
+            backingEl.textContent = `QQQx · ${cr}%`;
+        }
+    } else {
+        // Fallback: fetch from RPC if not in cache
+        try {
+            const vaultData = await readHub('getVault', [vaultAddress]);
+            const mintFeeBps = Number(vaultData.mintFeeBps || 0);
+            const burnRewardBps = Number(vaultData.burnRewardBps || 0);
+            updateSwapRateDisplay(isMint, mintFeeBps, burnRewardBps);
+
+            const burnTimeoutBlocks = Number(vaultData.burnTimeoutBlocks || 0);
+            const mintTimeoutBlocks = Number(vaultData.mintTimeoutBlocks || 0);
+            const timeoutBlocks = isMint ? mintTimeoutBlocks : burnTimeoutBlocks;
+            if (timeoutBlocks > 0) {
+                const timeoutHours = (timeoutBlocks * 5) / 3600;
+                const timeoutEl = document.getElementById(isMint ? 'mint-timeout' : 'burn-timeout');
+                if (timeoutEl) {
+                    if (timeoutHours >= 1) {
+                        timeoutEl.textContent = `${timeoutHours.toFixed(1)}h · slash protected`;
+                    } else {
+                        timeoutEl.textContent = `${Math.round(timeoutHours * 60)}m · slash protected`;
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('Could not fetch vault info (contracts may not be deployed):', error.message);
+        }
+    }
+
+    if (isMint) {
+        updateMintCapacityDisplay();
+        updateMintReceiveAmount();
+    } else {
+        updateBurnReceiveAmount();
+        updateBurnRewardDisplay();
+    }
+}
+
+/**
+ * Handle start mint
+ */
+async function handleStartMint() {
+    const elements = getElements();
+    
+    // Require wallet connection
+    if (!getUserAddress()) {
+        showError('Wallet Required', 'Please connect your wallet to start a mint');
+        return;
+    }
+    
+    const amount = parseFloat(elements.mintAmount.value);
+    const vaultAddress = elements.mintVaultSelect.value;
+
+    // Validate inputs
+    if (!amount || amount <= 0) {
+        showError('Invalid Input', 'Please enter a valid amount');
+        return;
+    }
+
+    // Validate against LP capacity
+    const vault = cachedVaults.find(v => v.address.toLowerCase() === vaultAddress.toLowerCase());
+    if (vault && vault.maxMintCapacityXmr !== undefined && amount > vault.maxMintCapacityXmr) {
+        showError('Capacity Exceeded', `This LP can only mint up to ${vault.maxMintCapacityXmr.toFixed(6)} XMR. You entered ${amount.toFixed(6)} XMR.`);
+        return;
+    }
+    
+    // If there's already an active mint in the UI, remember it so we can offer a way back
+    let previousMintRequestId = null;
+    if (currentMintFlow && currentMintFlow.state !== 'completed' && currentMintFlow.state !== 'idle') {
+        previousMintRequestId = currentMintFlow.requestId;
+    }
+
+    // Stop old flow's timers and event watchers before starting a new one
+    if (currentMintFlow) {
+        stopTimers(currentMintFlow);
+        currentMintFlow.cleanup();
+    }
+
+    try {
+        disableInputs(true);
+
+        // Clear any old progress tracker interval
+        if (mintProgressInterval) {
+            clearInterval(mintProgressInterval);
+            mintProgressInterval = null;
+        }
+
+        // Fully reset UI to clear any stale content from previous mint
+        resetMintUI();
+
+        // Create new mint flow
+        currentMintFlow = new MintFlow();
+        setStartMintButtonText('Start New Mint');
+
+        // Hide any stale previous-mint banner from earlier
+        hidePreviousMintBanner();
+
+        // Setup progress tracking
+        trackMintProgress(currentMintFlow);
+        
+        // Use the default LP vault from config
+        const { CONTRACTS } = await import('./config.js?v=3.22');
+        
+        // Start the flow with the LP vault that has the running LP node
+        await currentMintFlow.start(CONTRACTS.defaultLpVault, amount);
+        
+        // Show previous mint banner if user had another mint going
+        if (previousMintRequestId) {
+            const prevSwap = getActiveSwapByRequestId(previousMintRequestId);
+            if (prevSwap) {
+                showPreviousMintBanner(prevSwap, () => handleResumeSwap(prevSwap));
+            }
+        }
+
+        // Update balance
+        const address = getUserAddress();
+        const balance = await getWsXmrBalance(address);
+        updateBalance(balance);
+        
+        // Reset UI (banner + confetti are already shown by complete())
+        resetMintUI();
+        
+    } catch (error) {
+        console.error('Mint error:', error);
+        showError('Mint Error', error.message);
+        // Keep the previous-mint banner visible on error so user can switch back
+        if (previousMintRequestId) {
+            const prevSwap = getActiveSwapByRequestId(previousMintRequestId);
+            if (prevSwap) {
+                showPreviousMintBanner(prevSwap, () => handleResumeSwap(prevSwap));
+            }
+        }
+        enableInputs(true);
+    }
+}
+
+/**
+ * Track mint flow progress
+ */
+function trackMintProgress(flow) {
+    // Clean up old interval before starting a new one
+    if (mintProgressInterval) {
+        clearInterval(mintProgressInterval);
+        mintProgressInterval = null;
+    }
+
+    let lastState = null;
+    
+    // Monitor state changes
+    const checkState = setInterval(() => {
+        // Only update UI if state actually changed
+        if (flow.state === lastState) {
+            return;
+        }
+        
+        lastState = flow.state;
+        
+        switch (flow.state) {
+            case 'init':
+                updateMintProgress('init', 'Requesting signature...');
+                break;
+            case 'evm-init':
+                completeMintStep('init');
+                updateMintProgress('evm-init', 'Submitting griefing deposit to blockchain...');
+                break;
+            case 'initiated':
+            case 'awaiting-lp-key':
+                completeMintStep('evm-init');
+                updateMintProgress('deposit', 'Waiting for LP to provide XMR deposit address...');
+                break;
+            case 'deposit':
+                completeMintStep('evm-init');
+                updateMintProgress('deposit', 'Waiting for XMR deposit...');
+                const depositAddr = flow.depositAddress || flow.agent.getMoneroAddress();
+                showMintDepositInfo(depositAddr, flow.xmrAmount);
+                setStartMintButtonText('Start New Mint');
+                break;
+            case 'lp-verifying':
+                completeMintStep('deposit');
+                updateMintProgress('lp-confirm', 'Waiting for Monero confirmations (~15–30 min)...');
+                // Show deposit info first so the "See TX Details" button can toggle it
+                let depositAddrVerifying = flow.depositAddress;
+                if (!depositAddrVerifying && flow.agent) {
+                    try {
+                        depositAddrVerifying = flow.agent.getMoneroAddress();
+                    } catch (e) {
+                        console.warn('Agent not fully initialized yet, will show deposit address when ready');
+                    }
+                }
+                if (depositAddrVerifying) {
+                    showMintDepositInfo(depositAddrVerifying, flow.xmrAmount);
+                }
+                showLPVerificationStatus();
+                break;
+            case 'lp-ready':
+            case 'lp-confirm':
+                completeMintStep('deposit');
+                updateMintProgress('lp-confirm', 'LP verified! Preparing to mint...');
+                // Ensure toggle button is visible in lp-ready state
+                const toggleBtn = document.getElementById('toggle-deposit-details');
+                if (!toggleBtn) {
+                    const btn = document.createElement('button');
+                    btn.id = 'toggle-deposit-details';
+                    btn.className = 'btn btn-small btn-secondary';
+                    btn.style.cssText = 'margin-top: 12px; padding: 6px 14px; font-size: 0.8rem;';
+                    btn.textContent = 'Show Deposit Details';
+                    btn.onclick = () => toggleMintDepositDetails();
+                    const mintActions = document.getElementById('mint-actions');
+                    if (mintActions) mintActions.appendChild(btn);
+                } else {
+                    toggleBtn.classList.remove('hidden');
+                }
+                break;
+            case 'finalize':
+                completeMintStep('lp-confirm');
+                updateMintProgress('finalize', 'Revealing secret and minting wsXMR...');
+                // Hide deposit details toggle button during finalize
+                const finalizeToggleBtn = document.getElementById('toggle-deposit-details');
+                if (finalizeToggleBtn) {
+                    finalizeToggleBtn.classList.add('hidden');
+                }
+                // Hide claim button during finalize
+                const finalizeClaimBtn = getElements().mintActions?.querySelector('.claim-wsxmr-btn');
+                if (finalizeClaimBtn) {
+                    finalizeClaimBtn.classList.add('hidden');
+                }
+                break;
+            case 'expired':
+                updateMintProgress('deposit', 'Mint expired. Cancel to refund your deposit.');
+                clearInterval(checkState);
+                mintProgressInterval = null;
+                break;
+            case 'completed':
+                completeMintStep('finalize');
+                clearInterval(checkState);
+                mintProgressInterval = null;
+                break;
+        }
+    }, 500);
+}
+
+/**
+ * Toggle visibility of mint deposit details
+ */
+function toggleMintDepositDetails() {
+    const depositInfo = document.getElementById('mint-deposit-info');
+    const toggleBtn = document.getElementById('toggle-deposit-details');
+    
+    if (!depositInfo || !toggleBtn) return;
+    
+    if (depositInfo.classList.contains('hidden')) {
+        depositInfo.classList.remove('hidden');
+        toggleBtn.textContent = 'Hide Deposit Details';
+    } else {
+        depositInfo.classList.add('hidden');
+        toggleBtn.textContent = 'Show Deposit Details';
+    }
+}
+
+/**
+ * Handle cancel mint
+ */
+async function handleCancelMint() {
+    if (!currentMintFlow) return;
+    
+    const confirmed = confirm('Are you sure you want to cancel this mint? Any deposited XMR will be refunded.');
+    if (!confirmed) return;
+    
+    try {
+        stopTimers(currentMintFlow);
+        await currentMintFlow.cancel();
+        resetMintUI();
+        showSuccess('Mint Cancelled', 'Mint cancelled and XMR refunded');
+    } catch (error) {
+        console.error('Cancel error:', error);
+        showError('Cancel Error', error.message);
+    }
+}
+
+/**
+ * Handle cancel burn
+ */
+async function handleCancelBurn() {
+    if (!currentBurnFlow) return;
+
+    // Build a state-specific confirmation so the user knows exactly what happens
+    // when they cancel (wsXMR restored vs slashed collateral vs returns).
+    let modalBody = '<p>Are you sure you want to cancel this burn?</p>';
+    if (currentBurnFlow.requestId) {
+        try {
+            const burnReq = await readHub('getBurnRequest', [currentBurnFlow.requestId]);
+            const status = Number(burnReq.status);
+            // BurnStatus: 0=INVALID, 1=REQUESTED, 2=PROPOSED, 3=COMMITTED, 4=COMPLETED, 5=SLASHED, 6=CANCELLED
+            if (status === 1) {
+                modalBody = '<p>The LP has not responded yet. Cancelling restores your wsXMR to your wallet.</p>';
+            } else if (status === 2) {
+                modalBody = '<p>The LP did not send XMR. Cancelling restores your wsXMR to your wallet (the LP can still sweep any XMR it sent).</p>';
+            } else if (status === 3) {
+                modalBody = '<p>The LP failed to finalize. Cancelling lets you claim the slashed collateral.</p>';
+            } else if (status === 6) {
+                const abandoned = await readHub('abandonedBurns', [currentBurnFlow.requestId]).catch(() => false);
+                modalBody = abandoned
+                    ? '<p>The LP abandoned this burn. Cancelling restores your wsXMR via late claim.</p>'
+                    : '<p>This burn was cancelled. Cancelling restores your wsXMR.</p>';
+            } else if (status === 5) {
+                modalBody = '<p>This burn was slashed. Cancelling lets you withdraw your returns.</p>';
+            }
+        } catch (e) {
+            // Fall back to generic copy if the status read fails
+        }
+    }
+
+    const confirmed = await showConfirmModal('Cancel Burn?', modalBody);
+    if (!confirmed) return;
+
+    try {
+        stopTimers(currentBurnFlow);
+        const cancelled = await currentBurnFlow.cancel();
+        if (cancelled === false) return; // early-exit (e.g. deadline not reached) — error already shown
+        resetBurnUI();
+        showSuccess('Burn Cancelled', 'Burn cancelled successfully');
+    } catch (error) {
+        console.error('Burn cancel error:', error);
+        showError('Cancel Error', error.message);
+    }
+}
+
+/**
+ * Handle start burn
+ */
+async function handleStartBurn() {
+    const elements = getElements();
+    
+    // Require wallet connection
+    if (!getUserAddress()) {
+        console.log('Wallet not connected');
+        return;
+    }
+    
+    const amount = parseFloat(elements.burnAmount.value);
+    const vaultAddress = elements.burnVaultSelect.value;
+    
+    // Validate inputs
+    if (!amount || amount <= 0) {
+        showError('Invalid Amount', 'Please enter a valid burn amount');
+        return;
+    }
+
+    if (amount < SWAP_CONFIG.minBurnAmount) {
+        showError(
+            'Amount Too Small',
+            `Minimum burn amount is ${SWAP_CONFIG.minBurnAmount} wsXMR. You entered ${amount} wsXMR.`
+        );
+        return;
+    }
+    
+    if (!vaultAddress) {
+        showError('No Vault Selected', 'Please select an LP vault');
+        return;
+    }
+    
+    try {
+        disableInputs(false);
+        
+        // Create new burn flow
+        currentBurnFlow = new BurnFlow();
+        
+        // Setup progress tracking
+        trackBurnProgress(currentBurnFlow);
+        
+        // Start the flow
+        await currentBurnFlow.start(vaultAddress, amount);
+        
+        // Update balance
+        const address = getUserAddress();
+        const balance = await getWsXmrBalance(address);
+        updateBalance(balance);
+        
+        // Reset UI
+        resetBurnUI();
+        
+    } catch (error) {
+        console.error('Burn error:', error);
+        showError('Burn Failed', error.message || 'Transaction failed. Check console for details.');
+        enableInputs(false);
+    }
+}
+
+/**
+ * Track burn flow progress
+ */
+function trackBurnProgress(flow) {
+    // Only handle the visual step indicator (cur/done classes).
+    // Status text is owned by burnFlow.js via direct updateBurnProgress calls.
+    let lastState = null;
+    const checkState = setInterval(() => {
+        if (flow.state === lastState) return;
+        lastState = flow.state;
+
+        switch (flow.state) {
+            case 'init':
+                updateBurnProgress('init');
+                break;
+            case 'evm-request':
+                completeBurnStep('init');
+                updateBurnProgress('evm-request');
+                break;
+            case 'lp-propose':
+                completeBurnStep('evm-request');
+                updateBurnProgress('lp-propose');
+                break;
+            case 'confirm-lock':
+                completeBurnStep('lp-propose');
+                updateBurnProgress('confirm-lock');
+                break;
+            case 'lp-finalize':
+                completeBurnStep('confirm-lock');
+                updateBurnProgress('lp-finalize');
+                break;
+            case 'completed':
+                completeBurnStep('lp-finalize');
+                updateBurnProgress('completed');
+                clearInterval(checkState);
+                break;
+        }
+    }, 500);
+}
+
+// Initialize app when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    init();
+}

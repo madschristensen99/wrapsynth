@@ -18,11 +18,34 @@ import * as anchor from '@coral-xyz/anchor';
 
 export const DEFAULT_COMMITMENT = 'confirmed';
 
-export function makeConnection(url) {
-  return new Connection(url, DEFAULT_COMMITMENT);
-}
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Create a Connection. Some providers (Alchemy free tier) block
+ * getProgramAccounts — when the primary URL isn't api.devnet.solana.com, GPA
+ * calls are re-routed to `gpaUrl` (default: public devnet) with retries.
+ * Everything else hits the primary endpoint.
+ */
+export function makeConnection(url, gpaUrl = process.env.GPA_URL || 'https://api.devnet.solana.com') {
+  const conn = new Connection(url, DEFAULT_COMMITMENT);
+  if (!url.includes('api.devnet.solana.com') && gpaUrl && gpaUrl !== url) {
+    const gpaConn = new Connection(gpaUrl, DEFAULT_COMMITMENT);
+    const gpa = gpaConn.getProgramAccounts.bind(gpaConn);
+    conn.getProgramAccounts = async (...args) => {
+      let last;
+      for (let i = 0; i < 12; i++) {
+        try {
+          return await gpa(...args);
+        } catch (e) {
+          last = e;
+          await sleep(4000);
+        }
+      }
+      throw last;
+    };
+  }
+  return conn;
+}
 
 /** HTTP-poll confirmation — no websocket path. Throws on tx error. */
 export async function confirm(conn, sig, timeoutMs = 60_000) {

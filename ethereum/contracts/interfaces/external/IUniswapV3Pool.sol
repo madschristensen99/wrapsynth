@@ -8,7 +8,7 @@ interface IUniswapV3Pool {
         uint16 observationIndex,
         uint16 observationCardinality,
         uint16 observationCardinalityNext,
-        uint8 feeProtocol,
+        uint32 feeProtocol, // uint8 on UniV3, uint32 on PancakeSwap V3 — uint32 decodes both
         bool unlocked
     );
 
@@ -16,6 +16,9 @@ interface IUniswapV3Pool {
 
     function token0() external view returns (address);
     function token1() external view returns (address);
+
+    function fee() external view returns (uint24);
+    function tickSpacing() external view returns (int24);
 
     function swap(
         address recipient,
@@ -26,4 +29,11 @@ interface IUniswapV3Pool {
     ) external returns (int256 amount0, int256 amount1);
 
     function initialize(uint160 sqrtPriceX96) external;
+
+    function observe(uint32[] calldata secondsAgos)
+        external
+        view
+        returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s);
+
+    function increaseObservationCardinalityNext(uint16 observationCardinalityNext) external;
 }

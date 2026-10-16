@@ -224,7 +224,7 @@ contract MintBurnCoverageTest is HyperEVMTestBase {
         vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
-        vm.roll(block.number + 2500);
+        vm.roll(block.number + hub.LP_CLAIM_WINDOW_BLOCKS() + 5);
 
         uint256 pendingBefore = _getPendingReturns(user, address(0));
         MintFacet(address(hub)).sweepUnclaimedExpiredMint(reqId);
@@ -249,7 +249,7 @@ contract MintBurnCoverageTest is HyperEVMTestBase {
         vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
-        vm.roll(block.number + 2500);
+        vm.roll(block.number + hub.LP_CLAIM_WINDOW_BLOCKS() + 5);
 
         uint256 sDAIPendingBefore = _getPendingReturns(user, address(stata));
         MintFacet(address(hub)).sweepUnclaimedExpiredMint(reqId);
@@ -382,7 +382,7 @@ contract MintBurnCoverageTest is HyperEVMTestBase {
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
         // Past the claim window — LP can no longer claim
-        vm.roll(block.number + 1805);
+        vm.roll(block.number + hub.LP_CLAIM_WINDOW_BLOCKS() + 5);
         vm.prank(lp);
         vm.expectRevert(IErrors.DeadlineExpired.selector);
         MintFacet(address(hub)).abandonKeyProvidedMint(reqId, lpSecret);
@@ -402,7 +402,7 @@ contract MintBurnCoverageTest is HyperEVMTestBase {
         MintFacet(address(hub)).reclaimParkedDeposit(reqId);
 
         // Past window — user reclaims (dead-LP case)
-        vm.roll(block.number + 1805);
+        vm.roll(block.number + hub.LP_CLAIM_WINDOW_BLOCKS() + 5);
         MintFacet(address(hub)).reclaimParkedDeposit(reqId);
         assertEq(_getPendingReturns(user, address(0)), 0.001 ether, "user reclaims parked deposit");
         assertEq(uint256(_getMintRequest(reqId).status), uint256(wsXmrStorage.MintStatus.CANCELLED));
@@ -489,7 +489,7 @@ contract MintBurnCoverageTest is HyperEVMTestBase {
 
         vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
-        vm.roll(block.number + 1805);
+        vm.roll(block.number + hub.LP_CLAIM_WINDOW_BLOCKS() + 5);
 
         uint256 sdaiBefore = _getPendingReturns(user, address(stata));
         MintFacet(address(hub)).reclaimParkedDeposit(reqId);

@@ -27,14 +27,21 @@ interface IwsXmrLiquidityRouter is ILiquidityPosition {
 
     // ========== CONSTANTS ==========
 
-    function POOL_FEE() external pure returns (uint24);
-    function TICK_SPACING() external pure returns (int24);
+    function POOL_FEE() external view returns (uint24);
+    function TICK_SPACING() external view returns (int24);
 
     // ========== INITIALIZATION ==========
 
-    /// @notice Initialize the pool at the given XMR price (call once at deployment).
+    /// @notice Initialize the pool at the given XMR price, assuming ~$1 collateral
+    ///         (call once at deployment). For volatile collateral use
+    ///         initializePoolWithPrice.
     /// @param initialXmrPrice XMR price in USD (18 decimals)
     function initializePool(uint256 initialXmrPrice) external;
+
+    /// @notice Initialize the pool at explicit XMR and collateral USD prices.
+    /// @param initialXmrPrice XMR price in USD (18 decimals)
+    /// @param collateralPrice Collateral asset price in USD (18 decimals)
+    function initializePoolWithPrice(uint256 initialXmrPrice, uint256 collateralPrice) external;
 
     // ========== VIEW FUNCTIONS ==========
 

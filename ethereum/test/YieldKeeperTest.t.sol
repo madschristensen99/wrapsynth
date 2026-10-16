@@ -13,6 +13,33 @@ import {Ed25519} from "../contracts/Ed25519.sol";
 import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
 import {ISwapRouter} from "../contracts/interfaces/external/ISwapRouter.sol";
 
+/// @notice Swap-router mock that enforces `amountOutMinimum` like a real V3
+///         router — pays a configured output, pulls tokenIn, and reverts
+///         "Too little received" if the caller's minimum exceeds the output.
+///         vm.mockCall returns wsxmrOut unconditionally, which is the gap that
+///         let the 1e10× minWsxmr precision bug (wrapsynth#67) ship undetected.
+contract EnforcingSwapRouter {
+    uint256 public amountOut;
+    uint256 public lastAmountIn;
+    uint256 public lastAmountOutMinimum;
+
+    function setAmountOut(uint256 _amountOut) external {
+        amountOut = _amountOut;
+    }
+
+    function exactInputSingle(ISwapRouter.ExactInputSingleParams calldata params)
+        external
+        returns (uint256)
+    {
+        lastAmountIn = params.amountIn;
+        lastAmountOutMinimum = params.amountOutMinimum;
+        IERC20(params.tokenIn).transferFrom(msg.sender, address(this), params.amountIn);
+        require(amountOut >= params.amountOutMinimum, "Too little received");
+        IERC20(params.tokenOut).transfer(params.recipient, amountOut);
+        return amountOut;
+    }
+}
+
 contract YieldKeeperTest is HyperEVMTestBase {
     address keeper = makeAddr("keeper");
 
@@ -253,6 +280,40 @@ contract YieldKeeperTest is HyperEVMTestBase {
         console.log("War chest before:", warChestBefore);
         console.log("War chest after:", warChestAfter);
         assertLt(warChestAfter, warChestBefore, "War chest should decrease after buy-and-burn");
+    }
+
+    // ========== TEST 10: triggerBuyAndBurn minWsxmr uses wsXMR decimals (issue #67) ==========
+
+    function test_TriggerBuyAndBurn_MinOutUsesWsxmrDecimals() public {
+        _injectWarChestYield(1000 ether);
+
+        vm.warp(block.timestamp + 25 hours);
+        _updatePrices();
+        _mockEmaPrice(400 * 1e18);
+
+        // Etch a router with real V3 semantics onto the configured swapRouter:
+        // it reverts when the output is below amountOutMinimum. The buggy
+        // 1e18-scaled bound demanded ~1e10× the fair output and would revert
+        // here; the 1e8-scaled bound clears.
+        EnforcingSwapRouter impl = new EnforcingSwapRouter();
+        vm.etch(HYPERSWAP_ROUTER, address(impl).code);
+        EnforcingSwapRouter enforcingRouter = EnforcingSwapRouter(HYPERSWAP_ROUTER);
+
+        // Spend = 20% of the 1000-share war chest minus the 2% keeper reward
+        // = 196 shares. Pay out exactly the fair wsXMR amount at $300 spot.
+        uint256 daiAmount = stata.convertToAssets(196 ether);
+        uint256 fairOut = (daiAmount * 1e8) / XMR_PRICE;
+        enforcingRouter.setAmountOut(fairOut);
+        deal(address(wsxmr), HYPERSWAP_ROUTER, fairOut);
+
+        vm.prank(keeper);
+        YieldFacet(address(hub)).triggerBuyAndBurn(3000);
+
+        // Pin the bound itself: amountOutMinimum must be denominated in
+        // 8-decimal wsXMR (1e8), not 1e18.
+        uint256 expectedMin =
+            (enforcingRouter.lastAmountIn() * 1e8 * 9900) / (XMR_PRICE * 10000);
+        assertEq(enforcingRouter.lastAmountOutMinimum(), expectedMin);
     }
 
     // ========== HELPERS ==========

@@ -46,7 +46,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         uint256 collateralPrice
     ) internal {
         uint256 parValueUsd = (burnReq.wsxmrAmount * burnReq.xmrPriceAtRequest) / WSXMR_DECIMALS;
-        uint256 parDaiAmount = (parValueUsd * SDAI_DECIMALS) / collateralPrice;
+        uint256 parDaiAmount = (parValueUsd * _underlyingUnit()) / collateralPrice;
         uint256 parShares = _daiToShares(parDaiAmount);
 
         uint256 userBase = parShares < burnReq.lockedCollateral
@@ -117,9 +117,12 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
     }
     
     /// @notice Liquidate an undercollateralized vault — burns wsXMR from caller and seizes sDAI collateral at a bonus
-    /// @dev Permissionless. Requires vault's collateral ratio (including deployed positions) to be below LIQUIDATION_RATIO.
-    ///      Before seizing collateral, handles in-flight burns: force-cancels REQUESTED/PROPOSED burns (restoring wsXMR to users),
-    ///      settles COMMITTED burns via par-capped slash. Then unwinds all deployed Uniswap V3 positions.
+    /// @dev Permissionless. First handles in-flight burns (force-cancels REQUESTED/PROPOSED, settling
+    ///      COMMITTED burns via par-capped slash) and unwinds all deployed Uniswap V3 positions.
+    ///      Eligibility is then evaluated on the post-settlement state: free collateral
+    ///      (collateralShares - lockedCollateral, i.e. excluding never-seizable mint key bonds and
+    ///      any residual burn locks) must be below LIQUIDATION_RATIO, else VaultHealthy reverts and
+    ///      the settlements roll back atomically.
     ///      Seizes collateral at LIQUIDATION_BONUS premium over debt value. Never seizes locked collateral.
     ///      Writes off bad debt if vault is fully drained. Increments liquidationNonce and mintNonce to invalidate
     ///      pending mints and future burn cancellations.
@@ -162,12 +165,6 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             actualDebt = _denormalizeDebt(vault.normalizedDebt);
         }
         if (actualDebt == 0) revert InsufficientDebt();
-        if (debtToClear > actualDebt) {
-            debtToClear = actualDebt;
-        }
-        
-        uint256 ratio = _calculateCRWithPositions(lpVault, actualDebt);
-        if (ratio >= LIQUIDATION_RATIO) revert VaultHealthy();
         
         // Fetch prices once before burn loop (needed for par-cap slash settlement)
         collateralPrice = _getCollateralPriceFromStorage();
@@ -215,11 +212,24 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             _unwindAllVaultPositions(lpVault, xmrPrice);
         }
         
+        // Eligibility is evaluated on the post-settlement state: the burn loop has
+        // paid out or released every burn lock, positions are unwound into
+        // collateralShares, and debt reflects settled burns. lockedCollateral now
+        // only covers in-flight mint key bonds, which are never seizable.
+        actualDebt = _denormalizeDebt(vault.normalizedDebt);
+        if (actualDebt == 0) revert InsufficientDebt();
+        if (debtToClear > actualDebt) {
+            debtToClear = actualDebt;
+        }
+        
+        uint256 ratio = _calculateCRWithPositions(lpVault, actualDebt);
+        if (ratio >= LIQUIDATION_RATIO) revert VaultHealthy();
+        
         // Prices already fetched above, reuse for seizure calculation
         
         uint256 debtValueUsd = (debtToClear * xmrPrice) / WSXMR_DECIMALS; // wsXMR has 8 decimals
         uint256 collateralValueUsd = (debtValueUsd * LIQUIDATION_BONUS) / RATIO_PRECISION;
-        uint256 collateralToSeizeDai = (collateralValueUsd * SDAI_DECIMALS) / collateralPrice;
+        uint256 collateralToSeizeDai = (collateralValueUsd * _underlyingUnit()) / collateralPrice;
         uint256 collateralToSeize = _daiToShares(collateralToSeizeDai);
         
         // L1: Never seize locked collateral. After burn settlements and position unwinds,
@@ -231,7 +241,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         if (collateralToSeize > availableCollateral) {
             collateralToSeize = availableCollateral;
             uint256 actualDaiAmount = _sharesToDai(collateralToSeize);
-            uint256 actualCollateralValueUsd = (actualDaiAmount * collateralPrice) / SDAI_DECIMALS;
+            uint256 actualCollateralValueUsd = (actualDaiAmount * collateralPrice) / _underlyingUnit();
             debtToClear = (actualCollateralValueUsd * RATIO_PRECISION * WSXMR_DECIMALS) / (LIQUIDATION_BONUS * xmrPrice);
             
             if (debtToClear > actualDebt) {
@@ -337,10 +347,6 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         }
         if (oldDebt == 0) revert InsufficientDebt();
         
-        // Check old vault is underwater
-        uint256 ratio = _calculateCRWithPositions(oldVault, oldDebt);
-        if (ratio >= LIQUIDATION_RATIO) revert VaultHealthy();
-        
         // Handle in-flight burns on old vault (same as liquidate)
         bytes32[] storage vaultBurns = vaultBurnRequests[oldVault];
         for (uint256 i = 0; i < vaultBurns.length; i++) {
@@ -379,8 +385,14 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             _unwindAllVaultPositions(oldVault, xmrPrice);
         }
         
-        // Recalculate debt after burn settlements
+        // Recalculate debt after burn settlements — they may have cleared all
+        // of it, in which case there is nothing to backstop.
         oldDebt = _denormalizeDebt(oldV.normalizedDebt);
+        if (oldDebt == 0) revert InsufficientDebt();
+        
+        // Check old vault is underwater — post-settlement, same as liquidate()
+        uint256 ratio = _calculateCRWithPositions(oldVault, oldDebt);
+        if (ratio >= LIQUIDATION_RATIO) revert VaultHealthy();
         
         // C2: Capture absorbed collateral to prevent yield-siphon
         uint256 absorbedCollateral = oldV.collateralShares;
@@ -454,7 +466,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         
         uint256 debtValueUsd = (debtToClear * xmrPrice) / WSXMR_DECIMALS; // wsXMR has 8 decimals
         uint256 collateralValueUsd = (debtValueUsd * LIQUIDATION_BONUS) / RATIO_PRECISION;
-        uint256 collateralToSeizeDai = (collateralValueUsd * SDAI_DECIMALS) / collateralPrice;
+        uint256 collateralToSeizeDai = (collateralValueUsd * _underlyingUnit()) / collateralPrice;
         collateralSeized = _daiToShares(collateralToSeizeDai);
         
         uint256 availableCollateral = vault.collateralShares > vault.lockedCollateral
@@ -463,7 +475,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         if (collateralSeized > availableCollateral) {
             collateralSeized = availableCollateral;
             uint256 actualDaiAmount = _sharesToDai(collateralSeized);
-            uint256 actualCollateralValueUsd = (actualDaiAmount * collateralPrice) / SDAI_DECIMALS;
+            uint256 actualCollateralValueUsd = (actualDaiAmount * collateralPrice) / _underlyingUnit();
             actualDebtCleared = (actualCollateralValueUsd * RATIO_PRECISION * WSXMR_DECIMALS) / (LIQUIDATION_BONUS * xmrPrice);
             
             if (actualDebtCleared > actualDebt) {
@@ -509,6 +521,9 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
     }
 
     /// @dev Calculates a vault's collateral ratio including deployed Uniswap V3 positions.
+    ///      Counts only FREE collateral (collateralShares - lockedCollateral): burn locks are
+    ///      owed to burn users at par and mint key bonds are never seizable, so neither may
+    ///      back the liquidation-eligibility check. Matches getVaultHealth / withdrawCollateral.
     ///      If the vault has no deployed positions (deployedSDAIShares == 0), uses the simple ratio from idle collateral.
     ///      Otherwise, fetches position totals at oracle price and uses CollateralLogic.calculateVaultCRWithDeployment.
     /// @return Ratio as (collateralValueUSD * 100) / debtValueUSD, where 150 = 150%
@@ -518,16 +533,19 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         Vault memory vault = _vaults[vaultAddr];
         uint256 xmrPrice = _getXmrPriceFromStorage();
         uint256 collateralPrice = _getCollateralPriceFromStorage();
-        
+        uint256 freeShares = vault.collateralShares > vault.lockedCollateral
+            ? vault.collateralShares - vault.lockedCollateral
+            : 0;
+
         if (vault.deployedSDAIShares == 0) {
             return CollateralLogic.calculateRatioFromShares(
-                vault.collateralShares, debtAmount, collateralToken, collateralPrice, xmrPrice
+                freeShares, debtAmount, collateralToken, collateralPrice, xmrPrice
             );
         }
-        
+
         (uint256 positionDAI, uint256 positionWsxmr) = _getVaultPositionTotalsAtOracle(vaultAddr, xmrPrice);
         return CollateralLogic.calculateVaultCRWithDeployment(
-            vault.collateralShares,
+            freeShares,
             positionDAI,
             positionWsxmr,
             debtAmount,
@@ -543,10 +561,11 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
         internal view
         returns (uint256 totalDAI, uint256 totalWsxmr)
     {
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
         uint256[] memory positions = _vaultPositions[vaultAddr];
         for (uint256 i = 0; i < positions.length; i++) {
             (uint256 dai, uint256 wsxmr) = IwsXmrLiquidityRouter(liquidityRouter)
-                .getPositionAmountsAtPrice(positions[i], xmrPrice);
+                .getPositionAmountsAtPrice(positions[i], xmrPrice, collateralPrice);
             totalDAI += dai;
             totalWsxmr += wsxmr;
         }
@@ -564,7 +583,7 @@ contract LiquidationFacet is wsXmrStorage, ILiquidationFacet {
             PositionMetadata memory meta = _positionMetadata[tokenId];
             
             (uint256 daiOut, uint256 wsxmrOut) = IwsXmrLiquidityRouter(liquidityRouter)
-                .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS), xmrPrice);
+                .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS), xmrPrice, _getCollateralPriceFromStorage());
             
             if (daiOut > 0) {
                 // daiOut is USDe — wrap to shares before crediting the vault

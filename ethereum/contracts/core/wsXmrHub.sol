@@ -210,10 +210,41 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         underlyingToken = _underlyingToken;
         swapRouter = _swapRouter;
         xmrPerpIndex = _xmrPerpIndex + 1; // stored +1 so 0 means "unset"
+        underlyingDecimals = _tryDecimals(_underlyingToken);
         emit ExternalAddressesSet(_collateralToken, _underlyingToken, _swapRouter, _xmrPerpIndex);
     }
 
     event ExternalAddressesSet(address collateralToken, address underlyingToken, address swapRouter, uint32 xmrPerpIndex);
+
+    /// @notice Configure the on-chain collateral TWAP pools (BNB deployment).
+    /// @dev    Callable only pre-lock. Pass zero addresses to disable the TWAP leg.
+    /// @param _collateralPool   V3 pool: collateral vs intermediate (QQQB/WBNB)
+    /// @param _quotePool        V3 pool: intermediate vs USD token (WBNB/USDT)
+    /// @param _intermediateToken shared pool token (WBNB)
+    /// @param _usdToken         USD-pegged quote token (USDT)
+    /// @param _window           TWAP window in seconds
+    function setCollateralTwapConfig(
+        address _collateralPool,
+        address _quotePool,
+        address _intermediateToken,
+        address _usdToken,
+        uint32 _window
+    ) external onlyDeployer {
+        collateralTwapPool = _collateralPool;
+        quoteTwapPool = _quotePool;
+        twapIntermediateToken = _intermediateToken;
+        twapUsdToken = _usdToken;
+        collateralTwapWindow = _window;
+        emit CollateralTwapConfigSet(_collateralPool, _quotePool, _intermediateToken, _usdToken, _window);
+    }
+
+    event CollateralTwapConfigSet(
+        address collateralPool,
+        address quotePool,
+        address intermediateToken,
+        address usdToken,
+        uint32 window
+    );
     
     // ========== FACET OPERATIONS ==========
     
@@ -303,13 +334,13 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         if (positions.length > 0 && liquidityRouter != address(0)) {
             for (uint256 i = 0; i < positions.length; i++) {
                 (uint256 posDai, ) = IwsXmrLiquidityRouter(liquidityRouter)
-                    .getPositionAmountsAtPrice(positions[i], xmrPrice);
+                    .getPositionAmountsAtPrice(positions[i], xmrPrice, daiPrice);
                 totalDai += posDai;
             }
         }
         
-        // Calculate USD values (prices are 18 decimals, totalDai is 18 decimals)
-        uint256 collateralValueUsd = (totalDai * daiPrice) / 1e18; // 18 decimals
+        // Calculate USD values (prices 18 decimals, totalDai in raw underlying units)
+        uint256 collateralValueUsd = (totalDai * daiPrice) / _underlyingUnit(); // 18 decimals
         uint256 debtValueUsd = (actualDebt * xmrPrice) / 1e8; // wsXMR has 8 decimals, result 18 decimals
         
         // Calculate ratio: (collateral / debt) * 100
@@ -361,7 +392,7 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
 
         // Convert available shares to underlying, then to USD
         uint256 collateralAmount = IERC4626(collateralToken).convertToAssets(availableCollateral);
-        uint256 collateralValueUsd = (collateralAmount * collateralPrice) / SDAI_DECIMALS;
+        uint256 collateralValueUsd = (collateralAmount * collateralPrice) / _underlyingUnit();
 
         // Current debt value in USD
         uint256 currentDebt = actualDebt + vault.pendingDebt;

@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>Wrapsynth — Monero DeFi</title>
+<meta name="description" content="Mint and burn wsXMR. Bridge your Monero to Solana with trustless atomic swaps backed by >200% collateral.">
+<meta property="og:title" content="Wrapsynth | Atomic Liquidity for Monero">
+<meta property="og:description" content="Mint and burn wsXMR. Bridge your Monero to Solana with trustless atomic swaps backed by >200% collateral.">
+<meta property="og:image" content="https://wrapsynth.com/frontend/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:url" content="https://wrapsynth.com/app">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Wrapsynth | Atomic Liquidity for Monero">
+<meta name="twitter:description" content="Mint and burn wsXMR. Bridge your Monero to Solana with trustless atomic swaps backed by >200% collateral.">
+<meta name="twitter:image" content="https://wrapsynth.com/frontend/og-image.png">
+<link rel="icon" type="image/x-icon" href="./favicon_monero/favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="./favicon_monero/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="./favicon_monero/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="./favicon_monero/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<script type="importmap">
+{
+  "imports": {
+    "@noble/hashes/sha512": "https://esm.sh/@noble/hashes@1.3.3/sha512",
+    "@noble/hashes/sha256": "https://esm.sh/@noble/hashes@1.3.3/sha256",
+    "@noble/hashes/utils": "https://esm.sh/@noble/hashes@1.3.3/utils",
+    "@noble/hashes/hmac": "https://esm.sh/@noble/hashes@1.3.3/hmac",
+    "@noble/hashes/pbkdf2": "https://esm.sh/@noble/hashes@1.3.3/pbkdf2",
+    "@noble/hashes/ripemd160": "https://esm.sh/@noble/hashes@1.3.3/ripemd160",
+    "@noble/hashes/_assert": "https://esm.sh/@noble/hashes@1.3.3/_assert",
+    "@noble/curves/secp256k1": "https://esm.sh/@noble/curves@1.2.0/secp256k1",
+    "@scure/base": "https://esm.sh/@scure/base@1.1.5",
+    "@scure/base@~1.1.0": "https://esm.sh/@scure/base@1.1.5",
+    "@scure/base@~1.1.2": "https://esm.sh/@scure/base@1.1.5"
+  }
+}
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations().then(regs => {
+        regs.forEach(r => r.unregister());
+    });
+}
+</script>
+<link rel="stylesheet" href="app-styles.css?v=2.4">
+</head>
+<body class="app-page">
+<!-- Animated Background -->
+<canvas id="gl"></canvas>
+<div class="scrim"></div>
+
+<script>
+/* ambient threads bg (dim, slow) */
+(function(){
+  const cv=document.getElementById('gl'), gl=cv.getContext('webgl',{alpha:true,antialias:false});
+  if(!gl){return;}
+  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const vs=`attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}`;
+  const fs=`precision highp float;uniform vec2 u_res;uniform float u_time;uniform float u_m;
+    float h(float n){return fract(sin(n)*43758.5453);}
+    void main(){vec2 uv=gl_FragCoord.xy/u_res.xy;float t=u_time*u_m;float glow=0.;
+      const int N=11;
+      for(int i=0;i<N;i++){float fi=float(i);float s=fi*1.37;float yb=(fi+0.5)/float(N);
+        float a=0.03+0.04*h(s);float f=1.3+2.2*h(s+1.);float sp=0.08+0.2*h(s+2.);float ph=s*6.28;
+        float y=yb+a*sin(uv.x*f*3.14+t*sp+ph);float d=abs(uv.y-y);
+        glow+=(0.0014/(d+0.0011))*(0.4+0.5*h(s+3.));}
+      vec3 o=vec3(1.,0.42,0.1);vec3 te=vec3(0.18,0.9,0.77);
+      vec3 c=mix(o,te,smoothstep(0.1,0.9,uv.x))*glow*0.34;
+      gl_FragColor=vec4(c,1.0);}`;
+  function sh(t,src){const s=gl.createShader(t);gl.shaderSource(s,src);gl.compileShader(s);return s;}
+  const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,vs));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,fs));
+  gl.linkProgram(pr);gl.useProgram(pr);
+  const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+  const l=gl.getAttribLocation(pr,'p');gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,2,gl.FLOAT,false,0,0);
+  const uR=gl.getUniformLocation(pr,'u_res'),uT=gl.getUniformLocation(pr,'u_time'),uM=gl.getUniformLocation(pr,'u_m');
+  gl.uniform1f(uM,reduce?0:1);
+  function rz(){const dpr=Math.min(devicePixelRatio||1,1.5);cv.width=innerWidth*dpr;cv.height=innerHeight*dpr;
+    gl.viewport(0,0,cv.width,cv.height);gl.uniform2f(uR,cv.width,cv.height);}
+  addEventListener('resize',rz);rz();
+  const t0=performance.now();
+  (function f(){gl.uniform1f(uT,(performance.now()-t0)/1000);gl.drawArrays(gl.TRIANGLES,0,3);
+    if(!reduce)requestAnimationFrame(f);})();
+})();
+</script>
+
+<div class="shell">
+  <nav>
+    <a href="index.html" class="brand" style="text-decoration:none"><img src="./wrapsynth-symbol.png" alt="Wrapsynth" style="width:22px;height:22px;border-radius:6px">Wrapsynth</a>
+    <div class="nav-right">
+      <span class="pill"><img src="./solana.svg" alt="Solana" style="width:14px;height:14px;margin-right:4px;vertical-align:-2px">Solana Devnet</span>
+      <a id="dexscreener-link" class="pill" href="#" target="_blank" rel="noopener noreferrer" style="text-decoration:none"><img src="https://dexscreener.com/favicon.ico" alt="Pool" style="width:14px;height:14px;margin-right:4px">Trade</a>
+      <span class="pill price">XMR <b id="xmrPx">$--</b></span>
+      <button class="connect hidden" id="withdraw-returns-btn" style="margin-right:8px">Withdraw returns</button>
+      <button class="connect" id="connect-wallet">Connect wallet</button>
+      <a href="account.html" id="connected-info" class="wallet-connected hidden" style="text-decoration:none">
+        <div class="wallet-avatar"></div>
+        <div class="wallet-details">
+          <span id="user-address" class="wallet-address"></span>
+          <span id="user-balance" class="wallet-balance"></span>
+        </div>
+      </a>
+      <button class="connect hidden" id="disconnect-wallet" title="Disconnect wallet" style="margin-left:6px;padding:6px 10px">✕</button>
+    </div>
+  </nav>
+
+  <!-- Resume Active Swap Banner -->
+  <div id="resume-banner" class="banner banner-warning hidden">
+    <div id="resume-banner-header" style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+      <span id="resume-banner-title">Active operations detected!</span>
+    </div>
+    <div id="resume-swap-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+  </div>
+
+  <div class="stage">
+    <div class="card">
+      <div class="tabs">
+        <button class="tab" id="tab-mint" data-tab="mint">Mint</button>
+        <button class="tab" id="tab-burn" data-tab="burn">Burn</button>
+        <button class="tab" id="tab-co-lp" data-tab="co-lp">Co-LP</button>
+        <button class="tab" id="tab-lp" data-tab="lp">Vaults</button>
+      </div>
+
+      <!-- MINT PANEL -->
+      <div class="body panel" id="mint-panel" data-panel="mint">
+        <div class="label-row"><span>You send</span><span class="bal" data-fill="mint">Balance: -- XMR</span></div>
+        <div class="field">
+          <input id="mint-amount" inputmode="decimal" placeholder="0.0" />
+          <span class="asset"><img src="./monero-symbol-1280.png" alt="XMR" style="width:20px;height:20px;margin-right:6px">XMR</span>
+        </div>
+        <div class="usd-equiv" id="mint-usd-equiv"></div>
+        <div class="swap-mid"><div class="swap-ic">↓</div></div>
+        <div class="label-row"><span>You receive</span><span id="mint-rate">Select a vault</span></div>
+        <div class="field">
+          <input id="mint-receive" placeholder="0.0" readonly />
+          <span class="asset"><img src="./wrapsynth-symbol.png" alt="wsXMR" style="width:20px;height:20px;margin-right:6px">wsXMR</span>
+        </div>
+
+        <div class="meta">
+          <div class="r"><span>LP Vault</span>
+            <div class="vault-picker" id="mint-vault-picker">
+              <div class="vp-selected" id="mint-vp-selected">
+                <span class="vp-dot" style="background:var(--muted)"></span>
+                <span class="vp-addr">Loading vaults...</span>
+                <span class="vp-cr"></span>
+                <span class="vp-chev"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></span>
+              </div>
+              <div class="vp-list" id="mint-vp-list"></div>
+              <select id="mint-vault-select" style="display:none">
+                <option value="">Loading vaults...</option>
+              </select>
+            </div>
+          </div>
+          <div class="r" id="mint-vault-info" style="display:none"><span>Vault capacity</span><b id="mint-capacity">—</b></div>
+          <div class="r"><span id="mint-fee-label">LP mint fee</span><b id="mint-fee">—</b></div>
+          <div class="r"><span>LP timeout window</span><b id="mint-timeout">—</b></div>
+          <div class="r"><span>Backing collateral</span><b id="mint-backing-collateral">—</b></div>
+        </div>
+
+        <div id="mint-lp-detail" class="lp-detail hidden">
+          <div class="lp-detail-toggle" id="mint-lp-detail-toggle">
+            <span class="chev"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span>
+            <span>LP Details</span>
+          </div>
+          <div class="lp-detail-body">
+            <div class="lp-detail-top">
+              <div class="lp-detail-chart" id="mint-lp-chart"></div>
+              <div class="lp-detail-stats">
+                <div class="lp-stat-row"><span>Collateral ratio</span><b id="mint-lp-cr" class="lp-cr">—</b></div>
+                <div class="lp-stat-row"><span>Total collateral</span><b id="mint-lp-collateral">—</b></div>
+                <div class="lp-stat-row"><span>Total debt</span><b id="mint-lp-debt">—</b></div>
+                <div class="lp-stat-row"><span>Mint capacity</span><b id="mint-lp-capacity">—</b></div>
+                <div class="lp-stat-row"><span>Griefing deposit</span><b id="mint-lp-griefing">—</b></div>
+                <div class="lp-stat-row"><span>LP address</span><a id="mint-lp-scan-link" href="#" target="_blank" rel="noopener">Solscan ↗</a></div>
+              </div>
+            </div>
+            <div class="lp-detail-breakdown" id="mint-lp-breakdown"></div>
+          </div>
+        </div>
+
+        <div id="mint-capacity-info" class="hidden" style="margin-top:8px;font-size:12.5px;color:var(--muted);text-align:center"></div>
+
+        <button class="cta" id="start-mint" disabled>Enter an amount</button>
+
+        <div id="mint-progress" class="stepper">
+          <div class="steps">
+            <div class="step" data-s="0"><div class="bar"></div><div class="t">Initiate<br>+ griefing deposit</div></div>
+            <div class="step" data-s="1"><div class="bar"></div><div class="t">Send XMR<br>to LP address</div></div>
+            <div class="step" data-s="2"><div class="bar"></div><div class="t">LP confirms<br>receipt</div></div>
+            <div class="step" data-s="3"><div class="bar"></div><div class="t">Finalize<br>reveal secret</div></div>
+          </div>
+          <div class="step-note" id="mint-step-note"><span class="k" id="mint-step-num">01</span><span id="mint-step-text"></span></div>
+          <div id="mint-deadline-timer" class="hidden" style="margin:12px 0;padding:12px;background:var(--warning-bg);border:1px solid var(--warning-border);border-radius:8px;font-size:13px">
+            <div id="mint-time-remaining"></div>
+          </div>
+          <div id="mint-deadline-warning" class="hidden"></div>
+          <div id="mint-deposit-info"></div>
+          <canvas id="mint-qr-code"></canvas>
+          <div id="mint-xmr-address"></div>
+          <div id="mint-exact-amount"></div>
+          <div id="confirm-sent-xmr"></div>
+          <div id="waiting-lp-verification"></div>
+          <div id="mint-actions"></div>
+          <button class="reset" id="cancel-mint">↺ Cancel &amp; reset</button>
+        </div>
+      </div>
+
+      <!-- BURN PANEL -->
+      <div class="body panel hidden" id="burn-panel" data-panel="burn">
+        <div class="label-row"><span>You burn</span><span class="bal" id="burn-user-balance">Balance: -- wsXMR</span></div>
+        <div class="field">
+          <input id="burn-amount" inputmode="decimal" placeholder="0.0" />
+          <span class="asset"><img src="./wrapsynth-symbol.png" alt="wsXMR" style="width:20px;height:20px;margin-right:6px">wsXMR</span>
+        </div>
+        <div class="pct-row">
+          <button class="percentage-btn" data-percentage="25">25%</button>
+          <button class="percentage-btn" data-percentage="50">50%</button>
+          <button class="percentage-btn" data-percentage="100">MAX</button>
+          <span id="burn-percentage-feedback"></span>
+          <span class="usd-equiv" id="burn-usd-equiv"></span>
+        </div>
+        <div class="swap-mid"><div class="swap-ic">↓</div></div>
+        <div class="label-row"><span>You receive</span><span id="burn-rate">Select a vault</span></div>
+        <div class="field">
+          <input id="burn-receive" placeholder="0.0" readonly />
+          <span class="asset"><img src="./monero-symbol-1280.png" alt="XMR" style="width:20px;height:20px;margin-right:6px">XMR</span>
+        </div>
+
+        <div class="meta">
+          <div class="r"><span>LP Vault</span>
+            <div class="vault-picker" id="burn-vault-picker">
+              <div class="vp-selected" id="burn-vp-selected">
+                <span class="vp-dot" style="background:var(--muted)"></span>
+                <span class="vp-addr">Loading vaults...</span>
+                <span class="vp-cr"></span>
+                <span class="vp-chev"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></span>
+              </div>
+              <div class="vp-list" id="burn-vp-list"></div>
+              <select id="burn-vault-select" style="display:none">
+                <option value="">Loading vaults...</option>
+              </select>
+            </div>
+          </div>
+          <div class="r" id="burn-vault-info" style="display:none"><span>Vault capacity</span><b id="burn-capacity">—</b></div>
+          <div class="r"><span id="burn-fee-label">Reward rate</span><b id="burn-fee">—</b></div>
+          <div class="r"><span>Burn reward</span><b id="burn-reward-usde">—</b></div>
+          <div class="r"><span>LP timeout window</span><b id="burn-timeout">—</b></div>
+        </div>
+
+        <div id="burn-lp-detail" class="lp-detail hidden">
+          <div class="lp-detail-toggle" id="burn-lp-detail-toggle">
+            <span class="chev"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span>
+            <span>LP Details</span>
+          </div>
+          <div class="lp-detail-body">
+            <div class="lp-detail-top">
+              <div class="lp-detail-chart" id="burn-lp-chart"></div>
+              <div class="lp-detail-stats">
+                <div class="lp-stat-row"><span>Collateral ratio</span><b id="burn-lp-cr" class="lp-cr">—</b></div>
+                <div class="lp-stat-row"><span>Total collateral</span><b id="burn-lp-collateral">—</b></div>
+                <div class="lp-stat-row"><span>Total debt</span><b id="burn-lp-debt">—</b></div>
+                <div class="lp-stat-row"><span>Burn reward</span><b id="burn-lp-reward">—</b></div>
+                <div class="lp-stat-row"><span>Min burn amount</span><b id="burn-lp-min">—</b></div>
+                <div class="lp-stat-row"><span>LP address</span><a id="burn-lp-scan-link" href="#" target="_blank" rel="noopener">Solscan ↗</a></div>
+              </div>
+            </div>
+            <div class="lp-detail-breakdown" id="burn-lp-breakdown"></div>
+          </div>
+        </div>
+
+        <button class="cta" id="start-burn" disabled>Enter an amount</button>
+
+        <div id="burn-progress" class="stepper">
+          <div class="steps">
+            <div class="step" data-s="0"><div class="bar"></div><div class="t">Request burn<br>reserve + deadline</div></div>
+            <div class="step" data-s="1"><div class="bar"></div><div class="t">LP sends<br>XMR to you</div></div>
+            <div class="step" data-s="2"><div class="bar"></div><div class="t">Commit burn<br>escrow collateral</div></div>
+            <div class="step" data-s="3"><div class="bar"></div><div class="t">LP finalizes<br>reveal secret</div></div>
+            <div class="step" data-s="4"><div class="bar"></div><div class="t">Claim XMR<br>sweep to wallet</div></div>
+          </div>
+          <div class="step-note" id="burn-step-note"><span class="k" id="burn-step-num">01</span><span id="burn-step-text"></span></div>
+
+          <!-- Dynamic loading indicator for burn steps -->
+          <div id="burn-status-loading" class="burn-status-loading hidden"></div>
+
+          <!-- Burn address panel: shows shared Monero address + view key -->
+          <div id="burn-address-panel" class="burn-address-panel hidden">
+            <div class="verification-row">
+              <span class="verification-label">Shared XMR address</span>
+              <span class="verification-value" id="burn-monero-address">—</span>
+              <button class="btn-copy-sm" id="copy-burn-address" title="Copy address">Copy</button>
+            </div>
+            <div class="verification-row">
+              <span class="verification-label">Private view key</span>
+              <span class="verification-value" id="burn-view-key">—</span>
+              <button class="btn-copy-sm" id="copy-burn-viewkey" title="Copy view key">Copy</button>
+            </div>
+            <div class="verification-hint">Verifying XMR on-chain using your view key. The auto-scan checks the Monero blockchain for incoming transactions to this shared address.</div>
+          </div>
+
+          <!-- Burn verification: loading state -->
+          <div id="burn-verification-loading" class="hidden">
+            <svg class="spin" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent-orange);"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+            <span>Checking Monero blockchain…</span>
+          </div>
+
+          <!-- Burn verification: details -->
+          <div id="burn-verification-details" class="hidden">
+            <div class="verification-row">
+              <span class="verification-label">Destination</span>
+              <span class="verification-value" id="burn-verify-address">—</span>
+            </div>
+            <div class="verification-row">
+              <span class="verification-label">Monero tx</span>
+              <span class="verification-value" id="burn-verify-tx-hash">—</span>
+              <a id="burn-verify-tx-link" href="#" target="_blank" rel="noopener" style="font-size:0.75rem;color:var(--accent-blue);text-decoration:none;margin-left:6px;display:none;">View ↗</a>
+            </div>
+            <div class="verification-row">
+              <span class="verification-label">Status</span>
+              <span class="verification-value" id="burn-verify-confirmations">—</span>
+            </div>
+            <div class="verification-row">
+              <span class="verification-label">Amount</span>
+              <span class="verification-value" id="burn-verify-amount">—</span>
+            </div>
+          </div>
+
+          <!-- Burn verification: manual confirm -->
+          <div id="burn-verification-manual" class="hidden">
+            <p style="font-size:0.85rem;color:var(--text-2);margin:0.5rem 0;">
+              The auto-scan is verifying XMR on-chain using your view key. If you've already verified independently, you can confirm to proceed.
+            </p>
+            <div class="action-buttons">
+              <button class="cta" id="burn-confirm-receipt">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:4px"><polyline points="20 6 9 17 4 12"/></svg>
+                I received the XMR — Confirm & wait for LP
+              </button>
+              <button class="cta ghost" id="burn-confirm-receipt-manual">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:4px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <span id="burn-verify-explorer-label">View on moneroblocks.info</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Burn restore: LP abandoned the burn (didn't send XMR by deadline) -->
+          <div id="burn-restore-panel" class="hidden">
+            <div style="border:1px solid var(--accent-orange);border-radius:10px;padding:12px;margin:0.75rem 0;background:rgba(255,159,67,0.06);">
+              <div style="font-size:0.85rem;color:var(--text);font-weight:600;margin-bottom:4px;">LP did not send XMR by the deadline</div>
+              <p style="font-size:0.8rem;color:var(--text-2);margin:0 0 10px;">The burn was abandoned on-chain. Your wsXMR is still yours — restore it to your wallet now.</p>
+              <div class="action-buttons">
+                <button class="cta" id="burn-restore-wsxmr">Restore wsXMR</button>
+                <button class="cta ghost" id="burn-restore-cancel">Not now</button>
+              </div>
+            </div>
+          </div>
+
+          <button class="reset" id="cancel-burn">↺ Cancel &amp; reset</button>
+        </div>
+      </div>
+
+      <!-- CO-LP PANEL -->
+      <div class="body panel hidden" id="co-lp-panel" data-panel="co-lp">
+        <div style="padding:0 4px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <h3 style="font-family:'Plus Jakarta Sans';font-size:15px;font-weight:600">Your Co-LP Positions</h3>
+            <button class="cta ghost" id="co-lp-refresh-positions" style="padding:6px 10px;font-size:13px">↻ Refresh</button>
+          </div>
+          <div id="co-lp-pending" class="hidden">
+            <span>Pending returns: <b id="co-lp-pending-amt"></b></span>
+            <button class="cta ghost" id="co-lp-withdraw-btn">Withdraw</button>
+          </div>
+          <div id="co-lp-positions-list" style="margin-bottom:20px">
+            <div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">Connect wallet to see positions</div>
+          </div>
+          
+          <h3 style="font-family:'Plus Jakarta Sans';font-size:15px;font-weight:600;margin:20px 0 12px">Open New Position</h3>
+          <div class="label-row"><span>Your wsXMR Balance</span><span id="co-lp-user-balance">--</span></div>
+          
+          <div class="meta" style="margin-top:12px">
+            <div class="r">
+              <span>Select Vault</span>
+              <div class="vault-picker" id="colp-vault-picker">
+                <div class="vp-selected" id="colp-vp-selected">
+                  <span class="vp-dot" style="background:var(--muted)"></span>
+                  <span class="vp-addr">Loading vaults...</span>
+                  <span class="vp-cr"></span>
+                  <span class="vp-chev"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></span>
+                </div>
+                <div class="vp-list" id="colp-vp-list"></div>
+                <select id="colp-vault-select" style="display:none">
+                  <option value="">Loading vaults...</option>
+                </select>
+              </div>
+            </div>
+            <div class="r" id="co-lp-capacity" style="display:none"><span>Available capacity</span><b>--</b></div>
+          </div>
+          
+          <div class="addr-field">
+            <input id="co-lp-amount" type="number" step="0.0001" placeholder="wsXMR amount to provide" />
+          </div>
+          <div class="pct-row">
+            <button class="colp-percentage-btn" data-percentage="25">25%</button>
+            <button class="colp-percentage-btn" data-percentage="50">50%</button>
+            <button class="colp-percentage-btn" data-percentage="100">MAX</button>
+            <span id="colp-percentage-feedback"></span>
+          </div>
+
+          <button class="cta" id="co-lp-open" disabled>Open Co-LP Position</button>
+          
+          <div id="co-lp-lp-settings" class="hidden" style="margin-top:20px;padding-top:20px;border-top:1px solid var(--line-2)">
+            <h3 style="font-family:'Plus Jakarta Sans';font-size:14px;font-weight:600;margin-bottom:12px">LP Settings</h3>
+            <div class="label-row"><span>Max Co-LP Range (bps)</span></div>
+            <div class="addr-field">
+              <input id="co-lp-max-range" type="number" placeholder="e.g. 2500" />
+            </div>
+            <button class="cta ghost" id="co-lp-set-range">Update Range</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- LP PANEL / VAULTS -->
+      <div class="body panel vaults hidden" id="lp-panel" data-panel="lp">
+        <div class="vault-head">
+          <h3>LP Vaults</h3>
+          <button class="mini" id="new-vault">+ Create Vault</button>
+        </div>
+        <div id="vaults-list" class="vault-grid">
+          <!-- Vaults will be populated here by JavaScript -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="strip">
+    <div class="global">
+      <div class="g"><div class="n" id="tvl-stat">$--</div><div class="k">TVL</div></div>
+      <div class="g"><div class="n" id="vaults-stat">--</div><div class="k">Active Vaults</div></div>
+      <div class="g"><div class="n" id="volume-stat">$--</div><div class="k">24h Volume</div></div>
+    </div>
+    <div class="addrs" id="app-addrs">
+      <span class="lab">wsXMR</span> &nbsp;<a id="addr-link-wsxmr" href="#" target="_blank">Loading…</a><br>
+      <span class="lab">wsXmrHub</span> &nbsp;<a id="addr-link-hub" href="#" target="_blank">Loading…</a><br>
+      <span class="lab">Router</span> &nbsp;<a id="addr-link-router" href="#" target="_blank">Loading…</a>
+    </div>
+  </div>
+</div>
+
+<!-- Notification Container -->
+<div id="notification-container" class="notification-container"></div>
+
+<!-- Modal Overlay -->
+<div id="modal-overlay" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modal-title"></h3>
+      <button class="modal-close" id="modal-x-btn">&times;</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-footer" id="modal-footer">
+      <button id="modal-cancel-btn" class="btn btn-secondary hidden">Cancel</button>
+      <button id="modal-confirm-btn" class="btn btn-primary hidden">Confirm</button>
+      <button id="modal-close-btn" class="btn btn-primary">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Previous Mint Banner (for resuming) -->
+<div id="previous-mint-banner" class="banner banner-info hidden"></div>
+
+<!-- Load deployment.json before any app modules -->
+<script type="module">
+  const res = await fetch('./devnet-config.json?t=' + Date.now());
+  if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status);
+  window.DEPLOYMENT = await res.json();
+
+  // Populate footer address links from deployment.json
+  const D = window.DEPLOYMENT, DC = D.contracts || {};
+  const short = a => a ? `${a.slice(0,6)}…${a.slice(-4)}` : '';
+  const wsxmr = document.getElementById('addr-link-wsxmr');
+  const hub = document.getElementById('addr-link-hub');
+  const router = document.getElementById('addr-link-router');
+  if (wsxmr) { wsxmr.textContent = short(DC.wsXMR); wsxmr.href = `https://solscan.io/token/${DC.wsXMR}?cluster=devnet`; }
+  if (hub) { hub.textContent = short(DC.wsXmrHub); hub.href = `https://solscan.io/account/${DC.wsXmrHub}?cluster=devnet`; }
+  if (router) { router.textContent = short(DC.liquidityRouter); router.href = `https://solscan.io/account/${DC.liquidityRouter}?cluster=devnet`; }
+</script>
+<script type="module" src="./js/main.js?v=3.22"></script>
+</body>
+</html>

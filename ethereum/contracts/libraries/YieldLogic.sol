@@ -15,6 +15,20 @@ library YieldLogic {
     uint256 constant WSXMR_DECIMALS = 1e8;
     
     event YieldHarvested(uint256 yieldDai, uint256 yieldShares);
+
+    /// @dev Smallest-unit scale of the collateral underlying (10^decimals).
+    ///      convertToAssets returns raw underlying units — USD conversions
+    ///      must use this, not 1e18 (cbBTC is 8-dec). Defaults to 1e18 if the
+    ///      adapter doesn't expose asset().
+    function _underlyingUnit(address collateralToken) internal view returns (uint256) {
+        (bool ok, bytes memory data) = collateralToken.staticcall(abi.encodeWithSignature("asset()"));
+        if (ok && data.length >= 32) {
+            address underlying = abi.decode(data, (address));
+            (bool ok2, bytes memory d2) = underlying.staticcall(abi.encodeWithSignature("decimals()"));
+            if (ok2 && d2.length >= 32) return 10 ** abi.decode(d2, (uint8));
+        }
+        return 1e18;
+    }
     
     /**
      * @notice Calculate extractable yield from vault
@@ -48,14 +62,14 @@ library YieldLogic {
         if (totalObligations > 0) {
             // Convert available collateral shares to underlying, then to USD
             uint256 availableCollateralDai = ISavingsDAI(collateralToken).convertToAssets(collateralShares);
-            uint256 availableCollateralUSD = (availableCollateralDai * collateralPrice) / 1e18;
+            uint256 availableCollateralUSD = (availableCollateralDai * collateralPrice) / _underlyingUnit(collateralToken);
             
             uint256 debtValueUSD = (totalObligations * xmrPrice) / WSXMR_DECIMALS; // wsXMR has 8 decimals
             uint256 minCollateralUSD = (debtValueUSD * COLLATERAL_RATIO) / RATIO_PRECISION;
             
             // Convert locked collateral shares to USD and add to minimum
             uint256 lockedCollateralDai = ISavingsDAI(collateralToken).convertToAssets(lockedCollateral);
-            uint256 lockedCollateralUSD = (lockedCollateralDai * collateralPrice) / 1e18;
+            uint256 lockedCollateralUSD = (lockedCollateralDai * collateralPrice) / _underlyingUnit(collateralToken);
             minCollateralUSD += lockedCollateralUSD;
             
             if (availableCollateralUSD <= minCollateralUSD) {
@@ -63,7 +77,7 @@ library YieldLogic {
             }
             
             uint256 maxExtractableUSD = availableCollateralUSD - minCollateralUSD;
-            uint256 maxExtractableDai = (maxExtractableUSD * 1e18) / collateralPrice;
+            uint256 maxExtractableDai = (maxExtractableUSD * _underlyingUnit(collateralToken)) / collateralPrice;
             uint256 maxExtractableShares = ISavingsDAI(collateralToken).convertToShares(maxExtractableDai);
             
             if (vaultYieldShares > maxExtractableShares) {
@@ -135,7 +149,7 @@ library YieldLogic {
         // Convert collateral shares to underlying amount
         uint256 collateralAmount = ISavingsDAI(collateralToken).convertToAssets(collateralShares);
         
-        uint256 collateralValueUsd = (collateralAmount * collateralPrice) / PRICE_DECIMALS;
+        uint256 collateralValueUsd = (collateralAmount * collateralPrice) / _underlyingUnit(collateralToken);
         uint256 debtValueUsd = (debtAmount * xmrPrice) / 1e8; // wsXMR has 8 decimals
         
         return (collateralValueUsd * RATIO_PRECISION) / debtValueUsd;

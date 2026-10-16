@@ -7,6 +7,20 @@ pragma solidity ^0.8.20;
  */
 library CollateralLogic {
     uint256 constant RATIO_PRECISION = 100;
+
+    /// @dev Smallest-unit scale of the share token's underlying asset
+    ///      (10^decimals). convertToAssets returns raw underlying units, so
+    ///      USD conversions must use this — not a hardcoded 1e18 (cbBTC is
+    ///      8-dec). Defaults to 1e18 if the adapter doesn't expose asset().
+    function _underlyingUnit(address sdai) internal view returns (uint256) {
+        (bool ok, bytes memory data) = sdai.staticcall(abi.encodeWithSignature("asset()"));
+        if (ok && data.length >= 32) {
+            address underlying = abi.decode(data, (address));
+            (bool ok2, bytes memory d2) = underlying.staticcall(abi.encodeWithSignature("decimals()"));
+            if (ok2 && d2.length >= 32) return 10 ** abi.decode(d2, (uint8));
+        }
+        return 1e18;
+    }
     
     /**
      * @notice Calculate collateral ratio
@@ -72,7 +86,7 @@ library CollateralLogic {
         require(success && data.length >= 32, "convertToAssets failed");
         uint256 collateralAmount = abi.decode(data, (uint256));
         
-        uint256 collateralValueUsd = (collateralAmount * collateralPrice) / 1e18;
+        uint256 collateralValueUsd = (collateralAmount * collateralPrice) / _underlyingUnit(sdai);
         uint256 debtValueUsd = (debtAmount * xmrPrice) / 1e8; // wsXMR has 8 decimals
         
         return (collateralValueUsd * RATIO_PRECISION) / debtValueUsd;
@@ -107,7 +121,7 @@ library CollateralLogic {
         uint256 idleDaiAmount = abi.decode(data, (uint256));
         
         uint256 totalDaiAmount = idleDaiAmount + positionDAI;
-        uint256 collateralUsd = (totalDaiAmount * collateralPrice) / 1e18;
+        uint256 collateralUsd = (totalDaiAmount * collateralPrice) / _underlyingUnit(sdai);
         // M2: Do NOT count deployed wsXMR as vault collateral. On unwind it goes
         // to the user (pendingReturns), not the vault.
         uint256 debtValueUsd = (debtAmount * xmrPrice) / 1e8;

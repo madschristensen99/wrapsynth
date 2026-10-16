@@ -536,7 +536,7 @@ sequenceDiagram
     Anyone->>VM: cancelMint(requestId)
     VM->>VM: Verify READY and timeout reached
     VM->>VM: Move to EXPIRED_READY (not CANCELLED yet)
-    VM->>VM: Set new timeout = block + LP_CLAIM_WINDOW_BLOCKS (~30 min)
+    VM->>VM: Set new timeout = block + LP_CLAIM_WINDOW_BLOCKS (~1 hour)
     VM-->>Anyone: MintExpiredReady event
 
     Note over Anyone,LP: Scenario B1: LP claims griefing deposit (within claim window)

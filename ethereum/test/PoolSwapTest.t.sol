@@ -382,7 +382,7 @@ contract PoolSwapTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         // The on-chain bug was: uint256(liq) * (1 << 96) * diff0 overflowed uint256
         // when liquidity was ~3.4e23. This test creates a position and verifies
         // the router can compute its value without reverting.
-        (uint256 daiAmt, uint256 wsxmrAmt) = router.getPositionAmountsAtPrice(tokenId, XMR_PRICE);
+        (uint256 daiAmt, uint256 wsxmrAmt) = router.getPositionAmountsAtPrice(tokenId, XMR_PRICE, 1e18);
         console.log("Position sDAI value:", daiAmt);
         console.log("Position wsXMR value:", wsxmrAmt);
         // Values should be non-zero for an in-range position

@@ -51,9 +51,10 @@ interface ILiquidityPosition {
     /// @param tokenId V3 NFT id (diamond must own it)
     /// @param slippageBps Max acceptable slippage in bps (e.g. 50 = 0.5%)
     /// @param oracleXmrPrice Oracle XMR price (18 decimals) for slippage bounds
+    /// @param oracleCollateralPrice Oracle collateral price (18 decimals) for slippage bounds
     /// @return daiOut DAI recovered
     /// @return wsxmrOut wsXMR recovered
-    function drainPosition(uint256 tokenId, uint16 slippageBps, uint256 oracleXmrPrice)
+    function drainPosition(uint256 tokenId, uint16 slippageBps, uint256 oracleXmrPrice, uint256 oracleCollateralPrice)
         external returns (uint256 daiOut, uint256 wsxmrOut);
 
     /// @notice Collect accumulated fees on a position to the diamond.
@@ -71,11 +72,13 @@ interface ILiquidityPosition {
     /// @dev This is the function to use for CR calculations. Pass oracle xmrPrice.
     /// @param tokenId V3 NFT id
     /// @param xmrPriceUSD18 XMR price in USD (18 decimals)
-    function getPositionAmountsAtPrice(uint256 tokenId, uint256 xmrPriceUSD18)
+    /// @param collateralPriceUSD18 Collateral price in USD (18 decimals)
+    function getPositionAmountsAtPrice(uint256 tokenId, uint256 xmrPriceUSD18, uint256 collateralPriceUSD18)
         external view returns (uint256 daiAmount, uint256 wsxmrAmount);
 
     /// @notice Check if the position is out of range at the given oracle XMR price.
     /// @param tokenId V3 NFT id
     /// @param xmrPrice XMR price in USD (18 decimals)
-    function isPositionOutOfRange(uint256 tokenId, uint256 xmrPrice) external view returns (bool);
+    /// @param collateralPrice Collateral price in USD (18 decimals)
+    function isPositionOutOfRange(uint256 tokenId, uint256 xmrPrice, uint256 collateralPrice) external view returns (bool);
 }

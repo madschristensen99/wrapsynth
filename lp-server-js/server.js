@@ -105,7 +105,19 @@ const gnosisNetwork = new ethers.Network('gnosis', CHAIN_ID);
 // NOTE: batchMaxCount: 0 would mean *unlimited* batching — every request in the
 // 10ms stall window gets bundled into one batch, and if the endpoint stalls on
 // the batch they all hang together. `timeout` is not a valid provider option.
-const provider = new ethers.JsonRpcProvider(RPC_URL, gnosisNetwork, { staticNetwork: true, batchMaxCount: 1 });
+// RPC_URLS (comma-separated) configures a FallbackProvider so a single slow or
+// rate-limiting endpoint can't blind the poll loops — quorum 1 takes the first
+// backend that answers. Falls back to the single RPC_URL when RPC_URLS is unset.
+const RPC_URLS = (process.env.RPC_URLS || RPC_URL).split(',').map(u => u.trim()).filter(Boolean);
+const rpcBackends = RPC_URLS.map((url, i) => ({
+  provider: new ethers.JsonRpcProvider(url, gnosisNetwork, { staticNetwork: true, batchMaxCount: 1 }),
+  priority: i + 1,
+  stallTimeout: 1500,
+  weight: 1,
+}));
+const provider = rpcBackends.length === 1
+  ? rpcBackends[0].provider
+  : new ethers.FallbackProvider(rpcBackends, gnosisNetwork, { quorum: 1 });
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 const hub = new ethers.Contract(HUB_ADDRESS, HUB_ABI, wallet);
 
@@ -142,7 +154,7 @@ initNonceManager(provider, wallet.address);
 console.log(`LP Server starting...`);
 console.log(`Wallet / LP Vault: ${wallet.address}`);
 console.log(`Hub: ${HUB_ADDRESS}`);
-console.log(`RPC: ${RPC_URL}`);
+console.log(`RPC: ${RPC_URLS.join(', ')}`);
 
 // ─── In-memory tracking ─────────────────────────────────────────────────────
 const pendingMints = new Map(); // requestId -> { initiatedAt, keyPostedAt }

@@ -944,7 +944,7 @@ function copyAddr(btn){
       functionName:'totalSupply'
     });
     const supplyValue=parseFloat(formatUnits(supply,8));
-    document.getElementById('stat-supply').textContent=supplyValue<0.01?supplyValue.toFixed(8):supplyValue.toFixed(1);
+    document.getElementById('stat-supply').textContent=supplyValue<0.01?supplyValue.toFixed(8):supplyValue.toFixed(3);
     console.log('[Stats] wsXMR supply:',supplyValue);
     
     // Fetch vault count

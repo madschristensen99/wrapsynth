@@ -66,7 +66,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
             // Convert collateral shares to underlying assets
             uint256 availableForMint = IERC4626(collateralToken).convertToAssets(availableShares);
             
-            uint256 collateralValueUsd = (availableForMint * collateralPrice) / SDAI_DECIMALS;
+            uint256 collateralValueUsd = (availableForMint * collateralPrice) / _underlyingUnit();
             uint256 maxTotalDebtCapacity = (collateralValueUsd * RATIO_PRECISION) / COLLATERAL_RATIO;
             uint256 maxMintAllowed = (maxTotalDebtCapacity * vault.maxMintBps) / BPS_DENOMINATOR;
             
@@ -92,7 +92,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         uint256 xmrPrice = _getXmrPriceFromStorage();
         uint256 collateralPrice = _getCollateralPriceFromStorage();
         uint256 parValueUsd = (wsxmrAmount * xmrPrice) / WSXMR_DECIMALS;
-        uint256 parDaiAmount = (parValueUsd * SDAI_DECIMALS) / collateralPrice;
+        uint256 parDaiAmount = (parValueUsd * _underlyingUnit()) / collateralPrice;
         uint256 lockDaiAmount = (parDaiAmount * MINT_LOCK_RATIO) / RATIO_PRECISION;
         uint256 bondShares = _daiToShares(lockDaiAmount);
         
@@ -200,7 +200,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         uint256 xmrPrice = _getXmrPriceFromStorage();
         uint256 collateralPrice = _getCollateralPriceFromStorage();
         uint256 parValueUsd = (request.wsxmrAmount * xmrPrice) / WSXMR_DECIMALS;
-        uint256 parDaiAmount = (parValueUsd * SDAI_DECIMALS) / collateralPrice;
+        uint256 parDaiAmount = (parValueUsd * _underlyingUnit()) / collateralPrice;
         uint256 lockDaiAmount = (parDaiAmount * MINT_LOCK_RATIO) / RATIO_PRECISION;
         uint256 bondShares = _daiToShares(lockDaiAmount);
 
@@ -260,7 +260,7 @@ contract MintFacet is wsXmrStorage, IMintFacet {
         uint256 xmrPrice = _getXmrPriceFromStorage();
         uint256 collateralPrice = _getCollateralPriceFromStorage();
         uint256 parValueUsd = (request.wsxmrAmount * xmrPrice) / WSXMR_DECIMALS;
-        uint256 parDaiAmount = (parValueUsd * SDAI_DECIMALS) / collateralPrice;
+        uint256 parDaiAmount = (parValueUsd * _underlyingUnit()) / collateralPrice;
         uint256 lockDaiAmount = (parDaiAmount * MINT_LOCK_RATIO) / RATIO_PRECISION;
         uint256 lockShares = _daiToShares(lockDaiAmount);
 

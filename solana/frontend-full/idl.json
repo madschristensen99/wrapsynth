@@ -1,0 +1,7003 @@
+{
+  "address": "k4TC3sLs4feJfuMYBf8piyRQMU1WENM2LbQoKJNWbmx",
+  "metadata": {
+    "name": "wrapsynth_vault_manager",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "WrapSynth Vault Manager - Solana port of VaultManager.sol"
+  },
+  "instructions": [
+    {
+      "name": "abandon_key_provided_mint",
+      "discriminator": [
+        126,
+        73,
+        203,
+        249,
+        82,
+        23,
+        51,
+        97
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_request.request_id",
+                "account": "MintRequest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lp_returns",
+          "docs": [
+            "Pre-existing PendingReturns for vault LP."
+          ],
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "lp_secret",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "abandon_proposed_burn",
+      "discriminator": [
+        126,
+        241,
+        188,
+        48,
+        240,
+        98,
+        145,
+        149
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "burn_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  114,
+                  110,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "burn_request.request_id",
+                "account": "BurnRequest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "abort_burn",
+      "discriminator": [
+        42,
+        251,
+        42,
+        181,
+        42,
+        89,
+        207,
+        8
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "burn_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  114,
+                  110,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "burn_request.request_id",
+                "account": "BurnRequest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wsxmr_mint",
+          "writable": true
+        },
+        {
+          "name": "user_wsxmr_ata",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "backstop_vault",
+      "docs": [
+        "P1-1: A new LP assumes the debt and collateral of an underwater vault."
+      ],
+      "discriminator": [
+        24,
+        140,
+        147,
+        86,
+        8,
+        128,
+        184,
+        75
+      ],
+      "accounts": [
+        {
+          "name": "new_lp",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "old_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "old_vault.lp_address",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "new_lp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "pyth_xmr"
+        },
+        {
+          "name": "pyth_collateral"
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "old_vault_collateral_ata",
+          "docs": [
+            "Old vault's collateral ATA — source of the absorbed balance."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "old_vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_vault_collateral_ata",
+          "docs": [
+            "New vault's collateral ATA — destination of the absorbed balance."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "new_vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "batch_set_minter_whitelist",
+      "discriminator": [
+        63,
+        118,
+        158,
+        211,
+        114,
+        216,
+        51,
+        108
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "minters",
+          "type": {
+            "vec": "pubkey"
+          }
+        },
+        {
+          "name": "whitelisted",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "cancel_mint",
+      "discriminator": [
+        61,
+        87,
+        130,
+        22,
+        64,
+        57,
+        137,
+        57
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_request.request_id",
+                "account": "MintRequest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "initiator_returns",
+          "docs": [
+            "Pre-existing PendingReturns for mint initiator (SOL refund + collateral slash)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "lp_returns",
+          "docs": [
+            "Pre-existing PendingReturns for vault LP."
+          ],
+          "writable": true
+        },
+        {
+          "name": "wsxmr_mint",
+          "writable": true
+        },
+        {
+          "name": "recipient_wsxmr_ata",
+          "writable": true
+        },
+        {
+          "name": "lp_wsxmr_ata",
+          "writable": true
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "vault_collateral_ata",
+          "docs": [
+            "Vault collateral ATA — slash source for the liquidated-vault branch."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "program_collateral_ata",
+          "docs": [
+            "Program collateral pool ATA — slash destination."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "claim_griefing_deposit",
+      "discriminator": [
+        217,
+        250,
+        223,
+        96,
+        239,
+        197,
+        165,
+        147
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_request.request_id",
+                "account": "MintRequest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lp_returns",
+          "docs": [
+            "Pre-existing PendingReturns for vault LP."
+          ],
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "lp_secret",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "claim_slashed_collateral",
+      "discriminator": [
+        201,
+        11,
+        233,
+        168,
+        153,
+        45,
+        88,
+        181
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault_lp"
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault_lp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "burn_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  114,
+                  110,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "burn_request.request_id",
+                "account": "BurnRequest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_pending_returns",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  114,
+                  101,
+                  116,
+                  117,
+                  114,
+                  110,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pyth_xmr"
+        },
+        {
+          "name": "pyth_collateral"
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "vault_collateral_ata",
+          "docs": [
+            "Vault collateral ATA — slash source for the par-capped payout."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "program_collateral_ata",
+          "docs": [
+            "Program collateral pool ATA — slash destination."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "user_secret",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "collect_co_lp_fees",
+      "docs": [
+        "LP or user collects accrued fees from a co-LP position."
+      ],
+      "discriminator": [
+        108,
+        252,
+        128,
+        173,
+        124,
+        40,
+        16,
+        33
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "co_lp_position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  95,
+                  108,
+                  112,
+                  95,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "co_lp_position.vault",
+                "account": "CoLPPosition"
+              },
+              {
+                "kind": "account",
+                "path": "co_lp_position.user",
+                "account": "CoLPPosition"
+              },
+              {
+                "kind": "account",
+                "path": "co_lp_position.nonce",
+                "account": "CoLPPosition"
+              }
+            ]
+          }
+        },
+        {
+          "name": "position",
+          "docs": [
+            "Orca Position account"
+          ],
+          "writable": true
+        },
+        {
+          "name": "whirlpool",
+          "docs": [
+            "Orca Whirlpool account"
+          ],
+          "writable": true
+        },
+        {
+          "name": "position_token_account",
+          "writable": true
+        },
+        {
+          "name": "position_collateral_ata",
+          "writable": true
+        },
+        {
+          "name": "position_wsxmr_ata",
+          "writable": true
+        },
+        {
+          "name": "vault_collateral_ata",
+          "writable": true
+        },
+        {
+          "name": "user_wsxmr_ata",
+          "writable": true
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "wsxmr_mint"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "confirm_monero_lock",
+      "discriminator": [
+        39,
+        152,
+        65,
+        15,
+        181,
+        0,
+        117,
+        242
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "signer": true
+        },
+        {
+          "name": "burn_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  114,
+                  110,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "burn_request.request_id",
+                "account": "BurnRequest"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_vault",
+      "discriminator": [
+        29,
+        237,
+        247,
+        208,
+        193,
+        82,
+        54,
+        135
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "deactivate_vault",
+      "discriminator": [
+        152,
+        132,
+        22,
+        236,
+        200,
+        128,
+        124,
+        174
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "deposit_collateral",
+      "discriminator": [
+        156,
+        131,
+        142,
+        116,
+        146,
+        247,
+        162,
+        120
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "lp_collateral_ata",
+          "writable": true
+        },
+        {
+          "name": "vault_collateral_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "execute_liquidation",
+      "docs": [
+        "Phase 2: execute the actual liquidation after all burns are resolved."
+      ],
+      "discriminator": [
+        189,
+        55,
+        38,
+        121,
+        165,
+        84,
+        96,
+        124
+      ],
+      "accounts": [
+        {
+          "name": "liquidator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "wsxmr_mint",
+          "writable": true
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "liquidator_wsxmr_ata",
+          "writable": true
+        },
+        {
+          "name": "liquidator_collateral_ata",
+          "writable": true
+        },
+        {
+          "name": "vault_collateral_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pyth_xmr"
+        },
+        {
+          "name": "pyth_collateral"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "debt_to_clear",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "finalize_burn",
+      "discriminator": [
+        214,
+        238,
+        193,
+        136,
+        253,
+        151,
+        249,
+        13
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault_lp"
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault_lp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "burn_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  114,
+                  110,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "burn_request.request_id",
+                "account": "BurnRequest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_pending_returns",
+          "docs": [
+            "Pre-existing PendingReturns for burn user. Created via initialize_pending_returns."
+          ],
+          "writable": true
+        },
+        {
+          "name": "pyth_xmr"
+        },
+        {
+          "name": "pyth_collateral"
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "vault_collateral_ata",
+          "docs": [
+            "Vault collateral ATA — slash source for the user reward."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "program_collateral_ata",
+          "docs": [
+            "Program collateral pool ATA — slash destination."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "secret",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "finalize_mint",
+      "discriminator": [
+        77,
+        12,
+        218,
+        47,
+        57,
+        4,
+        38,
+        239
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_request.request_id",
+                "account": "MintRequest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wsxmr_mint",
+          "writable": true
+        },
+        {
+          "name": "recipient_wsxmr_ata",
+          "writable": true
+        },
+        {
+          "name": "lp_wsxmr_ata",
+          "writable": true
+        },
+        {
+          "name": "pending_returns",
+          "docs": [
+            "Pre-existing PendingReturns for mint initiator. Created via initialize_pending_returns."
+          ],
+          "writable": true
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "vault_collateral_ata",
+          "docs": [
+            "Vault collateral ATA — slash source for the liquidated-vault branch."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "program_collateral_ata",
+          "docs": [
+            "Program collateral pool ATA — slash destination."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "force_settle_burn",
+      "discriminator": [
+        164,
+        19,
+        246,
+        100,
+        252,
+        209,
+        204,
+        65
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "burn_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  114,
+                  110,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "burn_request.request_id",
+                "account": "BurnRequest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_pending_returns",
+          "docs": [
+            "Pre-existing PendingReturns for burn user."
+          ],
+          "writable": true
+        },
+        {
+          "name": "pyth_xmr"
+        },
+        {
+          "name": "pyth_collateral"
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "vault_collateral_ata",
+          "docs": [
+            "Vault collateral ATA — slash source for the par-capped payout."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "program_collateral_ata",
+          "docs": [
+            "Program collateral pool ATA — slash destination."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize",
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "wsxmr_mint",
+          "docs": [
+            "wsXMR Token-2022 mint PDA. Allocated and initialized manually in handler",
+            "to avoid Anchor 0.30 double-init bug with InterfaceAccount<Mint> + Token-2022."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  115,
+                  120,
+                  109,
+                  114,
+                  95,
+                  109,
+                  105,
+                  110,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "collateral_mint",
+          "docs": [
+            "Program collateral ATA — the pending-returns pool backing all slashed",
+            "collateral credits. The mint is supplied via argument so initialize is",
+            "collateral-agnostic."
+          ]
+        },
+        {
+          "name": "program_collateral_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "pyth_xmr_feed",
+          "type": "pubkey"
+        },
+        {
+          "name": "collateral_mint",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "initialize_pending_returns",
+      "discriminator": [
+        77,
+        175,
+        235,
+        181,
+        231,
+        87,
+        166,
+        117
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pending_returns",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  114,
+                  101,
+                  116,
+                  117,
+                  114,
+                  110,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize_vault_collateral",
+      "discriminator": [
+        64,
+        160,
+        30,
+        204,
+        90,
+        27,
+        120,
+        130
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "vault_collateral_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initiate_mint",
+      "discriminator": [
+        198,
+        6,
+        136,
+        107,
+        232,
+        232,
+        179,
+        158
+      ],
+      "accounts": [
+        {
+          "name": "initiator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "recipient"
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "request_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "griefing_escrow",
+          "docs": [
+            "SOL escrow account for griefing deposit (created by initiator, lamports checked)"
+          ],
+          "writable": true
+        },
+        {
+          "name": "initiator_pending_returns",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  114,
+                  101,
+                  116,
+                  117,
+                  114,
+                  110,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "initiator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pyth_xmr"
+        },
+        {
+          "name": "pyth_collateral"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "xmr_amount",
+          "type": "u64"
+        },
+        {
+          "name": "claim_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "user_public_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "request_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "propose_hash",
+      "discriminator": [
+        45,
+        6,
+        224,
+        60,
+        98,
+        64,
+        142,
+        49
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "burn_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  114,
+                  110,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "burn_request.request_id",
+                "account": "BurnRequest"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "secret_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "lp_public_spend_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "lp_public_view_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "provide_lp_key",
+      "discriminator": [
+        160,
+        213,
+        144,
+        181,
+        224,
+        59,
+        53,
+        148
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_request.request_id",
+                "account": "MintRequest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pyth_xmr"
+        },
+        {
+          "name": "pyth_collateral"
+        }
+      ],
+      "args": [
+        {
+          "name": "lp_public_spend_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "lp_public_view_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "lp_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "rebalance_co_lp",
+      "docs": [
+        "Keeper drains a co-LP position for rebalancing (re-open via user_open_co_lp)."
+      ],
+      "discriminator": [
+        54,
+        103,
+        200,
+        77,
+        47,
+        2,
+        60,
+        204
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "co_lp_position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  95,
+                  108,
+                  112,
+                  95,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "co_lp_position.vault",
+                "account": "CoLPPosition"
+              },
+              {
+                "kind": "account",
+                "path": "co_lp_position.user",
+                "account": "CoLPPosition"
+              },
+              {
+                "kind": "account",
+                "path": "co_lp_position.nonce",
+                "account": "CoLPPosition"
+              }
+            ]
+          }
+        },
+        {
+          "name": "position",
+          "docs": [
+            "Orca Position account"
+          ],
+          "writable": true
+        },
+        {
+          "name": "whirlpool",
+          "docs": [
+            "Orca Whirlpool account"
+          ],
+          "writable": true
+        },
+        {
+          "name": "position_token_account",
+          "writable": true
+        },
+        {
+          "name": "tick_array_lower",
+          "writable": true
+        },
+        {
+          "name": "tick_array_upper",
+          "writable": true
+        },
+        {
+          "name": "position_collateral_ata",
+          "writable": true
+        },
+        {
+          "name": "position_wsxmr_ata",
+          "writable": true
+        },
+        {
+          "name": "vault_collateral_ata",
+          "writable": true
+        },
+        {
+          "name": "user_wsxmr_ata",
+          "writable": true
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "wsxmr_mint"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "new_range_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "reclaim_parked_deposit",
+      "discriminator": [
+        125,
+        53,
+        47,
+        58,
+        183,
+        17,
+        36,
+        165
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_request.request_id",
+                "account": "MintRequest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "initiator_returns",
+          "docs": [
+            "Pre-existing PendingReturns for mint initiator (collateral slash + SOL refund)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "vault_collateral_ata",
+          "docs": [
+            "Vault collateral ATA — slash source."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "program_collateral_ata",
+          "docs": [
+            "Program collateral pool ATA — slash destination."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "reconcile_global_debt",
+      "discriminator": [
+        217,
+        34,
+        41,
+        18,
+        221,
+        74,
+        151,
+        218
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "request_burn",
+      "discriminator": [
+        222,
+        82,
+        224,
+        225,
+        201,
+        96,
+        24,
+        213
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "burn_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  114,
+                  110,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "request_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wsxmr_mint",
+          "writable": true
+        },
+        {
+          "name": "user_wsxmr_ata",
+          "writable": true
+        },
+        {
+          "name": "pyth_xmr"
+        },
+        {
+          "name": "pyth_collateral"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "wsxmr_amount",
+          "type": "u64"
+        },
+        {
+          "name": "claim_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "user_public_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "user_view_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "request_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "request_burn_from_router",
+      "discriminator": [
+        165,
+        189,
+        125,
+        181,
+        77,
+        206,
+        115,
+        69
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "burn_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  114,
+                  110,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "request_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wsxmr_mint",
+          "writable": true
+        },
+        {
+          "name": "user_wsxmr_ata",
+          "writable": true
+        },
+        {
+          "name": "pyth_xmr"
+        },
+        {
+          "name": "pyth_collateral"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "wsxmr_amount",
+          "type": "u64"
+        },
+        {
+          "name": "claim_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "user_public_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "user_view_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "request_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "resolve_burn_for_liquidation",
+      "docs": [
+        "Phase 1: resolve a single active burn on a liquidatable vault.",
+        "Call once per active burn. Permissionless."
+      ],
+      "discriminator": [
+        19,
+        207,
+        91,
+        53,
+        234,
+        124,
+        111,
+        87
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "burn_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  114,
+                  110,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "burn_request.request_id",
+                "account": "BurnRequest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_pending_returns",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  114,
+                  101,
+                  116,
+                  117,
+                  114,
+                  110,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "burn_request.user",
+                "account": "BurnRequest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wsxmr_mint",
+          "writable": true
+        },
+        {
+          "name": "user_wsxmr_ata",
+          "writable": true
+        },
+        {
+          "name": "pyth_xmr"
+        },
+        {
+          "name": "pyth_collateral"
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "vault_collateral_ata",
+          "docs": [
+            "Vault collateral ATA — slash source for revealed/committed burn payouts."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "program_collateral_ata",
+          "docs": [
+            "Program collateral pool ATA — slash destination."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "resolve_declined_proposal",
+      "discriminator": [
+        22,
+        90,
+        112,
+        173,
+        227,
+        128,
+        118,
+        7
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "burn_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  114,
+                  110,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "burn_request.request_id",
+                "account": "BurnRequest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "wsxmr_mint",
+          "writable": true
+        },
+        {
+          "name": "user_wsxmr_ata",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "user_secret",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "reveal_burn_secret",
+      "discriminator": [
+        119,
+        200,
+        232,
+        221,
+        74,
+        199,
+        52,
+        18
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "burn_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  114,
+                  110,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "burn_request.request_id",
+                "account": "BurnRequest"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "secret",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "reveal_secret",
+      "discriminator": [
+        126,
+        156,
+        142,
+        60,
+        92,
+        135,
+        177,
+        144
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "mint_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_request.request_id",
+                "account": "MintRequest"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "secret",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "set_burn_timeout",
+      "discriminator": [
+        147,
+        112,
+        29,
+        38,
+        104,
+        223,
+        169,
+        84
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "seconds",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "set_liquidity_router",
+      "discriminator": [
+        4,
+        57,
+        195,
+        0,
+        242,
+        41,
+        192,
+        236
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "router",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "set_max_co_lp_range",
+      "docs": [
+        "LP sets the preferred max co-LP range width (basis points)."
+      ],
+      "discriminator": [
+        50,
+        5,
+        149,
+        213,
+        22,
+        184,
+        136,
+        177
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "set_max_mint_bps",
+      "discriminator": [
+        179,
+        42,
+        1,
+        225,
+        89,
+        24,
+        172,
+        5
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "max_mint_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "set_min_burn_amount",
+      "discriminator": [
+        88,
+        59,
+        48,
+        178,
+        80,
+        23,
+        100,
+        218
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "min_amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "set_mint_griefing_deposit",
+      "discriminator": [
+        65,
+        157,
+        253,
+        230,
+        59,
+        150,
+        28,
+        102
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "deposit",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "set_mint_ready",
+      "discriminator": [
+        109,
+        66,
+        111,
+        178,
+        198,
+        143,
+        235,
+        173
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_request.request_id",
+                "account": "MintRequest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pyth_xmr"
+        },
+        {
+          "name": "pyth_collateral"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "set_mint_timeout",
+      "discriminator": [
+        244,
+        81,
+        151,
+        11,
+        220,
+        66,
+        153,
+        116
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "seconds",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "set_minter_whitelist",
+      "discriminator": [
+        194,
+        112,
+        167,
+        67,
+        242,
+        7,
+        54,
+        102
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "minter",
+          "type": "pubkey"
+        },
+        {
+          "name": "whitelisted",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "set_vault_market_metrics",
+      "discriminator": [
+        149,
+        233,
+        151,
+        73,
+        97,
+        154,
+        111,
+        224
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "mint_fee_bps",
+          "type": "u16"
+        },
+        {
+          "name": "burn_reward_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "settle_burn",
+      "discriminator": [
+        12,
+        139,
+        212,
+        132,
+        234,
+        51,
+        0,
+        8
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault_lp"
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault_lp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "burn_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  114,
+                  110,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "burn_request.request_id",
+                "account": "BurnRequest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_pending_returns",
+          "docs": [
+            "Pre-existing PendingReturns for burn user. Created via initialize_pending_returns."
+          ],
+          "writable": true
+        },
+        {
+          "name": "pyth_xmr"
+        },
+        {
+          "name": "pyth_collateral"
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "vault_collateral_ata",
+          "docs": [
+            "Vault collateral ATA — slash source for the user reward."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "program_collateral_ata",
+          "docs": [
+            "Program collateral pool ATA — slash destination."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "sweep_unclaimed_expired_mint",
+      "discriminator": [
+        175,
+        118,
+        222,
+        107,
+        184,
+        44,
+        31,
+        1
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  116,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint_request.request_id",
+                "account": "MintRequest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "initiator_returns",
+          "docs": [
+            "Pre-existing PendingReturns for mint initiator (collateral slash + SOL refund)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "vault_collateral_ata",
+          "docs": [
+            "Vault collateral ATA — slash source."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "program_collateral_ata",
+          "docs": [
+            "Program collateral pool ATA — slash destination."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "unwind_co_lp",
+      "docs": [
+        "LP or user closes a co-LP position and distributes proceeds."
+      ],
+      "discriminator": [
+        198,
+        5,
+        47,
+        9,
+        143,
+        104,
+        38,
+        165
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "co_lp_position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  95,
+                  108,
+                  112,
+                  95,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "co_lp_position.vault",
+                "account": "CoLPPosition"
+              },
+              {
+                "kind": "account",
+                "path": "co_lp_position.user",
+                "account": "CoLPPosition"
+              },
+              {
+                "kind": "account",
+                "path": "co_lp_position.nonce",
+                "account": "CoLPPosition"
+              }
+            ]
+          }
+        },
+        {
+          "name": "position",
+          "docs": [
+            "Orca Position account"
+          ],
+          "writable": true
+        },
+        {
+          "name": "whirlpool",
+          "docs": [
+            "Orca Whirlpool account"
+          ],
+          "writable": true
+        },
+        {
+          "name": "position_mint",
+          "docs": [
+            "Position NFT mint"
+          ],
+          "writable": true
+        },
+        {
+          "name": "position_token_account",
+          "writable": true
+        },
+        {
+          "name": "tick_array_lower",
+          "writable": true
+        },
+        {
+          "name": "tick_array_upper",
+          "writable": true
+        },
+        {
+          "name": "position_collateral_ata",
+          "writable": true
+        },
+        {
+          "name": "position_wsxmr_ata",
+          "writable": true
+        },
+        {
+          "name": "vault_collateral_ata",
+          "writable": true
+        },
+        {
+          "name": "user_wsxmr_ata",
+          "writable": true
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "wsxmr_mint"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "user_open_co_lp",
+      "docs": [
+        "User pairs wsXMR with vault idle QQQx collateral to open a position."
+      ],
+      "discriminator": [
+        136,
+        164,
+        114,
+        237,
+        179,
+        193,
+        71,
+        131
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "co_lp_position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  95,
+                  108,
+                  112,
+                  95,
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "arg",
+                "path": "nonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "position_mint",
+          "docs": [
+            "Position NFT mint (Token-2022 with metadata extensions) — created by the program"
+          ],
+          "writable": true
+        },
+        {
+          "name": "position_token_account",
+          "docs": [
+            "ATA holding the position NFT — created by the program"
+          ],
+          "writable": true
+        },
+        {
+          "name": "position",
+          "docs": [
+            "Orca Position PDA (derived from position_mint)"
+          ],
+          "writable": true
+        },
+        {
+          "name": "whirlpool",
+          "docs": [
+            "Orca Whirlpool account (mutated by increase_liquidity)"
+          ],
+          "writable": true
+        },
+        {
+          "name": "tick_array_lower",
+          "docs": [
+            "Whirlpool-internal accounts (token_vault_a/b, token_badge_a/b,",
+            "whirlpools_config_extension, metadata_update_auth, whirlpool_program) are",
+            "passed via ctx.remaining_accounts — keeping them out of the struct avoids a",
+            "~4KB try_accounts stack frame overflow."
+          ],
+          "writable": true
+        },
+        {
+          "name": "tick_array_upper",
+          "writable": true
+        },
+        {
+          "name": "position_collateral_ata",
+          "docs": [
+            "Program-owned QQQx ATA (position token_owner_account_a)"
+          ],
+          "writable": true
+        },
+        {
+          "name": "position_wsxmr_ata",
+          "docs": [
+            "Program-owned wsXMR ATA (position token_owner_account_b)"
+          ],
+          "writable": true
+        },
+        {
+          "name": "user_wsxmr_ata",
+          "writable": true
+        },
+        {
+          "name": "vault_collateral_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "wsxmr_mint"
+        },
+        {
+          "name": "pyth_xmr"
+        },
+        {
+          "name": "pyth_collateral"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "wsxmr_amount",
+          "type": "u64"
+        },
+        {
+          "name": "nonce",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw_collateral",
+      "discriminator": [
+        115,
+        135,
+        168,
+        106,
+        139,
+        214,
+        138,
+        150
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "lp_collateral_ata",
+          "writable": true
+        },
+        {
+          "name": "vault_collateral_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pyth_xmr"
+        },
+        {
+          "name": "pyth_collateral"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw_collateral_returns",
+      "discriminator": [
+        97,
+        12,
+        150,
+        237,
+        16,
+        150,
+        252,
+        254
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true
+        },
+        {
+          "name": "pending_returns",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  114,
+                  101,
+                  116,
+                  117,
+                  114,
+                  110,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "program_collateral_ata",
+          "docs": [
+            "Program-owned collateral ATA (pending returns pool)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_collateral_ata",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "withdraw_sol_returns",
+      "discriminator": [
+        164,
+        179,
+        69,
+        189,
+        226,
+        88,
+        188,
+        16
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pending_returns",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  114,
+                  101,
+                  116,
+                  117,
+                  114,
+                  110,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "global_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "sol_escrow",
+          "docs": [
+            "Program-owned SOL escrow account holding griefing deposits"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  111,
+                  108,
+                  95,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "BurnRequest",
+      "discriminator": [
+        192,
+        96,
+        174,
+        201,
+        165,
+        92,
+        135,
+        80
+      ]
+    },
+    {
+      "name": "CoLPPosition",
+      "discriminator": [
+        107,
+        75,
+        56,
+        133,
+        93,
+        159,
+        197,
+        5
+      ]
+    },
+    {
+      "name": "GlobalState",
+      "discriminator": [
+        163,
+        46,
+        74,
+        168,
+        216,
+        123,
+        133,
+        98
+      ]
+    },
+    {
+      "name": "MintRequest",
+      "discriminator": [
+        60,
+        88,
+        16,
+        213,
+        180,
+        138,
+        14,
+        225
+      ]
+    },
+    {
+      "name": "PendingReturns",
+      "discriminator": [
+        224,
+        157,
+        179,
+        244,
+        202,
+        0,
+        220,
+        20
+      ]
+    },
+    {
+      "name": "Vault",
+      "discriminator": [
+        211,
+        8,
+        232,
+        43,
+        2,
+        152,
+        117,
+        119
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "ZeroAddress",
+      "msg": "Zero address provided"
+    },
+    {
+      "code": 6001,
+      "name": "ZeroAmount",
+      "msg": "Zero amount provided"
+    },
+    {
+      "code": 6002,
+      "name": "VaultAlreadyExists",
+      "msg": "Vault already exists"
+    },
+    {
+      "code": 6003,
+      "name": "VaultDoesNotExist",
+      "msg": "Vault does not exist"
+    },
+    {
+      "code": 6004,
+      "name": "VaultNotActive",
+      "msg": "Vault not active"
+    },
+    {
+      "code": 6005,
+      "name": "InsufficientCollateral",
+      "msg": "Insufficient collateral"
+    },
+    {
+      "code": 6006,
+      "name": "ExceedsMaxMargin",
+      "msg": "Fee or reward exceeds maximum"
+    },
+    {
+      "code": 6007,
+      "name": "InvalidMintRequest",
+      "msg": "Invalid mint request"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidBurnRequest",
+      "msg": "Invalid burn request"
+    },
+    {
+      "code": 6009,
+      "name": "MintAlreadyExists",
+      "msg": "Mint request already exists"
+    },
+    {
+      "code": 6010,
+      "name": "BurnAlreadyExists",
+      "msg": "Burn request already exists"
+    },
+    {
+      "code": 6011,
+      "name": "InvalidSecret",
+      "msg": "Invalid secret"
+    },
+    {
+      "code": 6012,
+      "name": "InvalidUserSecret",
+      "msg": "Invalid user secret"
+    },
+    {
+      "code": 6013,
+      "name": "BurnExceedsVaultDebt",
+      "msg": "Burn exceeds vault debt"
+    },
+    {
+      "code": 6014,
+      "name": "InvalidCommitment",
+      "msg": "Invalid commitment"
+    },
+    {
+      "code": 6015,
+      "name": "PendingMintLock",
+      "msg": "Pending mints must be resolved first"
+    },
+    {
+      "code": 6016,
+      "name": "InvalidStatus",
+      "msg": "Invalid status for operation"
+    },
+    {
+      "code": 6017,
+      "name": "TimeoutNotReached",
+      "msg": "Timeout not reached"
+    },
+    {
+      "code": 6018,
+      "name": "DeadlineExpired",
+      "msg": "Deadline expired"
+    },
+    {
+      "code": 6019,
+      "name": "DeadlineNotExpired",
+      "msg": "Deadline not yet expired"
+    },
+    {
+      "code": 6020,
+      "name": "VaultHealthy",
+      "msg": "Vault is healthy, cannot liquidate"
+    },
+    {
+      "code": 6021,
+      "name": "InsufficientDebt",
+      "msg": "Insufficient debt"
+    },
+    {
+      "code": 6022,
+      "name": "Unauthorized",
+      "msg": "Unauthorized"
+    },
+    {
+      "code": 6023,
+      "name": "InvalidValue",
+      "msg": "Invalid value"
+    },
+    {
+      "code": 6024,
+      "name": "StalePrice",
+      "msg": "Stale or invalid price"
+    },
+    {
+      "code": 6025,
+      "name": "InsufficientDeposit",
+      "msg": "Insufficient deposit"
+    },
+    {
+      "code": 6026,
+      "name": "MathOverflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6027,
+      "name": "UnresolvedBurns",
+      "msg": "Active burns must be resolved before liquidation"
+    },
+    {
+      "code": 6028,
+      "name": "PoolNotInitialized",
+      "msg": "Pool not initialized"
+    },
+    {
+      "code": 6029,
+      "name": "BelowMinimumBurn",
+      "msg": "Below minimum burn amount"
+    },
+    {
+      "code": 6030,
+      "name": "MaxBurnRequestsReached",
+      "msg": "Maximum burn requests per vault reached"
+    },
+    {
+      "code": 6031,
+      "name": "OnlyUserCanInitiate",
+      "msg": "Only user can initiate this operation"
+    },
+    {
+      "code": 6032,
+      "name": "BurnInvalidatedByLiquidation",
+      "msg": "Burn invalidated by liquidation"
+    },
+    {
+      "code": 6033,
+      "name": "MaxVaultsReached",
+      "msg": "Maximum vault count reached"
+    },
+    {
+      "code": 6034,
+      "name": "InvalidConfig",
+      "msg": "Invalid configuration value"
+    },
+    {
+      "code": 6035,
+      "name": "RouterAlreadySet",
+      "msg": "Liquidity router already set"
+    },
+    {
+      "code": 6036,
+      "name": "OnlyRouter",
+      "msg": "Only liquidity router can call this"
+    },
+    {
+      "code": 6037,
+      "name": "OnlyDeployer",
+      "msg": "Only deployer can call this"
+    },
+    {
+      "code": 6038,
+      "name": "MintNonceMismatch",
+      "msg": "Vault mint nonce mismatch"
+    },
+    {
+      "code": 6039,
+      "name": "PriceNormalizedToZero",
+      "msg": "Price normalized to zero"
+    },
+    {
+      "code": 6040,
+      "name": "XmrAmountTooSmall",
+      "msg": "XMR amount too small (minimum 1e4 atomic units)"
+    },
+    {
+      "code": 6041,
+      "name": "CollateralDepegged",
+      "msg": "Collateral at distress discount: minting paused"
+    }
+  ],
+  "types": [
+    {
+      "name": "BurnRequest",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "request_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "lp_vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "wsxmr_amount",
+            "docs": [
+              "wsXMR burned (8 decimals)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "xmr_amount",
+            "docs": [
+              "Equivalent XMR atomic units (12 decimals)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "locked_collateral",
+            "docs": [
+              "Base collateral locked for this burn"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "reward_collateral",
+            "docs": [
+              "Extra collateral locked as burn reward"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "user_claim_commitment",
+            "docs": [
+              "User's Ed25519 commitment: keccak256(compress(secret · G))"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "user_public_key",
+            "docs": [
+              "User's compressed Ed25519 public spend key (for Monero address derivation + slash verification)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "user_view_key",
+            "docs": [
+              "User's Ed25519 public view key (x-coordinate)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "xmr_price_at_request",
+            "docs": [
+              "XMR price snapshot at request time (par settlement for slashes), 1e18-scaled USD"
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "secret_hash",
+            "docs": [
+              "Hash of LP's secret (set in propose_hash)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "lp_public_spend_key",
+            "docs": [
+              "LP's Ed25519 public spend key (x-coordinate) — set at propose_hash"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "lp_public_view_key",
+            "docs": [
+              "LP's Ed25519 public view key (x-coordinate) — set at propose_hash"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "revealed_secret",
+            "docs": [
+              "LP's revealed Ed25519 secret (set by reveal_burn_secret / finalize_burn)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "deadline",
+            "docs": [
+              "Deadline unix timestamp"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "vault_liquidation_nonce",
+            "docs": [
+              "Snapshot of vault liquidation nonce at creation"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "normalized_debt_amount",
+            "docs": [
+              "Normalized debt amount deducted at settlement (0 until then — debt is NOT",
+              "reduced at request time, eliminating index-shift debt inflation bugs)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "abandoned",
+            "docs": [
+              "True when the LP abandoned a PROPOSED burn — the user's wsXMR remains",
+              "claimable via resolve_declined_proposal (requires userSecret reveal)"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "BurnStatus"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BurnStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Invalid"
+          },
+          {
+            "name": "Requested"
+          },
+          {
+            "name": "Proposed"
+          },
+          {
+            "name": "Committed"
+          },
+          {
+            "name": "Completed"
+          },
+          {
+            "name": "Slashed"
+          },
+          {
+            "name": "Cancelled"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CoLPPosition",
+      "docs": [
+        "A co-LP position: a user pairs wsXMR with an LP vault's idle QQQx collateral",
+        "to open a concentrated-liquidity position on Orca Whirlpools (EVM",
+        "PositionMetadata parity). The vault manager program is the position authority;",
+        "the Orca Position account is referenced by `position_address`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "docs": [
+              "LP vault that supplied the collateral leg"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "user",
+            "docs": [
+              "User that supplied the wsXMR leg"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "collateral_original",
+            "docs": [
+              "Raw QQQx deployed from the vault (8 decimals)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "wsxmr_original",
+            "docs": [
+              "wsXMR deployed by the user (8 decimals)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "tick_lower",
+            "docs": [
+              "Lower tick of the concentrated range"
+            ],
+            "type": "i32"
+          },
+          {
+            "name": "tick_upper",
+            "docs": [
+              "Upper tick of the concentrated range"
+            ],
+            "type": "i32"
+          },
+          {
+            "name": "liquidity",
+            "docs": [
+              "Liquidity units deployed (Orca Position.liquidity)"
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "position_address",
+            "docs": [
+              "Orca Whirlpools Position account address"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "created_at",
+            "docs": [
+              "Unix timestamp of position creation"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "nonce",
+            "docs": [
+              "Nonce used in the PDA seed (global request nonce at creation)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GlobalState",
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "docs": [
+              "Deployer/admin pubkey (one-time router setup)"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "wsxmr_mint",
+            "docs": [
+              "wsXMR SPL Token 2022 mint address"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "collateral_mint",
+            "docs": [
+              "Collateral SPL token mint (raw QQQx, no yield wrapper)"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "liquidity_router",
+            "docs": [
+              "Authorized liquidity router program"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "pyth_xmr_feed",
+            "docs": [
+              "Pyth XMR/USD price feed account"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "global_total_debt",
+            "docs": [
+              "Total wsXMR debt across all vaults (8 decimals)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "global_debt_index",
+            "docs": [
+              "Debt multiplier for O(1) proportional forgiveness (scaled 1e18, stored as u64).",
+              "Fixed at INITIAL_DEBT_INDEX — no buy-and-burn modifies it, but the",
+              "normalized-debt machinery is retained for EVM accounting parity."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "global_pending_collateral",
+            "docs": [
+              "Pending collateral withdrawals queued in PendingReturns accounts.",
+              "Backed by the program_collateral_ata pool."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "global_pending_sol",
+            "docs": [
+              "Pending SOL/lamport withdrawals queued in PendingReturns accounts"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "global_bad_debt",
+            "docs": [
+              "Unbacked wsXMR from liquidation shortfalls"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "global_pending_burn_debt",
+            "docs": [
+              "wsXMR debt currently locked in pending burn requests"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "request_nonce",
+            "docs": [
+              "Global nonce for request ID generation"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "_reserved",
+            "docs": [
+              "Explicit padding so the struct is Pod-compatible (no implicit alignment padding)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                7
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "MintRequest",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "request_id",
+            "docs": [
+              "Unique request identifier (hash of initiator+lp+xmr_amount+commitment+nonce)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "initiator",
+            "docs": [
+              "Who paid the griefing deposit"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "recipient",
+            "docs": [
+              "Destination for minted wsXMR"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "lp_vault",
+            "docs": [
+              "LP vault pubkey"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "xmr_amount",
+            "docs": [
+              "XMR atomic units (12 decimals)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "wsxmr_amount",
+            "docs": [
+              "wsXMR amount (8 decimals)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "fee_amount",
+            "docs": [
+              "Portion of wsxmr_amount going to LP as fee"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "claim_commitment",
+            "docs": [
+              "Ed25519 commitment: keccak256(compress(secret · G)) binding the user's secret"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "user_public_key",
+            "docs": [
+              "User's compressed Ed25519 public spend key (for Monero address derivation)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "lp_public_spend_key",
+            "docs": [
+              "LP's Ed25519 public spend key (x-coordinate) — set at provide_lp_key"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "lp_public_view_key",
+            "docs": [
+              "LP's Ed25519 public view key (x-coordinate) — set at provide_lp_key"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "lp_commitment",
+            "docs": [
+              "LP's Ed25519 commitment: keccak256(compress(lp_secret · G))"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "timeout",
+            "docs": [
+              "Expiry unix timestamp (also reused as the LP claim-window deadline for",
+              "KeyCancelled / ExpiredReady states)"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "griefing_deposit",
+            "docs": [
+              "SOL lamports deposited as anti-spam"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "locked_collateral",
+            "docs": [
+              "Collateral shares locked as the key bond (provide_lp_key) / par lock (set_mint_ready)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "xmr_price_at_ready",
+            "docs": [
+              "XMR price snapshot at set_mint_ready (par settlement), 1e18-scaled USD"
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "normalized_debt_amount",
+            "docs": [
+              "Normalized debt amount stored for consistent accounting"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "vault_mint_nonce",
+            "docs": [
+              "Snapshot of vault's mint_nonce at creation (for liquidation invalidation)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "revealed_secret",
+            "docs": [
+              "User's revealed Ed25519 secret (set by reveal_secret, read by finalize_mint)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "MintStatus"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MintStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Invalid"
+          },
+          {
+            "name": "Pending"
+          },
+          {
+            "name": "KeyProvided"
+          },
+          {
+            "name": "Ready"
+          },
+          {
+            "name": "SecretRevealed"
+          },
+          {
+            "name": "Completed"
+          },
+          {
+            "name": "Cancelled"
+          },
+          {
+            "name": "KeyCancelled"
+          },
+          {
+            "name": "ExpiredReady"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PendingReturns",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "collateral_amount",
+            "docs": [
+              "Pending collateral token withdrawals"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "sol_amount",
+            "docs": [
+              "Pending SOL (lamport) withdrawals"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Vault",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "lp_address",
+            "docs": [
+              "LP owner of this vault"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "collateral_amount",
+            "docs": [
+              "Raw QQQx collateral held — TOTAL model: includes locked_collateral, so",
+              "available = collateral_amount - locked_collateral - deployed_collateral"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "locked_collateral",
+            "docs": [
+              "Collateral reserved for pending burns/mints (still inside collateral_amount)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "normalized_debt",
+            "docs": [
+              "Normalized debt: actual_debt = normalized_debt * global_debt_index / 1e18"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "pending_debt",
+            "docs": [
+              "Reserved capacity for pending mints (not liquidatable)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "max_mint_bps",
+            "docs": [
+              "LP-configured max single mint size in basis points (0 = no limit)"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "mint_griefing_deposit",
+            "docs": [
+              "SOL lamports required per mint request (anti-spam griefing deposit)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "mint_fee_bps",
+            "docs": [
+              "Fee LP charges for minting (basis points, max 1000)"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "burn_reward_bps",
+            "docs": [
+              "Reward LP pays to incentivize burning (basis points, max 1000)"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "liquidation_nonce",
+            "docs": [
+              "Incremented on liquidation to invalidate all pending burns"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "mint_nonce",
+            "docs": [
+              "Incremented on liquidation to invalidate all pending mints"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "min_burn_amount",
+            "docs": [
+              "LP-configurable minimum burn amount (0 = use global default)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "active_burn_count",
+            "docs": [
+              "Number of currently active (non-terminal) burn requests"
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "pending_mint_count",
+            "docs": [
+              "Number of mints in READY state — blocks state-changing vault ops until resolved"
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "mint_timeout_seconds",
+            "docs": [
+              "LP-configured mint request timeout in seconds (EVM mintTimeoutBlocks parity)"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "burn_timeout_seconds",
+            "docs": [
+              "LP-configured burn request timeout in seconds (EVM burnTimeoutBlocks parity)"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "whitelisted_minters",
+            "docs": [
+              "Whitelisted minters that bypass the griefing deposit (EVM whitelistedMinters parity)"
+            ],
+            "type": {
+              "array": [
+                "pubkey",
+                32
+              ]
+            }
+          },
+          {
+            "name": "whitelisted_minter_count",
+            "docs": [
+              "Number of entries in whitelisted_minters"
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "deployed_collateral",
+            "docs": [
+              "QQQx deployed into co-LP positions (excluded from liquid balance)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "max_co_lp_range_bps",
+            "docs": [
+              "LP's preferred max co-LP range width in basis points (EVM maxCoLPRangeBps parity)"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "active",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ]
+}

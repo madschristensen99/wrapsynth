@@ -344,7 +344,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         uint256 collateralPrice = _getCollateralPriceFromStorage();
         
         uint256 wsxmrUsd = (wsxmrAmount * xmrPrice) / WSXMR_DECIMALS;
-        uint256 daiNeeded = (wsxmrUsd * 1e18) / collateralPrice;
+        uint256 daiNeeded = (wsxmrUsd * _underlyingUnit()) / collateralPrice;
         uint256 sharesNeeded = IERC4626(collateralToken).convertToShares(daiNeeded);
         
         uint256 availableIdle = vault.collateralShares > vault.lockedCollateral
@@ -452,7 +452,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         uint256 collateralPrice = _getCollateralPriceFromStorage();
         
         uint256 daiAmount = IERC4626(collateralToken).convertToAssets(availableIdle);
-        uint256 daiUsd = (daiAmount * collateralPrice) / 1e18;
+        uint256 daiUsd = (daiAmount * collateralPrice) / _underlyingUnit();
         maxWsxmrAcceptable = (daiUsd * WSXMR_DECIMALS) / xmrPrice;
     }
     
@@ -470,13 +470,14 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         }
         
         uint256 xmrPrice = _getXmrPriceFromStorage();
-        bool outOfRange = IwsXmrLiquidityRouter(liquidityRouter).isPositionOutOfRange(tokenId, xmrPrice);
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
+        bool outOfRange = IwsXmrLiquidityRouter(liquidityRouter).isPositionOutOfRange(tokenId, xmrPrice, collateralPrice);
         bool isOwner = msg.sender == meta.vaultOwner;
         if (!outOfRange && !isOwner) revert PositionInRange();
         
         address user = meta.user;
         (uint256 daiOut, uint256 wsxmrOut) = IwsXmrLiquidityRouter(liquidityRouter)
-            .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS), xmrPrice);
+            .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS), xmrPrice, collateralPrice);
 
         uint256 keeperFee = 0;
         if (!isOwner) {
@@ -587,7 +588,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
 
         // Convert available shares to underlying, then to USD
         uint256 collateralAmount = IERC4626(collateralToken).convertToAssets(availableCollateral);
-        uint256 collateralValueUsd = (collateralAmount * collateralPrice) / SDAI_DECIMALS;
+        uint256 collateralValueUsd = (collateralAmount * collateralPrice) / _underlyingUnit();
 
         // Current debt value in USD
         uint256 currentDebt = actualDebt + vault.pendingDebt;
@@ -786,10 +787,11 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         internal view
         returns (uint256 totalDAI, uint256 totalWsxmr)
     {
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
         uint256[] memory positions = _vaultPositions[vaultAddr];
         for (uint256 i = 0; i < positions.length; i++) {
             (uint256 dai, uint256 wsxmr) = IwsXmrLiquidityRouter(liquidityRouter)
-                .getPositionAmountsAtPrice(positions[i], xmrPrice);
+                .getPositionAmountsAtPrice(positions[i], xmrPrice, collateralPrice);
             totalDAI += dai;
             totalWsxmr += wsxmr;
         }
@@ -801,7 +803,7 @@ contract VaultFacet is wsXmrStorage, IVaultFacet {
         uint256 xmrPrice = _getXmrPriceFromStorage();
         
         (uint256 daiOut, uint256 wsxmrOut) = IwsXmrLiquidityRouter(liquidityRouter)
-            .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS), xmrPrice);
+            .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS), xmrPrice, _getCollateralPriceFromStorage());
         
         if (vault.deployedSDAIShares >= meta.sDAISharesOriginal) {
             vault.deployedSDAIShares -= meta.sDAISharesOriginal;

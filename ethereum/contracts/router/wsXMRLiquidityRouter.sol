@@ -7,6 +7,7 @@ import {IwsXmrLiquidityRouter} from "../interfaces/router/IwsXmrLiquidityRouter.
 import {INonfungiblePositionManager} from "../interfaces/external/INonfungiblePositionManager.sol";
 import {IUniswapV3Pool} from "../interfaces/external/IUniswapV3Pool.sol";
 import {IUniswapV3Factory} from "../interfaces/external/IUniswapV3Factory.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {TickMath} from "../libraries/TickMath.sol";
 import {FullMath} from "../libraries/FullMath.sol";
 
@@ -28,10 +29,20 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
     address public immutable pool;
     bool public immutable sDAIIsToken0;
 
+    /// @dev sqrt of the raw-unit decimal scale factor between the quote token
+    ///      ("sDAI"/collateral) and wsXMR (8 decimals). For an 18-dec quote
+    ///      token the factor is 1e10 → SQRT_DEC_DEN = 1e5; for an 8-dec quote
+    ///      (cbBTC) both are 1; for a sub-8-dec quote the inverse lands on the
+    ///      numerator side (SQRT_DEC_NUM = sqrt(10^(8-dec))).
+    uint256 private immutable SQRT_DEC_NUM;
+    uint256 private immutable SQRT_DEC_DEN;
+
     // ========== CONSTANTS ==========
 
-    uint24 public constant POOL_FEE = 3000;
-    int24 public constant TICK_SPACING = 60;
+    /// @notice V3 pool fee tier and tick spacing — set per deployment
+    ///         (UniV3 0.3% = 3000/60; PancakeSwap V3 0.05% = 500/10)
+    uint24 public immutable POOL_FEE;
+    int24 public immutable TICK_SPACING;
     int24 private constant MIN_TICK = -887272;
     int24 private constant MAX_TICK = 887272;
     uint256 private constant BPS_DENOMINATOR = 10000;
@@ -56,6 +67,26 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         wsXMR = _wsXMR;
         pool = _pool;
         sDAIIsToken0 = _sDAI < _wsXMR;
+
+        // Self-derive fee tier, tick spacing, and the quote token's decimals
+        // from the pool so one codebase serves UniV3 (3000/60), PancakeSwap
+        // V3 (500/10, 2500/50, ...) and collateral of any decimal width.
+        POOL_FEE = IUniswapV3Pool(_pool).fee();
+        TICK_SPACING = IUniswapV3Pool(_pool).tickSpacing();
+
+        uint8 sDaiDec;
+        try IERC20Metadata(_sDAI).decimals() returns (uint8 d) {
+            sDaiDec = d;
+        } catch {
+            sDaiDec = 18;
+        }
+        if (sDaiDec >= 8) {
+            SQRT_DEC_DEN = _sqrt(10 ** (sDaiDec - 8));
+            SQRT_DEC_NUM = 1;
+        } else {
+            SQRT_DEC_NUM = _sqrt(10 ** (8 - sDaiDec));
+            SQRT_DEC_DEN = 1;
+        }
     }
 
     // ========== MODIFIERS ==========
@@ -68,7 +99,14 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
     // ========== INITIALIZATION ==========
 
     function initializePool(uint256 initialXmrPrice) external onlyDiamond {
-        uint256 collateralPrice = 1e18; // sDAI ≈ $1
+        initializePoolWithPrice(initialXmrPrice, 1e18); // sDAI/USDe ≈ $1
+    }
+
+    /// @notice Initialize the pool at an explicit collateral price — required on
+    ///         chains where the collateral asset isn't ~$1 (QQQB on BNB).
+    /// @param initialXmrPrice XMR price in USD (18 decimals)
+    /// @param collateralPrice Collateral asset price in USD (18 decimals)
+    function initializePoolWithPrice(uint256 initialXmrPrice, uint256 collateralPrice) public onlyDiamond {
         uint160 sqrtPriceX96 = _priceToSqrtPriceX96(initialXmrPrice, collateralPrice);
 
         IUniswapV3Pool(pool).initialize(sqrtPriceX96);
@@ -245,7 +283,7 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
             : (amount1, amount0);
     }
 
-    function drainPosition(uint256 tokenId, uint16 slippageBps, uint256 oracleXmrPrice)
+    function drainPosition(uint256 tokenId, uint16 slippageBps, uint256 oracleXmrPrice, uint256 oracleCollateralPrice)
         external onlyDiamond
         returns (uint256 daiOut, uint256 wsxmrOut)
     {
@@ -287,7 +325,7 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         // D2: Post-collect oracle sanity check — verify returned amounts are within
         // slippage tolerance of what the oracle price predicts.
         {
-            uint160 oracleSqrtPriceX96 = _priceToSqrtPriceX96(oracleXmrPrice, 1e18);
+            uint160 oracleSqrtPriceX96 = _priceToSqrtPriceX96(oracleXmrPrice, oracleCollateralPrice);
             (uint256 expectedDai, uint256 expectedWsxmr) = _getAmountsAtSqrtPrice(tokenId, oracleSqrtPriceX96);
 
             if (expectedDai > 0 && daiOut < (expectedDai * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR) {
@@ -331,20 +369,19 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         return _getAmountsAtSqrtPrice(tokenId, sqrtPriceX96);
     }
 
-    function getPositionAmountsAtPrice(uint256 tokenId, uint256 xmrPriceUSD18)
+    function getPositionAmountsAtPrice(uint256 tokenId, uint256 xmrPriceUSD18, uint256 collateralPriceUSD18)
         external view
         returns (uint256 daiAmount, uint256 wsxmrAmount)
     {
-        uint256 collateralPrice = 1e18;
-        uint160 sqrtPriceX96 = _priceToSqrtPriceX96(xmrPriceUSD18, collateralPrice);
+        uint160 sqrtPriceX96 = _priceToSqrtPriceX96(xmrPriceUSD18, collateralPriceUSD18);
         return _getAmountsAtSqrtPrice(tokenId, sqrtPriceX96);
     }
 
-    function isPositionOutOfRange(uint256 tokenId, uint256 xmrPrice) external view returns (bool) {
+    function isPositionOutOfRange(uint256 tokenId, uint256 xmrPrice, uint256 collateralPrice) external view returns (bool) {
         (, , , , , int24 tickLower, int24 tickUpper, , , , , ) =
             INonfungiblePositionManager(positionManager).positions(tokenId);
 
-        uint160 sqrtPriceX96 = _priceToSqrtPriceX96(xmrPrice, 1e18);
+        uint160 sqrtPriceX96 = _priceToSqrtPriceX96(xmrPrice, collateralPrice);
 
         uint160 sqrtLower = TickMath.getSqrtRatioAtTick(tickLower);
         uint160 sqrtUpper = TickMath.getSqrtRatioAtTick(tickUpper);
@@ -375,19 +412,16 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
     {
         uint256 sqrtXmrPrice = _sqrt(xmrPrice);
         uint256 sqrtCollateralPrice = _sqrt(collateralPrice);
-        uint256 sqrt1e10 = 100000; // sqrt(1e10) = 1e5
         uint256 sqrtPriceX96;
 
         if (sDAIIsToken0) {
-            // price = wsXMR/sDAI = collateralPrice / (xmrPrice * 1e10)
-            // sqrtPriceX96 = sqrt(collateralPrice / (xmrPrice * 1e10)) * 2^96
-            //              = sqrtCollateralPrice * 2^96 / (sqrtXmrPrice * 1e5)
-            sqrtPriceX96 = (sqrtCollateralPrice * (1 << 96)) / (sqrtXmrPrice * sqrt1e10);
+            // price = wsXMR/sDAI = collateralPrice / (xmrPrice * decScale)
+            // sqrtPriceX96 = sqrtCollateralPrice * SQRT_DEC_NUM * 2^96
+            //              / (sqrtXmrPrice * SQRT_DEC_DEN)
+            sqrtPriceX96 = (sqrtCollateralPrice * SQRT_DEC_NUM * (1 << 96)) / (sqrtXmrPrice * SQRT_DEC_DEN);
         } else {
-            // price = sDAI/wsXMR = (xmrPrice * 1e10) / collateralPrice
-            // sqrtPriceX96 = sqrt(xmrPrice * 1e10 / collateralPrice) * 2^96
-            //              = sqrtXmrPrice * 1e5 * 2^96 / sqrtCollateralPrice
-            sqrtPriceX96 = (sqrtXmrPrice * sqrt1e10 * (1 << 96)) / sqrtCollateralPrice;
+            // price = sDAI/wsXMR = (xmrPrice * decScale) / collateralPrice
+            sqrtPriceX96 = (sqrtXmrPrice * SQRT_DEC_DEN * (1 << 96)) / (sqrtCollateralPrice * SQRT_DEC_NUM);
         }
 
         return uint160(sqrtPriceX96);

@@ -7,6 +7,7 @@ import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
 import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
+import {ILiquidationFacet} from "../contracts/interfaces/facets/ILiquidationFacet.sol";
 import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
@@ -105,6 +106,98 @@ contract LiquidationCoverageTest is HyperEVMTestBase {
         _mintForUser(user, lp);
         uint256 yield_ = _getVaultExtractableYield(lp);
         assertEq(yield_, 0, "should have no extractable yield without sDAI appreciation");
+    }
+
+    // ========== Issue #69: liquidation eligibility counts free collateral only ==========
+
+    /// @notice Regression: a vault whose FREE collateral (collateralShares minus
+    ///         lockedCollateral) sits below LIQUIDATION_RATIO must be liquidatable even
+    ///         when total shares — inflated by an in-flight mint key bond — sit above
+    ///         it. The bond is never seizable, so counting it let an underwater vault
+    ///         dodge liquidation and accrue bad debt.
+    function test_Liquidate_MintBondDoesNotShield() public {
+        _mintForUser(user, lp); // 0.02 wsXMR debt @ $390 → $7.80
+
+        // Key a second identical mint — locks a 110%-of-par key bond (~$8.58)
+        bytes32 reqId = _initiateMint(user, lp);
+        _provideLPKey(lp, reqId);
+
+        // Pump XMR to $4,000 → debt ~$80. Total shares ~$100 → ~125% passed the old
+        // total-collateral check; free ~$91.4 → ~114% is below the floor.
+        _setXmrPrice8dec(4000_00000000);
+
+        assertLt(hub.getVaultHealth(lp), 120, "free-collateral health below floor");
+        assertTrue(_isVaultLiquidatable(lp), "free CR < 120% must be liquidatable");
+
+        uint256 debt = hub.getVaultDebt(lp);
+        deal(address(wsxmr), attacker, debt);
+        vm.prank(attacker);
+        LiquidationFacet(address(hub)).liquidate(lp, type(uint256).max);
+
+        assertEq(hub.getVaultDebt(lp), 0, "debt fully cleared");
+        assertGt(stata.balanceOf(attacker), 0, "liquidator seized collateral");
+    }
+
+    /// @notice Control: a vault whose free collateral remains above LIQUIDATION_RATIO
+    ///         still reverts VaultHealthy — the free-collateral basis must not
+    ///         over-trigger.
+    function test_Liquidate_HealthyFreeCollateral_StillReverts() public {
+        _mintForUser(user, lp);
+        bytes32 reqId = _initiateMint(user, lp);
+        _provideLPKey(lp, reqId);
+
+        // $3,000 XMR → debt $60; free ~$91.4 → ~152% — healthy on either basis.
+        _setXmrPrice8dec(3000_00000000);
+
+        assertFalse(_isVaultLiquidatable(lp), "healthy vault not liquidatable");
+
+        uint256 debt = hub.getVaultDebt(lp);
+        deal(address(wsxmr), attacker, debt);
+        vm.prank(attacker);
+        vm.expectRevert(ILiquidationFacet.VaultHealthy.selector);
+        LiquidationFacet(address(hub)).liquidate(lp, type(uint256).max);
+    }
+
+    /// @notice Committed burns settle BEFORE the eligibility check: their par payout
+    ///         and debt removal are already applied. A vault that is healthy
+    ///         post-settlement must not be liquidated — a naive pre-settlement
+    ///         free-collateral check would double-count (lock excluded, debt kept).
+    function test_Liquidate_HealthyAfterCommittedBurnSettle_Reverts() public {
+        uint256 minted = _mintForUser(user, lp);
+        uint256 burnAmount = minted / 2; // ~0.0099 wsXMR — half the vault's debt
+
+        // REQUESTED → PROPOSED → COMMITTED (locks 110% par + reward at request price)
+        bytes32 userSecret = bytes32(uint256(0xdeadbeef));
+        (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(userSecret));
+        bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
+        vm.startPrank(user);
+        wsxmr.approve(address(hub), burnAmount);
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(
+            burnAmount, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3))
+        );
+        vm.stopPrank();
+        bytes32 burnSecret = bytes32(uint256(0xcafebabe));
+        (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
+        bytes32 secretHash = keccak256(abi.encodePacked(bpx, bpy));
+        vm.prank(lp);
+        BurnFacet(address(hub)).proposeHash(burnId, secretHash, bytes32(uint256(0x1111)), bytes32(uint256(0x2222)));
+        vm.prank(user);
+        BurnFacet(address(hub)).confirmMoneroLock(burnId);
+
+        // $4,000 XMR → debt $80, burn lock ~$4.3. Pre-settlement free basis:
+        // (100 − 4.3)/80 ≈ 119.6% would over-trigger. Post-settlement truth: the
+        // burn pays par ($3.86 @ request price) + reward and removes $39.6 of debt
+        // → ~$96 free / ~$40 debt ≈ 238% → genuinely healthy → VaultHealthy.
+        _setXmrPrice8dec(4000_00000000);
+
+        uint256 debtBefore = hub.getVaultDebt(lp);
+        deal(address(wsxmr), attacker, debtBefore);
+        vm.prank(attacker);
+        vm.expectRevert(ILiquidationFacet.VaultHealthy.selector);
+        LiquidationFacet(address(hub)).liquidate(lp, type(uint256).max);
+
+        // Atomic revert: the in-flight burn is untouched and resolves via its own path.
+        assertEq(hub.getVaultDebt(lp), debtBefore, "debt unchanged on revert");
     }
 
     // ========== HUB VIEW HELPERS ==========

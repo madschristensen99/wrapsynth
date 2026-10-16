@@ -26,7 +26,7 @@ a collateral slash as the fallback.
 | Bond posted | `provideLPKey` locks a par-value key bond (`MINT_LOCK_RATIO` = 110% of mint USD par) into `vault.lockedCollateral` before the user sends XMR | `MintFacet.sol:183-200` |
 | Timeout | `cancelMint` (permissionless, post-`request.timeout`) moves `KEY_PROVIDED` → `KEY_CANCELLED` and parks the griefing deposit as a reveal bounty | `MintFacet.sol:438-444` |
 | XMR recovery | `abandonKeyProvidedMint` pays the LP the parked deposit for revealing `lpSecret` on-chain; user combines it with `userSecret` to sweep the shared address | `MintFacet.sol:459-518` |
-| Dead-LP slash | `reclaimParkedDeposit` (permissionless, after `LP_CLAIM_WINDOW_BLOCKS`) slashes the key bond to the user + returns the deposit | `MintFacet.sol:520-565` |
+| Dead-LP slash | `reclaimParkedDeposit` (permissionless, after `LP_CLAIM_WINDOW_BLOCKS` — ~1 hour) slashes the key bond to the user + returns the deposit | `MintFacet.sol:520-565` |
 | Post-READY ghost | `cancelMint` moves `READY` → `EXPIRED_READY`; LP can claim deposit via `claimGriefingDeposit` (reveals `lpSecret` — same XMR recovery effect); else `sweepUnclaimedExpiredMint` slashes the re-priced par lock to the user | `MintFacet.sol:448-454, 567-660` |
 
 Key invariant: the LP can never unilaterally take the XMR. Worst case it is stranded

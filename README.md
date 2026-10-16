@@ -148,6 +148,7 @@ deploy time (`hubLocked() == true`, `deployerOperationsLocked() == true`).
 - No formal verification yet
 - Oracle reads the native XMR perp via L1-read precompile (validator-maintained; no off-chain pusher)
 - LP-side Monero payment confirmation is an off-chain step; the protocol's protection is economic (collateral slashing), not cryptographic proof of XMR transfer
+- **LP liveness is assumed.** Only the LP can attest a Monero deposit (`setMintReady`) or release a user's XMR from the shared 2-of-2 address (by revealing `lpSecret`). After a mint timeout the LP has `LP_CLAIM_WINDOW_BLOCKS` (~1 hour on HyperEVM) to reveal; a live LP always will — it earns the parked griefing deposit and loses nothing. If the LP is unresponsive past the window, the key bond is slashed to the user (`reclaimParkedDeposit` / `sweepUnclaimedExpiredMint`). This means an LP outage longer than the window forfeits the bond even for mints where the user never sent XMR — the chain cannot distinguish a real deposit from a phantom one
 - Use amounts you can afford to lose
 
 ---

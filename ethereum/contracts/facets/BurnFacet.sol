@@ -379,7 +379,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         uint256 collateralPrice = _getCollateralPriceFromStorage();
         uint256 parValueUsd = (request.wsxmrAmount * request.xmrPriceAtRequest) / WSXMR_DECIMALS;
-        uint256 parDaiAmount = (parValueUsd * SDAI_DECIMALS) / collateralPrice;
+        uint256 parDaiAmount = (parValueUsd * _underlyingUnit()) / collateralPrice;
         uint256 parShares = _daiToShares(parDaiAmount);
 
         uint256 userPayout = parShares < request.lockedCollateral
@@ -402,8 +402,11 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         // Debt reduction happens here at settlement
         uint256 normalizedBurnAmount = (request.wsxmrAmount * 1e18 + globalDebtIndex - 1) / globalDebtIndex;
+        if (normalizedBurnAmount > vault.normalizedDebt) {
+            normalizedBurnAmount = vault.normalizedDebt;
+        }
         vault.normalizedDebt -= normalizedBurnAmount;
-        globalTotalDebt -= request.wsxmrAmount;
+        globalTotalDebt -= _denormalizeDebt(normalizedBurnAmount);
         if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
         else globalPendingBurnDebt -= request.wsxmrAmount;
 
@@ -471,7 +474,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         
         uint256 collateralPrice = _getCollateralPriceFromStorage();
         uint256 parValueUsd = (request.wsxmrAmount * request.xmrPriceAtRequest) / WSXMR_DECIMALS;
-        uint256 parDaiAmount = (parValueUsd * SDAI_DECIMALS) / collateralPrice;
+        uint256 parDaiAmount = (parValueUsd * _underlyingUnit()) / collateralPrice;
         uint256 parShares = _daiToShares(parDaiAmount);
         
         uint256 userBase = parShares < request.lockedCollateral
@@ -649,7 +652,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         // Compute off PAR directly, converting USD -> DAI via collateral price so the lock
         // is in the same units as the slash/settle side (which divide par USD by collateralPrice).
         uint256 parUsd = (wsxmrAmount * _getXmrPriceFromStorage()) / WSXMR_DECIMALS;
-        uint256 parDai = (parUsd * SDAI_DECIMALS) / _getCollateralPriceFromStorage();
+        uint256 parDai = (parUsd * _underlyingUnit()) / _getCollateralPriceFromStorage();
 
         uint256 baseDai = (parDai * BURN_LOCK_RATIO) / RATIO_PRECISION; // buffer over par
         baseLock = _daiToShares(baseDai);

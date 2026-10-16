@@ -162,7 +162,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         // The key invariant: CR uses oracle prices, not pool spot.
         // We verify this by checking that the position value at oracle price
         // is used in the CR calculation (via _calculateCRWithPositions)
-        (uint256 daiAtOracle, uint256 wsxmrAtOracle) = router.getPositionAmountsAtPrice(tokenId, XMR_PRICE);
+        (uint256 daiAtOracle, uint256 wsxmrAtOracle) = router.getPositionAmountsAtPrice(tokenId, XMR_PRICE, 1e18);
         assertTrue(daiAtOracle > 0, "should have DAI at oracle price");
         assertTrue(wsxmrAtOracle > 0, "should have wsXMR at oracle price");
 
@@ -326,7 +326,7 @@ contract CoLPTest is HyperEVMTestBase, IUniswapV3SwapCallback {
         // M3: Sync pool price to oracle so drainPosition slippage bounds are consistent
         _pushPoolPriceUp(10 ether);
 
-        bool outOfRange = router.isPositionOutOfRange(tokenId, 800 * 1e18);
+        bool outOfRange = router.isPositionOutOfRange(tokenId, 800 * 1e18, 1e18);
         assertTrue(outOfRange, "position should be out of range");
 
         // Keeper rebalances

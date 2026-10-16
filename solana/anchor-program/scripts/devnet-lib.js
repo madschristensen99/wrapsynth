@@ -36,6 +36,27 @@ const SOL_ESCROW_SEED = Buffer.from("sol_escrow");
 const findPda = (seeds, pid = PROGRAM_ID) => PublicKey.findProgramAddressSync(seeds, pid)[0];
 
 const conn = new Connection(DEVNET_URL, "confirmed");
+// Some RPC providers (Alchemy free tier) reject getProgramAccounts — re-route
+// those calls to the public devnet RPC with retries when the primary isn't it.
+if (!DEVNET_URL.includes("api.devnet.solana.com")) {
+  const gpaConn = new Connection(
+    process.env.GPA_URL || "https://api.devnet.solana.com",
+    "confirmed"
+  );
+  const gpa = gpaConn.getProgramAccounts.bind(gpaConn);
+  conn.getProgramAccounts = async (...args) => {
+    let last;
+    for (let i = 0; i < 12; i++) {
+      try {
+        return await gpa(...args);
+      } catch (e) {
+        last = e;
+        await new Promise((r) => setTimeout(r, 4000));
+      }
+    }
+    throw last;
+  };
+}
 
 function loadKeypair(file) {
   return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(file, "utf8"))));

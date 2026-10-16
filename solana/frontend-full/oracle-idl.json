@@ -1,0 +1,101 @@
+{
+  "address": "AWKqcPUtpsaPr19XpCq2ZD6Bk4HRGXnsYy9DUrZkLixY",
+  "metadata": {
+    "name": "oracle_mock",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Test-only oracle writer — lets the localnet suite update mock Pyth PriceUpdateV2 accounts mid-test (price, ema, publish_time)."
+  },
+  "instructions": [
+    {
+      "name": "probe_scalar_mul",
+      "docs": [
+        "Test probe: run `sol_curve_multiscalar_mul` (Edwards) on `scalar`·G and",
+        "write the compressed result into `target`[0..32]. Lets the suite verify",
+        "the syscall's scalar semantics match curve25519-dalek off-chain."
+      ],
+      "discriminator": [
+        191,
+        102,
+        54,
+        105,
+        6,
+        2,
+        118,
+        108
+      ],
+      "accounts": [
+        {
+          "name": "target",
+          "docs": [
+            "constraint below is the entire safety boundary."
+          ],
+          "writable": true
+        },
+        {
+          "name": "payer",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "scalar",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "write_account",
+      "docs": [
+        "Overwrite `data` bytes into `target` at `offset`. Only accounts owned by",
+        "this program can be written, so this cannot touch real chain state — and",
+        "this program is only ever deployed to the test validator."
+      ],
+      "discriminator": [
+        198,
+        52,
+        17,
+        82,
+        72,
+        149,
+        62,
+        177
+      ],
+      "accounts": [
+        {
+          "name": "target",
+          "docs": [
+            "constraint below is the entire safety boundary."
+          ],
+          "writable": true
+        },
+        {
+          "name": "payer",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "offset",
+          "type": "u64"
+        },
+        {
+          "name": "data",
+          "type": "bytes"
+        }
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "OutOfBounds",
+      "msg": "write range exceeds account data length"
+    }
+  ]
+}

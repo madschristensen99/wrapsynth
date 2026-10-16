@@ -2,6 +2,10 @@
 pragma solidity ^0.8.28;
 
 import {IOracleFacet} from "../interfaces/facets/IOracleFacet.sol";
+import {IUniswapV3Pool} from "../interfaces/external/IUniswapV3Pool.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {TickMath} from "../libraries/TickMath.sol";
+import {FullMath} from "../libraries/FullMath.sol";
 
 /**
  * @title wsXmrStorage
@@ -26,7 +30,14 @@ contract wsXmrStorage {
     uint256 public constant MAX_MINT_TIMEOUT_BLOCKS = 86400; // ~24 hours at 1s/block
     uint256 public constant DEFAULT_MINT_TIMEOUT_BLOCKS = 3600; // ~1 hour
     uint256 public constant MINT_READY_EXTENSION_BLOCKS = 7200; // ~2 hours at 1s/block
-    uint256 public constant LP_CLAIM_WINDOW_BLOCKS = 1800; // ~30 min for LP to claim after mint expiry
+    // LP liveness assumption: after a mint times out, the LP has this window to
+    // reveal lpSecret (abandonKeyProvidedMint / claimGriefingDeposit) before the
+    // key bond is slashed to the user. The protocol already assumes LP liveness —
+    // only the LP can attest deposits (setMintReady) and un-stick XMR at the shared
+    // address — so the window just defines how quickly a "live" LP must respond.
+    // 3600 ≈ 1 hour at 1s/block (HyperEVM): tolerant of brief outages/restarts,
+    // short enough that a permanently dead LP's bonds still resolve.
+    uint256 public constant LP_CLAIM_WINDOW_BLOCKS = 3600; // ~1 hour for LP to claim after mint expiry
 
     uint256 public constant MIN_BURN_TIMEOUT_BLOCKS = 1800; // ~30 min at 1s/block
     uint256 public constant MAX_BURN_TIMEOUT_BLOCKS = 86400; // ~24 hours at 1s/block
@@ -342,14 +353,26 @@ contract wsXmrStorage {
     ///      price (conservative: makes wsXMR debt look largest).
     uint256 internal constant ORACLE_MARK_MAX_DIVERGENCE = 1.02e18;
 
-    /// @notice Best-effort oracle refresh from the HyperCore native XMR perp.
+    /// @notice Best-effort oracle refresh. Runs two independent legs:
+    ///         1. HyperCore XMR perp precompile read (HyperEVM only — silently
+    ///            skips where the precompile doesn't exist)
+    ///         2. On-chain collateral TWAP (chains where collateralTwapPool is
+    ///            configured — BNB deployment)
     /// @dev Permissionless and trustless — the data source is the validator-
-    ///      maintained perp oracle, not a WrapSynth pusher. Called at the top of
-    ///      state-changing entry points and by HyperCoreOracleFacet.refreshPrices().
-    ///      Silently no-ops when the precompile read fails or the index is unset,
-    ///      so non-price paths (deposits, withdrawals) aren't blocked by an oracle
-    ///      outage; functions that need a price still fail closed via StalePrice.
+    ///      maintained perp oracle / the DEX's own observation accumulator,
+    ///      not a WrapSynth pusher. Called at the top of state-changing entry
+    ///      points and by oracle-facet refresh functions. Silently no-ops on
+    ///      read failure so non-price paths (deposits, withdrawals) aren't
+    ///      blocked by an oracle outage; functions that need a price still
+    ///      fail closed via StalePrice.
     function _tryRefreshOracle() internal {
+        _tryRefreshXmrFromPrecompile();
+        _tryRefreshCollateralTwap();
+    }
+
+    /// @dev HyperEVM leg: read the native XMR perp oraclePx/markPx and store.
+    ///      Collateral is pinned at $1.00 there (USDe unit of account).
+    function _tryRefreshXmrFromPrecompile() internal {
         uint32 idx = xmrPerpIndex;
         if (idx == 0) return; // unset (stored as index+1)
         idx -= 1;
@@ -379,8 +402,12 @@ contract wsXmrStorage {
 
         // USDe is the unit of account — collateral price fixed at $1.00 (8 dec).
         // The 150% ratio absorbs depeg tail risk; see migration spec §10.1.
-        lastCollateralPrice = int192(1e8);
-        lastCollateralPriceTimestamp = block.timestamp;
+        // Skipped when a collateral TWAP pool is configured (BNB): the TWAP
+        // leg owns the collateral price there and writes it right after.
+        if (collateralTwapPool == address(0)) {
+            lastCollateralPrice = int192(1e8);
+            lastCollateralPriceTimestamp = block.timestamp;
+        }
 
         // EMA update, gated to preserve ~10-period semantics
         if (block.timestamp >= lastEmaSampleTime + EMA_SAMPLE_INTERVAL) {
@@ -392,6 +419,115 @@ contract wsXmrStorage {
                     + (EMA_DENOMINATOR - EMA_ALPHA_NUMERATOR) * xmrEmaPrice) / EMA_DENOMINATOR;
             }
             lastEmaSampleTime = block.timestamp;
+        }
+    }
+
+    /// @dev On-chain collateral leg (BNB): recompute the collateral USD price
+    ///      from the configured V3 TWAP pools. Silent no-op when unconfigured
+    ///      or when a pool lacks observation history — stale detection stays
+    ///      with the readers (_getCollateralPriceFromStorage → StalePrice).
+    function _tryRefreshCollateralTwap() internal {
+        if (collateralTwapPool == address(0) || collateralTwapWindow == 0) return;
+        uint256 price8dec = _collateralTwapUsd8dec();
+        if (price8dec == 0) return;
+        lastCollateralPrice = int192(int256(price8dec));
+        lastCollateralPriceTimestamp = block.timestamp;
+    }
+
+    /// @notice Refresh the collateral price from on-chain TWAPs and revert if
+    ///         the result still isn't fresh. Callable through the oracle facet.
+    function _refreshCollateralTwapOrRevert() internal {
+        _tryRefreshCollateralTwap();
+        if (block.timestamp > lastCollateralPriceTimestamp + 120) {
+            revert IOracleFacet.StalePrice();
+        }
+    }
+
+    /// @dev collateral/USD = TWAP(collateral/intermediate) × TWAP(intermediate/USD).
+    ///      Returns the 8-decimal storage format, 0 on any read failure.
+    ///      Decimal-corrected: _twapQuote18 quotes raw quote units per 1e18 raw
+    ///      base units, so each leg is normalized by 10^(baseDec - quoteDec);
+    ///      the intermediate token's decimals cancel between the two legs.
+    ///      A zero quoteTwapPool selects single-leg mode: the collateral pool
+    ///      quotes USD directly (pxB = 1e18, e.g. cbBTC/USDC on Base).
+    function _collateralTwapUsd8dec() internal view returns (uint256) {
+        uint256 pxA = _twapQuote18(collateralTwapPool, underlyingToken, twapIntermediateToken);
+        if (pxA == 0) return 0;
+        uint8 decU = _tryDecimals(underlyingToken);
+        uint8 decI = _tryDecimals(twapIntermediateToken);
+        uint8 decUsd = _tryDecimals(twapUsdToken);
+        // Normalize leg A to an 18-decimal whole-token price
+        uint256 legA18 = FullMath.mulDiv(pxA, 10 ** decU, 10 ** decI);
+        uint256 legB18;
+        if (quoteTwapPool == address(0)) {
+            legB18 = 1e18; // single-leg: pool already quotes the USD token
+        } else {
+            uint256 pxB = _twapQuote18(quoteTwapPool, twapIntermediateToken, twapUsdToken);
+            if (pxB == 0) return 0;
+            legB18 = FullMath.mulDiv(pxB, 10 ** decI, 10 ** decUsd);
+        }
+        // 1e18 × 1e18 / 1e28 → 8-decimal price (RedStone storage format)
+        return FullMath.mulDiv(legA18, legB18, 1e28);
+    }
+
+    /// @dev Smallest-unit scale of the collateral underlying (10^decimals).
+    ///      "dai" amounts flowing through the protocol are raw underlying
+    ///      units, so all USD↔underlying conversions must divide/multiply by
+    ///      this — not a hardcoded 1e18 (cbBTC is 8-dec).
+    function _underlyingUnit() internal view returns (uint256) {
+        return underlyingDecimals == 0 ? 1e18 : 10 ** underlyingDecimals;
+    }
+
+    /// @dev decimals() lookup defaulting to 18 for tokens that don't expose it.
+    function _tryDecimals(address token) internal view returns (uint8) {
+        try IERC20Metadata(token).decimals() returns (uint8 d) {
+            return d;
+        } catch {
+            return 18;
+        }
+    }
+
+    /// @dev UniV3-style getQuote: quote tokens per 1e18 raw base units, using
+    ///      the pool's arithmetic-mean tick over collateralTwapWindow. The raw
+    ///      scale is normalized by the caller (_collateralTwapUsd8dec) using
+    ///      each token's decimals. Returns 0 on insufficient history.
+    function _twapQuote18(address twapPool, address baseToken, address quoteToken)
+        internal view returns (uint256)
+    {
+        uint32[] memory secondsAgos = new uint32[](2);
+        secondsAgos[0] = collateralTwapWindow;
+        // secondsAgos[1] = 0 (latest)
+
+        try IUniswapV3Pool(twapPool).observe(secondsAgos)
+            returns (int56[] memory tickCumulatives, uint160[] memory)
+        {
+            int56 delta = tickCumulatives[1] - tickCumulatives[0];
+            int56 window = int56(int32(collateralTwapWindow));
+            int24 tick = int24(delta / window);
+            // Arithmetic-mean tick rounds toward negative infinity (UniV3 convention)
+            if (delta < 0 && delta % window != 0) tick--;
+            return _quoteAtTick(tick, 1e18, baseToken, quoteToken);
+        } catch {
+            return 0;
+        }
+    }
+
+    /// @dev Port of Uniswap OracleLibrary.getQuoteAtTick — returns how much of
+    ///      quoteToken one unit-scaled amount of baseToken is worth.
+    function _quoteAtTick(int24 tick, uint128 baseAmount, address baseToken, address quoteToken)
+        internal pure returns (uint256 quoteAmount)
+    {
+        uint160 sqrtRatioX96 = TickMath.getSqrtRatioAtTick(tick);
+        if (sqrtRatioX96 <= type(uint128).max) {
+            uint256 ratioX192 = uint256(sqrtRatioX96) * sqrtRatioX96;
+            quoteAmount = baseToken < quoteToken
+                ? FullMath.mulDiv(ratioX192, baseAmount, 1 << 192)
+                : FullMath.mulDiv(1 << 192, baseAmount, ratioX192);
+        } else {
+            uint256 ratioX128 = FullMath.mulDiv(sqrtRatioX96, sqrtRatioX96, 1 << 64);
+            quoteAmount = baseToken < quoteToken
+                ? FullMath.mulDiv(ratioX128, baseAmount, 1 << 128)
+                : FullMath.mulDiv(1 << 128, baseAmount, ratioX128);
         }
     }
     
@@ -476,7 +612,31 @@ contract wsXmrStorage {
     ///      settlement so the array holds only active burns and liquidation loops stay bounded.
     mapping(bytes32 => uint256) internal burnRequestIndexPlusOne;
 
-    uint256[28] private __gap;
+    // ========== ON-CHAIN COLLATERAL TWAP (BNB deployment) ==========
+    // Appended state — set pre-lock via wsXmrHub.setCollateralTwapConfig.
+
+    /// @notice V3 pool pricing the collateral asset against the intermediate
+    ///         quote asset (QQQB/WBNB on BNB). 0 = TWAP refresh disabled.
+    address public collateralTwapPool;
+
+    /// @notice V3 pool pricing the intermediate quote asset against a
+    ///         USD-pegged token (WBNB/USDT on BNB).
+    address public quoteTwapPool;
+
+    /// @notice Token shared by both TWAP pools (WBNB on BNB).
+    address public twapIntermediateToken;
+
+    /// @notice USD-pegged quote token of quoteTwapPool (USDT on BNB).
+    address public twapUsdToken;
+
+    /// @notice TWAP window applied to both pools, in seconds.
+    uint32 public collateralTwapWindow;
+
+    /// @notice Decimals of underlyingToken, captured in setExternalAddresses.
+    ///         0 = unset (legacy deployments) → treated as 18.
+    uint8 public underlyingDecimals;
+
+    uint256[22] private __gap;
     
     // ========== CONSTRUCTOR ==========
     

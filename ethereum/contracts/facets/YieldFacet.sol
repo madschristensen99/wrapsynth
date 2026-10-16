@@ -53,19 +53,14 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
 
         IERC20(underlyingToken).forceApprove(swapRouter, daiAmount);
 
-        uint256 minWsxmr = (daiAmount * PRICE_PRECISION * (10000 - MEV_SLIPPAGE_BPS)) / (spotPrice * 10000);
+        // USD value of the underlying (18-dec collateral price) → 8-dec wsXMR at spot.
+        // The collateral leg matters where the underlying isn't $1 (BNB: QQQB);
+        // on HyperEVM it's pinned at 1e18 and reduces to the stablecoin case.
+        uint256 collateralPrice = _getCollateralPriceFromStorage();
+        uint256 minWsxmr = (daiAmount * collateralPrice * WSXMR_DECIMALS * (10000 - MEV_SLIPPAGE_BPS))
+            / (spotPrice * _underlyingUnit() * 10000);
 
-        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
-            tokenIn: underlyingToken,
-            tokenOut: wsxmrToken,
-            fee: poolFeeTier,
-            recipient: address(this),
-            amountIn: daiAmount,
-            amountOutMinimum: minWsxmr,
-            sqrtPriceLimitX96: 0
-        });
-
-        uint256 wsxmrBought = ISwapRouter(swapRouter).exactInputSingle(params);
+        uint256 wsxmrBought = _swapUnderlyingForWsxmr(poolFeeTier, daiAmount, minWsxmr);
 
         // Queue keeper reward in collateral shares (still backed, never redeemed)
         if (keeperReward > 0) {
@@ -100,6 +95,24 @@ contract YieldFacet is wsXmrStorage, IYieldFacet {
         emit BuyAndBurnExecuted(sDAIToSpend, wsxmrBought, keeperReward, globalDebtIndex);
     }
     
+    /// @notice Swap collateral underlying for wsXMR via the configured V3 swap router
+    /// @dev Virtual so chain-specific facets can override for routers with different
+    ///      exactInputSingle signatures (e.g. PancakeSwap V3 requires a deadline field).
+    function _swapUnderlyingForWsxmr(uint24 poolFeeTier, uint256 amountIn, uint256 minWsxmr)
+        internal virtual returns (uint256)
+    {
+        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+            tokenIn: underlyingToken,
+            tokenOut: wsxmrToken,
+            fee: poolFeeTier,
+            recipient: address(this),
+            amountIn: amountIn,
+            amountOutMinimum: minWsxmr,
+            sqrtPriceLimitX96: 0
+        });
+        return ISwapRouter(swapRouter).exactInputSingle(params);
+    }
+
     /// @notice Migrate debt index when it drops too low to prevent precision loss
     /// @dev Rescales all vault normalized debts and resets index to 1e18
     /// @dev WARNING: Expensive operation - ~30M gas for MAX_VAULT_COUNT _vaults

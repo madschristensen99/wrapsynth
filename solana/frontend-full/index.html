@@ -1,0 +1,1326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Wrapsynth — Monero DeFi</title>
+<meta name="description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on Solana.">
+<meta property="og:title" content="Wrapsynth | Trustless Wrapped Monero via Atomic Liquidity">
+<meta property="og:description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on Solana.">
+<meta property="og:image" content="https://wrapsynth.com/frontend/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:url" content="https://wrapsynth.com">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Wrapsynth | Trustless Wrapped Monero via Atomic Liquidity">
+<meta name="twitter:description" content="Exchange XMR for wsXMR backed by >200% overcollateralization through atomic mints and burns on Solana.">
+<meta name="twitter:image" content="https://wrapsynth.com/frontend/og-image.png">
+<link rel="icon" type="image/x-icon" href="./favicon_monero/favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="./favicon_monero/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="./favicon_monero/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="./favicon_monero/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0c0c14; --panel:#161621; --panel-2:#1c1c2a; --input:#242436;
+    --fg:#ffffff; --muted:#a8a8c0; --faint:#686880;
+    --xmr:#ff7a3d; --teal:#3efce0; --green:#4af0aa; --amber:#ffd95e; --red:#ff8580;
+    --line:rgba(255,255,255,.12); --line-2:rgba(255,255,255,.07);
+    --max:1080px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--fg);font-family:'Inter',system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;line-height:1.5;overflow-x:hidden}
+  .mono{font-family:'JetBrains Mono',monospace}
+  a{color:inherit}
+  .wrap{max-width:var(--max);margin:0 auto;padding:0 28px}
+  section{position:relative;z-index:2}
+
+  /* NAV */
+  .nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(12px);
+    background:rgba(22,22,33,.65);border-bottom:1px solid var(--line-2);
+    box-shadow:0 1px 20px rgba(255,122,61,.1)}
+  .nav-in{max-width:var(--max);margin:0 auto;padding:0 28px;height:66px;
+    display:flex;align-items:center;justify-content:space-between}
+  .brand{display:flex;align-items:center;gap:10px;font-family:'Plus Jakarta Sans';font-weight:700;
+    letter-spacing:-.02em;font-size:18px;text-decoration:none;color:var(--fg)}
+  .brand .mk{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,var(--xmr),var(--teal))}
+  .brand:hover{text-shadow:0 0 30px rgba(62,252,224,.4)}
+  .nav-links{display:flex;align-items:center;gap:28px}
+  .nav-links a{font-size:14px;color:var(--muted);text-decoration:none;transition:color .15s}
+  .nav-links a:hover{color:var(--fg)}
+  .nav-links a.nav-cta{font-family:'Plus Jakarta Sans';font-weight:600;font-size:14px;text-decoration:none;
+    background:var(--xmr);color:#160a02;border-radius:10px;padding:9px 15px;
+    transition:background .15s, box-shadow .15s;box-shadow:0 0 20px rgba(255,122,61,.25)}
+  .nav-links a.nav-cta:hover{background:#ff9060;box-shadow:0 0 30px rgba(255,122,61,.4);color:#160a02}
+  @media(max-width:760px){.nav-links a:not(.nav-cta){display:none}}
+
+  /* HERO */
+  .hero{position:relative;overflow:hidden;border-bottom:1px solid var(--line-2)}
+  #gl{position:absolute;inset:0;width:100%;height:100%;z-index:0;opacity:.85}
+  .hero-scrim{position:absolute;inset:0;z-index:1;pointer-events:none;
+    background:radial-gradient(110% 70% at 50% -10%,transparent 40%,rgba(12,12,20,.6) 100%),
+               linear-gradient(180deg,transparent 60%,var(--bg) 100%)}
+  .hero-in{position:relative;z-index:2;max-width:var(--max);margin:0 auto;padding:96px 28px 76px}
+  .eyebrow{display:inline-flex;align-items:center;gap:9px;font-family:'JetBrains Mono';font-size:12px;
+    color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:7px 14px;
+    background:rgba(255,255,255,.02);text-transform:uppercase;letter-spacing:.05em}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--green)}
+  h1{font-family:'Plus Jakarta Sans';font-weight:600;letter-spacing:-.035em;line-height:1.04;
+    font-size:clamp(38px,6.4vw,68px);margin:24px 0 0;max-width:16ch}
+  h1 .o{color:var(--xmr)}h1 .t{color:var(--teal)}
+  .lede{margin-top:22px;font-size:clamp(16px,2vw,18.5px);color:var(--muted);max-width:60ch;line-height:1.6}
+  .lede b{color:var(--fg);font-weight:500}
+  .hero-ctas{display:flex;gap:13px;margin-top:34px;flex-wrap:wrap}
+  .btn{font-family:'Plus Jakarta Sans';font-weight:600;font-size:15px;text-decoration:none;
+    display:inline-flex;align-items:center;gap:8px;padding:13px 22px;border-radius:12px;
+    transition:background .15s, transform .12s, border-color .15s}
+  .btn:active{transform:translateY(1px)}
+  .btn-primary{background:var(--xmr);color:#160a02}
+  .btn-primary:hover{background:#ff9060;box-shadow:0 0 32px rgba(255,122,61,.35),0 0 12px rgba(255,122,61,.2)}
+  .btn-ghost{border:1px solid var(--line);color:var(--fg);background:rgba(255,255,255,.06)}
+  .btn-ghost:hover{background:rgba(255,255,255,.1);box-shadow:0 0 20px rgba(255,255,255,.08)}
+  .hero-stats{display:flex;gap:40px;margin-top:54px;flex-wrap:wrap}
+  .hs .n{font-family:'JetBrains Mono';font-weight:600;font-size:clamp(20px,2.6vw,26px);letter-spacing:-.02em}
+  .hs .k{font-size:12.5px;color:var(--muted);margin-top:4px}
+  .hs .n .o{color:var(--xmr)}
+
+  /* reveal (hero only) */
+  .rv{opacity:0;transform:translateY(14px);animation:rise .75s cubic-bezier(.2,.7,.2,1) forwards}
+  .r1{animation-delay:.04s}.r2{animation-delay:.14s}.r3{animation-delay:.24s}.r4{animation-delay:.34s}.r5{animation-delay:.46s}
+  @keyframes rise{to{opacity:1;transform:none}}
+
+  /* SECTION HEADERS */
+  .eyebrow-sm{font-family:'JetBrains Mono';font-size:12px;color:var(--xmr);text-transform:uppercase;
+    letter-spacing:.12em}
+  .sec-h{font-family:'Plus Jakarta Sans';font-weight:600;letter-spacing:-.025em;
+    font-size:clamp(26px,3.4vw,36px);margin:12px 0 0}
+  .sec-sub{color:var(--muted);margin-top:12px;max-width:54ch;font-size:15.5px}
+  .sec-pad{padding:84px 0}
+  .sec-line{border-bottom:1px solid var(--line-2)}
+
+  /* FEATURES */
+  .feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:44px}
+  @media(max-width:820px){.feat-grid{grid-template-columns:1fr}}
+  .feat{background:linear-gradient(135deg,rgba(255,255,255,.02),rgba(255,255,255,.005));
+    border:1px solid var(--line-2);border-radius:16px;padding:24px 22px;
+    transition:all .3s cubic-bezier(.4,0,.2,1);backdrop-filter:blur(8px)}
+  .feat:hover{border-color:rgba(62,252,224,.4);transform:translateY(-4px);
+    box-shadow:0 8px 48px rgba(62,252,224,.15),0 0 0 1px rgba(62,252,224,.15),0 0 80px rgba(62,252,224,.06)}
+  .feat .ic{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;
+    background:rgba(255,122,61,.1);border:1px solid rgba(255,122,61,.25);margin-bottom:16px;
+    box-shadow:0 0 16px rgba(255,122,61,.08)}
+  .feat .ic svg{width:20px;height:20px;stroke:var(--xmr);fill:none;stroke-width:1.7;
+    stroke-linecap:round;stroke-linejoin:round}
+  .feat.tl .ic{background:rgba(62,252,224,.1);border-color:rgba(62,252,224,.25);box-shadow:0 0 16px rgba(62,252,224,.08)}
+  .feat.tl .ic svg{stroke:var(--teal)}
+  .feat h3{font-family:'Plus Jakarta Sans';font-weight:600;font-size:17px;letter-spacing:-.01em}
+  .feat p{color:var(--muted);font-size:14px;margin-top:9px;line-height:1.55}
+
+  /* MEET */
+  .who-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;margin-top:44px;max-width:680px}
+  @media(max-width:820px){.who-grid{grid-template-columns:1fr}}
+  .who-card{background:linear-gradient(135deg,rgba(255,255,255,.02),rgba(255,255,255,.005));
+    border:1px solid var(--line-2);border-radius:16px;padding:32px 28px;
+    transition:all .3s cubic-bezier(.4,0,.2,1);backdrop-filter:blur(8px);
+    display:flex;flex-direction:column;align-items:center;text-align:center}
+  .who-card:hover{border-color:rgba(255,122,61,.3);transform:translateY(-4px);
+    box-shadow:0 8px 48px rgba(255,122,61,.1),0 0 0 1px rgba(255,122,61,.1)}
+  .who-card .avatar{width:96px;height:96px;border-radius:50%;object-fit:cover;
+    margin-bottom:18px;border:2px solid var(--line);
+    box-shadow:0 0 24px rgba(255,122,61,.1)}
+  .who-card h3{font-family:'Plus Jakarta Sans';font-weight:600;font-size:19px;letter-spacing:-.01em}
+  .who-card .role{font-family:'JetBrains Mono';font-size:12px;color:var(--xmr);
+    text-transform:uppercase;letter-spacing:.08em;margin-top:6px}
+  .who-card .socials{display:flex;gap:12px;margin-top:16px}
+  .who-card .socials a{display:flex;align-items:center;justify-content:center;
+    width:36px;height:36px;border-radius:10px;border:1px solid var(--line-2);
+    background:rgba(255,255,255,.03);transition:all .2s;color:var(--muted)}
+  .who-card .socials a:hover{border-color:rgba(62,252,224,.4);color:var(--teal);
+    box-shadow:0 0 16px rgba(62,252,224,.1)}
+  .who-card .socials svg{width:18px;height:18px;fill:currentColor}
+  .tg-join{margin-top:28px}
+
+  /* DONATE CARD */
+  .donate-card{margin-top:24px;display:flex;align-items:center;gap:16px;
+    background:linear-gradient(135deg,rgba(255,122,61,.04),rgba(255,255,255,.02));
+    border:1px solid var(--line-2);border-radius:14px;padding:18px 22px;max-width:680px;
+    transition:all .3s cubic-bezier(.4,0,.2,1)}
+  .donate-card:hover{border-color:rgba(255,122,61,.25);box-shadow:0 4px 32px rgba(255,122,61,.08)}
+  .donate-icon{flex-shrink:0}
+  .donate-icon svg{width:40px;height:40px}
+  .donate-body{flex:1;min-width:0}
+  .donate-label{font-family:'Plus Jakarta Sans';font-weight:600;font-size:14px;color:var(--fg);margin-bottom:4px}
+  .donate-addr{font-family:'JetBrains Mono';font-size:11.5px;color:var(--xmr);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .donate-copy{flex-shrink:0;display:flex;align-items:center;gap:6px;
+    padding:8px 14px;border-radius:10px;border:1px solid var(--line-2);
+    background:rgba(255,255,255,.04);color:var(--muted);font-size:12.5px;
+    font-family:'JetBrains Mono';cursor:pointer;transition:all .2s}
+  .donate-copy:hover{border-color:rgba(255,122,61,.4);color:var(--xmr);
+    background:rgba(255,122,61,.06)}
+  .donate-copy.copied{border-color:rgba(62,252,224,.4);color:var(--teal)}
+
+  /* SEQUENCE DIAGRAMS */
+  .seq-tabs{display:flex;gap:8px;margin-top:44px;overflow-x:auto;scrollbar-width:thin;
+    scrollbar-color:var(--line) transparent;padding-bottom:6px}
+  .seq-tabs::-webkit-scrollbar{height:4px}
+  .seq-tabs::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px}
+  .seq-tab{flex:0 0 auto;font-family:'Plus Jakarta Sans';font-weight:600;font-size:13px;
+    color:var(--muted);background:rgba(255,255,255,.03);border:1px solid var(--line-2);
+    border-radius:10px;padding:10px 16px;cursor:pointer;transition:all .2s;white-space:nowrap}
+  .seq-tab:hover{color:var(--fg);border-color:rgba(74,214,200,.3)}
+  .seq-tab.active{color:var(--teal);border-color:rgba(74,214,200,.4);
+    background:rgba(74,214,200,.08);box-shadow:0 0 24px rgba(74,214,200,.08)}
+  .seq-panels{margin-top:20px;position:relative}
+  .seq-panel{display:none;animation:seqFade .3s ease}
+  .seq-panel.active{display:block}
+  @keyframes seqFade{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+  .seq-card{background:linear-gradient(135deg,rgba(255,255,255,.02),rgba(255,255,255,.005));
+    border:1px solid var(--line-2);border-radius:14px;padding:28px 24px;
+    transition:border-color .2s,box-shadow .2s}
+  .seq-card:hover{border-color:rgba(74,214,200,.2);box-shadow:0 0 32px rgba(74,214,200,.04)}
+  .seq-diagram{width:100%;overflow-x:auto;margin-bottom:16px;scrollbar-width:thin;
+    scrollbar-color:var(--line) transparent}
+  .seq-diagram::-webkit-scrollbar{height:4px}
+  .seq-diagram::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px}
+  .seq-diagram svg{width:100%;min-width:520px;height:auto;display:block}
+  .seq-desc{color:var(--muted);font-size:14px;line-height:1.6;margin-bottom:14px}
+  .seq-tags{display:flex;gap:8px;flex-wrap:wrap}
+  .seq-tag{font-family:'JetBrains Mono';font-size:11px;color:var(--muted);
+    border:1px solid var(--line);border-radius:5px;padding:3px 8px;background:rgba(255,255,255,.03)}
+
+  /* STEPS */
+  .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:44px}
+  @media(max-width:820px){.steps{grid-template-columns:1fr}}
+  .stp{position:relative;padding-top:18px}
+  .stp .num{font-family:'JetBrains Mono';font-weight:600;font-size:13px;color:#0c0c14;
+    width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
+    background:var(--xmr);margin-bottom:16px;box-shadow:0 0 16px rgba(255,122,61,.25)}
+  .stp h3{font-family:'Plus Jakarta Sans';font-weight:600;font-size:16.5px;letter-spacing:-.01em}
+  .stp p{color:var(--muted);font-size:13.5px;margin-top:9px;line-height:1.55}
+  .stp::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:var(--line)}
+
+  /* LIVE STATS */
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;margin-top:44px;
+    background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+  @media(max-width:820px){.metrics{grid-template-columns:repeat(2,1fr)}}
+  .met{background:var(--bg);padding:28px 24px;transition:background .2s,box-shadow .2s}
+  .met:hover{background:var(--panel-2);box-shadow:inset 0 0 24px rgba(62,252,224,.06)}
+  .met .n{font-family:'JetBrains Mono';font-weight:600;font-size:clamp(22px,3vw,30px);letter-spacing:-.02em}
+  .met .n.tl{color:var(--teal)}
+  .met .k{font-size:13px;color:var(--fg);margin-top:8px;font-weight:500}
+  .met .s{font-size:12px;color:var(--muted);margin-top:2px}
+
+  /* FERRY DOCK CARTOON */
+  .ferry-dock-wrap{display:flex;gap:32px;align-items:center;margin-top:24px;flex-wrap:wrap}
+  .ferry-dock-ill{flex:0 0 460px;width:460px;max-width:100%}
+  .ferry-dock-svg{width:100%;display:block;border-radius:16px;border:1px solid var(--line-2);
+    background:linear-gradient(180deg,#0d1428 0%,#0a1020 60%,#080d18 100%);
+    box-shadow:0 8px 48px rgba(0,0,0,.4),inset 0 0 60px rgba(62,252,224,.04);overflow:hidden}
+  .ferry-rock-1{animation:ferryRock1 8s ease-in-out infinite}
+  .ferry-rock-2{animation:ferryRock2 9s ease-in-out infinite}
+  .ferry-rock-3{animation:ferryRock3 7.5s ease-in-out infinite}
+  .ferry-rock-4{animation:ferryRock4 10s ease-in-out infinite}
+  .ferry-rock-5{animation:ferryRock5 8.5s ease-in-out infinite}
+  .ferry-rock-6{animation:ferryRock6 9.5s ease-in-out infinite}
+  @keyframes ferryRock1{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-1px) rotate(.3deg)}}
+  @keyframes ferryRock2{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-.8px) rotate(-.25deg)}}
+  @keyframes ferryRock3{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-1px) rotate(.35deg)}}
+  @keyframes ferryRock4{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-.5px) rotate(-.3deg)}}
+  @keyframes ferryRock5{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-1px) rotate(.2deg)}}
+  @keyframes ferryRock6{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-.8px) rotate(-.3deg)}}
+  .ferry-flag{animation:ferryFlag 2.5s ease-in-out infinite;transform-origin:left center;transform-box:fill-box}
+  @keyframes ferryFlag{0%,100%{transform:skewX(0deg)}50%{transform:skewX(6deg)}}
+  @media(prefers-reduced-motion:reduce){
+    .ferry-rock-1,.ferry-rock-2,.ferry-rock-3,.ferry-rock-4,.ferry-rock-5,.ferry-rock-6{animation:none}
+    .ferry-flag{animation:none}
+  }
+  @media(max-width:820px){.ferry-dock-ill{flex:0 0 100%;width:100%;max-width:500px;margin:0 auto}}
+
+  /* CONTRACTS */
+  .ctr-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:44px}
+  @media(max-width:760px){.ctr-grid{grid-template-columns:1fr}}
+  .ctr{background:linear-gradient(135deg,rgba(255,255,255,.02),rgba(255,255,255,.005));
+    border:1px solid var(--line-2);border-radius:14px;padding:20px 22px;
+    transition:border-color .2s,box-shadow .2s}
+  .ctr:hover{border-color:rgba(62,252,224,.3);box-shadow:0 0 32px rgba(62,252,224,.08)}
+  .ctr .lab{font-family:'Plus Jakarta Sans';font-weight:600;font-size:14.5px;display:flex;align-items:center;gap:8px}
+  .ctr .badge{font-family:'JetBrains Mono';font-size:10px;color:var(--teal);border:1px solid rgba(62,252,224,.3);
+    border-radius:5px;padding:2px 6px;background:rgba(62,252,224,.1);box-shadow:0 0 12px rgba(62,252,224,.08)}
+  .ctr .addr{font-family:'JetBrains Mono';font-size:12.5px;color:var(--muted);margin-top:12px;
+    word-break:break-all;line-height:1.6}
+  .ctr .acts{display:flex;gap:14px;margin-top:14px;font-size:12.5px;font-family:'JetBrains Mono'}
+  .ctr .acts button,.ctr .acts a{background:none;border:none;color:var(--muted);cursor:pointer;
+    text-decoration:none;padding:0;transition:color .15s}
+  .ctr .acts button:hover,.ctr .acts a:hover{color:var(--teal);text-shadow:0 0 12px rgba(62,252,224,.4)}
+
+  /* FINAL CTA */
+  .final{text-align:center;padding:92px 0}
+  .final .chk{font-family:'JetBrains Mono';font-size:12px;color:var(--green);margin-bottom:16px}
+  .final h2{font-family:'Plus Jakarta Sans';font-weight:600;letter-spacing:-.025em;font-size:clamp(28px,4vw,40px)}
+  .final p{color:var(--muted);margin-top:12px;font-size:16px}
+  .final .hero-ctas{justify-content:center}
+
+  /* FOOTER */
+  footer{border-top:1px solid var(--line-2);padding:48px 0 56px}
+  .foot-grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:30px}
+  @media(max-width:680px){.foot-grid{grid-template-columns:1fr}}
+  .foot-grid h4{font-family:'Plus Jakarta Sans';font-weight:600;font-size:14px;margin-bottom:6px}
+  .foot-grid p,.foot-grid a{color:var(--muted);font-size:13.5px;text-decoration:none;display:block;margin-top:8px;line-height:1.5}
+  .foot-grid a:hover{color:var(--fg)}
+  .foot-bot{margin-top:40px;padding-top:22px;border-top:1px solid var(--line-2);
+    display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;
+    font-family:'JetBrains Mono';font-size:11.5px;color:var(--faint)}
+  .disc{color:var(--amber);opacity:.85}
+
+  @media(prefers-reduced-motion:reduce){.rv{animation:none;opacity:1;transform:none}}
+
+  ::selection{background:rgba(62,252,224,.3);color:var(--fg)}
+  ::-moz-selection{background:rgba(62,252,224,.3);color:var(--fg)}
+  ::-webkit-scrollbar{width:8px}
+  ::-webkit-scrollbar-track{background:var(--bg)}
+  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:4px}
+  ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.18)}
+
+  /* TIMELINE — horizontal collapsed */
+  .tl-h{margin-top:44px}
+  .tl-rail{position:relative;display:flex;align-items:flex-start;justify-content:space-between;
+    gap:0;padding:8px 10px 0;overflow-x:auto;scrollbar-width:thin;
+    scrollbar-color:var(--line) transparent}
+  .tl-rail::-webkit-scrollbar{height:4px}
+  .tl-rail::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px}
+  .tl-rail::before{content:"";position:absolute;top:15px;left:10px;right:10px;height:2px;
+    background:linear-gradient(90deg,var(--xmr),var(--line) 15%,var(--line) 85%,var(--teal));
+    border-radius:1px;z-index:0}
+  .tl-node{flex:0 0 auto;min-width:64px;display:flex;flex-direction:column;align-items:center;
+    gap:6px;background:none;border:none;cursor:pointer;padding:0;position:relative;z-index:1}
+  .tl-dot{width:14px;height:14px;border-radius:50%;background:var(--bg);
+    border:2px solid var(--muted);transition:all .25s}
+  .tl-node.milestone .tl-dot{border-color:var(--xmr);background:var(--xmr)}
+  .tl-node.delisting .tl-dot{border-color:var(--red)}
+  .tl-node.resolution .tl-dot{border-color:var(--teal);background:var(--teal);width:18px;height:18px}
+  .tl-node:hover .tl-dot{transform:scale(1.3);box-shadow:0 0 0 4px rgba(255,255,255,.06)}
+  .tl-node.active .tl-dot{transform:scale(1.35);box-shadow:0 0 0 4px rgba(62,252,224,.15)}
+  .tl-node.milestone.active .tl-dot{box-shadow:0 0 0 4px rgba(255,122,61,.18)}
+  .tl-node.delisting.active .tl-dot{box-shadow:0 0 0 4px rgba(255,133,128,.18)}
+  .tl-node.resolution.active .tl-dot{box-shadow:0 0 0 5px rgba(62,252,224,.2)}
+  .tl-lbl{font-family:'Plus Jakarta Sans';font-weight:600;font-size:12px;color:var(--muted);
+    text-align:center;line-height:1.2;transition:color .2s;white-space:nowrap}
+  .tl-node.milestone .tl-lbl{color:var(--xmr)}
+  .tl-node.delisting .tl-lbl{color:var(--red)}
+  .tl-node.resolution .tl-lbl{color:var(--teal)}
+  .tl-node:hover .tl-lbl{color:var(--fg)}
+  .tl-node.active .tl-lbl{color:var(--fg)}
+  .tl-sub{font-size:10px;color:var(--faint);text-align:center;line-height:1.2;white-space:nowrap;
+    max-width:80px;overflow:hidden;text-overflow:ellipsis}
+  @media(max-width:900px){
+    .tl-rail{justify-content:flex-start;gap:4px;padding-bottom:8px}
+    .tl-rail::before{left:0;right:0}
+  }
+  .tl-panels{margin-top:24px;position:relative}
+  .tl-panel{display:none;animation:tlFade .3s ease}
+  .tl-panel.active{display:block}
+  @keyframes tlFade{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+  .tl-panel-card{max-width:620px;margin:0 auto;padding:24px 28px;border-radius:16px;
+    background:linear-gradient(135deg,rgba(255,255,255,.03),rgba(255,255,255,.01));
+    border:1px solid var(--line-2)}
+  .tl-panel.milestone .tl-panel-card{border-color:rgba(255,122,61,.25)}
+  .tl-panel.delisting .tl-panel-card{border-color:rgba(255,133,128,.25)}
+  .tl-panel.resolution .tl-panel-card{border-color:rgba(62,252,224,.3);
+    background:linear-gradient(135deg,rgba(62,252,224,.06),rgba(255,122,61,.04))}
+  .tl-year{font-family:'Plus Jakarta Sans';font-weight:700;font-size:14px;color:var(--xmr);
+    margin-bottom:6px}
+  .tl-panel.delisting .tl-year{color:var(--red)}
+  .tl-panel.resolution .tl-year{color:var(--teal)}
+  .tl-title{font-family:'Plus Jakarta Sans';font-weight:600;font-size:18px;letter-spacing:-.01em;
+    line-height:1.3;margin-bottom:10px}
+  .tl-body{font-size:15px;color:var(--muted);line-height:1.65}
+  .tl-body b{color:var(--fg);font-weight:600}
+  .tl-features{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px;
+    padding-top:16px;border-top:1px solid var(--line-2)}
+  @media(max-width:520px){.tl-features{grid-template-columns:1fr}}
+  .tl-feat{padding:12px 14px;background:rgba(255,255,255,.02);border:1px solid var(--line-2);
+    border-radius:12px}
+  .tl-feat .fh{font-family:'Plus Jakarta Sans';font-weight:700;font-size:14px;color:var(--teal);
+    margin-bottom:4px}
+  .tl-feat .fb{font-size:13px;color:var(--muted);line-height:1.5}
+
+  /* BUBBLE CHART */
+  .bc-wrap{position:relative;margin:48px auto 0;max-width:660px;aspect-ratio:1/1}
+  .bc-lines{position:absolute;inset:0;width:100%;height:100%;z-index:1;pointer-events:none}
+  .bc-lines line{stroke:rgba(255,255,255,.1);stroke-width:.4;stroke-dasharray:2 2;
+    transition:stroke .3s,stroke-width .3s;
+    animation:dashFlow 3s linear infinite}
+  .bc-lines line.on{stroke:rgba(62,252,224,.35);stroke-width:.6}
+  @keyframes dashFlow{to{stroke-dashoffset:4}}
+  .bc-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:140px;height:140px;border-radius:50%;z-index:5;display:grid;place-items:center;
+    background:radial-gradient(circle,rgba(22,22,33,.95),rgba(22,22,33,.6));
+    border:2px solid rgba(62,252,224,.3);
+    box-shadow:0 0 40px rgba(62,252,224,.15),0 0 80px rgba(255,122,61,.06)}
+  .bc-center img{width:76px;height:76px;border-radius:14px}
+  .bc-center .bc-lbl{position:absolute;bottom:-26px;left:50%;transform:translateX(-50%);
+    font-family:'Plus Jakarta Sans';font-weight:700;font-size:16px;color:var(--teal);white-space:nowrap}
+  .bub{position:absolute;border-radius:50%;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+    padding:10px;background:linear-gradient(135deg,rgba(255,255,255,.04),rgba(255,255,255,.01));
+    border:1px solid var(--line-2);backdrop-filter:blur(8px);z-index:3}
+  .bub .b-icon{width:34px;height:34px;margin-bottom:6px;opacity:.85}
+  .bub .b-icon svg{width:100%;height:100%;display:block}
+  .bub .b-tag{font-family:'JetBrains Mono';font-size:11px;text-transform:uppercase;letter-spacing:.08em;opacity:.7;margin-bottom:4px}
+  .bub .b-title{font-family:'Plus Jakarta Sans';font-weight:600;font-size:16px;letter-spacing:-.01em;line-height:1.2}
+  .bub .b-sub{font-size:12.5px;color:var(--muted);margin-top:4px;line-height:1.3}
+  .bub.xmr .b-tag{color:var(--xmr)}.bub.teal .b-tag{color:var(--teal)}
+  .bub.green .b-tag{color:var(--green)}.bub.amber .b-tag{color:var(--amber)}
+  .bub.xmr .b-icon{color:var(--xmr)}.bub.teal .b-icon{color:var(--teal)}
+  .bub.green .b-icon{color:var(--green)}.bub.amber .b-icon{color:var(--amber)}
+  .bub.xmr.active{border-color:rgba(255,122,61,.5);box-shadow:0 0 40px rgba(255,122,61,.18)}
+  .bub.green.active{border-color:rgba(74,240,170,.5);box-shadow:0 0 40px rgba(74,240,170,.18)}
+  .bub.amber.active{border-color:rgba(255,217,94,.5);box-shadow:0 0 40px rgba(255,217,94,.18)}
+  .b-trade{top:0;left:0;width:175px;height:175px}
+  .b-earn{top:0;right:0;width:175px;height:175px}
+  .b-build{bottom:0;right:0;width:175px;height:175px}
+  .b-spend{bottom:0;left:0;width:175px;height:175px}
+  .bp-panels{display:none}
+  @media(max-width:680px){
+    .bc-wrap{aspect-ratio:auto;display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+    .bc-lines{display:none}
+    .bc-center{position:relative;top:auto;left:auto;transform:none;grid-column:1/-1;margin:0 auto 8px}
+    .bub{position:relative;top:auto;left:auto;right:auto;bottom:auto;transform:none;margin:0;
+      width:100%!important;height:auto!important;min-height:110px;border-radius:16px}
+    .bub:hover{transform:translateY(-3px)}.bub.active{transform:translateY(-2px)}
+  }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="nav-in">
+    <a class="brand" href="#"><img src="./wrapsynth-symbol.png" alt="Wrapsynth" style="width:22px;height:22px;border-radius:6px">Wrapsynth</a>
+    <nav class="nav-links">
+      <a href="#who">Meet</a>
+      <a href="#what">Metrics</a>
+      <a href="#when">Timeline</a>
+      <a href="#where">Smart Contracts</a>
+      <a href="#advantages">Advantages</a>
+      <a href="#features">Features</a>
+      <a class="nav-cta" href="app.html">Launch app →</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <canvas id="gl"></canvas>
+  <div class="hero-scrim"></div>
+  <div class="hero-in">
+    <h1 class="rv r1">Bring <span class="o">Monero</span> to <span class="t">DeFi</span> with atomic redemption.</h1>
+    <p class="lede rv r2">Permissionlessly guaranteed wrapped Monero. Exchange XMR for <b>wsXMR</b>
+      backed by over-200% collateral through <b>atomic mints and burns</b> — no custodian, no bridge multisig to trust.</p>
+    <div class="hero-ctas rv r3">
+      <a class="btn btn-primary" href="app.html">Launch app →</a>
+      <a class="btn btn-ghost" href="#features">How it works</a>
+    </div>
+    <div class="hero-stats rv r4">
+      <div class="hs"><div class="n"><span class="o">&gt;200%</span></div><div class="k">Overcollateralized</div></div>
+      <div class="hs"><div class="n">24h max</div><div class="k">Atomic swap timeout</div></div>
+      <div class="hs">
+        <div class="n" style="display:flex;align-items:center;gap:8px;font-size:18px">
+          <a href="https://app.pyth.com/explore/Crypto.XMR%2FUSD?returnUrl=%2Fexplore%3Fsearch%3Dxmr%26state%3Dstable" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center">
+            <img src="https://pyth.network/token.svg" alt="Pyth" style="width:24px;height:24px">
+          </a>
+          <a href="https://app.redstone.finance/pull-feeds/XMR" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center">
+            <img src="./RedStone.png" alt="RedStone" style="width:24px;height:24px">
+          </a>
+        </div>
+        <div class="k">Real-time price feeds</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MEET -->
+<section id="who" class="sec-line">
+  <div class="wrap sec-pad">
+    <span class="eyebrow-sm">Meet</span>
+    <h2 class="sec-h">The builders</h2>
+    <p class="sec-sub">Two developers, open source, no VC, no token grift. Plus a community of developers, supporters, and contributors.</p>
+    <div class="who-grid">
+      <div class="who-card">
+        <img class="avatar" src="./mads.jpeg" alt="REMSee">
+        <h3>REMSee</h3>
+        <div class="role">Lead Developer</div>
+        <div class="socials">
+          <a href="https://github.com/madschristensen99" target="_blank" rel="noopener" aria-label="GitHub">
+            <svg viewBox="0 0 24 24"><path d="M12 .5C5.37.5 0 5.78 0 12.29c0 5.21 3.44 9.63 8.21 11.19.6.11.82-.25.82-.56 0-.28-.01-1.02-.02-2-3.34.71-4.04-1.58-4.04-1.58-.55-1.37-1.34-1.74-1.34-1.74-1.09-.73.08-.72.08-.72 1.21.08 1.85 1.22 1.85 1.22 1.07 1.8 2.81 1.28 3.5.98.11-.76.42-1.28.76-1.57-2.67-.3-5.47-1.31-5.47-5.84 0-1.29.47-2.35 1.23-3.18-.12-.3-.53-1.52.12-3.16 0 0 1-.32 3.3 1.21a11.6 11.6 0 0 1 6 0c2.3-1.53 3.3-1.21 3.3-1.21.65 1.64.24 2.86.12 3.16.77.83 1.23 1.89 1.23 3.18 0 4.54-2.81 5.54-5.49 5.83.43.36.81 1.08.81 2.18 0 1.58-.01 2.85-.01 3.24 0 .31.22.68.83.56A12.02 12.02 0 0 0 24 12.29C24 5.78 18.63.5 12 .5z"/></svg>
+          </a>
+          <a href="https://x.com/wrapsynth" target="_blank" rel="noopener" aria-label="Twitter">
+            <svg viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+          </a>
+          <a href="https://www.youtube.com/@remsee1608" target="_blank" rel="noopener" aria-label="YouTube">
+            <svg viewBox="0 0 24 24"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+          </a>
+        </div>
+      </div>
+      <div class="who-card">
+        <img class="avatar" src="./taproot_400x400.jpg" alt="Taproot">
+        <h3>Taproot</h3>
+        <div class="role">Protocol Engineer</div>
+        <div class="socials">
+          <a href="https://github.com/kkoshiya" target="_blank" rel="noopener" aria-label="GitHub">
+            <svg viewBox="0 0 24 24"><path d="M12 .5C5.37.5 0 5.78 0 12.29c0 5.21 3.44 9.63 8.21 11.19.6.11.82-.25.82-.56 0-.28-.01-1.02-.02-2-3.34.71-4.04-1.58-4.04-1.58-.55-1.37-1.34-1.74-1.34-1.74-1.09-.73.08-.72.08-.72 1.21.08 1.85 1.22 1.85 1.22 1.07 1.8 2.81 1.28 3.5.98.11-.76.42-1.28.76-1.57-2.67-.3-5.47-1.31-5.47-5.84 0-1.29.47-2.35 1.23-3.18-.12-.3-.53-1.52.12-3.16 0 0 1-.32 3.3 1.21a11.6 11.6 0 0 1 6 0c2.3-1.53 3.3-1.21 3.3-1.21.65 1.64.24 2.86.12 3.16.77.83 1.23 1.89 1.23 3.18 0 4.54-2.81 5.54-5.49 5.83.43.36.81 1.08.81 2.18 0 1.58-.01 2.85-.01 3.24 0 .31.22.68.83.56A12.02 12.02 0 0 0 24 12.29C24 5.78 18.63.5 12 .5z"/></svg>
+          </a>
+          <a href="https://x.com/kyle_corsola" target="_blank" rel="noopener" aria-label="Twitter">
+            <svg viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+          </a>
+        </div>
+      </div>
+    </div>
+    <div class="donate-card">
+      <div class="donate-icon">
+        <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="16" cy="16" r="15" fill="none" stroke="#ff7a3d" stroke-width="1.5" opacity=".4"/>
+          <path d="M16 4 C 10 4 5 9 5 16 C 5 23 10 28 16 28 C 22 28 27 23 27 16 C 27 9 22 4 16 4 Z" fill="#ff7a3d" opacity=".08"/>
+          <path d="M7 8 L7 24 L11 24 L11 15 L16 20 L21 15 L21 24 L25 24 L25 8 L23 8 L16 16 L9 8 Z" fill="#ff7a3d"/>
+        </svg>
+      </div>
+      <div class="donate-body">
+        <div class="donate-label">Support WrapSynth</div>
+        <div class="donate-addr" id="donate-addr">83PvXnBHDNmN4TtRdKXMr4Vq1uHerTthZDRjrTG4hMUyeLSd7pNYwM31eCmDdX9D3F61FsdA2XvTmT92eQzqWFwR9CJ4gb8</div>
+      </div>
+      <button class="donate-copy" id="donate-copy" onclick="copyDonateAddr()">
+        <svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+        <span id="donate-copy-text">Copy</span>
+      </button>
+    </div>
+    <a class="btn btn-ghost tg-join" href="https://t.me/fungerbilswap" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.531 6.998-3.02 3.332-1.387 4.025-1.627 4.476-1.635z"/></svg>
+      Join our Telegram
+    </a>
+  </div>
+</section>
+
+<!-- WHAT: LIVE STATS -->
+<section id="what" class="sec-line">
+  <div class="wrap sec-pad">
+    <span class="eyebrow-sm">Metrics</span>
+    <h2 class="sec-h">On-chain activity</h2>
+    <div class="ferry-dock-wrap">
+      <p class="sec-sub" style="margin-top:0">Wrapsynth is a tokenization ferry dock — it connects Monero to DeFi without custody. Atomic swaps, overcollateralized vaults, no multisig. Live on Solana devnet.</p>
+      <div class="ferry-dock-ill">
+        <svg class="ferry-dock-svg" viewBox="0 0 520 320" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="fd-water" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#0d1a2e"/><stop offset="100%" stop-color="#080d18"/>
+            </linearGradient>
+            <linearGradient id="fd-dock" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#2e2e44"/><stop offset="100%" stop-color="#1a1a2e"/>
+            </linearGradient>
+            <linearGradient id="fd-xmr" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#3a1a0a"/><stop offset="100%" stop-color="#1a0a04"/>
+            </linearGradient>
+            <linearGradient id="fd-evm" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#0a2a2a"/><stop offset="100%" stop-color="#041a1a"/>
+            </linearGradient>
+          </defs>
+
+          <!-- Water background -->
+          <rect x="0" y="0" width="520" height="320" fill="url(#fd-water)"/>
+          <!-- Water lines -->
+          <g opacity=".08" stroke="#3efce0" stroke-width=".5" fill="none">
+            <path d="M0 50 Q 80 46 160 50 T 320 50 T 520 50"/>
+            <path d="M0 280 Q 80 276 160 280 T 320 280 T 520 280"/>
+          </g>
+
+          <!-- ═══ LEFT ISLAND: MONERO ═══ -->
+          <path d="M0 0 L 90 0 L 90 120 Q 70 135 50 130 Q 30 125 20 135 Q 10 140 0 130 Z" fill="url(#fd-xmr)"/>
+          <path d="M0 190 Q 10 185 20 195 Q 30 200 50 195 Q 70 190 90 200 L 90 320 L 0 320 Z" fill="url(#fd-xmr)"/>
+          <!-- Monero label -->
+          <text x="45" y="165" text-anchor="middle" fill="#ff7a3d" font-family="Plus Jakarta Sans" font-weight="700" font-size="20">XMR</text>
+
+          <!-- ═══ RIGHT ISLAND: EVM ═══ -->
+          <path d="M430 0 L 520 0 L 520 130 Q 510 140 500 135 Q 490 125 470 130 Q 450 135 430 120 Z" fill="url(#fd-evm)"/>
+          <path d="M430 200 Q 450 190 470 195 Q 490 200 500 195 Q 510 185 520 190 L 520 320 L 430 320 Z" fill="url(#fd-evm)"/>
+          <!-- EVM label -->
+          <text x="475" y="165" text-anchor="middle" fill="#3efce0" font-family="Plus Jakarta Sans" font-weight="700" font-size="20">DeFi</text>
+
+          <!-- ═══ DOCK: connects both islands, sticks out from each side ═══ -->
+          <!-- Left dock arm (from Monero island) -->
+          <rect x="90" y="130" width="120" height="60" fill="url(#fd-dock)" rx="3"/>
+          <rect x="90" y="128" width="120" height="2" fill="#3a3a52" opacity=".6"/>
+          <rect x="90" y="189" width="120" height="2" fill="#3a3a52" opacity=".6"/>
+          <!-- Right dock arm (to EVM island) -->
+          <rect x="310" y="130" width="120" height="60" fill="url(#fd-dock)" rx="3"/>
+          <rect x="310" y="128" width="120" height="2" fill="#3a3a52" opacity=".6"/>
+          <rect x="310" y="189" width="120" height="2" fill="#3a3a52" opacity=".6"/>
+          <!-- Dock planks -->
+          <line x1="120" y1="130" x2="120" y2="190" stroke="#33334a" stroke-width="1" opacity=".4"/>
+          <line x1="150" y1="130" x2="150" y2="190" stroke="#33334a" stroke-width="1" opacity=".4"/>
+          <line x1="180" y1="130" x2="180" y2="190" stroke="#33334a" stroke-width="1" opacity=".4"/>
+          <line x1="340" y1="130" x2="340" y2="190" stroke="#33334a" stroke-width="1" opacity=".4"/>
+          <line x1="370" y1="130" x2="370" y2="190" stroke="#33334a" stroke-width="1" opacity=".4"/>
+          <line x1="400" y1="130" x2="400" y2="190" stroke="#33334a" stroke-width="1" opacity=".4"/>
+          <!-- Bollards -->
+          <rect x="96" y="136" width="5" height="12" fill="#4a4a66" rx="2"/>
+          <rect x="199" y="136" width="5" height="12" fill="#4a4a66" rx="2"/>
+          <rect x="316" y="136" width="5" height="12" fill="#4a4a66" rx="2"/>
+          <rect x="419" y="136" width="5" height="12" fill="#4a4a66" rx="2"/>
+          <!-- ═══ FERRY 1: Large cargo ferry (top, between islands) ═══ -->
+          <g transform="translate(200,30)"><g class="ferry-rock-1">
+            <path d="M0 16 Q 0 36 10 33 L 110 33 Q 120 36 120 16 Z" fill="#2a4a6a" stroke="#3efce0" stroke-width=".8" opacity=".9"/>
+            <rect x="8" y="6" width="104" height="12" fill="#3a5a7a" stroke="#3efce0" stroke-width=".5" opacity=".85" rx="1"/>
+            <rect x="38" y="-4" width="28" height="12" fill="#2a4a6a" stroke="#3efce0" stroke-width=".5" rx="2"/>
+            <rect x="42" y="-1" width="6" height="5" fill="#3efce0" opacity=".4" rx="1"/>
+            <rect x="52" y="-1" width="6" height="5" fill="#3efce0" opacity=".4" rx="1"/>
+            <rect x="86" y="-8" width="6" height="16" fill="#3a5a7a" stroke="#3efce0" stroke-width=".4" rx="1"/>
+            <rect x="10" y="9" width="18" height="7" fill="#ff7a3d" opacity=".5" rx="1"/>
+            <rect x="30" y="9" width="18" height="7" fill="#3efce0" opacity=".3" rx="1"/>
+            <line x1="52" y1="-4" x2="52" y2="-16" stroke="#3efce0" stroke-width=".8" opacity=".5"/>
+            <path class="ferry-flag" d="M52 -16 L 64 -13 L 52 -10 Z" fill="#ff7a3d" opacity=".8"/>
+            <text x="60" y="48" text-anchor="middle" fill="#a8a8c0" font-family="JetBrains Mono" font-size="7">LP · 0x492c..f3Aa</text>
+          </g></g>
+
+          <!-- ═══ FERRY 2: Medium ferry (top-left, near Monero) ═══ -->
+          <g transform="translate(100,60)"><g class="ferry-rock-2">
+            <path d="M0 12 Q 0 26 8 24 L 72 24 Q 80 26 80 12 Z" fill="#1a3a2a" stroke="#4af0aa" stroke-width=".8" opacity=".9"/>
+            <rect x="6" y="4" width="68" height="10" fill="#2a4a3a" stroke="#4af0aa" stroke-width=".5" opacity=".85" rx="1"/>
+            <rect x="26" y="-2" width="16" height="8" fill="#1a3a2a" stroke="#4af0aa" stroke-width=".5" rx="2"/>
+            <rect x="29" y="0" width="4" height="4" fill="#4af0aa" opacity=".4" rx="1"/>
+            <rect x="35" y="0" width="4" height="4" fill="#4af0aa" opacity=".4" rx="1"/>
+            <rect x="58" y="-6" width="5" height="12" fill="#2a4a3a" stroke="#4af0aa" stroke-width=".4" rx="1"/>
+            <rect x="8" y="6" width="12" height="6" fill="#4af0aa" opacity=".25" rx="1"/>
+            <rect x="22" y="6" width="12" height="6" fill="#ffd95e" opacity=".3" rx="1"/>
+            <text x="40" y="38" text-anchor="middle" fill="#a8a8c0" font-family="JetBrains Mono" font-size="7">LP · 0xb1e2..8cD1</text>
+          </g></g>
+
+          <!-- ═══ FERRY 3: Small tugboat (top-right, near EVM) ═══ -->
+          <g transform="translate(350,55)"><g class="ferry-rock-3">
+            <path d="M0 8 Q 0 18 5 17 L 35 17 Q 40 18 40 8 Z" fill="#3a1a4a" stroke="#b388ff" stroke-width=".7" opacity=".9"/>
+            <rect x="4" y="2" width="32" height="8" fill="#4a2a5a" stroke="#b388ff" stroke-width=".5" rx="2"/>
+            <rect x="13" y="-3" width="12" height="7" fill="#3a1a4a" stroke="#b388ff" stroke-width=".5" rx="2"/>
+            <rect x="16" y="-1" width="3" height="3" fill="#b388ff" opacity=".4" rx="1"/>
+            <rect x="21" y="-1" width="3" height="3" fill="#b388ff" opacity=".4" rx="1"/>
+            <rect x="19" y="-6" width="4" height="10" fill="#4a2a5a" stroke="#b388ff" stroke-width=".4" rx="1"/>
+            <text x="20" y="30" text-anchor="middle" fill="#a8a8c0" font-family="JetBrains Mono" font-size="7">LP · 0xf0a1..2eB9</text>
+          </g></g>
+
+          <!-- ═══ FERRY 4: Tiny sailboat (bottom-left, near Monero) ═══ -->
+          <g transform="translate(110,230)"><g class="ferry-rock-4">
+            <path d="M0 6 Q 0 14 4 13 L 28 13 Q 32 14 32 6 Z" fill="#2a2a4a" stroke="#3efce0" stroke-width=".6" opacity=".88"/>
+            <rect x="3" y="2" width="26" height="5" fill="#3a3a5a" stroke="#3efce0" stroke-width=".3" rx="1"/>
+            <line x1="16" y1="2" x2="16" y2="-18" stroke="#3efce0" stroke-width="1" opacity=".5"/>
+            <path d="M16 -18 L 16 -1 L 28 -7 Z" fill="#3efce0" opacity=".15" stroke="#3efce0" stroke-width=".4"/>
+            <path d="M16 -18 L 16 -1 L 6 -7 Z" fill="#3efce0" opacity=".1" stroke="#3efce0" stroke-width=".4"/>
+            <text x="16" y="26" text-anchor="middle" fill="#a8a8c0" font-family="JetBrains Mono" font-size="7">LP · 7BkP..4xZ</text>
+          </g></g>
+
+          <!-- ═══ FERRY 5: Wide barge (bottom, between islands) ═══ -->
+          <g transform="translate(180,230)"><g class="ferry-rock-5">
+            <path d="M0 12 Q 0 26 7 24 L 153 24 Q 160 26 160 12 Z" fill="#4a4a1a" stroke="#ffd95e" stroke-width=".8" opacity=".88"/>
+            <rect x="6" y="3" width="148" height="10" fill="#5a5a2a" stroke="#ffd95e" stroke-width=".5" opacity=".85" rx="1"/>
+            <rect x="60" y="-4" width="28" height="9" fill="#4a4a1a" stroke="#ffd95e" stroke-width=".5" rx="2"/>
+            <rect x="64" y="-1" width="6" height="5" fill="#ffd95e" opacity=".4" rx="1"/>
+            <rect x="72" y="-1" width="6" height="5" fill="#ffd95e" opacity=".4" rx="1"/>
+            <rect x="80" y="-1" width="6" height="5" fill="#ffd95e" opacity=".4" rx="1"/>
+            <rect x="100" y="-8" width="5" height="14" fill="#5a5a2a" stroke="#ffd95e" stroke-width=".4" rx="1"/>
+            <rect x="110" y="-8" width="5" height="14" fill="#5a5a2a" stroke="#ffd95e" stroke-width=".4" rx="1"/>
+            <rect x="8" y="5" width="20" height="7" fill="#ff7a3d" opacity=".4" rx="1"/>
+            <rect x="30" y="5" width="20" height="7" fill="#3efce0" opacity=".25" rx="1"/>
+            <rect x="120" y="5" width="20" height="7" fill="#b388ff" opacity=".3" rx="1"/>
+            <rect x="142" y="5" width="10" height="7" fill="#4af0aa" opacity=".25" rx="1"/>
+            <line x1="74" y1="-4" x2="74" y2="-14" stroke="#ffd95e" stroke-width=".8" opacity=".5"/>
+            <path class="ferry-flag" d="M74 -14 L 84 -11 L 74 -8 Z" fill="#3efce0" opacity=".7"/>
+            <text x="80" y="38" text-anchor="middle" fill="#a8a8c0" font-family="JetBrains Mono" font-size="7">LP · 3KqR..9mT</text>
+          </g></g>
+
+          <!-- ═══ FERRY 6: Small speedboat (bottom-right, near EVM) ═══ -->
+          <g transform="translate(370,240)"><g class="ferry-rock-6">
+            <path d="M0 8 Q 0 20 6 19 L 44 19 Q 50 20 50 8 Z" fill="#4a2a1a" stroke="#ff7a3d" stroke-width=".7" opacity=".9"/>
+            <rect x="5" y="1" width="40" height="8" fill="#5a3a2a" stroke="#ff7a3d" stroke-width=".5" rx="2"/>
+            <path d="M12 1 L 18 -4 L 26 1 Z" fill="#ff7a3d" opacity=".3" stroke="#ff7a3d" stroke-width=".4"/>
+            <text x="25" y="32" text-anchor="middle" fill="#a8a8c0" font-family="JetBrains Mono" font-size="7">LP · Hx8W..2pL</text>
+          </g></g>
+        </svg>
+      </div>
+    </div>
+    <div class="metrics">
+      <div class="met"><div class="n tl" id="stat-supply">--</div><div class="k">wsXMR supply</div><div class="s">Circulating</div></div>
+      <div class="met"><div class="n" id="stat-tvl">--</div><div class="k">Total value locked</div><div class="s">QQQx collateral</div></div>
+      <div class="met"><div class="n" id="stat-collateral-ratio">--</div><div class="k">Collateral ratio</div><div class="s">Overcollateralized</div></div>
+      <div class="met"><div class="n" id="stat-active-vaults">--</div><div class="k">Active vaults</div><div class="s">Liquidity providers</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- WHEN: TIMELINE / HISTORY -->
+<section id="when" class="sec-line">
+  <div class="wrap sec-pad">
+    <span class="eyebrow-sm">Timeline</span>
+    <h2 class="sec-h">Wrapsynth's place in history</h2>
+    <p class="sec-sub">Click a point to explore.</p>
+    <div class="tl-h">
+      <div class="tl-rail">
+        <button class="tl-node milestone" data-tl="0"><div class="tl-dot"></div><div class="tl-lbl">2009</div><div class="tl-sub">Bitcoin</div></button>
+        <button class="tl-node delisting" data-tl="1"><div class="tl-dot"></div><div class="tl-lbl">2013</div><div class="tl-sub">Mt. Gox</div></button>
+        <button class="tl-node milestone" data-tl="2"><div class="tl-dot"></div><div class="tl-lbl">2014</div><div class="tl-sub">Monero born</div></button>
+        <button class="tl-node delisting" data-tl="3"><div class="tl-dot"></div><div class="tl-lbl">2017</div><div class="tl-sub">Block size war</div></button>
+        <button class="tl-node milestone" data-tl="4"><div class="tl-dot"></div><div class="tl-lbl">'16–'22</div><div class="tl-sub">Monero hardens</div></button>
+        <button class="tl-node delisting" data-tl="5"><div class="tl-dot"></div><div class="tl-lbl">'21–'22</div><div class="tl-sub">First delistings</div></button>
+        <button class="tl-node delisting" data-tl="6"><div class="tl-dot"></div><div class="tl-lbl">2024</div><div class="tl-sub">Major delistings</div></button>
+        <button class="tl-node delisting" data-tl="7"><div class="tl-dot"></div><div class="tl-lbl">2025</div><div class="tl-sub">73 exchanges</div></button>
+        <button class="tl-node milestone" data-tl="8"><div class="tl-dot"></div><div class="tl-lbl">'25–'26</div><div class="tl-sub">Survives</div></button>
+        <button class="tl-node resolution" data-tl="9"><div class="tl-dot"></div><div class="tl-lbl">Today</div><div class="tl-sub">Wrapsynth</div></button>
+      </div>
+      <div class="tl-panels">
+        <div class="tl-panel milestone" id="tlp-0"><div class="tl-panel-card">
+          <div class="tl-year">2009</div>
+          <div class="tl-title">Bitcoin launches</div>
+          <div class="tl-body">Genesis block: <b>"Chancellor on brink of second bailout for banks."</b> Trustless electronic cash — no intermediaries, no gatekeepers. The original promise.</div>
+        </div></div>
+        <div class="tl-panel delisting" id="tlp-1"><div class="tl-panel-card">
+          <div class="tl-year">2013</div>
+          <div class="tl-title">Mt. Gox handles 70% of Bitcoin trading</div>
+          <div class="tl-body">The promise of self-sovereign money, funneled through a single point of failure. <b>850,000 BTC</b> would be lost when it collapsed in February 2014. The lesson was already clear: centralization is the weakness.</div>
+        </div></div>
+        <div class="tl-panel milestone" id="tlp-2"><div class="tl-panel-card">
+          <div class="tl-year">April 2014</div>
+          <div class="tl-title">Monero is born</div>
+          <div class="tl-body">From the CryptoNote whitepaper. <b>Private by default</b> — every transaction hides sender, recipient, and amount. No rich list. No traceable history. The spiritual successor to Bitcoin's original promise.</div>
+        </div></div>
+        <div class="tl-panel delisting" id="tlp-3"><div class="tl-panel-card">
+          <div class="tl-year">2017</div>
+          <div class="tl-title">The Bitcoin Block Size War</div>
+          <div class="tl-body">Bitcoin grinds to a halt. 1MB cap, <b>$50 fees</b>, transactions stuck for days. The community fractures into BTC and BCH. Years of toxic debate over a parameter that should have been uncontroversial. Meanwhile Monero has <b>dynamic block sizes</b> — the median scales automatically with usage. No cap to fight over. No civil war.</div>
+        </div></div>
+        <div class="tl-panel milestone" id="tlp-4"><div class="tl-panel-card">
+          <div class="tl-year">2016 — 2022</div>
+          <div class="tl-title">Monero hardens</div>
+          <div class="tl-body">While exchanges prepared to delist it, Monero was getting stronger.</div>
+          <div class="tl-features">
+            <div class="tl-feat"><div class="fh">RingCT</div><div class="fb">Transaction amounts hidden cryptographically. No one can see how much is being sent — not the sender, not the recipient, not the network.</div></div>
+            <div class="tl-feat"><div class="fh">RandomX + P2Pool</div><div class="fb">ASIC-resistant mining so a CPU competes with a data center. Trustless decentralized mining pool so no operator can withhold payouts or censor miners.</div></div>
+            <div class="tl-feat"><div class="fh">Dandelion++</div><div class="fb">Transaction propagation that hides your IP from the network. Even your ISP can't easily link you to your transactions.</div></div>
+            <div class="tl-feat"><div class="fh">Tail Emission</div><div class="fb">June 2022, block 2,641,623: reward locks at 0.6 XMR forever. Miners always have a reason to secure the network. No supply cliff.</div></div>
+          </div>
+        </div></div>
+        <div class="tl-panel delisting" id="tlp-5"><div class="tl-panel-card">
+          <div class="tl-year">2021 — 2022</div>
+          <div class="tl-title">First delistings</div>
+          <div class="tl-body"><b>Bittrex</b> delists Monero in January 2021, citing <b>"evolving regulatory standards"</b> — no specific law. <b>Huobi</b> follows in September 2022, removing 7 privacy coins at once. Neither exchange names a regulation.</div>
+        </div></div>
+        <div class="tl-panel delisting" id="tlp-6"><div class="tl-panel-card">
+          <div class="tl-year">2024</div>
+          <div class="tl-title">The major delistings</div>
+          <div class="tl-body"><b>OKX</b> removes all privacy tokens in January. <b>Binance</b> delists Monero in February — XMR drops <b>30%</b>, then Binance <b>force-converts</b> remaining balances to USDC without consent. <b>LocalMonero</b>, the only P2P fiat on-ramp, shuts down in May after 7 years. <b>Kraken</b> delists for all of Europe in October: <b>"We concluded we have no choice."</b></div>
+        </div></div>
+        <div class="tl-panel delisting" id="tlp-7"><div class="tl-panel-card">
+          <div class="tl-year">2025</div>
+          <div class="tl-title">73 exchanges drop privacy coins</div>
+          <div class="tl-body">The delisting wave becomes the new baseline — a <b>43% increase</b> over 2023. Canadian regulators force <b>Kraken Canada</b> to delist XMR and shut down <b>TradeOgre</b> entirely.</div>
+        </div></div>
+        <div class="tl-panel milestone" id="tlp-8"><div class="tl-panel-card">
+          <div class="tl-year">2025 — 2026</div>
+          <div class="tl-title">Monero survives</div>
+          <div class="tl-body">On-chain transaction volumes <b>increase</b>, stabilizing above 2020–2021 levels. XMR near <b>$797</b>. Liquidity doesn't disappear — it reroutes. Atomic swaps, DEXs, and wrapped instruments become the new infrastructure.</div>
+        </div></div>
+        <div class="tl-panel resolution" id="tlp-9"><div class="tl-panel-card">
+          <div class="tl-year">Today</div>
+          <div class="tl-title">Monero, compatible with decentralized exchanges</div>
+          <div class="tl-body">Wrapsynth brings Monero to DeFi through <b>trustless atomic swaps</b> — no custodian, no multisig, no centralized listing to revoke. Monero's access to DeFi is now <b>permanent</b>.</div>
+        </div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- WHERE: CONTRACTS -->
+<section id="where" class="sec-line">
+  <div class="wrap sec-pad">
+    <span class="eyebrow-sm">Smart Contracts</span>
+    <h2 class="sec-h">Deployed on Solana</h2>
+    <p class="sec-sub">Verified on Solscan · Solana devnet. Low fees, fast finality, secure.</p>
+    <div class="ctr-grid">
+      <div class="ctr">
+        <div class="lab">wsXmrHub <span class="badge">DIAMOND · EIP-2535</span></div>
+        <div class="addr" id="addr-hub">Loading…</div>
+        <div class="acts">
+          <button onclick="copyAddr(this)">Copy address</button>
+          <a id="link-hub" href="#" target="_blank">View on Solscan ↗</a>
+        </div>
+      </div>
+      <div class="ctr">
+        <div class="lab">wsXMR token <span class="badge">ERC-20 · 8 dec</span></div>
+        <div class="addr" id="addr-wsxmr">Loading…</div>
+        <div class="acts">
+          <button onclick="copyAddr(this)">Copy address</button>
+          <a id="link-wsxmr" href="#" target="_blank">View on Solscan ↗</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ADVANTAGES: BUBBLE CHART -->
+<section id="advantages" class="sec-line">
+  <div class="wrap sec-pad">
+    <span class="eyebrow-sm">Advantages</span>
+    <h2 class="sec-h">Built for composability</h2>
+    <p class="sec-sub">Monero is the best monetary blockchain and also the most isolated. No lending, no liquidity, no composability — just an asset you have to sell to ever use. Wrapsynth ends that, without asking you to trust a bridge operator with your coins.</p>
+    <p style="margin-top:16px;font-size:15px;color:var(--fg);font-weight:500">wsXMR is private money made composable. Everything below inherits both properties.</p>
+    <div class="bc-wrap">
+      <svg class="bc-lines" viewBox="0 0 100 100" preserveAspectRatio="none">
+        <line id="bl-0" x1="50" y1="50" x2="10" y2="10"/>
+        <line id="bl-1" x1="50" y1="50" x2="90" y2="10"/>
+        <line id="bl-2" x1="50" y1="50" x2="90" y2="90"/>
+        <line id="bl-3" x1="50" y1="50" x2="10" y2="90"/>
+      </svg>
+      <div class="bc-center">
+        <img src="./wrapsynth-symbol.png" alt="Wrapsynth">
+        <span class="bc-lbl">wsXMR</span>
+      </div>
+      <div class="bub xmr b-trade">
+        <span class="b-icon"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 24h24M6 24V14M11 24V8M16 24V18M21 24V11M26 24V6"/><path d="M6 14l5-6 5 10 5-7 5 5" stroke-dasharray="2 3" opacity=".5"/></svg></span>
+        <span class="b-tag">Trade</span>
+        <span class="b-title">DEX liquidity & perps</span>
+        <span class="b-sub">Swap, hedge, settle</span>
+      </div>
+      <div class="bub teal b-earn">
+        <span class="b-icon"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="16" cy="16" r="11"/><path d="M16 8v8l5 3"/><path d="M16 5v3M16 24v3M5 16h3M24 16h3" opacity=".5"/></svg></span>
+        <span class="b-tag">Earn</span>
+        <span class="b-title">Yield, Payroll, and Governance</span>
+        <span class="b-sub">Put your XMR to work</span>
+      </div>
+      <div class="bub green b-spend">
+        <span class="b-icon"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="24" height="16" rx="3"/><path d="M4 13h24"/><path d="M8 18h5M8 21h3"/><circle cx="22" cy="19" r="2"/></svg></span>
+        <span class="b-tag">Spend</span>
+        <span class="b-title">Payments and commerce</span>
+        <span class="b-sub">Private payments, composable rails</span>
+      </div>
+      <div class="bub amber b-build">
+        <span class="b-icon"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="4"/><circle cx="24" cy="8" r="4"/><circle cx="8" cy="24" r="4"/><circle cx="24" cy="24" r="4"/><path d="M12 8h12M8 12v12M24 12v12M12 24h12" opacity=".4"/><path d="M11 11l10 10M21 11l-10 10"/></svg></span>
+        <span class="b-tag">Build</span>
+        <span class="b-title">Cross-chain & agents</span>
+        <span class="b-sub">Settlement layer for private money</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES: PROTOCOL MECHANICS -->
+<section id="features" class="sec-line">
+  <div class="wrap sec-pad">
+    <span class="eyebrow-sm">Features</span>
+    <h2 class="sec-h">Protocol mechanics</h2>
+    <p class="sec-sub">The moving parts that make Wrapsynth work — configurable, on-chain, verifiable.</p>
+    <div class="seq-tabs">
+      <button class="seq-tab active" data-seq="0">Mint (XMR → wsXMR)</button>
+      <button class="seq-tab" data-seq="1">Burn (wsXMR → XMR)</button>
+      <button class="seq-tab" data-seq="2">War chest buy-and-burn</button>
+      <button class="seq-tab" data-seq="3">Co-LP system</button>
+      <button class="seq-tab" data-seq="4">Liquidation</button>
+    </div>
+    <div class="seq-panels" id="seq-panels"></div>
+  </div>
+</section>
+
+<!-- FINAL CTA -->
+<section class="sec-line">
+  <div class="wrap final">
+    <h2>Fungibility is fundamental</h2>
+    <p>Use Monero in DeFi. No custodians, no bridges, no trust required.</p>
+    <div class="hero-ctas">
+      <a class="btn btn-primary" href="app.html">Launch app →</a>
+      <a class="btn btn-ghost" href="https://github.com/madschristensen99/wrapsynth" target="_blank">Read the docs</a>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <h4>Wrapsynth</h4>
+        <p>Trustless wrapped Monero via atomic exchanges. Bringing Monero's anonymity set to DeFi, and DeFi liquidity to Monero.</p>
+      </div>
+      <div>
+        <h4>Resources</h4>
+        <a href="https://github.com/madschristensen99/wrapsynth" target="_blank">GitHub</a>
+        <a href="https://github.com/madschristensen99/wrapsynth" target="_blank">Protocol spec</a>
+        <a href="app.html">Launch app</a>
+      </div>
+      <div>
+        <h4>Contract</h4>
+        <a id="footer-link-hub" href="#" target="_blank">wsXmrHub (Diamond)</a>
+        <a id="footer-link-wsxmr" href="#" target="_blank">wsXMR token</a>
+      </div>
+    </div>
+    <div class="foot-bot">
+      <span>v1.0.0 · MIT License</span>
+      <span class="mono" style="font-size:11px;color:var(--faint);display:inline-flex;align-items:center;gap:6px"><svg viewBox="0 0 32 32" style="width:14px;height:14px"><circle cx="16" cy="16" r="15" fill="none" stroke="#ff7a3d" stroke-width="1.5" opacity=".4"/><path d="M16 4 C 10 4 5 9 5 16 C 5 23 10 28 16 28 C 22 28 27 23 27 16 C 27 9 22 4 16 4 Z" fill="#ff7a3d" opacity=".08"/><path d="M7 8 L7 24 L11 24 L11 15 L16 20 L21 15 L21 24 L25 24 L25 8 L23 8 L16 16 L9 8 Z" fill="#ff7a3d"/></svg> Donations: <span style="color:var(--xmr)">83PvXnBHDNmN4TtRdKXMr4Vq1uHerTthZDRjrTG4hMUyeLSd7pNYwM31eCmDdX9D3F61FsdA2XvTmT92eQzqWFwR9CJ4gb8</span></span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  window.__deploymentReady = fetch('./devnet-config.json?t=' + Date.now())
+    .then(res => { if (!res.ok) throw new Error('Failed to load deployment.json: ' + res.status); return res.json(); })
+    .then(d => { window.DEPLOYMENT = d; return d; })
+    .catch(err => { console.error(err); return window.DEPLOYMENT || {}; });
+</script>
+<script>
+/* ambient threads — hero only, dim + slow */
+(function(){
+  const cv=document.getElementById('gl'), gl=cv.getContext('webgl',{alpha:true,antialias:false});
+  if(!gl)return;
+  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const vs=`attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}`;
+  const fs=`precision highp float;uniform vec2 u_res;uniform float u_time;uniform float u_m;
+    float h(float n){return fract(sin(n)*43758.5453);}
+    void main(){vec2 uv=gl_FragCoord.xy/u_res.xy;float t=u_time*u_m;float glow=0.;
+      const int N=11;
+      for(int i=0;i<N;i++){float fi=float(i);float s=fi*1.37;float yb=(fi+0.5)/float(N);
+        float a=0.03+0.04*h(s);float f=1.3+2.2*h(s+1.);float sp=0.08+0.2*h(s+2.);float ph=s*6.28;
+        float y=yb+a*sin(uv.x*f*3.14+t*sp+ph);float d=abs(uv.y-y);
+        glow+=(0.0014/(d+0.0011))*(0.4+0.5*h(s+3.));}
+      vec3 o=vec3(1.,0.42,0.1);vec3 te=vec3(0.18,0.9,0.77);
+      vec3 c=mix(o,te,smoothstep(0.1,0.9,uv.x))*glow*0.34;
+      gl_FragColor=vec4(c,1.0);}`;
+  function sh(t,src){const s=gl.createShader(t);gl.shaderSource(s,src);gl.compileShader(s);return s;}
+  const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,vs));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,fs));
+  gl.linkProgram(pr);gl.useProgram(pr);
+  const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+  const l=gl.getAttribLocation(pr,'p');gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,2,gl.FLOAT,false,0,0);
+  const uR=gl.getUniformLocation(pr,'u_res'),uT=gl.getUniformLocation(pr,'u_time'),uM=gl.getUniformLocation(pr,'u_m');
+  gl.uniform1f(uM,reduce?0:1);
+  function rz(){const dpr=Math.min(devicePixelRatio||1,1.5);const r=cv.getBoundingClientRect();
+    cv.width=r.width*dpr;cv.height=r.height*dpr;gl.viewport(0,0,cv.width,cv.height);gl.uniform2f(uR,cv.width,cv.height);}
+  addEventListener('resize',rz);rz();
+  const t0=performance.now();
+  (function f(){gl.uniform1f(uT,(performance.now()-t0)/1000);gl.drawArrays(gl.TRIANGLES,0,3);
+    if(!reduce)requestAnimationFrame(f);})();
+})();
+
+/* copy contract address */
+function copyAddr(btn){
+  const a=btn.closest('.ctr').querySelector('.addr').dataset.addr;
+  navigator.clipboard.writeText(a).then(()=>{
+    const old=btn.textContent;btn.textContent='Copied ✓';btn.style.color='var(--teal)';
+    setTimeout(()=>{btn.textContent=old;btn.style.color='';},1400);
+  }).catch(()=>{});
+}
+
+/* fetch live protocol stats — solana devnet via the shared shim */
+(async function fetchProtocolStats(){
+  try {
+    const {readHub,readWsxmr,initializeClients}=await import('./js/viemClient.js');
+    const D=await (window.__deploymentReady||Promise.resolve(window.DEPLOYMENT||{}));const DC=D.contracts||{};
+    const hub=DC.wsXmrHub||D.programId;
+    const wsXMR=DC.wsXMR||D.wsxmrMint;
+    if(!hub||!wsXMR){console.warn('devnet-config.json not loaded — stats disabled');return;}
+    await initializeClients();
+    const fU=(v,d)=>Number(v)/Math.pow(10,d);
+    const scanQ='?cluster=devnet';
+
+    // Populate contract address display
+    const hubEl=document.getElementById('addr-hub');if(hubEl){hubEl.textContent=hub;hubEl.dataset.addr=hub;}
+    const wsxmrEl=document.getElementById('addr-wsxmr');if(wsxmrEl){wsxmrEl.textContent=wsXMR;wsxmrEl.dataset.addr=wsXMR;}
+    const linkHub=document.getElementById('link-hub');if(linkHub)linkHub.href=`https://solscan.io/account/${hub}${scanQ}`;
+    const linkWsxmr=document.getElementById('link-wsxmr');if(linkWsxmr)linkWsxmr.href=`https://solscan.io/token/${wsXMR}${scanQ}`;
+    const flHub=document.getElementById('footer-link-hub');if(flHub)flHub.href=`https://solscan.io/account/${hub}${scanQ}`;
+    const flWsxmr=document.getElementById('footer-link-wsxmr');if(flWsxmr)flWsxmr.href=`https://solscan.io/token/${wsXMR}${scanQ}`;
+
+    // wsXMR total supply (8 decimals)
+    const supply=await readWsxmr('totalSupply');
+    const supplyValue=fU(supply,8);
+    document.getElementById('stat-supply').textContent=supplyValue<0.01?supplyValue.toFixed(8):supplyValue.toFixed(3);
+    console.log('[Stats] wsXMR supply:',supplyValue);
+
+    // Vault count + per-vault collateral/debt
+    const vaultCount=await readHub('getVaultCount');
+    document.getElementById('stat-active-vaults').textContent=vaultCount.toString();
+
+    let totalCollateral=0n; // 18-dec scaled by shim (raw QQQx is 9-dec)
+    let totalDebt=0n;       // wsXMR, 8 decimals
+    for(let i=0;i<Number(vaultCount);i++){
+      const vaultAddr=await readHub('vaultList',[BigInt(i)]);
+      const vault=await readHub('getVault',[vaultAddr]);
+      const vaultDebt=await readHub('getVaultDebt',[vaultAddr]);
+      console.log(`[Stats] Vault ${i} (${vaultAddr}):`,vault.collateralShares.toString(),'shares, debt:',vaultDebt.toString());
+      totalCollateral+=vault.collateralShares;
+      totalDebt+=vaultDebt;
+    }
+    console.log('[Stats] Total collateral shares:',totalCollateral.toString());
+    console.log('[Stats] Total debt:',totalDebt.toString());
+
+    // Collateral is QQQx — value it via the mock oracle price (18-dec)
+    let collateralPrice=600;
+    try{
+      const collPriceRaw=await readHub('getCollateralPrice');
+      collateralPrice=fU(collPriceRaw,18);
+    }catch(e){
+      console.warn('getCollateralPrice unavailable, assuming $600');
+    }
+
+    const tvlUSD=fU(totalCollateral,18)*collateralPrice;
+    console.log('[Stats] TVL (USD):',tvlUSD);
+    document.getElementById('stat-tvl').textContent=tvlUSD>=1e6?`$${(tvlUSD/1e6).toFixed(2)}M`:tvlUSD>=1e3?`$${(tvlUSD/1e3).toFixed(1)}K`:`$${tvlUSD.toFixed(2)}`;
+
+    // XMR price from mock oracle or fallback to CoinGecko
+    let xmrPrice=200;
+    try{
+      const xmrPriceRaw=await readHub('getXmrPrice');
+      xmrPrice=fU(xmrPriceRaw,18);
+    }catch(e){
+      try{
+        const res=await fetch('https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd');
+        const data=await res.json();
+        if(data.monero?.usd)xmrPrice=data.monero.usd;
+      }catch(e2){
+        console.warn('Failed to fetch XMR price from both oracle and CoinGecko, using fallback $200');
+      }
+    }
+
+    // Collateral ratio
+    const totalDebtValue=fU(totalDebt,8);
+    const debtValueUSD=totalDebtValue*xmrPrice;
+    const collateralRatio=debtValueUSD>0?(tvlUSD/debtValueUSD)*100:0;
+    console.log('[Stats] XMR price:',xmrPrice);
+    console.log('[Stats] Total debt (wsXMR):',totalDebtValue);
+    console.log('[Stats] Debt value (USD):',debtValueUSD);
+    console.log('[Stats] Collateral ratio:',collateralRatio+'%');
+    document.getElementById('stat-collateral-ratio').textContent=collateralRatio>9999?'>9,999%':`${Math.round(collateralRatio)}%`;
+
+  } catch(err){
+    console.warn('Failed to fetch protocol stats:',err);
+  }
+})();
+
+/* Sequence diagrams: tab switching + SVG render */
+(function(){
+  var diagrams=[
+    {
+      desc:"User swaps XMR for wsXMR through an atomic swap. The on-chain collateralization requirement is 150%, but LPs effectively post >200% because they hold XMR alongside their USDe vault collateral. The LP provides Ed25519 public keys for a 2-of-2 shared Monero address (view = user's key, spend = user + LP). The user sends XMR there, then proves the deposit by submitting the txid and tx secret key — the LP verifies it trustlessly with check_tx_key and calls setMintReady, locking collateral. The user then reveals their secret on-chain (verified with Ed25519 — the same curve Monero uses) to mint wsXMR minus a configurable fee to the user and the fee to the LP; that reveal also gives the LP the full spend key to sweep the deposit. The user posts a griefing deposit in ETH; LP collateral is only locked at setMintReady — never before. If the LP keys but never sets ready, the mint times out to KEY_CANCELLED: the deposit is parked, the LP can claim it by revealing their lpSecret (which also lets the user sweep their XMR back), or the user reclaims it after the claim window. If the user doesn't finalize after READY, the mint enters EXPIRED_READY — the LP can claim the deposit by revealing their secret, or if they don't, anyone can sweep the deposit back to the user.",
+      tags:[">150% on-chain CR","2-of-2 shared-key model","Ed25519 verify","Griefing deposit","Collateral locks at setMintReady","~1h timeout","KEY_CANCELLED / EXPIRED_READY lifecycle"],
+      actors:[
+        {name:"User",color:"xmr"},
+        {name:"Monero",color:"gray"},
+        {name:"VaultManager",color:"teal"},
+        {name:"LP",color:"xmr"},
+        {name:"Oracle",color:"gray"}
+      ],
+      messages:[
+        {from:0,to:2,label:"initiateMint(amt, commitment, pubkey) + ETH deposit",type:"call"},
+        {from:2,to:4,label:"read XMR price (storage)",type:"call"},
+        {from:4,to:2,label:"XMR price",type:"return"},
+        {from:2,to:2,label:"check CR \u2265 150% (no debt reserved)",type:"note"},
+        {from:3,to:2,label:"provideLPKey(spendKey, viewKey, commitment)",type:"call"},
+        {from:2,to:2,label:"reserve pendingDebt, status: KEY_PROVIDED (no collateral locked)",type:"note"},
+        {from:0,to:1,label:"send XMR to 2-of-2 deposit (view=userPub)",type:"call"},
+        {from:3,to:1,label:"scan deposit with view key (lpSecret)",type:"call"},
+        {from:3,to:2,label:"setMintReady() \u2014 LP attests deposit",type:"call"},
+        {from:2,to:2,label:"re-check CR, lock 110% collateral, status: READY",type:"note"},
+        {from:0,to:2,label:"revealSecret(secret) \u2014 user reveals",type:"call"},
+        {from:2,to:2,label:"Ed25519: verify secret\u00b7G = commitment, status: SECRET_REVEALED",type:"note"},
+        {from:2,to:2,label:"finalizeMint() \u2014 anyone calls",type:"call"},
+        {from:2,to:0,label:"mint wsXMR (amt \u2212 fee)",type:"return"},
+        {from:2,to:3,label:"mint fee wsXMR to LP",type:"return"},
+        {from:3,to:1,label:"sweep deposit (userSecret + lpSecret)",type:"call"},
+        {from:2,to:0,label:"refund griefing deposit (pendingReturns)",type:"effect"},
+        {from:2,to:2,label:"release locked collateral to vault",type:"note"},
+        {from:2,to:2,label:"\u26a0 LP keys but never sets ready: cancelMint \u2192 KEY_CANCELLED, deposit parked \u2192 LP claims via abandonKeyProvidedMint (reveals lpSecret) or user reclaims via reclaimParkedDeposit",type:"note"},
+        {from:2,to:2,label:"\u26a0 If user doesn't finalize: EXPIRED_READY \u2192 LP claims deposit or sweep to user",type:"note"}
+      ]
+    },
+    {
+      desc:"User burns wsXMR to receive XMR through the reverse atomic swap. Each burn derives a unique Ed25519 keypair from the user's seed (per-burn key derivation) so revealing one burn's secret doesn't compromise others. The contract locks 110% collateral over par and burns wsXMR. The LP sends XMR to a shared 2-of-2 burn address (view = user's key, spend = user + LP) and commits a secret hash; the user scans the address with their own view key and confirms the lock on-chain, binding both parties. The LP then reveals their secret on-chain via finalizeBurn — verified with Ed25519 — which settles the burn, releases the locked collateral, and queues the burn reward to the user in USDe; that reveal also gives the user the full spend key to sweep the shared XMR. If the LP fails to reveal after COMMITTED, the user can claim slashed collateral (par + reward) after a grace period. If the LP never proposes (REQUESTED timeout), the user can abort to recover wsXMR or force-settle for par value in USDe. If the LP proposed but didn't follow through (PROPOSED timeout), the user calls resolveDeclinedProposal with their per-burn userSecret (private spend key) to restore wsXMR — the userSecret is emitted on-chain, allowing the LP to combine it with their own secret to sweep the shared XMR back to their wallet.",
+      tags:["110% collateral lock","2-of-2 shared-key model","Ed25519 verify","Per-burn key derivation","Burn reward","Slashing","Abort/force-settle","On-chain secret reveal for recovery"],
+      actors:[
+        {name:"User",color:"xmr"},
+        {name:"Monero",color:"gray"},
+        {name:"VaultManager",color:"teal"},
+        {name:"LP",color:"xmr"}
+      ],
+      messages:[
+        {from:0,to:2,label:"requestBurn(amt, vault, commitment, per-burn keys)",type:"call"},
+        {from:2,to:2,label:"keys derived: user_priv_i = H(seed || nonce)",type:"note"},
+        {from:2,to:2,label:"lock 110% collateral, burn wsXMR, reduce debt",type:"note"},
+        {from:3,to:1,label:"send XMR to 2-of-2 burn address (view=userView)",type:"call"},
+        {from:3,to:2,label:"proposeHash(secretHash, LP keys)",type:"call"},
+        {from:0,to:1,label:"scan burn address (own view key)",type:"call"},
+        {from:0,to:2,label:"confirmMoneroLock()",type:"call"},
+        {from:2,to:2,label:"start slashing timer (COMMITTED)",type:"note"},
+        {from:3,to:2,label:"finalizeBurn(secret) \u2014 LP reveals lpSecret",type:"call"},
+        {from:2,to:2,label:"Ed25519: verify secret\u00b7G = secretHash",type:"note"},
+        {from:2,to:2,label:"unlock collateral in vault, deduct reward",type:"note"},
+        {from:2,to:3,label:"collateral stays in vault",type:"effect"},
+        {from:2,to:0,label:"burn reward queued (USDe, pendingReturns)",type:"effect"},
+        {from:0,to:1,label:"sweep shared XMR (userSecret + lpSecret)",type:"call"},
+        {from:2,to:2,label:"⚠ LP doesn't finalize (COMMITTED timeout): claimSlashedCollateral(requestId, userSecret) → par to user, userSecret revealed → LP sweeps shared XMR",type:"note"},
+        {from:2,to:2,label:"⚠ LP never proposes (REQUESTED timeout): abortBurn → restore wsXMR, or forceSettleBurn → par in USDe",type:"note"},
+        {from:2,to:2,label:"⚠ LP proposes but doesn't lock (PROPOSED timeout): user calls resolveDeclinedProposal(requestId, userSecret)",type:"note"},
+        {from:2,to:2,label:"VM verifies compressPoint(userSecret·G) = userPublicKey, emits BurnProposalDeclined(requestId, userSecret)",type:"note"},
+        {from:2,to:2,label:"⚠ User gone entirely: LP calls abandonProposedBurn → collateral released; wsXMR stays claimable only via resolveDeclinedProposal (user reveal → LP sweeps XMR)",type:"note"},
+        {from:3,to:1,label:"LP sweeps shared XMR (userSecret + lpSecret → full spend key)",type:"call"}
+      ]
+    },
+    {
+      desc:"Excess USDe yield from vaults accrues in an on-chain war chest. When XMR dips below its Exponential Moving Average (EMA), anyone can trigger a buy-and-burn \u2014 the chest redeems USDe to USDe, swaps USDe for wsXMR on HyperSwap V3, and burns it. This reduces outstanding debt and frees up collateral across all vaults. The keeper earns a 2% reward (queued in USDe shares) for calling the function. A 24-hour cooldown prevents over-triggering. Reverts if pending READY mints exist, war chest is empty, or swap slippage exceeds 1%.",
+      tags:["USDe yield","Redeem → USDe → wsXMR","Dip-triggered","2% keeper reward","24h cooldown","PendingMintLock guard","1% slippage cap"],
+      tags:["USDe yield","Redeem \u2192 USDe \u2192 wsXMR","Dip-triggered","2% keeper reward","24h cooldown","PendingMintLock guard","1% slippage cap"],
+      actors:[
+        {name:"Keeper",color:"xmr"},
+        {name:"VaultManager",color:"teal"},
+        {name:"Oracle",color:"gray"},
+        {name:"HyperSwap V3",color:"gray"}
+      ],
+      messages:[
+        {from:1,to:1,label:"yield accrues in war chest",type:"note"},
+        {from:0,to:1,label:"triggerBuyAndBurn(poolFeeTier)",type:"call"},
+        {from:1,to:2,label:"read XMR spot & EMA (storage)",type:"call"},
+        {from:2,to:1,label:"spot + EMA prices",type:"return"},
+        {from:1,to:1,label:"verify spot \u2264 EMA \u00d7 99%",type:"note"},
+        {from:1,to:1,label:"redeem USDe \u2192 USDe (20% of chest)",type:"note"},
+        {from:1,to:3,label:"swap USDe \u2192 wsXMR",type:"call"},
+        {from:3,to:1,label:"wsXMR received",type:"return"},
+        {from:1,to:1,label:"burn wsXMR, rescale debt index",type:"note"},
+        {from:1,to:0,label:"keeper reward queued (USDe shares)",type:"effect"},
+        {from:1,to:1,label:"⚠ Reverts if: pending mints, war chest empty, cooldown active, no dip, slippage > 1%",type:"note"},
+        {from:1,to:1,label:"⚠ Full debt wipe: zero all vault debts + reset index to 1e18",type:"note"}
+      ]
+    },
+    {
+      desc:"Co-LPs provide wsXMR that is paired with the LP vault's idle USDe collateral into a HyperSwap V3 concentrated liquidity position. The LP sets a max range (maxCoLPRangeBps) controlling how wide the position can be. Trading fees from the HyperSwap position accrue separately: USDe fees go to the LP vault, wsXMR fees go to the Co-LP. Either party can unwind the position; a keeper can rebalance when it goes out of range. Mint fees are separate and go entirely to the primary LP.",
+      tags:["Co-LP provides wsXMR","HyperSwap V3 concentrated LP","Range-limited","Separate fee streams"],
+      actors:[
+        {name:"Primary LP",color:"xmr"},
+        {name:"VaultManager",color:"teal"},
+        {name:"Co-LP",color:"xmr"},
+        {name:"HyperSwap V3",color:"gray"}
+      ],
+      messages:[
+        {from:0,to:1,label:"createVault() + depositCollateral()",type:"call"},
+        {from:0,to:1,label:"setMaxCoLPRange(maxBps)",type:"call"},
+        {from:2,to:1,label:"userOpenCoLP(vault, wsxmrAmt, deadline)",type:"call"},
+        {from:1,to:1,label:"pair vault USDe + Co-LP wsXMR",type:"note"},
+        {from:1,to:3,label:"mint concentrated position",type:"call"},
+        {from:3,to:1,label:"tokenId, liquidity, amounts",type:"return"},
+        {from:1,to:1,label:"trading fees accrue in position",type:"note"},
+        {from:0,to:1,label:"collectCoLPFees(tokenId)",type:"call"},
+        {from:1,to:3,label:"collect accrued fees",type:"call"},
+        {from:3,to:1,label:"USDe fees + wsXMR fees",type:"return"},
+        {from:1,to:0,label:"USDe fees \u2192 vault (pendingReturns)",type:"effect"},
+        {from:1,to:2,label:"wsXMR fees \u2192 Co-LP (pendingReturns)",type:"effect"},
+        {from:2,to:1,label:"unwindCoLP(tokenId) or rebalanceCoLP",type:"call"}
+      ]
+    },
+    {
+      desc:"When a vault's collateral ratio drops below 120%, there are two resolution paths. Hard liquidation: anyone can burn wsXMR and seize collateral at a 10% bonus. In-flight burns are settled first (REQUESTED/PROPOSED cancelled, COMMITTED slash-settled at par). All co-LP positions are unwound. Residual bad debt is written off to globalBadDebt. Soft liquidation (backstop): a new LP with a healthy vault can absorb the underwater vault's debt and collateral into their own vault, settling in-flight burns the same way. The new LP effectively buys collateral at a discount by assuming the debt. The merged vault must remain healthy (CR >= 150%) or the backstop reverts.",
+      tags:["CR < 120% trigger","Hard: 10% bonus","Soft: vault backstop","In-flight burn settlement","Co-LP unwind","Bad debt write-off"],
+      actors:[
+        {name:"Liquidator",color:"xmr"},
+        {name:"VaultManager",color:"teal"},
+        {name:"wsXMR Token",color:"gray"},
+        {name:"USDe",color:"gray"}
+      ],
+      messages:[
+        {from:0,to:1,label:"liquidate(vault, debtToClear)",type:"call"},
+        {from:1,to:1,label:"sync yield, check CR < 120%",type:"note"},
+        {from:1,to:1,label:"settle in-flight burns (cancel/slash)",type:"note"},
+        {from:1,to:1,label:"unwind all co-LP positions",type:"note"},
+        {from:1,to:1,label:"seize 110% of debt value in USDe",type:"note"},
+        {from:1,to:2,label:"burn(debtToClear wsXMR)",type:"call"},
+        {from:2,to:1,label:"tokens burned",type:"return"},
+        {from:1,to:3,label:"transfer seized USDe to liquidator",type:"call"},
+        {from:3,to:1,label:"transfer complete",type:"return"},
+        {from:1,to:1,label:"write off bad debt if collateral exhausted",type:"note"},
+        {from:1,to:1,label:"increment liquidationNonce + mintNonce",type:"note"},
+        {from:1,to:0,label:"VaultLiquidated event",type:"return"},
+        {from:0,to:1,label:"backstopVault(oldVault) \u2014 soft liquidation",type:"call"},
+        {from:1,to:1,label:"settle burns, unwind positions, merge debt+collateral to new vault",type:"note"},
+        {from:1,to:1,label:"verify new vault CR >= 150% or revert",type:"note"},
+        {from:1,to:0,label:"VaultBackstopped event",type:"return"}
+      ]
+    }
+  ];
+
+  function cf(c){return c==='xmr'?'#ff7a3d':c==='teal'?'#3efce0':'#a8a8c0'}
+
+  function wrapNote(label,maxChars){
+    var lines=[];
+    var words=label.split(' '),cur='';
+    for(var wi=0;wi<words.length;wi++){
+      if((cur+(cur?' ':'')+words[wi]).length>maxChars){lines.push(cur);cur=words[wi]}
+      else{cur=cur?(cur+' '+words[wi]):words[wi]}
+    }
+    if(cur)lines.push(cur);
+    return lines;
+  }
+
+  function renderSVG(d,di){
+    var aw=120,ah=34,gap=178,msgH=42,minNoteH=42,notePad=12,top=56,bot=28,pad=22;
+    var n=d.actors.length;
+    var w=(n-1)*gap+aw+pad*2;
+    function ax(i){return pad+i*gap+aw/2}
+    function mkId(c){return c==='xmr'?'sx'+di:c==='teal'?'st'+di:'sg'+di}
+
+    var maxW=240,maxChars=Math.floor((maxW-20)/6.2);
+
+    var rowHeights=d.messages.map(function(m){
+      if(m.type==='note'){
+        var lines=wrapNote(m.label,maxChars);
+        var nh=18*lines.length+8+notePad;
+        return Math.max(nh,minNoteH);
+      }
+      return msgH;
+    });
+    var cumH=[0];
+    for(var ri=0;ri<rowHeights.length;ri++){cumH[ri+1]=cumH[ri]+rowHeights[ri]}
+    var h=top+cumH[rowHeights.length]+bot;
+
+    var s='<svg viewBox="0 0 '+w+' '+h+'" xmlns="http://www.w3.org/2000/svg" style="font-family:Inter,sans-serif">';
+    s+='<defs>';
+    s+='<marker id="sx'+di+'" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#ff7a3d"/></marker>';
+    s+='<marker id="st'+di+'" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#3efce0"/></marker>';
+    s+='<marker id="sg'+di+'" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#a8a8c0"/></marker>';
+    s+='</defs>';
+
+    d.actors.forEach(function(a,i){
+      var x=ax(i),c=cf(a.color);
+      s+='<rect x="'+(x-aw/2)+'" y="14" width="'+aw+'" height="'+ah+'" rx="7" fill="#161621" stroke="'+c+'" stroke-width="1.5" opacity="0.95"/>';
+      s+='<text x="'+x+'" y="35" text-anchor="middle" fill="'+c+'" font-family="Plus Jakarta Sans" font-weight="600" font-size="12">'+a.name+'</text>';
+      s+='<line x1="'+x+'" y1="'+(14+ah)+'" x2="'+x+'" y2="'+(h-8)+'" stroke="'+c+'" stroke-width="1" stroke-dasharray="2 6" opacity="0.2"/>';
+    });
+
+    d.messages.forEach(function(m,i){
+      var y=top+cumH[i]+rowHeights[i]/2;
+      var fx=ax(m.from);
+
+      s+='<text x="'+(pad-6)+'" y="'+(y+3)+'" text-anchor="end" fill="#686880" font-family="JetBrains Mono" font-size="10">'+(i+1)+'</text>';
+
+      if(m.type==='note'){
+        var lines=wrapNote(m.label,maxChars);
+        var nw=Math.max(Math.max.apply(null,lines.map(function(l){return l.length}))*6.2+20,90);
+        var nh=18*lines.length+8;
+        var nx=fx+10;
+        var nc=cf(d.actors[m.from].color);
+        s+='<rect x="'+nx+'" y="'+(y-nh/2)+'" width="'+nw+'" height="'+nh+'" rx="5" fill="rgba(255,255,255,0.04)" stroke="'+nc+'" stroke-width="1" opacity="0.5"/>';
+        lines.forEach(function(l,li){
+          var ly=y-(nh/2)+14+li*18;
+          s+='<text x="'+(nx+nw/2)+'" y="'+ly+'" text-anchor="middle" fill="#a8a8c0" font-size="11">'+l+'</text>';
+        });
+      } else {
+        var tx=ax(m.to);
+        var ac=d.actors[m.from].color;
+        var c=cf(ac);
+        var mid=mkId(ac);
+        var dashStyle='';
+        if(m.type==='return'){dashStyle=' stroke-dasharray="6 4"'}
+        else if(m.type==='effect'){dashStyle=' stroke-dasharray="2 3"'}
+        s+='<line x1="'+fx+'" y1="'+y+'" x2="'+tx+'" y2="'+y+'" stroke="'+c+'" stroke-width="1.5"'+dashStyle+' marker-end="url(#'+mid+')"/>';
+        var mx=(fx+tx)/2;
+        s+='<text x="'+mx+'" y="'+(y-6)+'" text-anchor="middle" fill="#a8a8c0" font-size="11">'+m.label+'</text>';
+      }
+    });
+
+    s+='</svg>';
+    return s;
+  }
+
+  var container=document.getElementById('seq-panels');
+  if(!container)return;
+  diagrams.forEach(function(d,i){
+    var panel=document.createElement('div');
+    panel.className='seq-panel'+(i===0?' active':'');
+    panel.innerHTML='<div class="seq-card">'
+      +'<div class="seq-diagram">'+renderSVG(d,i)+'</div>'
+      +'<div class="seq-desc">'+d.desc+'</div>'
+      +'<div class="seq-tags">'+d.tags.map(function(t){return '<span class="seq-tag">'+t+'</span>'}).join('')+'</div>'
+      +'</div>';
+    container.appendChild(panel);
+  });
+
+  var tabs=document.querySelectorAll('.seq-tab');
+  var panels=container.querySelectorAll('.seq-panel');
+  tabs.forEach(function(tab){
+    tab.addEventListener('click',function(){
+      var idx=parseInt(tab.dataset.seq);
+      tabs.forEach(function(t,j){t.classList.toggle('active',j===idx)});
+      panels.forEach(function(p,j){p.classList.toggle('active',j===idx)});
+    });
+  });
+})();
+
+/* Timeline: click node to expand panel + auto-advance every 15s */
+(function(){
+  var nodes=document.querySelectorAll('.tl-node');
+  var panels=document.querySelectorAll('.tl-panel');
+  if(!nodes.length)return;
+  var current=0,userInteracted=false,autoTimer=null,resumeTimer=null;
+  var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function activate(i){
+    current=i;
+    nodes.forEach(function(n,j){n.classList.toggle('active',j===i)});
+    panels.forEach(function(p,j){p.classList.toggle('active',j===i)});
+  }
+  function startAuto(){
+    if(reduce)return;
+    stopAuto();
+    autoTimer=setInterval(function(){
+      if(userInteracted)return;
+      activate((current+1)%nodes.length);
+    },15000);
+  }
+  function stopAuto(){if(autoTimer){clearInterval(autoTimer);autoTimer=null;}}
+  function pauseAuto(){
+    userInteracted=true;
+    stopAuto();
+    if(resumeTimer)clearTimeout(resumeTimer);
+    resumeTimer=setTimeout(function(){userInteracted=false;startAuto();},30000);
+  }
+
+  nodes.forEach(function(n,i){
+    n.addEventListener('click',function(){
+      pauseAuto();
+      if(n.classList.contains('active')){
+        n.classList.remove('active');
+        panels[i].classList.remove('active');
+      }else{
+        activate(i);
+      }
+    });
+  });
+
+  /* open first node by default */
+  nodes[0].classList.add('active');
+  panels[0].classList.add('active');
+  startAuto();
+})();
+
+function copyDonateAddr(){
+  const addr=document.getElementById('donate-addr').textContent.trim();
+  navigator.clipboard.writeText(addr).then(()=>{
+    const btn=document.getElementById('donate-copy');
+    const txt=document.getElementById('donate-copy-text');
+    btn.classList.add('copied');
+    txt.textContent='Copied!';
+    setTimeout(()=>{btn.classList.remove('copied');txt.textContent='Copy';},2000);
+  }).catch(()=>{
+    const ta=document.createElement('textarea');
+    ta.value=addr;document.body.appendChild(ta);ta.select();
+    document.execCommand('copy');document.body.removeChild(ta);
+    const btn=document.getElementById('donate-copy');
+    const txt=document.getElementById('donate-copy-text');
+    btn.classList.add('copied');txt.textContent='Copied!';
+    setTimeout(()=>{btn.classList.remove('copied');txt.textContent='Copy';},2000);
+  });
+}
+</script>
+</body>
+</html>

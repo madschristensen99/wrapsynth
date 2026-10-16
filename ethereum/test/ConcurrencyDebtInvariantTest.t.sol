@@ -139,7 +139,7 @@ contract ConcurrencyDebtInvariantTest is HyperEVMTestBase {
         assertEq(_getTotalPendingMints(), 1, "EXPIRED_READY should still hold lock");
 
         // Warp past LP claim window, then sweep (no secret needed)
-        vm.roll(block.number + 1800);
+        vm.roll(block.number + hub.LP_CLAIM_WINDOW_BLOCKS() + 5);
         MintFacet(address(hub)).sweepUnclaimedExpiredMint(reqId);
 
         assertEq(_getTotalPendingMints(), 0, "Should have 0 pending mints after sweep");
