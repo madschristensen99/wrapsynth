@@ -42,6 +42,39 @@ app.use((req, res, next) => {
   next();
 });
 
+// ─── RedStone oracle proxy ────────────────────────────────────────────────
+// RedStone's public gateways are being sunset — the frontend must fetch
+// signed data packages through an authenticated gateway, but API keys can't
+// ship in browser JS. This route forwards /redstone/* to the gateway and
+// attaches the server-side key. Point the frontend's dataServiceConfig.urls
+// at http://localhost:<PORT>/redstone.
+//
+// Env:
+//   REDSTONE_GATEWAY_URL — authenticated gateway base (required once keys are issued)
+//   REDSTONE_API_KEY     — sent as x-api-key
+//   Falls back to the public gateway when unset (works between rejection windows).
+const REDSTONE_UPSTREAM = (process.env.REDSTONE_GATEWAY_URL || 'https://oracle-gateway-1.a.redstone.finance').replace(/\/+$/, '');
+const redstoneCache = new Map(); // path -> { t, status, body }
+const REDSTONE_CACHE_MS = 3000;
+app.use('/redstone', async (req, res) => {
+  try {
+    const path = req.url; // e.g. /data-packages/latest/redstone-primary-prod
+    const cached = redstoneCache.get(path);
+    if (cached && Date.now() - cached.t < REDSTONE_CACHE_MS) {
+      return res.status(cached.status).type('application/json').send(cached.body);
+    }
+    const headers = {};
+    if (process.env.REDSTONE_API_KEY) headers['x-api-key'] = process.env.REDSTONE_API_KEY;
+    const upstream = await fetch(REDSTONE_UPSTREAM + path, { headers });
+    const body = await upstream.text();
+    if (upstream.ok) redstoneCache.set(path, { t: Date.now(), status: upstream.status, body });
+    res.status(upstream.status).type('application/json').send(body);
+  } catch (e) {
+    console.error('[redstone-proxy]', e.message);
+    res.status(502).json({ error: 'redstone proxy failed', message: e.message });
+  }
+});
+
 // ─── Multi-chain Config ────────────────────────────────────────────────────
 // One LP service can monitor multiple independent wsXMR deployments. Chain
 // contexts come from chains.json (lp-server-js/chains.json): each entry names a
@@ -100,6 +133,8 @@ const HUB_ABI = [
   'function lpPublicKeys(bytes32 requestId) external view returns (bytes32)',
   'function lpPublicViewKeys(bytes32 requestId) external view returns (bytes32)',
   'function updateOraclePrices(bytes[] calldata updateData) external payable',
+  'function lastXmrPriceTimestamp() external view returns (uint256)',
+  'function lastCollateralPriceTimestamp() external view returns (uint256)',
   'function cancelMint(bytes32 requestId, bytes32 userSecret) external',
   'function abandonKeyProvidedMint(bytes32 requestId, bytes32 lpSecret) external',
 ];
@@ -199,6 +234,10 @@ function buildChainContext(chainCfg) {
     hubAddress,
     rpcUrls,
     logChunkSize: chainCfg.logChunkSize || 900,
+    // Arbitrum Orbit chains: contracts see block.number == L1 block number while
+    // eth_blockNumber returns the L2 number. On-chain deadlines live in the L1
+    // domain — compare them via contractBlockNumber().
+    usesL1BlockNumber: !!chainCfg.usesL1BlockNumber,
     provider,
     wallet,
     hub,
@@ -232,6 +271,19 @@ function resolveCtx(req, reqIdHex = null) {
   return null;
 }
 
+/**
+ * Block number in the domain the contracts see. On Arbitrum Orbit chains
+ * (Robinhood), block.number inside contracts is the L1 block number while
+ * eth_blockNumber returns the L2 number — read `l1BlockNumber` off the latest
+ * L2 block for deadline comparisons. Event/log scanning stays on L2 numbers.
+ */
+async function contractBlockNumber(ctx) {
+  if (!ctx.usesL1BlockNumber) return ctx.provider.getBlockNumber();
+  const b = await ctx.provider.send('eth_getBlockByNumber', ['latest', false]);
+  if (b && b.l1BlockNumber) return parseInt(b.l1BlockNumber, 16);
+  return ctx.provider.getBlockNumber();
+}
+
 function loadJsonFile(file) {
   try {
     if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -249,11 +301,16 @@ let lpMoneroAddress = process.env.MONERO_LP_ADDRESS || null; // fetched from wal
 // Each chain's RPC caps eth_getLogs ranges differently — ctx.logChunkSize.
 // Retries on rate-limit errors and paces chunks to stay under limits.
 const LOG_CHUNK_DELAY_MS = 150;
-async function queryFilterChunked(ctx, contract, filter, fromBlock, toBlock) {
+async function queryFilterChunked(ctx, contract, filter, fromBlock, toBlock, opts = {}) {
+  const { backwards = false, stopOnFirst = false } = opts;
   const chunkSize = ctx.logChunkSize || 900;
   const events = [];
+  const bounds = [];
   for (let start = fromBlock; start <= toBlock; start += chunkSize) {
-    const end = Math.min(start + chunkSize - 1, toBlock);
+    bounds.push([start, Math.min(start + chunkSize - 1, toBlock)]);
+  }
+  if (backwards) bounds.reverse();
+  for (const [start, end] of bounds) {
     let retries = 5;
     while (true) {
       try {
@@ -266,6 +323,7 @@ async function queryFilterChunked(ctx, contract, filter, fromBlock, toBlock) {
         await new Promise(r => setTimeout(r, 2000));
       }
     }
+    if (stopOnFirst && events.length > 0) return events;
     await new Promise(r => setTimeout(r, LOG_CHUNK_DELAY_MS));
   }
   return events;
@@ -785,7 +843,8 @@ async function startupRecoverMints(ctx) {
   // finalized-mint XMR sweeps — load them up front (previously referenced
   // without loading, silently breaking those recovery paths).
   const secrets = loadJsonFile(ctx.secretsFile);
-  const currentBlock = await ctx.provider.getBlockNumber();
+  const currentBlock = await ctx.provider.getBlockNumber();       // L2 domain — event scan ranges
+  const contractBlock = await contractBlockNumber(ctx);          // contract domain — deadline compares
   // Scan last ~10000 blocks (~3.5 days on Gnosis at 5s blocks)
   // Use 9999 to stay within RPC's 10000-block max range
   const fromBlock = Math.max(ctx.deployment.deployedAtBlock || 0, currentBlock - 9999);
@@ -827,7 +886,7 @@ async function startupRecoverMints(ctx) {
         // claim it via abandonKeyProvidedMint (publishes lpSecret for user sweep).
         const timeout = Number(mintReq.timeout);
         const entry = secrets[reqIdHex];
-        if (currentBlock < timeout && entry && entry.lpSecret) {
+        if (contractBlock < timeout && entry && entry.lpSecret) {
           console.log(`[Recovery] Mint ${reqIdHex} is KEY_CANCELLED within claim window, claiming parked deposit...`);
           try {
             const abandonNonce = await ctx.nonce.getNextNonce();
@@ -846,7 +905,7 @@ async function startupRecoverMints(ctx) {
       if (status === 3) {
         // READY — mint is waiting for user to reveal secret. If timeout passed, cancel it.
         const timeout = Number(mintReq.timeout);
-        const currentBlock = await ctx.provider.getBlockNumber();
+        const currentBlock = await contractBlockNumber(ctx);
         if (currentBlock >= timeout) {
           console.log(`[Recovery] Mint ${reqIdHex} is READY but timed out (timeout=${timeout}, current=${currentBlock}), cancelling...`);
           try {
@@ -868,7 +927,7 @@ async function startupRecoverMints(ctx) {
         // griefing deposit and publish lpSecret on-chain so the user can sweep
         // their XMR back. Otherwise re-process (deposit may have arrived).
         const timeout = Number(mintReq.timeout);
-        if (currentBlock >= timeout) {
+        if (contractBlock >= timeout) {
           const entry = secrets[reqIdHex];
           if (entry && entry.lpSecret) {
             console.log(`[Recovery] Mint ${reqIdHex} timed out at KEY_PROVIDED, abandoning (claim parked deposit + publish lpSecret)...`);
@@ -1018,19 +1077,38 @@ async function startupSweepFinalizedMints(ctx) {
         console.log(`[Sweep]   deposit tx: ${entry.depositTxHash}, height: ${entry.depositHeight || 'N/A'}`);
       }
 
-      // Scan recent blocks for the SecretRevealed event
+      // Prefer getMintRequest().revealedSecret — a plain eth_call, immune to
+      // eth_getLogs rate/archive limits that plague the event scans.
+      let userSecret;
+      try {
+        const req = await ctx.hub.getMintRequest(reqIdHex);
+        if (req.revealedSecret && req.revealedSecret !== ethers.ZeroHash) {
+          userSecret = req.revealedSecret;
+          console.log(`[Sweep] Got user secret from mint request (no event scan needed)`);
+        }
+      } catch (e) {
+        console.warn(`[Sweep] getMintRequest failed, falling back to event scan:`, e.message);
+      }
+
+      // Backwards scans below resolve a just-finalized mint in the newest
+      // chunk, inside free RPCs' non-archive window, instead of 403ing on a
+      // full-range scan.
       const currentBlock = await ctx.provider.getBlockNumber();
       const fromBlock = Math.max(ctx.deployment.deployedAtBlock || 0, currentBlock - 100000);
-      const filter = ctx.hub.filters.SecretRevealed(reqIdHex);
-      const events = await queryFilterChunked(ctx, ctx.hub, filter, fromBlock, currentBlock);
 
-      let userSecret;
-      if (events.length > 0) {
-        userSecret = ethers.hexlify(events[0].args.secret);
-      } else {
+      if (!userSecret) {
+        const filter = ctx.hub.filters.SecretRevealed(reqIdHex);
+        const events = await queryFilterChunked(ctx, ctx.hub, filter, fromBlock, currentBlock, { backwards: true, stopOnFirst: true });
+
+        if (events.length > 0) {
+          userSecret = ethers.hexlify(events[0].args.secret);
+        }
+      }
+
+      if (!userSecret) {
         // Fall back to MintFinalized event (same secret, emitted at finalization)
         const finalizeFilter = ctx.hub.filters.MintFinalized(reqIdHex);
-        const finalizeEvents = await queryFilterChunked(ctx, ctx.hub, finalizeFilter, fromBlock, currentBlock);
+        const finalizeEvents = await queryFilterChunked(ctx, ctx.hub, finalizeFilter, fromBlock, currentBlock, { backwards: true, stopOnFirst: true });
         if (finalizeEvents.length === 0) {
           console.warn(`[Sweep] Could not find SecretRevealed or MintFinalized event for ${reqIdHex} — skipping`);
           continue;
@@ -1107,7 +1185,8 @@ async function startupSweepFinalizedMints(ctx) {
 
 // ─── Startup Resolution: Cancel stale mints & resolve stale burns ───────────
 async function startupResolveStale(ctx) {
-  const currentBlock = await ctx.provider.getBlockNumber();
+  const currentBlock = await ctx.provider.getBlockNumber();        // L2 domain — event scan ranges
+  const contractBlock = await contractBlockNumber(ctx);           // contract domain — deadline compares
   const fromBlock = Math.max(ctx.deployment.deployedAtBlock || 0, currentBlock - 9999);
   console.log('[Resolve] Checking for stale mints and burns...');
 
@@ -1132,7 +1211,7 @@ async function startupResolveStale(ctx) {
       const timeout = Number(mintReq.timeout);
 
       // Status 1=PENDING, 2=KEY_PROVIDED, 3=READY — cancel if timeout passed
-      if ((status === 1 || status === 2 || status === 3) && currentBlock >= timeout) {
+      if ((status === 1 || status === 2 || status === 3) && contractBlock >= timeout) {
         console.log(`[Resolve] Mint ${reqIdHex} is stale (status=${status}, timeout=${timeout}, current=${currentBlock}), cancelling...`);
         try {
           const cancelNonce = await ctx.nonce.getNextNonce();
@@ -1176,7 +1255,7 @@ async function startupResolveStale(ctx) {
       // State 2=PROPOSED — abandon post-deadline to release locked collateral.
       // The user can still late-claim wsXMR via resolveDeclinedProposal (which
       // reveals userSecret → lets us sweep the shared XMR).
-      if (state === 2 && currentBlock >= deadline) {
+      if (state === 2 && contractBlock >= deadline) {
         console.log(`[Resolve] Burn ${reqIdHex} is stale (PROPOSED, deadline=${deadline}, current=${currentBlock}) — abandoning to release collateral...`);
         try {
           const abandonNonce = await ctx.nonce.getNextNonce();
@@ -1445,7 +1524,7 @@ async function startEventListener(ctx) {
 function startPeriodicJobs(ctx) {
 setInterval(async () => {
   try {
-    const currentBlock = await ctx.provider.getBlockNumber();
+    const currentBlock = await contractBlockNumber(ctx);
     for (const [reqIdHex, burn] of ctx.burns.pendingBurns.entries()) {
       if (burn.state !== 'proposed') continue;
       try {

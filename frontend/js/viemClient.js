@@ -2,7 +2,7 @@
 // Uses createPublicClient and createWalletClient as required
 
 import { createPublicClient, createWalletClient, custom, http, fallback, parseAbi, defineChain } from 'https://esm.sh/viem@2.7.0';
-import { CHAINS, CONTRACTS, ABIS, RAW_ABIS, getActiveChain, getActiveChainKey } from './config.js?v=3.34';
+import { CHAINS, CONTRACTS, ABIS, RAW_ABIS, getActiveChain, getActiveChainKey } from './config.js?v=3.41';
 
 // viem chain definitions, built lazily from the CHAINS registry so every
 // supported chain (including ones viem doesn't ship built-in) works.
@@ -710,6 +710,32 @@ export async function getPastEvents(contractAddress, abi, eventName, fromBlock, 
 export async function getBlockNumber() {
     const client = getPublicClient();
     return await client.getBlockNumber();
+}
+
+/**
+ * Get the block number in the domain contracts see for deadlines.
+ * On Arbitrum Orbit chains (Robinhood) block.number inside contracts is the
+ * L1 block number, while eth_blockNumber returns the L2 number — so deadline
+ * comparisons must read the `l1BlockNumber` field off the latest L2 block.
+ */
+export async function getContractBlockNumber() {
+    const client = getPublicClient();
+    if (!getActiveChain()?.usesL1BlockNumber) return await client.getBlockNumber();
+    const block = await client.request({
+        method: 'eth_getBlockByNumber',
+        params: ['latest', false]
+    });
+    const l1 = block?.l1BlockNumber;
+    if (!l1) return await client.getBlockNumber(); // non-Orbit fallback
+    return BigInt(l1);
+}
+
+/**
+ * Seconds per block in the deadline domain (L1 cadence on Orbit chains).
+ */
+export function getDeadlineBlockTimeSec() {
+    const chain = getActiveChain();
+    return chain?.deadlineBlockTimeSec || chain?.blockTimeSec || 1;
 }
 
 /**

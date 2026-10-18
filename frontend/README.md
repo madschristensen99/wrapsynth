@@ -1,6 +1,6 @@
 # WrapSynth Frontend
 
-The web application for trustless XMR ⇄ wsXMR atomic swaps across multiple chains — BNB Chain (live), Base and Robinhood Chain (queued). The user picks a chain; there is no default. Live at [wrapsynth.com](https://wrapsynth.com).
+The web application for trustless XMR ⇄ wsXMR atomic swaps across multiple chains — BNB Chain, Base, and Robinhood Chain (all live). The user picks a chain; there is no default. Live at [wrapsynth.com](https://wrapsynth.com).
 
 ---
 
@@ -23,7 +23,7 @@ No build step is required. The app uses native ES modules with CDN imports for `
 
 - Node.js v18+ (for `npm install` of local dependencies)
 - A browser with EIP-1193 wallet support (MetaMask, Rabby, etc.)
-- Network: whichever chain you select — BNB Chain (ChainID 56) is live; Base (8453) and Robinhood Chain (46630… per `chains.json`) activate when their manifests land
+- Network: whichever chain you select — BNB Chain (56), Base (8453), and Robinhood Chain (4663) are all live with deployment manifests
 
 ---
 

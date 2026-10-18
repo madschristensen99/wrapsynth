@@ -1,9 +1,9 @@
 // UI Controller
 // Manages all DOM interactions and updates
 
-import { DECIMALS, ASSET, explorerAddressUrl, getActiveChain, getActiveChainKey } from './config.js?v=3.34';
-import { getIconSVG } from './icons.js?v=3.34';
-import { launchMintCelebration, launchBurnAnimation } from './animations.js?v=3.34';
+import { DECIMALS, ASSET, explorerAddressUrl, getActiveChain, getActiveChainKey } from './config.js?v=3.41';
+import { getIconSVG } from './icons.js?v=3.41';
+import { launchMintCelebration, launchBurnAnimation } from './animations.js?v=3.41';
 
 /**
  * UI Element References
@@ -438,7 +438,7 @@ export function showResumeCountdown(requestId, deadlineBlock, currentBlock, onRe
     // Update countdown every 1s, estimating wall time from chain block time
     let cachedDeadline = deadlineBlock;
     let cachedCurrent = currentBlock;
-    const secPerBlock = getActiveChain()?.blockTimeSec || 1;
+    const secPerBlock = getActiveChain()?.deadlineBlockTimeSec || getActiveChain()?.blockTimeSec || 1;
     function updateMsg() {
         const blocksRemaining = Math.max(0, cachedDeadline - cachedCurrent);
         const estSeconds = Math.round(blocksRemaining * secPerBlock);
@@ -456,9 +456,8 @@ export function showResumeCountdown(requestId, deadlineBlock, currentBlock, onRe
     // Poll block number every 5s to update countdown
     const intervalId = setInterval(async () => {
         try {
-            const { getPublicClient } = await import('./viemClient.js?v=3.34');
-            const client = getPublicClient();
-            cachedCurrent = Number(await client.getBlockNumber());
+            const { getContractBlockNumber } = await import('./viemClient.js?v=3.41');
+            cachedCurrent = Number(await getContractBlockNumber());
             updateMsg();
             if (cachedCurrent >= cachedDeadline) {
                 clearInterval(intervalId);
@@ -535,7 +534,7 @@ export async function showBurnTab() {
     saveActiveTab('burn');
 
     // Update balance when showing burn tab
-    const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js?v=3.34');
+    const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js?v=3.41');
     const address = getUserAddress();
     if (address) {
         try {

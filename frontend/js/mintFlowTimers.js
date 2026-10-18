@@ -6,7 +6,7 @@ export async function startDeadlineTimer(mintFlow) {
     // If we don't have the on-chain timeout yet, query it now
     if (!mintFlow.timeout) {
         try {
-            const { readHub } = await import('./viemClient.js?v=3.34');
+            const { readHub } = await import('./viemClient.js?v=3.41');
             const mintReq = await readHub('getMintRequest', [mintFlow.requestId]);
             mintFlow.timeout = mintReq.timeout;
             console.log('[Timer] Queried on-chain timeout (block):', mintFlow.timeout.toString());
@@ -56,10 +56,9 @@ export async function startDeadlineTimer(mintFlow) {
     const updateTimer = async () => {
         if (!running) return;
         try {
-            const { getPublicClient } = await import('./viemClient.js?v=3.34');
-            const publicClient = getPublicClient();
-            const currentBlock = await publicClient.getBlockNumber();
-            
+            const { getContractBlockNumber, getDeadlineBlockTimeSec } = await import('./viemClient.js?v=3.41');
+            const currentBlock = await getContractBlockNumber();
+
             const blocksRemaining = Number(mintFlow.timeout) - Number(currentBlock);
             console.log('[Timer] Blocks remaining:', blocksRemaining, 'Current:', currentBlock.toString(), 'Timeout:', mintFlow.timeout.toString());
             
@@ -88,7 +87,7 @@ export async function startDeadlineTimer(mintFlow) {
                         refundBtn.disabled = true;
                         refundBtn.textContent = 'Checking status...';
                         try {
-                            const { readHub, writeHub } = await import('./viemClient.js?v=3.34');
+                            const { readHub, writeHub } = await import('./viemClient.js?v=3.41');
                             
                             // Check current on-chain status before deciding action
                             const mintReq = await readHub('getMintRequest', [mintFlow.requestId]);
@@ -102,16 +101,15 @@ export async function startDeadlineTimer(mintFlow) {
                                 console.log('withdrawReturns tx:', receipt.transactionHash);
                                 timerElement.innerHTML = '<strong style="color:var(--success-color);">Refunded</strong>';
                                 refundBtn.remove();
-                                const { clearActiveSwap } = await import('./storage.js?v=3.34');
+                                const { clearActiveSwap } = await import('./storage.js?v=3.41');
                                 clearActiveSwap();
-                                const { resetMintUI } = await import('./ui.js?v=3.34');
+                                const { resetMintUI } = await import('./ui.js?v=3.41');
                                 resetMintUI();
                             } else if (status === 7) {
                                 // EXPIRED_READY — LP has a claim window
                                 const claimWindowEnd = Number(mintReq.timeout);
-                                const { getPublicClient } = await import('./viemClient.js?v=3.34');
-                                const pubClient = getPublicClient();
-                                const currentBlock = await pubClient.getBlockNumber();
+                                const { getContractBlockNumber } = await import('./viemClient.js?v=3.41');
+                                const currentBlock = await getContractBlockNumber();
                                 if (currentBlock >= claimWindowEnd) {
                                     // LP claim window expired — sweep to recover deposit + slashed collateral
                                     refundBtn.textContent = 'Sweeping expired mint...';
@@ -119,20 +117,20 @@ export async function startDeadlineTimer(mintFlow) {
                                     await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
                                     // Also withdraw slashed collateral (active chain's share token)
                                     try {
-                                        const { CONTRACTS } = await import('./config.js?v=3.34');
+                                        const { CONTRACTS } = await import('./config.js?v=3.41');
                                         await writeHub('withdrawReturns', [CONTRACTS.stataUSDe]);
                                     } catch (e) { /* may have no collateral returns */ }
                                     timerElement.innerHTML = '<strong style="color:var(--success-color);">Deposit + Collateral Recovered</strong>';
                                     refundBtn.remove();
-                                    const { clearActiveSwap } = await import('./storage.js?v=3.34');
+                                    const { clearActiveSwap } = await import('./storage.js?v=3.41');
                                     clearActiveSwap();
-                                    const { resetMintUI } = await import('./ui.js?v=3.34');
+                                    const { resetMintUI } = await import('./ui.js?v=3.41');
                                     resetMintUI();
                                 } else {
                                     // LP still has time to claim
                                     const blocksRemaining = claimWindowEnd - Number(currentBlock);
-                                    const { getActiveChain } = await import('./config.js?v=3.34');
-                                    const minutes = Math.ceil(blocksRemaining * (getActiveChain()?.blockTimeSec || 1) / 60);
+                                    const { getDeadlineBlockTimeSec } = await import('./viemClient.js?v=3.41');
+                                    const minutes = Math.ceil(blocksRemaining * getDeadlineBlockTimeSec() / 60);
                                     refundBtn.disabled = true;
                                     refundBtn.textContent = `Waiting for LP claim window (~${minutes} min)`;
                                     timerElement.innerHTML += `<br><span style="font-size:0.75rem;color:var(--warning-color);">LP can claim deposit for ~${minutes} more minutes. After that, you can sweep it back.</span>`;
@@ -156,17 +154,17 @@ export async function startDeadlineTimer(mintFlow) {
                                 } catch (e) { /* may have none */ }
                                 timerElement.innerHTML = `<strong style="color:var(--success-color);">Cancelled & Refunded${slashedMsg}</strong>`;
                                 refundBtn.remove();
-                                const { clearActiveSwap } = await import('./storage.js?v=3.34');
+                                const { clearActiveSwap } = await import('./storage.js?v=3.41');
                                 clearActiveSwap();
-                                const { resetMintUI } = await import('./ui.js?v=3.34');
+                                const { resetMintUI } = await import('./ui.js?v=3.41');
                                 resetMintUI();
                             } else if (status === 5) {
                                 // Already completed
                                 timerElement.innerHTML = '<strong style="color:var(--success-color);">Mint Completed</strong>';
                                 refundBtn.remove();
-                                const { clearActiveSwap } = await import('./storage.js?v=3.34');
+                                const { clearActiveSwap } = await import('./storage.js?v=3.41');
                                 clearActiveSwap();
-                                const { resetMintUI } = await import('./ui.js?v=3.34');
+                                const { resetMintUI } = await import('./ui.js?v=3.41');
                                 resetMintUI();
                             } else {
                                 throw new Error(`Unexpected mint status: ${status}`);
@@ -189,9 +187,9 @@ export async function startDeadlineTimer(mintFlow) {
                 return;
             }
             
-            // Calculate time remaining (block time is per-chain)
-            const { getActiveChain } = await import('./config.js?v=3.34');
-            const secondsRemaining = Math.round(blocksRemaining * (getActiveChain()?.blockTimeSec || 1));
+            // Calculate time remaining (deadline-domain block time is per-chain —
+            // L1 cadence on Orbit chains)
+            const secondsRemaining = Math.round(blocksRemaining * getDeadlineBlockTimeSec());
             const hours = Math.floor(secondsRemaining / 3600);
             const minutes = Math.floor((secondsRemaining % 3600) / 60);
             const seconds = secondsRemaining % 60;

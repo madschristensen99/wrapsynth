@@ -1,8 +1,8 @@
 // RedStone Oracle Price Update Helper
 // Manually builds calldata to avoid viem v1 / connector selector bugs with bytes[] params
 
-import { CONTRACTS, ABIS, getActiveChain } from './config.js?v=3.34';
-import { getWalletClient, getPublicClient, getUserAddress, ensureAuthorizedAccount, getViemChain } from './viemClient.js?v=3.34';
+import { CONTRACTS, ABIS, getActiveChain } from './config.js?v=3.41';
+import { getWalletClient, getPublicClient, getUserAddress, ensureAuthorizedAccount, getViemChain } from './viemClient.js?v=3.41';
 
 /**
  * Update oracle prices using RedStone
@@ -64,7 +64,14 @@ export async function buildRedStonePayload() {
     const dataServiceConfig = {
         dataServiceId: 'redstone-primary-prod',
         uniqueSignersCount: 3,
-        urls: ['https://oracle-gateway-1.a.redstone.finance']
+        // Public RedStone gateways are being switched off — payloads must come
+        // through an authenticated gateway. The LP server proxies
+        // /redstone/* -> gateway with its server-side API key; the public
+        // gateway stays as a fallback for open windows.
+        urls: [
+            'http://localhost:3001/redstone',
+            'https://oracle-gateway-1.a.redstone.finance'
+        ]
     };
     const dataFeeds = getActiveChain()?.redstoneFeeds || ['XMR'];
 

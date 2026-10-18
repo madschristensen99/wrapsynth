@@ -7,13 +7,15 @@
       "manifest": "../frontend/deployment.bnb.json",
       "rpcEnv": "BNB_RPC_URLS",
       "rpcUrls": [
+        "https://rpc-bsc.48.club",
         "https://bsc.publicnode.com",
         "https://bsc-dataseed.binance.org",
         "https://bsc-dataseed.bnbchain.org",
-        "https://rpc-bsc.48.club",
         "https://bsc.drpc.org"
       ],
-      "redstoneFeeds": ["XMR"],
+      "redstoneFeeds": [
+        "XMR"
+      ],
       "logChunkSize": 900
     },
     {
@@ -23,12 +25,14 @@
       "manifest": "../frontend/deployment.base.json",
       "rpcEnv": "BASE_RPC_URLS",
       "rpcUrls": [
-        "https://mainnet.base.org",
         "https://base.publicnode.com",
-        "https://base.llamarpc.com"
+        "https://base.drpc.org",
+        "https://mainnet.base.org"
       ],
-      "redstoneFeeds": ["XMR"],
-      "logChunkSize": 900
+      "redstoneFeeds": [
+        "XMR"
+      ],
+      "logChunkSize": 200
     },
     {
       "key": "robinhood",
@@ -39,8 +43,11 @@
       "rpcUrls": [
         "https://rpc.mainnet.chain.robinhood.com"
       ],
-      "redstoneFeeds": ["XMR"],
-      "logChunkSize": 900
+      "redstoneFeeds": [
+        "XMR"
+      ],
+      "logChunkSize": 900,
+      "usesL1BlockNumber": true
     }
   ]
 }

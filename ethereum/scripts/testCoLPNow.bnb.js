@@ -8,6 +8,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../.env') }
 const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
+const { redstoneGatewayUrls } = require('./redstoneGateway');
 const { HUB_ADDRESS, WSXMR_ADDRESS, QQQB_ADDRESS, ED25519_HELPER, RPC_URL } = require('./deploymentConfig.bnb');
 
 async function retryRedStone(fn, maxRetries = 3) {
@@ -93,7 +94,8 @@ async function main() {
         dataServiceId: 'redstone-primary-prod',
         uniqueSignersCount: 3,
         dataPackagesIds: ['XMR'],
-        authorizedSigners
+        authorizedSigners,
+        urls: redstoneGatewayUrls()
     });
 
     console.log('Hub liquidityRouter:', await hub.liquidityRouter());

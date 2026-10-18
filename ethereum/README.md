@@ -1,6 +1,6 @@
 # wsXMR - Wrapped Monero (multi-chain)
 
-A decentralized protocol for wrapping Monero (XMR) using a diamond proxy pattern with LP-backed minting and burning. Live on **BNB Chain** (QQQB collateral); **Base** (cbBTC) and **Robinhood Chain** (SPY) deployments are built and fork-tested. Prior deployments: Gnosis Chain (beta) and HyperEVM (deprecated).
+A decentralized protocol for wrapping Monero (XMR) using a diamond proxy pattern with LP-backed minting and burning. Live on **BNB Chain** (QQQB collateral), **Base** (cbBTC collateral), and **Robinhood Chain** (SPY collateral). Prior deployments: Gnosis Chain (beta) and HyperEVM (deprecated).
 
 ## 🚀 BNB Chain Mainnet Deployment (primary venue)
 
@@ -33,9 +33,69 @@ cp deployments/bnb-deployment.json ../frontend/deployment.bnb.json
 
 Requires `PRIVATE_KEY` (deployer needs ~0.01 BNB) and `BNB_RPC_URL`; `BSCSCAN_API_KEY` for verification. The script fetches live XMR (CoinGecko) and QQQB (DexScreener) prices to initialize the pool.
 
-### Deploying to Base / Robinhood (queued)
+## 🚀 Base Mainnet Deployment
 
-Same pattern — `DeployBase.s.sol` (cbBTC collateral, Uniswap V3) and `DeployRobinhood.s.sol` (SPY collateral, Uniswap V3). Both are built and fork-tested; SwapHelper is no longer part of deployments (pool-swap tests route through the chain's real DEX router).
+**Deployed:** chain 8453, block `52775153` — full stack live, all 13 contracts verified on BaseScan, and exercised end-to-end on mainnet (vault setup → mint → burn round-trip → co-LP open/unwind → swaps via Uniswap SwapRouter02). Deployer powers permanently locked. Manifest: `deployments/base-deployment.json` / `frontend/deployment.base.json`.
+
+- **wsXmrHub (Diamond Proxy):** `0xF22f1550829E1413f1bc538Be419071728DD53b8`
+- **wsXMR Token:** `0x9E50B436901A573DC4f0676150B282135f0C0623`
+- **LiquidityRouter:** `0x53E46B60D79d33D031A0e222029A382146d5a15F`
+- **Ed25519Helper:** `0xA1b9115450c3e3dCAD11c04Cf9Bf4092335B3A64`
+- **SwapHelper:** `0x313166bb40927D94e969c51Af227bc22F30df6D2`
+- **StataCbBTC (collateral share token):** `0x64f05A6c0E19Fe7Ae76Ca88740D63EA069A5CA28`
+- **wsXMR/cbBTC Uniswap V3 Pool (500 fee):** `0xEac27935Dc31AF9215822505174404c38c5A3FEc`
+- **BaseOracleFacet:** `0x147F829Fa732811A0f54E50310eCB71218B4511a`
+- **VaultFacet:** `0x97166ED3478759199442BFc6570F386884b4917B`
+- **MintFacet:** `0xBfCDA75903920cDe32F0B17eD1a57974Bab4bc66`
+- **BurnFacet:** `0xAa32790EF174Db5457AdF7c268fEa4Bc527eB140`
+- **LiquidationFacet:** `0x7c7BD2D57Db2C08F39d3050fabC002593183fF69`
+- **YieldFacet:** `0xF1fBBb13004410dCA48360872004870B6C85a214`
+- **CoLPFacet:** `0xA6b4F4Ea557e2f7F2f23F32EDA9D17aB7F48dd49`
+- **Network:** Base (ChainID 8453) · **Collateral:** cbBTC (Coinbase Wrapped BTC) · **Oracle:** RedStone `XMR` feed + on-chain cbBTC/USDC TWAP
+- **Explorer:** https://basescan.org
+
+**Mainnet validation (all executed on-chain):** `testFullCycleNow.base.js` (vault → mint → burn), `testCoLPNow.base.js` (co-LP open + unwind; `KEEP_OPEN=1` leaves the position live to seed the pool), `testPoolSwaps.base.js` (both-direction swaps via Uniswap SwapRouter02). Scripts source addresses from `scripts/deploymentConfig.base.js`.
+
+Notes:
+- Base gas limits in the scripts are sized to measured usage — don't pad them back to 1.5M+, the send-time `gasLimit × maxFee` check drains the wallet during baseFee spikes.
+- Very small co-LP positions (<~500 wei of paired cbBTC) revert on the router's 0.5% slippage floor due to wei rounding — keep test deposits above dust.
+- Oracle pushes revert when the RedStone datapoint timestamp isn't strictly newer than stored — the scripts skip pushes when `getXmrPrice()` is already fresh.
+
+## 🚀 Robinhood Chain Mainnet Deployment
+
+**Deployed:** chain 4663, block `92045119` — full stack live, all 13 contracts verified on robin.etherscan.io, and exercised end-to-end on mainnet (vault setup → mint → burn round-trip → co-LP open/unwind → swaps via Uniswap SwapRouter02). Deployer powers permanently locked. Manifest: `frontend/deployment.robinhood.json`.
+
+- **wsXmrHub (Diamond Proxy):** `0x15bb9ba8236De055090a262F45a7e213F6040320`
+- **wsXMR Token:** `0x9B8d1851bCc06ac265c1c1ACaBD0F71E69DD312c`
+- **LiquidityRouter:** `0x1034259f355566fcE4571F792d239a99BBa1b9b4`
+- **Ed25519Helper:** `0x85e8fc329B2C9A44e7D653f347dfA5269575f9A3`
+- **SwapHelper:** `0x917a2Afc28BE633B0BDE1aeE4923C4A97F0ab250`
+- **StataSPY (collateral share token):** `0xd821A7D919e007b6b39925f672f1219dB4865Fba`
+- **wsXMR/SPY Uniswap V3 Pool (500 fee):** `0xf631c5DC155d7e635c259318117952B3fD9C9d85` — token0 SPY / token1 wsXMR
+- **RobinhoodOracleFacet:** `0xb694120Ecdc69fbbEe3Ae21831d7B76ab8a9169B`
+- **VaultFacet:** `0x6ABAEB70c9BA9EA497Ff5e20D08bd20Ca1E02139`
+- **MintFacet:** `0xb6251797386a8C5a2a4A8783f430Ef2ED5c63BeF`
+- **BurnFacet:** `0xCE92E887d225D06c21a16d845D88E980d536FA2b`
+- **LiquidationFacet:** `0xd6Ee29f9ae035aDB0f2741228eD55F0fC6dBb6c2`
+- **YieldFacet:** `0xD1f77F73Ca47A726875D884cc45EFf289f6176E3`
+- **CoLPFacet:** `0x8e3EF1e28262E351EB066374df1bEd36CC704dDA`
+- **Network:** Robinhood Chain (ChainID 4663, Arbitrum Orbit, ETH gas) · **Collateral:** SPY (Robinhood tokenized S&P 500) · **Oracle:** RedStone `XMR` feed + on-chain SPY/USDG TWAP
+- **Explorer:** https://robin.etherscan.io
+
+**Mainnet validation (all executed on-chain):** `testFullCycleNow.robinhood.js` (vault → mint → burn), `testCoLPNow.robinhood.js` (co-LP open + unwind; `KEEP_OPEN=1` leaves the position live to seed the pool), `testPoolSwaps.robinhood.js` (both-direction swaps via Uniswap SwapRouter02). Scripts source addresses from `scripts/deploymentConfig.robinhood.js`.
+
+Notes:
+- Pool liquidity is currently a single thin co-LP position — sequential same-direction swaps can exhaust the in-range liquidity and revert. Reduce size or add liquidity.
+- Verification: `forge verify-contract` cannot resolve chain 4663 — generate `--show-standard-json-input` and POST it to `https://api.etherscan.io/v2/api?chainid=4663` with the unified scan API key. All 13 contracts verified this way.
+
+### Deploying to Robinhood
+
+```shell
+forge script script/DeployRobinhood.s.sol --rpc-url robinhood --broadcast -vvvv
+cp broadcast/DeployRobinhood.s.sol/4663/run-latest.json deployments/robinhood-deployment.json  # manifest lives at frontend/deployment.robinhood.json
+```
+
+Requires `PRIVATE_KEY` (deployer needs ~0.005 ETH for gas) and `ROBINHOOD_RPC_URL`. The script fetches live XMR (RedStone) and SPY (on-chain SPY/USDG TWAP) prices to initialize the pool.
 
 ## HyperEVM Mainnet Deployment (⛔ deprecated)
 

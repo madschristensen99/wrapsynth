@@ -31,7 +31,8 @@ robinhood = "${ROBINHOOD_RPC_URL}"
 gnosis = { key = "${GNOSISSCAN_API_KEY}", url = "https://api.gnosisscan.io/api" }
 bnb = { key = "${BSCSCAN_API_KEY}", url = "https://api.bscscan.com/api" }
 base = { key = "${BASESCAN_API_KEY}", url = "https://api.basescan.org/api" }
-# robinhood: verify via `forge verify-contract --verifier blockscout` once the
-# RobinScan/Blockscout endpoint is confirmed — no etherscan-family API key yet.
+# robinhood: robin.etherscan.io is Etherscan V2 — forge can't resolve chain 4663,
+# so verify by submitting standard-JSON input to api.etherscan.io/v2/api?chainid=4663
+# directly (see verification steps in README).
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

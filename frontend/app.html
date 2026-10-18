@@ -50,7 +50,7 @@ if ('serviceWorker' in navigator) {
     });
 }
 </script>
-<link rel="stylesheet" href="app-styles.css?v=3.34">
+<link rel="stylesheet" href="app-styles.css?v=3.41">
 </head>
 <body class="app-page">
 <!-- Animated Background -->
@@ -417,6 +417,7 @@ if ('serviceWorker' in navigator) {
           </div>
 
           <button class="cta" id="co-lp-open" disabled>Open Co-LP Position</button>
+          <div id="co-lp-status" style="display:none;margin-top:10px;padding:10px 12px;border:1px solid var(--line-2);border-radius:8px;font-size:13px;color:var(--muted);line-height:1.5"></div>
           
           <div id="co-lp-lp-settings" class="hidden" style="margin-top:20px;padding-top:20px;border-top:1px solid var(--line-2)">
             <h3 style="font-family:'Plus Jakarta Sans';font-size:14px;font-weight:600;margin-bottom:12px">LP Settings</h3>
@@ -481,21 +482,20 @@ if ('serviceWorker' in navigator) {
 
 <!-- Populate footer address links from the active chain's manifest -->
 <script type="module">
-  const { bootChain } = await import('./js/chainPicker.js?v=3.34');
-  const { getActiveChain, getDeployment } = await import('./js/config.js?v=3.34');
+  const { bootChain } = await import('./js/chainPicker.js?v=3.41');
+  const { getActiveChain, CONTRACTS } = await import('./js/config.js?v=3.41');
   const key = await bootChain();
   if (key) {
-    const D = getDeployment(key), DC = D.contracts || {};
     const explorer = getActiveChain().explorer;
     const short = a => a ? `${a.slice(0,6)}…${a.slice(-4)}` : '';
     const wsxmr = document.getElementById('addr-link-wsxmr');
     const hub = document.getElementById('addr-link-hub');
     const router = document.getElementById('addr-link-router');
-    if (wsxmr) { wsxmr.textContent = short(DC.wsXMR); wsxmr.href = `${explorer}/token/${DC.wsXMR}`; }
-    if (hub) { hub.textContent = short(DC.wsXmrHub); hub.href = `${explorer}/address/${DC.wsXmrHub}`; }
-    if (router) { router.textContent = short(DC.liquidityRouter); router.href = `${explorer}/address/${DC.liquidityRouter}`; }
+    if (wsxmr && CONTRACTS.wsxmrToken) { wsxmr.textContent = short(CONTRACTS.wsxmrToken); wsxmr.href = `${explorer}/token/${CONTRACTS.wsxmrToken}`; }
+    if (hub && CONTRACTS.hub) { hub.textContent = short(CONTRACTS.hub); hub.href = `${explorer}/address/${CONTRACTS.hub}`; }
+    if (router && CONTRACTS.liquidityRouter) { router.textContent = short(CONTRACTS.liquidityRouter); router.href = `${explorer}/address/${CONTRACTS.liquidityRouter}`; }
   }
 </script>
-<script type="module" src="./js/main.js?v=3.34"></script>
+<script type="module" src="./js/main.js?v=3.41"></script>
 </body>
 </html>

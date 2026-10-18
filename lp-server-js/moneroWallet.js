@@ -243,6 +243,16 @@ function _readVarint(buf, off) {
 function _scReduce(leBuf) {
   return BigInt('0x' + Buffer.from(leBuf).reverse().toString('hex')) % _ED_L;
 }
+
+// Canonicalize a raw little-endian scalar hex for generate_from_keys.
+// Random secrets (lpSecret, userSecret, MONERO_VIEW_KEY) are raw 32 bytes —
+// ~half exceed L and fail wallet-rpc's sc_check, silently producing wallets
+// that derive the right pubkeys for display but scan nothing. Reduce mod L
+// and re-encode so wallet-rpc always gets a valid private key.
+function _canonicalScalarLeHex(leHex) {
+  const n = _scReduce(Buffer.from(leHex.replace(/^0x/, ''), 'hex'));
+  return _toLe32(n).toString('hex');
+}
 function _toLe32(n) {
   return Buffer.from(n.toString(16).padStart(64, '0'), 'hex').reverse();
 }
@@ -484,7 +494,7 @@ async function _pollDepositRpcOnce(depositAddress, lpViewKey, expectedAmountAtom
         filename: walletName,
         password: walletPass,
         address: depositAddress,
-        viewkey: lpViewKey,
+        viewkey: _canonicalScalarLeHex(lpViewKey),
         restore_height: restoreHeight,
         autosave_current: true, // proper save → open_wallet works next cycle
       }, 180000);
@@ -506,7 +516,7 @@ async function _pollDepositRpcOnce(depositAddress, lpViewKey, expectedAmountAtom
           } catch {}
           await depositRpc('generate_from_keys', {
             filename: walletName, password: walletPass,
-            address: depositAddress, viewkey: lpViewKey,
+            address: depositAddress, viewkey: _canonicalScalarLeHex(lpViewKey),
             restore_height: restoreHeight, autosave_current: true,
           }, 180000);
         }
@@ -889,7 +899,7 @@ async function _sweepMintDeposit({ userSecretHex, lpSecretHex, lpMainAddress, re
         password: walletPass,
         address: depositAddress,
         spendkey: combinedSpendHex,
-        viewkey: lpViewKeyLe,
+        viewkey: _canonicalScalarLeHex(lpViewKeyLe),
         restore_height: moneroRestoreHeight,
       });
       walletOpened = true;
@@ -1106,7 +1116,7 @@ async function _sweepBurnShared({ userSecretHex, lpSecretHex, lpMainAddress, res
         password: walletPass,
         address: sharedAddress,
         spendkey: combinedSpendHex,
-        viewkey: userViewKeyLeHex,
+        viewkey: _canonicalScalarLeHex(userViewKeyLeHex),
         restore_height: moneroRestoreHeight,
       });
       walletOpened = true;
@@ -1543,8 +1553,8 @@ async function _ensureWalletOpen() {
       filename: walletName,
       password: walletPass,
       address,
-      spendkey: spendKey,
-      viewkey: viewKey,
+      spendkey: _canonicalScalarLeHex(spendKey),
+      viewkey: _canonicalScalarLeHex(viewKey),
       restore_height: restoreHeight,
     });
     walletOpened = true;

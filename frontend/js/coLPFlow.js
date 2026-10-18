@@ -8,8 +8,8 @@
  * Also includes helpers for querying active positions via on-chain event history.
  */
 
-import { CONTRACTS, ABIS, DECIMALS, getActiveChainKey, getDeployment } from './config.js?v=3.34';
-import { readHub, writeHub, readWsxmr, writeWsxmr, getUserAddress, getPublicClient, getWalletClient } from './viemClient.js?v=3.34';
+import { CONTRACTS, ABIS, DECIMALS, getActiveChainKey, getDeployment } from './config.js?v=3.41';
+import { readHub, writeHub, readWsxmr, writeWsxmr, getUserAddress, getPublicClient, getWalletClient } from './viemClient.js?v=3.41';
 import { formatUnits, parseUnits, parseAbi, decodeEventLog, toEventSelector, encodeFunctionData, decodeFunctionResult, keccak256, encodeAbiParameters, toHex } from 'https://esm.sh/viem@2.7.0';
 
 // Co-LP event signatures — a single eth_getLogs query matches all three by
@@ -76,18 +76,44 @@ export class CoLPFlow {
         console.log('✅ Oracle prices updated for Co-LP');
     }
 
-    async userOpenCoLP(lpVault, wsxmrAmount, deadline) {
+    async userOpenCoLP(lpVault, wsxmrAmount, deadline, onStep) {
+        const step = typeof onStep === 'function' ? onStep : () => {};
         // Push fresh prices first — getCoLPCapacity and userOpenCoLP both need them
+        let priceErr = null;
         try {
+            step('Step 1 of 3: Refreshing oracle prices — approve the "updateOraclePrices" transaction in your wallet…');
             await this.updatePrices();
-        } catch (priceErr) {
-            console.warn('⚠️ Could not update oracle prices:', priceErr.message);
-            console.log('ℹ️ Continuing anyway — transaction will revert if prices are stale');
+            step('Step 1 of 3: Oracle prices refreshed ✓');
+        } catch (err) {
+            priceErr = err;
+            console.warn('⚠️ Could not update oracle prices:', err.message);
+        }
+
+        // The push failing is only fatal if on-chain prices are actually
+        // stale (>120s → both userOpenCoLP and getCoLPCapacity revert
+        // StalePrice). Check now and surface a clear error instead of the
+        // raw contract revert downstream.
+        try {
+            await Promise.all([
+                readHub('getXmrPriceWithAge', [120]),
+                readHub('getCollateralPriceWithAge', [120]),
+            ]);
+        } catch (staleErr) {
+            const isStale = staleErr.message?.includes('StalePrice') || staleErr.message?.includes('0x19abf40e');
+            if (isStale) {
+                throw new Error(
+                    'Oracle price refresh did not land and on-chain prices are stale (>2 min). ' +
+                    'Approve the updateOraclePrices transaction in your wallet and retry.' +
+                    (priceErr ? ` (Refresh failed: ${priceErr.message})` : '')
+                );
+            }
+            console.warn('⚠️ Could not verify oracle freshness — continuing:', staleErr.message);
         }
 
         const amount = parseUnits(wsxmrAmount, DECIMALS.wsXMR);
 
         // Run pre-flight diagnostics
+        step('Step 2 of 3: Checking vault capacity, balance and allowance…');
         const preflight = await this.preflightUserOpenCoLP(lpVault, amount);
         if (!preflight.ok) {
             throw new Error(`Co-LP preflight failed:\n${preflight.issues.join('\n')}`);
@@ -96,10 +122,13 @@ export class CoLPFlow {
         // Check allowance before approving to avoid unnecessary txs
         const currentAllowance = await this.getWsxmrAllowance();
         if (currentAllowance < amount) {
+            step('Step 2 of 3: Approving wsXMR spend — approve the "approve" transaction in your wallet…');
             await writeWsxmr('approve', [CONTRACTS.hub, amount]);
+            step('Step 2 of 3: wsXMR spend approved ✓');
         }
 
         // userOpenCoLP mints a UniV3 NFT — needs high gas limit
+        step('Step 3 of 3: Opening Co-LP position — approve the "userOpenCoLP" transaction in your wallet…');
         const receipt = await writeHub('userOpenCoLP', [lpVault, amount, BigInt(deadline)], 0n, 2000000n);
         console.log('Co-LP position opened, tx:', receipt.transactionHash);
 
@@ -118,12 +147,15 @@ export class CoLPFlow {
      * @param {number} deadline - Unix timestamp deadline
      * @returns {Promise<Object>} transaction receipt
      */
-    async unwindCoLP(tokenId, deadline) {
+    async unwindCoLP(tokenId, deadline, onStep) {
+        const step = typeof onStep === 'function' ? onStep : () => {};
         // Push fresh prices first — unwind reads oracle for tick calculations
         let pricesPushed = false;
         try {
+            step('Step 1 of 2: Refreshing oracle prices — approve the "updateOraclePrices" transaction in your wallet…');
             await this.updatePrices();
             pricesPushed = true;
+            step('Step 1 of 2: Oracle prices refreshed ✓');
         } catch (priceErr) {
             console.warn('⚠️ Could not update oracle prices:', priceErr.message);
         }
@@ -147,6 +179,7 @@ export class CoLPFlow {
             }
         }
 
+        step('Step 2 of 2: Closing Co-LP position — approve the "unwindCoLP" transaction in your wallet…');
         const receipt = await writeHub('unwindCoLP', [BigInt(tokenId), BigInt(deadline)], 0n, 2000000n);
         console.log('Co-LP position unwound, tx:', receipt.transactionHash);
         return receipt;
@@ -274,10 +307,20 @@ export class CoLPFlow {
             if (slot0[0] === 0n) blockers.push('Uniswap V3 pool is not initialized (sqrtPriceX96 = 0)');
 
             // 4. Capacity
-            const capacity = await this.getCoLPCapacity(lpVault);
-            data.capacity = capacity.toString();
-            if (capacity === 0n) blockers.push('Co-LP capacity is 0 (vault has no idle collateral)');
-            if (capacity < amount) blockers.push(`Co-LP capacity (${capacity}) < requested amount (${amount})`);
+            try {
+                const capacity = await this.getCoLPCapacity(lpVault);
+                data.capacity = capacity.toString();
+                if (capacity === 0n) blockers.push('Co-LP capacity is 0 (vault has no idle collateral)');
+                if (capacity < amount) blockers.push(`Co-LP capacity (${capacity}) < requested amount (${amount})`);
+            } catch (capErr) {
+                const isStale = capErr.message?.includes('StalePrice') || capErr.message?.includes('0x19abf40e');
+                if (isStale) {
+                    blockers.push('On-chain oracle prices are stale (>2 min) — the price-refresh transaction must confirm before opening a position');
+                    data.capacity = 'stale-oracle';
+                } else {
+                    throw capErr;
+                }
+            }
 
             // 5. User balance
             const balance = await this.getWsxmrBalance();
@@ -501,7 +544,7 @@ export class CoLPFlow {
             this._saveScanCache(cache.events.concat(freshEvents), Number(scannedTo) + 1);
         };
 
-        const { getLogsChunked } = await import('./viemClient.js?v=3.34');
+        const { getLogsChunked } = await import('./viemClient.js?v=3.41');
         try {
             await getLogsChunked({
                 address: CONTRACTS.hub,

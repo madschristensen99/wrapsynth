@@ -306,6 +306,17 @@ lp-server-js/monero-wallets-recover/
 # Monero wallet RPC logs
 lp-server-js/monero-wallet-rpc.log*
 
+# Internal keeper/arb tooling (not for public release)
+lp-server-js/pegBot.js
+lp-server-js/pegBot.base.js
+lp-server-js/pegBot.robinhood.js
+
+# Debug scratch scripts
+lp-server-js/trace*.mjs
+
+# Deposit wallet files at repo root (contains private keys)
+/monero-wallets-deposit/
+
 # LP secrets (contains private keys, commitments)
 lp-server-js/lp-secrets.json
 lp-server-js/lp-burn-secrets.json

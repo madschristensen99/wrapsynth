@@ -9,6 +9,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '../../.env') }
 const { ethers } = require('ethers');
 const { WrapperBuilder } = require('@redstone-finance/evm-connector');
 const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
+const { redstoneGatewayUrls } = require('./redstoneGateway');
 const { HUB_ADDRESS, WSXMR_ADDRESS, QQQB_ADDRESS, STATA_ADDRESS, ED25519_HELPER, RPC_URL } = require('./deploymentConfig.bnb');
 
 function wrapWithRedStone(contract) {
@@ -17,7 +18,8 @@ function wrapWithRedStone(contract) {
         dataServiceId: 'redstone-primary-prod',
         uniqueSignersCount: 3,
         dataPackagesIds: ['XMR'], // BNB collateral price is on-chain TWAP, not a pushed feed
-        authorizedSigners
+        authorizedSigners,
+        urls: redstoneGatewayUrls()
     });
 }
 

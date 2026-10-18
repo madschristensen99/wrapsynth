@@ -11,7 +11,8 @@ WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Us
 ## 🚀 Status: Multi-chain rollout in progress
 
 - ✅ **Live on BNB Chain** — deployed, verified on BscScan, and exercised end-to-end on mainnet (mint → co-LP → pool swap → burn)
-- ✅ Full hub + facet system built and fork-tested on **Base** and **Robinhood Chain** (deployments queued)
+- ✅ **Live on Base** — deployed, verified on BaseScan, and exercised end-to-end on mainnet (mint → burn → co-LP open/unwind → pool swaps)
+- ✅ **Live on Robinhood Chain** — deployed, verified on robin.etherscan.io, and exercised end-to-end on mainnet (mint → burn → co-LP open/unwind → pool swaps)
 - ✅ Complete mint → trade → burn cycle executed end-to-end on mainnet (former HyperEVM deployment)
 - ✅ Two rounds of security review completed; all critical findings resolved (see [Security](#-security))
 - ✅ 633-line solvency invariant test suite + audit regression suite, replicated per chain (~900 fork tests)
@@ -43,6 +44,36 @@ Deployed at block `128040249`. All contracts verified on BscScan; deployer power
 | CoLPFacet | [`0x8e3EF1e28262E351EB066374df1bEd36CC704dDA`](https://bscscan.com/address/0x8e3EF1e28262E351EB066374df1bEd36CC704dDA) |
 
 Machine-readable manifest: [`frontend/deployment.bnb.json`](./frontend/deployment.bnb.json) · [`ethereum/deployments/bnb-deployment.json`](./ethereum/deployments/bnb-deployment.json)
+</details>
+
+### Live: Base (ChainID 8453)
+
+Deployed at block `52775153`. All contracts verified on BaseScan; deployer powers permanently locked. Exercised end-to-end on mainnet: mint → burn round-trip, co-LP open + unwind (position `6297447` left live seeding the pool), and swaps through Uniswap SwapRouter02. Collateral is **cbBTC**; the vault is funded and active.
+
+| Contract | Address |
+|---|---|
+| wsXMR Token | [`0x9E50B436901A573DC4f0676150B282135f0C0623`](https://basescan.org/address/0x9E50B436901A573DC4f0676150B282135f0C0623) |
+| wsXmrHub | [`0xF22f1550829E1413f1bc538Be419071728DD53b8`](https://basescan.org/address/0xF22f1550829E1413f1bc538Be419071728DD53b8) |
+| Liquidity Router | [`0x53E46B60D79d33D031A0e222029A382146d5a15F`](https://basescan.org/address/0x53E46B60D79d33D031A0e222029A382146d5a15F) |
+| StataCbBTC (collateral share token) | [`0x64f05A6c0E19Fe7Ae76Ca88740D63EA069A5CA28`](https://basescan.org/address/0x64f05A6c0E19Fe7Ae76Ca88740D63EA069A5CA28) |
+| wsXMR/cbBTC Uniswap V3 Pool (0.05%) | [`0xEac27935Dc31AF9215822505174404c38c5A3FEc`](https://basescan.org/address/0xEac27935Dc31AF9215822505174404c38c5A3FEc) |
+| Ed25519Helper | [`0xA1b9115450c3e3dCAD11c04Cf9Bf4092335B3A64`](https://basescan.org/address/0xA1b9115450c3e3dCAD11c04Cf9Bf4092335B3A64) |
+| SwapHelper | [`0x313166bb40927D94e969c51Af227bc22F30df6D2`](https://basescan.org/address/0x313166bb40927D94e969c51Af227bc22F30df6D2) |
+
+<details>
+<summary>Facet addresses</summary>
+
+| Facet | Address |
+|---|---|
+| BaseOracleFacet | [`0x147F829Fa732811A0f54E50310eCB71218B4511a`](https://basescan.org/address/0x147F829Fa732811A0f54E50310eCB71218B4511a) |
+| VaultFacet | [`0x97166ED3478759199442BFc6570F386884b4917B`](https://basescan.org/address/0x97166ED3478759199442BFc6570F386884b4917B) |
+| MintFacet | [`0xBfCDA75903920cDe32F0B17eD1a57974Bab4bc66`](https://basescan.org/address/0xBfCDA75903920cDe32F0B17eD1a57974Bab4bc66) |
+| BurnFacet | [`0xAa32790EF174Db5457AdF7c268fEa4Bc527eB140`](https://basescan.org/address/0xAa32790EF174Db5457AdF7c268fEa4Bc527eB140) |
+| LiquidationFacet | [`0x7c7BD2D57Db2C08F39d3050fabC002593183fF69`](https://basescan.org/address/0x7c7BD2D57Db2C08F39d3050fabC002593183fF69) |
+| YieldFacet | [`0xF1fBBb13004410dCA48360872004870B6C85a214`](https://basescan.org/address/0xF1fBBb13004410dCA48360872004870B6C85a214) |
+| CoLPFacet | [`0xA6b4F4Ea557e2f7F2f23F32EDA9D17aB7F48dd49`](https://basescan.org/address/0xA6b4F4Ea557e2f7F2f23F32EDA9D17aB7F48dd49) |
+
+Machine-readable manifest: [`frontend/deployment.base.json`](./frontend/deployment.base.json) · [`ethereum/deployments/base-deployment.json`](./ethereum/deployments/base-deployment.json)
 </details>
 
 ### Deprecated: former HyperEVM deployment (ChainID 999)
@@ -252,8 +283,8 @@ The strategy is parallel collateral experiments across chains — deploy everywh
 | Chain | Collateral | Collateral type | Status |
 |---|---|---|---|
 | BNB Chain | QQQB (bStocks tokenized Nasdaq) | Tokenized equity | ✅ **Live** — deployed, verified, end-to-end tested on mainnet |
-| Base | cbBTC (Coinbase Wrapped BTC) | Custodial wrapped asset | ✅ Built + fork-tested, queued after BNB |
-| Robinhood Chain | SPY (Robinhood tokenized S&P 500) | Tokenized equity | ✅ Built + fork-tested, queued after Base |
+| Base | cbBTC (Coinbase Wrapped BTC) | Custodial wrapped asset | ✅ **Live** — deployed, verified, end-to-end tested on mainnet |
+| Robinhood Chain | SPY (Robinhood tokenized S&P 500) | Tokenized equity | ✅ **Live** — deployed, verified, end-to-end tested on mainnet |
 | Solana | Native SOL | Maximal censorship resistance — no issuer | 🔄 In development |
 | HyperEVM | sUSDe (HyperLend) | Yield-bearing stablecoin | ⛔ Deprecated — see [Hyperliquid risks](./docs/HYPERLIQUID_RISKS.md) |
 | Gnosis | sDAI | Yield-bearing stablecoin | ⛔ Beta (superseded) |
