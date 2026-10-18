@@ -281,7 +281,9 @@ async function contractBlockNumber(ctx) {
   if (!ctx.usesL1BlockNumber) return ctx.provider.getBlockNumber();
   const b = await ctx.provider.send('eth_getBlockByNumber', ['latest', false]);
   if (b && b.l1BlockNumber) return parseInt(b.l1BlockNumber, 16);
-  return ctx.provider.getBlockNumber();
+  // Never fall back to the L2 head — it sits ~66M blocks past every L1
+  // deadline and would mark live requests expired. Fail so callers retry.
+  throw new Error('l1BlockNumber unavailable on latest block');
 }
 
 function loadJsonFile(file) {

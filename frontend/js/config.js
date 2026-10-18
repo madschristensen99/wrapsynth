@@ -128,7 +128,7 @@ export const CHAINS = {
             decimals: 18,
             shareDecimals: 18,
             name: 'SPDR S&P 500 (Robinhood Token)',
-            icon: null,
+            icon: 'assets/tokens/spy.png',
             address: '0x117cc2133c37B721F49dE2A7a74833232B3B4C0C',
             whatItIs: 'Robinhood stock token tracking SPDR S&P 500 (RH Assets, Jersey)',
             note: 'Robinhood stock tokens are not offered to US persons — check your jurisdiction.',

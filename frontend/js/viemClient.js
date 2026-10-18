@@ -2,7 +2,7 @@
 // Uses createPublicClient and createWalletClient as required
 
 import { createPublicClient, createWalletClient, custom, http, fallback, parseAbi, defineChain } from 'https://esm.sh/viem@2.7.0';
-import { CHAINS, CONTRACTS, ABIS, RAW_ABIS, getActiveChain, getActiveChainKey } from './config.js?v=3.41';
+import { CHAINS, CONTRACTS, ABIS, RAW_ABIS, getActiveChain, getActiveChainKey } from './config.js?v=3.49';
 
 // viem chain definitions, built lazily from the CHAINS registry so every
 // supported chain (including ones viem doesn't ship built-in) works.
@@ -721,13 +721,18 @@ export async function getBlockNumber() {
 export async function getContractBlockNumber() {
     const client = getPublicClient();
     if (!getActiveChain()?.usesL1BlockNumber) return await client.getBlockNumber();
-    const block = await client.request({
-        method: 'eth_getBlockByNumber',
-        params: ['latest', false]
-    });
-    const l1 = block?.l1BlockNumber;
-    if (!l1) return await client.getBlockNumber(); // non-Orbit fallback
-    return BigInt(l1);
+    for (let i = 0; i < 2; i++) {
+        const block = await client.request({
+            method: 'eth_getBlockByNumber',
+            params: ['latest', false]
+        });
+        const l1 = block?.l1BlockNumber;
+        if (l1) return BigInt(l1);
+    }
+    // Never fall back to the L2 head — its ~92M domain sits past every L1
+    // deadline and would make live requests look expired. Throw instead so
+    // callers skip this tick and retry.
+    throw new Error('l1BlockNumber unavailable on latest block');
 }
 
 /**

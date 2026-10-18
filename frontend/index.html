@@ -216,6 +216,42 @@
   .met .k{font-size:13px;color:var(--fg);margin-top:8px;font-weight:500}
   .met .s{font-size:12px;color:var(--muted);margin-top:2px}
 
+  /* PER-CHAIN LIVE CARDS */
+  .chain-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:16px}
+  @media(max-width:900px){.chain-grid{grid-template-columns:1fr}}
+  .cchain{background:linear-gradient(135deg,rgba(255,255,255,.02),rgba(255,255,255,.005));
+    border:1px solid var(--line-2);border-radius:16px;padding:20px 20px 16px;
+    transition:border-color .2s,box-shadow .2s;display:flex;flex-direction:column}
+  .cchain:hover{border-color:rgba(62,252,224,.3);box-shadow:0 0 32px rgba(62,252,224,.06)}
+  .cchain-head{display:flex;align-items:center;gap:9px;font-family:'Plus Jakarta Sans';
+    font-weight:600;font-size:15px}
+  .cchain-head .badge{font-family:'JetBrains Mono';font-size:10px;color:var(--teal);
+    border:1px solid rgba(62,252,224,.3);border-radius:5px;padding:2px 6px;
+    background:rgba(62,252,224,.1);margin-left:auto}
+  .cprice{display:flex;align-items:baseline;gap:10px;margin-top:12px}
+  .cprice .p{font-family:'JetBrains Mono';font-weight:600;font-size:26px;letter-spacing:-.02em}
+  .prem{font-family:'JetBrains Mono';font-size:11px;border-radius:5px;padding:2px 7px;
+    border:1px solid var(--line);color:var(--muted)}
+  .prem.on{color:var(--teal);border-color:rgba(62,252,224,.35);background:rgba(62,252,224,.07)}
+  .prem.hi{color:var(--amber);border-color:rgba(255,217,94,.35);background:rgba(255,217,94,.07)}
+  .prem.lo{color:var(--green);border-color:rgba(74,240,170,.35);background:rgba(74,240,170,.07)}
+  .crows{margin-top:14px;border-top:1px solid var(--line-2)}
+  .crow{display:flex;justify-content:space-between;align-items:center;
+    padding:7px 0;border-bottom:1px solid var(--line-2);font-size:12.5px}
+  .crow span{color:var(--muted)}
+  .crow b{font-family:'JetBrains Mono';font-weight:500;font-size:12.5px}
+  .cneed{margin-top:12px;font-size:11.5px;color:var(--faint);line-height:1.5}
+  .clinks{display:flex;gap:14px;margin-top:auto;padding-top:14px;
+    font-family:'JetBrains Mono';font-size:12.5px}
+  .clinks a{color:var(--muted);text-decoration:none;transition:color .15s}
+  .clinks a:hover{color:var(--teal);text-shadow:0 0 12px rgba(62,252,224,.4)}
+  .clinks a:last-child{color:var(--xmr)}
+  .clinks a:last-child:hover{text-shadow:0 0 12px rgba(255,122,61,.4)}
+  .cchain.soon{border-style:dashed;opacity:.55}
+  .cchain.soon:hover{border-color:rgba(255,217,94,.3)}
+  .soon-badge{color:var(--amber)!important;border-color:rgba(255,217,94,.35)!important;
+    background:rgba(255,217,94,.08)!important}
+
   /* FERRY DOCK CARTOON */
   .ferry-dock-wrap{display:flex;gap:32px;align-items:center;margin-top:24px;flex-wrap:wrap}
   .ferry-dock-ill{flex:0 0 460px;width:460px;max-width:100%}
@@ -427,7 +463,7 @@
     </div>
     <div class="hero-stats rv r4">
       <div class="hs"><div class="n"><span class="o">&gt;200%</span></div><div class="k">Overcollateralized</div></div>
-      <div class="hs"><div class="n">24h max</div><div class="k">Atomic swap timeout</div></div>
+      <div class="hs"><div class="n" id="stat-chains">--</div><div class="k">Chains live</div></div>
       <div class="hs">
         <div class="n" style="display:flex;align-items:center;gap:8px;font-size:18px">
           <a href="https://app.pyth.com/explore/Crypto.XMR%2FUSD?returnUrl=%2Fexplore%3Fsearch%3Dxmr%26state%3Dstable" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center">
@@ -725,7 +761,7 @@
         <div class="tl-panel milestone" id="tlp-8"><div class="tl-panel-card">
           <div class="tl-year">2025 — 2026</div>
           <div class="tl-title">Monero survives</div>
-          <div class="tl-body">On-chain transaction volumes <b>increase</b>, stabilizing above 2020–2021 levels. XMR near <b>$797</b>. Liquidity doesn't disappear — it reroutes. Atomic swaps, DEXs, and wrapped instruments become the new infrastructure.</div>
+          <div class="tl-body">On-chain transaction volumes <b>increase</b>, stabilizing above 2020–2021 levels. XMR near <b id="tl-xmr-price">$797</b>. Liquidity doesn't disappear — it reroutes. Atomic swaps, DEXs, and wrapped instruments become the new infrastructure.</div>
         </div></div>
         <div class="tl-panel resolution" id="tlp-9"><div class="tl-panel-card">
           <div class="tl-year">Today</div>
@@ -743,8 +779,8 @@
     <span class="eyebrow-sm">Smart Contracts</span>
     <h2 class="sec-h">Deployments</h2>
     <p class="sec-sub">Each chain runs an independent wsXMR deployment with its own collateral asset — no bridging. Verified contracts per chain.</p>
-    <div class="ctr-grid" id="ctr-grid">
-      <div class="ctr"><div class="addr">Loading…</div></div>
+    <div class="chain-grid" id="chain-live">
+      <div class="cchain"><div class="cneed">Loading…</div></div>
     </div>
   </div>
 </section>
@@ -894,124 +930,6 @@ function copyAddr(btn){
   }).catch(()=>{});
 }
 
-/* fetch live protocol stats — aggregated across every deployed chain */
-(async function fetchProtocolStats(){
-  try {
-    const {createPublicClient,http,formatUnits,parseAbi,fallback}=await import('https://esm.sh/viem@2.21.54');
-    const {CHAINS,loadDeployment}=await import('./js/config.js?v=3.41');
-
-    const getVaultAbi=[{
-      name:'getVault',type:'function',stateMutability:'view',
-      inputs:[{name:'lpAddress',type:'address'}],
-      outputs:[{type:'tuple',components:[
-        {name:'lpAddress',type:'address'},{name:'collateralShares',type:'uint256'},
-        {name:'lockedCollateral',type:'uint256'},{name:'normalizedDebt',type:'uint256'},
-        {name:'pendingDebt',type:'uint256'},{name:'maxMintBps',type:'uint16'},
-        {name:'mintGriefingDeposit',type:'uint256'},{name:'mintFeeBps',type:'uint16'},
-        {name:'burnRewardBps',type:'uint16'},{name:'liquidationNonce',type:'uint256'},
-        {name:'mintNonce',type:'uint256'},{name:'minBurnAmount',type:'uint256'},
-        {name:'active',type:'bool'},{name:'deployedUSDeShares',type:'uint256'},
-        {name:'maxCoLPRangeBps',type:'uint16'},{name:'mintTimeoutBlocks',type:'uint256'},
-        {name:'burnTimeoutBlocks',type:'uint256'},{name:'pendingMintCount',type:'uint256'}
-      ]}]
-    }];
-
-    let totalSupply=0, totalVaults=0, tvlUSD=0, debtValueUSD=0;
-    const chainResults=[];
-    const grid=document.getElementById('ctr-grid');
-    if(grid)grid.innerHTML='';
-
-    for(const key of Object.keys(CHAINS)){
-      const cfg=CHAINS[key];
-      const D=await loadDeployment(key).catch(()=>null);
-      if(!D)continue;
-      const DC=D.contracts||{};
-      const hub=DC.wsXmrHub, wsXMR=DC.wsXMR;
-      if(!hub||!wsXMR)continue;
-
-      const client=createPublicClient({
-        chain:{id:cfg.chainId,name:cfg.name,nativeCurrency:cfg.nativeCurrency,rpcUrls:{default:{http:cfg.rpcUrls}}},
-        transport:fallback(cfg.rpcUrls.map(u=>http(u)))
-      });
-
-      // Contract cards for this chain
-      if(grid){
-        const pool=D.pool&&D.pool.uniswapV3Pool;
-        grid.innerHTML+=`
-          <div class="ctr">
-            <div class="lab">${cfg.name} <span class="badge">wsXMR ⇄ ${cfg.collateral.symbol}</span></div>
-            <div style="font-size:11.5px;color:var(--muted);margin-top:6px">${cfg.collateral.whatItIs || cfg.collateral.name} · gas: ${cfg.nativeCurrency.symbol}</div>
-            <div class="addr" data-addr="${hub}" title="wsXmrHub">${hub.slice(0,10)}…${hub.slice(-8)}</div>
-            <div class="acts">
-              <button onclick="copyAddr(this)">Copy hub</button>
-              <a href="${cfg.explorer}/address/${hub}" target="_blank">Hub ↗</a>
-              <a href="${cfg.explorer}/token/${wsXMR}" target="_blank">wsXMR ↗</a>
-              ${pool?`<a href="${cfg.dexscreenerSlug?`https://dexscreener.com/${cfg.dexscreenerSlug}/${pool}`:`${cfg.explorer}/address/${pool}`}" target="_blank">Pool ↗</a>`:''}
-            </div>
-          </div>`;
-      }
-
-      // Stats (best-effort per chain)
-      try{
-        const [supply,vaultCount]=await Promise.all([
-          client.readContract({address:wsXMR,abi:parseAbi(['function totalSupply() external view returns (uint256)']),functionName:'totalSupply'}),
-          client.readContract({address:hub,abi:parseAbi(['function getVaultCount() external view returns (uint256)']),functionName:'getVaultCount'})
-        ]);
-        totalSupply+=parseFloat(formatUnits(supply,8));
-        totalVaults+=Number(vaultCount);
-
-        let chainCollateral=0n, chainDebt=0n;
-        for(let i=0;i<Number(vaultCount);i++){
-          const vaultAddr=await client.readContract({address:hub,abi:parseAbi(['function vaultList(uint256) external view returns (address)']),functionName:'vaultList',args:[BigInt(i)]});
-          const vault=await client.readContract({address:hub,abi:getVaultAbi,functionName:'getVault',args:[vaultAddr]});
-          const vaultDebt=await client.readContract({address:hub,abi:parseAbi(['function getVaultDebt(address) external view returns (uint256)']),functionName:'getVaultDebt',args:[vaultAddr]});
-          chainCollateral+=vault.collateralShares;
-          chainDebt+=vaultDebt;
-        }
-
-        let collateralPrice=0;
-        try{
-          const raw=await client.readContract({address:hub,abi:parseAbi(['function getCollateralPrice() external view returns (uint256)']),functionName:'getCollateralPrice'});
-          collateralPrice=parseFloat(formatUnits(raw,18));
-        }catch(e){console.warn(`[Stats] ${key}: collateral price unavailable`);}
-
-        let xmrPrice=0;
-        try{
-          const raw=await client.readContract({address:hub,abi:parseAbi(['function getXmrPrice() external view returns (uint256)']),functionName:'getXmrPrice'});
-          xmrPrice=parseFloat(formatUnits(raw,18));
-        }catch(e){}
-
-        tvlUSD+=parseFloat(formatUnits(chainCollateral,18))*collateralPrice;
-        debtValueUSD+=parseFloat(formatUnits(chainDebt,8))*xmrPrice;
-      }catch(e){console.warn(`[Stats] ${key} read failed:`,e);}
-    }
-
-    // XMR price fallback (needed for CR even if all oracle reads were stale)
-    if(debtValueUSD>0&&tvlUSD>0){/* have prices already */}else{
-      try{
-        const res=await fetch('https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd');
-        const data=await res.json();
-        // only used for the ratio display if oracle reads all failed — applied below
-        if(data.monero?.usd&&debtValueUSD===0){/* no debt anyway */}
-      }catch(e){}
-    }
-
-    const supplyEl=document.getElementById('stat-supply');
-    if(supplyEl)supplyEl.textContent=totalSupply<0.01?totalSupply.toFixed(8):totalSupply.toFixed(3);
-    const tvlEl=document.getElementById('stat-tvl');
-    if(tvlEl)tvlEl.textContent=tvlUSD>=1e6?`$${(tvlUSD/1e6).toFixed(2)}M`:tvlUSD>=1e3?`$${(tvlUSD/1e3).toFixed(1)}K`:`$${tvlUSD.toFixed(2)}`;
-    const vaultsEl=document.getElementById('stat-active-vaults');
-    if(vaultsEl)vaultsEl.textContent=String(totalVaults);
-    const crEl=document.getElementById('stat-collateral-ratio');
-    if(crEl){
-      const cr=debtValueUSD>0?(tvlUSD/debtValueUSD)*100:0;
-      crEl.textContent=debtValueUSD===0?'—':(cr>9999?'>9,999%':`${Math.round(cr)}%`);
-    }
-  } catch(err){
-    console.warn('Failed to fetch protocol stats:',err);
-  }
-})();
-
 /* Sequence diagrams: tab switching + SVG render */
 (function(){
   var diagrams=[
@@ -1083,7 +1001,6 @@ function copyAddr(btn){
     {
       desc:"Excess collateral yield from vaults accrues in an on-chain war chest. When XMR dips below its Exponential Moving Average (EMA), anyone can trigger a buy-and-burn \u2014 the chest redeems collateral, swaps it for wsXMR on the chain's V3 DEX, and burns it. This reduces outstanding debt and frees up collateral across all vaults. The keeper earns a 2% reward (queued in collateral shares) for calling the function. A 24-hour cooldown prevents over-triggering. Reverts if pending READY mints exist, war chest is empty, or swap slippage exceeds 1%.",
       tags:["Collateral yield","Redeem → collateral → wsXMR","Dip-triggered","2% keeper reward","24h cooldown","PendingMintLock guard","1% slippage cap"],
-      tags:["Collateral yield","Redeem \u2192 collateral \u2192 wsXMR","Dip-triggered","2% keeper reward","24h cooldown","PendingMintLock guard","1% slippage cap"],
       actors:[
         {name:"Keeper",color:"xmr"},
         {name:"VaultManager",color:"teal"},
@@ -1333,5 +1250,8 @@ function copyDonateAddr(){
   });
 }
 </script>
+
+<!-- live stats, per-chain cards, contract cards, timeline price -->
+<script type="module" src="./js/landing.js?v=3.50"></script>
 </body>
 </html>

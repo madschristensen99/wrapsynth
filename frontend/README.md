@@ -85,10 +85,6 @@ User Browser
   │                      ├── Computes shared deposit addresses (user + LP keys)
   │                      └── Sweeps XMR from shared address after finalization
   │
-  ├── lpClient.js ──→ LP Server (lp-server-js, default localhost:3001)
-  │                     ├── Notifies LP of new mint/burn requests
-  │                     └── Polls mint/burn status
-  │
   └── redstoneWrapper.js ──→ RedStone API + on-chain oracle update
                              ├── fetchRedStonePrices() → off-chain price display
                              └── updateOraclePrices()  → on-chain price push
@@ -137,12 +133,11 @@ Manifest structure (per chain):
 
 ## LP Server Integration
 
-The frontend communicates with the LP server (`lp-server-js/`) for:
-- Notifying the LP when a new mint or burn is initiated
-- Polling mint/burn processing status
-- Fetching quotes (fees, timeouts)
-
-The LP server URL defaults to `http://localhost:3001` and is configurable in `config.js` → `LP_SERVER_CONFIG`. See the [LP Server README](../lp-server-js/README.md) for API details.
+The frontend is fully on-chain — it makes **no calls to the LP server**. The
+LP server watches chain events independently (`lp-server-js/`); the frontend
+discovers mint/burn state by reading contracts directly and picks up LP keys
+and deposit addresses on-chain. There is no `LP_SERVER_CONFIG` and no
+`lpClient.js` — do not reintroduce them.
 
 ---
 
