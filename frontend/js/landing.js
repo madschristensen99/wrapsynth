@@ -11,7 +11,7 @@
 // that card to "--" rather than blanking the page. DexScreener responses
 // are cached in sessionStorage and refreshed every REFRESH_MS.
 
-import { CHAINS, loadDeployment } from './config.js?v=3.57';
+import { CHAINS, loadDeployment } from './config.js?v=3.58';
 
 const REFRESH_MS = 60_000;
 const DEX_CACHE_MS = 60_000;
@@ -79,6 +79,7 @@ async function fetchDex(slug, pool) {
 
 const poolSlot0Abi = 'function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 fee, uint8 unlocked)';
 const poolTokenAbi = 'function token0() view returns (address)';
+const poolToken1Abi = 'function token1() view returns (address)';
 const erc20ReadAbi = 'function balanceOf(address) view returns (uint256)';
 const erc20DecAbi = 'function decimals() view returns (uint8)';
 
@@ -90,12 +91,16 @@ async function readPoolOnChain(key, cfg, D) {
     if (!collUsd) return null;
     try {
         const { formatUnits, parseAbi } = await import('https://esm.sh/viem@2.21.54');
-        const poolAbi = parseAbi([poolSlot0Abi, poolTokenAbi]);
+        const poolAbi = parseAbi([poolSlot0Abi, poolTokenAbi, poolToken1Abi]);
         const tokenAbi = parseAbi([erc20ReadAbi, erc20DecAbi]);
-        const [slot, t0, t1, b0, b1, d0, d1] = await Promise.all([
+        // Resolve the pool first — the balance/decimals reads below target the
+        // resolved token addresses and can't be built in the same Promise.all.
+        const [slot, t0, t1] = await Promise.all([
             client.readContract({ address: pool, abi: poolAbi, functionName: 'slot0' }),
             client.readContract({ address: pool, abi: poolAbi, functionName: 'token0' }),
             client.readContract({ address: pool, abi: poolAbi, functionName: 'token1' }),
+        ]);
+        const [b0, b1, d0, d1] = await Promise.all([
             client.readContract({ address: t0, abi: tokenAbi, functionName: 'balanceOf', args: [pool] }),
             client.readContract({ address: t1, abi: tokenAbi, functionName: 'balanceOf', args: [pool] }),
             client.readContract({ address: t0, abi: tokenAbi, functionName: 'decimals' }),

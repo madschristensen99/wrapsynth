@@ -12,7 +12,7 @@ import {
     writeHub,
     onAccountsChanged,
     onChainChanged
-} from './viemClient.js?v=3.57';
+} from './viemClient.js?v=3.58';
 import { formatUnits } from 'https://esm.sh/viem@2.7.0';
 
 import { 
@@ -56,22 +56,22 @@ import {
     renderLPDetailCard,
     initLPDetailToggles,
     initVaultPickers
-} from './ui.js?v=3.57';
+} from './ui.js?v=3.58';
 
-import { MintFlow } from './mintFlow.js?v=3.57';
-import { stopTimers } from './mintFlowTimers.js?v=3.57';
-import { BurnFlow } from './burnFlow.js?v=3.57';
-import { getLPPanel } from './lpPanel.js?v=3.57';
-import { getPoolFlow } from './poolFlow.js?v=3.57';
-import { getCoLPFlow } from './coLPFlow.js?v=3.57';
-import { getDashboard } from './dashboard.js?v=3.57';
-import { hasActiveSwap, loadActiveSwap, loadActiveSwaps, saveActiveSwap, addOrUpdateActiveSwap, removeActiveSwap, clearActiveSwap, setSwapsArray, getActiveSwapByRequestId, saveToHistory, getSwapHistory } from './storage.js?v=3.57';
-import { CONTRACTS, SWAP_CONFIG, CHAINS, ASSET, getActiveChain, setActiveChain, chainKeyForId } from './config.js?v=3.57';
-import { bootChain, initChainPicker } from './chainPicker.js?v=3.57';
-import { refreshFundingPanels } from './fundingGuide.js?v=3.57';
-import { displaySwapHistory } from './swapHistory.js?v=3.57';
-import { loadRecentActivity, startActivityFeedWatcher } from './activityFeed.js?v=3.57';
-import { updateProtocolStats } from './protocolStats.js?v=3.57';
+import { MintFlow } from './mintFlow.js?v=3.58';
+import { stopTimers } from './mintFlowTimers.js?v=3.58';
+import { BurnFlow } from './burnFlow.js?v=3.58';
+import { getLPPanel } from './lpPanel.js?v=3.58';
+import { getPoolFlow } from './poolFlow.js?v=3.58';
+import { getCoLPFlow } from './coLPFlow.js?v=3.58';
+import { getDashboard } from './dashboard.js?v=3.58';
+import { hasActiveSwap, loadActiveSwap, loadActiveSwaps, saveActiveSwap, addOrUpdateActiveSwap, removeActiveSwap, clearActiveSwap, setSwapsArray, getActiveSwapByRequestId, saveToHistory, getSwapHistory } from './storage.js?v=3.58';
+import { CONTRACTS, SWAP_CONFIG, CHAINS, ASSET, getActiveChain, setActiveChain, chainKeyForId } from './config.js?v=3.58';
+import { bootChain, initChainPicker } from './chainPicker.js?v=3.58';
+import { refreshFundingPanels } from './fundingGuide.js?v=3.58';
+import { displaySwapHistory } from './swapHistory.js?v=3.58';
+import { loadRecentActivity, startActivityFeedWatcher } from './activityFeed.js?v=3.58';
+import { updateProtocolStats } from './protocolStats.js?v=3.58';
 
 // Global state
 let currentMintFlow = null;
@@ -173,8 +173,8 @@ const volumeScanCache = { lastBlock: null, mintEvents: [], burnEvents: [] };
  */
 async function fetch24hVolume() {
     try {
-        const { getPublicClient, getContractEventsChunked } = await import('./viemClient.js?v=3.57');
-        const { CONTRACTS, getDeployment } = await import('./config.js?v=3.57');
+        const { getPublicClient, getContractEventsChunked } = await import('./viemClient.js?v=3.58');
+        const { CONTRACTS, getDeployment } = await import('./config.js?v=3.58');
         const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
 
         const publicClient = getPublicClient();
@@ -506,7 +506,7 @@ async function handleBurnPercentage(event) {
     const feedback = document.getElementById('burn-percentage-feedback');
     
     // Get actual balance from contract
-    const { readWsxmr, getUserAddress } = await import('./viemClient.js?v=3.57');
+    const { readWsxmr, getUserAddress } = await import('./viemClient.js?v=3.58');
     const userAddress = getUserAddress();
     
     if (!userAddress) {
@@ -611,7 +611,7 @@ async function handleUpdatePrices() {
         }, 2000);
         
         console.log('✅ Oracle prices updated successfully');
-        const { showSuccessNotification } = await import('./ui.js?v=3.57');
+        const { showSuccessNotification } = await import('./ui.js?v=3.58');
         showSuccessNotification('Prices Updated', '<p>Oracle prices have been updated with latest RedStone data.</p>');
         
     } catch (error) {
@@ -622,7 +622,7 @@ async function handleUpdatePrices() {
             btn.disabled = false;
         }, 2000);
         
-        const { showErrorNotification } = await import('./ui.js?v=3.57');
+        const { showErrorNotification } = await import('./ui.js?v=3.58');
         showErrorNotification('Update Failed', `<p>Could not update oracle prices: ${error.message}</p>`);
     }
 }
@@ -632,7 +632,7 @@ async function handleUpdatePrices() {
  * account-scoped view (positions, balances, pending returns) resets cleanly.
  */
 async function handleDisconnectWallet() {
-    const { disconnectWallet } = await import('./viemClient.js?v=3.57');
+    const { disconnectWallet } = await import('./viemClient.js?v=3.58');
     await disconnectWallet();
     location.reload();
 }
@@ -703,7 +703,7 @@ function autoResumeSwap(swap) {
         // Pre-check: don't auto-resume if seed is missing
         // publicSpendKey has '0x' prefix (from toHex); keep it for correct lookup
         const pubKeyHex = swap.publicSpendKey;
-        import('./seedStorage.js?v=3.57').then(({ hasStoredSeed }) => {
+        import('./seedStorage.js?v=3.58').then(({ hasStoredSeed }) => {
             if (!hasStoredSeed(pubKeyHex)) {
                 console.log('Auto-resume skipped: seed not found for', swap.requestId.slice(0,10));
                 return;
@@ -782,7 +782,7 @@ async function handleAccountChange(newAddress) {
     } else {
         console.log('Account disconnected');
         // Try to silently reconnect before showing disconnected state
-        const { ensureConnected } = await import('./viemClient.js?v=3.57');
+        const { ensureConnected } = await import('./viemClient.js?v=3.58');
         const reconnected = await ensureConnected();
         if (reconnected) {
             console.log('Silently reconnected:', reconnected);
@@ -895,7 +895,7 @@ async function handleChainChange(chainId) {
         showError('Unsupported network', 'This wallet network isn\'t a Wrapsynth deployment. Pick a chain in the selector.');
         return;
     }
-    if (key !== (await import('./config.js?v=3.57')).getActiveChainKey()) {
+    if (key !== (await import('./config.js?v=3.58')).getActiveChainKey()) {
         try { await setActiveChain(key); } catch (e) { console.warn('chain switch failed:', e.message); }
         return; // wrapsynth:chainChanged -> reload
     }
@@ -968,7 +968,7 @@ async function checkForActiveSwapOnChain(userAddress) {
 
     try {
         // Fetch mint request IDs, burn request IDs, and current block number in parallel
-        const { getPublicClient } = await import('./viemClient.js?v=3.57');
+        const { getPublicClient } = await import('./viemClient.js?v=3.58');
         const publicClient = getPublicClient();
 
         console.log('[CHAIN CHECK] Fetching mint IDs, burn IDs, and block number in parallel for', userAddress);
@@ -981,7 +981,7 @@ async function checkForActiveSwapOnChain(userAddress) {
                 console.error('[CHAIN CHECK] getUserBurnRequests FAILED:', err.message);
                 return [];
             }),
-            import('./viemClient.js?v=3.57').then(m => m.getContractBlockNumber()).catch(err => {
+            import('./viemClient.js?v=3.58').then(m => m.getContractBlockNumber()).catch(err => {
                 console.error('[CHAIN CHECK] getBlockNumber FAILED:', err.message);
                 return 0n;
             }),
@@ -1305,7 +1305,7 @@ function renderCoLPPositions(positions) {
  */
 async function refreshCoLPBalance(prefetchedBalance) {
     try {
-        const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js?v=3.57');
+        const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js?v=3.58');
         const address = getUserAddress();
         const balanceEl = document.getElementById('co-lp-user-balance');
         if (address && balanceEl) {
@@ -1685,7 +1685,7 @@ async function handleResumeSwap(specificSwap) {
         // Ensure wallet is connected
         let address = getUserAddress();
         if (!address) {
-            const { ensureConnected } = await import('./viemClient.js?v=3.57');
+            const { ensureConnected } = await import('./viemClient.js?v=3.58');
             address = await ensureConnected();
             if (!address) {
                 await handleConnectWallet();
@@ -1761,8 +1761,8 @@ async function handleResumeSwap(specificSwap) {
 
         // Resume appropriate flow
         if (swap.type === 'mint') {
-            const { loadSeed, hasStoredSeed } = await import('./seedStorage.js?v=3.57');
-            const { getPhantomAgent } = await import('./phantomAgent.js?v=3.57');
+            const { loadSeed, hasStoredSeed } = await import('./seedStorage.js?v=3.58');
+            const { getPhantomAgent } = await import('./phantomAgent.js?v=3.58');
 
             // publicSpendKey from storage has '0x' prefix (from toHex in initiateOnEVM).
             // seedStorage.js uses the key as-is, so we must NOT strip the prefix.
@@ -1850,7 +1850,7 @@ function addClearButtonToSwapItem(requestId) {
     clearBtn.textContent = 'Clear Swap';
     clearBtn.style.cssText = 'padding: 0.25rem 0.75rem; font-size: 0.8rem; background: transparent; color: var(--text-secondary); border: 1px solid var(--border-color); margin-top: 0.25rem; align-self: flex-start;';
     clearBtn.onclick = async () => {
-        const { removeActiveSwap } = await import('./storage.js?v=3.57');
+        const { removeActiveSwap } = await import('./storage.js?v=3.58');
         removeActiveSwap(requestId);
         item.remove();
         const remaining = JSON.parse(localStorage.getItem('activeSwaps') || '[]');
@@ -1921,7 +1921,7 @@ function addSignToUnlockButton(requestId, publicSpendKey) {
         btn.disabled = true;
         btn.textContent = 'Unlocking...';
         try {
-            const { loadSeed } = await import('./seedStorage.js?v=3.57');
+            const { loadSeed } = await import('./seedStorage.js?v=3.58');
             const seed = await loadSeed(publicSpendKey);
             if (!seed) {
                 btn.disabled = false;
@@ -1954,8 +1954,8 @@ function addSignToUnlockButton(requestId, publicSpendKey) {
  */
 async function _deriveBurnUserSecret(swap) {
     try {
-        const { loadSeed } = await import('./seedStorage.js?v=3.57');
-        const { derivePerBurnKeySet } = await import('./seedManager.js?v=3.57');
+        const { loadSeed } = await import('./seedStorage.js?v=3.58');
+        const { derivePerBurnKeySet } = await import('./seedManager.js?v=3.58');
         const seed = await loadSeed(swap.publicSpendKey);
         let burnNonce = swap.burnNonce;
         if (burnNonce == null) {
@@ -1994,7 +1994,7 @@ async function handleResolveSwap(swap) {
         // PENDING mint: cancel on-chain to recover griefing deposit
         if (swap.type === 'mint' && (swap.state === 'awaiting-lp-key' || swap.state === 'evm-init' || swap.state === 'initiated' || swap.state === 'deposit' || swap.state === 'lp-verifying')) {
             console.log('Resolving stale mint on-chain:', swap.requestId);
-            const { readHub, writeHub } = await import('./viemClient.js?v=3.57');
+            const { readHub, writeHub } = await import('./viemClient.js?v=3.58');
             const mintReq = await readHub('getMintRequest', [swap.requestId]);
             const status = Number(mintReq.status);
             // MintStatus: 0=INVALID, 1=PENDING, 2=KEY_PROVIDED, 3=READY, 4=SECRET_REVEALED, 5=COMPLETED, 6=CANCELLED
@@ -2003,7 +2003,7 @@ async function handleResolveSwap(swap) {
                 showResumeSuccess(swap.requestId, 'Mint was already cancelled. Your griefing deposit has been claimed.');
             } else if (status === 1 || status === 2 || status === 3 || status === 4) {
                 // Check timeout before calling cancelMint to avoid TimeoutNotReached revert
-                const { getContractBlockNumber, getDeadlineBlockTimeSec } = await import('./viemClient.js?v=3.57');
+                const { getContractBlockNumber, getDeadlineBlockTimeSec } = await import('./viemClient.js?v=3.58');
                 const currentBlock = await getContractBlockNumber();
                 const timeout = mintReq.timeout;
                 if (currentBlock < timeout) {
@@ -2043,7 +2043,7 @@ async function handleResolveSwap(swap) {
         // REQUESTED burn: abort on-chain to recover wsXMR
         else if (swap.type === 'burn' && (swap.state === 'evm-request' || swap.state === 'lp-propose')) {
             console.log('Resolving stale burn on-chain:', swap.requestId);
-            const { getPublicClient, getWalletClient, getUserAddress } = await import('./viemClient.js?v=3.57');
+            const { getPublicClient, getWalletClient, getUserAddress } = await import('./viemClient.js?v=3.58');
             const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
             const publicClient = getPublicClient();
             const walletClient = getWalletClient();
@@ -2059,7 +2059,7 @@ async function handleResolveSwap(swap) {
             
             // Check burn request status and deadline before cancelling
             const burnReq = await readHub('getBurnRequest', [swap.requestId]);
-            const { getContractBlockNumber } = await import('./viemClient.js?v=3.57');
+            const { getContractBlockNumber } = await import('./viemClient.js?v=3.58');
             const currentBlock = await getContractBlockNumber();
             
             // BurnStatus: 0=INVALID,1=REQUESTED,2=PROPOSED,3=COMMITTED,4=COMPLETED,5=SLASHED,6=CANCELLED
@@ -2185,7 +2185,7 @@ async function handleResolveSwap(swap) {
         else if (swap.type === 'mint' && (swap.state === 'lp-ready' || swap.state === 'finalize')) {
             console.log('Mint is READY but secret is missing, trying cancel anyway:', swap.requestId);
             try {
-                const { writeHub } = await import('./viemClient.js?v=3.57');
+                const { writeHub } = await import('./viemClient.js?v=3.58');
                 const receipt = await writeHub('cancelMint', [swap.requestId, '0x0000000000000000000000000000000000000000000000000000000000000000']);
                 console.log('cancelMint tx:', receipt.transactionHash);
                 showResumeSuccess(swap.requestId, 'Mint cancelled. Your griefing deposit has been refunded.');
@@ -2247,7 +2247,7 @@ export async function loadVaults() {
         let totalCollateralWei = 0n;
 
         // Fire ALL independent reads in a single Promise.all — no sequential round-trips
-        const { getPublicClient } = await import('./viemClient.js?v=3.57');
+        const { getPublicClient } = await import('./viemClient.js?v=3.58');
         const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
         const publicClient = getPublicClient();
         const shareAbi = parseAbi(['function convertToAssets(uint256 shares) view returns (uint256)']);
@@ -2776,7 +2776,7 @@ async function updateMintBackingCollateral() {
         // Fetch fresh XMR price from oracle, fall back to CoinGecko cache, then vault cache
         let xmrPrice = 0;
         try {
-            const { readHub } = await import('./viemClient.js?v=3.57');
+            const { readHub } = await import('./viemClient.js?v=3.58');
             const xmrPriceWei = await readHub('getXmrPrice');
             xmrPrice = Number(xmrPriceWei) / 1e18;
         } catch (e) {
@@ -2865,7 +2865,7 @@ async function _updateBurnRewardDisplay() {
         }
 
         const wsxmrAmount = BigInt(Math.round(amount * 1e8));
-        const { getPublicClient } = await import('./viemClient.js?v=3.57');
+        const { getPublicClient } = await import('./viemClient.js?v=3.58');
         const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
         const publicClient = getPublicClient();
 
@@ -3072,7 +3072,7 @@ async function handleStartMint() {
         trackMintProgress(currentMintFlow);
         
         // Use the default LP vault from config
-        const { CONTRACTS } = await import('./config.js?v=3.57');
+        const { CONTRACTS } = await import('./config.js?v=3.58');
         
         // Start the flow with the LP vault that has the running LP node
         await currentMintFlow.start(CONTRACTS.defaultLpVault, amount);
