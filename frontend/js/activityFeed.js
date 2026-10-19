@@ -1,7 +1,7 @@
 // Recent Activity Feed - Shows recent mints and burns from all users
 
-import { getPublicClient, getContractEventsChunked } from './viemClient.js?v=3.52';
-import { CONTRACTS, ASSET, getActiveChain } from './config.js?v=3.52';
+import { getPublicClient, getContractEventsChunked } from './viemClient.js?v=3.53';
+import { CONTRACTS, ASSET, getActiveChain } from './config.js?v=3.53';
 import { parseAbi } from 'https://esm.sh/viem@2.7.0';
 
 // Event ABI strings matching the deployed contract exactly
@@ -375,7 +375,7 @@ function handleNewActivityLogs(logs, publicClient) {
             if (terminalMint || terminalBurn) {
                 const requestId = log.args?.requestId;
                 if (requestId) {
-                    import('./storage.js?v=3.52').then(({ getActiveSwapByRequestId, removeActiveSwap, saveToHistory }) => {
+                    import('./storage.js?v=3.53').then(({ getActiveSwapByRequestId, removeActiveSwap, saveToHistory }) => {
                         const existing = getActiveSwapByRequestId(requestId);
                         if (existing) {
                             let status;
