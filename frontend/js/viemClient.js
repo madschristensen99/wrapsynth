@@ -2,7 +2,7 @@
 // Uses createPublicClient and createWalletClient as required
 
 import { createPublicClient, createWalletClient, custom, http, fallback, parseAbi, defineChain } from 'https://esm.sh/viem@2.7.0';
-import { CHAINS, CONTRACTS, ABIS, RAW_ABIS, getActiveChain, getActiveChainKey } from './config.js?v=3.49';
+import { CHAINS, CONTRACTS, ABIS, RAW_ABIS, getActiveChain, getActiveChainKey } from './config.js?v=3.52';
 
 // viem chain definitions, built lazily from the CHAINS registry so every
 // supported chain (including ones viem doesn't ship built-in) works.
@@ -609,7 +609,9 @@ export async function getContractEventsChunked(params) {
                 const msg = err?.message || '';
                 const details = err?.details || '';
                 const isRangeError = msg.includes('block range') || details.includes('block range')
-                    || msg.includes('exceeds max') || details.includes('exceeds max');
+                    || msg.includes('exceeds max') || details.includes('exceeds max')
+                    || msg.includes('ranges over') || details.includes('ranges over')
+                    || msg.includes('not supported') || details.includes('not supported');
                 // Some RPCs cap eth_getLogs below our chunk size — split the range.
                 if (isRangeError && end - start > 50n && depth < 8) {
                     const mid = start + (end - start) / 2n;
@@ -747,16 +749,30 @@ export function getDeadlineBlockTimeSec() {
  * Listen for account changes
  */
 export function onAccountsChanged(callback) {
-    if (window.ethereum) {
-        window.ethereum.on('accountsChanged', (accounts) => {
-            if (accounts.length > 0) {
-                userAddress = accounts[0];
-                callback(accounts[0]);
-            } else {
-                userAddress = null;
-                callback(null);
-            }
-        });
+    if (!window.ethereum) return;
+    const handler = (accounts) => {
+        if (accounts.length > 0) {
+            userAddress = accounts[0];
+            callback(accounts[0]);
+        } else {
+            userAddress = null;
+            callback(null);
+        }
+    };
+    try {
+        window.ethereum.on('accountsChanged', handler);
+    } catch (err) {
+        // Ambire (and some proxies) expose `on` as a non-configurable data
+        // property and throw on subscription — fall back to polling.
+        console.warn('[viem] ethereum.on failed, polling accounts instead:', err.message);
+        let last = userAddress;
+        setInterval(async () => {
+            try {
+                const accs = await window.ethereum?.request({ method: 'eth_accounts' });
+                const cur = accs?.[0] || null;
+                if (cur !== last) { last = cur; handler(Array.isArray(accs) ? accs : []); }
+            } catch { /* provider busy */ }
+        }, 2000);
     }
 }
 
@@ -764,9 +780,19 @@ export function onAccountsChanged(callback) {
  * Listen for chain changes
  */
 export function onChainChanged(callback) {
-    if (window.ethereum) {
+    if (!window.ethereum) return;
+    try {
         window.ethereum.on('chainChanged', (chainId) => {
             callback(chainId);
         });
+    } catch (err) {
+        console.warn('[viem] ethereum.on failed, polling chain instead:', err.message);
+        let last = null;
+        setInterval(async () => {
+            try {
+                const id = await window.ethereum?.request({ method: 'eth_chainId' });
+                if (id !== last) { last = id; callback(id); }
+            } catch { /* provider busy */ }
+        }, 2000);
     }
 }

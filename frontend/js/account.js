@@ -10,9 +10,9 @@ import {
   readHub,
   getPastEvents,
   onAccountsChanged
-} from './viemClient.js?v=3.49';
-import { CONTRACTS, DECIMALS, ASSET, explorerTxUrl } from './config.js?v=3.49';
-import { bootChain, initChainPicker } from './chainPicker.js?v=3.49';
+} from './viemClient.js?v=3.52';
+import { CONTRACTS, DECIMALS, ASSET, explorerTxUrl, getActiveChain } from './config.js?v=3.52';
+import { bootChain, initChainPicker } from './chainPicker.js?v=3.52';
 import { parseAbi, formatUnits } from 'https://esm.sh/viem@2.7.0';
 
 const TRANSFER_ABI = ['event Transfer(address indexed from, address indexed to, uint256 value)'];
@@ -187,6 +187,7 @@ async function loadHistory(address) {
     fetchBurnHistory(address).catch((e) => { console.warn('Burns failed:', e); return []; })
   ]);
   allHistory = [...mints, ...burns];
+  allHistory.sort((a, b) => (b.timestamp || b._deadline || 0) - (a.timestamp || a._deadline || 0));
   renderHistory();
 
   // Best-effort: fill in real creation timestamps from events, then re-sort
@@ -195,7 +196,7 @@ async function loadHistory(address) {
     enrichWithTimestamps(mints, MINT_EVENT_ABI, 'MintInitiated', 'initiator', address),
     enrichWithTimestamps(burns, BURN_EVENT_ABI, 'BurnRequested', 'user', address)
   ]);
-  allHistory.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  allHistory.sort((a, b) => (b.timestamp || b._deadline || 0) - (a.timestamp || a._deadline || 0));
   renderHistory();
 
   // Transfers scan a wide block range — load them separately with a timeout
@@ -453,13 +454,13 @@ function renderHistory() {
     btn.disabled = true;
     btn.textContent = 'Loading keys…';
     try {
-      const { buildBurnClaimKeys } = await import('./burnSweep.js?v=3.49');
-      const { showBurnKeysFallback } = await import('./ui.js?v=3.49');
+      const { buildBurnClaimKeys } = await import('./burnSweep.js?v=3.52');
+      const { showBurnKeysFallback } = await import('./ui.js?v=3.52');
       const { keys, sharedAddress, restoreHeight } = await buildBurnClaimKeys(requestId);
       showBurnKeysFallback(keys, restoreHeight, sharedAddress);
     } catch (err) {
       console.error('Claim failed:', err);
-      const { showError } = await import('./ui.js?v=3.49');
+      const { showError } = await import('./ui.js?v=3.52');
       showError('Cannot Claim XMR', err.message || 'Could not rebuild your claim keys.');
     } finally {
       btn.disabled = false;

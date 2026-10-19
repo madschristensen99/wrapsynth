@@ -11,7 +11,7 @@
 // that card to "--" rather than blanking the page. DexScreener responses
 // are cached in sessionStorage and refreshed every REFRESH_MS.
 
-import { CHAINS, loadDeployment } from './config.js?v=3.49';
+import { CHAINS, loadDeployment } from './config.js?v=3.52';
 
 const REFRESH_MS = 60_000;
 const DEX_CACHE_MS = 60_000;

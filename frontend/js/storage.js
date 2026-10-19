@@ -1,7 +1,7 @@
 // LocalStorage manager for persisting swap state
 // Supports multiple concurrent active swaps
 
-import { STORAGE_KEYS, chainScopedKey } from './config.js?v=3.49';
+import { STORAGE_KEYS, chainScopedKey } from './config.js?v=3.52';
 
 // Keys are namespaced by the active chain so swaps/history on one
 // deployment never surface on another.

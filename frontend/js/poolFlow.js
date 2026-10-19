@@ -1,7 +1,7 @@
 // Co-LP Pairing Flow - Liquidity Router Integration
 
-import { CONTRACTS, ABIS, DECIMALS, getActiveChain } from './config.js?v=3.49';
-import { readHub, writeHub, readWsxmr, writeWsxmr, getUserAddress, getPublicClient, getWalletClient } from './viemClient.js?v=3.49';
+import { CONTRACTS, ABIS, DECIMALS, getActiveChain } from './config.js?v=3.52';
+import { readHub, writeHub, readWsxmr, writeWsxmr, getUserAddress, getPublicClient, getWalletClient } from './viemClient.js?v=3.52';
 import { formatUnits, parseUnits, parseAbi } from 'https://esm.sh/viem@2.7.0';
 
 export class PoolFlow {

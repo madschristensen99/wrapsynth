@@ -1,7 +1,7 @@
 // Protocol Stats - Calculate real-time protocol metrics
 
-import { getPublicClient, getContractEventsChunked, readHub } from './viemClient.js?v=3.49';
-import { CONTRACTS, getActiveChain, getDeployment } from './config.js?v=3.49';
+import { getPublicClient, getContractEventsChunked, readHub } from './viemClient.js?v=3.52';
+import { CONTRACTS, getActiveChain, getDeployment } from './config.js?v=3.52';
 import { formatUnits } from 'https://esm.sh/viem@2.7.0';
 
 // Correct inline event definitions matching the deployed contract ABI
