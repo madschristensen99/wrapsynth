@@ -10,9 +10,9 @@ import {
   readHub,
   getPastEvents,
   onAccountsChanged
-} from './viemClient.js?v=3.54';
-import { CONTRACTS, DECIMALS, ASSET, explorerTxUrl, getActiveChain } from './config.js?v=3.54';
-import { bootChain, initChainPicker } from './chainPicker.js?v=3.54';
+} from './viemClient.js?v=3.55';
+import { CONTRACTS, DECIMALS, ASSET, explorerTxUrl, getActiveChain } from './config.js?v=3.55';
+import { bootChain, initChainPicker } from './chainPicker.js?v=3.55';
 import { parseAbi, formatUnits } from 'https://esm.sh/viem@2.7.0';
 
 const TRANSFER_ABI = ['event Transfer(address indexed from, address indexed to, uint256 value)'];
@@ -454,13 +454,13 @@ function renderHistory() {
     btn.disabled = true;
     btn.textContent = 'Loading keys…';
     try {
-      const { buildBurnClaimKeys } = await import('./burnSweep.js?v=3.54');
-      const { showBurnKeysFallback } = await import('./ui.js?v=3.54');
+      const { buildBurnClaimKeys } = await import('./burnSweep.js?v=3.55');
+      const { showBurnKeysFallback } = await import('./ui.js?v=3.55');
       const { keys, sharedAddress, restoreHeight } = await buildBurnClaimKeys(requestId);
       showBurnKeysFallback(keys, restoreHeight, sharedAddress);
     } catch (err) {
       console.error('Claim failed:', err);
-      const { showError } = await import('./ui.js?v=3.54');
+      const { showError } = await import('./ui.js?v=3.55');
       showError('Cannot Claim XMR', err.message || 'Could not rebuild your claim keys.');
     } finally {
       btn.disabled = false;

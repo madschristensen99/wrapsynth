@@ -2,7 +2,7 @@
 // Uses createPublicClient and createWalletClient as required
 
 import { createPublicClient, createWalletClient, custom, http, fallback, parseAbi, defineChain } from 'https://esm.sh/viem@2.7.0';
-import { CHAINS, CONTRACTS, ABIS, RAW_ABIS, getActiveChain, getActiveChainKey } from './config.js?v=3.54';
+import { CHAINS, CONTRACTS, ABIS, RAW_ABIS, getActiveChain, getActiveChainKey } from './config.js?v=3.55';
 
 // viem chain definitions, built lazily from the CHAINS registry so every
 // supported chain (including ones viem doesn't ship built-in) works.
@@ -358,26 +358,13 @@ export async function writeHub(functionName, args = [], value = 0n, gas = undefi
 
     const gasHex = gas ? '0x' + gas.toString(16) : undefined;
 
-    // Send directly via wallet provider to bypass viem transport InternalRpcError.
-    // Only the SEND is wrapped — the receipt wait stays outside so a wait-time
-    // RPC flake or a mined-and-reverted tx can't trigger a duplicate submission.
-    let hash;
-    try {
-        const txParams = {
-            from: account,
-            to: CONTRACTS.hub,
-            data,
-        };
-        if (gasHex) txParams.gas = gasHex;
-        if (value > 0n) txParams.value = '0x' + value.toString(16);
+    // Ambire's AA provider re-prompts on the raw direct path (the first
+    // prompt the user sees is the "bogus" one) — its wallet flow needs the
+    // viem simulate+write path to render one correct prompt. Detect it and
+    // skip the direct attempt entirely.
+    const isAmbire = !!(window.ethereum?.isAmbire || window.ethereum?.isAmbireWallet || window.ambire);
 
-        hash = await window.ethereum.request({
-            method: 'eth_sendTransaction',
-            params: [txParams]
-        });
-    } catch (directErr) {
-        // Fall back to viem simulate + writeContract
-        console.warn('[writeHub] Direct send failed, falling back to simulate:', directErr.message);
+    const sendViaViem = async () => {
         const client = getWalletClient();
         const simOpts = {
             address: CONTRACTS.hub,
@@ -389,7 +376,41 @@ export async function writeHub(functionName, args = [], value = 0n, gas = undefi
         };
         if (gas !== undefined) simOpts.gas = gas;
         const { request } = await getPublicClient().simulateContract(simOpts);
-        hash = await client.writeContract({ ...request, account: userAddress });
+        return client.writeContract({ ...request, account: userAddress });
+    };
+
+    let hash;
+    if (isAmbire) {
+        hash = await sendViaViem();
+    } else {
+        // Direct send via wallet provider to bypass viem transport
+        // InternalRpcError. Only the SEND is wrapped — the receipt wait stays
+        // outside so a wait-time RPC flake or a mined-and-reverted tx can't
+        // trigger a duplicate submission.
+        try {
+            const txParams = {
+                from: account,
+                to: CONTRACTS.hub,
+                data,
+            };
+            if (gasHex) txParams.gas = gasHex;
+            if (value > 0n) txParams.value = '0x' + value.toString(16);
+
+            hash = await window.ethereum.request({
+                method: 'eth_sendTransaction',
+                params: [txParams]
+            });
+        } catch (directErr) {
+            const msg = directErr?.message || '';
+            // A user rejection is a decision — surface it, never auto
+            // re-prompt with a second tx (the old fallback caused the
+            // "reject the bogus one, accept the real one" double prompt).
+            if (directErr?.code === 4001 || /rejected|denied/i.test(msg)) {
+                throw directErr;
+            }
+            console.warn('[writeHub] Direct send failed, falling back to simulate:', msg);
+            hash = await sendViaViem();
+        }
     }
 
     return waitMinedOrThrow(hash, functionName);

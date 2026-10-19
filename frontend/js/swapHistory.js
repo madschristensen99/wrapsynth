@@ -1,9 +1,9 @@
 // Swap History Display
 
-import { loadSwapHistory } from './storage.js?v=3.54';
-import { getIconSVG } from './icons.js?v=3.54';
-import { getPastEvents, getUserAddress, getPublicClient } from './viemClient.js?v=3.54';
-import { CONTRACTS, DECIMALS, explorerTxUrl, getActiveChainKey, getDeployment } from './config.js?v=3.54';
+import { loadSwapHistory } from './storage.js?v=3.55';
+import { getIconSVG } from './icons.js?v=3.55';
+import { getPastEvents, getUserAddress, getPublicClient } from './viemClient.js?v=3.55';
+import { CONTRACTS, DECIMALS, explorerTxUrl, getActiveChainKey, getDeployment } from './config.js?v=3.55';
 
 const TRANSFER_EVENT_ABI = ['event Transfer(address indexed from, address indexed to, uint256 value)'];
 
@@ -84,13 +84,13 @@ export async function displaySwapHistory() {
         btn.disabled = true;
         btn.textContent = 'Loading keys…';
         try {
-            const { buildBurnClaimKeys } = await import('./burnSweep.js?v=3.54');
-            const { showBurnKeysFallback } = await import('./ui.js?v=3.54');
+            const { buildBurnClaimKeys } = await import('./burnSweep.js?v=3.55');
+            const { showBurnKeysFallback } = await import('./ui.js?v=3.55');
             const { keys, sharedAddress, restoreHeight } = await buildBurnClaimKeys(requestId);
             showBurnKeysFallback(keys, restoreHeight, sharedAddress);
         } catch (err) {
             console.error('Claim failed:', err);
-            const { showError } = await import('./ui.js?v=3.54');
+            const { showError } = await import('./ui.js?v=3.55');
             showError('Cannot Claim XMR', err.message || 'Could not rebuild your claim keys.');
         } finally {
             btn.disabled = false;

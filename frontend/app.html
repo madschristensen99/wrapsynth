@@ -482,8 +482,8 @@ if ('serviceWorker' in navigator) {
 
 <!-- Populate footer address links from the active chain's manifest -->
 <script type="module">
-  const { bootChain } = await import('./js/chainPicker.js?v=3.54');
-  const { getActiveChain, CONTRACTS } = await import('./js/config.js?v=3.54');
+  const { bootChain } = await import('./js/chainPicker.js?v=3.55');
+  const { getActiveChain, CONTRACTS } = await import('./js/config.js?v=3.55');
   const key = await bootChain();
   if (key) {
     const explorer = getActiveChain().explorer;
@@ -496,6 +496,6 @@ if ('serviceWorker' in navigator) {
     if (router && CONTRACTS.liquidityRouter) { router.textContent = short(CONTRACTS.liquidityRouter); router.href = `${explorer}/address/${CONTRACTS.liquidityRouter}`; }
   }
 </script>
-<script type="module" src="./js/main.js?v=3.54"></script>
+<script type="module" src="./js/main.js?v=3.55"></script>
 </body>
 </html>
