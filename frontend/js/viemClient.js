@@ -2,7 +2,7 @@
 // Uses createPublicClient and createWalletClient as required
 
 import { createPublicClient, createWalletClient, custom, http, fallback, parseAbi, defineChain } from 'https://esm.sh/viem@2.7.0';
-import { CHAINS, CONTRACTS, ABIS, RAW_ABIS, getActiveChain, getActiveChainKey } from './config.js?v=3.53';
+import { CHAINS, CONTRACTS, ABIS, RAW_ABIS, getActiveChain, getActiveChainKey } from './config.js?v=3.54';
 
 // viem chain definitions, built lazily from the CHAINS registry so every
 // supported chain (including ones viem doesn't ship built-in) works.
@@ -51,7 +51,7 @@ let userAddress = null;
  */
 function getTransport() {
     const timeout = 10000; // 10s — prevent slow RPC from blocking UI
-    const retryOpts = { retryCount: 1, retryDelay: 200, timeout };
+    const retryOpts = { retryCount: 0, retryDelay: 200, timeout };
     const httpTransports = getActiveChain().rpcUrls.map(url => http(url, retryOpts));
     // Reads go ONLY to HTTP RPCs. Never route reads through window.ethereum:
     // wallet extensions (Ambire, MetaMask) forward eth_getLogs to their own

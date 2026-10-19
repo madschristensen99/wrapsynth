@@ -160,8 +160,8 @@
 </div>
 
 <script type="module">
-  const { bootChain } = await import('./js/chainPicker.js?v=3.53');
-  const { getActiveChain } = await import('./js/config.js?v=3.53');
+  const { bootChain } = await import('./js/chainPicker.js?v=3.54');
+  const { getActiveChain } = await import('./js/config.js?v=3.54');
   const key = await bootChain();
   const cfg = getActiveChain();
   if (cfg) {
@@ -171,6 +171,6 @@
     document.getElementById('chain-pill').textContent = 'No chain';
   }
 </script>
-<script type="module" src="./js/account.js?v=3.53"></script>
+<script type="module" src="./js/account.js?v=3.54"></script>
 </body>
 </html>

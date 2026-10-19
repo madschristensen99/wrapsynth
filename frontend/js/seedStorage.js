@@ -7,7 +7,7 @@
 // - Requires BOTH browser access AND wallet signature to decrypt
 
 import { keccak256, hexToBytes, bytesToHex } from 'https://esm.sh/viem@2.7.0';
-import { getWalletClient, getUserAddress } from './viemClient.js?v=3.53';
+import { getWalletClient, getUserAddress } from './viemClient.js?v=3.54';
 
 const DB_NAME = 'Wrapsynth';
 const STORE_NAME = 'keys';
