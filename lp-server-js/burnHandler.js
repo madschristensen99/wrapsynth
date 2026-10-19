@@ -988,10 +988,9 @@ async function startupRecoverBurns() {
   const reqIds = Object.keys(secrets);
   if (reqIds.length === 0) {
     console.log(`[${CHAIN}][Burn Recovery] No persisted burn secrets found`);
-    return;
+  } else {
+    console.log(`[${CHAIN}][Burn Recovery] Found ${reqIds.length} persisted burn(s), checking on-chain status...`);
   }
-
-  console.log(`[${CHAIN}][Burn Recovery] Found ${reqIds.length} persisted burn(s), checking on-chain status...`);
 
   for (const reqIdHex of reqIds) {
     const saved = secrets[reqIdHex];
@@ -1100,7 +1099,11 @@ async function startupRecoverBurns() {
   // Also scan recent BurnRequested events for our vault that aren't in persisted secrets
   try {
     const currentBlock = await provider.getBlockNumber();
-    const fromBlock = Math.max(0, currentBlock - 9999);
+    // Scan far enough back to catch burns orphaned by a restart — an LP
+    // crash between BurnRequested and proposeHash leaves no persisted
+    // secret, so a narrow window would strand the user until deadline.
+    const deployedAt = ctx.deployment?.deployedAtBlock || 0;
+    const fromBlock = Math.max(deployedAt, currentBlock - 200000);
     const burnEvents = await queryFilterChunked(hubContract, hubContract.filters.BurnRequested(), fromBlock, currentBlock);
     const ourBurns = burnEvents.filter(
       e => e.args.lpVault.toLowerCase() === wallet.address.toLowerCase()

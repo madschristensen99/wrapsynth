@@ -25,7 +25,7 @@
       "manifest": "../frontend/deployment.base.json",
       "rpcEnv": "BASE_RPC_URLS",
       "rpcUrls": [
-        "https://base.publicnode.com",
+        "https://base.gateway.tenderly.co",
         "https://base.drpc.org",
         "https://mainnet.base.org"
       ],
