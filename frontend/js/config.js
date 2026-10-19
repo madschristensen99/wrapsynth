@@ -69,9 +69,9 @@ export const CHAINS = {
         name: 'Base',
         chainIcon: 'assets/chains/base.png',
         rpcUrls: [
+            'https://base.drpc.org',
             'https://mainnet.base.org',
-            'https://base.publicnode.com',
-            'https://base.llamarpc.com'
+            'https://base.gateway.tenderly.co'
         ],
         explorer: 'https://basescan.org',
         explorerName: 'BaseScan',
