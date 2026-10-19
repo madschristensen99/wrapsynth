@@ -1,7 +1,7 @@
 // Monero RPC Client
 // Handles all Monero daemon and wallet RPC interactions
 
-import { MONERO_CONFIG } from './config.js?v=3.56';
+import { MONERO_CONFIG } from './config.js?v=3.57';
 
 /**
  * Monero RPC Client for daemon and wallet operations

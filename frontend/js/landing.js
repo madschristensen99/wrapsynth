@@ -11,7 +11,7 @@
 // that card to "--" rather than blanking the page. DexScreener responses
 // are cached in sessionStorage and refreshed every REFRESH_MS.
 
-import { CHAINS, loadDeployment } from './config.js?v=3.56';
+import { CHAINS, loadDeployment } from './config.js?v=3.57';
 
 const REFRESH_MS = 60_000;
 const DEX_CACHE_MS = 60_000;
@@ -337,20 +337,31 @@ async function main() {
         }));
     }
 
-    await Promise.all([
-        refreshDex(),
-        ...keys.map(async (key) => {
-            const { client, D } = state.chains[key];
-            const DC = D.contracts || D;
-            try {
-                const s = await readChainStats(key, client, DC.wsXmrHub, DC.wsXMR, parseAbi, formatUnits);
-                state.chains[key].onchain = s;
-                applyOnchainToCard(key, s);
-                totalSupply += s.supply; totalVaults += s.vaults;
-                tvlUSD += s.tvlUsd; debtUSD += s.debtUsd;
-            } catch (e) { console.warn(`[Landing] ${key} onchain:`, e); }
-        })
-    ]);
+    // On-chain stats FIRST — the DexScreener fallback needs the oracle
+    // collateral price (onchain.collUsd), so it can't race ahead of these.
+    await Promise.all(keys.map(async (key) => {
+        const { client, D } = state.chains[key];
+        const DC = D.contracts || D;
+        try {
+            const s = await readChainStats(key, client, DC.wsXmrHub, DC.wsXMR, parseAbi, formatUnits);
+            state.chains[key].onchain = s;
+            applyOnchainToCard(key, s);
+            totalSupply += s.supply; totalVaults += s.vaults;
+            tvlUSD += s.tvlUsd; debtUSD += s.debtUsd;
+        } catch (e) { console.warn(`[Landing] ${key} onchain:`, e); }
+    }));
+
+    // Dex now — the per-chain fallback has oracle prices available.
+    await refreshDex();
+
+    // Retry the on-chain pool fallback for any chain DexScreener missed
+    // (their index drops tiny pools; first pass may have raced the stats).
+    await Promise.all(keys.map(async (key) => {
+        if (state.chains[key].dex || !state.chains[key].onchain?.collUsd) return;
+        const { cfg, D } = state.chains[key];
+        const pair = await readPoolOnChain(key, cfg, D).catch(() => null);
+        if (pair) { state.chains[key].dex = pair; applyDexToCard(key, pair); }
+    }));
 
     if (!state.xmrUsd) state.xmrUsd = keys.map(k => state.chains[k].onchain?.xmrUsd).find(v => v > 0) || 0;
     if (tl && state.xmrUsd) tl.textContent = `$${Math.round(state.xmrUsd)}`;
