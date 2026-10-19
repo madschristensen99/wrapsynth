@@ -334,3 +334,6 @@ solana/lp-server/lp-server.log
 solana/frontend/dist/
 solana/frontend/idl.json
 solana/frontend/devnet-config.json
+
+# Hostinger FTP creds — never commit
+frontend/.ftp-creds
