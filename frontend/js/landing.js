@@ -11,7 +11,7 @@
 // that card to "--" rather than blanking the page. DexScreener responses
 // are cached in sessionStorage and refreshed every REFRESH_MS.
 
-import { CHAINS, loadDeployment } from './config.js?v=3.55';
+import { CHAINS, loadDeployment } from './config.js?v=3.56';
 
 const REFRESH_MS = 60_000;
 const DEX_CACHE_MS = 60_000;
@@ -69,10 +69,69 @@ async function fetchDex(slug, pool) {
     return pair;
 }
 
+// ─── On-chain pool fallback ─────────────────────────────────────────────────
+// DexScreener drops tiny pools from its index (Base wsXMR/cbBTC has done this
+// repeatedly). When a pair comes back null, derive the price + liquidity
+// straight from the pool contract so the card never goes empty:
+//   price0 = (sqrtPriceX96 / 2^96)^2  = token0 in units of token1
+//   liquidity = balanceOf(token0)*p0Usd + balanceOf(token1)*p1Usd
+// Volume/swaps genuinely can't be computed cheaply on-chain — they stay "--".
+
+const poolSlot0Abi = 'function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 fee, uint8 unlocked)';
+const poolTokenAbi = 'function token0() view returns (address)';
+const erc20ReadAbi = 'function balanceOf(address) view returns (uint256)';
+const erc20DecAbi = 'function decimals() view returns (uint8)';
+
+async function readPoolOnChain(key, cfg, D) {
+    const { client, onchain } = state.chains[key];
+    const pool = (D.pool && D.pool.uniswapV3Pool) || D.pool;
+    if (!pool || typeof pool !== 'string') return null;
+    const collUsd = onchain?.collUsd || 0;
+    if (!collUsd) return null;
+    try {
+        const { formatUnits, parseAbi } = await import('https://esm.sh/viem@2.21.54');
+        const poolAbi = parseAbi([poolSlot0Abi, poolTokenAbi]);
+        const tokenAbi = parseAbi([erc20ReadAbi, erc20DecAbi]);
+        const [slot, t0, t1, b0, b1, d0, d1] = await Promise.all([
+            client.readContract({ address: pool, abi: poolAbi, functionName: 'slot0' }),
+            client.readContract({ address: pool, abi: poolAbi, functionName: 'token0' }),
+            client.readContract({ address: pool, abi: poolAbi, functionName: 'token1' }),
+            client.readContract({ address: t0, abi: tokenAbi, functionName: 'balanceOf', args: [pool] }),
+            client.readContract({ address: t1, abi: tokenAbi, functionName: 'balanceOf', args: [pool] }),
+            client.readContract({ address: t0, abi: tokenAbi, functionName: 'decimals' }),
+            client.readContract({ address: t1, abi: tokenAbi, functionName: 'decimals' }),
+        ]);
+        const token0 = String(t0).toLowerCase();
+        const token1 = String(t1).toLowerCase();
+        const DC = D.contracts || D;
+        const wsxmr = String(DC.wsXMR || '').toLowerCase();
+        if (!wsxmr) return null;
+
+        const sqrtP = Number(slot[0]);
+        const price0 = Math.pow(sqrtP / Math.pow(2, 96), 2); // token0 per token1
+        const wsxmrIsToken0 = token0 === wsxmr;
+        const wsxmrUsd = wsxmrIsToken0 ? price0 * collUsd : collUsd / price0;
+        if (!isFinite(wsxmrUsd) || wsxmrUsd <= 0) return null;
+
+        const usdOf = (isWsxmr) => isWsxmr ? wsxmrUsd : collUsd;
+        const liqUsd = parseFloat(formatUnits(b0, d0)) * usdOf(wsxmrIsToken0)
+            + parseFloat(formatUnits(b1, d1)) * usdOf(!wsxmrIsToken0);
+
+        return {
+            priceUsd: String(wsxmrUsd),
+            liquidity: { usd: String(liqUsd) },
+            source: 'onchain',
+        };
+    } catch (e) {
+        console.warn(`[Landing] ${key} pool fallback:`, e.message);
+        return null;
+    }
+}
+
 // ─── On-chain reads ─────────────────────────────────────────────────────────
 
 async function readChainStats(key, client, hub, wsXMR, parseAbi, formatUnits) {
-    const out = { supply: 0, vaults: 0, tvlUsd: 0, debtUsd: 0, xmrUsd: 0 };
+    const out = { supply: 0, vaults: 0, tvlUsd: 0, debtUsd: 0, xmrUsd: 0, collUsd: 0 };
     const [supply, vaultCount] = await Promise.all([
         client.readContract({ address: wsXMR, abi: parseAbi(['function totalSupply() external view returns (uint256)']), functionName: 'totalSupply' }),
         client.readContract({ address: hub, abi: parseAbi(['function getVaultCount() external view returns (uint256)']), functionName: 'getVaultCount' })
@@ -97,6 +156,7 @@ async function readChainStats(key, client, hub, wsXMR, parseAbi, formatUnits) {
     try {
         const raw = await client.readContract({ address: hub, abi: parseAbi(['function lastCollateralPrice() external view returns (uint256)']), functionName: 'lastCollateralPrice' });
         collateralPrice = parseFloat(formatUnits(raw, 8));
+        out.collUsd = collateralPrice;
     } catch (e) { console.warn(`[Landing] ${key}: collateral price unavailable`); }
     try {
         const raw = await client.readContract({ address: hub, abi: parseAbi(['function lastXmrPrice() external view returns (uint256)']), functionName: 'lastXmrPrice' });
@@ -267,7 +327,10 @@ async function main() {
             const pool = (D.pool && D.pool.uniswapV3Pool) || D.pool;
             if (!cfg.dexscreenerSlug || !pool) return;
             try {
-                const pair = await fetchDex(cfg.dexscreenerSlug, pool);
+                let pair = await fetchDex(cfg.dexscreenerSlug, pool);
+                // DexScreener drops tiny pools from its index — fall back to
+                // the on-chain pool read so the card never goes empty.
+                if (!pair) pair = await readPoolOnChain(key, cfg, D);
                 state.chains[key].dex = pair;
                 applyDexToCard(key, pair);
             } catch (e) { console.warn(`[Landing] ${key} dex:`, e); }
