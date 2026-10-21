@@ -1,9 +1,9 @@
 // UI Controller
 // Manages all DOM interactions and updates
 
-import { DECIMALS, ASSET, explorerAddressUrl, getActiveChain, getActiveChainKey } from './config.js?v=3.58';
-import { getIconSVG } from './icons.js?v=3.58';
-import { launchMintCelebration, launchBurnAnimation } from './animations.js?v=3.58';
+import { DECIMALS, ASSET, explorerAddressUrl, getActiveChain, getActiveChainKey } from './config.js?v=3.59';
+import { getIconSVG } from './icons.js?v=3.59';
+import { launchMintCelebration, launchBurnAnimation } from './animations.js?v=3.59';
 
 /**
  * UI Element References
@@ -456,7 +456,7 @@ export function showResumeCountdown(requestId, deadlineBlock, currentBlock, onRe
     // Poll block number every 5s to update countdown
     const intervalId = setInterval(async () => {
         try {
-            const { getContractBlockNumber } = await import('./viemClient.js?v=3.58');
+            const { getContractBlockNumber } = await import('./viemClient.js?v=3.59');
             cachedCurrent = Number(await getContractBlockNumber());
             updateMsg();
             if (cachedCurrent >= cachedDeadline) {
@@ -534,7 +534,7 @@ export async function showBurnTab() {
     saveActiveTab('burn');
 
     // Update balance when showing burn tab
-    const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js?v=3.58');
+    const { getUserAddress, getWsXmrBalance } = await import('./viemClient.js?v=3.59');
     const address = getUserAddress();
     if (address) {
         try {

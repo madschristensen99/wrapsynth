@@ -12,8 +12,8 @@
 // Containers opt in with a data-funding-mode attribute; refreshFundingPanels()
 // re-renders all of them (call after connect / chain change / vault select).
 
-import { getActiveChain, getActiveChainKey, CONTRACTS, ASSET } from './config.js?v=3.58';
-import { getUserAddress, getPublicClient, getNativeBalance } from './viemClient.js?v=3.58';
+import { getActiveChain, getActiveChainKey, CONTRACTS, ASSET } from './config.js?v=3.59';
+import { getUserAddress, getPublicClient, getNativeBalance } from './viemClient.js?v=3.59';
 import { formatUnits } from 'https://esm.sh/viem@2.7.0';
 
 const ERC20_BALANCE_ABI = [{
