@@ -3,7 +3,8 @@ pragma solidity ^0.8.28;
 
 import {console} from "forge-std/Test.sol";
 import {RobinhoodMockTestBase} from "./RobinhoodTestBase.sol";
-import {HyperCoreOracleFacet} from "../contracts/facets/HyperCoreOracleFacet.sol";
+import {RobinhoodOracleFacet} from "../contracts/facets/RobinhoodOracleFacet.sol";
+import {IOracleFacet} from "../contracts/interfaces/facets/IOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -102,14 +103,14 @@ contract OracleCoverageTestRobin is RobinhoodMockTestBase {
     function test_UpdateOraclePrices_RefundsETH() public {
         bytes[] memory emptyData = new bytes[](0);
         uint256 balanceBefore = address(this).balance;
-        HyperCoreOracleFacet(address(hub)).updateOraclePrices{value: 0.1 ether}(emptyData);
+        RobinhoodOracleFacet(address(hub)).updateOraclePrices{value: 0.1 ether}(emptyData);
         uint256 balanceAfter = address(this).balance;
         assertEq(balanceAfter, balanceBefore, "ETH should be refunded");
     }
 
     function test_UpdateOraclePrices_NoETH_NoRevert() public {
         bytes[] memory emptyData = new bytes[](0);
-        HyperCoreOracleFacet(address(hub)).updateOraclePrices(emptyData);
+        RobinhoodOracleFacet(address(hub)).updateOraclePrices(emptyData);
     }
 
     // ========== HUB VIEW HELPERS ==========
@@ -121,36 +122,36 @@ contract OracleCoverageTestRobin is RobinhoodMockTestBase {
     }
 
     function _getCollateralPrice() internal returns (uint256) {
-        bytes memory r = _hubView(abi.encodeWithSelector(HyperCoreOracleFacet.getCollateralPrice.selector));
+        bytes memory r = _hubView(abi.encodeWithSelector(IOracleFacet.getCollateralPrice.selector));
         return abi.decode(r, (uint256));
     }
 
     function _getCollateralPriceWithAge(uint256 maxAge) internal returns (uint256) {
         bytes memory r = _hubView(
-            abi.encodeWithSelector(HyperCoreOracleFacet.getCollateralPriceWithAge.selector, maxAge)
+            abi.encodeWithSelector(IOracleFacet.getCollateralPriceWithAge.selector, maxAge)
         );
         return abi.decode(r, (uint256));
     }
 
     function _getXmrPriceWithAge(uint256 maxAge) internal returns (uint256) {
         bytes memory r = _hubView(
-            abi.encodeWithSelector(HyperCoreOracleFacet.getXmrPriceWithAge.selector, maxAge)
+            abi.encodeWithSelector(IOracleFacet.getXmrPriceWithAge.selector, maxAge)
         );
         return abi.decode(r, (uint256));
     }
 
     function _getUpdateFee(bytes[] memory data) internal returns (uint256) {
-        bytes memory r = _hubView(abi.encodeWithSelector(HyperCoreOracleFacet.getUpdateFee.selector, data));
+        bytes memory r = _hubView(abi.encodeWithSelector(IOracleFacet.getUpdateFee.selector, data));
         return abi.decode(r, (uint256));
     }
 
     function _normalizeDebt(uint256 actualDebt) internal returns (uint256) {
-        bytes memory r = _hubView(abi.encodeWithSelector(HyperCoreOracleFacet.normalizeDebt.selector, actualDebt));
+        bytes memory r = _hubView(abi.encodeWithSelector(IOracleFacet.normalizeDebt.selector, actualDebt));
         return abi.decode(r, (uint256));
     }
 
     function _denormalizeDebt(uint256 normalizedDebt) internal returns (uint256) {
-        bytes memory r = _hubView(abi.encodeWithSelector(HyperCoreOracleFacet.denormalizeDebt.selector, normalizedDebt));
+        bytes memory r = _hubView(abi.encodeWithSelector(IOracleFacet.denormalizeDebt.selector, normalizedDebt));
         return abi.decode(r, (uint256));
     }
 

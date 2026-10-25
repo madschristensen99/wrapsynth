@@ -3,15 +3,15 @@ pragma solidity ^0.8.28;
 
 import {console} from "forge-std/Test.sol";
 import {BaseMockTestBase} from "./BaseTestBase.sol";
-import {HyperCoreOracleFacet} from "../contracts/facets/HyperCoreOracleFacet.sol";
+import {BaseOracleFacet} from "../contracts/facets/BaseOracleFacet.sol";
 import {IOracleFacet} from "../contracts/interfaces/facets/IOracleFacet.sol";
 
 /**
- * @title HyperCoreOracleFacetTestBase
+ * @title BaseOracleFacetTestBase
  * @notice Verifies the HyperCore precompile oracle: raw-staticcall reads (no
  *         selector), oraclePx/markPx divergence handling (conservative max),
  *         fail-closed staleness, EMA sampling, and the zero-fee refresh surface.
- * @dev    Uses the etched MockL1Read precompiles from HyperEVMTestBase. Prices
+ * @dev    Uses the etched MockL1Read precompiles from the test base. Prices
  *         are expressed in the 8-decimal test convention; the mock stores the
  *         raw precompile value (price*1e3 for XMR szDecimals=3).
  *
@@ -19,7 +19,7 @@ import {IOracleFacet} from "../contracts/interfaces/facets/IOracleFacet.sol";
  *         staticcall — the hub's fallback TSTOREs the EIP-1153 delegate-context
  *         flag, which reverts in a static context.
  */
-contract HyperCoreOracleFacetTestBase is BaseMockTestBase {
+contract BaseOracleFacetTestBase is BaseMockTestBase {
     uint256 constant P390_8DEC = 390_00000000;
     uint256 constant P400_8DEC = 400_00000000;
 
@@ -40,19 +40,19 @@ contract HyperCoreOracleFacetTestBase is BaseMockTestBase {
     }
 
     function _getXmrPrice() internal returns (uint256) {
-        return abi.decode(_hubView(abi.encodeWithSelector(HyperCoreOracleFacet.getXmrPrice.selector)), (uint256));
+        return abi.decode(_hubView(abi.encodeWithSelector(IOracleFacet.getXmrPrice.selector)), (uint256));
     }
 
     function _getCollateralPrice() internal returns (uint256) {
-        return abi.decode(_hubView(abi.encodeWithSelector(HyperCoreOracleFacet.getCollateralPrice.selector)), (uint256));
+        return abi.decode(_hubView(abi.encodeWithSelector(IOracleFacet.getCollateralPrice.selector)), (uint256));
     }
 
     function _getXmrEmaPrice() internal returns (uint256) {
-        return abi.decode(_hubView(abi.encodeWithSelector(HyperCoreOracleFacet.getXmrEmaPrice.selector)), (uint256));
+        return abi.decode(_hubView(abi.encodeWithSelector(IOracleFacet.getXmrEmaPrice.selector)), (uint256));
     }
 
     function _getXmrPriceWithAge(uint256 maxAge) internal returns (uint256) {
-        return abi.decode(_hubView(abi.encodeWithSelector(HyperCoreOracleFacet.getXmrPriceWithAge.selector, maxAge)), (uint256));
+        return abi.decode(_hubView(abi.encodeWithSelector(IOracleFacet.getXmrPriceWithAge.selector, maxAge)), (uint256));
     }
 
     /// @dev Assert a hub view call reverts with the expected 4-byte selector.
@@ -140,7 +140,7 @@ contract HyperCoreOracleFacetTestBase is BaseMockTestBase {
         // Past the staleness window, price-dependent reads fail closed.
         vm.warp(block.timestamp + 121);
         _assertHubReverts(
-            abi.encodeWithSelector(HyperCoreOracleFacet.getXmrPrice.selector),
+            abi.encodeWithSelector(IOracleFacet.getXmrPrice.selector),
             IOracleFacet.StalePrice.selector
         );
     }
@@ -152,7 +152,7 @@ contract HyperCoreOracleFacetTestBase is BaseMockTestBase {
 
         vm.warp(block.timestamp + 61);
         _assertHubReverts(
-            abi.encodeWithSelector(HyperCoreOracleFacet.getXmrPriceWithAge.selector, uint256(60)),
+            abi.encodeWithSelector(IOracleFacet.getXmrPriceWithAge.selector, uint256(60)),
             IOracleFacet.StalePrice.selector
         );
     }
@@ -195,7 +195,7 @@ contract HyperCoreOracleFacetTestBase is BaseMockTestBase {
     function test_GetUpdateFee_Zero() public {
         bytes[] memory empty = new bytes[](0);
         uint256 fee = abi.decode(
-            _hubView(abi.encodeWithSelector(HyperCoreOracleFacet.getUpdateFee.selector, empty)),
+            _hubView(abi.encodeWithSelector(IOracleFacet.getUpdateFee.selector, empty)),
             (uint256)
         );
         assertEq(fee, 0, "precompile oracle should have zero update fee");
@@ -205,7 +205,7 @@ contract HyperCoreOracleFacetTestBase is BaseMockTestBase {
     function test_UpdateOraclePrices_RefundsValue() public {
         uint256 balBefore = address(this).balance;
         bytes[] memory empty = new bytes[](0);
-        HyperCoreOracleFacet(address(hub)).updateOraclePrices{value: 1 ether}(empty);
+        BaseOracleFacet(address(hub)).updateOraclePrices{value: 1 ether}(empty);
         assertEq(address(this).balance, balBefore, "msg.value should be refunded");
     }
 

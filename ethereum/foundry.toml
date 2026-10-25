@@ -21,7 +21,6 @@ fs_permissions = [{ access = "read-write", path = "./deployments" }]
 # RPC endpoints
 [rpc_endpoints]
 gnosis = "${GNOSIS_RPC_URL}"
-hyperevm = "${HYPEREVM_RPC_URL}"
 bnb = "${BNB_RPC_URL}"
 base = "${BASE_RPC_URL}"
 robinhood = "${ROBINHOOD_RPC_URL}"

@@ -5,7 +5,7 @@ import {console} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {BaseMockTestBase} from "./BaseTestBase.sol";
 import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
-import {HyperCoreOracleFacet} from "../contracts/facets/HyperCoreOracleFacet.sol";
+import {BaseOracleFacet} from "../contracts/facets/BaseOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
@@ -496,9 +496,9 @@ contract SecurityGuardTestBase is BaseMockTestBase {
         mockOracle.setPrice(XMR_PERP_INDEX, 0);
         mockMark.setPrice(XMR_PERP_INDEX, 0);
         vm.warp(block.timestamp + 3 minutes);
-        HyperCoreOracleFacet(address(hub)).refreshPrices(); // skips zero price
+        BaseOracleFacet(address(hub)).refreshPrices(); // skips zero price
         vm.expectRevert();
-        HyperCoreOracleFacet(address(hub)).getXmrPrice();
+        BaseOracleFacet(address(hub)).getXmrPrice();
     }
 
     /// @notice getXmrPrice when stale must revert
@@ -507,7 +507,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
         vm.warp(block.timestamp + 3 minutes);
 
         vm.expectRevert();
-        HyperCoreOracleFacet(address(hub)).getXmrPrice();
+        BaseOracleFacet(address(hub)).getXmrPrice();
     }
 
     // ========== VAULT EVICTION: GRIEFING PREVENTION ==========

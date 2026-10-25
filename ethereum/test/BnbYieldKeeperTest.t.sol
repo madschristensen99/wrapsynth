@@ -3,7 +3,7 @@ pragma solidity ^0.8.19;
 
 import {console} from "forge-std/Test.sol";
 import {BnbMockTestBase} from "./BnbTestBase.sol";
-import {HyperCoreOracleFacet} from "../contracts/facets/HyperCoreOracleFacet.sol";
+import {BnbOracleFacet} from "../contracts/facets/BnbOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
@@ -383,7 +383,7 @@ contract YieldKeeperTestBnb is BnbMockTestBase {
         // Mock getXmrEmaPrice on the hub (delegates to oracle facet)
         vm.mockCall(
             address(hub),
-            abi.encodeWithSelector(HyperCoreOracleFacet.getXmrEmaPrice.selector),
+            abi.encodeWithSelector(BnbOracleFacet.getXmrEmaPrice.selector),
             abi.encode(emaPrice)
         );
     }

@@ -20,7 +20,7 @@ import {StataCbBTC} from "../contracts/StataCbBTC.sol";
 import {MockL1Read} from "../contracts/mocks/MockL1Read.sol";
 import {MockTwapPool} from "../contracts/mocks/MockTwapPool.sol";
 import {MockERC20} from "../contracts/mocks/MockERC20.sol";
-import {MockVerifierProxy} from "./HyperEVMTestBase.sol";
+import {MockVerifierProxy} from "../contracts/mocks/MockVerifierProxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IUniswapV3Factory} from "../contracts/interfaces/external/IUniswapV3Factory.sol";
 import {IUniswapV3Pool} from "../contracts/interfaces/external/IUniswapV3Pool.sol";
@@ -133,7 +133,7 @@ abstract contract RobinhoodTestBase is Test {
     // ========== SETUP INTERNALS ==========
 
     /// @dev Etch MockL1Read runtime code onto the three L1-read precompile
-    ///      addresses — identical trick to HyperEVMTestBase so the shared
+    ///      addresses — identical trick to the shared
     ///      precompile oracle leg works on the Robinhood fork. (Robinhood is
     ///      an Orbit chain — nothing lives at 0x806..808, so etch is safe.)
     function _etchPrecompiles() internal {
@@ -286,7 +286,7 @@ abstract contract RobinhoodTestBase is Test {
         return TickMath.getTickAtSqrtRatio(uint160(sqrtX96));
     }
 
-    // ========== HELPERS (HyperEVMTestBase parity) ==========
+    // ========== HELPERS (shared parity) ==========
 
     /// @dev Set the mock XMR perp price. Takes the old 8-decimal format.
     ///      Writes both oraclePx and markPx (mark = oracle, no divergence).

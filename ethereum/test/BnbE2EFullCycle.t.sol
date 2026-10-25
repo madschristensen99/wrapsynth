@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {console} from "forge-std/Test.sol";
 import {BnbMockTestBase} from "./BnbTestBase.sol";
 import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
-import {HyperCoreOracleFacet} from "../contracts/facets/HyperCoreOracleFacet.sol";
+import {BnbOracleFacet} from "../contracts/facets/BnbOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";

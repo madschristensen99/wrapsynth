@@ -13,7 +13,7 @@ WrapSynth brings Monero's anonymity set to DeFi and DeFi liquidity to Monero. Us
 - ✅ **Live on BNB Chain** — deployed, verified on BscScan, and exercised end-to-end on mainnet (mint → co-LP → pool swap → burn)
 - ✅ **Live on Base** — deployed, verified on BaseScan, and exercised end-to-end on mainnet (mint → burn → co-LP open/unwind → pool swaps)
 - ✅ **Live on Robinhood Chain** — deployed, verified on robin.etherscan.io, and exercised end-to-end on mainnet (mint → burn → co-LP open/unwind → pool swaps)
-- ✅ Complete mint → trade → burn cycle executed end-to-end on mainnet (former HyperEVM deployment)
+- ✅ Complete mint → trade → burn cycle executed end-to-end on mainnet
 - ✅ Two rounds of security review completed; all critical findings resolved (see [Security](#-security))
 - ✅ 633-line solvency invariant test suite + audit regression suite, replicated per chain (~900 fork tests)
 -  Solana port in development (`solana/`)
@@ -74,37 +74,6 @@ Deployed at block `52775153`. All contracts verified on BaseScan; deployer power
 | CoLPFacet | [`0xA6b4F4Ea557e2f7F2f23F32EDA9D17aB7F48dd49`](https://basescan.org/address/0xA6b4F4Ea557e2f7F2f23F32EDA9D17aB7F48dd49) |
 
 Machine-readable manifest: [`frontend/deployment.base.json`](./frontend/deployment.base.json) · [`ethereum/deployments/base-deployment.json`](./ethereum/deployments/base-deployment.json)
-</details>
-
-### Deprecated: former HyperEVM deployment (ChainID 999)
-
-> HyperEVM is deprecated. The contracts remain live and immutable on-chain
-> (deployer powers were permanently locked at launch), but it is no longer a
-> supported venue and is not selectable in the frontend. Deeper Hyperliquid
-> integration (CLOB listing, HIP-3 perps) is deferred — see
-> [docs/HYPERLIQUID_RISKS.md](./docs/HYPERLIQUID_RISKS.md) for the risk
-> analysis behind that decision.
-
-| Contract | Address |
-|---|---|
-| wsXMR Token | [`0x25Ed246C3CB273730235A3184aB63aB4DF4f4CF3`](https://hyperevmscan.io/address/0x25Ed246C3CB273730235A3184aB63aB4DF4f4CF3) |
-| wsXmrHub | [`0xb901C70F2a49d78c32e88ea1F36290d3F5F21f12`](https://hyperevmscan.io/address/0xb901C70F2a49d78c32e88ea1F36290d3F5F21f12) |
-| Liquidity Router | [`0x4619e409c8070042DAC16637F8f883F1C7118aEE`](https://hyperevmscan.io/address/0x4619e409c8070042DAC16637F8f883F1C7118aEE) |
-| wsXMR/USDe HyperSwap Pool | [`0xFA529Dc1B245B3228a172CEb886F47F2127AF401`](https://hyperevmscan.io/address/0xFA529Dc1B245B3228a172CEb886F47F2127AF401) |
-
-<details>
-<summary>Facet addresses</summary>
-
-| Facet | Address |
-|---|---|
-| HyperCoreOracleFacet | [`0x2a18BCFf642015E363080072F51DaA34A86A14bD`](https://hyperevmscan.io/address/0x2a18BCFf642015E363080072F51DaA34A86A14bD) |
-| VaultFacet | [`0x09444C6Af846b1E9628FDb47ed44185A3f650425`](https://hyperevmscan.io/address/0x09444C6Af846b1E9628FDb47ed44185A3f650425) |
-| MintFacet | [`0xfF9D2c2BBd88Ad92ED2Ee5b0CaF3ddFdc7BC6Fee`](https://hyperevmscan.io/address/0xfF9D2c2BBd88Ad92ED2Ee5b0CaF3ddFdc7BC6Fee) |
-| BurnFacet | [`0x31D33FF29D147dEf74a5F3959F6302b38aB8bD50`](https://hyperevmscan.io/address/0x31D33FF29D147dEf74a5F3959F6302b38aB8bD50) |
-| LiquidationFacet | [`0xfFc6F0F8d5ed6010532EE95646115E0118BAa144`](https://hyperevmscan.io/address/0xfFc6F0F8d5ed6010532EE95646115E0118BAa144) |
-| YieldFacet | [`0x8D7DD0A1FD26A2602837B028afB7A1f1b21DA9E7`](https://hyperevmscan.io/address/0x8D7DD0A1FD26A2602837B028afB7A1f1b21DA9E7) |
-
-Full deployment manifest (external contracts, pool config, LP defaults): [`deployment.json`](./deployment.json) · HyperEVM manifest: [`ethereum/deployments/hyperevm-deployment.json`](./ethereum/deployments/hyperevm-deployment.json)
 </details>
 
 > Prior beta deployment on Gnosis Chain (ChainID 100) is preserved in [`frontend/deployment.gnosis.json`](./frontend/deployment.gnosis.json).
@@ -205,7 +174,7 @@ deploy time (`hubLocked() == true`, `deployerOperationsLocked() == true`).
 
 - [`BurnSolvencyInvariantTest.t.sol`](./ethereum/test/BurnSolvencyInvariantTest.t.sol) — 633-line Foundry invariant suite asserting system solvency across randomized mint/burn/liquidation sequences
 - Full lifecycle E2E suites (`E2EFullCycle`, `E2EComprehensive`, `E2EAdvancedScenarios`) plus Hardhat unit suites per facet
-- Co-LP fork tests against HyperEVM mainnet state (`test/coLP/`)
+- Co-LP fork tests against BNB Chain mainnet state (`test/`)
 - Ed25519 compatibility tests against reference vectors
 
 ### Honest risk disclosure
@@ -259,7 +228,6 @@ anchor build && anchor test
 
 ```
 wrapsynth/
-├── deployment.json           # Per-chain deployment manifests (bnb / base / robinhood)
 ├── ethereum/
 │   ├── contracts/
 │   │   ├── core/             # wsXmrHub, wsXmrStorage
@@ -286,13 +254,13 @@ The strategy is parallel collateral experiments across chains — deploy everywh
 | Base | cbBTC (Coinbase Wrapped BTC) | Custodial wrapped asset | ✅ **Live** — deployed, verified, end-to-end tested on mainnet |
 | Robinhood Chain | SPY (Robinhood tokenized S&P 500) | Tokenized equity | ✅ **Live** — deployed, verified, end-to-end tested on mainnet |
 | Solana | Native SOL | Maximal censorship resistance — no issuer | 🔄 In development |
-| HyperEVM | sUSDe (HyperLend) | Yield-bearing stablecoin | ⛔ Deprecated — see [Hyperliquid risks](./docs/HYPERLIQUID_RISKS.md) |
+| HyperEVM | sUSDe (HyperLend) | Yield-bearing stablecoin | ⛔ Deprecated — removed from repo |
 | Gnosis | sDAI | Yield-bearing stablecoin | ⛔ Beta (superseded) |
 
 - 🔄 Additional LP onboarding + deeper liquidity
 - ⏳ Third-party audit + bug bounty ahead of broader scaling
 
-The oracle model minimizes external dependencies: XMR/USD comes from RedStone signed calldata, and collateral prices are computed fully on-chain from V3 TWAP pools — no second oracle provider per deployment. (The deprecated HyperEVM build read a native perp precompile instead; see [Hyperliquid risks](./docs/HYPERLIQUID_RISKS.md).)
+The oracle model minimizes external dependencies: XMR/USD comes from RedStone signed calldata, and collateral prices are computed fully on-chain from V3 TWAP pools — no second oracle provider per deployment.
 
 ---
 
@@ -300,7 +268,6 @@ The oracle model minimizes external dependencies: XMR/USD comes from RedStone si
 
 - [Funding guide](./docs/FUNDING.md) — what assets each chain needs and where to get them
 - [Sequence diagrams](./docs/sequenceDiagrams.md) — mint/burn/liquidation flows
-- [Hyperliquid integration risks](./docs/HYPERLIQUID_RISKS.md) — why HyperEVM is deprecated and what deeper perp integration would require
 - [Seed storage design](./docs/SEED_STORAGE_IMPLEMENTATION.md)
 - [LP node README](./ethereum/lp-node/)
 - [Solana program](./solana/anchor-program/)

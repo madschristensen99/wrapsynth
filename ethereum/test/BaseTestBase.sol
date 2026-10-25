@@ -20,7 +20,7 @@ import {StataCbBTC} from "../contracts/StataCbBTC.sol";
 import {MockL1Read} from "../contracts/mocks/MockL1Read.sol";
 import {MockTwapPool} from "../contracts/mocks/MockTwapPool.sol";
 import {MockERC20} from "../contracts/mocks/MockERC20.sol";
-import {MockVerifierProxy} from "./HyperEVMTestBase.sol";
+import {MockVerifierProxy} from "../contracts/mocks/MockVerifierProxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IUniswapV3Factory} from "../contracts/interfaces/external/IUniswapV3Factory.sol";
 import {IUniswapV3Pool} from "../contracts/interfaces/external/IUniswapV3Pool.sol";
@@ -40,7 +40,7 @@ interface IStataAdapter is IERC20 {
 /**
  * @title BaseTestBase
  * @notice Shared setUp for the Base fork test suite — mirrors
- *         HyperEVMTestBase/BnbTestBase so tests port with minimal changes.
+ *         BnbTestBase so tests port with minimal changes.
  * @dev    Forks Base mainnet and deploys the WrapSynth stack against REAL
  *         mainnet state:
  *
@@ -144,7 +144,7 @@ abstract contract BaseTestBase is Test {
     // ========== SETUP INTERNALS ==========
 
     /// @dev Etch MockL1Read runtime code onto the three L1-read precompile
-    ///      addresses — identical trick to HyperEVMTestBase so the shared
+    ///      addresses — identical trick to the shared
     ///      precompile oracle leg works on the Base fork.
     function _etchPrecompiles() internal {
         MockL1Read impl = new MockL1Read();
@@ -296,7 +296,7 @@ abstract contract BaseTestBase is Test {
         return TickMath.getTickAtSqrtRatio(uint160(sqrtX96));
     }
 
-    // ========== HELPERS (HyperEVMTestBase parity) ==========
+    // ========== HELPERS (shared parity) ==========
 
     /// @dev Set the mock XMR perp price. Takes the old 8-decimal format.
     ///      Writes both oraclePx and markPx (mark = oracle, no divergence).

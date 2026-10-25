@@ -3,7 +3,8 @@ pragma solidity ^0.8.19;
 
 import {console} from "forge-std/Test.sol";
 import {RobinhoodMockTestBase} from "./RobinhoodTestBase.sol";
-import {HyperCoreOracleFacet} from "../contracts/facets/HyperCoreOracleFacet.sol";
+import {RobinhoodOracleFacet} from "../contracts/facets/RobinhoodOracleFacet.sol";
+import {IOracleFacet} from "../contracts/interfaces/facets/IOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
@@ -383,7 +384,7 @@ contract YieldKeeperTestRobin is RobinhoodMockTestBase {
         // Mock getXmrEmaPrice on the hub (delegates to oracle facet)
         vm.mockCall(
             address(hub),
-            abi.encodeWithSelector(HyperCoreOracleFacet.getXmrEmaPrice.selector),
+            abi.encodeWithSelector(IOracleFacet.getXmrEmaPrice.selector),
             abi.encode(emaPrice)
         );
     }

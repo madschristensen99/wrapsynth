@@ -31,7 +31,7 @@ contract BnbOracleFacet is wsXmrStorage, IOracleFacet, PrimaryProdDataServiceCon
     ///      refresh rides along — it is on-chain TWAP, not a pushed feed.
     ///      If calldata carries no RedStone payload (no marker appended), the
     ///      call degrades to a soft refresh — _tryRefreshOracle legs +
-    ///      msg.value refund — matching HyperCoreOracleFacet semantics.
+    ///      msg.value refund — matching the precompile oracle semantics.
     function updateOraclePrices(bytes[] calldata) external payable {
         if (!_hasRedStonePayload()) {
             _tryRefreshOracle();
@@ -65,7 +65,7 @@ contract BnbOracleFacet is wsXmrStorage, IOracleFacet, PrimaryProdDataServiceCon
         _refreshCollateralTwapOrRevert();
     }
 
-    /// @notice Permissionless full refresh — mirrors HyperCoreOracleFacet's
+    /// @notice Permissionless full refresh — mirrors the precompile oracle's
     ///         refreshPrices entry point. Runs the shared _tryRefreshOracle
     ///         legs (precompile XMR read where configured + collateral TWAP).
     function refreshPrices() external {

@@ -4,7 +4,8 @@ pragma solidity ^0.8.28;
 import {console} from "forge-std/Test.sol";
 import {BaseMockTestBase} from "./BaseTestBase.sol";
 import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
-import {HyperCoreOracleFacet} from "../contracts/facets/HyperCoreOracleFacet.sol";
+import {BaseOracleFacet} from "../contracts/facets/BaseOracleFacet.sol";
+import {IOracleFacet} from "../contracts/interfaces/facets/IOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
@@ -666,7 +667,7 @@ contract ConcurrencyDebtInvariantTestBase is BaseMockTestBase {
     function _mockEmaPrice(uint256 emaPrice) internal {
         vm.mockCall(
             address(hub),
-            abi.encodeWithSelector(HyperCoreOracleFacet.getXmrEmaPrice.selector),
+            abi.encodeWithSelector(IOracleFacet.getXmrEmaPrice.selector),
             abi.encode(emaPrice)
         );
     }

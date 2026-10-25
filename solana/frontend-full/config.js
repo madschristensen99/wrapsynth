@@ -10,30 +10,6 @@ const DE = D.externalContracts || {};
 
 // Network configurations
 export const NETWORKS = {
-    HYPEREVM: {
-        id: 999,
-        name: 'HyperEVM',
-        network: 'hyperevm',
-        nativeCurrency: {
-            decimals: 18,
-            name: 'HYPE',
-            symbol: 'HYPE',
-        },
-        rpcUrls: {
-            default: {
-                http: ['https://rpc.hyperliquid.xyz/evm'],
-            },
-            public: {
-                http: ['https://rpc.hyperliquid.xyz/evm'],
-            },
-        },
-        blockExplorers: {
-            default: {
-                name: 'HyperEVM Scan',
-                url: 'https://hyperevmscan.io',
-            },
-        },
-    },
     UNICHAIN_SEPOLIA: {
         id: 1301,
         name: 'Unichain Sepolia',
@@ -62,22 +38,6 @@ export const NETWORKS = {
 
 // Contract deployments per network
 export const DEPLOYMENTS = {
-    HYPEREVM: {
-        chainId: 999,
-        wrappedMonero: DC.wsXMR,
-        wsXmrHub: DC.wsXmrHub,
-        oracleFacet: DF.HyperCoreOracleFacet,
-        vaultFacet: DF.VaultFacet,
-        mintFacet: DF.MintFacet,
-        burnFacet: DF.BurnFacet,
-        liquidationFacet: DF.LiquidationFacet,
-        yieldFacet: DF.YieldFacet,
-        liquidityRouter: DC.liquidityRouter,
-        stataUSDe: DE.stataUSDe || DE.sDAI,
-        ed25519Helper: DE.Ed25519Helper,
-        initialMoneroBlock: 3607954,
-        deployedAt: D.deploymentDate,
-    },
     UNICHAIN_SEPOLIA: {
         chainId: 1301,
         wrappedMonero: '0xC67Cf54d14078ff2968b4Fcd55331C48CEf69eeF',
@@ -88,8 +48,8 @@ export const DEPLOYMENTS = {
     },
 };
 
-// Default network (HyperEVM mainnet)
-export const DEFAULT_NETWORK = 'HYPEREVM';
+// Default network
+export const DEFAULT_NETWORK = 'UNICHAIN_SEPOLIA';
 
 // Get configuration for a specific network
 export function getNetworkConfig(networkKey = DEFAULT_NETWORK) {
