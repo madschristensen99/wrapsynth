@@ -73,7 +73,8 @@ async function fetchDex(slug, pool) {
 // DexScreener drops tiny pools from its index (Base wsXMR/cbBTC has done this
 // repeatedly). When a pair comes back null, derive the price + liquidity
 // straight from the pool contract so the card never goes empty:
-//   price0 = (sqrtPriceX96 / 2^96)^2  = token0 in units of token1
+//   rawRate = (sqrtPriceX96 / 2^96)^2  = raw token1 per raw token0
+//   human rate = rawRate * 10^(decimals0 - decimals1)
 //   liquidity = balanceOf(token0)*p0Usd + balanceOf(token1)*p1Usd
 // Volume/swaps genuinely can't be computed cheaply on-chain — they stay "--".
 
@@ -113,9 +114,12 @@ async function readPoolOnChain(key, cfg, D) {
         if (!wsxmr) return null;
 
         const sqrtP = Number(slot[0]);
-        const price0 = Math.pow(sqrtP / Math.pow(2, 96), 2); // token0 per token1
+        // (sqrtP/2^96)^2 is the RAW token1/token0 ratio — normalize by the
+        // decimals gap (wsXMR 8 vs collateral 18) before pricing in USD.
+        const price0 = Math.pow(sqrtP / Math.pow(2, 96), 2);
+        const humanRate = price0 * Math.pow(10, Number(d0) - Number(d1)); // human token1 per human token0
         const wsxmrIsToken0 = token0 === wsxmr;
-        const wsxmrUsd = wsxmrIsToken0 ? price0 * collUsd : collUsd / price0;
+        const wsxmrUsd = wsxmrIsToken0 ? humanRate * collUsd : collUsd / humanRate;
         if (!isFinite(wsxmrUsd) || wsxmrUsd <= 0) return null;
 
         const usdOf = (isWsxmr) => isWsxmr ? wsxmrUsd : collUsd;
