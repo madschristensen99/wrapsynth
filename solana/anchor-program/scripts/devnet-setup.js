@@ -4,27 +4,21 @@
 //   node scripts/devnet-setup.js
 //
 // Creates (idempotently):
-//   - two mock Pyth price accounts owned by oracle-mock (XMR/USD, SOL/USD)
-//   - initial price writes ($15 XMR, $150 SOL)
+//   - rent-floor funding for the global lamport escrow PDAs
 //   - protocol initialize (GlobalState, wsXMR mint)
 // Collateral is native SOL — no stand-in mint, no ATAs needed.
-// Writes devnet/devnet-config.json consumed by the LP server, frontend,
-// and the oracle refresher.
+// No oracle accounts: thresholds are LP-declared on-chain parameters.
+// Writes devnet/devnet-config.json consumed by the LP server and frontend.
 "use strict";
 
 const fs = require("fs");
 const path = require("path");
 const {
-  Connection, Keypair, PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL,
+  Keypair, PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL,
   SYSVAR_RENT_PUBKEY,
 } = require("@solana/web3.js");
 const { TOKEN_2022_PROGRAM_ID } = require("@solana/spl-token");
-const anchor = require("@coral-xyz/anchor");
 const L = require("./devnet-lib");
-
-const XMR_USD = 15n;
-const SOL_USD = 150n;
-const ORACLE_SPACE = 200;
 
 async function send(tx, signers) {
   const sig = await L.conn.sendTransaction(tx, signers);
@@ -52,46 +46,16 @@ async function main() {
   console.log("balance:", (await conn.getBalance(admin.publicKey)) / LAMPORTS_PER_SOL, "SOL");
 
   const program = L.loadProgram(admin);
-  const oracleMock = L.loadOracleMock(admin);
 
-  // Sanity: both programs must be deployed
-  for (const [name, id] of [["vault-manager", L.PROGRAM_ID], ["oracle-mock", L.ORACLE_MOCK_ID]]) {
-    const info = await conn.getAccountInfo(id);
-    if (!info || !info.executable) throw new Error(`${name} not deployed at ${id.toBase58()}`);
+  // Sanity: the program must be deployed
+  {
+    const info = await conn.getAccountInfo(L.PROGRAM_ID);
+    if (!info || !info.executable) throw new Error(`vault-manager not deployed at ${L.PROGRAM_ID.toBase58()}`);
   }
-
-  const kp = (f) => L.keypairOrNew(f);
-  const oracleXmrKp = kp("oracle-xmr.json");
-  const oracleSolKp = kp("oracle-sol.json");
-
-  // ── 2. Mock oracle accounts (owned by oracle-mock) ────────────────────────
-  const rentO = await conn.getMinimumBalanceForRentExemption(ORACLE_SPACE);
-  for (const [name, okp] of [["xmr", oracleXmrKp], ["sol", oracleSolKp]]) {
-    if (!(await conn.getAccountInfo(okp.publicKey))) {
-      const tx = new Transaction().add(
-        SystemProgram.createAccount({
-          fromPubkey: admin.publicKey,
-          newAccountPubkey: okp.publicKey,
-          space: ORACLE_SPACE,
-          lamports: rentO,
-          programId: L.ORACLE_MOCK_ID,
-        })
-      );
-      await send(tx, [admin, okp]);
-      console.log(`created ${name} oracle account:`, okp.publicKey.toBase58());
-    } else {
-      console.log(`${name} oracle exists:`, okp.publicKey.toBase58());
-    }
-  }
-
-  // ── 3. Initial price writes ──────────────────────────────────────────────
-  await L.writeOracle(oracleMock, admin, oracleXmrKp.publicKey, L.XMR_FEED_ID, XMR_USD);
-  await L.writeOracle(oracleMock, admin, oracleSolKp.publicKey, L.SOL_FEED_ID, SOL_USD);
-  console.log(`oracles written: XMR $${XMR_USD}, SOL $${SOL_USD}`);
 
   const collateralEscrow = L.findPda([L.PROGRAM_COLLATERAL_SEED]);
 
-  // ── 4. Rent-floor funding for lamport escrows ────────────────────────────
+  // ── 1. Rent-floor funding for lamport escrows ────────────────────────────
   // A data-less PDA left with (0, rentMin) lamports violates rent — floor-fund
   // the global escrows once; tracked deposits/withdrawals sit on top.
   {
@@ -109,13 +73,13 @@ async function main() {
     }
   }
 
-  // ── 5. Protocol initialize ───────────────────────────────────────────────
+  // ── 2. Protocol initialize ───────────────────────────────────────────────
   const globalState = L.findPda([L.GLOBAL_STATE_SEED]);
   const wsxmrMint = L.findPda([L.WSXMR_MINT_SEED]);
   if (!(await conn.getAccountInfo(globalState))) {
     await L.rpcIx(
       program.methods
-        .initialize(oracleXmrKp.publicKey)
+        .initialize()
         .accounts({
           authority: admin.publicKey,
           globalState,
@@ -131,31 +95,24 @@ async function main() {
     console.log("already initialized. wsXMR mint:", wsxmrMint.toBase58());
   }
 
-  // ── 6. Emit config ───────────────────────────────────────────────────────
+  // ── 3. Emit config ───────────────────────────────────────────────────────
   const config = {
     cluster: "devnet",
     rpc: L.DEVNET_URL,
     programId: L.PROGRAM_ID.toBase58(),
-    oracleMockProgramId: L.ORACLE_MOCK_ID.toBase58(),
     globalState: globalState.toBase58(),
     wsxmrMint: wsxmrMint.toBase58(),
     // Native SOL collateral — wSOL mint is the SPL identity (used by co-LP)
     collateralMint: "So11111111111111111111111111111111111111112",
     collateralEscrow: collateralEscrow.toBase58(),
     solEscrow: L.findPda([L.SOL_ESCROW_SEED]).toBase58(),
-    oracle: {
-      xmr: oracleXmrKp.publicKey.toBase58(),
-      sol: oracleSolKp.publicKey.toBase58(),
-      xmrFeedId: "0x" + L.XMR_FEED_ID.toString("hex"),
-      solFeedId: "0x" + L.SOL_FEED_ID.toString("hex"),
-      note: "MOCKED — owned by oracle-mock, refreshed by scripts/oracle-refresh.js. NOT real Pyth.",
-    },
     authority: admin.publicKey.toBase58(),
     seeds: {
       globalState: "global_state", wsxmrMint: "wsxmr_mint",
       programCollateral: "program_collateral", vault: "vault",
       vaultCollateral: "vault_collateral", pendingReturns: "pending_returns",
       mintRequest: "mint_request", burnRequest: "burn_request", solEscrow: "sol_escrow",
+      auction: "auction", auctionBond: "auction_bond",
     },
     generatedAt: new Date().toISOString(),
   };

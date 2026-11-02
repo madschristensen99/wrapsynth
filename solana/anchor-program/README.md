@@ -1,6 +1,8 @@
 # WrapSynth Vault Manager — Solana Program
 
-A Solana/Anchor implementation of the WrapSynth vault manager protocol, which enables minting and burning of **wsXMR** (wrapped Monero) tokens backed by **QQQx** (Backed's tokenized Nasdaq-100) collateral held in permissioned LP vaults. The target collateral for the Solana deployment is **native SOL** — no issuer, no freeze authority, the maximal censorship-resistance option.
+A Solana/Anchor implementation of the WrapSynth vault manager protocol: minting and burning **wsXMR** (wrapped Monero) backed by **native SOL** collateral in permissioned LP vaults.
+
+**Oracle-free.** Consensus never reads an external price. Each LP declares a `threshold` — lamports of collateral per `1e8` wsXMR — which determines mint capacity, vault solvency, burn/par settlement, and liquidation outcomes. Market prices are display-only in the frontend. Unhealthy vaults are resolved by a permissionless **bonded kick → Dutch auction** instead of oracle-triggered liquidations.
 
 ---
 
@@ -11,163 +13,138 @@ programs/
   wrapsynth-vault-manager/   # Core Anchor program (Rust)
     src/
       instructions/
-        initialize.rs        # Protocol init, GlobalState + wsXMR mint creation
-        vault_management.rs  # LP vault CRUD, collateral deposit/withdraw, yield sync,
-                             # per-vault timeouts + minter whitelist
+        initialize.rs        # Protocol init — GlobalState + wsXMR mint (no oracle args)
+        vault_management.rs  # LP vault CRUD, native SOL deposit/withdraw, set_threshold,
+                             # set_max_mint_wsxmr, repay_debt, kick-cancel hooks
         mint_flow.rs         # initiate_mint → provide_lp_key → set_mint_ready → reveal_secret
                              # → finalize_mint; cancel_mint + abandon/reclaim/claim/sweep paths
         burn_flow.rs         # request_burn → propose_hash → confirm_monero_lock → finalize_burn
-                             # + reveal_burn_secret/settle_burn, claim_slashed_collateral,
-                             # abort_burn, force_settle_burn, resolve_declined_proposal,
-                             # abandon_proposed_burn
-        liquidation.rs       # resolve_burn_for_liquidation, execute_liquidation, backstop_vault
+                             # + claim_slashed_collateral, abort_burn, force_settle_burn,
+                             # resolve_declined_proposal, abandon_proposed_burn
+        auction.rs           # kick → open_auction → bid → resolve_kick / reauction,
+                             # resolve_burn_for_auction, backstop_vault
         co_lp.rs             # set_max_co_lp_range, user_open_co_lp, collect_co_lp_fees,
                              # unwind_co_lp, rebalance_co_lp (Orca Whirlpools concentrated LP)
-        buy_and_burn.rs      # trigger_buy_and_burn (war-chest deflation) + continue_debt_wipe,
-                             # continue_debt_migration (batch debt wipe / index migration)
-        withdrawals.rs       # initialize_pending_returns, withdraw_collateral_returns, withdraw_sol_returns
+        withdrawals.rs       # initialize_pending_returns, withdraw_collateral_returns
         reconciliation.rs    # reconcile_global_debt across all vaults
-      state/                 # Account structs: GlobalState, Vault, MintRequest, BurnRequest, PendingReturns
-      constants.rs           # PDA seeds, numeric constants (COLLATERAL_RATIO, INITIAL_DEBT_INDEX, …)
+      state/                 # GlobalState, Vault, MintRequest, BurnRequest,
+                             # PendingReturns, Auction
+      utils/math.rs          # threshold/par helpers (par_lamports, required_collateral,
+                             # debt normalization, actual debt)
+      constants.rs           # PDA seeds, lock ratios, kick/auction timing constants
       errors.rs              # WrapSynthError enum
-      oracle.rs              # Manual Pyth price-feed deserialization (no pyth-sdk dependency)
 tests/
-  vault_manager.ts           # Full integration test suite (TypeScript/Mocha/Anchor)
+  vault_manager.ts           # Integration suite (TypeScript/Mocha/Anchor) — 47 tests
 types/
-  wrapsynth_vault_manager.ts # Hand-authored IDL type + IDL const (replaces anchor build IDL gen)
+  wrapsynth_vault_manager.ts # Generated IDL type file (anchor build emits the IDL now)
 ```
+
+---
+
+## Oracle-free accounting
+
+| Concept | On-chain meaning |
+|---|---|
+| `threshold` | Lamports of SOL per `1e8` wsXMR, declared by the LP (`set_threshold`). Floor: `MIN_THRESHOLD_LAMPORTS`. |
+| `par(wsxmr)` | `wsxmr × threshold / 1e8` — the collateral value the protocol uses for settlement. |
+| Mint capacity | `bond + (debt + pending_mints + mint) × threshold ≤ free_collateral` |
+| Mint key bond | `par × MINT_LOCK_RATIO` (110%) |
+| Burn lock | proportional `par` share of free collateral × `BURN_LOCK_MULTIPLIER_BPS` (1.3×), par-capped at the request's `threshold_at_request` |
+| Price feeds | **none** — no Pyth, no RedStone, no whirlpool TWAP in consensus |
+
+`xmr_price_at_*` request snapshots are gone — `threshold_at_ready` / `threshold_at_request` snapshot the LP's declared par instead, so settlement uses exactly the terms agreed at request time.
+
+## Auction liquidation
+
+Permissionless bonded kick → Dutch auction, mirroring `LiquidationAuctionFacet.sol` on EVM:
+
+```
+kick(vault)                 # anyone; posts KICK_BOND (2% of vault collateral, min floor)
+  → GRACE window            # LP can cancel by proving liveness: deposit_collateral or repay_debt
+  → open_auction            # settles in-flight mint/burn requests (resolve_burn_for_auction),
+                            # unwinds co-LP, bumps liquidation_nonce + mint_nonce
+  → ACTIVE auction          # bids = burn the full vault debt, receive X(t)% of offered collateral
+                            # X(t) decays linearly 100% → HAIRCUT_FLOOR over the window
+  → ENDED, no bid           # resolve_kick → vault frozen; backstop_vault lets a healthy LP
+                            # assume the debt + collateral and pay out residual
+reauction                   # anyone, after a bid fails to settle
+```
+
+Kicker bonds are escrowed at an `auction_bond` PDA. A cancelled kick forfeits the bond to vault equity; a resolved kick pays bond + a collateral chip to the kicker, with the "sane kick" guard (`KICK_SANE_BPS`) against griefing.
+
+`open_auction` requires every in-flight request to be settled first — burns in `Requested`/`Proposed` re-mint the user's wsXMR; `Committed` burns settle (LP revealed → user paid reward + lock released; LP absent → par-capped slash). Request nonces are bumped so stale requests can never execute against the post-liquidation vault.
+
+## Co-LP (Orca Whirlpools)
+
+`user_open_co_lp` deploys vault collateral + user wsXMR into a WSOL/wsXMR concentrated-liquidity position. Sizing is **user-supplied** (collateral amount + wsXMR bounds) — no price matching on-chain. `unwind_co_lp`, `rebalance_co_lp`, `collect_co_lp_fees` manage the position; post-operation health is checked against threshold coverage.
 
 ---
 
 ## Key Design Decisions
 
-### Oracle
-Pyth oracle accounts are passed as `AccountInfo` and deserialized manually in `oracle.rs`. The `pyth-solana-receiver-sdk` crate was removed because it conflicts with anchor-spl 0.30 via dependency version mismatches.
+### `request_id` — client-side keccak
+Both `initiate_mint` and `request_burn` take a `request_id: [u8; 32]` argument; the client pre-computes `keccak256(parties ‖ amounts ‖ nonce)` where `nonce = global.request_nonce + 1`. Avoids runtime-expression PDA seeds that break Anchor's `Bumps` derive.
 
-### `request_id` — Client-side keccak
-Both `initiate_mint` and `request_burn` accept a `request_id: [u8; 32]` as an instruction argument. The client pre-computes this via `keccak256(nonce || vault || timestamp)`. This avoids runtime-expression PDA seeds that break Anchor's `Bumps` derive macro.
+### `PendingReturns` — pre-creation pattern
+`PendingReturns` per actor is created up front via `initialize_pending_returns`; `init_if_needed` was abandoned because cross-account-field PDA seeds break the `Bumps` derive.
 
-### `PendingReturns` — Pre-creation pattern
-`PendingReturns` accounts for each actor (LP, user, keeper) must be created in advance via `initialize_pending_returns`. The `init_if_needed` pattern was abandoned because cross-account-field PDA seeds break the `Bumps` derive.
+### wsXMR mint — manual CPI init
+The Token-2022 mint PDA is created via `SystemProgram::create_account` + `initialize_mint2` CPIs inside `initialize`. Anchor 0.30+'s `InterfaceAccount<Mint>` `init` path calls `InitializeMint2` twice on Token-2022 mints (error `0x6`); the manual path avoids it.
 
-### wsXMR Mint — Manual CPI init
-The wsXMR Token-2022 mint PDA is created via `SystemProgram::create_account` CPI and then initialized via `initialize_mint2` CPI inside the `initialize` handler. Anchor 0.30's `InterfaceAccount<Mint>` with `init` + `mint::token_program` incorrectly calls `InitializeMint2` twice on Token-2022 mints, causing error `0x6`. The manual approach avoids this.
+### RefCell scoping around CPIs
+Zero-copy loaders (`GlobalState`) must drop their `RefMut` before any CPI that passes the account (e.g. `mint_to` with `global_state` as mint authority) or the runtime raises `AccountBorrowFailed`. Scopes are kept tight in `auction.rs`/`burn_flow.rs`.
 
-### Borrow conflicts — `drop()` pattern
-`finalize_mint` and `trigger_buy_and_burn` extract `bump` and `to_account_info()` before taking `&mut` borrows, then `drop()` the mutable borrow before CPI calls, and re-borrow after. This satisfies the Rust borrow checker in the Anchor 0.30 context.
-
-### `CancelBurn` / `ClaimSlashedCollateral` / `ResolveBurnForLiquidation`
-These instructions use `vault_lp: AccountInfo` with an explicit `constraint` check instead of cross-account-field seeds for vault PDA derivation, because cross-account seeds in `#[derive(Accounts)]` structs break Anchor's Bumps auto-derivation.
-
-### Reconciliation
-`reconcile_global_debt` iterates `remaining_accounts` and deserializes each `Vault` via `Vault::try_deserialize(&mut &data[8..])` directly from raw account data, avoiding the `Account::try_from` lifetime issue.
-
----
-
-## Instruction Flow
-
-### Mint flow
-```
-1. initiate_mint(xmr_amount, claim_commitment, timeout_duration, request_id)
-   → MintRequest { status: Pending }, griefing deposit escrowed
-2. set_mint_ready()            [LP]
-   → MintRequest { status: Ready }
-3. finalize_mint(secret)       [anyone with secret]
-   → wsXMR minted to recipient, fee to LP ATA, debt recorded
-4. cancel_mint()               [anyone, after timeout]
-   → griefing deposit returned to initiator, LP penalised if Ready
-```
-
-### Burn flow
-```
-1. request_burn(wsxmr_amount, request_id)  [user]
-   → wsXMR burned from user ATA, BurnRequest { status: Requested }, collateral locked
-2. propose_hash(secret_hash)               [LP]
-   → BurnRequest { status: Proposed }
-3. confirm_monero_lock()                   [user]
-   → BurnRequest { status: Committed }
-4. finalize_burn(secret)                   [LP]
-   → collateral released to user PendingReturns, debt reconciled
-   OR
-4b. claim_slashed_collateral()             [user, after deadline]
-   → LP's collateral slashed to user PendingReturns
-```
+### `test-lifecycle` cargo feature
+`cargo build-sbf -- --features test-lifecycle` compiles short auction/kick/timeout constants (grace 15s, auction 10s, cooldown 10s) so the full liquidation lifecycle runs against `solana-test-validator` in minutes. Production/devnet builds keep EVM-parity timings (1h grace, 24h auction, 6h cooldown, 30m open delay).
 
 ---
 
 ## Build & Test
 
 ### Prerequisites
-- Rust + `cargo build-sbf` (Solana BPF toolchain v1.52)
-- Node.js + npm
-- `solana-test-validator`
+- Rust + `cargo build-sbf` (Solana BPF toolchain)
+- Node.js + npm, `solana-test-validator`
 
 ### Build
 ```bash
-cd solana/wrapsynth
-touch programs/wrapsynth-vault-manager/src/lib.rs
-cargo build-sbf --manifest-path programs/wrapsynth-vault-manager/Cargo.toml --tools-version v1.52
+cd solana/anchor-program/programs/wrapsynth-vault-manager
+cargo build-sbf                              # production timing
+cargo build-sbf -- --features test-lifecycle # short lifecycle constants for tests
 ```
 
-### Deploy to local validator
+### Integration suite (47 tests, ~3 min)
 ```bash
-# Start fresh validator
-solana-test-validator --reset --quiet &
-sleep 8
-solana airdrop 100
+# Terminal 1 — validator with the test-lifecycle build baked in
+solana-test-validator --reset \
+  --bpf-program C9kVasKgQiUX1BCngBjorvMA8QaFyERHvdkYdwPyy3H1 \
+  target/deploy/wrapsynth_vault_manager.so
 
-# Deploy
-solana program deploy target/deploy/wrapsynth_vault_manager.so \
-  --program-id target/deploy/wrapsynth_vault_manager-keypair.json
-```
-
-### Run tests
-```bash
+# Terminal 2
+npx tsc -p tsconfig.test.json
 ANCHOR_PROVIDER_URL=http://localhost:8899 \
 ANCHOR_WALLET=~/.config/solana/id.json \
-npx ts-mocha -p ./tsconfig.json -t 1000000 tests/vault_manager.ts
+npx mocha -t 1000000 dist-test/tests/vault_manager.js
 ```
 
----
+Covers: initialize, vault/threshold config, whitelist, SOL deposit/withdraw, full mint + burn handshakes (Ed25519 secret scheme), `repay_debt`, kick → grace-cancel → re-kick → open auction → bid, auction expiry → freeze → `backstop_vault`, pending-return withdrawals, reconciliation.
 
-## Current Status
+Rust unit tests (`cargo test`) cover threshold/par math, auction bid curves, nonce invalidation, Whirlpool tick math, and Ed25519 verification.
 
-### Program compilation
-✅ Compiles clean — 0 errors, ~40 warnings (unused variable noise) — under `anchor-lang 0.30.1` / `anchor-spl 0.30.1`.
+> **Follow-up:** a co-LP fork suite (cloned mainnet Whirlpool via `scripts/run-fork-tests.sh`) needs to be rewritten for the new `user_open_co_lp` surface — the old suite targeted the removed SPL-collateral model.
 
-### TypeScript test suite
-✅ Zero `tsc --noEmit` errors. The IDL is hand-authored in `types/wrapsynth_vault_manager.ts` because `anchor build --features idl-build` cannot process `InterfaceAccount` types in Anchor 0.30.
+### Deploy to devnet
+```bash
+bash scripts/deploy-devnet.sh   # anchor build → deploy → devnet-setup.js
+```
 
-### Integration tests
-- **11 / 35 tests passing** as of last run
-- `PendingReturns` initialization, burn flow (propose/confirm/finalize/cancel/slash), mint cancel (timeout), liquidation guard, and LP2 multi-vault scaffolding all pass
-- **Blocked by**: `initialize` (test 1) still failing at runtime due to a double `InitializeMint2` invocation. The fix (manual `create_account` + `initialize_mint2` CPI replacing the Anchor `init` constraint) has been applied to the source and compiled, but requires a validator reset + fresh deploy to take effect.
-
-### Known open issues
-| # | Description |
-|---|---|
-| 1 | `initialize` fails with Token-2022 error `0x6` (double mint init) — fix compiled, pending fresh deploy |
-| 2 | All downstream tests (vault creation, mint flow, burn flow, buy-and-burn, etc.) cascade-fail from issue 1 |
-| 3 | `withdraw_collateral_returns` / `withdraw_sol_returns` — zero-balance rejection assertion fails (program returns success instead of `ZeroAmount`) |
+`devnet-setup.js` funds the global escrow rent floors, runs `initialize` (no oracle args), and writes `devnet/devnet-config.json` for the LP server + frontend.
 
 ---
 
 ## Program ID
 
-**Devnet**: `EZ1hsgYwmqmCY5Gzw9mwnJnJE4PJcKX5hHw5MZXk2ssy`  
-**Localnet**: `EZ1hsgYwmqmCY5Gzw9mwnJnJE4PJcKX5hHw5MZXk2ssy`
+`C9kVasKgQiUX1BCngBjorvMA8QaFyERHvdkYdwPyy3H1`
 
 Keypair: `target/deploy/wrapsynth_vault_manager-keypair.json`
 
-### Deploy to Devnet
-```bash
-# Set cluster to devnet
-solana config set --url https://api.devnet.solana.com
-
-# Deploy/upgrade program
-solana program deploy target/deploy/wrapsynth_vault_manager.so \
-  --program-id target/deploy/wrapsynth_vault_manager-keypair.json
-
-# View on explorer
-# https://explorer.solana.com/address/EZ1hsgYwmqmCY5Gzw9mwnJnJE4PJcKX5hHw5MZXk2ssy?cluster=devnet
-```
+Existing devnet state is **ABI-incompatible** — redeploy and re-`initialize`; old `GlobalState`/`Vault` accounts cannot be deserialized by this program.

@@ -21,13 +21,7 @@ export const IDL_PATH = path.join(
   'idl',
   'wrapsynth_vault_manager.json'
 );
-export const ORACLE_MOCK_IDL_PATH = path.join(
-  SOLANA_ROOT,
-  'anchor-program',
-  'target',
-  'idl',
-  'oracle_mock.json'
-);
+export const ORACLE_MOCK_IDL_PATH = null;
 
 export function loadConfig(configPath = process.env.DEVNET_CONFIG || DEFAULT_CONFIG_PATH) {
   const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -43,18 +37,12 @@ export function loadConfig(configPath = process.env.DEVNET_CONFIG || DEFAULT_CON
     collateralEscrow: new PublicKey(cfg.collateralEscrow ?? cfg.programCollateralAta),
     programCollateralAta: new PublicKey(cfg.collateralEscrow ?? cfg.programCollateralAta),
     solEscrow: new PublicKey(cfg.solEscrow),
-    oracleXmr: new PublicKey(cfg.oracle.xmr),
-    oracleSol: new PublicKey(cfg.oracle.sol ?? cfg.oracle.qqqx),
-    oracleMockProgramId: new PublicKey(cfg.oracleMockProgramId),
     authority: new PublicKey(cfg.authority),
   };
 }
 
 export function loadIdl() {
   return JSON.parse(fs.readFileSync(IDL_PATH, 'utf8'));
-}
-export function loadOracleMockIdl() {
-  return JSON.parse(fs.readFileSync(ORACLE_MOCK_IDL_PATH, 'utf8'));
 }
 
 export function loadKeypair(file) {

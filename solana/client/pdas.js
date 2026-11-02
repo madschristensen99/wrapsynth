@@ -21,6 +21,8 @@ export const SEEDS = {
   solEscrow: Buffer.from('sol_escrow'),
   coLpPosition: Buffer.from('co_lp_position'),
   coLpPositionMint: Buffer.from('co_lp_position_mint'),
+  auction: Buffer.from('auction'),
+  auctionBond: Buffer.from('auction_bond'),
 };
 
 export const findPda = (seeds, programId) =>
@@ -45,6 +47,10 @@ export const mintRequestPda = (requestId, pid) =>
   findPda([SEEDS.mintRequest, requestId], pid);
 export const burnRequestPda = (requestId, pid) =>
   findPda([SEEDS.burnRequest, requestId], pid);
+export const auctionPda = (vault, pid) =>
+  findPda([SEEDS.auction, vault.toBuffer()], pid);
+export const auctionBondEscrowPda = (vault, pid) =>
+  findPda([SEEDS.auctionBond, vault.toBuffer()], pid);
 
 export function le64(v) {
   const b = Buffer.alloc(8);

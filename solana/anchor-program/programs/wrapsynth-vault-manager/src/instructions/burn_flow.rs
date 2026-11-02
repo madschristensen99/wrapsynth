@@ -7,10 +7,9 @@ use crate::errors::WrapSynthError;
 use crate::instructions::vault_management::slash_to_pool;
 use crate::state::{BurnRequest, BurnStatus, GlobalState, PendingReturns, Vault};
 use crate::utils::{
-    get_collateral_price, get_xmr_price,
     math::{
-        calculate_collateral_ratio, check_collateral_ratio, collateral_to_usd,
-        collateral_value_for_debt, get_actual_debt, normalize_debt, usd_to_collateral,
+        free_collateral, get_actual_debt, normalize_debt, par_lamports,
+        required_lamports,
     },
     mul_verify, verify_public_key,
 };
@@ -88,6 +87,16 @@ fn _request_burn(
 
     let vault = &mut ctx.accounts.vault;
     require!(vault.active, WrapSynthError::VaultNotActive);
+    // New obligations cannot open while a kick is live or the vault is frozen
+    // (EVM vaultNotBlocked parity).
+    require!(!vault.kick_active, WrapSynthError::KickActive);
+    require!(!vault.frozen, WrapSynthError::VaultFrozen);
+
+    let threshold = vault.threshold_lamports_per_wsxmr;
+    require!(
+        threshold >= MIN_THRESHOLD_LAMPORTS,
+        WrapSynthError::BelowMinThreshold
+    );
 
     if vault.min_burn_amount > 0 {
         require!(
@@ -101,12 +110,6 @@ fn _request_burn(
     );
 
     let global_debt_index = ctx.accounts.global_state.load()?.global_debt_index;
-    let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
-    let col_price = get_collateral_price(
-        &ctx.accounts.pyth_collateral,
-        PRICE_MAX_AGE,
-        &SOL_USD_FEED_ID,
-    )?;
 
     // M1: Burn cannot exceed the vault's own debt. Debt is NOT reduced here —
     // it is reduced only at settlement (finalize, slash, force_settle, abort).
@@ -118,42 +121,45 @@ fn _request_burn(
         WrapSynthError::BurnExceedsVaultDebt
     );
 
-    // Calculate collateral to lock at BURN_LOCK_RATIO + reward
-    let col_val_usd = collateral_value_for_debt(wsxmr_amount, xmr_price, BURN_LOCK_RATIO);
-    let collateral_to_lock = usd_to_collateral(col_val_usd, col_price);
+    // PROPORTIONAL LOCK (EVM calculateBurnCollateral parity): the collateral
+    // seized on slash equals the burn's fair share of the vault's free
+    // collateral times BURN_LOCK_MULTIPLIER (1.3×):
+    //     baseLock = freeCollateral × (wsxmr/debt) × 1.3
+    // Reward = par × burnRewardBps where par = wsxmr × threshold / 1e8 (the
+    // declared rate — no oracle). This protects slash payouts when the vault
+    // sits below its own threshold: the user gets a proportional share of what
+    // actually backs their debt slice.
+    let free = free_collateral(vault);
+    let collateral_to_lock = ((free as u128)
+        .checked_mul(wsxmr_amount as u128)
+        .unwrap_or(0)
+        .checked_mul(BURN_LOCK_MULTIPLIER_BPS as u128)
+        .unwrap_or(0)
+        / actual_debt as u128
+        / BPS_DENOMINATOR as u128) as u64;
 
-    let reward_usd =
-        (wsxmr_amount as u128).checked_mul(xmr_price).unwrap_or(0) / WSXMR_DECIMALS as u128;
-    let reward_usd = reward_usd
+    let reward_collateral = ((par_lamports(wsxmr_amount, threshold) as u128)
         .checked_mul(vault.burn_reward_bps as u128)
         .unwrap_or(0)
-        / BPS_DENOMINATOR as u128;
-    let reward_collateral = usd_to_collateral(reward_usd, col_price);
+        / BPS_DENOMINATOR as u128) as u64;
     let total_lock = collateral_to_lock
         .checked_add(reward_collateral)
         .ok_or(WrapSynthError::MathOverflow)?;
 
     // Total collateral model: collateral_amount = total (locked included), so
     // available = collateral_amount - locked_collateral.
-    let available_collateral = vault
-        .collateral_amount
-        .saturating_sub(vault.locked_collateral);
+    let available_collateral = free;
     require!(
         available_collateral >= total_lock,
         WrapSynthError::InsufficientCollateral
     );
 
-    // Ensure remaining free collateral can back pending mints at COLLATERAL_RATIO
+    // Remaining free collateral must still back pending mints at the vault's
+    // declared threshold.
     let remaining_free = available_collateral - total_lock;
     if vault.pending_debt > 0 {
         require!(
-            check_collateral_ratio(
-                remaining_free,
-                col_price,
-                vault.pending_debt,
-                xmr_price,
-                COLLATERAL_RATIO,
-            ),
+            remaining_free >= required_lamports(vault.pending_debt, threshold),
             WrapSynthError::InsufficientCollateral
         );
     }
@@ -216,7 +222,7 @@ fn _request_burn(
     burn_req.user_claim_commitment = claim_commitment;
     burn_req.user_public_key = user_public_key;
     burn_req.user_view_key = user_view_key;
-    burn_req.xmr_price_at_request = xmr_price;
+    burn_req.threshold_at_request = threshold;
     burn_req.secret_hash = [0u8; 32];
     burn_req.lp_public_spend_key = [0u8; 32];
     burn_req.lp_public_view_key = [0u8; 32];
@@ -349,8 +355,6 @@ pub fn settle_burn(ctx: Context<SettleBurn>) -> Result<()> {
         request,
         &mut ctx.accounts.vault,
         &mut *ctx.accounts.global_state.load_mut()?,
-        &ctx.accounts.pyth_xmr,
-        &ctx.accounts.pyth_collateral,
         &ctx.accounts.vault_collateral_escrow,
         &ctx.accounts.collateral_escrow,
         &ctx.accounts.system_program,
@@ -385,8 +389,6 @@ pub fn finalize_burn(ctx: Context<FinalizeBurn>, secret: [u8; 32]) -> Result<()>
         request,
         &mut ctx.accounts.vault,
         &mut *ctx.accounts.global_state.load_mut()?,
-        &ctx.accounts.pyth_xmr,
-        &ctx.accounts.pyth_collateral,
         &ctx.accounts.vault_collateral_escrow,
         &ctx.accounts.collateral_escrow,
         &ctx.accounts.system_program,
@@ -402,51 +404,15 @@ fn settle_burn_internal<'a>(
     request: &mut BurnRequest,
     vault: &mut Vault,
     global: &mut GlobalState,
-    pyth_xmr: &AccountInfo<'a>,
-    pyth_collateral: &AccountInfo<'a>,
     vault_collateral_escrow: &AccountInfo<'a>,
     collateral_escrow: &AccountInfo<'a>,
     system_program: &Program<'a, System>,
     user_pending_returns: &mut PendingReturns,
 ) -> Result<()> {
-    let xmr_price = get_xmr_price(pyth_xmr, PRICE_MAX_AGE)?;
-    let col_price = get_collateral_price(pyth_collateral, PRICE_MAX_AGE, &SOL_USD_FEED_ID)?;
-
-    let mut safe_reward = request.reward_collateral;
+    // EVM _settleBurn parity: the reward is paid as locked at request time —
+    // no health cap, no price read.
+    let safe_reward = request.reward_collateral;
     let total_unlock = request.locked_collateral + request.reward_collateral;
-
-    // Cap the reward to maintain vault health (total model: collateral_amount
-    // includes locked collateral).
-    if safe_reward > 0 {
-        let projected_collateral = vault.collateral_amount;
-        let remaining_debt = get_actual_debt(vault.normalized_debt, global.global_debt_index);
-
-        if remaining_debt > 0 {
-            let other_locked = vault.locked_collateral.saturating_sub(total_unlock);
-            let available_for_debt = projected_collateral.saturating_sub(other_locked);
-
-            let col_usd =
-                collateral_to_usd(available_for_debt.saturating_sub(safe_reward), col_price);
-            let debt_usd = remaining_debt as u128 * xmr_price / WSXMR_DECIMALS as u128;
-            let ratio = calculate_collateral_ratio(col_usd, debt_usd);
-
-            if ratio < LIQUIDATION_RATIO {
-                // Reduce reward to maintain vault at LIQUIDATION_RATIO
-                let debt_with_pending = remaining_debt.saturating_add(vault.pending_debt);
-                let debt_usd_full = debt_with_pending as u128 * xmr_price / WSXMR_DECIMALS as u128;
-                let min_col_usd =
-                    debt_usd_full * LIQUIDATION_RATIO as u128 / RATIO_PRECISION as u128;
-                let min_col_shares =
-                    usd_to_collateral(min_col_usd, col_price).saturating_add(other_locked);
-
-                if projected_collateral > min_col_shares {
-                    safe_reward = projected_collateral - min_col_shares;
-                } else {
-                    safe_reward = 0;
-                }
-            }
-        }
-    }
 
     // Total collateral model: release the reservation, AND remove the paid-out
     // reward from vault equity (it leaves the vault to the holder).
@@ -548,18 +514,9 @@ pub fn claim_slashed_collateral(
     let global = &mut ctx.accounts.global_state.load_mut()?;
 
     // Par-capped slash: user receives min(par, locked) — NO reward, since the LP
-    // never completed the burn. Par is fixed at request time via xmr_price_at_request,
-    // protecting the user from XMR price appreciation.
-    let col_price = get_collateral_price(
-        &ctx.accounts.pyth_collateral,
-        PRICE_MAX_AGE,
-        &SOL_USD_FEED_ID,
-    )?;
-    let par_value_usd = (request.wsxmr_amount as u128)
-        .checked_mul(request.xmr_price_at_request)
-        .ok_or(WrapSynthError::MathOverflow)?
-        / WSXMR_DECIMALS as u128;
-    let par_collateral = usd_to_collateral(par_value_usd, col_price);
+    // never completed the burn. Par is fixed at request time via the vault's
+    // threshold snapshot (threshold_at_request) — no price read (EVM parity).
+    let par_collateral = par_lamports(request.wsxmr_amount, request.threshold_at_request);
 
     let mut user_payout = par_collateral.min(request.locked_collateral);
     if user_payout > vault.collateral_amount {
@@ -710,17 +667,9 @@ pub fn force_settle_burn(ctx: Context<ForceSettleBurn>) -> Result<()> {
 
     // Par-capped settlement: user receives min(par, locked) — no reward, since
     // the LP never proposed. Unlike abort_burn, this pays collateral instead of
-    // restoring wsXMR (user prefers collateral over getting wsXMR back).
-    let col_price = get_collateral_price(
-        &ctx.accounts.pyth_collateral,
-        PRICE_MAX_AGE,
-        &SOL_USD_FEED_ID,
-    )?;
-    let par_value_usd = (request.wsxmr_amount as u128)
-        .checked_mul(request.xmr_price_at_request)
-        .ok_or(WrapSynthError::MathOverflow)?
-        / WSXMR_DECIMALS as u128;
-    let par_collateral = usd_to_collateral(par_value_usd, col_price);
+    // restoring wsXMR (user prefers collateral over getting wsXMR back). Par is
+    // fixed at the request's threshold snapshot — no price read (EVM parity).
+    let par_collateral = par_lamports(request.wsxmr_amount, request.threshold_at_request);
 
     let user_base = par_collateral.min(request.locked_collateral);
     let total_lock = request.locked_collateral + request.reward_collateral;
@@ -945,10 +894,6 @@ pub struct RequestBurn<'info> {
     #[account(mut)]
     pub user_wsxmr_ata: InterfaceAccount<'info, TokenAccount>,
 
-    /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
-    pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth collateral price feed — validated by oracle.rs
-    pub pyth_collateral: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,
@@ -1039,10 +984,6 @@ pub struct SettleBurn<'info> {
     )]
     pub user_pending_returns: Box<Account<'info, PendingReturns>>,
 
-    /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
-    pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth collateral price feed — validated by oracle.rs
-    pub pyth_collateral: AccountInfo<'info>,
 
     /// CHECK: lamport-only vault collateral escrow PDA — validated by seeds
     #[account(
@@ -1103,10 +1044,6 @@ pub struct FinalizeBurn<'info> {
     )]
     pub user_pending_returns: Box<Account<'info, PendingReturns>>,
 
-    /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
-    pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth collateral price feed — validated by oracle.rs
-    pub pyth_collateral: AccountInfo<'info>,
 
     /// CHECK: lamport-only vault collateral escrow PDA — validated by seeds
     #[account(
@@ -1167,10 +1104,6 @@ pub struct ClaimSlashedCollateral<'info> {
     )]
     pub user_pending_returns: Box<Account<'info, PendingReturns>>,
 
-    /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
-    pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth collateral price feed — validated by oracle.rs
-    pub pyth_collateral: AccountInfo<'info>,
 
     /// CHECK: lamport-only vault collateral escrow PDA — validated by seeds
     #[account(
@@ -1259,10 +1192,6 @@ pub struct ForceSettleBurn<'info> {
     )]
     pub user_pending_returns: Box<Account<'info, PendingReturns>>,
 
-    /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
-    pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth collateral price feed — validated by oracle.rs
-    pub pyth_collateral: AccountInfo<'info>,
 
     /// CHECK: lamport-only vault collateral escrow PDA — validated by seeds
     #[account(

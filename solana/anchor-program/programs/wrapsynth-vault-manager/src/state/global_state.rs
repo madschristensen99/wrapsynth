@@ -6,12 +6,10 @@ pub struct GlobalState {
     pub authority: Pubkey,
     /// wsXMR SPL Token 2022 mint address
     pub wsxmr_mint: Pubkey,
-    /// Collateral SPL token mint (raw QQQx, no yield wrapper)
+    /// Collateral SPL token mint (wSOL — SPL identity of the lamport collateral)
     pub collateral_mint: Pubkey,
     /// Authorized liquidity router program
     pub liquidity_router: Pubkey,
-    /// Pyth XMR/USD price feed account
-    pub pyth_xmr_feed: Pubkey,
 
     /// Total wsXMR debt across all vaults (8 decimals)
     pub global_total_debt: u64,
@@ -37,9 +35,9 @@ pub struct GlobalState {
 
 impl GlobalState {
     /// Account discriminator + all fields (zero-copy, no implicit padding).
-    /// Pubkeys: 5 * 32 = 160
+    /// Pubkeys: 4 * 32 = 128
     /// u64s: 7 * 8 = 56
     /// u8 bump + 7 reserved = 8
-    /// Total data: 8 + 160 + 56 + 8 = 232
-    pub const LEN: usize = 8 + 160 + 56 + 8; // = 232
+    /// Total data: 8 + 128 + 56 + 8 = 200
+    pub const LEN: usize = 8 + 128 + 56 + 8; // = 200
 }

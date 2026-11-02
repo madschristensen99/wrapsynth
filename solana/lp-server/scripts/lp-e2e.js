@@ -100,7 +100,6 @@ await rpcIx(c.program.methods.initiateMint(
   vault: vaultPda, globalState: c.globalState, mintRequest: mintPda,
   griefingEscrow: lp.publicKey,
   initiatorPendingReturns: pr,
-  ...c.oracleAccounts(), systemProgram: SystemProgram.programId,
 }), [user]);
 console.log('[mint] initiated — handing off to lp-server');
 
@@ -156,7 +155,7 @@ await rpcIx(c.program.methods.requestBurn(
   Array.from(userBurn.pubKey), Array.from(userBurn.pubKey), Array.from(burnId))
   .accounts({
     user: user.publicKey, vault: vaultPda, globalState: c.globalState, burnRequest: burnPda,
-    wsxmrMint: c.wsxmrMint, userWsxmrAta, ...c.oracleAccounts(),
+    wsxmrMint: c.wsxmrMint, userWsxmrAta,
     tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
   }), [user]);
 console.log('[burn] requested — handing off to lp-server');

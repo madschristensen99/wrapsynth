@@ -12,7 +12,7 @@ import {
 import BN from 'bn.js';
 import {
   cfg, conn, program, attachWallet, walletTx, confirm, fetchRetry,
-  vaultPda, pendingReturns, oracleAccounts, collateralAccounts, nextNonce,
+  vaultPda, pendingReturns, collateralAccounts, nextNonce,
   listVaults, pdas, accounts, secrets,
 } from './browserClient.js';
 
@@ -162,7 +162,6 @@ $('mintBtn').onclick = async () => {
       vault: vpda, globalState: cfg.globalState, mintRequest: pda,
       griefingEscrow: cfg.raw.authority || wallet.publicKey,
       initiatorPendingReturns: pr,
-      ...oracleAccounts(), systemProgram: SystemProgram.programId,
     }), wallet);
   } catch (e) { $('mintStatus').textContent = 'failed'; log('initiate failed: ' + e.message); return; }
 
@@ -237,7 +236,6 @@ $('burnBtn').onclick = async () => {
     ).accounts({
       user: wallet.publicKey, vault: vpda, globalState: cfg.globalState, burnRequest: pda,
       wsxmrMint: cfg.wsxmrMint, userWsxmrAta: userAta,
-      ...oracleAccounts(), tokenProgram: TOKEN_2022_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     }), wallet);
   } catch (e) {
@@ -255,7 +253,6 @@ $('burnBtn').onclick = async () => {
       ).accounts({
         user: wallet.publicKey, vault: vpda, globalState: cfg.globalState, burnRequest: pda2,
         wsxmrMint: cfg.wsxmrMint, userWsxmrAta: userAta,
-        ...oracleAccounts(), tokenProgram: TOKEN_2022_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       }), wallet);
       burnState[Buffer.from(id2).toString('hex')] = { secret, pda: pda2, id: id2 };

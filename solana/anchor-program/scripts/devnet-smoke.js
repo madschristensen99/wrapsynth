@@ -61,8 +61,6 @@ const burnRequestId = (user, vault, wsxmrAmt, nonce) =>
 const globalState = new PublicKey(cfg.globalState);
 const wsxmrMint = new PublicKey(cfg.wsxmrMint);
 const collateralEscrow = new PublicKey(cfg.collateralEscrow);
-const PYTH_XMR = new PublicKey(cfg.oracle.xmr);
-const PYTH_COL = new PublicKey(cfg.oracle.sol);
 const CU = (u) => ComputeBudgetProgram.setComputeUnitLimit({ units: u });
 
 const tokenBal = async (ata) =>
@@ -123,11 +121,16 @@ async function main() {
     lp: lp.publicKey, vault: vaultPda,
   }), [lp]); // 1% mint fee, 0.5% burn reward
 
-  await rpcIx(program.methods.depositCollateral(new anchor.BN("2000000000")).accounts({ // 2 SOL = $300
-    lp: lp.publicKey, vault: vaultPda, globalState,
-    vaultCollateralEscrow, systemProgram: SystemProgram.programId,
+  // Oracle-free: the LP declares its own par rate — 0.5 SOL per wsXMR.
+  await rpcIx(program.methods.setThreshold(new anchor.BN("500000000")).accounts({
+    lp: lp.publicKey, vault: vaultPda,
   }), [lp]);
-  console.log("[vault] deposited 2 SOL");
+  await rpcIx(program.methods.depositCollateral(new anchor.BN("3000000000")).accounts({ // 3 SOL
+    lp: lp.publicKey, vault: vaultPda, globalState,
+    vaultCollateralEscrow, auction: null, bondEscrow: null,
+    systemProgram: SystemProgram.programId,
+  }), [lp]);
+  console.log("[vault] deposited 3 SOL (par 0.5 SOL/wsXMR)");
 
   for (const owner of [lp, user]) {
     const pr = pendingOf(owner.publicKey);
@@ -142,9 +145,9 @@ async function main() {
   }), [lp]);
 
   // ── Mint handshake: initiate -> provide_lp_key -> set_mint_ready -> reveal -> finalize
-  console.log("\n[mint] 4 wsXMR request");
+  console.log("\n[mint] 2 wsXMR request");
   const mint1 = makeSecret(), lpKey = makeSecret();
-  const XMR_AMOUNT = 4n * 10n ** 12n;      // 4 XMR = 4 wsXMR = $60 @ $15
+  const XMR_AMOUNT = 2n * 10n ** 12n;      // 2 XMR = 2 wsXMR
   const WSXMR_AMOUNT = XMR_AMOUNT / 10_000n;
   const mintId = mintRequestId(user.publicKey, vaultPda, XMR_AMOUNT, mint1.commitment, await reqNonce() + 1n);
   const mintPda = L.findPda([L.MINT_REQUEST_SEED, mintId]);
@@ -157,7 +160,6 @@ async function main() {
     vault: vaultPda, globalState, mintRequest: mintPda,
     griefingEscrow: admin.publicKey,
     initiatorPendingReturns: pendingOf(user.publicKey),
-    pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
     systemProgram: SystemProgram.programId,
   }), [user]);
   console.log("[mint] initiated");
@@ -166,13 +168,11 @@ async function main() {
     Array.from(lpKey.pubKey), Array.from(lpKey.pubKey), Array.from(lpKey.commitment)
   ).accounts({
     lp: lp.publicKey, vault: vaultPda, globalState, mintRequest: mintPda,
-    pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
   }), [lp]);
   console.log("[mint] LP keys provided (this is the LP-server tx)");
 
   await rpcIx(program.methods.setMintReady().accounts({
     lp: lp.publicKey, vault: vaultPda, globalState, mintRequest: mintPda,
-    pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
   }), [lp]);
   console.log("[mint] marked ready (LP locked Monero off-chain)");
 
@@ -186,7 +186,7 @@ async function main() {
   await rpcIx(program.methods.finalizeMint()
     .preInstructions([CU(400_000)])
     .accounts({
-      caller: lp.publicKey, vaultLp: lp.publicKey, vault: vaultPda, globalState,
+      caller: lp.publicKey, vault: vaultPda, globalState,
       mintRequest: mintPda,
       wsxmrMint, recipientWsxmrAta: userWsxmrAta, lpWsxmrAta,
       pendingReturns: pendingOf(user.publicKey),
@@ -208,7 +208,7 @@ async function main() {
     Array.from(burn1.pubKey), Array.from(burn1.pubKey), Array.from(burnId)
   ).accounts({
     user: user.publicKey, vault: vaultPda, globalState, burnRequest: burnPda,
-    wsxmrMint, userWsxmrAta, pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
+    wsxmrMint, userWsxmrAta,
     tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
   }), [user]);
   console.log("[burn] requested — wsXMR burned, collateral locked");
@@ -230,8 +230,7 @@ async function main() {
     .accounts({
       caller: lp.publicKey, vaultLp: lp.publicKey, vault: vaultPda, globalState,
       burnRequest: burnPda, userPendingReturns: pendingOf(user.publicKey),
-      pythXmr: PYTH_XMR, pythCollateral: PYTH_COL,
-      vaultCollateralEscrow, collateralEscrow,
+        vaultCollateralEscrow, collateralEscrow,
       tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
     }), [lp]);
   console.log("[burn] finalized — reward credited to user pending returns");

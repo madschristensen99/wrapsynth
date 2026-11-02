@@ -1,3 +1,4 @@
+pub mod auction;
 pub mod burn_request;
 pub mod co_lp_position;
 pub mod global_state;
@@ -5,6 +6,7 @@ pub mod mint_request;
 pub mod pending_returns;
 pub mod vault;
 
+pub use auction::*;
 pub use burn_request::*;
 pub use co_lp_position::*;
 pub use global_state::*;

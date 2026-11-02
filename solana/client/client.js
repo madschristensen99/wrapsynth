@@ -49,8 +49,6 @@ export class WrapSynthClient {
   get wsxmrMint() { return this.cfg.wsxmrMint; }
   get collateralMint() { return this.cfg.collateralMint; }
   get programCollateralAta() { return this.cfg.programCollateralAta; }
-  get pythXmr() { return this.cfg.oracleXmr; }
-  get pythCol() { return this.cfg.oracleSol; }
 
   nextNonce = () => pdas.nextRequestNonce(this.program, this.globalState);
 
@@ -67,9 +65,8 @@ export class WrapSynthClient {
     accounts.scanBurnRequests(this.conn, this.program, vault, statuses);
 
   // ── Common account sets ──────────────────────────────────────────────────
-  oracleAccounts() {
-    return { pythXmr: this.pythXmr, pythCollateral: this.pythCol };
-  }
+  auctionPda = (vault) => pdas.auctionPda(vault, this.programId);
+  auctionBondEscrow = (vault) => pdas.auctionBondEscrowPda(vault, this.programId);
   collateralAccounts(vault) {
     return {
       vaultCollateralEscrow: this.vaultCollateralAta(vault),

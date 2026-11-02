@@ -21,8 +21,6 @@ export const cfg = {
   collateralMint: new PublicKey(cfgJson.collateralMint),
   programCollateralAta: new PublicKey(cfgJson.programCollateralAta),
   solEscrow: new PublicKey(cfgJson.solEscrow),
-  oracleXmr: new PublicKey(cfgJson.oracle.xmr),
-  oracleQqqx: new PublicKey(cfgJson.oracle.qqqx),
 };
 
 export const conn = new Connection(cfg.rpc, 'confirmed');
@@ -63,7 +61,8 @@ export async function walletTx(builder, wallet, { paceMs = 1500 } = {}) {
 export const vaultPda = (lp) => pdas.vaultPda(lp, programId);
 export const pendingReturns = (o) => pdas.pendingReturnsPda(o, programId);
 export const vaultCollateralAta = (v) => pdas.vaultCollateralAtaPda(v, programId);
-export const oracleAccounts = () => ({ pythXmr: cfg.oracleXmr, pythCollateral: cfg.oracleQqqx });
+export const auctionPda = (v) => pdas.auctionPda(v, programId);
+export const auctionBondEscrow = (v) => pdas.auctionBondEscrowPda(v, programId);
 export const collateralAccounts = (v) => ({
   collateralMint: cfg.collateralMint,
   vaultCollateralAta: vaultCollateralAta(v),

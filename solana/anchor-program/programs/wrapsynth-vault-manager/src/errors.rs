@@ -50,8 +50,22 @@ pub enum WrapSynthError {
     Unauthorized,
     #[msg("Invalid value")]
     InvalidValue,
-    #[msg("Stale or invalid price")]
-    StalePrice,
+    #[msg("A kick/auction is active on this vault")]
+    KickActive,
+    #[msg("No active kick on this vault")]
+    NoActiveKick,
+    #[msg("Vault is frozen after an inconclusive auction")]
+    VaultFrozen,
+    #[msg("Vault is on kick cooldown")]
+    KickOnCooldown,
+    #[msg("Auction is not open for bids")]
+    BidNotOpen,
+    #[msg("Auction has not ended")]
+    AuctionNotEnded,
+    #[msg("Reauction already used for this vault")]
+    NoReauctionAvailable,
+    #[msg("Threshold below protocol minimum")]
+    BelowMinThreshold,
     #[msg("Insufficient deposit")]
     InsufficientDeposit,
     #[msg("Arithmetic overflow")]
@@ -80,10 +94,6 @@ pub enum WrapSynthError {
     OnlyDeployer,
     #[msg("Vault mint nonce mismatch")]
     MintNonceMismatch,
-    #[msg("Price normalized to zero")]
-    PriceNormalizedToZero,
     #[msg("XMR amount too small (minimum 1e4 atomic units)")]
     XmrAmountTooSmall,
-    #[msg("Collateral at distress discount: minting paused")]
-    CollateralDepegged,
 }

@@ -16,8 +16,8 @@ pub mod wrapsynth_vault_manager {
 
     // ── Initialization ────────────────────────────────────────────────────────
 
-    pub fn initialize(ctx: Context<Initialize>, pyth_xmr_feed: Pubkey) -> Result<()> {
-        initialize::handler(ctx, pyth_xmr_feed)
+    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
+        initialize::handler(ctx)
     }
 
     pub fn set_liquidity_router(ctx: Context<SetLiquidityRouter>, router: Pubkey) -> Result<()> {
@@ -51,8 +51,23 @@ pub mod wrapsynth_vault_manager {
         vault_management::set_vault_market_metrics(ctx, mint_fee_bps, burn_reward_bps)
     }
 
-    pub fn set_max_mint_bps(ctx: Context<UpdateVaultConfig>, max_mint_bps: u16) -> Result<()> {
-        vault_management::set_max_mint_bps(ctx, max_mint_bps)
+    /// LP-declared collateral threshold: lamports per 1e8 wsXMR. Governs mint
+    /// capacity, vault coverage, and par settlement (EVM setThreshold parity).
+    pub fn set_threshold(ctx: Context<UpdateVaultConfig>, threshold: u128) -> Result<()> {
+        vault_management::set_threshold(ctx, threshold)
+    }
+
+    /// LP-declared absolute mint cap in wsXMR units (0 = uncapped).
+    /// (EVM setMaxMintWsxmr parity — replaces the price-relative max_mint_bps.)
+    pub fn set_max_mint_wsxmr(ctx: Context<UpdateVaultConfig>, max_wsxmr: u64) -> Result<()> {
+        vault_management::set_max_mint_wsxmr(ctx, max_wsxmr)
+    }
+
+    /// Burn wsXMR to reduce vault debt. In the kick grace window any amount
+    /// cancels the kick; after grace only a full repay cancels the auction.
+    /// (EVM repayDebt parity — replaces the mint-for-redemption hack.)
+    pub fn repay_debt(ctx: Context<RepayDebt>, wsxmr_amount: u64) -> Result<()> {
+        vault_management::repay_debt(ctx, wsxmr_amount)
     }
 
     pub fn set_min_burn_amount(ctx: Context<UpdateVaultConfig>, min_amount: u64) -> Result<()> {
@@ -241,22 +256,49 @@ pub mod wrapsynth_vault_manager {
         burn_flow::abandon_proposed_burn(ctx)
     }
 
-    // ── Liquidation ───────────────────────────────────────────────────────────
+    // ── Auction Liquidation (permissionless kick → Dutch auction) ────────────
 
-    /// Phase 1: resolve a single active burn on a liquidatable vault.
-    /// Call once per active burn. Permissionless.
-    pub fn resolve_burn_for_liquidation(ctx: Context<ResolveBurnForLiquidation>) -> Result<()> {
-        liquidation::resolve_burn_for_liquidation(ctx)
+    /// Kick a vault — post a bond and open the grace window. Permissionless;
+    /// no solvency proof required. (EVM kick parity.)
+    pub fn kick(ctx: Context<Kick>) -> Result<()> {
+        auction::kick(ctx)
     }
 
-    /// Phase 2: execute the actual liquidation after all burns are resolved.
-    pub fn execute_liquidation(ctx: Context<ExecuteLiquidation>, debt_to_clear: u64) -> Result<()> {
-        liquidation::execute_liquidation(ctx, debt_to_clear)
+    /// Retry liquidation on a frozen vault — exactly once. (EVM reauction parity.)
+    pub fn reauction(ctx: Context<Reauction>) -> Result<()> {
+        auction::reauction(ctx)
     }
 
-    /// P1-1: A new LP assumes the debt and collateral of an underwater vault.
+    /// Resolve a single active burn on a kicked vault — permissionless,
+    /// callable once the grace window has elapsed. Call once per active burn
+    /// before open_auction.
+    pub fn resolve_burn_for_auction(ctx: Context<ResolveBurnForAuction>) -> Result<()> {
+        auction::resolve_burn_for_auction(ctx)
+    }
+
+    /// Open the auction — permissionless, idempotent. Requires all in-flight
+    /// burns resolved and co-LP positions unwound; snapshots the offered
+    /// collateral and bumps both nonces.
+    pub fn open_auction(ctx: Context<OpenAuction>) -> Result<()> {
+        auction::open_auction(ctx)
+    }
+
+    /// Bid — burn the vault's FULL actual debt in wsXMR for X(t)% of the
+    /// offered collateral. Whole-debt bids only. (EVM bid parity.)
+    pub fn bid(ctx: Context<Bid>) -> Result<()> {
+        auction::bid(ctx)
+    }
+
+    /// Resolve a no-bid auction — freeze the vault, return the bond.
+    /// (EVM resolveKick parity.)
+    pub fn resolve_kick(ctx: Context<ResolveKick>) -> Result<()> {
+        auction::resolve_kick(ctx)
+    }
+
+    /// A healthy LP assumes the debt and collateral of a frozen vault.
+    /// (EVM backstopVault parity.)
     pub fn backstop_vault(ctx: Context<BackstopVault>) -> Result<()> {
-        liquidation::backstop_vault(ctx)
+        auction::backstop_vault(ctx)
     }
 
     // ── Co-LP (Orca Whirlpools) ───────────────────────────────────────────────
@@ -266,13 +308,15 @@ pub mod wrapsynth_vault_manager {
         co_lp::set_max_co_lp_range(ctx, bps)
     }
 
-    /// User pairs wsXMR with vault idle QQQx collateral to open a position.
+    /// User pairs wsXMR with vault idle SOL collateral to open a position.
+    /// Both leg amounts are caller-supplied (EVM userOpenCoLP parity).
     pub fn user_open_co_lp<'info>(
         ctx: Context<'_, '_, '_, 'info, UserOpenCoLP<'info>>,
         wsxmr_amount: u64,
+        collateral_amount: u64,
         nonce: u64,
     ) -> Result<()> {
-        co_lp::user_open_co_lp(ctx, wsxmr_amount, nonce)
+        co_lp::user_open_co_lp(ctx, wsxmr_amount, collateral_amount, nonce)
     }
 
     /// LP or user collects accrued fees from a co-LP position.

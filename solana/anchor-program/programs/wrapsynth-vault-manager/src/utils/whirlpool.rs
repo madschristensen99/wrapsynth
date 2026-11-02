@@ -71,7 +71,7 @@ pub struct WhirlpoolData {
 
 pub fn read_whirlpool(account: &AccountInfo) -> Result<WhirlpoolData> {
     let data = account.try_borrow_data()?;
-    require!(data.len() >= 245, WrapSynthError::StalePrice);
+    require!(data.len() >= 245, WrapSynthError::InvalidValue);
 
     let tick_spacing = u16::from_le_bytes(data[41..43].try_into().unwrap());
     let liquidity = u128::from_le_bytes(data[49..65].try_into().unwrap());

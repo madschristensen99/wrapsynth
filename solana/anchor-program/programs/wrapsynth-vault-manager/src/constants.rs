@@ -1,33 +1,11 @@
-/// Protocol constants — native-SOL-collateral variant (no yield, no protocol fees).
-
-// Collateral ratios (percentage, precision 100) — retuned for VOLATILE
-// collateral: both legs move (XMR vs SOL), so margins are wider than the
-// stable-collateral sUSDe deployment.
-pub const COLLATERAL_RATIO: u64 = 200; // mint floor
-pub const LIQUIDATION_RATIO: u64 = 150; // liquidate below this
-pub const LIQUIDATION_BONUS: u64 = 110; // liquidator incentive (gross, pre-split)
-pub const RATIO_PRECISION: u64 = 100;
-pub const BURN_LOCK_RATIO: u64 = 160; // reserve for in-flight burns
-pub const MINT_LOCK_RATIO: u64 = 160; // key bond / par lock buffer over par
-
-// Compile-time invariant checks — these must hold or the program fails to compile.
-// Ordering: LIQUIDATION_RATIO < COLLATERAL_RATIO. BURN_LOCK_RATIO sits above
-// LIQUIDATION_RATIO so in-flight burn reservations survive the liquidation band.
-const _: () = assert!(
-    LIQUIDATION_RATIO < COLLATERAL_RATIO,
-    "LIQUIDATION_RATIO must be < COLLATERAL_RATIO"
-);
-const _: () = assert!(
-    BURN_LOCK_RATIO >= LIQUIDATION_RATIO,
-    "BURN_LOCK_RATIO must cover the liquidation band"
-);
-const _: () = assert!(
-    MINT_LOCK_RATIO >= RATIO_PRECISION,
-    "MINT_LOCK_RATIO must be >= 100%"
-);
+/// Protocol constants — oracle-free variant.
+///
+/// No external price feeds exist in consensus. LP-declared per-vault
+/// thresholds (lamports of SOL collateral per 1e8 wsXMR) define par
+/// settlement, mint capacity, and coverage. Liquidation is market-discovered
+/// via the bonded-kick Dutch haircut auction.
 
 // Precision constants
-pub const PRICE_PRECISION: u64 = 1_000_000_000_000_000_000; // 1e18
 pub const WSXMR_DECIMALS: u64 = 100_000_000; // 1e8
 /// Native SOL collateral decimals scale (9 decimals — raw lamports).
 /// collateral_amount / locked_collateral are stored in raw lamports so
@@ -35,20 +13,80 @@ pub const WSXMR_DECIMALS: u64 = 100_000_000; // 1e8
 pub const COLLATERAL_DECIMALS: u64 = 1_000_000_000; // 1e9
 pub const DEBT_INDEX_PRECISION: u64 = 1_000_000_000_000_000_000; // 1e18
 pub const XMR_TO_WSXMR_DIVISOR: u64 = 10_000; // 1e4 (12 dec → 8 dec)
+pub const RATIO_PRECISION: u64 = 100;
+
+// Lock ratios (EVM wsXmrStorage parity)
+pub const MINT_LOCK_RATIO: u64 = 110; // key bond / par lock = 110% of par collateral
+pub const BURN_LOCK_MULTIPLIER_BPS: u64 = 13_000; // 1.3× proportional burn lock
+
+// Threshold floor — LPs declare thresholds in lamports per 1e8 wsXMR.
+// A vault whose threshold sits below this floor cannot mint (capacity = 0).
+// 0.01 SOL per wsXMR — the floor exists to catch fat-fingered zero/near-zero
+// declarations, not to police real quotes.
+pub const MIN_THRESHOLD_LAMPORTS: u128 = 10_000_000;
+
+// ─── Kick auction (docs/ORACLE_FREE_MIGRATION_SPEC.md §2.2 — EVM parity) ────
+// Times are unix seconds (EVM used ~1s/block; identical wall-clock values).
+// The `test-lifecycle` cargo feature shrinks the wall-clock windows so the
+// localnet suite can drive a full kick→auction→resolve lifecycle — build the
+// test validator's program with `cargo build-sbf --features test-lifecycle`.
+#[cfg(feature = "test-lifecycle")]
+pub const KICK_GRACE_SECONDS: i64 = 15;
+#[cfg(not(feature = "test-lifecycle"))]
+pub const KICK_GRACE_SECONDS: i64 = 3_600; // ~1h LP respond window
+#[cfg(feature = "test-lifecycle")]
+pub const KICK_COOLDOWN_SECONDS: i64 = 10;
+#[cfg(not(feature = "test-lifecycle"))]
+pub const KICK_COOLDOWN_SECONDS: i64 = 21_600; // ~6h per-vault re-kick rate limit
+#[cfg(feature = "test-lifecycle")]
+pub const AUCTION_DURATION_SECONDS: i64 = 60;
+#[cfg(not(feature = "test-lifecycle"))]
+pub const AUCTION_DURATION_SECONDS: i64 = 86_400; // ~24h Dutch window
+#[cfg(feature = "test-lifecycle")]
+pub const AUCTION_OPEN_DELAY_SECONDS: i64 = 10;
+#[cfg(not(feature = "test-lifecycle"))]
+pub const AUCTION_OPEN_DELAY_SECONDS: i64 = 1_800; // ~30min LP rescue window
+pub const KICK_BOND_BPS: u64 = 200; // 2% of vault collateral
+pub const KICK_BOND_MIN_LAMPORTS: u64 = 50_000_000; // 0.05 SOL floor
+pub const HAIRCUT_START_BPS: u64 = 10_000; // offer opens at 100% of collateral
+pub const HAIRCUT_FLOOR_BPS: u64 = 500; // 5% — curve end; below → inconclusive
+pub const CHIP_BPS: u64 = 50; // kicker's cut of liquidation surplus
+pub const KICK_SANE_BPS: u64 = 8_000; // wrongful-kick threshold: clearing X* ≤ 80%
 
 // Timeouts (seconds)
+#[cfg(feature = "test-lifecycle")]
+pub const LP_CLAIM_WINDOW: i64 = 20;
+#[cfg(not(feature = "test-lifecycle"))]
 pub const LP_CLAIM_WINDOW: i64 = 1_800; // 30 min for LP to claim after mint expiry
 pub const MINT_READY_EXTENSION: i64 = 7_200; // 2 hours
 pub const BURN_COMMIT_TIMEOUT: i64 = 7_200; // 2 hours
+#[cfg(feature = "test-lifecycle")]
+pub const BURN_FINALIZE_GRACE: i64 = 10;
+#[cfg(not(feature = "test-lifecycle"))]
 pub const BURN_FINALIZE_GRACE: i64 = 600; // 10 min grace for LP finalization
+#[cfg(feature = "test-lifecycle")]
+pub const GRACE_PERIOD: i64 = 10;
+#[cfg(not(feature = "test-lifecycle"))]
 pub const GRACE_PERIOD: i64 = 900; // 15 minutes
 
 // Per-vault timeout configuration (EVM MIN/MAX/DEFAULT_*_TIMEOUT_BLOCKS parity)
+#[cfg(feature = "test-lifecycle")]
+pub const MIN_MINT_TIMEOUT_SECONDS: i64 = 10;
+#[cfg(not(feature = "test-lifecycle"))]
 pub const MIN_MINT_TIMEOUT_SECONDS: i64 = 1_800; // ~30 min
 pub const MAX_MINT_TIMEOUT_SECONDS: i64 = 86_400; // ~24 hours
+#[cfg(feature = "test-lifecycle")]
+pub const DEFAULT_MINT_TIMEOUT_SECONDS: i64 = 30;
+#[cfg(not(feature = "test-lifecycle"))]
 pub const DEFAULT_MINT_TIMEOUT_SECONDS: i64 = 3_600; // ~1 hour
+#[cfg(feature = "test-lifecycle")]
+pub const MIN_BURN_TIMEOUT_SECONDS: i64 = 10;
+#[cfg(not(feature = "test-lifecycle"))]
 pub const MIN_BURN_TIMEOUT_SECONDS: i64 = 1_800; // ~30 min
 pub const MAX_BURN_TIMEOUT_SECONDS: i64 = 86_400; // ~24 hours
+#[cfg(feature = "test-lifecycle")]
+pub const DEFAULT_BURN_TIMEOUT_SECONDS: i64 = 30;
+#[cfg(not(feature = "test-lifecycle"))]
 pub const DEFAULT_BURN_TIMEOUT_SECONDS: i64 = 3_600; // ~1 hour
 
 // Minter whitelist (EVM whitelistedMinters parity — fixed-size cap for Solana)
@@ -70,26 +108,6 @@ pub const MIN_BURN_AMOUNT: u64 = 1_000_000; // 0.01 wsXMR (8 decimals)
 pub const MAX_BURN_REQUESTS_PER_VAULT: u32 = 50;
 pub const INITIAL_DEBT_INDEX: u64 = 1_000_000_000_000_000_000; // 1e18
 
-// Oracle staleness
-pub const PRICE_MAX_AGE: u64 = 120; // 2 minutes
-pub const LIQUIDITY_PRICE_MAX_AGE: u64 = 30; // 30 seconds
-
-// Pyth feed IDs
-pub const XMR_USD_FEED_ID: [u8; 32] = [
-    0x46, 0xb8, 0xcc, 0x93, 0x47, 0xf0, 0x43, 0x91, 0x76, 0x4a, 0x03, 0x61, 0xe0, 0xb1, 0x7c, 0x3b,
-    0xa3, 0x94, 0xb0, 0x01, 0xe7, 0xc3, 0x04, 0xf7, 0x65, 0x0f, 0x63, 0x76, 0xe3, 0x7c, 0x32, 0x1d,
-];
-
-// SOL/USD Pyth feed ID (Crypto.SOL/USD — 24/7 publishing)
-pub const SOL_USD_FEED_ID: [u8; 32] = [
-    0xef, 0x0d, 0x8b, 0x6f, 0xda, 0x2c, 0xeb, 0xa4, 0x1d, 0xa1, 0x5d, 0x40, 0x95, 0xd1, 0xda, 0x39,
-    0x2a, 0x0d, 0x2f, 0x8e, 0xd0, 0xc6, 0xc7, 0xbc, 0x0f, 0x4c, 0xfa, 0xc8, 0xc2, 0x80, 0xb5, 0x6d,
-];
-
-// Discount guard tolerance: pause minting if market SOL/USD falls sharply
-// below its own EMA (flash-crash / oracle anomaly guard).
-pub const DEPEG_TOLERANCE_BPS: u64 = 300; // 3%
-
 // Wrapped SOL mint — the SPL representation of the native collateral used by
 // co-LP whirlpool positions (Orca pools pair tokens, so SOL deploys as wSOL).
 pub const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
@@ -108,3 +126,7 @@ pub const CO_LP_POSITION_MINT_SEED: &[u8] = b"co_lp_position_mint";
 /// returns pool backing all slashed-collateral credits
 /// (invariant: balance >= global_pending_collateral).
 pub const PROGRAM_COLLATERAL_SEED: &[u8] = b"program_collateral";
+/// One auction record per vault — created by kick(), reused across kicks.
+pub const AUCTION_SEED: &[u8] = b"auction";
+/// Per-vault lamport PDA holding the active kicker's bond.
+pub const AUCTION_BOND_SEED: &[u8] = b"auction_bond";

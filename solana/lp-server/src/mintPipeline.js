@@ -156,7 +156,6 @@ export class MintPipeline {
             vault: this.vault,
             globalState: this.client.globalState,
             mintRequest: pda,
-            ...this.client.oracleAccounts(),
           }),
         []
       );
@@ -248,7 +247,6 @@ export class MintPipeline {
         vault: this.vault,
         globalState: this.client.globalState,
         mintRequest: pda,
-        ...this.client.oracleAccounts(),
       }),
       []
     );

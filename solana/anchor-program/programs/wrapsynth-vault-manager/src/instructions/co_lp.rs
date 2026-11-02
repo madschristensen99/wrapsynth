@@ -11,8 +11,7 @@ use crate::constants::*;
 use crate::errors::WrapSynthError;
 use crate::state::{CoLPPosition, GlobalState, Vault};
 use crate::utils::{
-    get_collateral_price, get_xmr_price,
-    math::{calculate_collateral_ratio, collateral_to_usd, get_actual_debt, usd_to_collateral},
+    math::{get_actual_debt, required_lamports},
     whirlpool::*,
 };
 // ─── set_max_co_lp_range ─────────────────────────────────────────────────────
@@ -33,26 +32,33 @@ pub fn set_max_co_lp_range(ctx: Context<SetMaxCoLPRange>, bps: u16) -> Result<()
 // manager (GlobalState PDA) is the position authority; the position NFT is held
 // in a program-owned ATA.
 
+/// `collateral_amount` is supplied by the caller — the user chooses the
+/// wsXMR↔SOL pairing for their range, the protocol does not price it (EVM
+/// userOpenCoLP parity). Pool-side slippage is bounded by the whirlpool
+/// increase_liquidity token_max arguments.
 pub fn user_open_co_lp<'info>(
     mut ctx: Context<'_, '_, '_, 'info, UserOpenCoLP<'info>>,
     wsxmr_amount: u64,
+    collateral_amount: u64,
     nonce: u64,
 ) -> Result<()> {
     require!(wsxmr_amount > 0, WrapSynthError::ZeroAmount);
+    require!(collateral_amount > 0, WrapSynthError::ZeroAmount);
     let vault = &mut ctx.accounts.vault;
     require!(vault.active, WrapSynthError::VaultNotActive);
+    // No new deployments while a kick is live or the vault is frozen
+    // (EVM vaultNotBlocked parity).
+    require!(!vault.kick_active, WrapSynthError::KickActive);
+    require!(!vault.frozen, WrapSynthError::VaultFrozen);
     // The co-LP PDA nonce must be the next global request nonce
     require!(
         nonce == ctx.accounts.global_state.load()?.request_nonce + 1,
         WrapSynthError::InvalidValue
     );
 
-    let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
-    let col_price = get_collateral_price(
-        &ctx.accounts.pyth_collateral,
-        PRICE_MAX_AGE,
-        &SOL_USD_FEED_ID,
-    )?;
+    // Oracle-free: the caller supplies the SOL leg directly. The protocol only
+    // enforces that the vault has the idle collateral to fund it.
+    let collateral_needed = collateral_amount;
 
     // Whirlpool-internal CPI accounts are passed via remaining_accounts (kept out
     // of the named struct to avoid a ~4KB try_accounts stack overflow):
@@ -64,10 +70,6 @@ pub fn user_open_co_lp<'info>(
     let token_vault_b = ra[1].clone();
     let metadata_update_auth = ra[2].clone();
     let memo_program = ra[4].clone();
-
-    // QQQx needed = wsXMR value in USD → shares
-    let wsxmr_usd = wsxmr_amount as u128 * xmr_price / WSXMR_DECIMALS as u128;
-    let collateral_needed = usd_to_collateral(wsxmr_usd, col_price);
 
     // Idle collateral check (total model: available = collateral - locked - deployed)
     let available = vault
@@ -350,18 +352,21 @@ pub fn user_open_co_lp<'info>(
         .checked_add(collateral_needed)
         .ok_or(WrapSynthError::MathOverflow)?;
 
-    // Vault health check after deployment
+    // Vault coverage check after deployment — remaining free collateral must
+    // still back debt+pendingDebt at the vault's declared threshold (EVM
+    // parity — threshold replaces the oracle CR check).
     let global = &ctx.accounts.global_state.load()?;
     let actual_debt = get_actual_debt(vault.normalized_debt, global.global_debt_index);
     let available_after = vault
         .collateral_amount
         .saturating_sub(vault.locked_collateral)
         .saturating_sub(vault.deployed_collateral);
-    let col_usd = collateral_to_usd(available_after, col_price);
-    let debt_usd = actual_debt as u128 * xmr_price / WSXMR_DECIMALS as u128;
-    let ratio = calculate_collateral_ratio(col_usd, debt_usd);
     require!(
-        ratio >= COLLATERAL_RATIO,
+        available_after
+            >= required_lamports(
+                actual_debt.saturating_add(vault.pending_debt),
+                vault.threshold_lamports_per_wsxmr,
+            ),
         WrapSynthError::InsufficientCollateral
     );
 
@@ -1243,10 +1248,6 @@ pub struct UserOpenCoLP<'info> {
     pub collateral_mint: Box<InterfaceAccount<'info, Mint>>,
     pub wsxmr_mint: Box<InterfaceAccount<'info, Mint>>,
 
-    /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
-    pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth collateral price feed — validated by oracle.rs
-    pub pyth_collateral: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token2022>,
     /// SPL Token (legacy) program for the wSOL leg

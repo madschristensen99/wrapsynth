@@ -15,9 +15,6 @@ ORCA_CONFIG="2LecshUwdy9xi7meFgHtFJQNSKk4KdTrcpvaB56dP2NQ"
 ORCA_FEE_TIER_64="HT55NVGVTjWmWLjV7BrSMPVZ7ppU8T2xE5nCAZ6YaGad"
 MAINNET_RPC="mainnet-beta"
 
-echo "==> Generating mock Pyth fixtures"
-node scripts/gen-mock-pyth.js
-
 echo "==> Building program (cargo build-sbf)"
 cargo build-sbf --manifest-path programs/wrapsynth-vault-manager/Cargo.toml
 

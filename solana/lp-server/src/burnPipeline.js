@@ -211,7 +211,6 @@ export class BurnPipeline {
           globalState: this.client.globalState,
           burnRequest: pda,
           userPendingReturns: this.client.pendingReturns(req.user),
-          ...this.client.oracleAccounts(),
           ...this.client.collateralAccounts(this.vault),
           tokenProgram: TOKEN_2022_PROGRAM_ID,
           systemProgram: SystemProgram.programId,

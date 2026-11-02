@@ -7,31 +7,11 @@ use crate::errors::WrapSynthError;
 use crate::instructions::vault_management::slash_to_pool;
 use crate::state::{GlobalState, MintRequest, MintStatus, PendingReturns, Vault};
 use crate::utils::{
-    check_discount_guard, get_collateral_ema_price, get_collateral_price, get_xmr_price,
     math::{
-        check_collateral_ratio, collateral_to_usd, get_actual_debt, normalize_debt,
-        usd_to_collateral,
+        get_actual_debt, normalize_debt, par_lock_for, required_lamports,
     },
     mul_verify,
 };
-
-/// Compute the par-value collateral lock for a mint — the key bond at
-/// provide_lp_key and the re-priced par lock at set_mint_ready. Mirrors the EVM
-/// MintFacet sizing:
-///   par_value_usd = wsxmr_amount * xmr_price / 1e8
-///   lock_usd      = par_value_usd * MINT_LOCK_RATIO / 100
-///   lock_shares   = lock_usd * 1e18 / collateral_price
-fn compute_mint_lock(wsxmr_amount: u64, xmr_price: u128, col_price: u128) -> Result<u64> {
-    let par_value_usd = (wsxmr_amount as u128)
-        .checked_mul(xmr_price)
-        .ok_or(WrapSynthError::MathOverflow)?
-        / WSXMR_DECIMALS as u128;
-    let lock_usd = par_value_usd
-        .checked_mul(MINT_LOCK_RATIO as u128)
-        .ok_or(WrapSynthError::MathOverflow)?
-        / RATIO_PRECISION as u128;
-    Ok(usd_to_collateral(lock_usd, col_price))
-}
 
 // ─── initiate_mint ────────────────────────────────────────────────────────────
 
@@ -57,6 +37,14 @@ pub fn initiate_mint(
 
     let vault = &mut ctx.accounts.vault;
     require!(vault.active, WrapSynthError::VaultNotActive);
+    // New obligations cannot open while a kick is live or the vault is frozen
+    // (EVM vaultNotBlocked parity).
+    require!(!vault.kick_active, WrapSynthError::KickActive);
+    require!(!vault.frozen, WrapSynthError::VaultFrozen);
+    require!(
+        vault.threshold_lamports_per_wsxmr >= MIN_THRESHOLD_LAMPORTS,
+        WrapSynthError::BelowMinThreshold
+    );
 
     let global_debt_index = ctx.accounts.global_state.load()?.global_debt_index;
 
@@ -86,29 +74,21 @@ pub fn initiate_mint(
         / BPS_DENOMINATOR as u128;
     let fee_amount = fee_amount as u64;
 
-    // Enforce max mint bps limit
-    if vault.max_mint_bps > 0 {
-        let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
-        let col_price = get_collateral_price(
-            &ctx.accounts.pyth_collateral,
-            PRICE_MAX_AGE,
-            &SOL_USD_FEED_ID,
-        )?;
-        let col_val_usd = collateral_to_usd(vault.collateral_amount, col_price);
-        let max_debt_capacity = (col_val_usd * RATIO_PRECISION as u128) / COLLATERAL_RATIO as u128;
-        let max_mint_allowed =
-            (max_debt_capacity * vault.max_mint_bps as u128) / BPS_DENOMINATOR as u128;
-        let wsxmr_val_usd = (wsxmr_amount as u128 * xmr_price) / WSXMR_DECIMALS as u128;
+    // Enforce the LP's absolute mint cap (EVM maxMintWsxmr parity — replaces
+    // the price-relative max_mint_bps).
+    if vault.max_mint_wsxmr > 0 {
         require!(
-            wsxmr_val_usd <= max_mint_allowed,
+            wsxmr_amount <= vault.max_mint_wsxmr,
             WrapSynthError::InvalidValue
         );
     }
 
-    // Capacity check — mirrors EVM initiateMint: the key bond (MINT_LOCK_RATIO of
-    // par) is reserved in the CR check so the LP can always key the mint. Nothing
-    // is reserved in storage here; pending_debt is reserved at provide_lp_key so
-    // spamming initiate_mint cannot DoS the vault's minting ability.
+    // Capacity check — mirrors EVM initiateMint: the key bond (MINT_LOCK_RATIO
+    // of par at the declared threshold) plus the collateral required to cover
+    // debt+pendingDebt+this mint at the vault's threshold must fit in free
+    // collateral. No price is read — the LP's declared threshold IS the rate.
+    // Nothing is reserved in storage here; pending_debt is reserved at
+    // provide_lp_key so spamming initiate_mint cannot DoS the vault.
     let actual_debt = get_actual_debt(vault.normalized_debt, global_debt_index);
     let total_projected = actual_debt
         .checked_add(vault.pending_debt)
@@ -121,34 +101,14 @@ pub fn initiate_mint(
     let available_collateral = vault
         .collateral_amount
         .saturating_sub(vault.locked_collateral);
-    let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
-    let col_price = get_collateral_price(
-        &ctx.accounts.pyth_collateral,
-        PRICE_MAX_AGE,
-        &SOL_USD_FEED_ID,
-    )?;
-    let bond_shares = compute_mint_lock(wsxmr_amount, xmr_price, col_price)?;
+    let bond_shares = par_lock_for(wsxmr_amount, vault.threshold_lamports_per_wsxmr);
+    let required = required_lamports(total_projected, vault.threshold_lamports_per_wsxmr)
+        .checked_add(bond_shares)
+        .ok_or(WrapSynthError::MathOverflow)?;
     require!(
-        available_collateral >= bond_shares,
+        available_collateral >= required,
         WrapSynthError::InsufficientCollateral
     );
-    let remaining_free = available_collateral - bond_shares;
-
-    require!(
-        check_collateral_ratio(
-            remaining_free,
-            col_price,
-            total_projected,
-            xmr_price,
-            COLLATERAL_RATIO,
-        ),
-        WrapSynthError::InsufficientCollateral
-    );
-
-    // Discount guard: prevent new mints if QQQx trades at a distress discount
-    // to its own EMA (issuer/custody stress or market break).
-    let col_ema = get_collateral_ema_price(&ctx.accounts.pyth_collateral, PRICE_MAX_AGE)?;
-    check_discount_guard(col_price, col_ema)?;
 
     // Increment nonce. Client pre-computed request_id = keccak(initiator, vault, amount, commitment, nonce+1).
     let gs = &mut ctx.accounts.global_state.load_mut()?;
@@ -191,7 +151,7 @@ pub fn initiate_mint(
     request.timeout = clock.unix_timestamp + vault.mint_timeout_seconds;
     request.griefing_deposit = vault.mint_griefing_deposit;
     request.locked_collateral = 0;
-    request.xmr_price_at_ready = 0;
+    request.threshold_at_ready = 0;
     request.normalized_debt_amount = 0;
     request.vault_mint_nonce = vault.mint_nonce;
     request.revealed_secret = [0u8; 32];
@@ -251,6 +211,11 @@ pub fn provide_lp_key(
         WrapSynthError::InvalidStatus
     );
 
+    // The LP must not engage new keys while a kick is live — the vault is in
+    // dispute (EVM vaultNotBlocked parity).
+    require!(!ctx.accounts.vault.kick_active, WrapSynthError::KickActive);
+    require!(!ctx.accounts.vault.frozen, WrapSynthError::VaultFrozen);
+
     // Reserve debt capacity now that the LP has engaged. Reverts if the vault
     // cannot plausibly serve this mint — prevents over-reservation.
     let vault = &mut ctx.accounts.vault;
@@ -259,14 +224,12 @@ pub fn provide_lp_key(
         .checked_add(request.wsxmr_amount)
         .ok_or(WrapSynthError::MathOverflow)?;
 
-    // Compute the par-value key bond — same sizing as the set_mint_ready lock
-    let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
-    let col_price = get_collateral_price(
-        &ctx.accounts.pyth_collateral,
-        PRICE_MAX_AGE,
-        &SOL_USD_FEED_ID,
-    )?;
-    let bond_shares = compute_mint_lock(request.wsxmr_amount, xmr_price, col_price)?;
+    // Compute the par-value key bond at the vault's declared threshold — same
+    // sizing as the set_mint_ready lock (EVM _parLockFor parity).
+    let bond_shares = par_lock_for(
+        request.wsxmr_amount,
+        vault.threshold_lamports_per_wsxmr,
+    );
 
     // Total collateral model: collateral_amount = total (locked included), so
     // available = collateral_amount - locked_collateral.
@@ -278,7 +241,8 @@ pub fn provide_lp_key(
         WrapSynthError::InsufficientCollateral
     );
 
-    // Re-check CR with the remaining free collateral after locking the bond
+    // Re-check coverage: remaining free collateral must still back
+    // debt+pendingDebt at the declared threshold.
     let remaining_free = available_collateral - bond_shares;
     let actual_debt = get_actual_debt(
         vault.normalized_debt,
@@ -288,13 +252,8 @@ pub fn provide_lp_key(
         .checked_add(vault.pending_debt)
         .ok_or(WrapSynthError::MathOverflow)?;
     require!(
-        check_collateral_ratio(
-            remaining_free,
-            col_price,
-            projected_debt,
-            xmr_price,
-            COLLATERAL_RATIO,
-        ),
+        remaining_free
+            >= required_lamports(projected_debt, vault.threshold_lamports_per_wsxmr),
         WrapSynthError::InsufficientCollateral
     );
 
@@ -339,15 +298,12 @@ pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
 
     let vault = &mut ctx.accounts.vault;
 
-    let xmr_price = get_xmr_price(&ctx.accounts.pyth_xmr, PRICE_MAX_AGE)?;
-    let col_price = get_collateral_price(
-        &ctx.accounts.pyth_collateral,
-        PRICE_MAX_AGE,
-        &SOL_USD_FEED_ID,
-    )?;
+    // Snapshot the vault's declared threshold — this becomes the mint's par
+    // settlement rate (EVM thresholdAtReady parity).
+    let threshold = vault.threshold_lamports_per_wsxmr;
 
-    // Re-price the par-value lock at ready time
-    let lock_shares = compute_mint_lock(request.wsxmr_amount, xmr_price, col_price)?;
+    // Re-price the par-value lock at ready time against the declared threshold
+    let lock_shares = par_lock_for(request.wsxmr_amount, threshold);
 
     // Total model: available = collateral_amount - locked_collateral (excludes
     // the key bond); adding it back gives the free collateral the new lock must
@@ -365,7 +321,8 @@ pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
     );
     remaining_free -= lock_shares;
 
-    // Re-check CR with the remaining free collateral after adjustment
+    // Re-check coverage: remaining free collateral must still back
+    // debt+pendingDebt at the declared threshold.
     let actual_debt = get_actual_debt(
         vault.normalized_debt,
         ctx.accounts.global_state.load()?.global_debt_index,
@@ -374,13 +331,7 @@ pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
         .checked_add(vault.pending_debt)
         .ok_or(WrapSynthError::MathOverflow)?;
     require!(
-        check_collateral_ratio(
-            remaining_free,
-            col_price,
-            projected_debt,
-            xmr_price,
-            COLLATERAL_RATIO,
-        ),
+        remaining_free >= required_lamports(projected_debt, threshold),
         WrapSynthError::InsufficientCollateral
     );
 
@@ -396,7 +347,7 @@ pub fn set_mint_ready(ctx: Context<SetMintReady>) -> Result<()> {
         vault.locked_collateral = vault.locked_collateral.saturating_sub(delta);
     }
     request.locked_collateral = lock_shares;
-    request.xmr_price_at_ready = xmr_price;
+    request.threshold_at_ready = threshold;
 
     request.status = MintStatus::Ready;
     request.timeout = clock.unix_timestamp + MINT_READY_EXTENSION;
@@ -1035,11 +986,6 @@ pub struct InitiateMint<'info> {
     )]
     pub initiator_pending_returns: Account<'info, crate::state::PendingReturns>,
 
-    /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
-    pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth SOL/USD price feed — validated by oracle.rs
-    pub pyth_collateral: AccountInfo<'info>,
-
     pub system_program: Program<'info, System>,
 }
 
@@ -1068,11 +1014,6 @@ pub struct SetMintReady<'info> {
         constraint = mint_request.lp_vault == vault.key() @ WrapSynthError::Unauthorized,
     )]
     pub mint_request: Box<Account<'info, MintRequest>>,
-
-    /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
-    pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth SOL/USD price feed — validated by oracle.rs
-    pub pyth_collateral: AccountInfo<'info>,
 }
 
 #[derive(Accounts)]
@@ -1163,11 +1104,6 @@ pub struct ProvideLPKey<'info> {
         constraint = mint_request.lp_vault == vault.key() @ WrapSynthError::Unauthorized,
     )]
     pub mint_request: Box<Account<'info, MintRequest>>,
-
-    /// CHECK: Pyth XMR/USD price feed — validated by oracle.rs
-    pub pyth_xmr: AccountInfo<'info>,
-    /// CHECK: Pyth SOL/USD price feed — validated by oracle.rs
-    pub pyth_collateral: AccountInfo<'info>,
 }
 
 #[derive(Accounts)]

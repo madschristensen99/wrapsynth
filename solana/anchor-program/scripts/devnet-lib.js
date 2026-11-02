@@ -11,18 +11,7 @@ const ROOT = path.join(__dirname, "..");
 const KEY_DIR = path.join(ROOT, "devnet");
 
 const PROGRAM_ID = new PublicKey("C9kVasKgQiUX1BCngBjorvMA8QaFyERHvdkYdwPyy3H1"); // wrapsynth_vault_manager
-const ORACLE_MOCK_ID = new PublicKey("AWKqcPUtpsaPr19XpCq2ZD6Bk4HRGXnsYy9DUrZkLixY");
 const TOKEN_2022 = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
-
-const XMR_FEED_ID = Buffer.from([
-  0x46, 0xb8, 0xcc, 0x93, 0x47, 0xf0, 0x43, 0x91, 0x76, 0x4a, 0x03, 0x61, 0xe0, 0xb1, 0x7c, 0x3b,
-  0xa3, 0x94, 0xb0, 0x01, 0xe7, 0xc3, 0x04, 0xf7, 0x65, 0x0f, 0x63, 0x76, 0xe3, 0x7c, 0x32, 0x1d,
-]);
-// Pyth Crypto.SOL/USD feed ID — matches SOL_USD_FEED_ID in constants.rs
-const SOL_FEED_ID = Buffer.from([
-  0xef, 0x0d, 0x8b, 0x6f, 0xda, 0x2c, 0xeb, 0xa4, 0x1d, 0xa1, 0x5d, 0x40, 0x95, 0xd1, 0xda, 0x39,
-  0x2a, 0x0d, 0x2f, 0x8e, 0xd0, 0xc6, 0xc7, 0xbc, 0x0f, 0x4c, 0xfa, 0xc8, 0xc2, 0x80, 0xb5, 0x6d,
-]);
 
 const GLOBAL_STATE_SEED = Buffer.from("global_state");
 const WSXMR_MINT_SEED = Buffer.from("wsxmr_mint");
@@ -33,6 +22,8 @@ const PENDING_RETURNS_SEED = Buffer.from("pending_returns");
 const MINT_REQUEST_SEED = Buffer.from("mint_request");
 const BURN_REQUEST_SEED = Buffer.from("burn_request");
 const SOL_ESCROW_SEED = Buffer.from("sol_escrow");
+const AUCTION_SEED = Buffer.from("auction");
+const AUCTION_BOND_SEED = Buffer.from("auction_bond");
 
 const findPda = (seeds, pid = PROGRAM_ID) => PublicKey.findProgramAddressSync(seeds, pid)[0];
 
@@ -87,26 +78,6 @@ function loadProgram(payer) {
   const idl = JSON.parse(fs.readFileSync(path.join(ROOT, "target/idl/wrapsynth_vault_manager.json"), "utf8"));
   return new anchor.Program(idl, makeProvider(payer));
 }
-function loadOracleMock(payer) {
-  const idl = JSON.parse(fs.readFileSync(path.join(ROOT, "target/idl/oracle_mock.json"), "utf8"));
-  return new anchor.Program(idl, makeProvider(payer));
-}
-
-const EXP = -8;
-/** 200-byte mock PriceUpdateV2 blob — same layout the on-chain parser reads. */
-function pythBlob(feedId, priceRaw, emaRaw, publishTs, confRaw) {
-  const b = Buffer.alloc(200, 0);
-  Buffer.from([0xc8, 0x8c, 0x29, 0x47, 0x6e, 0x23, 0x15, 0x1c]).copy(b, 0);
-  feedId.copy(b, 42);
-  b.writeBigInt64LE(priceRaw, 74);
-  b.writeBigUInt64LE(confRaw ?? priceRaw / 1000n, 82);
-  b.writeInt32LE(EXP, 90);
-  b.writeBigInt64LE(publishTs, 94);
-  b.writeBigInt64LE(publishTs - 10n, 102);
-  b.writeBigInt64LE(emaRaw, 110);
-  b.writeBigUInt64LE(emaRaw / 1000n, 118);
-  return b;
-}
 
 /** HTTP-poll confirmation — avoids ws subs that die under devnet 429s. */
 async function confirm(sig, timeoutMs = 60_000) {
@@ -137,27 +108,14 @@ async function rpcIx(builder, signers, payer) {
   return sig;
 }
 
-async function writeOracle(oracleMock, payer, acct, feedId, usd, { emaUsd, publishTs } = {}) {
-  const priceRaw = BigInt(usd) * 100_000_000n;
-  const emaRaw = BigInt(emaUsd ?? usd) * 100_000_000n;
-  const ts = publishTs ?? BigInt(Math.floor(Date.now() / 1000));
-  const blob = pythBlob(feedId, priceRaw, emaRaw, ts);
-  return rpcIx(
-    oracleMock.methods
-      .writeAccount(new anchor.BN(0), blob)
-      .accounts({ target: acct, payer: payer.publicKey }),
-    [payer], payer
-  );
-}
-
 module.exports = {
   DEVNET_URL, ROOT, KEY_DIR,
-  PROGRAM_ID, ORACLE_MOCK_ID, TOKEN_2022,
-  XMR_FEED_ID, SOL_FEED_ID,
+  PROGRAM_ID, TOKEN_2022,
   GLOBAL_STATE_SEED, WSXMR_MINT_SEED, PROGRAM_COLLATERAL_SEED,
   VAULT_SEED, VAULT_COLLATERAL_SEED, PENDING_RETURNS_SEED,
   MINT_REQUEST_SEED, BURN_REQUEST_SEED, SOL_ESCROW_SEED,
+  AUCTION_SEED, AUCTION_BOND_SEED,
   findPda, conn, loadKeypair, saveKeypair, keypairOrNew, adminKeypair,
-  makeProvider, loadProgram, loadOracleMock, pythBlob, writeOracle,
+  makeProvider, loadProgram,
   confirm, sendAndConfirm, rpcIx,
 };

@@ -13,15 +13,7 @@ use crate::state::GlobalState;
 /// InterfaceAccount<Mint>. Anchor 0.30 with Token-2022 calls InitializeMint2 twice when
 /// those constraints are used (once from the constraint framework, once from mint:: helper),
 /// causing error 0x6 ("account already in use"). The manual approach avoids this.
-pub fn handler(
-    ctx: Context<Initialize>,
-    pyth_xmr_feed: Pubkey,
-) -> Result<()> {
-    require!(
-        pyth_xmr_feed != Pubkey::default(),
-        WrapSynthError::ZeroAddress
-    );
-
+pub fn handler(ctx: Context<Initialize>) -> Result<()> {
     let global = &mut ctx.accounts.global_state.load_init()?;
     global.authority = ctx.accounts.authority.key();
     global.wsxmr_mint = ctx.accounts.wsxmr_mint.key();
@@ -29,7 +21,6 @@ pub fn handler(
     // collateral asset (co-LP whirlpool pairs pair wSOL, not raw lamports).
     global.collateral_mint = WSOL_MINT.parse().unwrap();
     global.liquidity_router = Pubkey::default();
-    global.pyth_xmr_feed = pyth_xmr_feed;
     global.global_total_debt = 0;
     global.global_debt_index = INITIAL_DEBT_INDEX;
     global.global_pending_collateral = 0;

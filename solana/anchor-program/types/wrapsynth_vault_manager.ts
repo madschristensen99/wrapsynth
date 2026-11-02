@@ -5,7 +5,7 @@
  * IDL can be found at `target/idl/wrapsynth_vault_manager.json`.
  */
 export type WrapsynthVaultManager = {
-  "address": "k4TC3sLs4feJfuMYBf8piyRQMU1WENM2LbQoKJNWbmx",
+  "address": "C9kVasKgQiUX1BCngBjorvMA8QaFyERHvdkYdwPyy3H1",
   "metadata": {
     "name": "wrapsynthVaultManager",
     "version": "0.1.0",
@@ -252,26 +252,7 @@ export type WrapsynthVaultManager = {
         },
         {
           "name": "vault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "burn_request.lp_vault",
-                "account": "burnRequest"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "globalState",
@@ -350,7 +331,8 @@ export type WrapsynthVaultManager = {
     {
       "name": "backstopVault",
       "docs": [
-        "P1-1: A new LP assumes the debt and collateral of an underwater vault."
+        "A healthy LP assumes the debt and collateral of a frozen vault.",
+        "(EVM backstopVault parity.)"
       ],
       "discriminator": [
         24,
@@ -414,6 +396,70 @@ export type WrapsynthVaultManager = {
           }
         },
         {
+          "name": "auction",
+          "docs": [
+            "Optional auction record — pass when the old vault's kick is still",
+            "active-but-ended so it can be resolved to frozen inline."
+          ],
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "oldVault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "kicker",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "bondEscrow",
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110,
+                  95,
+                  98,
+                  111,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "oldVault"
+              }
+            ]
+          }
+        },
+        {
           "name": "globalState",
           "writable": true,
           "pda": {
@@ -439,19 +485,7 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "pythXmr"
-        },
-        {
-          "name": "pythCollateral"
-        },
-        {
-          "name": "collateralMint"
-        },
-        {
-          "name": "oldVaultCollateralAta",
-          "docs": [
-            "Old vault's collateral ATA — source of the absorbed balance."
-          ],
+          "name": "oldVaultCollateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -484,10 +518,7 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "newVaultCollateralAta",
-          "docs": [
-            "New vault's collateral ATA — destination of the absorbed balance."
-          ],
+          "name": "newVaultCollateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -582,6 +613,185 @@ export type WrapsynthVaultManager = {
           "type": "bool"
         }
       ]
+    },
+    {
+      "name": "bid",
+      "docs": [
+        "Bid — burn the vault's FULL actual debt in wsXMR for X(t)% of the",
+        "offered collateral. Whole-debt bids only. (EVM bid parity.)"
+      ],
+      "discriminator": [
+        199,
+        56,
+        85,
+        38,
+        146,
+        243,
+        37,
+        158
+      ],
+      "accounts": [
+        {
+          "name": "bidder",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "auction",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "kicker",
+          "writable": true
+        },
+        {
+          "name": "bondEscrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110,
+                  95,
+                  98,
+                  111,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "globalState",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "wsxmrMint",
+          "writable": true
+        },
+        {
+          "name": "bidderWsxmrAta",
+          "writable": true
+        },
+        {
+          "name": "vaultCollateralEscrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
     },
     {
       "name": "cancelMint",
@@ -706,13 +916,7 @@ export type WrapsynthVaultManager = {
           "writable": true
         },
         {
-          "name": "collateralMint"
-        },
-        {
-          "name": "vaultCollateralAta",
-          "docs": [
-            "Vault collateral ATA — slash source for the liquidated-vault branch."
-          ],
+          "name": "vaultCollateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -745,10 +949,7 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "programCollateralAta",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -1038,19 +1239,7 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "pythXmr"
-        },
-        {
-          "name": "pythCollateral"
-        },
-        {
-          "name": "collateralMint"
-        },
-        {
-          "name": "vaultCollateralAta",
-          "docs": [
-            "Vault collateral ATA — slash source for the par-capped payout."
-          ],
+          "name": "vaultCollateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -1083,10 +1272,7 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "programCollateralAta",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -1275,15 +1461,109 @@ export type WrapsynthVaultManager = {
           "writable": true
         },
         {
-          "name": "vaultCollateralAta",
-          "writable": true
+          "name": "vaultCollateralEscrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultWsolAta",
+          "docs": [
+            "wSOL ATA owned by the vault PDA — staging for unwrap-back-to-escrow.",
+            "Caller pays rent if it must be created; it is closed again before the",
+            "instruction returns."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "collateralTokenProgram"
+              },
+              {
+                "kind": "account",
+                "path": "collateralMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
         },
         {
           "name": "userWsxmrAta",
           "writable": true
         },
         {
-          "name": "collateralMint"
+          "name": "collateralMint",
+          "docs": [
+            "wSOL mint (spl-token program)"
+          ]
         },
         {
           "name": "wsxmrMint"
@@ -1291,6 +1571,17 @@ export type WrapsynthVaultManager = {
         {
           "name": "tokenProgram",
           "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "collateralTokenProgram",
+          "docs": [
+            "SPL Token (legacy) program for the wSOL leg"
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
         },
         {
           "name": "systemProgram",
@@ -1555,14 +1846,7 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "collateralMint"
-        },
-        {
-          "name": "lpCollateralAta",
-          "writable": true
-        },
-        {
-          "name": "vaultCollateralAta",
+          "name": "vaultCollateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -1595,8 +1879,63 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "tokenProgram",
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          "name": "auction",
+          "docs": [
+            "Optional auction record — pass the vault's auction PDA when a kick is",
+            "active so a GRACE-phase kick is cancelled by this deposit."
+          ],
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "bondEscrow",
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110,
+                  95,
+                  98,
+                  111,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
         },
         {
           "name": "systemProgram",
@@ -1606,145 +1945,6 @@ export type WrapsynthVaultManager = {
       "args": [
         {
           "name": "amount",
-          "type": "u64"
-        }
-      ]
-    },
-    {
-      "name": "executeLiquidation",
-      "docs": [
-        "Phase 2: execute the actual liquidation after all burns are resolved."
-      ],
-      "discriminator": [
-        189,
-        55,
-        38,
-        121,
-        165,
-        84,
-        96,
-        124
-      ],
-      "accounts": [
-        {
-          "name": "liquidator",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "vault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "vault.lp_address",
-                "account": "vault"
-              }
-            ]
-          }
-        },
-        {
-          "name": "globalState",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  103,
-                  108,
-                  111,
-                  98,
-                  97,
-                  108,
-                  95,
-                  115,
-                  116,
-                  97,
-                  116,
-                  101
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "wsxmrMint",
-          "writable": true
-        },
-        {
-          "name": "collateralMint"
-        },
-        {
-          "name": "liquidatorWsxmrAta",
-          "writable": true
-        },
-        {
-          "name": "liquidatorCollateralAta",
-          "writable": true
-        },
-        {
-          "name": "vaultCollateralAta",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116,
-                  95,
-                  99,
-                  111,
-                  108,
-                  108,
-                  97,
-                  116,
-                  101,
-                  114,
-                  97,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "vault"
-              }
-            ]
-          }
-        },
-        {
-          "name": "pythXmr"
-        },
-        {
-          "name": "pythCollateral"
-        },
-        {
-          "name": "tokenProgram",
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
-        },
-        {
-          "name": "systemProgram",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": [
-        {
-          "name": "debtToClear",
           "type": "u64"
         }
       ]
@@ -1855,19 +2055,7 @@ export type WrapsynthVaultManager = {
           "writable": true
         },
         {
-          "name": "pythXmr"
-        },
-        {
-          "name": "pythCollateral"
-        },
-        {
-          "name": "collateralMint"
-        },
-        {
-          "name": "vaultCollateralAta",
-          "docs": [
-            "Vault collateral ATA — slash source for the user reward."
-          ],
+          "name": "vaultCollateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -1900,10 +2088,7 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "programCollateralAta",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -2070,13 +2255,7 @@ export type WrapsynthVaultManager = {
           "writable": true
         },
         {
-          "name": "collateralMint"
-        },
-        {
-          "name": "vaultCollateralAta",
-          "docs": [
-            "Vault collateral ATA — slash source for the liquidated-vault branch."
-          ],
+          "name": "vaultCollateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -2109,10 +2288,7 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "programCollateralAta",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -2173,26 +2349,7 @@ export type WrapsynthVaultManager = {
         },
         {
           "name": "vault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "burn_request.lp_vault",
-                "account": "burnRequest"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "globalState",
@@ -2257,19 +2414,7 @@ export type WrapsynthVaultManager = {
           "writable": true
         },
         {
-          "name": "pythXmr"
-        },
-        {
-          "name": "pythCollateral"
-        },
-        {
-          "name": "collateralMint"
-        },
-        {
-          "name": "vaultCollateralAta",
-          "docs": [
-            "Vault collateral ATA — slash source for the par-capped payout."
-          ],
+          "name": "vaultCollateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -2302,10 +2447,7 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "programCollateralAta",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -2417,45 +2559,6 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "collateralMint",
-          "docs": [
-            "Program collateral ATA — the pending-returns pool backing all slashed",
-            "collateral credits. The mint is supplied via argument so initialize is",
-            "collateral-agnostic."
-          ]
-        },
-        {
-          "name": "programCollateralAta",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  114,
-                  111,
-                  103,
-                  114,
-                  97,
-                  109,
-                  95,
-                  99,
-                  111,
-                  108,
-                  108,
-                  97,
-                  116,
-                  101,
-                  114,
-                  97,
-                  108
-                ]
-              }
-            ]
-          }
-        },
-        {
           "name": "tokenProgram",
           "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
         },
@@ -2468,16 +2571,7 @@ export type WrapsynthVaultManager = {
           "address": "SysvarRent111111111111111111111111111111111"
         }
       ],
-      "args": [
-        {
-          "name": "pythXmrFeed",
-          "type": "pubkey"
-        },
-        {
-          "name": "collateralMint",
-          "type": "pubkey"
-        }
-      ]
+      "args": []
     },
     {
       "name": "initializePendingReturns",
@@ -2528,92 +2622,6 @@ export type WrapsynthVaultManager = {
               }
             ]
           }
-        },
-        {
-          "name": "systemProgram",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": []
-    },
-    {
-      "name": "initializeVaultCollateral",
-      "discriminator": [
-        64,
-        160,
-        30,
-        204,
-        90,
-        27,
-        120,
-        130
-      ],
-      "accounts": [
-        {
-          "name": "lp",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "vault",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "lp"
-              }
-            ]
-          }
-        },
-        {
-          "name": "collateralMint"
-        },
-        {
-          "name": "vaultCollateralAta",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116,
-                  95,
-                  99,
-                  111,
-                  108,
-                  108,
-                  97,
-                  116,
-                  101,
-                  114,
-                  97,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "vault"
-              }
-            ]
-          }
-        },
-        {
-          "name": "tokenProgram",
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
         },
         {
           "name": "systemProgram",
@@ -2760,12 +2768,6 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "pythXmr"
-        },
-        {
-          "name": "pythCollateral"
-        },
-        {
           "name": "systemProgram",
           "address": "11111111111111111111111111111111"
         }
@@ -2803,6 +2805,208 @@ export type WrapsynthVaultManager = {
           }
         }
       ]
+    },
+    {
+      "name": "kick",
+      "docs": [
+        "Kick a vault — post a bond and open the grace window. Permissionless;",
+        "no solvency proof required. (EVM kick parity.)"
+      ],
+      "discriminator": [
+        184,
+        92,
+        149,
+        185,
+        62,
+        150,
+        19,
+        210
+      ],
+      "accounts": [
+        {
+          "name": "kicker",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "auction",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "bondEscrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110,
+                  95,
+                  98,
+                  111,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "globalState",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "openAuction",
+      "docs": [
+        "Open the auction — permissionless, idempotent. Requires all in-flight",
+        "burns resolved and co-LP positions unwound; snapshots the offered",
+        "collateral and bumps both nonces."
+      ],
+      "discriminator": [
+        48,
+        60,
+        204,
+        12,
+        175,
+        130,
+        173,
+        33
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "auction",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
     },
     {
       "name": "proposeHash",
@@ -2996,12 +3200,6 @@ export type WrapsynthVaultManager = {
               }
             ]
           }
-        },
-        {
-          "name": "pythXmr"
-        },
-        {
-          "name": "pythCollateral"
         }
       ],
       "args": [
@@ -3033,6 +3231,134 @@ export type WrapsynthVaultManager = {
           }
         }
       ]
+    },
+    {
+      "name": "reauction",
+      "docs": [
+        "Retry liquidation on a frozen vault — exactly once. (EVM reauction parity.)"
+      ],
+      "discriminator": [
+        13,
+        80,
+        51,
+        65,
+        80,
+        213,
+        18,
+        101
+      ],
+      "accounts": [
+        {
+          "name": "kicker",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "auction",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "bondEscrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110,
+                  95,
+                  98,
+                  111,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "globalState",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
     },
     {
       "name": "rebalanceCoLp",
@@ -3180,15 +3506,109 @@ export type WrapsynthVaultManager = {
           "writable": true
         },
         {
-          "name": "vaultCollateralAta",
-          "writable": true
+          "name": "vaultCollateralEscrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultWsolAta",
+          "docs": [
+            "wSOL ATA owned by the vault PDA — staging for unwrap-back-to-escrow.",
+            "Caller pays rent if it must be created; it is closed again before the",
+            "instruction returns."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "collateralTokenProgram"
+              },
+              {
+                "kind": "account",
+                "path": "collateralMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
         },
         {
           "name": "userWsxmrAta",
           "writable": true
         },
         {
-          "name": "collateralMint"
+          "name": "collateralMint",
+          "docs": [
+            "wSOL mint (spl-token program)"
+          ]
         },
         {
           "name": "wsxmrMint"
@@ -3196,6 +3616,17 @@ export type WrapsynthVaultManager = {
         {
           "name": "tokenProgram",
           "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "collateralTokenProgram",
+          "docs": [
+            "SPL Token (legacy) program for the wSOL leg"
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
         },
         {
           "name": "systemProgram",
@@ -3313,13 +3744,7 @@ export type WrapsynthVaultManager = {
           "writable": true
         },
         {
-          "name": "collateralMint"
-        },
-        {
-          "name": "vaultCollateralAta",
-          "docs": [
-            "Vault collateral ATA — slash source."
-          ],
+          "name": "vaultCollateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -3352,10 +3777,7 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "programCollateralAta",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -3440,6 +3862,193 @@ export type WrapsynthVaultManager = {
         }
       ],
       "args": []
+    },
+    {
+      "name": "repayDebt",
+      "docs": [
+        "Burn wsXMR to reduce vault debt. In the kick grace window any amount",
+        "cancels the kick; after grace only a full repay cancels the auction.",
+        "(EVM repayDebt parity — replaces the mint-for-redemption hack.)"
+      ],
+      "discriminator": [
+        79,
+        200,
+        30,
+        15,
+        252,
+        22,
+        162,
+        8
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "globalState",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "wsxmrMint",
+          "writable": true
+        },
+        {
+          "name": "lpWsxmrAta",
+          "writable": true
+        },
+        {
+          "name": "auction",
+          "docs": [
+            "Optional auction record — pass when a kick is active (GRACE cancel or",
+            "full-debt post-grace rescue)."
+          ],
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "bondEscrow",
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110,
+                  95,
+                  98,
+                  111,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultCollateralEscrow",
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "wsxmrAmount",
+          "type": "u64"
+        }
+      ]
     },
     {
       "name": "requestBurn",
@@ -3543,12 +4152,6 @@ export type WrapsynthVaultManager = {
         {
           "name": "userWsxmrAta",
           "writable": true
-        },
-        {
-          "name": "pythXmr"
-        },
-        {
-          "name": "pythCollateral"
         },
         {
           "name": "tokenProgram",
@@ -3706,12 +4309,6 @@ export type WrapsynthVaultManager = {
           "writable": true
         },
         {
-          "name": "pythXmr"
-        },
-        {
-          "name": "pythCollateral"
-        },
-        {
           "name": "tokenProgram",
           "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
         },
@@ -3764,20 +4361,21 @@ export type WrapsynthVaultManager = {
       ]
     },
     {
-      "name": "resolveBurnForLiquidation",
+      "name": "resolveBurnForAuction",
       "docs": [
-        "Phase 1: resolve a single active burn on a liquidatable vault.",
-        "Call once per active burn. Permissionless."
+        "Resolve a single active burn on a kicked vault — permissionless,",
+        "callable once the grace window has elapsed. Call once per active burn",
+        "before open_auction."
       ],
       "discriminator": [
-        19,
-        207,
-        91,
-        53,
-        234,
-        124,
-        111,
-        87
+        201,
+        101,
+        182,
+        29,
+        170,
+        41,
+        63,
+        254
       ],
       "accounts": [
         {
@@ -3804,6 +4402,29 @@ export type WrapsynthVaultManager = {
                 "kind": "account",
                 "path": "vault.lp_address",
                 "account": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "auction",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
               }
             ]
           }
@@ -3905,19 +4526,7 @@ export type WrapsynthVaultManager = {
           "writable": true
         },
         {
-          "name": "pythXmr"
-        },
-        {
-          "name": "pythCollateral"
-        },
-        {
-          "name": "collateralMint"
-        },
-        {
-          "name": "vaultCollateralAta",
-          "docs": [
-            "Vault collateral ATA — slash source for revealed/committed burn payouts."
-          ],
+          "name": "vaultCollateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -3950,10 +4559,7 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "programCollateralAta",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -4014,26 +4620,7 @@ export type WrapsynthVaultManager = {
         },
         {
           "name": "vault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "burn_request.lp_vault",
-                "account": "burnRequest"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "globalState",
@@ -4118,6 +4705,172 @@ export type WrapsynthVaultManager = {
           }
         }
       ]
+    },
+    {
+      "name": "resolveKick",
+      "docs": [
+        "Resolve a no-bid auction — freeze the vault, return the bond.",
+        "(EVM resolveKick parity.)"
+      ],
+      "discriminator": [
+        27,
+        25,
+        63,
+        192,
+        127,
+        73,
+        18,
+        103
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.lp_address",
+                "account": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "auction",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "kicker",
+          "writable": true
+        },
+        {
+          "name": "bondEscrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  117,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110,
+                  95,
+                  98,
+                  111,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultCollateralEscrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "globalState",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
     },
     {
       "name": "revealBurnSecret",
@@ -4389,16 +5142,20 @@ export type WrapsynthVaultManager = {
       ]
     },
     {
-      "name": "setMaxMintBps",
+      "name": "setMaxMintWsxmr",
+      "docs": [
+        "LP-declared absolute mint cap in wsXMR units (0 = uncapped).",
+        "(EVM setMaxMintWsxmr parity — replaces the price-relative max_mint_bps.)"
+      ],
       "discriminator": [
-        179,
-        42,
-        1,
-        225,
-        89,
-        24,
-        172,
-        5
+        204,
+        34,
+        228,
+        127,
+        186,
+        167,
+        74,
+        46
       ],
       "accounts": [
         {
@@ -4430,8 +5187,8 @@ export type WrapsynthVaultManager = {
       ],
       "args": [
         {
-          "name": "maxMintBps",
-          "type": "u16"
+          "name": "maxWsxmr",
+          "type": "u64"
         }
       ]
     },
@@ -4622,12 +5379,6 @@ export type WrapsynthVaultManager = {
               }
             ]
           }
-        },
-        {
-          "name": "pythXmr"
-        },
-        {
-          "name": "pythCollateral"
         }
       ],
       "args": []
@@ -4727,6 +5478,57 @@ export type WrapsynthVaultManager = {
         {
           "name": "whitelisted",
           "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "setThreshold",
+      "docs": [
+        "LP-declared collateral threshold: lamports per 1e8 wsXMR. Governs mint",
+        "capacity, vault coverage, and par settlement (EVM setThreshold parity)."
+      ],
+      "discriminator": [
+        155,
+        53,
+        245,
+        104,
+        116,
+        169,
+        239,
+        167
+      ],
+      "accounts": [
+        {
+          "name": "lp",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lp"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "threshold",
+          "type": "u128"
         }
       ]
     },
@@ -4887,19 +5689,7 @@ export type WrapsynthVaultManager = {
           "writable": true
         },
         {
-          "name": "pythXmr"
-        },
-        {
-          "name": "pythCollateral"
-        },
-        {
-          "name": "collateralMint"
-        },
-        {
-          "name": "vaultCollateralAta",
-          "docs": [
-            "Vault collateral ATA — slash source for the user reward."
-          ],
+          "name": "vaultCollateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -4932,10 +5722,7 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "programCollateralAta",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -5080,13 +5867,7 @@ export type WrapsynthVaultManager = {
           "writable": true
         },
         {
-          "name": "collateralMint"
-        },
-        {
-          "name": "vaultCollateralAta",
-          "docs": [
-            "Vault collateral ATA — slash source."
-          ],
+          "name": "vaultCollateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -5119,10 +5900,7 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "programCollateralAta",
-          "docs": [
-            "Program collateral pool ATA — slash destination."
-          ],
+          "name": "collateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -5316,15 +6094,109 @@ export type WrapsynthVaultManager = {
           "writable": true
         },
         {
-          "name": "vaultCollateralAta",
-          "writable": true
+          "name": "vaultCollateralEscrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  108,
+                  108,
+                  97,
+                  116,
+                  101,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultWsolAta",
+          "docs": [
+            "wSOL ATA owned by the vault PDA — staging for unwrap-back-to-escrow.",
+            "Caller pays rent if it must be created; it is closed again before the",
+            "instruction returns."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "collateralTokenProgram"
+              },
+              {
+                "kind": "account",
+                "path": "collateralMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
         },
         {
           "name": "userWsxmrAta",
           "writable": true
         },
         {
-          "name": "collateralMint"
+          "name": "collateralMint",
+          "docs": [
+            "wSOL mint (spl-token program)"
+          ]
         },
         {
           "name": "wsxmrMint"
@@ -5332,6 +6204,17 @@ export type WrapsynthVaultManager = {
         {
           "name": "tokenProgram",
           "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "collateralTokenProgram",
+          "docs": [
+            "SPL Token (legacy) program for the wSOL leg"
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
         },
         {
           "name": "systemProgram",
@@ -5343,7 +6226,8 @@ export type WrapsynthVaultManager = {
     {
       "name": "userOpenCoLp",
       "docs": [
-        "User pairs wsXMR with vault idle QQQx collateral to open a position."
+        "User pairs wsXMR with vault idle SOL collateral to open a position.",
+        "Both leg amounts are caller-supplied (EVM userOpenCoLP parity)."
       ],
       "discriminator": [
         136,
@@ -5509,7 +6393,7 @@ export type WrapsynthVaultManager = {
           "writable": true
         },
         {
-          "name": "vaultCollateralAta",
+          "name": "vaultCollateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -5542,20 +6426,86 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "collateralMint"
+          "name": "vaultWsolAta",
+          "docs": [
+            "wSOL ATA owned by the vault PDA — staging account for wrapping escrow",
+            "SOL into pool-deployable wSOL. Opened fresh and closed (unwrapped back",
+            "to the escrow) within each co-LP instruction."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "collateralTokenProgram"
+              },
+              {
+                "kind": "account",
+                "path": "collateralMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "collateralMint",
+          "docs": [
+            "wSOL mint (spl-token program)"
+          ]
         },
         {
           "name": "wsxmrMint"
         },
         {
-          "name": "pythXmr"
-        },
-        {
-          "name": "pythCollateral"
-        },
-        {
           "name": "tokenProgram",
           "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "collateralTokenProgram",
+          "docs": [
+            "SPL Token (legacy) program for the wSOL leg"
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         },
         {
           "name": "associatedTokenProgram",
@@ -5569,6 +6519,10 @@ export type WrapsynthVaultManager = {
       "args": [
         {
           "name": "wsxmrAmount",
+          "type": "u64"
+        },
+        {
+          "name": "collateralAmount",
           "type": "u64"
         },
         {
@@ -5643,14 +6597,7 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "collateralMint"
-        },
-        {
-          "name": "lpCollateralAta",
-          "writable": true
-        },
-        {
-          "name": "vaultCollateralAta",
+          "name": "vaultCollateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -5683,16 +6630,6 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "pythXmr"
-        },
-        {
-          "name": "pythCollateral"
-        },
-        {
-          "name": "tokenProgram",
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
-        },
-        {
           "name": "systemProgram",
           "address": "11111111111111111111111111111111"
         }
@@ -5719,6 +6656,7 @@ export type WrapsynthVaultManager = {
       "accounts": [
         {
           "name": "owner",
+          "writable": true,
           "signer": true
         },
         {
@@ -5779,13 +6717,7 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "collateralMint"
-        },
-        {
-          "name": "programCollateralAta",
-          "docs": [
-            "Program-owned collateral ATA (pending returns pool)"
-          ],
+          "name": "collateralEscrow",
           "writable": true,
           "pda": {
             "seeds": [
@@ -5816,12 +6748,8 @@ export type WrapsynthVaultManager = {
           }
         },
         {
-          "name": "userCollateralAta",
-          "writable": true
-        },
-        {
-          "name": "tokenProgram",
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": []
@@ -5936,6 +6864,19 @@ export type WrapsynthVaultManager = {
     }
   ],
   "accounts": [
+    {
+      "name": "auction",
+      "discriminator": [
+        218,
+        94,
+        247,
+        242,
+        126,
+        233,
+        131,
+        81
+      ]
+    },
     {
       "name": "burnRequest",
       "discriminator": [
@@ -6138,96 +7079,221 @@ export type WrapsynthVaultManager = {
     },
     {
       "code": 6024,
-      "name": "stalePrice",
-      "msg": "Stale or invalid price"
+      "name": "kickActive",
+      "msg": "A kick/auction is active on this vault"
     },
     {
       "code": 6025,
+      "name": "noActiveKick",
+      "msg": "No active kick on this vault"
+    },
+    {
+      "code": 6026,
+      "name": "vaultFrozen",
+      "msg": "Vault is frozen after an inconclusive auction"
+    },
+    {
+      "code": 6027,
+      "name": "kickOnCooldown",
+      "msg": "Vault is on kick cooldown"
+    },
+    {
+      "code": 6028,
+      "name": "bidNotOpen",
+      "msg": "Auction is not open for bids"
+    },
+    {
+      "code": 6029,
+      "name": "auctionNotEnded",
+      "msg": "Auction has not ended"
+    },
+    {
+      "code": 6030,
+      "name": "noReauctionAvailable",
+      "msg": "Reauction already used for this vault"
+    },
+    {
+      "code": 6031,
+      "name": "belowMinThreshold",
+      "msg": "Threshold below protocol minimum"
+    },
+    {
+      "code": 6032,
       "name": "insufficientDeposit",
       "msg": "Insufficient deposit"
     },
     {
-      "code": 6026,
+      "code": 6033,
       "name": "mathOverflow",
       "msg": "Arithmetic overflow"
     },
     {
-      "code": 6027,
+      "code": 6034,
       "name": "unresolvedBurns",
       "msg": "Active burns must be resolved before liquidation"
     },
     {
-      "code": 6028,
+      "code": 6035,
       "name": "poolNotInitialized",
       "msg": "Pool not initialized"
     },
     {
-      "code": 6029,
+      "code": 6036,
       "name": "belowMinimumBurn",
       "msg": "Below minimum burn amount"
     },
     {
-      "code": 6030,
+      "code": 6037,
       "name": "maxBurnRequestsReached",
       "msg": "Maximum burn requests per vault reached"
     },
     {
-      "code": 6031,
+      "code": 6038,
       "name": "onlyUserCanInitiate",
       "msg": "Only user can initiate this operation"
     },
     {
-      "code": 6032,
+      "code": 6039,
       "name": "burnInvalidatedByLiquidation",
       "msg": "Burn invalidated by liquidation"
     },
     {
-      "code": 6033,
+      "code": 6040,
       "name": "maxVaultsReached",
       "msg": "Maximum vault count reached"
     },
     {
-      "code": 6034,
+      "code": 6041,
       "name": "invalidConfig",
       "msg": "Invalid configuration value"
     },
     {
-      "code": 6035,
+      "code": 6042,
       "name": "routerAlreadySet",
       "msg": "Liquidity router already set"
     },
     {
-      "code": 6036,
+      "code": 6043,
       "name": "onlyRouter",
       "msg": "Only liquidity router can call this"
     },
     {
-      "code": 6037,
+      "code": 6044,
       "name": "onlyDeployer",
       "msg": "Only deployer can call this"
     },
     {
-      "code": 6038,
+      "code": 6045,
       "name": "mintNonceMismatch",
       "msg": "Vault mint nonce mismatch"
     },
     {
-      "code": 6039,
-      "name": "priceNormalizedToZero",
-      "msg": "Price normalized to zero"
-    },
-    {
-      "code": 6040,
+      "code": 6046,
       "name": "xmrAmountTooSmall",
       "msg": "XMR amount too small (minimum 1e4 atomic units)"
-    },
-    {
-      "code": 6041,
-      "name": "collateralDepegged",
-      "msg": "Collateral at distress discount: minting paused"
     }
   ],
   "types": [
+    {
+      "name": "auction",
+      "docs": [
+        "Bonded-kick Dutch haircut auction — the oracle-free replacement for",
+        "oracle-triggered liquidation (EVM Kick struct + KickPhase parity).",
+        "",
+        "Lifecycle (times are unix seconds):",
+        "1. kick() posts a bond into the vault's bond-escrow PDA → GRACE opens.",
+        "The LP cancels by acting (deposit_collateral / repay_debt); the bond",
+        "is paid to the vault either way the kick resolves in the LP's favor.",
+        "2. After KICK_GRACE_SECONDS, keepers resolve in-flight burns and unwind",
+        "co-LP positions, then open_auction() snapshots offered_collateral",
+        "(free collateral; key bonds excluded) and bumps both nonces.",
+        "3. During AUCTION_OPEN_DELAY_SECONDS bids still revert — the LP may",
+        "repay_debt in full to cancel outright (bond → LP).",
+        "4. ACTIVE: X(t) decays linearly from HAIRCUT_START_BPS to",
+        "HAIRCUT_FLOOR_BPS over AUCTION_DURATION_SECONDS. First bid wins:",
+        "bidder burns the vault's FULL actual debt in wsXMR and receives X%",
+        "of offered_collateral. Kicker gets CHIP_BPS of the surplus; on a",
+        "wrongful kick (clearing X* ≤ KICK_SANE_BPS) the bond goes to the LP.",
+        "5. ENDED with no bid → resolve_kick freezes the vault; bond → kicker.",
+        "reauction retries discovery exactly once; backstop_vault lets a",
+        "healthy LP absorb a frozen vault.",
+        "",
+        "No price is ever consulted — the auction discovers the settlement",
+        "haircut in the market."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "docs": [
+              "Vault this auction belongs to (one auction per vault)"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "kicker",
+            "docs": [
+              "Who posted the kick bond"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "bond",
+            "docs": [
+              "Bond held in the bond-escrow PDA (lamports)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "kickTime",
+            "docs": [
+              "Kick timestamp"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "auctionEnd",
+            "docs": [
+              "kick_time + GRACE + OPEN_DELAY + DURATION — no-bid resolution point"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "offeredCollateral",
+            "docs": [
+              "Free collateral snapshotted at open_auction (lamports)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "auctionOpened",
+            "docs": [
+              "True once open_auction() ran the grace→auction transition"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "active",
+            "docs": [
+              "True while the kick is unresolved"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "isReauction",
+            "docs": [
+              "True when this kick was started via reauction"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
     {
       "name": "burnRequest",
       "type": {
@@ -6315,11 +7381,12 @@ export type WrapsynthVaultManager = {
             }
           },
           {
-            "name": "xmrPriceAtRequest",
+            "name": "thresholdAtRequest",
             "docs": [
-              "XMR price snapshot at request time (par settlement for slashes)"
+              "Vault threshold snapshot at request time (par settlement rate for",
+              "slashes, lamports per 1e8 wsXMR — EVM thresholdAtRequest parity)"
             ],
-            "type": "u64"
+            "type": "u128"
           },
           {
             "name": "secretHash",
@@ -6557,7 +7624,7 @@ export type WrapsynthVaultManager = {
           {
             "name": "collateralMint",
             "docs": [
-              "Collateral SPL token mint (raw QQQx, no yield wrapper)"
+              "Collateral SPL token mint (wSOL — SPL identity of the lamport collateral)"
             ],
             "type": "pubkey"
           },
@@ -6565,13 +7632,6 @@ export type WrapsynthVaultManager = {
             "name": "liquidityRouter",
             "docs": [
               "Authorized liquidity router program"
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "pythXmrFeed",
-            "docs": [
-              "Pyth XMR/USD price feed account"
             ],
             "type": "pubkey"
           },
@@ -6788,11 +7848,12 @@ export type WrapsynthVaultManager = {
             "type": "u64"
           },
           {
-            "name": "xmrPriceAtReady",
+            "name": "thresholdAtReady",
             "docs": [
-              "XMR price snapshot at set_mint_ready (par settlement)"
+              "Vault threshold snapshot at set_mint_ready (par settlement rate,",
+              "lamports per 1e8 wsXMR — EVM thresholdAtReady parity)"
             ],
-            "type": "u64"
+            "type": "u128"
           },
           {
             "name": "normalizedDebtAmount",
@@ -6915,7 +7976,7 @@ export type WrapsynthVaultManager = {
           {
             "name": "collateralAmount",
             "docs": [
-              "Raw QQQx collateral held — TOTAL model: includes locked_collateral, so",
+              "Raw lamport collateral held — TOTAL model: includes locked_collateral, so",
               "available = collateral_amount - locked_collateral - deployed_collateral"
             ],
             "type": "u64"
@@ -6942,11 +8003,21 @@ export type WrapsynthVaultManager = {
             "type": "u64"
           },
           {
-            "name": "maxMintBps",
+            "name": "thresholdLamportsPerWsxmr",
             "docs": [
-              "LP-configured max single mint size in basis points (0 = no limit)"
+              "LP-declared par rate: lamports of collateral per 1e8 wsXMR. Defines mint",
+              "capacity, coverage, and par settlement — the oracle-free replacement for",
+              "price-derived collateral ratios (EVM thresholdSharesPerWsxmr parity)."
             ],
-            "type": "u16"
+            "type": "u128"
+          },
+          {
+            "name": "maxMintWsxmr",
+            "docs": [
+              "LP-configured absolute max single mint size in wsXMR (0 = no limit)",
+              "(EVM maxMintWsxmr parity — replaces the price-relative max_mint_bps)"
+            ],
+            "type": "u64"
           },
           {
             "name": "mintGriefingDeposit",
@@ -6972,14 +8043,14 @@ export type WrapsynthVaultManager = {
           {
             "name": "liquidationNonce",
             "docs": [
-              "Incremented on liquidation to invalidate all pending burns"
+              "Incremented on auction open to invalidate all pending burns"
             ],
             "type": "u64"
           },
           {
             "name": "mintNonce",
             "docs": [
-              "Incremented on liquidation to invalidate all pending mints"
+              "Incremented on auction open to invalidate all pending mints"
             ],
             "type": "u64"
           },
@@ -7040,7 +8111,7 @@ export type WrapsynthVaultManager = {
           {
             "name": "deployedCollateral",
             "docs": [
-              "QQQx deployed into co-LP positions (excluded from liquid balance)"
+              "Collateral (lamports, deployed as wSOL) in co-LP positions (excluded from liquid balance)"
             ],
             "type": "u64"
           },
@@ -7050,6 +8121,35 @@ export type WrapsynthVaultManager = {
               "LP's preferred max co-LP range width in basis points (EVM maxCoLPRangeBps parity)"
             ],
             "type": "u16"
+          },
+          {
+            "name": "kickActive",
+            "docs": [
+              "A kick/auction is live on this vault — new mints/burns/withdrawals revert"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "frozen",
+            "docs": [
+              "Vault froze after an inconclusive auction — only repay_debt,",
+              "deposit_collateral, reauction and backstop_vault remain"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "reauctionUsed",
+            "docs": [
+              "One-shot retry flag: true once a frozen vault has been reauctioned"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "lastKickResolved",
+            "docs": [
+              "Timestamp of the last kick resolution — enforces KICK_COOLDOWN_SECONDS"
+            ],
+            "type": "i64"
           },
           {
             "name": "active",
@@ -7064,3 +8164,4 @@ export type WrapsynthVaultManager = {
     }
   ]
 };
+

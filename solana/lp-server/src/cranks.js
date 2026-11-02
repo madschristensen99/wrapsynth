@@ -107,7 +107,6 @@ export class Cranks {
             globalState: this.client.globalState,
             burnRequest: pubkey,
             userPendingReturns: this.client.pendingReturns(req.user),
-            ...this.client.oracleAccounts(),
             ...this.client.collateralAccounts(this.vault),
             tokenProgram: TOKEN_2022_PROGRAM_ID,
             systemProgram: SystemProgram.programId,

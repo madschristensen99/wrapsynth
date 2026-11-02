@@ -15,6 +15,10 @@ no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+# Test-only: shrinks auction/timeout wall-clock constants so the localnet
+# suite can drive a full kick→auction→resolve lifecycle. NEVER deploy a
+# build made with this feature — devnet/mainnet use the default constants.
+test-lifecycle = []
 
 [dependencies]
 anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }

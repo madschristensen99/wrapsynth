@@ -1,6 +1,11 @@
-/// Safe math helpers mirroring the Solidity contract's arithmetic.
+/// Safe math helpers — oracle-free, threshold-relative accounting.
 /// All intermediate calculations use u128 to prevent overflow on u64 inputs.
+///
+/// Threshold semantics (EVM wsXmrStorage parity):
+///   threshold = lamports of collateral per 1e8 wsXMR (u128, LP-declared)
+///   par(wsxmr) = wsxmr * threshold / WSXMR_DECIMALS  → lamports
 use crate::constants::*;
+use crate::state::Vault;
 
 /// Compute actual debt from normalized debt and current global debt index.
 /// actual_debt = normalized_debt * global_debt_index / 1e18
@@ -22,64 +27,87 @@ pub fn normalize_debt(actual_amount: u64, global_debt_index: u64) -> u64 {
     (numerator / global_debt_index as u128) as u64
 }
 
-/// Collateral value in USD (18 decimals).
-/// collateral_amount (raw atomic, COLLATERAL_DECIMALS scale) × price (18-dec) / COLLATERAL_DECIMALS
-///
-/// USD-denominated values are u128 throughout: at 1e18 scale, u64 overflows
-/// above ~$18.4 — far below a single QQQx token (~$600).
-pub fn collateral_to_usd(collateral_amount: u64, collateral_price: u128) -> u128 {
-    (collateral_amount as u128)
-        .checked_mul(collateral_price)
+/// Par settlement amount in lamports: collateral owed per wsXMR at the given
+/// declared threshold (lamports-per-1e8-wsXMR).
+/// EVM _parCollateral parity.
+pub fn par_lamports(wsxmr_amount: u64, threshold: u128) -> u64 {
+    ((wsxmr_amount as u128)
+        .checked_mul(threshold)
         .unwrap_or(0)
-        / COLLATERAL_DECIMALS as u128
+        / WSXMR_DECIMALS as u128) as u64
 }
 
-/// Convert USD value (18 decimals) to raw collateral atomic units.
-pub fn usd_to_collateral(usd_value: u128, collateral_price: u128) -> u64 {
-    if collateral_price == 0 {
-        return 0;
-    }
-    (usd_value
-        .checked_mul(COLLATERAL_DECIMALS as u128)
-        .unwrap_or(0)
-        / collateral_price) as u64
+/// Lamports of collateral the vault must hold against wsXMR debt at its own
+/// declared threshold. EVM _requiredCollateral parity.
+pub fn required_lamports(wsxmr_debt: u64, threshold: u128) -> u64 {
+    par_lamports(wsxmr_debt, threshold)
 }
 
-/// Collateral ratio = (collateral_usd * 100) / debt_usd.
-/// Returns u64::MAX when debt is zero (infinite health).
-pub fn calculate_collateral_ratio(collateral_usd: u128, debt_usd: u128) -> u64 {
-    if debt_usd == 0 {
+/// Par-value lock for mint key bonds and the set_mint_ready par lock:
+/// par collateral at the declared threshold × MINT_LOCK_RATIO (110%).
+/// EVM _parLockFor parity.
+pub fn par_lock_for(wsxmr_amount: u64, threshold: u128) -> u64 {
+    ((wsxmr_amount as u128)
+        .checked_mul(threshold)
+        .unwrap_or(0)
+        .checked_mul(MINT_LOCK_RATIO as u128)
+        .unwrap_or(0)
+        / WSXMR_DECIMALS as u128
+        / RATIO_PRECISION as u128) as u64
+}
+
+/// Free (seizable / mint-eligible) collateral: total minus locked.
+/// Key bonds and burn locks never count as free. EVM _freeCollateral parity.
+pub fn free_collateral(v: &Vault) -> u64 {
+    v.collateral_amount.saturating_sub(v.locked_collateral)
+}
+
+/// INFORMATIONAL ONLY — self-declared coverage:
+///   free_collateral / (debt × threshold) × RATIO_PRECISION.
+/// 100+ = vault covers debt at its own declared threshold. Not a solvency
+/// oracle — the LP sets the threshold. EVM getVaultHealth parity.
+pub fn coverage_ratio(free: u64, debt: u64, threshold: u128) -> u64 {
+    let required = required_lamports(debt, threshold);
+    if required == 0 {
         return u64::MAX;
     }
-    (collateral_usd
+    ((free as u128)
         .checked_mul(RATIO_PRECISION as u128)
         .unwrap_or(0)
-        / debt_usd) as u64
+        / required as u128) as u64
 }
 
-/// USD value of debt at the given collateral ratio (used for collateral locking checks).
-/// debt_amount is in wsXMR (8 decimals), xmr_price is 18-decimal USD.
-/// Returns USD value (18 decimals).
-pub fn collateral_value_for_debt(debt_amount: u64, xmr_price: u128, ratio: u64) -> u128 {
-    let debt_usd =
-        (debt_amount as u128).checked_mul(xmr_price).unwrap_or(0) / WSXMR_DECIMALS as u128;
-    debt_usd.checked_mul(ratio as u128).unwrap_or(0) / RATIO_PRECISION as u128
-}
-
-/// Full collateral ratio check combining prices.
-pub fn check_collateral_ratio(
-    collateral_amount: u64,
-    collateral_price: u128,
-    debt_amount: u64,
-    xmr_price: u128,
-    required_ratio: u64,
-) -> bool {
-    if debt_amount == 0 {
-        return true;
+/// Threshold-derived mint capacity, quote-capped — EVM getMintCapacity parity.
+/// Mirrors the bond-reserved coverage check in initiate_mint:
+///   free·1e8 >= T·(D0 + pending + x) + MINT_LOCK_RATIO·x·T/100
+///   x <= (free·1e8 − T·(D0+pending))·100 / (T·(100 + MINT_LOCK_RATIO))
+pub fn mint_capacity(v: &Vault, global_debt_index: u64) -> u64 {
+    if !v.active {
+        return 0;
     }
-    let col_usd = collateral_to_usd(collateral_amount, collateral_price);
-    let debt_usd =
-        (debt_amount as u128).checked_mul(xmr_price).unwrap_or(0) / WSXMR_DECIMALS as u128;
-    let ratio = calculate_collateral_ratio(col_usd, debt_usd);
-    ratio >= required_ratio
+    let threshold = v.threshold_lamports_per_wsxmr;
+    if threshold < MIN_THRESHOLD_LAMPORTS {
+        return 0;
+    }
+    let free = free_collateral(v);
+    if free == 0 {
+        return 0;
+    }
+    let actual_debt = get_actual_debt(v.normalized_debt, global_debt_index);
+    let headroom = (free as u128).checked_mul(WSXMR_DECIMALS as u128).unwrap_or(0);
+    let committed = threshold
+        .checked_mul((actual_debt as u128).checked_add(v.pending_debt as u128).unwrap_or(0))
+        .unwrap_or(u128::MAX);
+    if headroom <= committed {
+        return 0;
+    }
+    let capacity = ((headroom - committed)
+        .checked_mul(RATIO_PRECISION as u128)
+        .unwrap_or(0))
+        / (threshold * (RATIO_PRECISION as u128 + MINT_LOCK_RATIO as u128));
+    let mut cap = capacity.min(u64::MAX as u128) as u64;
+    if v.max_mint_wsxmr > 0 && cap > v.max_mint_wsxmr {
+        cap = v.max_mint_wsxmr;
+    }
+    cap
 }

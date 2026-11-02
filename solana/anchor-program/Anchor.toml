@@ -6,8 +6,6 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-oracle_mock = "AWKqcPUtpsaPr19XpCq2ZD6Bk4HRGXnsYy9DUrZkLixY"
-wrapsynth = "EyhaxbtseCcbAc7W9PhVCyAWLt9EQ1rtPdK6aFPVzGka"
 wrapsynth_vault_manager = "C9kVasKgQiUX1BCngBjorvMA8QaFyERHvdkYdwPyy3H1"
 
 [registry]
@@ -19,7 +17,6 @@ wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "npx tsc -p tsconfig.test.json && npx mocha -t 1000000 dist-test/tests/vault_manager.js"
-test-oracle = "npx tsc -p tsconfig.test.json && npx mocha -t 1000000 dist-test/tests/oracle_dual_source.test.js"
 
 [test]
 startup_wait = 15000
@@ -31,11 +28,3 @@ bind_address = "0.0.0.0"
 url = "http://localhost:8899"
 ledger = ".anchor/test-ledger"
 rpc_port = 8899
-
-[[test.validator.account]]
-address = "6LwVtpkVzR9zSCo4xKkesQJaraDJaqzaQTRAQfZo6jxf"
-filename = "tests/fixtures/pyth_xmr_account.json"
-
-[[test.validator.account]]
-address = "7D8MNQMdCEDrVebrMPmnMQ5Z54WqceWsu89FDEqrWL73"
-filename = "tests/fixtures/pyth_col_account.json"
