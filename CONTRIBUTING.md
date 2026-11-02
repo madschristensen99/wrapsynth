@@ -20,8 +20,7 @@ wsFrontendOverhaul/
 ├── frontend/          # Web app (vanilla ES modules, no bundler)
 ├── lp-server-js/      # LP node (Node.js/Express, Monero wallet RPC)
 ├── solana/            # Solana/Anchor program (alternative deployment)
-├── docs/              # Architecture docs, sequence diagrams, implementation notes
-└── deployment.json    # Canonical contract address manifest
+└── docs/              # Architecture docs, sequence diagrams, implementation notes
 ```
 
 ### Getting Started
@@ -100,7 +99,9 @@ forge test --match-test testMintHappyPath -vvv
 forge test --gas-report
 
 # Fork mainnet for integration tests
-forge test --fork-url https://rpc.gnosischain.com
+# fork a chain into local anvil first, then:
+anvil --fork-url $BASE_RPC_URL --port 8545 &
+forge test --match-path "test/Base*" --fork-url http://127.0.0.1:8545
 ```
 
 ### Frontend
@@ -108,7 +109,7 @@ forge test --fork-url https://rpc.gnosischain.com
 No automated test framework. Manual testing:
 
 1. Start a static server: `npx serve frontend/`
-2. Connect a Gnosis-compatible wallet (MetaMask, Rabby)
+2. Connect a wallet on a deployed chain — BNB Chain, Base, or Robinhood (MetaMask, Rabby)
 3. Test mint/burn flows against a local or testnet LP server
 4. Verify state persistence (refresh page mid-swap, check `localStorage`)
 
@@ -135,7 +136,7 @@ node check-mint-keys.js
 Before submitting a pull request:
 
 - [ ] **Solidity changes compile**: `forge build` succeeds with no warnings
-- [ ] **Solidity tests pass**: `forge test` passes (including fork tests if applicable)
+- [ ] **Solidity tests pass**: `forge test` passes against a local Anvil fork (`--match-path "test/Base*"`)
 - [ ] **NatSpec added**: New public/external functions have `@notice`/`@param`/`@return`
 - [ ] **Storage layout unchanged**: If modifying `wsXmrStorage.sol`, only append new variables — never reorder or insert
 - [ ] **JS changes don't break the module graph**: Verify imports resolve (no circular deps, no missing exports)

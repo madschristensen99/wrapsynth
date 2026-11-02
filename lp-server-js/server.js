@@ -149,7 +149,7 @@ function loadChainConfigs() {
       name: d.network || 'default',
       chainId: d.chainId,
       manifest: legacyManifest,
-      rpcUrls: (process.env.RPC_URLS || process.env.RPC_URL || 'https://rpc.gnosischain.com')
+      rpcUrls: (process.env.RPC_URLS || process.env.RPC_URL || '')
         .split(',').map(u => u.trim()).filter(Boolean),
       logChunkSize: 900,
     }];

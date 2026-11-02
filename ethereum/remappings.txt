@@ -1,3 +1,2 @@
 @openzeppelin/=vendor/openzeppelin-contracts/
 forge-std/=vendor/forge-std/src/
-@redstone-finance/evm-connector/contracts/=vendor/redstone/
