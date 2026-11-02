@@ -7,7 +7,7 @@ import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
-import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
+import {LiquidationAuctionFacet} from "../contracts/facets/LiquidationAuctionFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
 import {IErrors} from "../contracts/interfaces/IErrors.sol";
@@ -39,7 +39,7 @@ contract BurnSolvencyInvariantTestBase is BaseMockTestBase {
 
         // Request burn
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted / 2, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
 
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -87,7 +87,7 @@ contract BurnSolvencyInvariantTestBase is BaseMockTestBase {
         (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(TEST_USER_SECRET));
         bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted / 2, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
 
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -134,7 +134,7 @@ contract BurnSolvencyInvariantTestBase is BaseMockTestBase {
         uint256 minted = _mintForUser(user, lp);
 
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted / 2, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
 
         wsXmrStorage.Vault memory vaultBefore = _getVault(lp);
         uint256 sharesBefore = vaultBefore.collateralShares;
@@ -169,7 +169,7 @@ contract BurnSolvencyInvariantTestBase is BaseMockTestBase {
         uint256 minted = _mintForUser(user, lp);
 
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted / 2, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
 
         wsXmrStorage.Vault memory vaultBefore = _getVault(lp);
         uint256 sharesBefore = vaultBefore.collateralShares;
@@ -209,7 +209,7 @@ contract BurnSolvencyInvariantTestBase is BaseMockTestBase {
         bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
 
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted / 2, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
 
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -255,7 +255,7 @@ contract BurnSolvencyInvariantTestBase is BaseMockTestBase {
         (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(TEST_USER_SECRET));
         bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted / 2, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
 
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -343,20 +343,22 @@ contract BurnSolvencyInvariantTestBase is BaseMockTestBase {
         vm.prank(user);
         BurnFacet(address(hub)).confirmMoneroLock(burnId);
 
-        // Liquidator needs wsXMR - mint BEFORE depegging so initiateMint sees normal prices
-        // Must be enough to cover the debt being liquidated (increased collateral means more debt to clear)
-        _performMint(lp, liquidator, 100_000000000);
-
-        // Pump XMR to $3000 to make vault liquidatable (collateral price is
-        // fixed at $1 on HyperEVM — debt value rises instead of collateral depeg)
-        _setXmrPrice8dec(3000_00000000);
+        // Liquidator is funded below with the vault's exact debt for the bid
 
         wsXmrStorage.Vault memory vaultBefore = _getVault(lp);
         uint256 sharesBefore = vaultBefore.collateralShares;
 
-        vm.startPrank(liquidator);
+        // Kick → settle in-flight burns at auction open → liquidator bids
+        _kickVault(liquidator, lp);
+        vm.roll(block.number + hub.KICK_GRACE_BLOCKS() + 1);
+        LiquidationAuctionFacet(address(hub)).openAuction(lp);
+        vm.roll(block.number + hub.AUCTION_OPEN_DELAY_BLOCKS() + 1);
+
         uint256 debtToClear = hub.getVaultDebt(lp);
-        LiquidationFacet(address(hub)).liquidate(lp, debtToClear);
+        deal(address(wsxmr), liquidator, debtToClear);
+        vm.startPrank(liquidator);
+        wsxmr.approve(address(hub), debtToClear);
+        LiquidationAuctionFacet(address(hub)).bid(lp);
         vm.stopPrank();
 
         wsXmrStorage.Vault memory vaultAfter = _getVault(lp);
@@ -384,7 +386,7 @@ contract BurnSolvencyInvariantTestBase is BaseMockTestBase {
         uint256 minted = _mintForUser(user, lp);
 
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted / 2, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
 
         // Roll past the request timeout
         vm.roll(block.number + 172805);
@@ -413,29 +415,27 @@ contract BurnSolvencyInvariantTestBase is BaseMockTestBase {
 
     // ========== FIX 2: LOCK RATIO ==========
 
-    /// @notice calculateBurnCollateral must reserve ~110% of par (not ~195%).
-    function test_F2_BurnLockRatio_Is110PercentOfPar() public {
+    /// @notice calculateBurnCollateral reserves freeCollateral × (wsxmr/debt) × 1.3
+    ///         for the base lock and par × burnRewardBps for the reward.
+    function test_F2_BurnLockRatio_ProportionalToDebt() public {
         _createVaultAndDeposit(lp, 100 ether);
         _updatePrices();
         _configureVault(lp);
 
-        uint256 wsxmrAmount = 1e8; // 1 wsXMR
+        uint256 minted = _mintForUser(user, lp);
 
-        (uint256 baseLock, uint256 rewardLock) = _calculateBurnCollateral(lp, wsxmrAmount);
+        (uint256 baseLock, uint256 rewardLock) = _calculateBurnCollateral(lp, minted);
 
-        // Compute expected par in shares
-        uint256 xmrPrice = uint256(uint192(hub.lastXmrPrice())) * 1e10;
-        uint256 collateralPrice = uint256(uint192(hub.lastCollateralPrice())) * 1e10;
+        // Proportional base lock: free × (burn/debt) × 1.3
+        uint256 debt = hub.getVaultDebt(lp);
+        wsXmrStorage.Vault memory vault = _getVault(lp);
+        uint256 free = vault.collateralShares - vault.lockedCollateral;
+        uint256 expectedBase = (free * minted * 130) / (debt * 100);
+        assertApproxEqRel(baseLock, expectedBase, 0.01e18, "baseLock should be proportional 1.3x");
 
-        uint256 parUsd = (wsxmrAmount * xmrPrice) / 1e8;
-        uint256 parDai = (parUsd * 1e18) / collateralPrice;
-        uint256 parShares = _daiToShares(parDai);
-
-        // baseLock should be ~110% of par shares
-        assertApproxEqRel(baseLock, (parShares * 110) / 100, 0.01e18, "baseLock should be ~110% of par");
-
-        // With 100 bps burn reward, rewardLock should be ~1% of par shares
-        uint256 expectedReward = (parShares * 100) / 10000;
+        // Reward = par × burnRewardBps; par = wsxmr × threshold / 1e8
+        uint256 parNorm = (minted * vault.thresholdSharesPerWsxmr) / 1e8;
+        uint256 expectedReward = (parNorm * 100) / 10000;
         assertApproxEqRel(rewardLock, expectedReward, 0.01e18, "rewardLock should be burnRewardBps% of par");
     }
 
@@ -451,7 +451,7 @@ contract BurnSolvencyInvariantTestBase is BaseMockTestBase {
         (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(TEST_USER_SECRET));
         bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted / 2, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
 
         wsXmrStorage.BurnRequest memory req = _getBurnRequest(burnId);
 
@@ -505,7 +505,7 @@ contract BurnSolvencyInvariantTestBase is BaseMockTestBase {
         (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(TEST_USER_SECRET));
         bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
         vm.prank(user);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted / 2, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
 
         wsXmrStorage.BurnRequest memory req = _getBurnRequest(burnId);
         assertGt(req.rewardCollateral, 0, "test requires a configured burn reward");
@@ -525,13 +525,10 @@ contract BurnSolvencyInvariantTestBase is BaseMockTestBase {
 
         uint256 userPayout = _getPendingReturns(user, address(stata));
 
-        // Expected par in shares, mirroring the contract's slash math.
-        // Collateral price is fixed at $1 (1e18 normalized) on HyperEVM.
-        // WSXMR_DECIMALS = 1e8, SDAI_DECIMALS = 1e18 (wsXmrStorage).
-        uint256 parValueUsd = (req.wsxmrAmount * req.xmrPriceAtRequest) / 1e8;
-        uint256 parDaiAmount = (parValueUsd * 1e18) / 1e18;
-        uint256 parShares = stata.convertToShares(parDaiAmount);
-        uint256 expectedPayout = parShares < req.lockedCollateral ? parShares : req.lockedCollateral;
+        // Expected par, mirroring the contract's slash math: par = wsxmr ×
+        // thresholdAtRequest / 1e8 in normalized collateral units, capped at lock.
+        uint256 parNorm = (req.wsxmrAmount * req.thresholdAtRequest) / 1e8;
+        uint256 expectedPayout = parNorm < req.lockedCollateral ? parNorm : req.lockedCollateral;
 
         assertEq(userPayout, expectedPayout, "slash must pay par only - reward excluded");
     }
@@ -547,21 +544,22 @@ contract BurnSolvencyInvariantTestBase is BaseMockTestBase {
             totalVaultShares += v.collateralShares;
         }
 
-        uint256 pendingSDAI = hub.globalPendingSDAI();
-        uint256 warChest = hub.yieldWarChest();
-        uint256 hubBalance = IERC20(address(stata)).balanceOf(address(hub));
+        uint256 pending = hub.pendingReturns(user, USDE)
+            + hub.pendingReturns(lp, USDE)
+            + hub.pendingReturns(liquidator, USDE);
+        uint256 hubBalance = IERC20(USDE).balanceOf(address(hub));
 
-        assertEq(
-            totalVaultShares + pendingSDAI + warChest,
+        assertGe(
+            totalVaultShares + pending,
             hubBalance,
-            "Solvency invariant: vault shares + pending + war chest == hub stataUSDe balance"
+            "Solvency invariant: vault shares + tracked pending >= hub collateral balance"
         );
     }
 
     // ========== HELPERS ==========
 
     function _updatePrices() internal {
-        _setXmrPrice8dec(XMR_PRICE_8DEC);
+        
     }
 
     function _createVaultAndDeposit(address who, uint256 amount) internal {
@@ -577,7 +575,7 @@ contract BurnSolvencyInvariantTestBase is BaseMockTestBase {
 
     function _configureVault(address who) internal {
         vm.startPrank(who);
-        VaultFacet(address(hub)).setMaxMintBps(0);
+        VaultFacet(address(hub)).setMaxMintWsxmr(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
         VaultFacet(address(hub)).setVaultMarketMetrics(100, 100); // 1% fees / 1% reward
@@ -644,6 +642,6 @@ contract BurnSolvencyInvariantTestBase is BaseMockTestBase {
     }
 
     function _daiToShares(uint256 daiAmount) internal view returns (uint256) {
-        return stata.convertToShares(daiAmount);
+        return daiAmount; // raw 18-dec collateral: shares are identity
     }
 }

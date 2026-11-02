@@ -4,7 +4,6 @@ pragma solidity ^0.8.28;
 import {console} from "forge-std/Test.sol";
 import {BaseTestBase} from "./BaseTestBase.sol";
 import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
-import {BaseOracleFacet} from "../contracts/facets/BaseOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {CoLPFacet} from "../contracts/facets/CoLPFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
@@ -16,10 +15,10 @@ import {BaseAddresses} from "../contracts/BaseAddresses.sol";
 
 /**
  * @title BaseForkTest
- * @notice Base fork tests: deployment wiring, on-chain cbBTC collateral
- *         TWAP (single-leg cbBTC/USDC), StataCbBTC 8→18 decimal scaling,
- *         vault lifecycle, full mint cycle, burn request, and a co-LP
- *         position minted on real Uniswap V3.
+ * @notice Base fork tests: deployment wiring, raw cbBTC collateral with
+ *         8→18 decimal boundary scaling, vault lifecycle, full mint cycle,
+ *         burn request, and a co-LP position minted on real Uniswap V3.
+ *         Oracle-free: thresholds are the declared par/capacity rate.
  */
 contract BaseForkTest is BaseTestBase {
 
@@ -29,7 +28,7 @@ contract BaseForkTest is BaseTestBase {
         super.setUp();
         console.log("=== BASE FORK DEPLOYMENT ===");
         console.log("wsXmrHub:", address(hub));
-        console.log("StataCbBTC:", address(stata));
+        console.log("collateral (cbBTC):", USDE);
         console.log("wsXMR/cbBTC pool:", pool);
     }
 
@@ -37,72 +36,50 @@ contract BaseForkTest is BaseTestBase {
 
     function testDeployment() public view {
         assertTrue(hub.facets(address(vaultFacet)), "vaultFacet not registered");
-        assertTrue(hub.facets(address(oracleFacet)), "oracleFacet not registered");
-        assertEq(hub.collateralToken(), address(stata), "collateralToken");
-        assertEq(hub.underlyingToken(), BaseAddresses.CBBTC, "underlyingToken");
-        assertEq(hub.collateralTwapPool(), BaseAddresses.CBBTC_USDC_POOL, "collateralTwapPool");
-        assertEq(hub.collateralTwapWindow(), BaseAddresses.COLLATERAL_TWAP_WINDOW, "twapWindow");
+        assertTrue(hub.facets(address(liquidationAuctionFacet)), "auctionFacet not registered");
+        assertTrue(hub.facets(address(coLPFacet)), "coLPFacet not registered");
+        assertEq(hub.collateralToken(), USDE, "collateralToken");
+        assertEq(hub.collateralScale(), 1e10, "cbBTC 8->18 scale");
         assertEq(router.POOL_FEE(), BaseAddresses.WSXMR_POOL_FEE, "router fee");
         assertEq(router.TICK_SPACING(), BaseAddresses.WSXMR_TICK_SPACING, "router spacing");
     }
 
-    // ========== ORACLE ==========
-
-    /// @notice Collateral price comes from the real on-chain cbBTC/USDC TWAP
-    ///         — sanity-band it ($30k–$500k covers BTC across any realistic
-    ///         fork block).
-    function testCollateralTwapPrice() public {
-        uint256 px = _collateralPrice18();
-        console.log("cbBTC TWAP USD price:", px / 1e18);
-        assertGt(px, 30_000e18, "cbBTC price below sanity floor");
-        assertLt(px, 500_000e18, "cbBTC price above sanity ceiling");
-
-        // Second refresh must succeed too (idempotent, keeps fresh timestamp)
-        _refreshCollateral();
-        assertEq(hub.lastCollateralPriceTimestamp(), block.timestamp, "collateral ts not fresh");
-    }
-
-    /// @notice Stale collateral price fails closed.
-    function testCollateralStaleness() public {
-        vm.warp(block.timestamp + 3 minutes);
-        vm.expectRevert();
-        BaseOracleFacet(address(hub)).getCollateralPrice();
-    }
-
     // ========== VAULT LIFECYCLE ==========
 
-    /// @notice cbBTC is 8-decimal; StataCbBTC mints 1e10 shares per raw unit,
-    ///         so the hub's share balance is deposit × 1e10 (18-dec).
+    /// @notice cbBTC is 8-decimal and held raw; the vault's normalized
+    ///         collateralShares are deposit × 1e10 (18-dec).
     function testVaultDepositWithdraw() public {
-        uint256 deposit = 2e8; // 2 cbBTC ~ $200k
+        uint256 deposit = 2e8; // 2 cbBTC
         _lpVaultWithCollateral(lp, deposit);
 
         assertEq(
-            stata.balanceOf(address(hub)),
-            deposit * 1e10,
-            "hub should hold stataCbBTC shares (18-dec scaled)"
+            IERC20(USDE).balanceOf(address(hub)),
+            deposit,
+            "hub should hold raw cbBTC"
         );
 
         // No debt → health is max
         assertEq(hub.getVaultHealth(lp), type(uint256).max, "empty vault health should be max");
 
-        // Withdraw everything
+        // Withdraw everything (normalized units)
         uint256 balBefore = IERC20(BaseAddresses.CBBTC).balanceOf(lp);
         vm.prank(lp);
         VaultFacet(address(hub)).withdrawCollateral(deposit * 1e10);
         assertEq(IERC20(BaseAddresses.CBBTC).balanceOf(lp), balBefore + deposit, "cbBTC not returned");
     }
 
-    /// @notice Mint capacity must reflect the cbBTC collateral price, not $1.
-    function testMintCapacityUsesCollateralPrice() public {
-        _lpVaultWithCollateral(lp, 2e8); // 2 cbBTC ~ $200k collateral
+    /// @notice Mint capacity derives from the vault's declared threshold, not
+    ///         any external price. At the minThreshold floor, 2 cbBTC of free
+    ///         collateral yields ~0.95 wsXMR of capacity.
+    function testMintCapacityUsesThreshold() public {
+        _lpVaultWithCollateral(lp, 2e8); // 2 cbBTC => 2e18 normalized
         uint256 cap = hub.getMintCapacity(lp);
         assertGt(cap, 0, "capacity should be nonzero");
 
-        // 2 cbBTC * ~$100k / 150% CR => ~$133k capacity => ~340 wsXMR at $390.
-        // Loose band: anything sane between 10 and 10_000 wsXMR (1e8 dec).
-        assertLt(cap, 10_000e8, "capacity absurdly large");
-        assertGt(cap, 10e8, "capacity too small");
+        // cap = freeNorm * 1e8 * 100 / (T * (100+110)) = 2e18*1e8*100/(1e18*210)
+        //     ≈ 0.95e8 wsXMR
+        assertLt(cap, 2e8, "capacity absurdly large");
+        assertGt(cap, 0.5e8, "capacity too small");
     }
 
     // ========== FULL MINT CYCLE ==========
@@ -135,7 +112,6 @@ contract BaseForkTest is BaseTestBase {
             bytes32(uint256(0xdeadbeef))
         );
 
-        _refreshCollateral();
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady(requestId);
 
@@ -204,7 +180,7 @@ contract BaseForkTest is BaseTestBase {
 
         vm.startPrank(user);
         wsxmr.approve(address(hub), amount);
-        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, amount, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, amount, 1e7, block.timestamp + 1 hours);
         vm.stopPrank();
 
         assertGt(tokenId, 0, "no NFT position minted");

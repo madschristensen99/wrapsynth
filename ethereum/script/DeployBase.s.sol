@@ -3,15 +3,12 @@ pragma solidity ^0.8.19;
 
 import "forge-std/Script.sol";
 import "../contracts/core/wsXmrHub.sol";
-import "../contracts/facets/BaseOracleFacet.sol";
 import "../contracts/facets/VaultFacet.sol";
 import "../contracts/facets/MintFacet.sol";
 import "../contracts/facets/BurnFacet.sol";
-import "../contracts/facets/LiquidationFacet.sol";
-import "../contracts/facets/YieldFacet.sol";
+import "../contracts/facets/LiquidationAuctionFacet.sol";
 import "../contracts/facets/CoLPFacet.sol";
 import "../contracts/wsXMR.sol";
-import "../contracts/StataCbBTC.sol";
 import "../contracts/router/wsXMRLiquidityRouter.sol";
 import "../contracts/interfaces/external/IUniswapV3Factory.sol";
 import "../contracts/interfaces/external/IUniswapV3Pool.sol";
@@ -19,43 +16,59 @@ import "../contracts/BaseAddresses.sol";
 
 /**
  * @title DeployBase
- * @notice Deploys the WrapSynth stack on Base with cbBTC (Coinbase Wrapped
- *         BTC) as vault collateral.
+ * @notice Deploys the oracle-free WrapSynth stack on Base with cbBTC
+ *         (Coinbase Wrapped BTC) held raw as vault collateral.
  *
- * Oracle model:
- *   - XMR/USD: RedStone pull oracle (only external price input)
- *   - cbBTC/USD: fully on-chain — single-leg TWAP on the UniV3 cbBTC/USDC
- *     fee-500 pool, refreshed inside every state-changing hub call via
- *     _tryRefreshCollateralTwap()
+ * Oracle-free model:
+ *   - No external price feeds anywhere in the protocol. No RedStone, no
+ *     Pyth, no precompiles, no TWAP. Nothing in consensus path reads a
+ *     price.
+ *   - Vaults declare `thresholdSharesPerWsxmr` (normalized collateral per
+ *     1e8 wsXMR). It is the mint bound, the self-declared solvency line,
+ *     and the par-settlement rate for burns and auctions.
+ *   - Liquidation is a bonded kick → Dutch haircut auction, fully
+ *     market-discovered.
+ *   - The only price in this script is the pool-initialization price
+ *     fetched from Coingecko — a deploy-time input for the AMM, never
+ *     consensus.
  */
 contract DeployBase is Script {
-    // No verifier needed for RedStone (uses off-chain signed data)
     address constant VERIFIER = address(0);
 
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
 
+        // Deployment floors (normalized collateral units, 18-dec).
+        // MIN_THRESHOLD: minimum LP-declared collateral per 1e8 wsXMR.
+        // KICK_BOND_MIN: absolute kick bond floor in normalized units.
+        uint256 minThreshold = vm.envOr("MIN_THRESHOLD", uint256(1e15));
+        uint256 kickBondMin = vm.envOr("KICK_BOND_MIN", uint256(1e15));
+
         console.log("============================================================");
-        console.log("Starting Base Deployment (cbBTC collateral)");
+        console.log("Starting Base Deployment (oracle-free, cbBTC collateral)");
         console.log("============================================================");
         console.log("Deployer:", deployer);
         console.log("Balance:", deployer.balance / 1e18, "ETH");
+        console.log("MIN_THRESHOLD:", minThreshold);
+        console.log("KICK_BOND_MIN:", kickBondMin);
         console.log("");
 
-        // Fetch current XMR and BTC prices from Coingecko
+        // Fetch current XMR and BTC prices from Coingecko for POOL INIT ONLY.
+        // This price never enters protocol consensus — it only seeds the
+        // AMM's initial sqrtPrice so the co-LP pool starts near market.
         string[] memory inputs = new string[](3);
         inputs[0] = "bash";
         inputs[1] = "-c";
         inputs[2] = "curl -s 'https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd' | jq -r '.monero.usd | floor | tostring'";
         bytes memory res = vm.ffi(inputs);
         uint256 xmrPrice = vm.parseUint(_trim(string(res))) * 1e18;
-        console.log("Fetched XMR price:", xmrPrice / 1e18, "USD");
+        console.log("Fetched XMR price (pool init only):", xmrPrice / 1e18, "USD");
 
         inputs[2] = "curl -s 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd' | jq -r '.bitcoin.usd | floor | tostring'";
         res = vm.ffi(inputs);
         uint256 cbbtcPrice = vm.parseUint(_trim(string(res))) * 1e18;
-        console.log("Fetched cbBTC price:", cbbtcPrice / 1e18, "USD");
+        console.log("Fetched cbBTC price (pool init only):", cbbtcPrice / 1e18, "USD");
         console.log("");
 
         vm.startBroadcast(deployerPrivateKey);
@@ -70,7 +83,7 @@ contract DeployBase is Script {
         console.log("============================================================");
         console.log("STEP 2: Deploying wsXmrHub");
         console.log("============================================================");
-        wsXmrHub hub = new wsXmrHub(address(wsxmr), VERIFIER);
+        wsXmrHub hub = new wsXmrHub(address(wsxmr), VERIFIER, minThreshold, kickBondMin);
         console.log("wsXmrHub deployed to:", address(hub));
         console.log("");
 
@@ -78,28 +91,20 @@ contract DeployBase is Script {
         console.log("STEP 3: Deploying Facets");
         console.log("============================================================");
 
-        // BaseOracleFacet - RedStone XMR + on-chain collateral TWAP
-        BaseOracleFacet oracleFacet = new BaseOracleFacet(address(wsxmr), VERIFIER);
-        console.log("BaseOracleFacet deployed to:", address(oracleFacet));
-
-        VaultFacet vaultFacet = new VaultFacet(address(wsxmr), VERIFIER);
+        VaultFacet vaultFacet = new VaultFacet(address(wsxmr), VERIFIER, minThreshold, kickBondMin);
         console.log("VaultFacet deployed to:", address(vaultFacet));
 
-        MintFacet mintFacet = new MintFacet(address(wsxmr), VERIFIER);
+        MintFacet mintFacet = new MintFacet(address(wsxmr), VERIFIER, minThreshold, kickBondMin);
         console.log("MintFacet deployed to:", address(mintFacet));
 
-        BurnFacet burnFacet = new BurnFacet(address(wsxmr), VERIFIER);
+        BurnFacet burnFacet = new BurnFacet(address(wsxmr), VERIFIER, minThreshold, kickBondMin);
         console.log("BurnFacet deployed to:", address(burnFacet));
 
-        LiquidationFacet liquidationFacet = new LiquidationFacet(address(wsxmr), VERIFIER);
-        console.log("LiquidationFacet deployed to:", address(liquidationFacet));
+        LiquidationAuctionFacet liquidationAuctionFacet =
+            new LiquidationAuctionFacet(address(wsxmr), VERIFIER, minThreshold, kickBondMin);
+        console.log("LiquidationAuctionFacet deployed to:", address(liquidationAuctionFacet));
 
-        // UniV3 SwapRouter02 on Base uses the no-deadline exactInputSingle
-        // (deadline rides in the multicall wrapper) — identical to HyperSwap's
-        // signature, so the plain YieldFacet works unmodified.
-        YieldFacet yieldFacet = new YieldFacet(address(wsxmr), VERIFIER);
-        console.log("YieldFacet deployed to:", address(yieldFacet));
-        CoLPFacet coLPFacet = new CoLPFacet(address(wsxmr), VERIFIER);
+        CoLPFacet coLPFacet = new CoLPFacet(address(wsxmr), VERIFIER, minThreshold, kickBondMin);
         console.log("CoLPFacet deployed to:", address(coLPFacet));
         console.log("");
 
@@ -110,48 +115,22 @@ contract DeployBase is Script {
             address(vaultFacet),
             address(mintFacet),
             address(burnFacet),
-            address(liquidationFacet),
-            address(yieldFacet),
-            address(oracleFacet)
+            address(liquidationAuctionFacet),
+            address(coLPFacet)
         );
-        hub.addFacet(address(coLPFacet));
         console.log("All facets registered");
         console.log("");
 
         console.log("============================================================");
-        console.log("STEP 4b: Deploying StataCbBTC collateral adapter");
-        console.log("============================================================");
-        StataCbBTC stata = new StataCbBTC(BaseAddresses.CBBTC);
-        console.log("StataCbBTC deployed to:", address(stata));
-        console.log("");
-
-        console.log("============================================================");
-        console.log("STEP 5: Setting Hub as wsXMR Minter + external addresses");
+        console.log("STEP 5: Setting Hub as wsXMR Minter + collateral token");
         console.log("============================================================");
         wsxmr.setHub(address(hub));
         console.log("Hub set as wsXMR minter");
 
-        // collateralToken = stataCbBTC shares, underlyingToken = cbBTC,
-        // swapRouter = UniV3 SwapRouter02 (buy-and-burn),
-        // xmrPerpIndex = 0 (no HyperCore precompile on Base — the precompile
-        // staticcall fails and the leg no-ops cleanly)
-        hub.setExternalAddresses(
-            address(stata),
-            BaseAddresses.CBBTC,
-            BaseAddresses.UNI_SWAP_ROUTER,
-            0
-        );
-        console.log("External addresses set (stataCbBTC / cbBTC / UniV3 router)");
-
-        // On-chain collateral TWAP: single-leg cbBTC/USDC (quote pool = 0)
-        hub.setCollateralTwapConfig(
-            BaseAddresses.CBBTC_USDC_POOL,
-            address(0),
-            BaseAddresses.USDC,
-            BaseAddresses.USDC,
-            BaseAddresses.COLLATERAL_TWAP_WINDOW
-        );
-        console.log("Collateral TWAP config set (window:", BaseAddresses.COLLATERAL_TWAP_WINDOW, "s)");
+        // Collateral is raw cbBTC — no share adapter, no yield layer.
+        // collateralScale is derived from the token's decimals (8 → 1e10).
+        hub.setExternalAddresses(BaseAddresses.CBBTC);
+        console.log("External addresses set (raw cbBTC)");
         console.log("");
 
         console.log("============================================================");
@@ -191,7 +170,8 @@ contract DeployBase is Script {
         hub.setLiquidityRouter(address(router));
         console.log("Router registered with hub");
 
-        // Initialize pool at live prices — pool.initialize is permissionless
+        // Initialize pool at the fetched spot price — pool.initialize is
+        // permissionless. This is a deploy-time AMM seed, not consensus.
         (bool success, bytes memory data) = pool.call(abi.encodeWithSignature("slot0()"));
         if (success && data.length >= 32) {
             uint160 sqrtPriceX96 = abi.decode(data, (uint160));
@@ -207,7 +187,6 @@ contract DeployBase is Script {
             }
         }
 
-        // Grow the pool's observation cardinality for future robustness
         IUniswapV3Pool(pool).increaseObservationCardinalityNext(64);
         console.log("Observation cardinality bumped to 64");
         console.log("");
@@ -215,12 +194,6 @@ contract DeployBase is Script {
         console.log("============================================================");
         console.log("STEP 9: Locking Deployer Powers (IRREVERSIBLE)");
         console.log("============================================================");
-        // Removes the two admin backdoors from the live system:
-        //  - wsXMR.replaceHub(): deployer could repoint the token at an arbitrary
-        //    contract which could then mint/burn wsXMR without limit.
-        //  - wsXmrHub.addSelectors()/removeSelectors(): deployer could add or brick
-        //    facet routes after launch.
-        // Both locks are one-way and must be the final configuration action.
         wsxmr.lockHub();
         hub.lockDeployer();
         console.log("wsXMR.hubLocked():", wsxmr.hubLocked());
@@ -239,28 +212,24 @@ contract DeployBase is Script {
         console.log("Core Contracts:");
         console.log("  wsXMR:            ", address(wsxmr));
         console.log("  wsXmrHub:         ", address(hub));
-        console.log("  StataCbBTC:       ", address(stata));
         console.log("  LiquidityRouter:  ", address(router));
         console.log("");
         console.log("Facets:");
-        console.log("  OracleFacet:      ", address(oracleFacet));
         console.log("  VaultFacet:       ", address(vaultFacet));
         console.log("  MintFacet:        ", address(mintFacet));
         console.log("  BurnFacet:        ", address(burnFacet));
-        console.log("  LiquidationFacet: ", address(liquidationFacet));
-        console.log("  YieldFacet:       ", address(yieldFacet));
+        console.log("  LiquidationAuction:", address(liquidationAuctionFacet));
         console.log("  CoLPFacet:        ", address(coLPFacet));
         console.log("");
         console.log("External Contracts:");
         console.log("  cbBTC:            ", BaseAddresses.CBBTC);
-        console.log("  cbBTC/USDC pool:  ", BaseAddresses.CBBTC_USDC_POOL);
         console.log("  wsXMR/cbBTC pool: ", pool);
         console.log("============================================================");
         console.log("");
         console.log("Next steps:");
         console.log("1. Verify contracts on BaseScan");
         console.log("2. Update frontend configuration with deployment.base.json");
-        console.log("3. Configure LP server with deployed addresses + RedStone XMR");
+        console.log("3. Configure LP server with deployed addresses");
         console.log("4. Seed the wsXMR/cbBTC pool");
     }
 
@@ -275,10 +244,8 @@ contract DeployBase is Script {
         uint256 sqrtPriceX96;
 
         if (cbbtcIsToken0) {
-            // price = wsXMR/cbBTC = cbbtcPrice / xmrPrice
             sqrtPriceX96 = (sqrtCbbtcPrice * (1 << 96)) / sqrtXmrPrice;
         } else {
-            // price = cbBTC/wsXMR = xmrPrice / cbbtcPrice
             sqrtPriceX96 = (sqrtXmrPrice * (1 << 96)) / sqrtCbbtcPrice;
         }
 

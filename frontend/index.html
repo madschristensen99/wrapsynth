@@ -465,15 +465,8 @@
       <div class="hs"><div class="n"><span class="o">&gt;200%</span></div><div class="k">Overcollateralized</div></div>
       <div class="hs"><div class="n" id="stat-chains">--</div><div class="k">Chains live</div></div>
       <div class="hs">
-        <div class="n" style="display:flex;align-items:center;gap:8px;font-size:18px">
-          <a href="https://app.pyth.com/explore/Crypto.XMR%2FUSD?returnUrl=%2Fexplore%3Fsearch%3Dxmr%26state%3Dstable" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center">
-            <img src="https://pyth.network/token.svg" alt="Pyth" style="width:24px;height:24px">
-          </a>
-          <a href="https://app.redstone.finance/pull-feeds/XMR" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center">
-            <img src="./RedStone.png" alt="RedStone" style="width:24px;height:24px">
-          </a>
-        </div>
-        <div class="k">Real-time price feeds</div>
+        <div class="n"><span class="o">0</span></div>
+        <div class="k">Oracles in consensus — LP-declared terms</div>
       </div>
     </div>
   </div>
@@ -840,9 +833,8 @@
     <div class="seq-tabs">
       <button class="seq-tab active" data-seq="0">Mint (XMR → wsXMR)</button>
       <button class="seq-tab" data-seq="1">Burn (wsXMR → XMR)</button>
-      <button class="seq-tab" data-seq="2">War chest buy-and-burn</button>
-      <button class="seq-tab" data-seq="3">Co-LP system</button>
-      <button class="seq-tab" data-seq="4">Liquidation</button>
+      <button class="seq-tab" data-seq="2">Co-LP system</button>
+      <button class="seq-tab" data-seq="3">Liquidation auction</button>
     </div>
     <div class="seq-panels" id="seq-panels"></div>
   </div>
@@ -934,26 +926,23 @@ function copyAddr(btn){
 (function(){
   var diagrams=[
     {
-      desc:"User swaps XMR for wsXMR through an atomic swap. The on-chain collateralization requirement is 150%, but LPs effectively post >200% because they hold XMR alongside their vault collateral. The LP provides Ed25519 public keys for a 2-of-2 shared Monero address (view = user's key, spend = user + LP). The user sends XMR there, then proves the deposit by submitting the txid and tx secret key — the LP verifies it trustlessly with check_tx_key and calls setMintReady, locking collateral. The user then reveals their secret on-chain (verified with Ed25519 — the same curve Monero uses) to mint wsXMR minus a configurable fee to the user and the fee to the LP; that reveal also gives the LP the full spend key to sweep the deposit. The user posts a griefing deposit in the chain's gas token; LP collateral is only locked at setMintReady — never before. If the LP keys but never sets ready, the mint times out to KEY_CANCELLED: the deposit is parked, the LP can claim it by revealing their lpSecret (which also lets the user sweep their XMR back), or the user reclaims it after the claim window. If the user doesn't finalize after READY, the mint enters EXPIRED_READY — the LP can claim the deposit by revealing their secret, or if they don't, anyone can sweep the deposit back to the user.",
-      tags:[">150% on-chain CR","2-of-2 shared-key model","Ed25519 verify","Griefing deposit","Collateral locks at setMintReady","~1h timeout","KEY_CANCELLED / EXPIRED_READY lifecycle"],
+      desc:"User swaps XMR for wsXMR through an atomic swap. There is no price oracle anywhere in the flow — each LP declares a collateralization threshold (normalized collateral per wsXMR) that bounds mints, marks the vault's own solvency line, and sets par settlement terms. The LP provides Ed25519 public keys for a 2-of-2 shared Monero address (view = user's key, spend = user + LP). The user sends XMR there, then proves the deposit by submitting the txid and tx secret key — the LP verifies it trustlessly with check_tx_key and calls setMintReady, locking collateral. The user then reveals their secret on-chain (verified with Ed25519 — the same curve Monero uses) to mint wsXMR minus a configurable fee to the user and the fee to the LP; that reveal also gives the LP the full spend key to sweep the deposit. The user posts a griefing deposit in the chain's gas token; LP collateral is only locked at setMintReady — never before. If the LP keys but never sets ready, the mint times out to KEY_CANCELLED: the deposit is parked, the LP can claim it by revealing their lpSecret (which also lets the user sweep their XMR back), or the user reclaims it after the claim window. If the user doesn't finalize after READY, the mint enters EXPIRED_READY — the LP can claim the deposit by revealing their secret, or if they don't, anyone can sweep the deposit back to the user.",
+      tags:["LP-declared threshold par","2-of-2 shared-key model","Ed25519 verify","Griefing deposit","Collateral locks at setMintReady","~1h timeout","KEY_CANCELLED / EXPIRED_READY lifecycle"],
       actors:[
         {name:"User",color:"xmr"},
         {name:"Monero",color:"gray"},
         {name:"VaultManager",color:"teal"},
-        {name:"LP",color:"xmr"},
-        {name:"Oracle",color:"gray"}
+        {name:"LP",color:"xmr"}
       ],
       messages:[
         {from:0,to:2,label:"initiateMint(amt, commitment, pubkey) + gas-token deposit",type:"call"},
-        {from:2,to:4,label:"read XMR price (storage)",type:"call"},
-        {from:4,to:2,label:"XMR price",type:"return"},
-        {from:2,to:2,label:"check CR \u2265 150% (no debt reserved)",type:"note"},
+        {from:2,to:2,label:"check capacity: (debt+pending+mint)\u00d7threshold \u2264 free collateral",type:"note"},
         {from:3,to:2,label:"provideLPKey(spendKey, viewKey, commitment)",type:"call"},
         {from:2,to:2,label:"reserve pendingDebt, status: KEY_PROVIDED (no collateral locked)",type:"note"},
         {from:0,to:1,label:"send XMR to 2-of-2 deposit (view=userPub)",type:"call"},
         {from:3,to:1,label:"scan deposit with view key (lpSecret)",type:"call"},
         {from:3,to:2,label:"setMintReady() \u2014 LP attests deposit",type:"call"},
-        {from:2,to:2,label:"re-check CR, lock 110% collateral, status: READY",type:"note"},
+        {from:2,to:2,label:"lock par\u00d7110% key bond at threshold, status: READY",type:"note"},
         {from:0,to:2,label:"revealSecret(secret) \u2014 user reveals",type:"call"},
         {from:2,to:2,label:"Ed25519: verify secret\u00b7G = commitment, status: SECRET_REVEALED",type:"note"},
         {from:2,to:2,label:"finalizeMint() \u2014 anyone calls",type:"call"},
@@ -967,8 +956,8 @@ function copyAddr(btn){
       ]
     },
     {
-      desc:"User burns wsXMR to receive XMR through the reverse atomic swap. Each burn derives a unique Ed25519 keypair from the user's seed (per-burn key derivation) so revealing one burn's secret doesn't compromise others. The contract locks 110% collateral over par and burns wsXMR. The LP sends XMR to a shared 2-of-2 burn address (view = user's key, spend = user + LP) and commits a secret hash; the user scans the address with their own view key and confirms the lock on-chain, binding both parties. The LP then reveals their secret on-chain via finalizeBurn — verified with Ed25519 — which settles the burn, releases the locked collateral, and queues the burn reward to the user in collateral; that reveal also gives the user the full spend key to sweep the shared XMR. If the LP fails to reveal after COMMITTED, the user can claim slashed collateral (par + reward) after a grace period. If the LP never proposes (REQUESTED timeout), the user can abort to recover wsXMR or force-settle for par value in collateral. If the LP proposed but didn't follow through (PROPOSED timeout), the user calls resolveDeclinedProposal with their per-burn userSecret (private spend key) to restore wsXMR — the userSecret is emitted on-chain, allowing the LP to combine it with their own secret to sweep the shared XMR back to their wallet.",
-      tags:["110% collateral lock","2-of-2 shared-key model","Ed25519 verify","Per-burn key derivation","Burn reward","Slashing","Abort/force-settle","On-chain secret reveal for recovery"],
+      desc:"User burns wsXMR to receive XMR through the reverse atomic swap. Each burn derives a unique Ed25519 keypair from the user's seed (per-burn key derivation) so revealing one burn's secret doesn't compromise others. The contract locks proportional par collateral at the vault's declared threshold plus the LP's burn reward, and burns wsXMR. The LP sends XMR to a shared 2-of-2 burn address (view = user's key, spend = user + LP) and commits a secret hash; the user scans the address with their own view key and confirms the lock on-chain, binding both parties. The LP then reveals their secret on-chain via finalizeBurn — verified with Ed25519 — which settles the burn, releases the locked collateral, and queues the burn reward to the user in collateral; that reveal also gives the user the full spend key to sweep the shared XMR. If the LP fails to reveal after COMMITTED, the user can claim slashed collateral (par + reward) after a grace period. If the LP never proposes (REQUESTED timeout), the user can abort to recover wsXMR or force-settle for par value in collateral. If the LP proposed but didn't follow through (PROPOSED timeout), the user calls resolveDeclinedProposal with their per-burn userSecret (private spend key) to restore wsXMR — the userSecret is emitted on-chain, allowing the LP to combine it with their own secret to sweep the shared XMR back to their wallet.",
+      tags:["Par collateral lock at threshold","2-of-2 shared-key model","Ed25519 verify","Per-burn key derivation","Burn reward","Slashing","Abort/force-settle","On-chain secret reveal for recovery"],
       actors:[
         {name:"User",color:"xmr"},
         {name:"Monero",color:"gray"},
@@ -978,7 +967,7 @@ function copyAddr(btn){
       messages:[
         {from:0,to:2,label:"requestBurn(amt, vault, commitment, per-burn keys)",type:"call"},
         {from:2,to:2,label:"keys derived: user_priv_i = H(seed || nonce)",type:"note"},
-        {from:2,to:2,label:"lock 110% collateral, burn wsXMR, reduce debt",type:"note"},
+        {from:2,to:2,label:"lock proportional par collateral at threshold (+ reward), burn wsXMR, reduce debt",type:"note"},
         {from:3,to:1,label:"send XMR to 2-of-2 burn address (view=userView)",type:"call"},
         {from:3,to:2,label:"proposeHash(secretHash, LP keys)",type:"call"},
         {from:0,to:1,label:"scan burn address (own view key)",type:"call"},
@@ -999,30 +988,6 @@ function copyAddr(btn){
       ]
     },
     {
-      desc:"Excess collateral yield from vaults accrues in an on-chain war chest. When XMR dips below its Exponential Moving Average (EMA), anyone can trigger a buy-and-burn \u2014 the chest redeems collateral, swaps it for wsXMR on the chain's V3 DEX, and burns it. This reduces outstanding debt and frees up collateral across all vaults. The keeper earns a 2% reward (queued in collateral shares) for calling the function. A 24-hour cooldown prevents over-triggering. Reverts if pending READY mints exist, war chest is empty, or swap slippage exceeds 1%.",
-      tags:["Collateral yield","Redeem → collateral → wsXMR","Dip-triggered","2% keeper reward","24h cooldown","PendingMintLock guard","1% slippage cap"],
-      actors:[
-        {name:"Keeper",color:"xmr"},
-        {name:"VaultManager",color:"teal"},
-        {name:"Oracle",color:"gray"},
-        {name:"V3 DEX",color:"gray"}
-      ],
-      messages:[
-        {from:1,to:1,label:"yield accrues in war chest",type:"note"},
-        {from:0,to:1,label:"triggerBuyAndBurn(poolFeeTier)",type:"call"},
-        {from:1,to:2,label:"read XMR spot & EMA (storage)",type:"call"},
-        {from:2,to:1,label:"spot + EMA prices",type:"return"},
-        {from:1,to:1,label:"verify spot \u2264 EMA \u00d7 99%",type:"note"},
-        {from:1,to:1,label:"redeem collateral (20% of chest)",type:"note"},
-        {from:1,to:3,label:"swap collateral \u2192 wsXMR",type:"call"},
-        {from:3,to:1,label:"wsXMR received",type:"return"},
-        {from:1,to:1,label:"burn wsXMR, rescale debt index",type:"note"},
-        {from:1,to:0,label:"keeper reward queued (collateral shares)",type:"effect"},
-        {from:1,to:1,label:"⚠ Reverts if: pending mints, war chest empty, cooldown active, no dip, slippage > 1%",type:"note"},
-        {from:1,to:1,label:"⚠ Full debt wipe: zero all vault debts + reset index to 1e18",type:"note"}
-      ]
-    },
-    {
       desc:"Co-LPs provide wsXMR that is paired with the LP vault's idle collateral into a V3 concentrated liquidity position. The LP sets a max range (maxCoLPRangeBps) controlling how wide the position can be. Trading fees from the DEX position accrue separately: collateral fees go to the LP vault, wsXMR fees go to the Co-LP. Either party can unwind the position; a keeper can rebalance when it goes out of range. Mint fees are separate and go entirely to the primary LP.",
       tags:["Co-LP provides wsXMR","V3 concentrated LP","Range-limited","Separate fee streams"],
       actors:[
@@ -1034,7 +999,7 @@ function copyAddr(btn){
       messages:[
         {from:0,to:1,label:"createVault() + depositCollateral()",type:"call"},
         {from:0,to:1,label:"setMaxCoLPRange(maxBps)",type:"call"},
-        {from:2,to:1,label:"userOpenCoLP(vault, wsxmrAmt, deadline)",type:"call"},
+        {from:2,to:1,label:"userOpenCoLP(vault, wsxmrAmt, collAmt, deadline)",type:"call"},
         {from:1,to:1,label:"pair vault collateral + Co-LP wsXMR",type:"note"},
         {from:1,to:3,label:"mint concentrated position",type:"call"},
         {from:3,to:1,label:"tokenId, liquidity, amounts",type:"return"},
@@ -1048,31 +1013,25 @@ function copyAddr(btn){
       ]
     },
     {
-      desc:"When a vault's collateral ratio drops below 120%, there are two resolution paths. Hard liquidation: anyone can burn wsXMR and seize collateral at a 10% bonus. In-flight burns are settled first (REQUESTED/PROPOSED cancelled, COMMITTED slash-settled at par). All co-LP positions are unwound. Residual bad debt is written off to globalBadDebt. Soft liquidation (backstop): a new LP with a healthy vault can absorb the underwater vault's debt and collateral into their own vault, settling in-flight burns the same way. The new LP effectively buys collateral at a discount by assuming the debt. The merged vault must remain healthy (CR >= 150%) or the backstop reverts.",
-      tags:["CR < 120% trigger","Hard: 10% bonus","Soft: vault backstop","In-flight burn settlement","Co-LP unwind","Bad debt write-off"],
+      desc:"There is no oracle price to trigger liquidations — instead anyone can post a bond to kick() a vault they believe is insolvent. The LP gets a grace window to cancel the kick by depositing collateral or repaying any amount of debt (the kicker's bond pays them for the false alarm). If the vault doesn't respond, a bonded Dutch auction opens: the offered collateral starts at a 100% haircut and decays to 5% over the auction window. A bid() pays the vault's full wsXMR debt and takes X(t)% of the offered collateral — bidders settle solvent vaults profitably, and a clearing X* at or below 80% proves the kick was wrongful (bond to LP). In-flight burns and co-LP positions settle before the auction so the collateral offered is clean. If nobody bids, the vault freezes (never drains): a single reauction can retry discovery, and backstopVault lets a healthy LP assume the debt + collateral as the manual escape.",
+      tags:["Bonded kick — no price oracle","Grace cancel via deposit/repay","Dutch haircut 100% \u2192 5%","Wrongful-kick bond to LP","Freeze, never drain","Reauction + backstop escape"],
       actors:[
-        {name:"Liquidator",color:"xmr"},
+        {name:"Kicker",color:"xmr"},
         {name:"VaultManager",color:"teal"},
-        {name:"wsXMR Token",color:"gray"},
-        {name:"Collateral",color:"gray"}
+        {name:"LP",color:"xmr"},
+        {name:"Bidder",color:"gray"}
       ],
       messages:[
-        {from:0,to:1,label:"liquidate(vault, debtToClear)",type:"call"},
-        {from:1,to:1,label:"sync yield, check CR < 120%",type:"note"},
-        {from:1,to:1,label:"settle in-flight burns (cancel/slash)",type:"note"},
-        {from:1,to:1,label:"unwind all co-LP positions",type:"note"},
-        {from:1,to:1,label:"seize 110% of debt value in collateral",type:"note"},
-        {from:1,to:2,label:"burn(debtToClear wsXMR)",type:"call"},
-        {from:2,to:1,label:"tokens burned",type:"return"},
-        {from:1,to:3,label:"transfer seized collateral to liquidator",type:"call"},
-        {from:3,to:1,label:"transfer complete",type:"return"},
-        {from:1,to:1,label:"write off bad debt if collateral exhausted",type:"note"},
-        {from:1,to:1,label:"increment liquidationNonce + mintNonce",type:"note"},
-        {from:1,to:0,label:"VaultLiquidated event",type:"return"},
-        {from:0,to:1,label:"backstopVault(oldVault) \u2014 soft liquidation",type:"call"},
-        {from:1,to:1,label:"settle burns, unwind positions, merge debt+collateral to new vault",type:"note"},
-        {from:1,to:1,label:"verify new vault CR >= 150% or revert",type:"note"},
-        {from:1,to:0,label:"VaultBackstopped event",type:"return"}
+        {from:0,to:1,label:"kick(vault) + bond",type:"call"},
+        {from:1,to:1,label:"GRACE: LP depositCollateral/repayDebt cancels, bond \u2192 LP",type:"note"},
+        {from:1,to:1,label:"settle in-flight burns + unwind co-LP at auction open",type:"note"},
+        {from:1,to:1,label:"auction opens: X(t) decays 100% \u2192 5%",type:"note"},
+        {from:3,to:1,label:"bid(vault) \u2014 pays full wsXMR debt",type:"call"},
+        {from:1,to:3,label:"X(t)% of offered collateral",type:"return"},
+        {from:1,to:0,label:"kicker bond back + chip % of surplus (or \u2192 LP if X* \u2264 80% wrongful)",type:"effect"},
+        {from:1,to:1,label:"no bid: vault FROZEN (bond back to kicker)",type:"note"},
+        {from:2,to:1,label:"reauction() once, or backstopVault() absorbs debt + collateral",type:"call"},
+        {from:1,to:1,label:"frozen vault: only rescue paths until debt repaid in full",type:"note"}
       ]
     }
   ];

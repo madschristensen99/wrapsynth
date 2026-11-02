@@ -18,7 +18,7 @@ interface ICoLPFacet is IErrors {
         address indexed vault,
         address indexed user,
         uint256 indexed tokenId,
-        uint256 sDAIShares,
+        uint256 collateralAmount,
         uint256 wsxmrAmount,
         uint16 rangeBps
     );
@@ -26,7 +26,7 @@ interface ICoLPFacet is IErrors {
         uint256 indexed tokenId,
         address indexed vault,
         address indexed user,
-        uint256 daiReturned,
+        uint256 collateralReturned,
         uint256 wsxmrReturned,
         bool liquidationTriggered
     );
@@ -39,7 +39,7 @@ interface ICoLPFacet is IErrors {
         uint16 newRangeBps
     );
     event CoLPRangePreferenceUpdated(address indexed vault, uint16 maxRangeBps);
-    event CoLPFeesCollected(uint256 indexed tokenId, uint256 daiFees, uint256 wsxmrFees);
+    event CoLPFeesCollected(uint256 indexed tokenId, uint256 collFees, uint256 wsxmrFees);
 
     // ========== CO-LP OPERATIONS ==========
 
@@ -48,13 +48,18 @@ interface ICoLPFacet is IErrors {
     function setMaxCoLPRange(uint16 newMaxBps) external;
 
     /// @notice User opens a co-LP position by pairing wsXMR against an LP vault's idle collateral
+    /// @dev Oracle-free: the user supplies both leg amounts directly — negotiated
+    ///      terms with the LP, not an oracle conversion. The pool consumes what
+    ///      its slot0-centered range needs; leftovers reconcile back.
     /// @param lpVault LP vault address
     /// @param wsxmrAmount Amount of wsXMR to contribute
+    /// @param collateralAmount Raw collateral the vault deploys (agreed off-chain)
     /// @param deadline Transaction deadline
     /// @return tokenId V3 NFT token ID
     function userOpenCoLP(
         address lpVault,
         uint256 wsxmrAmount,
+        uint256 collateralAmount,
         uint256 deadline
     ) external returns (uint256 tokenId);
 

@@ -1,6 +1,8 @@
 # WrapSynth LP Server (JS)
 
-Automated liquidity provider node for WrapSynth. Monitors on-chain events, processes mints (XMR deposits), handles burns (XMR sends), and exposes a REST API for the frontend.
+Automated liquidity provider node for WrapSynth. Monitors on-chain events, processes mints (XMR deposits), handles burns (XMR sends), watches for kicks on its own vault, and exposes a REST API for the frontend.
+
+**The protocol is oracle-free** — the server never pushes prices. Mint/burn settlement uses each vault's declared `thresholdSharesPerWsxmr` (normalized collateral per 1e8 wsXMR), which the LP sets on-chain via `setThreshold`.
 
 ---
 
@@ -21,7 +23,7 @@ The server starts on `http://localhost:3001` (configurable via `PORT`).
 - Node.js v18+
 - The LP vault wallet funded with each chain's native gas token (BNB on BNB Chain, ETH on Base / Robinhood Chain)
 - `monero-wallet-rpc` running locally (for XMR deposit scanning and burn sends) — shared across all chains
-- The wallet must have an active vault on each chain's wsXmrHub with deposited collateral (QQQB on BNB, cbBTC on Base, SPY on Robinhood)
+- The wallet must have an active vault on each chain's wsXmrHub with deposited collateral (QQQB on BNB, cbBTC on Base, SPY on Robinhood) **and a declared threshold** (`setThreshold`)
 
 ### Starting monero-wallet-rpc
 
@@ -58,7 +60,6 @@ and an optional env var overriding its RPC list:
 | `manifest` | Path to the deployment manifest (flat forge output or curated nested shape) |
 | `rpcEnv` | Env var holding comma-separated RPC URLs (e.g. `BNB_RPC_URLS`) |
 | `rpcUrls` | Fallback RPC URLs when `rpcEnv` is unset |
-| `redstoneFeeds` | Feed ids appended to oracle-update payloads (default `["XMR"]`) |
 | `logChunkSize` | `eth_getLogs` block-range cap for event scans |
 
 A chain whose manifest file doesn't exist is skipped with a warning, so
@@ -92,6 +93,21 @@ working for backward compatibility.
 | `BURN_LP_PUBLIC_SPEND_KEY` | — | Default LP Ed25519 public spend key for burns (hex, 64 chars) |
 | `BURN_LP_PUBLIC_VIEW_KEY` | — | Default LP Ed25519 public view key for burns (hex, 64 chars) |
 
+### Kick Watcher
+
+The server polls `KickStarted` / `ReauctionStarted` / `AuctionOpened` / `AuctionSettled` / `VaultFrozen` / `VaultBackstopped` events on every configured chain.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KICK_WATCH` | `1` | Set `0` to disable the watcher entirely |
+| `KICK_WATCH_POLL_MS` | `30000` | Event poll interval |
+| `KICK_AUTOCANCEL` | `false` | If `true`, when *this server's vault* is kicked during `GRACE`, automatically `depositCollateral` to cancel it (the wrongful-kick bond pays the LP) |
+| `KICK_DEPOSIT_RAW` | `10000` | Raw collateral units deposited per auto-cancel call |
+| `SEEDED_BIDDER` | `false` | If `true`, act as a seeded keeper: bid on open auctions once the Dutch haircut reaches `SEEDED_BIDDER_MIN_X_BPS` |
+| `SEEDED_BIDDER_MIN_X_BPS` | `7000` | Haircut floor (bps) at which the seeded bidder will `bid()` — 70% default |
+
+The seeded bidder is a market-side helper, not consensus — it simply offers to clear the vault's debt in exchange for the offered collateral once the haircut is conservative enough.
+
 ### Server
 
 | Variable | Default | Description |
@@ -105,10 +121,10 @@ working for backward compatibility.
 ```
 lp-server-js/
 ├── server.js              # Main entry — Express server, per-chain mint processing + listeners
-├── chains.json            # Multi-chain registry: manifests, RPC env vars, feeds, log chunking
+├── chains.json            # Multi-chain registry: manifests, RPC env vars, log chunking
 ├── burnHandler.js         # Per-chain burn handler factory — proposeHash, finalizeBurn, slashes
+├── kickWatcher.js         # Per-chain kick/auction watcher + optional grace-cancel and seeded bid
 ├── nonceManager.js        # Per-chain nonce manager factory + withTimeout helper
-├── oracleUpdate.js        # Per-chain RedStone oracle updater factory
 ├── moneroWallet.js        # monero-wallet-rpc wrapper — deposit scanning, XMR sends, sweeping (shared)
 ├── moneroCrypto.js        # Ed25519 key generation + shared address computation
 ├── commitment.js          # Secret hash computation for PTLC commitments
@@ -131,12 +147,12 @@ lp-server-js/
 3. **Spawn deposit wallet-rpc** — dedicated `monero-wallet-rpc` for per-mint view-only wallets (shared by all chains)
 4. **Open Monero wallet** — connects to main `monero-wallet-rpc`, fetches LP address (shared)
 5. **Per chain** (independently, so one stalled chain never blocks the others):
-   - Build context — provider/fallback RPCs, wallet binding, hub contract, nonce manager, oracle updater, burn handler
+   - Build context — provider/fallback RPCs, wallet binding, hub contract, nonce manager, burn handler, kick watcher
    - Start event listener — polls `MintInitiated`/`BurnRequested` events every 15s
    - Recover mints — scans from `deployedAtBlock` (bounded) for active mints needing `setMintReady`
    - Resolve stale — cancels timed-out mints, resolves stuck burn proposals
    - Sweep finalized — sweeps XMR from finalized mints where LP secret is persisted
-   - Start periodic jobs — stale-burn check (60s), mint auto-retry (5min)
+   - Start periodic jobs — stale-burn check (60s), mint auto-retry (5min), kick watcher (15s)
 
 ### Mint Processing Flow
 
@@ -148,10 +164,9 @@ MintInitiated event detected
   ├── Compute shared deposit address (user pubkey + LP keys)
   ├── Scan for XMR deposit via view-only wallet (view key = lpSecret, 15s interval)
   │     └── Optional fallback: user submits txid+txKey via POST /mint/deposit
-  ├── Update oracle prices (required for collateral check)
   ├── Generate LP secret + commitment
   ├── Persist LP secret to lp-secrets.json (for crash recovery)
-  └── setMintReady() on-chain with LP commitment + bond
+  └── setMintReady(requestId) on-chain — locks par × 110% key bond at threshold
         │
         └── MintFinalized event detected later
               ├── Combine user's revealed secret + LP secret
@@ -168,9 +183,27 @@ BurnRequested event detected
   │     ├── Send XMR to user's Monero destination
   │     ├── proposeHash() on-chain (after BURN_PROPOSE_DELAY_MS)
   │     └── finalizeBurn() on-chain (after BURN_FINALIZE_DELAY_MS)
+  │           — settles at par vs thresholdAtRequest, no price push
   │
   └── [If AUTO_PROCESS_BURNS=false]
         └── Wait for manual /burn/propose + /burn/finalize API calls
+```
+
+### Kick Watch Flow
+
+```
+KickStarted(vault, kicker, bond, auctionEnd) detected
+  │
+  ├── vault == our LP vault?
+  │     ├── yes → log alert; if KICK_AUTOCANCEL && phase == GRACE:
+  │     │         repayDebt(partial ok) or depositCollateral → KickCancelled, bond → LP
+  │     └── no  → remember auction
+  │
+  ├── AuctionOpened(vault, offeredCollateral)
+  │     └── if SEEDED_BIDDER: watch X(t); when xBps <= SEEDED_BIDDER_MIN_X_BPS,
+  │         bid(vault) — pays full wsXMR debt, receives X(t)% of collateral
+  │
+  └── AuctionSettled / VaultFrozen / VaultBackstopped → final state log
 ```
 
 ---
@@ -202,15 +235,13 @@ BurnRequested event detected
 | `POST` | `/burn/slash` | `requestId` | Claim slashed collateral from a timed-out burn |
 | `POST` | `/burn/resolve-declined` | `requestId` | Resolve a burn where user declined the LP's proposal |
 
-### Oracle Reports
-
-| Method | Endpoint | Params | Description |
-|--------|----------|--------|-------------|
-| `GET` | `/reports` | `feedIDs` (comma-separated) | Fetch Chainlink Data Streams signed reports for the frontend |
-
 ---
 
 ## Operational Notes
+
+### Vault terms
+
+Every vault must declare `thresholdSharesPerWsxmr` (`setThreshold`) — normalized collateral per 1e8 wsXMR. It is the vault's solvency line, settlement par, and mint capacity bound. `setMaxMintWsxmr` optionally caps total outstanding mints. Keep free collateral comfortably above `(debt + pending) × threshold` — anything below that is kickable in practice, though the protocol itself never judges prices.
 
 ### Griefing deposit
 
@@ -247,6 +278,7 @@ something in the same dollar range, not 0.001 ETH.
 The server logs to stdout with prefixed tags:
 - `[Mint]` — mint processing steps
 - `[Burn]` — burn processing steps
+- `[Kick]` — kick/auction watcher events
 - `[Chain]` — on-chain transaction submissions and confirmations
 - `[Sweep]` — XMR sweep operations
 - `[Recovery]` — startup recovery

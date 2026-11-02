@@ -97,9 +97,19 @@ export class LPPanel {
         return receipt;
     }
 
-    async setMaxMintBps(maxBps) {
-        const receipt = await writeHub('setMaxMintBps', [maxBps]);
-        console.log('Max mint BPS updated:', receipt.transactionHash);
+    async setThreshold(thresholdHuman) {
+        const t = parseUnits(thresholdHuman.toString(), 18);
+        const receipt = await writeHub('setThreshold', [t]);
+        console.log('Threshold updated:', receipt.transactionHash);
+
+        await this.loadVaultData();
+        return receipt;
+    }
+
+    async setMaxMintWsxmr(maxWsxmrHuman) {
+        const w = parseUnits(maxWsxmrHuman.toString(), DECIMALS.wsXMR);
+        const receipt = await writeHub('setMaxMintWsxmr', [w]);
+        console.log('Max mint cap updated:', receipt.transactionHash);
         
         await this.loadVaultData();
         return receipt;
@@ -131,11 +141,12 @@ export class LPPanel {
         if (!this.vault) return null;
 
         return {
-            collateralShares: formatUnits(this.vault.collateralShares, getActiveChain()?.collateral.shareDecimals ?? 18),
-            lockedCollateral: formatUnits(this.vault.lockedCollateral, getActiveChain()?.collateral.shareDecimals ?? 18),
+            collateralShares: formatUnits(this.vault.collateralShares, 18),
+            lockedCollateral: formatUnits(this.vault.lockedCollateral, 18),
             normalizedDebt: formatUnits(this.vault.normalizedDebt, DECIMALS.wsXMR),
             pendingDebt: formatUnits(this.vault.pendingDebt, DECIMALS.wsXMR),
-            maxMintBps: this.vault.maxMintBps,
+            thresholdSharesPerWsxmr: formatUnits(this.vault.thresholdSharesPerWsxmr, 18),
+            maxMintWsxmr: formatUnits(this.vault.maxMintWsxmr, DECIMALS.wsXMR),
             mintGriefingDeposit: formatUnits(this.vault.mintGriefingDeposit, DECIMALS.ETH),
             pendingMintCount: this.vault.pendingMintCount?.toString() || '0',
             mintFeeBps: this.vault.mintFeeBps,

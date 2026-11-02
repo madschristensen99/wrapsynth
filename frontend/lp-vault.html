@@ -133,8 +133,9 @@
       <div class="lp-address" id="lp-address">0x...</div>
       <div class="stat-grid" style="margin-bottom:0">
         <div>
-          <div class="stat-label">Health Ratio</div>
+          <div class="stat-label">Coverage vs Threshold</div>
           <div class="stat-value" id="health-ratio">--</div>
+          <div class="stat-sub" id="health-sub">par: --</div>
         </div>
         <div>
           <div class="stat-label">Total Collateral</div>
@@ -227,8 +228,6 @@ async function loadVaultDetails(address) {
   const D = await loadDeployment(chainKey);
   if (!D) { document.getElementById('lp-name').textContent = `${cfg.name} not deployed yet`; return; }
   const hub = D.contracts.wsXmrHub;
-  const shareToken = (D.externalContracts || {}).stataQQQB || (D.externalContracts||{}).stataCbBTC
-    || (D.externalContracts||{}).stataSPY || (D.externalContracts||{}).stataUSDe;
 
   const client = createPublicClient({
     chain: { id: cfg.chainId, name: cfg.name, nativeCurrency: cfg.nativeCurrency, rpcUrls: { default: { http: cfg.rpcUrls } } },
@@ -251,7 +250,8 @@ async function loadVaultDetails(address) {
           {name: 'lockedCollateral', type: 'uint256'},
           {name: 'normalizedDebt', type: 'uint256'},
           {name: 'pendingDebt', type: 'uint256'},
-          {name: 'maxMintBps', type: 'uint16'},
+          {name: 'thresholdSharesPerWsxmr', type: 'uint256'},
+          {name: 'maxMintWsxmr', type: 'uint256'},
           {name: 'mintGriefingDeposit', type: 'uint256'},
           {name: 'mintFeeBps', type: 'uint16'},
           {name: 'burnRewardBps', type: 'uint16'},
@@ -259,7 +259,8 @@ async function loadVaultDetails(address) {
           {name: 'mintNonce', type: 'uint256'},
           {name: 'minBurnAmount', type: 'uint256'},
           {name: 'active', type: 'bool'},
-          {name: 'deployedUSDeShares', type: 'uint256'},
+          {name: 'deployedCollateral', type: 'uint256'},
+          {name: 'deployedWsxmr', type: 'uint256'},
           {name: 'maxCoLPRangeBps', type: 'uint16'},
           {name: 'mintTimeoutBlocks', type: 'uint256'},
           {name: 'burnTimeoutBlocks', type: 'uint256'},
@@ -270,66 +271,50 @@ async function loadVaultDetails(address) {
       args: [address]
     });
 
-    const debt = await client.readContract({
-      address: hub,
-      abi: parseAbi(['function getVaultDebt(address) external view returns (uint256)']),
-      functionName: 'getVaultDebt',
-      args: [address]
+    const [debt, auction] = await Promise.all([
+      client.readContract({
+        address: hub,
+        abi: parseAbi(['function getVaultDebt(address) external view returns (uint256)']),
+        functionName: 'getVaultDebt',
+        args: [address]
+      }),
+      client.readContract({
+        address: hub,
+        abi: parseAbi(['function auctionState(address vault) external view returns (bool active, uint8 phase, uint256 xBps, uint256 offeredCollateral, uint256 bond, address kicker, uint256 auctionEnd, bool frozen)']),
+        functionName: 'auctionState',
+        args: [address]
+      }).catch(() => null)
     });
 
-    // shares -> underlying collateral via the share token's convertToAssets
-    let underlying = vault.collateralShares;
-    if (shareToken) {
-      try {
-        underlying = await client.readContract({
-          address: shareToken,
-          abi: parseAbi(['function convertToAssets(uint256 shares) external view returns (uint256)']),
-          functionName: 'convertToAssets',
-          args: [vault.collateralShares]
-        });
-      } catch (e) { console.warn('convertToAssets failed, using shares', e); }
-    }
-    const collateral = Number(formatUnits(underlying, cfg.collateral.decimals));
+    // collateralShares is normalized 18-dec — human collateral = /1e18.
+    // No share tokens, no convertToAssets: the vault holds raw collateral.
+    const collateral = Number(formatUnits(vault.collateralShares, 18));
     const debtAmount = Number(formatUnits(debt, 8));
+    const thresholdHuman = Number(formatUnits(vault.thresholdSharesPerWsxmr, 18));
 
-    // On-chain collateral price (1e18 USD) — do NOT assume $1
-    let collateralPrice = 0;
-    try {
-      const raw = await client.readContract({
-        address: hub,
-        abi: parseAbi(['function getCollateralPrice() external view returns (uint256)']),
-        functionName: 'getCollateralPrice'
-      });
-      collateralPrice = Number(formatUnits(raw, 18));
-    } catch (e) { console.warn('getCollateralPrice unavailable', e); }
+    // Threshold-relative coverage: collateral vs the vault's own declared par
+    // obligations. No market price needed — the LP's threshold defines
+    // solvency for this vault.
+    const required = debtAmount * thresholdHuman;
+    const healthPct = required > 0 ? (collateral / required) * 100 : (collateral > 0 ? Infinity : 0);
 
-    let xmrPrice = 0;
-    try {
-      const raw = await client.readContract({
-        address: hub,
-        abi: parseAbi(['function getXmrPrice() external view returns (uint256)']),
-        functionName: 'getXmrPrice'
-      });
-      xmrPrice = Number(formatUnits(raw, 18));
-    } catch (e) { console.warn('getXmrPrice unavailable, trying CoinGecko', e); }
-    if (!xmrPrice) {
-      try {
-        const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd');
-        const data = await res.json();
-        if (data.monero?.usd) xmrPrice = data.monero.usd;
-      } catch (e) { console.warn('Failed to fetch XMR price'); }
-    }
-
-    const collateralUSD = collateral * collateralPrice;
-    const debtUSD = debtAmount * xmrPrice;
-    const healthPct = debtUSD > 0 ? (collateralUSD / debtUSD) * 100 : (collateralUSD > 0 ? Infinity : 0);
+    // Auction / kick state
+    const [aActive, aPhase, aXBps, aOffered, aBond, aKicker, aEnd, aFrozen] = auction || [false, 0, 0n, 0n, 0n, '', 0n, false];
+    const phaseName = aFrozen ? 'FROZEN' : (aActive ? ['GRACE', 'OPEN DELAY', 'ACTIVE', 'ENDED'][Number(aPhase)] || 'UNKNOWN' : null);
+    const offerHuman = Number(formatUnits(aOffered, 18));
 
     document.getElementById('health-ratio').textContent =
-      collateralPrice > 0 && xmrPrice > 0
-        ? (healthPct === Infinity ? '∞' : healthPct > 9999 ? '>9,999%' : `${healthPct.toFixed(0)}%`)
-        : '—';
+      aFrozen ? 'FROZEN'
+      : healthPct === Infinity ? '∞' : healthPct > 9999 ? '>9,999%' : `${healthPct.toFixed(0)}%`;
     document.getElementById('total-collateral').textContent = collateral.toFixed(4);
     document.getElementById('total-debt').textContent = debtAmount.toFixed(4);
+
+    // Extra context line under health: declared par + auction state
+    const healthSub = document.getElementById('health-sub');
+    if (healthSub) {
+      const par = thresholdHuman > 0 ? `par: ${thresholdHuman.toFixed(4)} ${cfg.collateral.symbol}/XMR` : 'no threshold';
+      healthSub.textContent = phaseName ? `${phaseName}${aActive && !aFrozen ? ` · X=${Number(aXBps)/100}%` : ''}` : par;
+    }
 
     document.getElementById('mint-fee').textContent = `${Number(vault.mintFeeBps) / 100}%`;
     document.getElementById('burn-reward').textContent = `${Number(vault.burnRewardBps) / 100}%`;

@@ -2,6 +2,7 @@
 
 import { CONTRACTS, ABIS, DECIMALS, getActiveChain } from './config.js?v=3.59';
 import { readHub, readWsxmr, getUserAddress } from './viemClient.js?v=3.59';
+import { fetchDisplayPrices } from './prices.js?v=3.59';
 import { formatUnits } from 'https://esm.sh/viem@2.7.0';
 
 export class Dashboard {
@@ -28,14 +29,14 @@ export class Dashboard {
     async loadGlobalStats() {
         try {
             const totalSupply = await readWsxmr('totalSupply', []);
-            const xmrPrice = await readHub('getXmrPrice', []);
-            const collateralPrice = await readHub('getCollateralPrice', []);
+            // Display-only market prices — the protocol itself is oracle-free.
+            const prices = await fetchDisplayPrices();
             const vaultCount = await readHub('getVaultCount', []);
 
             this.globalStats = {
                 totalSupply: formatUnits(totalSupply, DECIMALS.wsXMR),
-                xmrPrice: formatUnits(xmrPrice, DECIMALS.USD),
-                collateralPrice: formatUnits(collateralPrice, DECIMALS.USD),
+                xmrPrice: prices?.xmr ?? null,
+                collateralPrice: prices?.coll ?? null,
                 vaultCount: Number(vaultCount),
                 tvl: 0
             };
@@ -60,8 +61,9 @@ export class Dashboard {
 
                 vaults.push({
                     lpAddress,
-                    collateralShares: formatUnits(vault.collateralShares, getActiveChain()?.collateral.shareDecimals ?? 18),
-                    lockedCollateral: formatUnits(vault.lockedCollateral, getActiveChain()?.collateral.shareDecimals ?? 18),
+                    // normalized 18-dec units — /1e18 renders human collateral
+                    collateralShares: formatUnits(vault.collateralShares, 18),
+                    lockedCollateral: formatUnits(vault.lockedCollateral, 18),
                     debt: formatUnits(debt, DECIMALS.wsXMR),
                     health: formatUnits(health, 16),
                     mintFeeBps: vault.mintFeeBps,
@@ -128,23 +130,12 @@ export class Dashboard {
     }
 
     async refreshPrices() {
-        try {
-            const xmrPrice = await readHub('getXmrPrice', []);
-            const collateralPrice = await readHub('getCollateralPrice', []);
-
-            if (this.globalStats) {
-                this.globalStats.xmrPrice = formatUnits(xmrPrice, DECIMALS.USD);
-                this.globalStats.collateralPrice = formatUnits(collateralPrice, DECIMALS.USD);
-            }
-
-            return {
-                xmrPrice: formatUnits(xmrPrice, DECIMALS.USD),
-                collateralPrice: formatUnits(collateralPrice, DECIMALS.USD)
-            };
-        } catch (error) {
-            console.error('Error refreshing prices:', error);
-            return null;
+        const prices = await fetchDisplayPrices();
+        if (this.globalStats && prices) {
+            this.globalStats.xmrPrice = prices.xmr;
+            this.globalStats.collateralPrice = prices.coll;
         }
+        return prices ? { xmrPrice: prices.xmr, collateralPrice: prices.coll } : null;
     }
 
     getHealthColor(healthRatio) {

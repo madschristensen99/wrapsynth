@@ -4,7 +4,6 @@ pragma solidity ^0.8.28;
 import {console} from "forge-std/Test.sol";
 import {BaseMockTestBase} from "./BaseTestBase.sol";
 import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
-import {BaseOracleFacet} from "../contracts/facets/BaseOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
@@ -84,7 +83,7 @@ contract E2EFullCycleTestBase is BaseMockTestBase {
     
     function _updatePrices() internal {
         console.log("=== STEP 1: UPDATE PRICES ===");
-        _setXmrPrice8dec(XMR_PRICE_8DEC);
+        
         console.log("XMR Price: $390 (HyperCore native perp, mocked)");
         console.log("Collateral Price: $1 (USDe unit of account)");
         console.log("[OK] Prices updated\n");
@@ -106,7 +105,7 @@ contract E2EFullCycleTestBase is BaseMockTestBase {
         vm.startPrank(lp);
         
         // Set mint parameters
-        VaultFacet(address(hub)).setMaxMintBps(0); // No limit
+        VaultFacet(address(hub)).setMaxMintWsxmr(0); // No limit
         VaultFacet(address(hub)).setMinBurnAmount(0); // No minimum
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
         console.log("[OK] Max mint BPS: unlimited");

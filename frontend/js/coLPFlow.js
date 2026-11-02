@@ -1,14 +1,14 @@
 /**
  * Co-LP Flow — Collateralized Liquidity Provider Position Manager
  *
- * Manages co-LP positions where users pair wsXMR with an LP vault's idle USDe collateral
+ * Manages co-LP positions where users pair wsXMR with an LP vault's idle collateral
  * to provide liquidity on Uniswap V3. Positions are represented as NFTs (UniV3 token IDs).
  *
  * Key operations: open (userOpenCoLP), unwind, rebalance, capacity check, preflight diagnostics.
  * Also includes helpers for querying active positions via on-chain event history.
  */
 
-import { CONTRACTS, ABIS, DECIMALS, getActiveChainKey, getDeployment } from './config.js?v=3.59';
+import { CONTRACTS, ABIS, DECIMALS, getActiveChain, getActiveChainKey, getDeployment } from './config.js?v=3.59';
 import { readHub, writeHub, readWsxmr, writeWsxmr, getUserAddress, getPublicClient, getWalletClient } from './viemClient.js?v=3.59';
 import { formatUnits, parseUnits, parseAbi, decodeEventLog, toEventSelector, encodeFunctionData, decodeFunctionResult, keccak256, encodeAbiParameters, toHex } from 'https://esm.sh/viem@2.7.0';
 
@@ -17,8 +17,8 @@ import { formatUnits, parseUnits, parseAbi, decodeEventLog, toEventSelector, enc
 // unwound: indexed topic3, rebalanced: NON-indexed data arg) so events can't
 // be uniformly server-filtered by user — decode + filter client-side instead.
 const COLP_EVENT_ABI = parseAbi([
-    'event CoLPDeployed(address indexed vault, address indexed user, uint256 indexed tokenId, uint256 usdeShares, uint256 wsxmrAmount, uint16 rangeBps)',
-    'event CoLPUnwound(uint256 indexed tokenId, address indexed vault, address indexed user, uint256 usdeOut, uint256 wsxmrOut, bool fromLiquidation)',
+    'event CoLPDeployed(address indexed vault, address indexed user, uint256 indexed tokenId, uint256 collateralAmount, uint256 wsxmrAmount, uint16 rangeBps)',
+    'event CoLPUnwound(uint256 indexed tokenId, address indexed vault, address indexed user, uint256 collateralOut, uint256 wsxmrOut, bool liquidationTriggered)',
     'event CoLPRebalanced(uint256 indexed oldTokenId, uint256 indexed newTokenId, address indexed vault, address user, address caller, uint16 newRangeBps)'
 ]);
 const COLP_EVENT_TOPICS = COLP_EVENT_ABI.map(item => toEventSelector(item));
@@ -70,50 +70,32 @@ export class CoLPFlow {
      * @param {number} deadline - Unix timestamp deadline
      * @returns {Promise<Object>} transaction receipt with tokenId
      */
-    async updatePrices() {
-        const { updateOraclePrices } = await import('./redstoneWrapper.js?v=' + Date.now());
-        await updateOraclePrices();
-        console.log('✅ Oracle prices updated for Co-LP');
+    /**
+     * Negotiated collateral leg for a co-LP open. Oracle-free: the vault's
+     * declared threshold IS the rate — collateralNorm = wsxmr × threshold/1e8,
+     * converted back to raw token units. The caller may pass its own
+     * collateralAmountRaw to override.
+     */
+    async negotiatedCollateral(lpVault, wsxmrAtomic, chain) {
+        const vault = await this.getVault(lpVault);
+        const norm = wsxmrAtomic * vault.thresholdSharesPerWsxmr / BigInt(1e8);
+        const scale = BigInt(chain?.collateral.collateralScale || '1');
+        return norm / scale; // raw collateral units
     }
 
-    async userOpenCoLP(lpVault, wsxmrAmount, deadline, onStep) {
+    async userOpenCoLP(lpVault, wsxmrAmount, deadline, onStep, collateralAmountRaw = null) {
         const step = typeof onStep === 'function' ? onStep : () => {};
-        // Push fresh prices first — getCoLPCapacity and userOpenCoLP both need them
-        let priceErr = null;
-        try {
-            step('Step 1 of 3: Refreshing oracle prices — approve the "updateOraclePrices" transaction in your wallet…');
-            await this.updatePrices();
-            step('Step 1 of 3: Oracle prices refreshed ✓');
-        } catch (err) {
-            priceErr = err;
-            console.warn('⚠️ Could not update oracle prices:', err.message);
-        }
-
-        // The push failing is only fatal if on-chain prices are actually
-        // stale (>120s → both userOpenCoLP and getCoLPCapacity revert
-        // StalePrice). Check now and surface a clear error instead of the
-        // raw contract revert downstream.
-        try {
-            await Promise.all([
-                readHub('getXmrPriceWithAge', [120]),
-                readHub('getCollateralPriceWithAge', [120]),
-            ]);
-        } catch (staleErr) {
-            const isStale = staleErr.message?.includes('StalePrice') || staleErr.message?.includes('0x19abf40e');
-            if (isStale) {
-                throw new Error(
-                    'Oracle price refresh did not land and on-chain prices are stale (>2 min). ' +
-                    'Approve the updateOraclePrices transaction in your wallet and retry.' +
-                    (priceErr ? ` (Refresh failed: ${priceErr.message})` : '')
-                );
-            }
-            console.warn('⚠️ Could not verify oracle freshness — continuing:', staleErr.message);
-        }
-
+        const chain = getActiveChain();
         const amount = parseUnits(wsxmrAmount, DECIMALS.wsXMR);
 
+        // The collateral leg is negotiated terms, not an oracle match —
+        // default to the vault's threshold par (collateral per wsXMR).
+        if (collateralAmountRaw === null) {
+            collateralAmountRaw = await this.negotiatedCollateral(lpVault, amount, chain);
+        }
+
         // Run pre-flight diagnostics
-        step('Step 2 of 3: Checking vault capacity, balance and allowance…');
+        step('Step 1 of 3: Checking vault capacity, balance and allowance…');
         const preflight = await this.preflightUserOpenCoLP(lpVault, amount);
         if (!preflight.ok) {
             throw new Error(`Co-LP preflight failed:\n${preflight.issues.join('\n')}`);
@@ -122,14 +104,14 @@ export class CoLPFlow {
         // Check allowance before approving to avoid unnecessary txs
         const currentAllowance = await this.getWsxmrAllowance();
         if (currentAllowance < amount) {
-            step('Step 2 of 3: Approving wsXMR spend — approve the "approve" transaction in your wallet…');
+            step('Step 1 of 3: Approving wsXMR spend — approve the "approve" transaction in your wallet…');
             await writeWsxmr('approve', [CONTRACTS.hub, amount]);
-            step('Step 2 of 3: wsXMR spend approved ✓');
+            step('Step 1 of 3: wsXMR spend approved ✓');
         }
 
         // userOpenCoLP mints a UniV3 NFT — needs high gas limit
-        step('Step 3 of 3: Opening Co-LP position — approve the "userOpenCoLP" transaction in your wallet…');
-        const receipt = await writeHub('userOpenCoLP', [lpVault, amount, BigInt(deadline)], 0n, 2000000n);
+        step('Step 2 of 3: Opening Co-LP position — approve the "userOpenCoLP" transaction in your wallet…');
+        const receipt = await writeHub('userOpenCoLP', [lpVault, amount, collateralAmountRaw, BigInt(deadline)], 0n, 2000000n);
         console.log('Co-LP position opened, tx:', receipt.transactionHash);
 
         // Try to extract tokenId from event logs
@@ -149,37 +131,7 @@ export class CoLPFlow {
      */
     async unwindCoLP(tokenId, deadline, onStep) {
         const step = typeof onStep === 'function' ? onStep : () => {};
-        // Push fresh prices first — unwind reads oracle for tick calculations
-        let pricesPushed = false;
-        try {
-            step('Step 1 of 2: Refreshing oracle prices — approve the "updateOraclePrices" transaction in your wallet…');
-            await this.updatePrices();
-            pricesPushed = true;
-            step('Step 1 of 2: Oracle prices refreshed ✓');
-        } catch (priceErr) {
-            console.warn('⚠️ Could not update oracle prices:', priceErr.message);
-        }
-
-        // The push failing is only fatal if on-chain prices are actually
-        // stale (>120s old → unwindCoLP reverts StalePrice). unwind reads
-        // BOTH xmr and collateral price helpers, so check both before
-        // burning gas on a doomed tx.
-        if (!pricesPushed) {
-            try {
-                await Promise.all([
-                    readHub('getXmrPriceWithAge', [120]),
-                    readHub('getCollateralPriceWithAge', [120]),
-                ]);
-            } catch {
-                throw new Error(
-                    'Oracle price update failed and on-chain prices are stale (>2 min). ' +
-                    'unwindCoLP would revert StalePrice. Reconnect the wallet that owns ' +
-                    'this position and retry — the UI must push a fresh RedStone price first.'
-                );
-            }
-        }
-
-        step('Step 2 of 2: Closing Co-LP position — approve the "unwindCoLP" transaction in your wallet…');
+        step('Closing Co-LP position — approve the "unwindCoLP" transaction in your wallet…');
         const receipt = await writeHub('unwindCoLP', [BigInt(tokenId), BigInt(deadline)], 0n, 2000000n);
         console.log('Co-LP position unwound, tx:', receipt.transactionHash);
         return receipt;
@@ -187,7 +139,7 @@ export class CoLPFlow {
 
     /**
      * @notice Collect accrued UniV3 fees from a co-LP position.
-     *         Fees land in pendingReturns: stataUSDe shares -> LP vault,
+     *         Fees land in pendingReturns: collateral -> LP vault,
      *         wsXMR -> position user. Callable by vault owner or user.
      * @param {string|number} tokenId - V3 NFT token ID
      * @returns {Promise<Object>} transaction receipt
@@ -203,9 +155,9 @@ export class CoLPFlow {
      *         Stateless eth_call on nfpm.collect() with the router spoofed as
      *         caller — the router owns the NFT, and eth_call doesn't verify
      *         signatures so the from-field satisfies isApprovedOrOwner.
-     *         Pool token0 = USDe (vault owner's share), token1 = wsXMR (user's).
+     *         Pool token0 = collateral (vault owner's leg), token1 = wsXMR (user's).
      * @param {string|number} tokenId - V3 NFT token ID
-     * @returns {Promise<{wsxmr: bigint, usde: bigint}>} accrued unclaimed fees
+     * @returns {Promise<{wsxmr: bigint, collateral: bigint}>} accrued unclaimed fees
      */
     async getClaimableFees(tokenId) {
         const MAX128 = (1n << 128n) - 1n;
@@ -222,10 +174,10 @@ export class CoLPFlow {
                 data
             });
             const [amount0, amount1] = decodeFunctionResult({ abi: collectAbi, functionName: 'collect', data: res });
-            return { usde: amount0, wsxmr: amount1 };
+            return { collateral: amount0, wsxmr: amount1 };
         } catch (err) {
             console.warn(`getClaimableFees(${tokenId}) failed:`, err.shortMessage || err.message);
-            return { usde: 0n, wsxmr: 0n };
+            return { collateral: 0n, wsxmr: 0n };
         }
     }
 
@@ -281,21 +233,10 @@ export class CoLPFlow {
             if (!vault.active) blockers.push(`Vault ${lpVault} is not active`);
             data.collateralShares = vault.collateralShares?.toString?.() ?? vault.collateralShares;
             data.lockedCollateral = vault.lockedCollateral?.toString?.() ?? vault.lockedCollateral;
-            data.maxCoLPRangeBps = vault.maxCoLPRangeBps ?? vault[13]; // tuple index fallback
+            data.maxCoLPRangeBps = vault.maxCoLPRangeBps ?? vault[16]; // tuple index fallback
 
-            // 2. Oracle prices (best-effort: view reads through diamond fallback often revert)
-            try {
-                const xmrPrice = await readHub('getXmrPrice');
-                const collPrice = await readHub('getCollateralPrice');
-                data.xmrPrice = xmrPrice.toString();
-                data.collPrice = collPrice.toString();
-                if (xmrPrice === 0n) warnings.push('XMR oracle price is 0 (likely stale)');
-                if (collPrice === 0n) warnings.push('Collateral oracle price is 0 (likely stale)');
-            } catch (oracleErr) {
-                warnings.push(`Oracle price read failed — prices may be stale; transaction will revert if so`);
-                data.xmrPrice = 'unavailable';
-                data.collPrice = 'unavailable';
-            }
+            // 2. Vault-declared threshold — the negotiated settlement rate
+            data.thresholdSharesPerWsxmr = vault.thresholdSharesPerWsxmr?.toString?.() ?? '0';
 
             // 3. Pool initialization
             const poolAbi = ['function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)'];
@@ -313,13 +254,7 @@ export class CoLPFlow {
                 if (capacity === 0n) blockers.push('Co-LP capacity is 0 (vault has no idle collateral)');
                 if (capacity < amount) blockers.push(`Co-LP capacity (${capacity}) < requested amount (${amount})`);
             } catch (capErr) {
-                const isStale = capErr.message?.includes('StalePrice') || capErr.message?.includes('0x19abf40e');
-                if (isStale) {
-                    blockers.push('On-chain oracle prices are stale (>2 min) — the price-refresh transaction must confirm before opening a position');
-                    data.capacity = 'stale-oracle';
-                } else {
-                    throw capErr;
-                }
+                throw capErr;
             }
 
             // 5. User balance

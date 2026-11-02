@@ -20,7 +20,7 @@ const CHAIN_ID = deployment.chainId || 100;
 
 const HUB_ABI = [
   'function cancelMint(bytes32 requestId, bytes32 userSecret) external',
-  'function getMintRequest(bytes32 requestId) external view returns (tuple(address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout, uint256 state))',
+  'function getMintRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout, uint256 griefingDeposit, uint256 normalizedDebtAmount, uint256 vaultMintNonce, bytes32 lpCommitment, bytes32 revealedSecret, uint8 status, uint256 lockedCollateral, uint256 thresholdAtReady))',
 ];
 
 const requestId = process.argv[2];

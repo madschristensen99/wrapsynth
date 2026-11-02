@@ -14,7 +14,7 @@ interface IwsXmrLiquidityRouter is ILiquidityPosition {
     event PoolInitialized(
         address indexed pool,
         uint160 sqrtPriceX96,
-        uint256 sDAIPrice,
+        uint256 collateralPrice,
         uint256 wsxmrPrice
     );
 
@@ -48,9 +48,9 @@ interface IwsXmrLiquidityRouter is ILiquidityPosition {
     function poolInitialized() external view returns (bool);
     function token0() external view returns (address);
     function token1() external view returns (address);
-    function sDAIIsToken0() external view returns (bool);
+    function collateralIsToken0() external view returns (bool);
     function hub() external view returns (address);
-    function sDAI() external view returns (address);
+    function collateral() external view returns (address);
     function wsXMR() external view returns (address);
     function pool() external view returns (address);
     function positionManager() external view returns (address);

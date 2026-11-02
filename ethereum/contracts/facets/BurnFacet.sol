@@ -5,19 +5,25 @@ import {wsXmrStorage} from "../core/wsXmrStorage.sol";
 import {IBurnFacet} from "../interfaces/facets/IBurnFacet.sol";
 import {IwsXmrHub} from "../interfaces/core/IwsXmrHub.sol";
 import {Ed25519} from "../Ed25519.sol";
-import {YieldLogic} from "../libraries/YieldLogic.sol";
-import {CollateralLogic} from "../libraries/CollateralLogic.sol";
 
+/**
+ * @title BurnFacet
+ * @notice Handles wsXMR -> XMR atomic swap burn operations
+ * @dev Oracle-free: burn locks are proportional — (burn/debt) × freeCollateral ×
+ *      BURN_LOCK_MULTIPLIER — and par settlement uses the vault's declared
+ *      threshold snapshotted into the request at request time
+ *      (thresholdAtRequest). No external price is ever consulted.
+ */
 contract BurnFacet is wsXmrStorage, IBurnFacet {
-    
+
     error ReentrancyGuard();
-    
+
     event BurnRequestsCleanedUp(address indexed vault, uint256 removed);
-    
-    constructor(address _wsxmrToken, address _verifierProxy) 
-        wsXmrStorage(_wsxmrToken, _verifierProxy) 
+
+    constructor(address _wsxmrToken, address _verifierProxy, uint256 _minThreshold, uint256 _kickBondMin)
+        wsXmrStorage(_wsxmrToken, _verifierProxy, _minThreshold, _kickBondMin)
     {}
-    
+
     /// @notice Initiate a burn request — user locks wsXMR and commits to a Monero destination via Ed25519 keys
     /// @dev Caller must be the user. Burns wsXMR from the user's balance and locks LP collateral.
     /// @param wsxmrAmount Amount of wsXMR to burn (8 decimals)
@@ -30,14 +36,14 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     function requestBurn(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey) external returns (bytes32) {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
-        
+
         if (msg.sender != user) revert OnlyUserCanInitiate();
         bytes32 requestId = _requestBurn(wsxmrAmount, lpVault, user, claimCommitment, userPublicKey, userViewKey, false);
-        
+
         _reentrancyStatus = _NOT_ENTERED;
         return requestId;
     }
-    
+
     /// @notice Initiate a burn request from the liquidity router — burns wsXMR from the router's internal balance
     /// @dev Only callable by the registered liquidity router. Same as requestBurn but burns from hub balance
     ///      (router has already received wsXMR via depositWsxmr).
@@ -51,14 +57,14 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     function requestBurnFromRouter(uint256 wsxmrAmount, address lpVault, address user, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey) external returns (bytes32) {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
-        
+
         if (msg.sender != liquidityRouter) revert OnlyRouter();
         bytes32 requestId = _requestBurn(wsxmrAmount, lpVault, user, claimCommitment, userPublicKey, userViewKey, true);
-        
+
         _reentrancyStatus = _NOT_ENTERED;
         return requestId;
     }
-    
+
     /// @dev Internal burn request logic shared by requestBurn and requestBurnFromRouter.
     ///      Validates vault state, checks burn limits, locks LP collateral (total model — only increments
     ///      lockedCollateral, never decrements collateralShares), burns wsXMR tokens, and records the request.
@@ -71,20 +77,22 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         if (lpVault == address(0)) revert ZeroAddress();
         if (user == address(0)) revert ZeroAddress();
         if (!_vaults[lpVault].active) revert VaultDoesNotExist();
-        
-        _tryRefreshOracle();
-        _syncVaultYield(lpVault);
-        
+        if (vaultFrozen[lpVault]) revert VaultIsFrozen();
+        if (vaultKicks[lpVault].active) revert KickActive();
+
         if (wsxmrAmount < MIN_BURN_AMOUNT) revert BelowMinimumBurn();
-        
+
         Vault storage vault = _vaults[lpVault];
-        
+
         if (vault.minBurnAmount > 0 && wsxmrAmount < vault.minBurnAmount) revert BelowMinimumBurn();
-        
+
+        uint256 threshold = vault.thresholdSharesPerWsxmr;
+        if (threshold < minThreshold) revert BelowMinThreshold();
+
         // M1: Burn cannot exceed the vault's own debt
         uint256 vaultActualDebt = _denormalizeDebt(vault.normalizedDebt);
         if (wsxmrAmount > vaultActualDebt) revert BurnExceedsVaultDebt();
-        
+
         bytes32[] storage vaultBurns = vaultBurnRequests[lpVault];
         uint256 activeCount = 0;
         for (uint256 i = 0; i < vaultBurns.length; i++) {
@@ -94,35 +102,31 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
             }
         }
         if (activeCount >= MAX_BURN_REQUESTS_PER_VAULT) revert MaxBurnRequestsReached();
-        
+
         (uint256 collateralToLock, uint256 rewardCollateral) = calculateBurnCollateral(lpVault, wsxmrAmount);
         uint256 totalLock = collateralToLock + rewardCollateral;
-        
+
         // Check available unlocked collateral (total model: collateralShares = total, lockedCollateral = reserved)
         uint256 availableCollateral = vault.collateralShares > vault.lockedCollateral
             ? vault.collateralShares - vault.lockedCollateral
             : 0;
         if (availableCollateral < totalLock) revert InsufficientCollateral();
-        
-        // Ensure remaining free collateral can back pending mints at COLLATERAL_RATIO
-        uint256 xmrPrice = _getXmrPriceFromStorage();
-        uint256 collateralPrice = _getCollateralPriceFromStorage();
+
+        // Remaining free collateral must still back pending mints at the vault's
+        // declared threshold.
         if (vault.pendingDebt > 0) {
-            uint256 remainingFree = availableCollateral > totalLock
-                ? availableCollateral - totalLock
-                : 0;
-            uint256 pendingRatio = CollateralLogic.calculateRatioFromShares(
-                remainingFree, vault.pendingDebt, collateralToken, collateralPrice, xmrPrice
-            );
-            if (pendingRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
+            uint256 remainingFree = availableCollateral - totalLock;
+            if (remainingFree < _requiredCollateral(vault.pendingDebt, threshold)) {
+                revert InsufficientCollateral();
+            }
         }
-        
+
         if (!fromRouter) {
             IwsXmrHub(address(this)).burnTokens(user, wsxmrAmount);
         } else {
             IwsXmrHub(address(this)).burnTokens(address(this), wsxmrAmount);
         }
-        
+
         // B1: Total collateral model - never subtract from collateralShares when locking
         vault.lockedCollateral += totalLock;
 
@@ -134,8 +138,8 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
 
         bytes32 requestId = keccak256(abi.encodePacked(user, lpVault, wsxmrAmount, ++_requestNonce));
         if (burnRequests[requestId].status != BurnStatus.INVALID) revert BurnAlreadyExists();
-        
-        
+
+
         BurnRequest storage req = burnRequests[requestId];
         req.requestId = requestId;
         req.user = user;
@@ -151,16 +155,16 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         req.userClaimCommitment = claimCommitment;
         req.userPublicKey = userPublicKey;
         req.userViewKey = userViewKey;
-        req.xmrPriceAtRequest = xmrPrice;
-        
+        req.thresholdAtRequest = threshold;
+
         userBurnRequests[user].push(requestId);
         vaultBurnRequests[lpVault].push(requestId);
         burnRequestIndexPlusOne[requestId] = vaultBurnRequests[lpVault].length;
-        
+
         emit BurnRequested(requestId, user, lpVault, wsxmrAmount, wsxmrAmount * XMR_TO_WSXMR_DIVISOR, rewardCollateral, claimCommitment, userPublicKey, userViewKey);
         return requestId;
     }
-    
+
     /**
      * @notice LP proposes secret hash after locking XMR on Monero
      * @dev The secretHash emitted here, combined with request.xmrAmount from BurnRequested event,
@@ -173,30 +177,30 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
-        
+
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.REQUESTED) revert InvalidStatus();
         if (block.number >= request.deadline) revert DeadlineExpired();
-        
+
         Vault storage vault = _vaults[request.lpVault];
         if (msg.sender != vault.lpAddress) revert Unauthorized();
         if (secretHash == bytes32(0)) revert InvalidSecret();
         if (lpPublicSpendKey == bytes32(0)) revert InvalidCommitment();
         if (lpPublicViewKey == bytes32(0)) revert InvalidCommitment();
         if (burnLpPublicKeys[requestId] != bytes32(0)) revert InvalidStatus(); // Already provided
-        
+
         request.secretHash = secretHash;
         request.status = BurnStatus.PROPOSED;
         request.deadline = block.number + BURN_COMMIT_TIMEOUT_BLOCKS;
-        
+
         burnLpPublicKeys[requestId] = lpPublicSpendKey;
         burnLpPublicViewKeys[requestId] = lpPublicViewKey;
-        
+
         emit HashProposed(requestId, secretHash, lpPublicSpendKey, lpPublicViewKey);
-        
+
         _reentrancyStatus = _NOT_ENTERED;
     }
-    
+
     /**
      * @notice User confirms the Monero output is locked with correct amount and secret binding
      * @dev CRITICAL CLIENT REQUIREMENT: This is a trust-minimized attestation. Clients MUST verify
@@ -207,7 +211,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
      *         claim the locked XMR
      *      3. The LP cannot expose the secret Monero-side before finalizeBurn, or double-claim
      *         becomes possible (user gets XMR + slashes collateral)
-     * 
+     *
      *      Once COMMITTED, the user is bound. If the LP fails to finalize, the user receives
      *      par value + reward via claimSlashedCollateral. There is no on-chain Monero verification.
      * @param requestId The burn request ID
@@ -215,22 +219,22 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     function confirmMoneroLock(bytes32 requestId) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
-        
+
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.PROPOSED) revert InvalidStatus();
         if (msg.sender != request.user) revert Unauthorized();
         // Enforce the proposal deadline — after it lapses the burn resolves via
         // resolveDeclinedProposal/abandonProposedBurn, not a late commit.
         if (block.number >= request.deadline) revert DeadlineExpired();
-        
+
         request.deadline = block.number + BURN_COMMIT_TIMEOUT_BLOCKS;
         request.status = BurnStatus.COMMITTED;
-        
+
         emit BurnCommitted(requestId, request.deadline);
-        
+
         _reentrancyStatus = _NOT_ENTERED;
     }
-    
+
     /// @notice LP reveals the Ed25519 secret for a committed burn — pure reveal, no settlement
     /// @dev Splits reveal from settlement so the secret only appears in calldata of a tx that
     ///      cannot revert on vault state (mirrors the mint side's revealSecret/finalizeMint split).
@@ -240,24 +244,24 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     function revealBurnSecret(bytes32 requestId, bytes32 secret) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
-        
+
         if (secret == 0) revert InvalidSecret();
-        
+
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
         if (request.revealedSecret != bytes32(0)) revert InvalidStatus();
         if (block.number >= request.deadline + BURN_FINALIZE_GRACE_BLOCKS) revert DeadlineExpired();
-        
+
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
         bytes32 computedHash = keccak256(abi.encodePacked(px, py));
         if (computedHash != request.secretHash) revert InvalidSecret();
-        
+
         request.revealedSecret = secret;
         emit BurnSecretRevealed(requestId, secret);
-        
+
         _reentrancyStatus = _NOT_ENTERED;
     }
-    
+
     /// @notice Settles a burn whose secret was revealed via revealBurnSecret — permissionless
     /// @dev Contains no secret in calldata, so a revert cannot leak key material.
     ///      Once the secret is stored, settlement only touches vault accounting.
@@ -265,16 +269,16 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     function settleBurn(bytes32 requestId) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
-        
+
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
         if (request.revealedSecret == bytes32(0)) revert InvalidStatus();
-        
+
         _settleBurn(request, requestId);
-        
+
         _reentrancyStatus = _NOT_ENTERED;
     }
-    
+
     /// @notice LP finalizes the burn by revealing the Ed25519 secret — settles the burn and releases collateral
     /// @dev Verifies that scalarMultBase(secret) matches the committed secretHash from proposeHash.
     ///      Releases locked collateral, pays burn reward to user via pendingReturns, and reduces vault debt.
@@ -285,44 +289,45 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     function finalizeBurn(bytes32 requestId, bytes32 secret) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
-        
+
         if (secret == 0) revert InvalidSecret();
-        
+
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
         if (block.number >= request.deadline + BURN_FINALIZE_GRACE_BLOCKS) revert DeadlineExpired();
-        
+
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
         bytes32 computedHash = keccak256(abi.encodePacked(px, py));
         if (computedHash != request.secretHash) revert InvalidSecret();
-        
+
         request.revealedSecret = secret;
         _settleBurn(request, requestId);
-        
+
         _reentrancyStatus = _NOT_ENTERED;
     }
-    
+
     /// @dev Shared settlement for finalizeBurn and settleBurn — releases the collateral
     ///      reservation, pays the burn reward to the user, and reduces vault debt.
     ///      Caller must have verified status == COMMITTED and revealedSecret != 0,
     ///      and must hold the reentrancy guard.
     function _settleBurn(BurnRequest storage request, bytes32 requestId) internal {
-        _syncVaultYield(request.lpVault);
-        
         Vault storage vault = _vaults[request.lpVault];
-        
+
         uint256 safeReward = request.rewardCollateral;
         uint256 totalLock = request.lockedCollateral + request.rewardCollateral;
-        
+
         // Total collateral model: release the reservation, AND remove the paid-out reward
         // from vault equity (it leaves the vault to the holder).
         // Defensive: never underflow — if state is inconsistent, cap to available.
         if (vault.lockedCollateral < totalLock) revert InsufficientCollateral();
         vault.lockedCollateral -= totalLock;
-        
-        if (vault.collateralShares < safeReward) revert InsufficientCollateral();
-        vault.collateralShares -= safeReward;
-        
+
+        uint256 rewardRaw = _rawFromNorm(safeReward);
+        uint256 rewardNorm = _normFromRaw(rewardRaw);
+
+        if (vault.collateralShares < rewardNorm) revert InsufficientCollateral();
+        vault.collateralShares -= rewardNorm;
+
         // Debt reduction happens here at settlement, not at request time
         uint256 normalizedBurnAmount = (request.wsxmrAmount * 1e18 + globalDebtIndex - 1) / globalDebtIndex;
         if (normalizedBurnAmount > vault.normalizedDebt) {
@@ -330,25 +335,25 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         }
         vault.normalizedDebt -= normalizedBurnAmount;
         globalTotalDebt -= _denormalizeDebt(normalizedBurnAmount);
-        
+
         if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
         else globalPendingBurnDebt -= request.wsxmrAmount;
-        
-        if (safeReward > 0) {
-            pendingReturns[request.user][collateralToken] += safeReward;
-            globalPendingSDAI += safeReward;
-            emit ReturnQueued(request.user, collateralToken, safeReward);
+
+        if (rewardRaw > 0) {
+            pendingReturns[request.user][collateralToken] += rewardRaw;
+            emit ReturnQueued(request.user, collateralToken, rewardRaw);
         }
-        
+
         request.status = BurnStatus.COMPLETED;
         _removeVaultBurnRequest(request.lpVault, requestId);
-        emit BurnFinalized(requestId, request.revealedSecret, safeReward);
+        emit BurnFinalized(requestId, request.revealedSecret, rewardRaw);
     }
-    
+
     /// @notice User claims slashed collateral when LP fails to finalize after the commit deadline
-    /// @dev User receives min(par, lockedCollateral) in sDAI via pendingReturns — NO reward,
+    /// @dev User receives min(par, lockedCollateral) via pendingReturns — NO reward,
     ///      since the LP never completed the burn (the reward is only paid on finalize).
-    ///      Par is fixed at request time via xmrPriceAtRequest, protecting the user from XMR price appreciation.
+    ///      Par is fixed at request time via thresholdAtRequest — the LP's own declared
+    ///      settlement rate — protecting the user from threshold repricing mid-flight.
     ///      Excess locked collateral above par returns to the vault.
     ///      The user MUST reveal their Monero spend key half (userSecret), verified against the
     ///      stored userPublicKey via Ed25519. The revealed userSecret is emitted in BurnSlashed so
@@ -359,31 +364,28 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     function claimSlashedCollateral(bytes32 requestId, bytes32 userSecret) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
-        
+
         if (userSecret == bytes32(0)) revert InvalidUserSecret();
-        
+
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.COMMITTED) revert InvalidStatus();
         // If the LP already revealed, the burn is settleable — slashing would double-pay
-        // the user (XMR via the public secret + sDAI). Route to settleBurn instead.
+        // the user (XMR via the public secret + collateral). Route to settleBurn instead.
         if (request.revealedSecret != bytes32(0)) revert InvalidStatus();
         if (block.number < request.deadline + BURN_FINALIZE_GRACE_BLOCKS) revert DeadlineNotExpired();
         if (msg.sender != request.user) revert Unauthorized();
-        
+
         // Verify userSecret corresponds to the stored userPublicKey (compressed Ed25519 point),
         // exactly as resolveDeclinedProposal does.
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(userSecret));
         if (bytes32(Ed25519.compressPoint(px, py)) != request.userPublicKey) revert InvalidUserSecret();
-        
-        Vault storage vault = _vaults[request.lpVault];
-        
-        uint256 collateralPrice = _getCollateralPriceFromStorage();
-        uint256 parValueUsd = (request.wsxmrAmount * request.xmrPriceAtRequest) / WSXMR_DECIMALS;
-        uint256 parDaiAmount = (parValueUsd * _underlyingUnit()) / collateralPrice;
-        uint256 parShares = _daiToShares(parDaiAmount);
 
-        uint256 userPayout = parShares < request.lockedCollateral
-            ? parShares
+        Vault storage vault = _vaults[request.lpVault];
+
+        uint256 parCollateral = _parCollateral(request.wsxmrAmount, request.thresholdAtRequest);
+
+        uint256 userPayout = parCollateral < request.lockedCollateral
+            ? parCollateral
             : request.lockedCollateral;
         if (userPayout > vault.collateralShares) {
             userPayout = vault.collateralShares;
@@ -396,10 +398,13 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         // completed the burn, so no reward is earned.
         if (vault.lockedCollateral < totalLock) revert InsufficientCollateral();
         vault.lockedCollateral -= totalLock;
-        
-        if (vault.collateralShares < userPayout) revert InsufficientCollateral();
-        vault.collateralShares -= userPayout;
-        
+
+        uint256 payoutRaw = _rawFromNorm(userPayout);
+        uint256 payoutNorm = _normFromRaw(payoutRaw);
+
+        if (vault.collateralShares < payoutNorm) revert InsufficientCollateral();
+        vault.collateralShares -= payoutNorm;
+
         // Debt reduction happens here at settlement
         uint256 normalizedBurnAmount = (request.wsxmrAmount * 1e18 + globalDebtIndex - 1) / globalDebtIndex;
         if (normalizedBurnAmount > vault.normalizedDebt) {
@@ -410,17 +415,16 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
         else globalPendingBurnDebt -= request.wsxmrAmount;
 
-        pendingReturns[request.user][collateralToken] += userPayout;
-        globalPendingSDAI += userPayout;
-        emit ReturnQueued(request.user, collateralToken, userPayout);
-        
+        pendingReturns[request.user][collateralToken] += payoutRaw;
+        emit ReturnQueued(request.user, collateralToken, payoutRaw);
+
         request.status = BurnStatus.SLASHED;
         _removeVaultBurnRequest(request.lpVault, requestId);
-        emit BurnSlashed(requestId, request.user, userPayout, userSecret);
-        
+        emit BurnSlashed(requestId, request.user, payoutRaw, userSecret);
+
         _reentrancyStatus = _NOT_ENTERED;
     }
-    
+
     /// @notice User aborts a burn request before the LP has proposed a hash (status must be REQUESTED)
     /// @dev Only callable after the burn deadline has expired and the LP has not proposed.
     ///      Restores wsXMR to the user and releases the locked LP collateral.
@@ -430,63 +434,65 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
     function abortBurn(bytes32 requestId) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
-        
+
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.REQUESTED) revert InvalidStatus();
         if (block.number < request.deadline) revert DeadlineNotExpired();
         if (msg.sender != request.user) revert Unauthorized();
-        
+
         Vault storage vault = _vaults[request.lpVault];
-        
+
         if (request.vaultLiquidationNonce == vault.liquidationNonce) {
             uint256 totalLock = request.lockedCollateral + request.rewardCollateral;
             if (vault.lockedCollateral < totalLock) revert InsufficientCollateral();
             vault.lockedCollateral -= totalLock;
         }
-        
+
         if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
         else globalPendingBurnDebt -= request.wsxmrAmount;
-        
+
         // Restore wsXMR to holder
         IwsXmrHub(address(this)).mintTokens(request.user, request.wsxmrAmount);
-        
+
         request.status = BurnStatus.CANCELLED;
         _removeVaultBurnRequest(request.lpVault, requestId);
         emit BurnAborted(requestId);
-        
+
         _reentrancyStatus = _NOT_ENTERED;
     }
-    
+
     /// @notice User force-settles a burn when the LP never proposed a hash (status must be REQUESTED, deadline expired)
-    /// @dev Unlike abortBurn, this pays the user par value in sDAI (no reward) instead of restoring wsXMR.
+    /// @dev Unlike abortBurn, this pays the user par value (no reward) instead of restoring wsXMR.
+    ///      Par = wsxmrAmount × thresholdAtRequest — the declared rate snapshotted at request.
     ///      This is used when the user prefers collateral over getting wsXMR back.
     /// @param requestId The burn request ID
     function forceSettleBurn(bytes32 requestId) external {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
-        
+
         BurnRequest storage request = burnRequests[requestId];
         if (request.status != BurnStatus.REQUESTED) revert InvalidStatus();
         if (block.number < request.deadline) revert DeadlineNotExpired();
         if (msg.sender != request.user) revert Unauthorized();
-        
+
         Vault storage vault = _vaults[request.lpVault];
-        
-        uint256 collateralPrice = _getCollateralPriceFromStorage();
-        uint256 parValueUsd = (request.wsxmrAmount * request.xmrPriceAtRequest) / WSXMR_DECIMALS;
-        uint256 parDaiAmount = (parValueUsd * _underlyingUnit()) / collateralPrice;
-        uint256 parShares = _daiToShares(parDaiAmount);
-        
-        uint256 userBase = parShares < request.lockedCollateral
-            ? parShares
+
+        uint256 parCollateral = _parCollateral(request.wsxmrAmount, request.thresholdAtRequest);
+
+        uint256 userBase = parCollateral < request.lockedCollateral
+            ? parCollateral
             : request.lockedCollateral;
         uint256 totalLock = request.lockedCollateral + request.rewardCollateral;
 
         if (vault.lockedCollateral < totalLock) revert InsufficientCollateral();
         vault.lockedCollateral -= totalLock;
-        if (vault.collateralShares < userBase) revert InsufficientCollateral();
-        vault.collateralShares -= userBase;
-        
+
+        uint256 baseRaw = _rawFromNorm(userBase);
+        uint256 baseNorm = _normFromRaw(baseRaw);
+
+        if (vault.collateralShares < baseNorm) revert InsufficientCollateral();
+        vault.collateralShares -= baseNorm;
+
         // Debt reduction happens here at settlement
         uint256 normalizedBurnAmount = (request.wsxmrAmount * 1e18 + globalDebtIndex - 1) / globalDebtIndex;
         if (normalizedBurnAmount > vault.normalizedDebt) {
@@ -494,22 +500,21 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         }
         vault.normalizedDebt -= normalizedBurnAmount;
         globalTotalDebt -= _denormalizeDebt(normalizedBurnAmount);
-        
+
         if (globalPendingBurnDebt < request.wsxmrAmount) globalPendingBurnDebt = 0;
         else globalPendingBurnDebt -= request.wsxmrAmount;
-        
+
         // Pay par value to holder (no reward for force-settle)
-        pendingReturns[request.user][collateralToken] += userBase;
-        globalPendingSDAI += userBase;
-        emit ReturnQueued(request.user, collateralToken, userBase);
-        
+        pendingReturns[request.user][collateralToken] += baseRaw;
+        emit ReturnQueued(request.user, collateralToken, baseRaw);
+
         request.status = BurnStatus.SLASHED;
         _removeVaultBurnRequest(request.lpVault, requestId);
-        emit BurnForceSettled(requestId, userBase);
-        
+        emit BurnForceSettled(requestId, baseRaw);
+
         _reentrancyStatus = _NOT_ENTERED;
     }
-    
+
     /// @notice Resolve a burn where the LP proposed a hash but the user never confirmed
     /// @dev Permissionless — anyone can call after the commit deadline expires.
     ///      Two accepted states:
@@ -576,7 +581,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
 
         _reentrancyStatus = _NOT_ENTERED;
     }
-    
+
     /// @notice LP abandons a proposed burn the user never confirmed — releases collateral only
     /// @dev LP-only escape for the PROPOSED deadlock: resolveDeclinedProposal requires the
     ///      user's secret, so if the user is gone the LP's collateral would be locked forever.
@@ -619,48 +624,52 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
 
         _reentrancyStatus = _NOT_ENTERED;
     }
-    
+
     /// @notice Get full burn request state
     /// @param requestId The burn request ID
     /// @return BurnRequest struct with all fields
     function getBurnRequest(bytes32 requestId) external view returns (BurnRequest memory) {
         return burnRequests[requestId];
     }
-    
+
     /// @notice Get all burn request IDs for a user
     /// @param user Address to query
     /// @return Array of burn request IDs
     function getUserBurnRequests(address user) external view returns (bytes32[] memory) {
         return userBurnRequests[user];
     }
-    
+
     /// @notice Get all burn request IDs for a vault
     /// @param vault Vault address to query
     /// @return Array of burn request IDs
     function getVaultBurnRequests(address vault) external view returns (bytes32[] memory) {
         return vaultBurnRequests[vault];
     }
-    
+
     /// @notice Calculate the collateral to lock for a burn request
-    /// @dev Computes par value in DAI from the current XMR price, applies BURN_LOCK_RATIO (110%) buffer,
-    ///      and converts to sDAI shares. Reward is the vault's burnRewardBps fraction of par.
+    /// @dev PROPORTIONAL LOCK: the collateral seized on slash equals the burn's fair share
+    ///      of the vault's free collateral times BURN_LOCK_MULTIPLIER (1.3×):
+    ///          baseLock = freeCollateral × (wsxmr/debt) × 1.3
+    ///      Reward = par × burnRewardBps where par = wsxmr × threshold (declared rate).
+    ///      This protects slash payouts when the vault sits below its own threshold —
+    ///      the user gets a proportional share of what actually backs their debt slice.
     /// @param lpVault The LP vault address
     /// @param wsxmrAmount Amount of wsXMR to burn (8 decimals)
-    /// @return baseLock sDAI shares locked as par + buffer collateral
-    /// @return rewardLock sDAI shares locked as burn reward for the user
+    /// @return baseLock Normalized collateral locked for the burn
+    /// @return rewardLock Normalized collateral locked as burn reward for the user
     function calculateBurnCollateral(address lpVault, uint256 wsxmrAmount) public view returns (uint256 baseLock, uint256 rewardLock) {
-        // Compute off PAR directly, converting USD -> DAI via collateral price so the lock
-        // is in the same units as the slash/settle side (which divide par USD by collateralPrice).
-        uint256 parUsd = (wsxmrAmount * _getXmrPriceFromStorage()) / WSXMR_DECIMALS;
-        uint256 parDai = (parUsd * _underlyingUnit()) / _getCollateralPriceFromStorage();
+        Vault memory vault = _vaults[lpVault];
+        uint256 debt = _denormalizeDebt(vault.normalizedDebt);
+        uint256 freeCollateral = _freeCollateral(vault);
 
-        uint256 baseDai = (parDai * BURN_LOCK_RATIO) / RATIO_PRECISION; // buffer over par
-        baseLock = _daiToShares(baseDai);
+        baseLock = debt == 0
+            ? 0
+            : (freeCollateral * wsxmrAmount * BURN_LOCK_MULTIPLIER_BPS) / (debt * BPS_DENOMINATOR);
 
-        uint256 rewardDai = (parDai * _vaults[lpVault].burnRewardBps) / BPS_DENOMINATOR;
-        rewardLock = _daiToShares(rewardDai);
+        uint256 par = _parCollateral(wsxmrAmount, vault.thresholdSharesPerWsxmr);
+        rewardLock = (par * vault.burnRewardBps) / BPS_DENOMINATOR;
     }
-    
+
     /// @notice Check if a burn amount meets the vault's minimum burn requirement
     /// @param lpVault The LP vault address
     /// @param wsxmrAmount Amount to check (8 decimals)
@@ -671,7 +680,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         if (vaultMin > 0 && wsxmrAmount < vaultMin) return false;
         return true;
     }
-    
+
     /// @notice Count active burn requests for a vault (REQUESTED, PROPOSED, or COMMITTED status)
     /// @param lpVault The LP vault address
     /// @return Number of active burn requests
@@ -686,7 +695,7 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         }
         return count;
     }
-    
+
     /// @notice Keeper function to cleanup completed/cancelled burn requests for a vault
     /// @dev Removes inactive requests from vaultBurnRequests array to save gas
     function cleanupVaultBurnRequests(address lpVault) external returns (uint256 removed) {
@@ -696,68 +705,20 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
         removed = initialLength - vaultBurns.length;
         emit BurnRequestsCleanedUp(lpVault, removed);
     }
-    
-    
-    /// @dev Syncs vault yield by harvesting excess sDAI shares generated since the last sync.
-    ///      Uses YieldLogic to compute the yield portion (collateral growth above principal).
-    ///      Harvested shares are moved from vault.collateralShares to yieldWarChest.
-    ///      Skips oracle calls if vault has no debt and no pending debt (gas optimization).
-    function _syncVaultYield(address lpAddress) internal {
-        Vault storage vault = _vaults[lpAddress];
-        
-        // Early return if no collateral
-        if (vault.collateralShares == 0) return;
-        
-        // Early return if no debt (skip expensive oracle calls)
-        uint256 actualDebt = (vault.normalizedDebt * globalDebtIndex) / 1e18;
-        if (actualDebt == 0 && vault.pendingDebt == 0) return;
-        
-        // Skip yield extraction if oracle price is stale — don't block burn operations
-        if (block.timestamp > lastXmrPriceTimestamp + 120 || block.timestamp > lastCollateralPriceTimestamp + 120) return;
-        
-        uint256 xmrPrice = _getXmrPriceFromStorage();
-        uint256 collateralPrice = _getCollateralPriceFromStorage();
-        
-        uint256 yieldShares = YieldLogic.syncVaultYield(
-            vault.collateralShares,
-            vault.lockedCollateral,
-            lpPrincipalDeposits[lpAddress],
-            vault.normalizedDebt,
-            vault.pendingDebt,
-            globalDebtIndex,
-            xmrPrice,
-            collateralPrice,
-            collateralToken
-        );
-        
-        if (yieldShares > 0) {
-            vault.collateralShares -= yieldShares;
-            yieldWarChest += yieldShares;
-        }
-    }
-    
-    /// @dev Convert underlying amount to collateral shares via the adapter's convertToShares
-    function _daiToShares(uint256 daiAmount) internal view returns (uint256) {
-        (bool success, bytes memory data) = collateralToken.staticcall(
-            abi.encodeWithSignature("convertToShares(uint256)", daiAmount)
-        );
-        require(success && data.length >= 32, "convertToShares failed");
-        return abi.decode(data, (uint256));
-    }
-    
+
     /// @dev Removes inactive (completed/cancelled/slashed) burn requests from the vault's burn array.
     ///      Compacts the array in-place by shifting active requests to the front and popping the rest.
     /// @return activeCount Number of active burn requests remaining after cleanup
     function _cleanupBurnRequests(bytes32[] storage vaultBurns) internal returns (uint256 activeCount) {
         uint256 writeIndex = 0;
         activeCount = 0;
-        
+
         for (uint256 i = 0; i < vaultBurns.length; i++) {
             bytes32 reqId = vaultBurns[i];
             BurnStatus status = burnRequests[reqId].status;
-            
-            if (status == BurnStatus.REQUESTED || 
-                status == BurnStatus.PROPOSED || 
+
+            if (status == BurnStatus.REQUESTED ||
+                status == BurnStatus.PROPOSED ||
                 status == BurnStatus.COMMITTED) {
                 if (writeIndex != i) {
                     vaultBurns[writeIndex] = reqId;
@@ -769,16 +730,16 @@ contract BurnFacet is wsXmrStorage, IBurnFacet {
                 delete burnRequestIndexPlusOne[reqId];
             }
         }
-        
+
         while (vaultBurns.length > writeIndex) {
             vaultBurns.pop();
         }
-        
+
         return activeCount;
     }
-    
+
     // ========== DIAMOND INTROSPECTION ==========
-    
+
     /// @notice Returns all function selectors implemented by this facet
     function selectors() external pure returns (bytes4[] memory) {
         bytes4[] memory sels = new bytes4[](19);

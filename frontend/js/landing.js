@@ -2,8 +2,8 @@
 //
 // Iterates every deployed chain (via config.js manifests) and renders:
 //   - aggregate protocol metrics (supply / TVL / CR / vaults)
-//   - a per-chain live card: DexScreener price, peg premium vs the hub
-//     oracle, pool liquidity, 24h volume, on-chain TVL/supply/vaults
+//   - a per-chain live card: DexScreener price, peg premium vs
+//     off-chain spot, pool liquidity, 24h volume, on-chain TVL/supply/vaults
 //   - the Deployments contract cards (with per-chain funding hints)
 //   - the live XMR price inside the timeline panel
 //
@@ -25,7 +25,8 @@ const getVaultAbi = [{
         { name: 'lockedCollateral', type: 'uint256' },
         { name: 'normalizedDebt', type: 'uint256' },
         { name: 'pendingDebt', type: 'uint256' },
-        { name: 'maxMintBps', type: 'uint16' },
+        { name: 'thresholdSharesPerWsxmr', type: 'uint256' },
+        { name: 'maxMintWsxmr', type: 'uint256' },
         { name: 'mintGriefingDeposit', type: 'uint256' },
         { name: 'mintFeeBps', type: 'uint16' },
         { name: 'burnRewardBps', type: 'uint16' },
@@ -33,7 +34,8 @@ const getVaultAbi = [{
         { name: 'mintNonce', type: 'uint256' },
         { name: 'minBurnAmount', type: 'uint256' },
         { name: 'active', type: 'bool' },
-        { name: 'deployedUSDeShares', type: 'uint256' },
+        { name: 'deployedCollateral', type: 'uint256' },
+        { name: 'deployedWsxmr', type: 'uint256' },
         { name: 'maxCoLPRangeBps', type: 'uint16' },
         { name: 'mintTimeoutBlocks', type: 'uint256' },
         { name: 'burnTimeoutBlocks', type: 'uint256' },
@@ -159,22 +161,21 @@ async function readChainStats(key, client, hub, wsXMR, parseAbi, formatUnits) {
         debt += vaultDebt;
     }
 
-    // getXmrPrice/getCollateralPrice revert on StalePrice when no one has
-    // pushed recently — last* return the stored values (1e8) unconditionally.
-    let collateralPrice = 0;
-    try {
-        const raw = await client.readContract({ address: hub, abi: parseAbi(['function lastCollateralPrice() external view returns (uint256)']), functionName: 'lastCollateralPrice' });
-        collateralPrice = parseFloat(formatUnits(raw, 8));
-        out.collUsd = collateralPrice;
-    } catch (e) { console.warn(`[Landing] ${key}: collateral price unavailable`); }
-    try {
-        const raw = await client.readContract({ address: hub, abi: parseAbi(['function lastXmrPrice() external view returns (uint256)']), functionName: 'lastXmrPrice' });
-        out.xmrUsd = parseFloat(formatUnits(raw, 8));
-    } catch (e) {}
+    // Display-only market prices — the protocol is oracle-free, so off-chain
+    // quotes are the only source for USD context (TVL, peg premium).
+    const yahoo = cfg.collateral.priceProxy?.yahoo;
+    if (yahoo) {
+        try {
+            const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahoo)}`, { signal: AbortSignal.timeout(8000) });
+            const j = await res.json();
+            const p = j?.chart?.result?.[0]?.meta?.regularMarketPrice;
+            if (p) out.collUsd = p;
+        } catch (e) { console.warn(`[Landing] ${key}: collateral price unavailable`); }
+    }
+    out.xmrUsd = state.xmrUsd || 0;
 
-    // Vault collateralShares are 18-dec share units; stata wrappers are 1:1
-    // with underlying at a fixed SCALE, so shares * price = underlying value.
-    out.tvlUsd = parseFloat(formatUnits(collateralShares, 18)) * collateralPrice;
+    // collateralShares are normalized 18-dec — human collateral = /1e18.
+    out.tvlUsd = parseFloat(formatUnits(collateralShares, 18)) * out.collUsd;
     out.debtUsd = parseFloat(formatUnits(debt, 8)) * out.xmrUsd;
     return out;
 }
@@ -273,12 +274,12 @@ function applyDexToCard(key, pair) {
     const t = pair.txns?.h24;
     if (el('ct-')) el('ct-').textContent = t ? String((t.buys || 0) + (t.sells || 0)) : '--';
 
-    // Peg premium vs fresh XMR spot (hub's stored price as fallback)
-    const oracle = state.xmrUsd || state.chains[key].onchain?.xmrUsd;
+    // Peg premium vs off-chain XMR spot — display only
+    const spot = state.xmrUsd || state.chains[key].onchain?.xmrUsd;
     const prem = el('cm-');
-    if (prem && isFinite(px) && oracle > 0) {
-        const pct = (px / oracle - 1) * 100;
-        prem.textContent = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}% vs oracle`;
+    if (prem && isFinite(px) && spot > 0) {
+        const pct = (px / spot - 1) * 100;
+        prem.textContent = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}% vs spot`;
         prem.className = 'prem ' + (Math.abs(pct) < 1 ? 'on' : pct > 0 ? 'hi' : 'lo');
     }
 }
@@ -320,7 +321,7 @@ async function main() {
     // Skeletons first so layout doesn't jump
     if (live) live.innerHTML = keys.map(renderChainCard).join('') + renderSoonCard();
 
-    // XMR spot: CoinGecko first (independent of oracle freshness), hub as fallback
+    // XMR spot: CoinGecko — display only (the protocol is oracle-free)
     try {
         const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd', { signal: AbortSignal.timeout(8000) });
         const j = await res.json();
@@ -346,7 +347,7 @@ async function main() {
         }));
     }
 
-    // On-chain stats FIRST — the DexScreener fallback needs the oracle
+    // On-chain stats FIRST — the DexScreener fallback needs the display
     // collateral price (onchain.collUsd), so it can't race ahead of these.
     await Promise.all(keys.map(async (key) => {
         const { client, D } = state.chains[key];
@@ -360,7 +361,7 @@ async function main() {
         } catch (e) { console.warn(`[Landing] ${key} onchain:`, e); }
     }));
 
-    // Dex now — the per-chain fallback has oracle prices available.
+    // Dex now — the per-chain fallback has display prices available.
     await refreshDex();
 
     // Retry the on-chain pool fallback for any chain DexScreener missed
@@ -388,7 +389,7 @@ async function main() {
         crEl.textContent = debtUSD === 0 ? '—' : (cr > 9999 ? '>9,999%' : `${Math.round(cr)}%`);
     }
 
-    // Re-apply dex so premiums pick up oracle prices that landed after dex did
+    // Re-apply dex so premiums pick up spot prices that landed after dex did
     keys.forEach(k => { if (state.chains[k].dex) applyDexToCard(k, state.chains[k].dex); });
 
     setInterval(refreshDex, REFRESH_MS);

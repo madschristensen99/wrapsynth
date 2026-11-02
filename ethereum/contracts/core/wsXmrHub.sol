@@ -6,16 +6,17 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {wsXmrStorage} from "./wsXmrStorage.sol";
 import {IwsXmrHub} from "../interfaces/core/IwsXmrHub.sol";
 import {IwsXMR} from "../interfaces/core/IwsXMR.sol";
-import {IwsXmrLiquidityRouter} from "../interfaces/router/IwsXmrLiquidityRouter.sol";
-import {VaultFacet} from "../facets/VaultFacet.sol";
-import {YieldLogic} from "../libraries/YieldLogic.sol";
-import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
 /**
  * @title wsXmrHub
  * @notice Central coordinator and state owner for the wsXMR system
  * @dev Holds all state, delegates logic to facets, controls token operations
- * 
+ *
+ * Oracle-free: no price feeds, no TWAP config, no perp index. Collateral is the
+ * raw ERC-20 held by the hub, tracked in normalized 18-dec units. Vaults quote
+ * their own thresholdSharesPerWsxmr; settlement happens at declared thresholds
+ * and market-discovered auction clearing prices — never at oracle prices.
+ *
  * Architecture:
  * - Hub owns all state (inherits from wsXmrStorage)
  * - Hub controls wsXMR token mint/burn
@@ -25,26 +26,31 @@ import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
  */
 contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     using SafeERC20 for IERC20;
-    
+
     // ========== STORAGE ==========
-    
+
     /// @notice Diamond selector dispatch table: function selector => facet address
     mapping(bytes4 => address) private _selectorToFacet;
-    
+
     /// @notice Transient storage slot for delegate context flag (EIP-1153)
     /// @dev WARNING: Per EIP-1153 spec, TSTORE fails in STATICCALL context
     /// @dev This means view functions CANNOT be called through the hub's fallback
     /// @dev Workaround: Expose view functions directly on hub, or use multicall pattern
     /// @dev Slot 0x00 is used for the transient flag
     uint256 private constant _DELEGATE_CONTEXT_SLOT = 0x00;
-    
+
+    // ========== EVENTS ==========
+
+    /// @notice Emitted once when the deployment's collateral asset is wired.
+    event ExternalAddressesSet(address collateralToken, uint256 collateralScale);
+
     // ========== MODIFIERS ==========
-    
+
     modifier onlyFacet() {
         if (!facets[msg.sender]) revert Unauthorized();
         _;
     }
-    
+
     modifier onlyDelegateCall() {
         // C1: Origin check defeats reentrancy bypass. Legitimate calls always come from the hub calling itself.
         if (msg.sender != address(this)) revert Unauthorized();
@@ -55,7 +61,7 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         if (!inContext) revert Unauthorized();
         _;
     }
-    
+
     modifier onlyDeployer() {
         if (msg.sender != deployer) revert Unauthorized();
         // One-way kill switch: once the deployer has locked its own powers,
@@ -63,19 +69,21 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         if (deployerOperationsLocked) revert Unauthorized();
         _;
     }
-    
+
     // ========== CONSTRUCTOR ==========
-    
+
     constructor(
         address _wsxmrToken,
-        address _verifierProxy
-    ) wsXmrStorage(_wsxmrToken, _verifierProxy) {
+        address _verifierProxy,
+        uint256 _minThreshold,
+        uint256 _kickBondMin
+    ) wsXmrStorage(_wsxmrToken, _verifierProxy, _minThreshold, _kickBondMin) {
         // Initialize allowed pool fee tiers
         allowedPoolFeeTiers[500] = true;   // 0.05%
         allowedPoolFeeTiers[3000] = true;  // 0.3%
         allowedPoolFeeTiers[10000] = true; // 1%
     }
-    
+
     // ========== INITIALIZATION ==========
 
     /// @notice Permanently disable every `onlyDeployer` action. Irreversible.
@@ -91,53 +99,51 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     }
 
     /// @inheritdoc IwsXmrHub
+    /// @dev Registers the five core facets and auto-builds the selector table by
+    ///      querying each facet's selectors() list. The old Yield/Oracle facet
+    ///      slots are gone — LiquidationAuctionFacet replaces LiquidationFacet.
     function registerFacets(
         address _vaultFacet,
         address _mintFacet,
         address _burnFacet,
-        address _liquidationFacet,
-        address _yieldFacet,
-        address _oracleFacet
+        address _liquidationAuctionFacet,
+        address _coLPFacet
     ) external onlyDeployer {
         if (vaultFacet != address(0)) revert AlreadyInitialized();
-        if (_vaultFacet == address(0) || _mintFacet == address(0) || 
-            _burnFacet == address(0) || _liquidationFacet == address(0) ||
-            _yieldFacet == address(0) || _oracleFacet == address(0)) {
+        if (_vaultFacet == address(0) || _mintFacet == address(0) ||
+            _burnFacet == address(0) || _liquidationAuctionFacet == address(0) ||
+            _coLPFacet == address(0)) {
             revert ZeroAddress();
         }
-        
+
         vaultFacet = _vaultFacet;
         mintFacet = _mintFacet;
         burnFacet = _burnFacet;
-        liquidationFacet = _liquidationFacet;
-        yieldFacet = _yieldFacet;
-        oracleFacet = _oracleFacet;
-        
+        liquidationAuctionFacet = _liquidationAuctionFacet;
+        coLPFacet = _coLPFacet;
+
         facets[_vaultFacet] = true;
         facets[_mintFacet] = true;
         facets[_burnFacet] = true;
-        facets[_liquidationFacet] = true;
-        facets[_yieldFacet] = true;
-        facets[_oracleFacet] = true;
-        
+        facets[_liquidationAuctionFacet] = true;
+        facets[_coLPFacet] = true;
+
         // Build selector table by querying each facet's selectors()
         _registerFacetSelectors(_vaultFacet);
         _registerFacetSelectors(_mintFacet);
         _registerFacetSelectors(_burnFacet);
-        _registerFacetSelectors(_liquidationFacet);
-        _registerFacetSelectors(_yieldFacet);
-        _registerFacetSelectors(_oracleFacet);
-        
+        _registerFacetSelectors(_liquidationAuctionFacet);
+        _registerFacetSelectors(_coLPFacet);
+
         emit FacetsRegistered(
             _vaultFacet,
             _mintFacet,
             _burnFacet,
-            _liquidationFacet,
-            _yieldFacet,
-            _oracleFacet
+            _liquidationAuctionFacet,
+            _coLPFacet
         );
     }
-    
+
     /// @notice Register all selectors from a facet into the routing table
     /// @dev Calls facet.selectors() and maps each selector to the facet address
     /// @dev Reverts if any selector is already registered to prevent silent overwrites
@@ -146,7 +152,7 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
             abi.encodeWithSignature("selectors()")
         );
         require(success, "Failed to get selectors");
-        
+
         bytes4[] memory sels = abi.decode(data, (bytes4[]));
         for (uint256 i = 0; i < sels.length; i++) {
             if (_selectorToFacet[sels[i]] != address(0)) {
@@ -155,10 +161,10 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
             _selectorToFacet[sels[i]] = facet;
         }
     }
-    
+
     /// @inheritdoc IwsXmrHub
-    /// @dev Used for facets beyond the six core slots (e.g. CoLPFacet). The
-    ///      deployer can only add facets before lockDeployer() is called.
+    /// @dev Used for facets beyond the five core slots. The deployer can only
+    ///      add facets before lockDeployer() is called.
     function addFacet(address facet) external onlyDeployer {
         if (facet == address(0)) revert ZeroAddress();
         if (facets[facet]) revert AlreadyInitialized();
@@ -171,13 +177,13 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     /// @dev Only deployer can modify selector table
     function addSelectors(address facet, bytes4[] calldata selectors) external onlyDeployer {
         if (!facets[facet]) revert Unauthorized();
-        
+
         for (uint256 i = 0; i < selectors.length; i++) {
             if (_selectorToFacet[selectors[i]] != address(0)) revert("Selector collision");
             _selectorToFacet[selectors[i]] = facet;
         }
     }
-    
+
     /// @notice Remove selectors from the routing table
     /// @dev Only deployer can modify selector table
     function removeSelectors(bytes4[] calldata selectors) external onlyDeployer {
@@ -185,16 +191,16 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
             delete _selectorToFacet[selectors[i]];
         }
     }
-    
+
     /// @inheritdoc IwsXmrHub
     function setLiquidityRouter(address router) external onlyDeployer {
         if (liquidityRouter != address(0)) revert AlreadyInitialized();
         if (router == address(0)) revert ZeroAddress();
-        
+
         liquidityRouter = router;
         emit LiquidityRouterSet(router);
     }
-    
+
     /// @notice Replace the liquidity router address (allows upgrades)
     /// @dev Only callable by deployer; emits same event as setLiquidityRouter
     function replaceLiquidityRouter(address router) external onlyDeployer {
@@ -203,106 +209,76 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
         emit LiquidityRouterSet(router);
     }
 
-    /// @notice Configure HyperEVM external dependencies. Callable once per
+    /// @notice Configure the vault collateral asset. Callable once per
     ///         deployment phase by the deployer before lockDeployer().
-    /// @param _collateralToken StataUSDe adapter (ERC-4626 share token over
-    ///        HyperLend USDe aToken) — the asset vault collateral is denominated in
-    /// @param _underlyingToken USDe — the asset users deposit
-    /// @param _swapRouter HyperSwap SwapRouter02 for buy-and-burn swaps
-    /// @param _xmrPerpIndex HyperCore native XMR perp index (224 mainnet / 202 testnet)
-    function setExternalAddresses(
-        address _collateralToken,
-        address _underlyingToken,
-        address _swapRouter,
-        uint32 _xmrPerpIndex
-    ) external onlyDeployer {
-        if (_collateralToken == address(0) || _underlyingToken == address(0)) revert ZeroAddress();
+    /// @dev    The collateral ERC-20 itself is the vault asset — no share
+    ///         adapter, no underlying indirection. `collateralScale` =
+    ///         10^(18 - token decimals) converts raw units to the normalized
+    ///         18-dec internal denomination used by every threshold, lock,
+    ///         bond, and auction quantity.
+    /// @param _collateralToken The collateral ERC-20 (cbBTC, QQQB, SPY, ...)
+    function setExternalAddresses(address _collateralToken) external onlyDeployer {
+        if (_collateralToken == address(0)) revert ZeroAddress();
+        if (collateralToken != address(0)) revert AlreadyInitialized();
         collateralToken = _collateralToken;
-        underlyingToken = _underlyingToken;
-        swapRouter = _swapRouter;
-        xmrPerpIndex = _xmrPerpIndex + 1; // stored +1 so 0 means "unset"
-        underlyingDecimals = _tryDecimals(_underlyingToken);
-        emit ExternalAddressesSet(_collateralToken, _underlyingToken, _swapRouter, _xmrPerpIndex);
+        uint8 decs = _tryDecimals(_collateralToken);
+        collateralScale = decs >= 18 ? 1 : 10 ** uint256(18 - decs);
+        emit ExternalAddressesSet(_collateralToken, collateralScale);
     }
 
-    event ExternalAddressesSet(address collateralToken, address underlyingToken, address swapRouter, uint32 xmrPerpIndex);
-
-    /// @notice Configure the on-chain collateral TWAP pools (BNB deployment).
-    /// @dev    Callable only pre-lock. Pass zero addresses to disable the TWAP leg.
-    /// @param _collateralPool   V3 pool: collateral vs intermediate (QQQB/WBNB)
-    /// @param _quotePool        V3 pool: intermediate vs USD token (WBNB/USDT)
-    /// @param _intermediateToken shared pool token (WBNB)
-    /// @param _usdToken         USD-pegged quote token (USDT)
-    /// @param _window           TWAP window in seconds
-    function setCollateralTwapConfig(
-        address _collateralPool,
-        address _quotePool,
-        address _intermediateToken,
-        address _usdToken,
-        uint32 _window
-    ) external onlyDeployer {
-        collateralTwapPool = _collateralPool;
-        quoteTwapPool = _quotePool;
-        twapIntermediateToken = _intermediateToken;
-        twapUsdToken = _usdToken;
-        collateralTwapWindow = _window;
-        emit CollateralTwapConfigSet(_collateralPool, _quotePool, _intermediateToken, _usdToken, _window);
+    /// @dev Best-effort ERC-20 decimals() probe; defaults to 18 on failure.
+    function _tryDecimals(address token) private view returns (uint8) {
+        (bool ok, bytes memory data) = token.staticcall(abi.encodeWithSignature("decimals()"));
+        if (!ok || data.length < 32) return 18;
+        return abi.decode(data, (uint8));
     }
 
-    event CollateralTwapConfigSet(
-        address collateralPool,
-        address quotePool,
-        address intermediateToken,
-        address usdToken,
-        uint32 window
-    );
-    
     // ========== FACET OPERATIONS ==========
-    
+
     /// @inheritdoc IwsXmrHub
     function mintTokens(address to, uint256 amount) external onlyDelegateCall {
         IwsXMR(wsxmrToken).mint(to, amount);
     }
-    
+
     /// @inheritdoc IwsXmrHub
     function burnTokens(address from, uint256 amount) external onlyDelegateCall {
         IwsXMR(wsxmrToken).burn(from, amount);
     }
-    
+
     /// @inheritdoc IwsXmrHub
     function transferAsset(address token, address to, uint256 amount) external onlyDelegateCall {
         IERC20(token).safeTransfer(to, amount);
     }
-    
+
     /// @inheritdoc IwsXmrHub
     function approveAsset(address token, address spender, uint256 amount) external onlyDelegateCall {
         IERC20(token).forceApprove(spender, amount);
     }
-    
+
     // ========== REENTRANCY GUARDS ==========
-    
+
     /// @inheritdoc IwsXmrHub
     function enterNonReentrant() external onlyDelegateCall {
         if (_reentrancyStatus == _ENTERED) revert ReentrancyGuard();
         _reentrancyStatus = _ENTERED;
     }
-    
+
     function exitNonReentrant() external onlyDelegateCall {
         _reentrancyStatus = _NOT_ENTERED;
     }
-    
+
     // ========== VIEW FUNCTIONS ==========
-    
+
     /// @notice Get total number of active vaults
     function getVaultCount() external view returns (uint256) {
         return activeVaultCount;
     }
-    
+
     /// @notice Get actual debt from normalized debt
     function getActualDebt(uint256 normalizedDebt) external view returns (uint256) {
         return (normalizedDebt * globalDebtIndex) / 1e18;
     }
-    
+
     /// @notice Get the facet address for a given function selector
     /// @dev Allows external callers to bypass hub and call view functions directly on facets
     /// @param selector The function selector to look up
@@ -310,54 +286,26 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     function getFacetAddress(bytes4 selector) external view returns (address) {
         return _selectorToFacet[selector];
     }
-    
+
     /// @notice Get vault health ratio for a given LP
     /// @dev Direct implementation to avoid TSTORE in staticcall issue.
-    ///      Includes co-LP positions so it matches LiquidationFacet CR logic.
+    ///      INFORMATIONAL ONLY — self-declared coverage:
+    ///      freeCollateral / (debt × threshold) × RATIO_PRECISION.
+    ///      This is not a solvency oracle — the LP sets the threshold.
     /// @param lpAddress The LP address to check
-    /// @return ratio The collateralization ratio (e.g., 150 = 150%)
+    /// @return ratio Coverage ratio (100 = vault covers debt at its own threshold)
     function getVaultHealth(address lpAddress) external view returns (uint256 ratio) {
         Vault memory vault = _vaults[lpAddress];
         uint256 actualDebt = (vault.normalizedDebt * globalDebtIndex) / 1e18;
-        
-        if (actualDebt == 0) return type(uint256).max;
-        
-        // Get prices from storage (set by oracle facet)
-        uint256 xmrPrice = _getXmrPriceFromStorage();  // 18 decimals (normalized)
-        uint256 daiPrice = _getCollateralPriceFromStorage();  // 18 decimals (normalized)
-        
-        // Only count unlocked collateral toward health ratio
-        uint256 availableShares = vault.collateralShares > vault.lockedCollateral
+        uint256 freeCollateral = vault.collateralShares > vault.lockedCollateral
             ? vault.collateralShares - vault.lockedCollateral
             : 0;
-
-        // Convert unlocked collateral shares to underlying
-        (bool success, bytes memory data) = collateralToken.staticcall(
-            abi.encodeWithSignature("convertToAssets(uint256)", availableShares)
-        );
-        require(success && data.length >= 32, "convertToAssets failed");
-        uint256 idleDai = abi.decode(data, (uint256));
-        
-        uint256 totalDai = idleDai;
-        
-        // Add co-LP position DAI values (ignore wsXMR — belongs to user)
-        uint256[] storage positions = _vaultPositions[lpAddress];
-        if (positions.length > 0 && liquidityRouter != address(0)) {
-            for (uint256 i = 0; i < positions.length; i++) {
-                (uint256 posDai, ) = IwsXmrLiquidityRouter(liquidityRouter)
-                    .getPositionAmountsAtPrice(positions[i], xmrPrice, daiPrice);
-                totalDai += posDai;
-            }
-        }
-        
-        // Calculate USD values (prices 18 decimals, totalDai in raw underlying units)
-        uint256 collateralValueUsd = (totalDai * daiPrice) / _underlyingUnit(); // 18 decimals
-        uint256 debtValueUsd = (actualDebt * xmrPrice) / 1e8; // wsXMR has 8 decimals, result 18 decimals
-        
-        // Calculate ratio: (collateral / debt) * 100
-        return (collateralValueUsd * 100) / debtValueUsd;
+        if (actualDebt == 0) return type(uint256).max;
+        uint256 required = (actualDebt * vault.thresholdSharesPerWsxmr) / WSXMR_DECIMALS;
+        if (required == 0) return type(uint256).max;
+        return (freeCollateral * RATIO_PRECISION) / required;
     }
-    
+
     /// @notice Get vault debt for a given LP
     /// @dev Direct implementation to avoid TSTORE in staticcall issue
     /// @param lpAddress The LP address to check
@@ -368,78 +316,41 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
 
     /// @notice Get max wsXMR amount a vault can mint in a single transaction
     /// @dev Direct implementation to avoid TSTORE in staticcall issue.
-    ///      Simulates yield sync and collateral ratio check exactly as initiateMint would.
+    ///      Mirrors the bond-reserved coverage check in MintFacet so the
+    ///      reported capacity is actually mintable:
+    ///        free·1e8 >= T·(D0 + x) + 1.1·x·T
+    ///        x <= (free·1e8 − T·D0) / (T·(1 + MINT_LOCK_RATIO/RATIO_PRECISION))
+    ///      Then capped by the vault's LP-quoted maxMintWsxmr.
     /// @param lpVault LP vault address
     /// @return maxWsxmrAmount Maximum wsXMR (8 decimals) that can be minted
     function getMintCapacity(address lpVault) external view returns (uint256 maxWsxmrAmount) {
         Vault memory vault = _vaults[lpVault];
         if (!vault.active) return 0;
+        uint256 threshold = vault.thresholdSharesPerWsxmr;
+        if (threshold < minThreshold) return 0;
 
-        uint256 xmrPrice = _getXmrPriceFromStorage();
-        uint256 collateralPrice = _getCollateralPriceFromStorage();
-
-        // Simulate _syncVaultYield: calculate yield that would be extracted
-        uint256 collateralShares = vault.collateralShares;
-        uint256 actualDebt = (vault.normalizedDebt * globalDebtIndex) / 1e18;
-        if (collateralShares > 0 && (actualDebt > 0 || vault.pendingDebt > 0)) {
-            uint256 yieldShares = YieldLogic.calculateExtractableYield(
-                collateralShares,
-                vault.lockedCollateral,
-                lpPrincipalDeposits[lpVault],
-                actualDebt,
-                vault.pendingDebt,
-                xmrPrice,
-                collateralPrice,
-                collateralToken
-            );
-            collateralShares -= yieldShares;
-        }
-
-        // Available collateral after yield sync (same as initiateMint)
-        uint256 availableCollateral = collateralShares > vault.lockedCollateral
-            ? collateralShares - vault.lockedCollateral
+        uint256 freeCollateral = vault.collateralShares > vault.lockedCollateral
+            ? vault.collateralShares - vault.lockedCollateral
             : 0;
-        if (availableCollateral == 0) return 0;
+        if (freeCollateral == 0) return 0;
 
-        // Convert available shares to underlying, then to USD
-        uint256 collateralAmount = IERC4626(collateralToken).convertToAssets(availableCollateral);
-        uint256 collateralValueUsd = (collateralAmount * collateralPrice) / _underlyingUnit();
+        uint256 actualDebt = (vault.normalizedDebt * globalDebtIndex) / 1e18;
+        uint256 headroom = freeCollateral * WSXMR_DECIMALS;
+        uint256 committed = threshold * (actualDebt + vault.pendingDebt);
+        if (headroom <= committed) return 0;
+        maxWsxmrAmount = ((headroom - committed) * RATIO_PRECISION)
+            / (threshold * (RATIO_PRECISION + MINT_LOCK_RATIO));
 
-        // Current debt value in USD
-        uint256 currentDebt = actualDebt + vault.pendingDebt;
-        uint256 currentDebtValueUsd = (currentDebt * xmrPrice) / WSXMR_DECIMALS;
-
-        // Max total debt at 150% CR — still needed for the per-mint maxMintBps cap,
-        // which initiateMint applies to the non-bond-reduced available collateral.
-        uint256 maxTotalDebtValueUsd = (collateralValueUsd * RATIO_PRECISION) / COLLATERAL_RATIO;
-
-        // Bond-reserved capacity: a mint of x wsXMR locks a 110%-of-par key bond
-        // AND must leave the remaining free collateral at CR >= 150%:
-        //   (C - 1.1·x·p) · 100  >=  150 · (D0 + x) · p        [all terms USD]
-        //   x <= (100·C - 150·D0) / ((150 + 110)·p)
-        // Mirrors the bond-reserved check in initiateMint/provideLPKey so the
-        // reported capacity is actually mintable — not just CR-eligible.
-        uint256 numerator = collateralValueUsd * RATIO_PRECISION;
-        uint256 debtTerm = currentDebtValueUsd * COLLATERAL_RATIO;
-        if (numerator <= debtTerm) return 0;
-        maxWsxmrAmount = ((numerator - debtTerm) * WSXMR_DECIMALS)
-            / ((COLLATERAL_RATIO + MINT_LOCK_RATIO) * xmrPrice);
-
-        // Apply maxMintBps limit (limits single mint USD value)
-        if (vault.maxMintBps > 0) {
-            uint256 maxMintAllowedUsd = (maxTotalDebtValueUsd * vault.maxMintBps) / BPS_DENOMINATOR;
-            uint256 maxMintFromBps = (maxMintAllowedUsd * WSXMR_DECIMALS) / xmrPrice;
-            if (maxMintFromBps < maxWsxmrAmount) {
-                maxWsxmrAmount = maxMintFromBps;
-            }
+        if (vault.maxMintWsxmr > 0 && maxWsxmrAmount > vault.maxMintWsxmr) {
+            maxWsxmrAmount = vault.maxMintWsxmr;
         }
     }
-    
+
     // ========== FALLBACK ==========
-    
+
     /// @notice Receive ETH for griefing deposits and refunds
     receive() external payable {}
-    
+
     /// @notice Route function calls to appropriate facets via delegatecall
     /// @dev Uses selector table for O(1) routing
     /// @dev Uses EIP-1153 transient storage (TSTORE/TLOAD) for reentrancy protection
@@ -448,20 +359,20 @@ contract wsXmrHub is wsXmrStorage, IwsXmrHub {
     fallback() external payable {
         address facet = _selectorToFacet[msg.sig];
         if (facet == address(0)) revert("Function does not exist");
-        
+
         assembly ("memory-safe") {
             // C1: Save previous transient flag and restore after delegatecall.
             // This prevents the flag from persisting across the entire transaction.
             let prev := tload(_DELEGATE_CONTEXT_SLOT)
             tstore(_DELEGATE_CONTEXT_SLOT, 1)
-            
+
             let ptr := mload(0x40)
             calldatacopy(ptr, 0, calldatasize())
             let result := delegatecall(gas(), facet, ptr, calldatasize(), 0, 0)
             returndatacopy(ptr, 0, returndatasize())
-            
+
             tstore(_DELEGATE_CONTEXT_SLOT, prev)
-            
+
             switch result
             case 0 { revert(ptr, returndatasize()) }
             default { return(ptr, returndatasize()) }

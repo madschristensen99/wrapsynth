@@ -7,8 +7,7 @@ import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
-import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
-import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
+import {LiquidationAuctionFacet} from "../contracts/facets/LiquidationAuctionFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
 import {IErrors} from "../contracts/interfaces/IErrors.sol";
@@ -98,6 +97,12 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
     ///         user's griefing deposit until timeout. initiateMint must reject
     ///         it up front with the same bond-reserved math.
     function test_InitiateMint_RejectsWhenBondReservedCRBelowMin() public {
+        // Set a threshold that leaves mints 1–7 inside the bound but puts mint 8
+        // over it: mint i needs bond + i·0.02·T ≤ free (100e18). T = 5.7e20 →
+        // mint 7 ≈ 9.23e19 (passes), mint 8 ≈ 1.04e20 (reverts).
+        vm.prank(lp);
+        VaultFacet(address(hub)).setThreshold(5.7e20);
+
         // Build debt so the vault is near capacity: 7 mints × 0.02 wsXMR = 0.14
         for (uint256 i = 0; i < 7; i++) {
             _mintForUser(user, lp);
@@ -119,7 +124,11 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
 
     /// @notice The bond-reserved check must still allow mints that clear the bar.
     function test_InitiateMint_PassesWhenBondReservedCRAboveMin() public {
-        // 6 mints × 0.02 wsXMR = 0.12 debt; 7th mint: CR with bond ≈ 167% — passes.
+        // T = 5.7e20 → mint 7 ≈ 9.23e19 required — inside the 100e18 bound.
+        vm.prank(lp);
+        VaultFacet(address(hub)).setThreshold(5.7e20);
+
+        // 6 mints × 0.02 wsXMR = 0.12 debt; 7th mint still clears the bound.
         for (uint256 i = 0; i < 6; i++) {
             _mintForUser(user, lp);
         }
@@ -140,7 +149,7 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
 
     function test_GetBurnRequest_ReturnsCorrect() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
         wsXmrStorage.BurnRequest memory req = _getBurnRequest(burnId);
         assertEq(req.requestId, burnId, "requestId should match");
         assertEq(req.user, user, "user should match");
@@ -152,7 +161,7 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
 
     function test_GetUserBurnRequests_ReturnsCorrect() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
         bytes32[] memory userBurns = _getUserBurnRequests(user);
         assertGt(userBurns.length, 0, "should have at least 1 burn request");
         assertEq(userBurns[userBurns.length - 1], burnId, "last should match");
@@ -162,7 +171,7 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
 
     function test_GetVaultBurnRequests_ReturnsCorrect() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
         bytes32[] memory vaultBurns = _getVaultBurnRequests(lp);
         assertGt(vaultBurns.length, 0, "should have at least 1 burn request");
         assertEq(vaultBurns[vaultBurns.length - 1], burnId, "last should match");
@@ -172,7 +181,7 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
 
     function test_GetActiveBurnCount_WithActive() public {
         uint256 minted = _mintForUser(user, lp);
-        _requestBurn(user, lp, minted);
+        _requestBurn(user, lp, minted / 2);
         uint256 count = _getActiveBurnCount(lp);
         assertEq(count, 1, "should have 1 active burn");
     }
@@ -184,7 +193,7 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
 
     function test_GetActiveBurnCount_AfterAbort() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
 
         vm.roll(block.number + 50000);
         vm.prank(user);
@@ -244,7 +253,7 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
         // Verify collateral was locked at setMintReady
         wsXmrStorage.MintRequest memory req = _getMintRequest(reqId);
         assertGt(req.lockedCollateral, 0, "collateral should be locked at setMintReady");
-        assertGt(req.xmrPriceAtReady, 0, "xmrPriceAtReady should be set");
+        assertGt(req.thresholdAtReady, 0, "thresholdAtReady should be set");
 
         vm.roll(block.number + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
@@ -525,7 +534,7 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
             vKeyed.lockedCollateral - reqKeyed.lockedCollateral + reqReady.lockedCollateral,
             "vault lock tracks request lock through re-price"
         );
-        assertGt(reqReady.xmrPriceAtReady, 0, "ready price recorded");
+        assertGt(reqReady.thresholdAtReady, 0, "ready price recorded");
     }
 
     /// @notice The bond is withdrawal-safe during KEY_PROVIDED even though
@@ -565,7 +574,7 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
 
     function test_AbandonProposedBurn_LPReleasesCollateral() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
 
         // LP proposes
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
@@ -612,9 +621,10 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
         (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(userSecret));
         bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
 
+        uint256 burnAmount = minted / 2;
         vm.startPrank(user);
         wsxmr.approve(address(hub), minted);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(burnAmount, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
         vm.stopPrank();
 
         // LP proposes
@@ -634,7 +644,7 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
 
         // Late claim: user reveals userSecret → wsXMR restored, secret emitted for LP
         BurnFacet(address(hub)).resolveDeclinedProposal(burnId, userSecret);
-        assertEq(wsxmr.balanceOf(user), balAfterAbandon + minted, "wsXMR restored on late claim");
+        assertEq(wsxmr.balanceOf(user), balAfterAbandon + burnAmount, "wsXMR restored on late claim");
         assertFalse(hub.abandonedBurns(burnId), "abandoned flag cleared");
 
         // No double collateral release
@@ -656,9 +666,10 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
         (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(userSecret));
         bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
 
+        uint256 burnAmount = minted / 2;
         vm.startPrank(user);
         wsxmr.approve(address(hub), minted);
-        bytes32 burnId = BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
+        bytes32 burnId = BurnFacet(address(hub)).requestBurn(burnAmount, lp, user, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
         vm.stopPrank();
 
         // LP proposes
@@ -672,7 +683,7 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
 
         uint256 balBefore = wsxmr.balanceOf(user);
         BurnFacet(address(hub)).resolveDeclinedProposal(burnId, userSecret);
-        assertEq(wsxmr.balanceOf(user), balBefore + minted, "wsXMR restored");
+        assertEq(wsxmr.balanceOf(user), balBefore + burnAmount, "wsXMR restored");
         assertEq(uint256(_getBurnRequest(burnId).status), uint256(wsXmrStorage.BurnStatus.CANCELLED), "should be CANCELLED");
     }
 
@@ -761,7 +772,7 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
 
     function test_VaultBurnRequests_RemovedEagerlyOnTerminal() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
 
         vm.roll(block.number + 50000);
         vm.prank(user);
@@ -777,7 +788,7 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
 
     function test_CleanupVaultBurnRequests_KeepsActive() public {
         uint256 minted = _mintForUser(user, lp);
-        _requestBurn(user, lp, minted);
+        _requestBurn(user, lp, minted / 2);
 
         uint256 beforeCount = _getVaultBurnRequests(lp).length;
         uint256 removed = BurnFacet(address(hub)).cleanupVaultBurnRequests(lp);
@@ -797,11 +808,8 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
         _provideLPKey(lp, reqId);
         assertGt(_getVault(lp).pendingDebt, 0, "pendingDebt should be reserved");
 
-        // Pump XMR price so the vault is underwater, then liquidate (mintNonce++)
-        _setXmrPrice8dec(50000_00000000);
-        deal(address(wsxmr), attacker, 1_000_000_000);
-        vm.prank(attacker);
-        LiquidationFacet(address(hub)).liquidate(lp, type(uint256).max);
+        // Kick → open (mintNonce++ invalidates the pending mint) → bid
+        _liquidateVault(attacker, lp);
 
         // Mint is nonce-invalidated — cancel after timeout must still release pendingDebt
         vm.roll(block.number + 50000);
@@ -819,10 +827,8 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
         vm.prank(user);
         MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
 
-        _setXmrPrice8dec(50000_00000000);
-        deal(address(wsxmr), attacker, 1_000_000_000);
-        vm.prank(attacker);
-        LiquidationFacet(address(hub)).liquidate(lp, type(uint256).max);
+        // Kick → open → bid: the whole-debt settlement bumps mintNonce
+        _liquidateVault(attacker, lp);
 
         // Secret is public — finalize cancels on nonce mismatch and slashes bond to user
         MintFacet(address(hub)).finalizeMint(reqId);
@@ -845,11 +851,8 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
         vm.roll(baseBlock + 50000);
         MintFacet(address(hub)).cancelMint(reqId, bytes32(0));
 
-        // Liquidate — the bond stays locked (liquidation never seizes locked collateral)
-        _setXmrPrice8dec(50000_00000000);
-        deal(address(wsxmr), attacker, 1_000_000_000);
-        vm.prank(attacker);
-        LiquidationFacet(address(hub)).liquidate(lp, type(uint256).max);
+        // Liquidate — the bond stays locked (auctions never seize locked collateral)
+        _liquidateVault(attacker, lp);
 
         assertGt(_getVault(lp).lockedCollateral, 0, "bond should still be locked");
 
@@ -887,7 +890,7 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
         uint256 minted = _mintForUser(user, lp);
         uint256 rollTarget = block.number;
         for (uint256 i = 0; i < 10; i++) {
-            bytes32 burnId = _requestBurn(user, lp, minted);
+            bytes32 burnId = _requestBurn(user, lp, minted / 2);
             rollTarget += 10000;
             vm.roll(rollTarget);
             vm.prank(user);
@@ -900,7 +903,7 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
 
     function _committedBurn() internal returns (bytes32 burnId, bytes32 burnSecret) {
         uint256 minted = _mintForUser(user, lp);
-        burnId = _requestBurn(user, lp, minted);
+        burnId = _requestBurn(user, lp, minted / 2);
 
         burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -960,7 +963,7 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
 
     function test_ConfirmMoneroLock_AfterDeadline_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
 
         bytes32 burnSecret = bytes32(uint256(0xcafebabe));
         (uint256 bpx, uint256 bpy) = Ed25519.scalarMultBase(uint256(burnSecret));
@@ -1028,6 +1031,21 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
         return abi.decode(r, (bool));
     }
 
+    /// @dev Kick → openAuction → bid: clears the vault's full debt for the
+    ///      Dutch-haircut share of offered collateral. Bidder is funded inline.
+    function _liquidateVault(address bidder, address lpVault) internal {
+        _kickVault(bidder, lpVault);
+        vm.roll(block.number + hub.KICK_GRACE_BLOCKS() + 1);
+        LiquidationAuctionFacet(address(hub)).openAuction(lpVault);
+        vm.roll(block.number + hub.AUCTION_OPEN_DELAY_BLOCKS() + 1);
+        uint256 debt = hub.getVaultDebt(lpVault);
+        deal(address(wsxmr), bidder, debt);
+        vm.startPrank(bidder);
+        wsxmr.approve(address(hub), debt);
+        LiquidationAuctionFacet(address(hub)).bid(lpVault);
+        vm.stopPrank();
+    }
+
     function _getPendingReturns(address who, address token) internal returns (uint256) {
         bytes memory r = _hubView(abi.encodeWithSelector(VaultFacet.getPendingReturns.selector, who, token));
         return abi.decode(r, (uint256));
@@ -1053,7 +1071,7 @@ contract MintBurnCoverageTestBase is BaseMockTestBase {
 
     function _configureVault(address who) internal {
         vm.startPrank(who);
-        VaultFacet(address(hub)).setMaxMintBps(0);
+        VaultFacet(address(hub)).setMaxMintWsxmr(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
         VaultFacet(address(hub)).setVaultMarketMetrics(100, 100);

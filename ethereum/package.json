@@ -11,8 +11,12 @@
     "coverage": "forge coverage",
     "fmt": "forge fmt",
     "deploy": "node scripts/deployAndTestAll.js",
-    "deploy:dry": "forge script script/DeployGnosis.s.sol:DeployGnosis --rpc-url $GNOSIS_RPC_URL",
-    "deploy:forge": "forge script script/DeployGnosis.s.sol:DeployGnosis --rpc-url $GNOSIS_RPC_URL --broadcast"
+    "deploy:dry:base": "forge script script/DeployBase.s.sol:DeployBase --rpc-url $BASE_RPC_URL",
+    "deploy:dry:bnb": "forge script script/DeployBnb.s.sol:DeployBnb --rpc-url $BSC_RPC_URL",
+    "deploy:dry:robinhood": "forge script script/DeployRobinhood.s.sol:DeployRobinhood --rpc-url $ROBINHOOD_RPC_URL",
+    "deploy:base": "forge script script/DeployBase.s.sol:DeployBase --rpc-url $BASE_RPC_URL --broadcast",
+    "deploy:bnb": "forge script script/DeployBnb.s.sol:DeployBnb --rpc-url $BSC_RPC_URL --broadcast",
+    "deploy:robinhood": "forge script script/DeployRobinhood.s.sol:DeployRobinhood --rpc-url $ROBINHOOD_RPC_URL --broadcast"
   },
   "keywords": [
     "monero",
@@ -31,8 +35,6 @@
   "dependencies": {
     "@noble/ed25519": "^2.0.0",
     "@openzeppelin/contracts": "^5.0.0",
-    "@redstone-finance/evm-connector": "0.8.0",
-    "@redstone-finance/sdk": "^0.9.0",
     "axios": "^1.13.4",
     "bs58": "^5.0.0",
     "circomlibjs": "^0.1.7",

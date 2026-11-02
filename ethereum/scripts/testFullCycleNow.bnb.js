@@ -1,48 +1,29 @@
 #!/usr/bin/env node
 /**
- * Test FULL mint and burn cycle on BNB Chain mainnet.
+ * Test FULL mint and burn cycle on Base mainnet.
  * Vault setup (QQQB collateral) -> mint wsXMR -> burn wsXMR.
- * All transactions hit the live deployment — visible on BscScan.
+ * All transactions hit the live deployment — visible on BaseScan.
+ *
+ * Oracle-free: no price pushes anywhere. The vault's declared
+ * thresholdSharesPerWsxmr is the mint bound and par-settlement rate.
  */
 
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const { ethers } = require('ethers');
-const { WrapperBuilder } = require('@redstone-finance/evm-connector');
-const { getSignersForDataServiceId } = require('@redstone-finance/oracles-smartweave-contracts');
-const { redstoneGatewayUrls } = require('./redstoneGateway');
-const { HUB_ADDRESS, WSXMR_ADDRESS, QQQB_ADDRESS, STATA_ADDRESS, ED25519_HELPER, RPC_URL } = require('./deploymentConfig.bnb');
+const { HUB_ADDRESS, WSXMR_ADDRESS, QQQB_ADDRESS, ED25519_HELPER, RPC_URL } = require('./deploymentConfig.bnb');
 
-function wrapWithRedStone(contract) {
-    const authorizedSigners = getSignersForDataServiceId('redstone-primary-prod');
-    return WrapperBuilder.wrap(contract).usingDataService({
-        dataServiceId: 'redstone-primary-prod',
-        uniqueSignersCount: 3,
-        dataPackagesIds: ['XMR'], // BNB collateral price is on-chain TWAP, not a pushed feed
-        authorizedSigners,
-        urls: redstoneGatewayUrls()
-    });
-}
+// Vault threshold: normalized collateral (18-dec) per 1e8 wsXMR.
+// ~150% coverage at XMR=$390, QQQB=$700 → 0.84 QQQB per wsXMR.
+const THRESHOLD = ethers.utils.parseUnits('0.84', 18);
 
-async function retryRedStone(fn, maxRetries = 3) {
-    let lastError;
-    for (let i = 0; i < maxRetries; i++) {
-        try {
-            return await fn();
-        } catch (err) {
-            lastError = err;
-            const isTimeout = err.message && (
-                err.message.includes('timeout') ||
-                err.message.includes('AggregateError') ||
-                err.message.includes('ETIMEDOUT')
-            );
-            if (!isTimeout || i === maxRetries - 1) throw err;
-            const delay = 2000 * Math.pow(2, i);
-            console.log(`  RedStone timeout, retrying in ${delay / 1000}s... (attempt ${i + 2}/${maxRetries})`);
-            await new Promise(r => setTimeout(r, delay));
-        }
-    }
-    throw lastError;
-}
+const VAULT_TUPLE =
+    'tuple(address lpAddress, uint256 collateralShares, uint256 lockedCollateral, ' +
+    'uint256 normalizedDebt, uint256 pendingDebt, uint256 thresholdSharesPerWsxmr, ' +
+    'uint256 maxMintWsxmr, uint256 mintGriefingDeposit, uint16 mintFeeBps, ' +
+    'uint16 burnRewardBps, uint256 liquidationNonce, uint256 mintNonce, ' +
+    'uint256 minBurnAmount, bool active, uint256 deployedCollateral, ' +
+    'uint256 deployedWsxmr, uint16 maxCoLPRangeBps, uint256 mintTimeoutBlocks, ' +
+    'uint256 burnTimeoutBlocks, uint256 pendingMintCount)';
 
 async function main() {
     if (!process.env.PRIVATE_KEY) {
@@ -51,14 +32,10 @@ async function main() {
     }
 
     const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
-    const floor = ethers.utils.parseUnits('0.1', 'gwei');
-    provider.getFeeData = async () => ({
-        gasPrice: floor, maxFeePerGas: floor, maxPriorityFeePerGas: floor, lastBaseFeePerGas: floor
-    });
     const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
 
-    console.log('Testing FULL Mint and Burn Cycle — BNB Chain');
-    console.log('=============================================');
+    console.log('Testing FULL Mint and Burn Cycle — BNB Chain (oracle-free)');
+    console.log('=========================================');
     console.log('Wallet:', wallet.address);
     console.log('Hub:', HUB_ADDRESS);
     console.log('');
@@ -67,8 +44,9 @@ async function main() {
         'function createVault() external',
         'function depositCollateral(uint256 amount) external',
         'function hasActiveVault(address lpAddress) external view returns (bool)',
-        'function getVault(address lpAddress) external view returns (tuple(address lpAddress, uint256 collateralShares, uint256 lockedCollateral, uint256 normalizedDebt, uint256 pendingDebt, uint16 maxMintBps, uint256 mintGriefingDeposit, uint16 mintFeeBps, uint16 burnRewardBps, uint256 liquidationNonce, uint256 mintNonce, uint256 minBurnAmount, bool active, uint256 deployedSDAIShares, uint16 maxCoLPRangeBps, uint256 mintTimeoutBlocks, uint256 burnTimeoutBlocks, uint256 pendingMintCount))',
-        'function setMaxMintBps(uint16 maxMintBps) external',
+        `function getVault(address lpAddress) external view returns (${VAULT_TUPLE})`,
+        'function setThreshold(uint256 newThreshold) external',
+        'function setMaxMintWsxmr(uint256 newMax) external',
         'function setMinBurnAmount(uint256 minAmount) external',
         'function setMintGriefingDeposit(uint256 deposit) external',
         'function setVaultMarketMetrics(uint16 mintFeeBps, uint16 burnRewardBps) external',
@@ -81,8 +59,7 @@ async function main() {
         'function requestBurn(uint256 wsxmrAmount, address lpVault, address burnRecipient, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey) external returns (bytes32)',
         'function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
         'function confirmMoneroLock(bytes32 requestId) external',
-        'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
-        'function updateOraclePrices(bytes[] calldata updateData) external payable'
+        'function finalizeBurn(bytes32 requestId, bytes32 secret) external'
     ];
 
     const erc20Abi = [
@@ -113,43 +90,37 @@ async function main() {
         await (await hub.createVault()).wait();
         console.log('  Vault created');
 
-        await (await hub.setMaxMintBps(0)).wait();
+        await (await hub.setThreshold(THRESHOLD)).wait();
+        await (await hub.setMaxMintWsxmr(0)).wait(); // uncapped
         await (await hub.setMinBurnAmount(0)).wait();
-        await (await hub.setMintGriefingDeposit(ethers.utils.parseEther('0.001'))).wait(); // 0.001 BNB
+        await (await hub.setMintGriefingDeposit(ethers.utils.parseEther('0.0002'))).wait(); // 0.0002 ETH
         await (await hub.setVaultMarketMetrics(50, 30)).wait(); // 0.5% mint fee, 0.3% burn reward
         await (await hub.setMaxCoLPRange(2500)).wait();
-        console.log('  Vault configured (0.5% mint fee, 0.3% burn reward, 0.001 BNB griefing, 2500bps co-LP range)');
+        console.log('  Vault configured (threshold ~150%, 0.5% mint fee, 0.3% burn reward, 0.0002 ETH griefing, 2500bps co-LP range)');
     } else {
         console.log('  Vault already exists');
-        await (await hub.setMintGriefingDeposit(ethers.utils.parseEther('0.001'))).wait();
         await (await hub.setVaultMarketMetrics(50, 30)).wait();
         console.log('  Vault config refreshed');
     }
 
     const vault = await hub.getVault(wallet.address);
-    console.log('  Collateral shares:', ethers.utils.formatEther(vault.collateralShares));
+    console.log('  Collateral (normalized):', ethers.utils.formatEther(vault.collateralShares));
     if (vault.collateralShares.eq(0)) {
         const qqqbBalance = await qqqb.balanceOf(wallet.address);
         console.log('  Wallet QQQB:', ethers.utils.formatEther(qqqbBalance));
-        if (qqqbBalance.lt(collateralAmount)) {
-            console.error('  Insufficient QQQB for collateral deposit');
+        if (qqqbBalance.eq(0)) {
+            console.error('  No QQQB for collateral deposit — fund the wallet first');
             process.exit(1);
         }
-        await (await qqqb.approve(HUB_ADDRESS, collateralAmount)).wait();
-        await (await hub.depositCollateral(collateralAmount)).wait();
-        console.log('  Deposited', ethers.utils.formatEther(collateralAmount), 'QQQB');
+        const depositAmt = qqqbBalance.lt(collateralAmount) ? qqqbBalance : collateralAmount;
+        await (await qqqb.approve(HUB_ADDRESS, depositAmt)).wait();
+        await (await hub.depositCollateral(depositAmt)).wait();
+        console.log('  Deposited', ethers.utils.formatEther(depositAmt), 'QQQB');
     }
     console.log('');
 
-    // --- STEP 1: Update prices ---
-    console.log('Step 1: Push RedStone XMR price (+ on-chain QQQB TWAP refresh)');
-    const updateTx = await retryRedStone(() => wrapWithRedStone(hub).updateOraclePrices([]));
-    console.log('  TX:', updateTx.hash);
-    await updateTx.wait();
-    console.log('  Prices updated\n');
-
-    // --- STEP 2: MINT ---
-    console.log('Step 2: MINT — initiate');
+    // --- STEP 1: MINT ---
+    console.log('Step 1: MINT — initiate');
     const xmrAmount = ethers.BigNumber.from('200000000'); // 0.002 XMR -> 20000 wsXMR units
     const expectedWsXmr = xmrAmount.div(10000);
     console.log('  Expected wsXMR:', ethers.utils.formatUnits(expectedWsXmr, 8));
@@ -159,14 +130,11 @@ async function main() {
     const [userPubX, userPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(secret));
     const compressed = await ed25519Helper.compressPublicKey(userPubX, userPubY);
     const userPublicKey = ethers.utils.hexZeroPad(compressed.toHexString(), 32);
-    const griefingDeposit = ethers.utils.parseEther('0.001');
-
-    console.log('  Refreshing prices before mint (120s staleness window)...');
-    await retryRedStone(() => wrapWithRedStone(hub).updateOraclePrices([])).then(tx => tx.wait());
+    const griefingDeposit = ethers.utils.parseEther('0.0002');
 
     const mintTx = await hub.initiateMint(
         wallet.address, wallet.address, xmrAmount, claimCommitment, userPublicKey,
-        { value: griefingDeposit, gasLimit: 1500000 }
+        { value: griefingDeposit, gasLimit: 800000 }
     );
     const mintReceipt = await mintTx.wait();
     const requestId = mintReceipt.logs[0].topics[1];
@@ -174,8 +142,7 @@ async function main() {
     console.log('  Request ID:', requestId);
     console.log('');
 
-    console.log('Step 3: MINT — LP provides public key');
-    await retryRedStone(() => wrapWithRedStone(hub).updateOraclePrices([])).then(tx => tx.wait());
+    console.log('Step 2: MINT — LP provides public key');
 
     const lpSecret = ethers.utils.randomBytes(32);
     const [lpPubX, lpPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(lpSecret));
@@ -188,10 +155,10 @@ async function main() {
     console.log('  Mint marked ready');
     console.log('');
 
-    console.log('Step 4: MINT — reveal + finalize');
-    await (await hub.revealSecret(requestId, secret, { gasLimit: 1500000 })).wait();
+    console.log('Step 3: MINT — reveal + finalize');
+    await (await hub.revealSecret(requestId, secret, { gasLimit: 800000 })).wait();
     console.log('  Secret revealed');
-    const finalizeTx = await hub.finalizeMint(requestId, { gasLimit: 1500000 });
+    const finalizeTx = await hub.finalizeMint(requestId, { gasLimit: 800000 });
     const finalizeReceipt = await finalizeTx.wait();
     console.log('  Mint finalized:', finalizeTx.hash, 'gas:', finalizeReceipt.gasUsed.toString());
 
@@ -202,11 +169,11 @@ async function main() {
         '(expected ~', ethers.utils.formatUnits(expectedAfterFee, decimals), 'after 0.5% fee)');
     console.log('');
 
-    // --- STEP 5: BURN ---
-    console.log('Step 5: BURN — request');
-    await retryRedStone(() => wrapWithRedStone(hub).updateOraclePrices([])).then(tx => tx.wait());
-
-    const burnAmount = wsxmrBalance;
+    // --- STEP 4: BURN ---
+    // The 1.3x proportional burn lock caps a single burn at ~77% of vault
+    // debt — burn half the balance.
+    console.log('Step 4: BURN — request');
+    const burnAmount = wsxmrBalance.div(2);
     await (await wsxmr.approve(HUB_ADDRESS, burnAmount)).wait();
 
     const dummyCommitment = ethers.utils.id('test-burn');
@@ -222,7 +189,7 @@ async function main() {
     console.log('  Amount:', ethers.utils.formatUnits(burnAmount, decimals), 'wsXMR');
     console.log('');
 
-    console.log('Step 6: BURN — LP proposes secret hash');
+    console.log('Step 5: BURN — LP proposes secret hash');
     const burnSecret = ethers.utils.randomBytes(32);
     const secretHash = await ed25519Helper.computeCommitment(burnSecret);
     const [burnLpPubX, burnLpPubY] = await ed25519Helper.scalarMultBase(ethers.BigNumber.from(burnSecret));
@@ -233,13 +200,13 @@ async function main() {
     console.log('  Secret hash proposed');
     console.log('');
 
-    console.log('Step 7: BURN — user confirms Monero lock (simulated)');
+    console.log('Step 6: BURN — user confirms Monero lock (simulated)');
     await (await hub.confirmMoneroLock(burnRequestId, { gasLimit: 500000 })).wait();
     console.log('  Monero lock confirmed');
     console.log('');
 
-    console.log('Step 8: BURN — LP finalizes');
-    const finalizeBurnTx = await hub.finalizeBurn(burnRequestId, burnSecret, { gasLimit: 1500000 });
+    console.log('Step 7: BURN — LP finalizes');
+    const finalizeBurnTx = await hub.finalizeBurn(burnRequestId, burnSecret, { gasLimit: 800000 });
     const finalizeBurnReceipt = await finalizeBurnTx.wait();
     console.log('  Burn finalized:', finalizeBurnTx.hash, 'gas:', finalizeBurnReceipt.gasUsed.toString());
 

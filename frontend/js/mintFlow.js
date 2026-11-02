@@ -36,7 +36,7 @@ export class MintFlow {
 
     /**
      * Run the complete mint flow from start to finish.
-     * Orchestrates: quote → agent init → oracle price check → EVM initiate →
+     * Orchestrates: quote → agent init → EVM initiate →
      * LP key wait → deposit address derivation → LP ready wait → finalize.
      * @param {string} lpVault - LP vault address to mint against
      * @param {number} xmrAmount - Amount of XMR to send (human-readable)
@@ -62,7 +62,6 @@ export class MintFlow {
 
         await this.getQuote();
         await this.initializeAgent();
-        await this.ensureFreshPrices();
         await this.initiateOnEVM();
         await this.notifyLP();
         if (this.state === 'expired') return;
@@ -399,13 +398,20 @@ export class MintFlow {
         
         const vault = await readHub('getVault', [this.lpVault]);
         this.griefingDeposit = vault.mintGriefingDeposit;
-        
+
+        // LP-declared settlement terms — shown to the user before they commit:
+        // par redemption = wsxmrAmount × threshold / 1e8 collateral units.
+        this.vaultThreshold = vault.thresholdSharesPerWsxmr;
+
         const xmrAtomic = BigInt(Math.floor(this.xmrAmount * Math.pow(10, DECIMALS.XMR)));
         this.wsxmrAmount = await readHub('calculateWsxmrAmount', [xmrAtomic]);
-        
+
         updateSwapState({
             griefingDeposit: this.griefingDeposit.toString(),
-            wsxmrAmount: this.wsxmrAmount.toString()
+            wsxmrAmount: this.wsxmrAmount.toString(),
+            thresholdSharesPerWsxmr: vault.thresholdSharesPerWsxmr.toString(),
+            // implied par settlement in collateral units (normalized 18-dec)
+            parCollateral: (this.wsxmrAmount * vault.thresholdSharesPerWsxmr / BigInt(1e8)).toString()
         });
     }
 
@@ -445,58 +451,6 @@ export class MintFlow {
         });
     }
 
-    /**
-     * Ensure oracle prices are fresh before minting.
-     * If stale, fetches RedStone prices, sends the update tx inline,
-     * and proceeds automatically — no modals needed.
-     */
-    async ensureFreshPrices() {
-        console.log('Checking oracle freshness...');
-
-        try {
-            // getXmrPrice enforces the 2-minute staleness check on-chain
-            const xmrPrice = await readHub('getXmrPrice', []);
-            const collateralPrice = await readHub('getCollateralPrice', []);
-            console.log('Oracle prices are fresh — XMR:', xmrPrice.toString(), 'collateral:', collateralPrice.toString());
-            return;
-        } catch (error) {
-            // StalePrice() or any other revert means we need to update
-            console.warn('Oracle prices are stale, fetching fresh RedStone prices...');
-        }
-
-        const { fetchRedStonePrices, buildRedStonePayload, sendPriceUpdate } =
-            await import('./redstoneWrapper.js?v=' + Date.now());
-
-        const xmrDisplay = (p) => p ? `$${p.toFixed(2)}` : 'latest';
-
-        updateMintProgress('evm-init', 'Fetching latest XMR price from RedStone...');
-        const redStonePrices = await fetchRedStonePrices();
-        console.log('RedStone prices fetched:', redStonePrices);
-
-        updateMintProgress('evm-init', `Updating oracle prices (XMR: ${xmrDisplay(redStonePrices.xmrPrice)})...`);
-        const payload = await buildRedStonePayload();
-
-        try {
-            const receipt = await sendPriceUpdate(payload);
-            console.log('Price update confirmed:', receipt.transactionHash);
-
-            showSuccessNotification(
-                'Oracle Prices Updated',
-                `<p>XMR price updated to ${xmrDisplay(redStonePrices.xmrPrice)}. Continuing with mint...</p>`
-            );
-        } catch (txError) {
-            console.error('Price update transaction failed:', txError);
-            throw new Error(
-                'Failed to update oracle prices: ' + (txError.message || txError)
-            );
-        }
-    }
-
-    async updatePrices() {
-        const { updateOraclePrices } = await import('./redstoneWrapper.js?v=' + Date.now());
-        await updateOraclePrices();
-        console.log('Prices updated, continuing with mint');
-    }
 
     /**
      * Call initiateMint on the Hub contract — burns a griefing deposit, creates the on-chain
@@ -524,9 +478,9 @@ export class MintFlow {
         });
 
         // Preflight: simulate the initiate tx BEFORE sending so a reverting
-        // tx (stale oracle, etc.) never reaches the wallet prompt. If the
-        // sim fails with StalePrice, push fresh prices first, re-simulate,
-        // and only then send — the user never sees a doomed mint tx.
+        // tx (capacity, griefing deposit, threshold bounds) never reaches
+        // the wallet prompt. RPC flakes during simulation don't block — the
+        // direct send path below is the behavior we had before.
         const simulateInitiate = async () => {
             return getPublicClient().simulateContract({
                 address: CONTRACTS.hub,
@@ -541,11 +495,7 @@ export class MintFlow {
             await simulateInitiate();
         } catch (simErr) {
             const simMsg = simErr?.message || '';
-            if (simMsg.includes('0x19abf40e') || simMsg.includes('StalePrice')) {
-                console.warn('[Mint] Preflight simulate hit StalePrice — pushing fresh oracle prices first');
-                await this.ensureFreshPrices();
-                await simulateInitiate(); // throws if it still fails
-            } else if (simMsg.includes('Failed to fetch') || simMsg.includes('fetch failed')
+            if (simMsg.includes('Failed to fetch') || simMsg.includes('fetch failed')
                 || simMsg.includes('timed out') || simErr?.code === -32000) {
                 // RPC flake during simulation — don't block the send; the
                 // direct send path below is the behavior we had before.
@@ -597,10 +547,6 @@ export class MintFlow {
                 1500000n
             );
         } catch (error) {
-            // Check if it's a StalePrice error (0x19abf40e)
-            if (error.message && error.message.includes('0x19abf40e')) {
-                throw new Error('Oracle prices are stale. Please wait a moment for the LP node to update prices, then try again.');
-            }
             throw error;
         }
 
@@ -830,7 +776,7 @@ export class MintFlow {
         updateSwapState({
             requestId: this.requestId,
             state: 'lp-verifying',
-            message: 'LP is scanning for your XMR deposit and updating oracle prices...'
+            message: 'LP is scanning for your XMR deposit...'
         });
         showLPVerificationStatus();
 
@@ -1149,7 +1095,7 @@ export class MintFlow {
         }
 
         // Step 2: Finalize the mint — permissionless, no secret in calldata.
-        // This tx mints wsXMR and cannot revert on oracle/CR issues.
+        // This tx mints wsXMR against the vault's declared threshold terms.
         let receipt;
         try {
             receipt = await writeHub('finalizeMint', [this.requestId], 0n, 1000000n);
@@ -1243,10 +1189,10 @@ export class MintFlow {
                         await writeHub('withdrawReturns', ['0x0000000000000000000000000000000000000000']);
                         try {
                             const { CONTRACTS } = await import('./config.js?v=3.59');
-                            await writeHub('withdrawReturns', [CONTRACTS.stataUSDe]);
+                            await writeHub('withdrawReturns', [CONTRACTS.collateralToken]);
                             console.log('Slashed collateral key bond claimed via withdrawReturns');
-                        } catch (usdeErr) {
-                            console.warn('Could not withdraw collateral returns (may have none):', usdeErr.message);
+                        } catch (collErr) {
+                            console.warn('Could not withdraw collateral returns (may have none):', collErr.message);
                         }
                     } else {
                         const blocksRemaining = claimWindowEnd - Number(currentBlock);
@@ -1275,10 +1221,10 @@ export class MintFlow {
                         // Withdraw collateral returns (slashed collateral)
                         try {
                             const { CONTRACTS } = await import('./config.js?v=3.59');
-                            await writeHub('withdrawReturns', [CONTRACTS.stataUSDe]);
+                            await writeHub('withdrawReturns', [CONTRACTS.collateralToken]);
                             console.log('Slashed collateral claimed via withdrawReturns');
-                        } catch (usdeErr) {
-                            console.warn('Could not withdraw collateral returns (may have none):', usdeErr.message);
+                        } catch (collErr) {
+                            console.warn('Could not withdraw collateral returns (may have none):', collErr.message);
                         }
                     } else {
                         const blocksRemaining = claimWindowEnd - Number(currentBlock);
@@ -1316,10 +1262,10 @@ export class MintFlow {
                     if (status === 2) {
                         try {
                             const { CONTRACTS } = await import('./config.js?v=3.59');
-                            await writeHub('withdrawReturns', [CONTRACTS.stataUSDe]);
+                            await writeHub('withdrawReturns', [CONTRACTS.collateralToken]);
                             console.log('Slashed collateral claimed via withdrawReturns');
-                        } catch (usdeErr) {
-                            console.warn('Could not withdraw collateral returns (may have none):', usdeErr.message);
+                        } catch (collErr) {
+                            console.warn('Could not withdraw collateral returns (may have none):', collErr.message);
                         }
                     }
                     // Withdraw griefing deposit
@@ -1452,8 +1398,7 @@ export class MintFlow {
                 // Restart from the beginning (need to get quote first)
                 console.log('Restarting mint flow from', this.state, 'state...');
                 await this.getQuote();
-                await this.ensureFreshPrices();
-                await this.initiateOnEVM();
+                        await this.initiateOnEVM();
                 await this.notifyLP();
                 await this.waitForLPReady();
                 await this.finalize();
@@ -1469,8 +1414,7 @@ export class MintFlow {
                     await this.notifyLP();
                 } else {
                     await this.getQuote();
-                    await this.ensureFreshPrices();
-                    await this.initiateOnEVM();
+                                await this.initiateOnEVM();
                     await this.notifyLP();
                 }
                 await this.waitForLPReady();

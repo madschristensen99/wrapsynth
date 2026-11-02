@@ -17,24 +17,18 @@ interface IwsXmrHub {
         uint256 globalDebtIndex;
         uint256 globalBadDebt;
         uint256 globalPendingBurnDebt;
-        uint256 yieldWarChest;
-        uint256 lastBuyTimestamp;
-        uint256 globalLpPrincipal;
-        uint256 globalLpPrincipalShares;
-        uint256 globalPendingSDAI;
         uint256 requestNonce;
         uint256 vaultCount;
     }
-    
+
     // ========== EVENTS ==========
-    
+
     event FacetsRegistered(
         address vaultFacet,
         address mintFacet,
         address burnFacet,
-        address liquidationFacet,
-        address yieldFacet,
-        address oracleFacet
+        address liquidationAuctionFacet,
+        address coLPFacet
     );
     event LiquidityRouterSet(address router);
     event LiquidityRouterMigrated(address indexed oldRouter, address indexed newRouter);
@@ -53,19 +47,17 @@ interface IwsXmrHub {
     /// @param vaultFacet Address of VaultFacet
     /// @param mintFacet Address of MintFacet
     /// @param burnFacet Address of BurnFacet
-    /// @param liquidationFacet Address of LiquidationFacet
-    /// @param yieldFacet Address of YieldFacet
-    /// @param oracleFacet Address of OracleFacet
+    /// @param liquidationAuctionFacet Address of LiquidationAuctionFacet
+    /// @param coLPFacet Address of CoLPFacet
     function registerFacets(
         address vaultFacet,
         address mintFacet,
         address burnFacet,
-        address liquidationFacet,
-        address yieldFacet,
-        address oracleFacet
+        address liquidationAuctionFacet,
+        address coLPFacet
     ) external;
-    
-    /// @notice Register an additional facet after the six core facets
+
+    /// @notice Register an additional facet after the five core facets
     /// @dev Marks the facet trusted and routes every selector it reports
     /// @param facet Address of the facet contract to add
     function addFacet(address facet) external;
@@ -127,10 +119,12 @@ interface IwsXmrHub {
     // - lpPublicKeys(bytes32) returns (bytes32)
     // - globalTotalDebt() returns (uint256)
     // - globalDebtIndex() returns (uint256)
-    // - lastXmrPrice() returns (int192)
-    // - lastCollateralPrice() returns (int192)
-    // - lastXmrPriceTimestamp() returns (uint256)
-    // - lastCollateralPriceTimestamp() returns (uint256)
+    // - collateralToken() returns (address)
+    // - collateralScale() returns (uint256)
+    // - minThreshold() returns (uint256)
+    // - kickBondMin() returns (uint256)
+    // - vaultKicks(address) returns (Kick memory)
+    // - vaultFrozen(address) returns (bool)
     // - getVaultCount() returns (uint256)
     // - getActualDebt(uint256) returns (uint256)
     // - MAX_VAULT_COUNT() returns (uint256)

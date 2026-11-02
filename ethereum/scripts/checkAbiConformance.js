@@ -198,10 +198,21 @@ function checkStaleFunctions() {
     const configPath = path.join(FRONTEND_DIR, 'js', 'config.js');
     const configSrc = fs.readFileSync(configPath, 'utf8');
 
-    // Known functions that were removed from the contract
+    // Known functions that were removed from the contract (oracle-free migration)
     const staleFunctions = [
         'setMintReadyBond',
         'mintReadyBond',
+        'updateOraclePrices',
+        'getXmrPrice',
+        'getCollateralPrice',
+        'refreshPrices',
+        'refreshCollateralPrice',
+        'setMaxMintBps',
+        'liquidateVault',
+        'buyAndBurn',
+        'yieldWarChest',
+        'lastXmrPriceTimestamp',
+        'lastCollateralPrice',
     ];
 
     for (const stale of staleFunctions) {

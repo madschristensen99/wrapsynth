@@ -3,15 +3,12 @@ pragma solidity ^0.8.19;
 
 import "forge-std/Script.sol";
 import "../contracts/core/wsXmrHub.sol";
-import "../contracts/facets/RobinhoodOracleFacet.sol";
 import "../contracts/facets/VaultFacet.sol";
 import "../contracts/facets/MintFacet.sol";
 import "../contracts/facets/BurnFacet.sol";
-import "../contracts/facets/LiquidationFacet.sol";
-import "../contracts/facets/YieldFacet.sol";
+import "../contracts/facets/LiquidationAuctionFacet.sol";
 import "../contracts/facets/CoLPFacet.sol";
 import "../contracts/wsXMR.sol";
-import "../contracts/StataSPY.sol";
 import "../contracts/router/wsXMRLiquidityRouter.sol";
 import "../contracts/interfaces/external/IUniswapV3Factory.sol";
 import "../contracts/interfaces/external/IUniswapV3Pool.sol";
@@ -21,46 +18,58 @@ import "../contracts/RobinhoodAddresses.sol";
 
 /**
  * @title DeployRobinhood
- * @notice Deploys the WrapSynth stack on Robinhood Chain with SPY (Robinhood
- *         tokenized S&P 500) as vault collateral.
+ * @notice Deploys the oracle-free WrapSynth stack on Robinhood Chain with
+ *         SPY (Robinhood tokenized S&P 500) held raw as vault collateral.
  *
- * Oracle model:
- *   - XMR/USD: RedStone pull oracle (only external price input)
- *   - SPY/USD: fully on-chain — single-leg TWAP on the UniV3 SPY/USDG
- *     fee-500 pool, refreshed inside every state-changing hub call via
- *     _tryRefreshCollateralTwap()
+ * Oracle-free model:
+ *   - No external price feeds anywhere in the protocol. No RedStone, no
+ *     Pyth, no precompiles, no TWAP. Nothing in consensus path reads a
+ *     price.
+ *   - Vaults declare `thresholdSharesPerWsxmr` (normalized collateral per
+ *     1e8 wsXMR). It is the mint bound, the self-declared solvency line,
+ *     and the par-settlement rate for burns and auctions.
+ *   - Liquidation is a bonded kick → Dutch haircut auction, fully
+ *     market-discovered.
+ *   - The only prices in this script are the pool-initialization prices —
+ *     deploy-time inputs for the AMM, never consensus. The SPY price is
+ *     read from the on-chain SPY/USDG pool spot tick purely for seeding
+ *     the new pool's initial sqrtPrice.
  */
 contract DeployRobinhood is Script {
-    // No verifier needed for RedStone (uses off-chain signed data)
     address constant VERIFIER = address(0);
 
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
 
+        // Deployment floors (normalized collateral units, 18-dec).
+        uint256 minThreshold = vm.envOr("MIN_THRESHOLD", uint256(1e15));
+        uint256 kickBondMin = vm.envOr("KICK_BOND_MIN", uint256(1e15));
+
         console.log("============================================================");
-        console.log("Starting Robinhood Chain Deployment (SPY collateral)");
+        console.log("Starting Robinhood Chain Deployment (oracle-free, SPY collateral)");
         console.log("============================================================");
         console.log("Deployer:", deployer);
         console.log("Balance:", deployer.balance / 1e18, "ETH");
+        console.log("MIN_THRESHOLD:", minThreshold);
+        console.log("KICK_BOND_MIN:", kickBondMin);
         console.log("");
 
-        // Fetch current XMR price from Coingecko
+        // Fetch XMR price for POOL INIT ONLY — never consensus.
         string[] memory inputs = new string[](3);
         inputs[0] = "bash";
         inputs[1] = "-c";
         inputs[2] = "curl -s 'https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd' | jq -r '.monero.usd | floor | tostring'";
         bytes memory res = vm.ffi(inputs);
         uint256 xmrPrice = vm.parseUint(_trim(string(res))) * 1e18;
-        console.log("Fetched XMR price:", xmrPrice / 1e18, "USD");
+        console.log("Fetched XMR price (pool init only):", xmrPrice / 1e18, "USD");
 
-        // SPY price from the on-chain SPY/USDG pool's current tick — the
-        // deployment's own oracle source, no external API needed.
-        // (slot0 → tick → raw USDG per 1e18 raw SPY → ×1e12 for 18-dec)
+        // SPY price from the on-chain SPY/USDG pool's current tick — used
+        // only to seed the new pool's initial sqrtPrice at deploy time.
         (, int24 spyTick,,,,,) = IUniswapV3Pool(RobinhoodAddresses.SPY_USDG_POOL).slot0();
         uint256 usdgRawPerSpy = _quoteAtTick(spyTick, 1e18, RobinhoodAddresses.SPY, RobinhoodAddresses.USDG);
         uint256 spyPrice = usdgRawPerSpy * 1e12; // USDG is 6-dec
-        console.log("On-chain SPY price (SPY/USDG spot):", spyPrice / 1e18, "USD");
+        console.log("On-chain SPY price (pool init only):", spyPrice / 1e18, "USD");
         console.log("");
 
         vm.startBroadcast(deployerPrivateKey);
@@ -75,7 +84,7 @@ contract DeployRobinhood is Script {
         console.log("============================================================");
         console.log("STEP 2: Deploying wsXmrHub");
         console.log("============================================================");
-        wsXmrHub hub = new wsXmrHub(address(wsxmr), VERIFIER);
+        wsXmrHub hub = new wsXmrHub(address(wsxmr), VERIFIER, minThreshold, kickBondMin);
         console.log("wsXmrHub deployed to:", address(hub));
         console.log("");
 
@@ -83,28 +92,20 @@ contract DeployRobinhood is Script {
         console.log("STEP 3: Deploying Facets");
         console.log("============================================================");
 
-        // RobinhoodOracleFacet - RedStone XMR + on-chain collateral TWAP
-        RobinhoodOracleFacet oracleFacet = new RobinhoodOracleFacet(address(wsxmr), VERIFIER);
-        console.log("RobinhoodOracleFacet deployed to:", address(oracleFacet));
-
-        VaultFacet vaultFacet = new VaultFacet(address(wsxmr), VERIFIER);
+        VaultFacet vaultFacet = new VaultFacet(address(wsxmr), VERIFIER, minThreshold, kickBondMin);
         console.log("VaultFacet deployed to:", address(vaultFacet));
 
-        MintFacet mintFacet = new MintFacet(address(wsxmr), VERIFIER);
+        MintFacet mintFacet = new MintFacet(address(wsxmr), VERIFIER, minThreshold, kickBondMin);
         console.log("MintFacet deployed to:", address(mintFacet));
 
-        BurnFacet burnFacet = new BurnFacet(address(wsxmr), VERIFIER);
+        BurnFacet burnFacet = new BurnFacet(address(wsxmr), VERIFIER, minThreshold, kickBondMin);
         console.log("BurnFacet deployed to:", address(burnFacet));
 
-        LiquidationFacet liquidationFacet = new LiquidationFacet(address(wsxmr), VERIFIER);
-        console.log("LiquidationFacet deployed to:", address(liquidationFacet));
+        LiquidationAuctionFacet liquidationAuctionFacet =
+            new LiquidationAuctionFacet(address(wsxmr), VERIFIER, minThreshold, kickBondMin);
+        console.log("LiquidationAuctionFacet deployed to:", address(liquidationAuctionFacet));
 
-        // UniV3 SwapRouter02 on Robinhood Chain uses the no-deadline exactInputSingle
-        // (deadline rides in the multicall wrapper) — identical to HyperSwap's
-        // signature, so the plain YieldFacet works unmodified.
-        YieldFacet yieldFacet = new YieldFacet(address(wsxmr), VERIFIER);
-        console.log("YieldFacet deployed to:", address(yieldFacet));
-        CoLPFacet coLPFacet = new CoLPFacet(address(wsxmr), VERIFIER);
+        CoLPFacet coLPFacet = new CoLPFacet(address(wsxmr), VERIFIER, minThreshold, kickBondMin);
         console.log("CoLPFacet deployed to:", address(coLPFacet));
         console.log("");
 
@@ -115,48 +116,21 @@ contract DeployRobinhood is Script {
             address(vaultFacet),
             address(mintFacet),
             address(burnFacet),
-            address(liquidationFacet),
-            address(yieldFacet),
-            address(oracleFacet)
+            address(liquidationAuctionFacet),
+            address(coLPFacet)
         );
-        hub.addFacet(address(coLPFacet));
         console.log("All facets registered");
         console.log("");
 
         console.log("============================================================");
-        console.log("STEP 4b: Deploying StataSPY collateral adapter");
-        console.log("============================================================");
-        StataSPY stata = new StataSPY(RobinhoodAddresses.SPY);
-        console.log("StataSPY deployed to:", address(stata));
-        console.log("");
-
-        console.log("============================================================");
-        console.log("STEP 5: Setting Hub as wsXMR Minter + external addresses");
+        console.log("STEP 5: Setting Hub as wsXMR Minter + collateral token");
         console.log("============================================================");
         wsxmr.setHub(address(hub));
         console.log("Hub set as wsXMR minter");
 
-        // collateralToken = stataSPY shares, underlyingToken = SPY,
-        // swapRouter = UniV3 SwapRouter02 (buy-and-burn),
-        // xmrPerpIndex = 0 (no HyperCore precompile on Robinhood Chain — the precompile
-        // staticcall fails and the leg no-ops cleanly)
-        hub.setExternalAddresses(
-            address(stata),
-            RobinhoodAddresses.SPY,
-            RobinhoodAddresses.UNI_SWAP_ROUTER,
-            0
-        );
-        console.log("External addresses set (stataSPY / SPY / UniV3 router)");
-
-        // On-chain collateral TWAP: single-leg SPY/USDG (quote pool = 0)
-        hub.setCollateralTwapConfig(
-            RobinhoodAddresses.SPY_USDG_POOL,
-            address(0),
-            RobinhoodAddresses.USDG,
-            RobinhoodAddresses.USDG,
-            RobinhoodAddresses.COLLATERAL_TWAP_WINDOW
-        );
-        console.log("Collateral TWAP config set (window:", RobinhoodAddresses.COLLATERAL_TWAP_WINDOW, "s)");
+        // Collateral is raw SPY (18-dec) — no share adapter, no yield layer.
+        hub.setExternalAddresses(RobinhoodAddresses.SPY);
+        console.log("External addresses set (raw SPY)");
         console.log("");
 
         console.log("============================================================");
@@ -183,7 +157,7 @@ contract DeployRobinhood is Script {
         wsXMRLiquidityRouter router = new wsXMRLiquidityRouter(
             address(hub),
             RobinhoodAddresses.UNI_V3_POSITION_MANAGER,
-            RobinhoodAddresses.SPY, // router's "sDAI" quote token is SPY on Robinhood Chain
+            RobinhoodAddresses.SPY, // router's "sDAI" quote token is SPY
             address(wsxmr),
             pool
         );
@@ -196,7 +170,8 @@ contract DeployRobinhood is Script {
         hub.setLiquidityRouter(address(router));
         console.log("Router registered with hub");
 
-        // Initialize pool at live prices — pool.initialize is permissionless
+        // Initialize pool at the spot price — permissionless; deploy-time
+        // AMM seed, not consensus.
         (bool success, bytes memory data) = pool.call(abi.encodeWithSignature("slot0()"));
         if (success && data.length >= 32) {
             uint160 sqrtPriceX96 = abi.decode(data, (uint160));
@@ -212,7 +187,6 @@ contract DeployRobinhood is Script {
             }
         }
 
-        // Grow the pool's observation cardinality for future robustness
         IUniswapV3Pool(pool).increaseObservationCardinalityNext(64);
         console.log("Observation cardinality bumped to 64");
         console.log("");
@@ -220,12 +194,6 @@ contract DeployRobinhood is Script {
         console.log("============================================================");
         console.log("STEP 9: Locking Deployer Powers (IRREVERSIBLE)");
         console.log("============================================================");
-        // Removes the two admin backdoors from the live system:
-        //  - wsXMR.replaceHub(): deployer could repoint the token at an arbitrary
-        //    contract which could then mint/burn wsXMR without limit.
-        //  - wsXmrHub.addSelectors()/removeSelectors(): deployer could add or brick
-        //    facet routes after launch.
-        // Both locks are one-way and must be the final configuration action.
         wsxmr.lockHub();
         hub.lockDeployer();
         console.log("wsXMR.hubLocked():", wsxmr.hubLocked());
@@ -244,33 +212,30 @@ contract DeployRobinhood is Script {
         console.log("Core Contracts:");
         console.log("  wsXMR:            ", address(wsxmr));
         console.log("  wsXmrHub:         ", address(hub));
-        console.log("  StataSPY:           ", address(stata));
         console.log("  LiquidityRouter:  ", address(router));
         console.log("");
         console.log("Facets:");
-        console.log("  OracleFacet:      ", address(oracleFacet));
         console.log("  VaultFacet:       ", address(vaultFacet));
         console.log("  MintFacet:        ", address(mintFacet));
         console.log("  BurnFacet:        ", address(burnFacet));
-        console.log("  LiquidationFacet: ", address(liquidationFacet));
-        console.log("  YieldFacet:       ", address(yieldFacet));
+        console.log("  LiquidationAuction:", address(liquidationAuctionFacet));
         console.log("  CoLPFacet:        ", address(coLPFacet));
         console.log("");
         console.log("External Contracts:");
         console.log("  SPY:              ", RobinhoodAddresses.SPY);
-        console.log("  SPY/USDG pool:   ", RobinhoodAddresses.SPY_USDG_POOL);
-        console.log("  wsXMR/SPY pool:  ", pool);
+        console.log("  wsXMR/SPY pool:   ", pool);
         console.log("============================================================");
         console.log("");
         console.log("Next steps:");
-        console.log("1. Verify contracts on RobinScan");
+        console.log("1. Verify contracts on the block explorer");
         console.log("2. Update frontend configuration with deployment.robinhood.json");
-        console.log("3. Configure LP server with deployed addresses + RedStone XMR");
+        console.log("3. Configure LP server with deployed addresses");
         console.log("4. Seed the wsXMR/SPY pool");
     }
 
-    /// @dev sqrtPriceX96 for token1/token0 where token0/token1 = SPY/wsXMR in
-    ///      either order. 1 wsXMR (1e8) = xmrPrice/spyPrice SPY (1e18).
+    /// @dev sqrtPriceX96 for token1/token0 where the pair is SPY/wsXMR.
+    ///      SPY is 18-decimal, wsXMR is 8-decimal — the raw-token price
+    ///      ratio needs a 1e10 decimal correction.
     function _priceToSqrtPriceX96(uint256 xmrPrice, uint256 spyPrice, bool spyIsToken0)
         internal pure returns (uint160)
     {
@@ -280,18 +245,15 @@ contract DeployRobinhood is Script {
         uint256 sqrtPriceX96;
 
         if (spyIsToken0) {
-            // price = wsXMR/SPY = spyPrice / (xmrPrice * 1e10)
             sqrtPriceX96 = (sqrtSpyPrice * (1 << 96)) / (sqrtXmrPrice * sqrt1e10);
         } else {
-            // price = SPY/wsXMR = (xmrPrice * 1e10) / spyPrice
             sqrtPriceX96 = (sqrtXmrPrice * sqrt1e10 * (1 << 96)) / sqrtSpyPrice;
         }
 
         return uint160(sqrtPriceX96);
     }
 
-    /// @dev Port of Uniswap OracleLibrary.getQuoteAtTick — returns raw
-    ///      quoteToken units per `baseAmount` raw baseToken units.
+    /// @dev Quote `baseAmount` of baseToken in quoteToken units at a tick.
     function _quoteAtTick(int24 tick, uint128 baseAmount, address baseToken, address quoteToken)
         internal pure returns (uint256 quoteAmount)
     {

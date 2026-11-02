@@ -5,18 +5,16 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {wsXmrStorage} from "../core/wsXmrStorage.sol";
 import {ICoLPFacet} from "../interfaces/facets/ICoLPFacet.sol";
-import {ISavingsDAI} from "../interfaces/external/ISavingsDAI.sol";
-import {CollateralLogic} from "../libraries/CollateralLogic.sol";
-import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {IwsXmrLiquidityRouter} from "../interfaces/router/IwsXmrLiquidityRouter.sol";
 
 /**
  * @title CoLPFacet
  * @notice Handles co-LP (co-liquidity-provision) operations for the wsXMR system
- * @dev Split from VaultFacet to keep both facets under the EIP-170 contract
- *      size limit. Shares the diamond's AppStorage — position bookkeeping in
- *      _positionMetadata/_vaultPositions/_userPositions is identical to what
- *      LiquidationFacet reads when force-unwinding positions.
+ * @dev Oracle-free (spec §3.7): the user and vault agree on leg amounts
+ *      directly — no oracle conversion. Range bounds come from the pool's own
+ *      slot0 tick, and slippage protection is the user's supplied bounds. The
+ *      collateral leg counts toward vault backing at face value and the wsXMR
+ *      leg nets against vault debt — no cross-asset oracle math anywhere.
  */
 contract CoLPFacet is wsXmrStorage, ICoLPFacet {
     using SafeERC20 for IERC20;
@@ -31,8 +29,8 @@ contract CoLPFacet is wsXmrStorage, ICoLPFacet {
 
     // ========== CONSTRUCTOR ==========
 
-    constructor(address _wsxmrToken, address _verifierProxy)
-        wsXmrStorage(_wsxmrToken, _verifierProxy)
+    constructor(address _wsxmrToken, address _verifierProxy, uint256 _minThreshold, uint256 _kickBondMin)
+        wsXmrStorage(_wsxmrToken, _verifierProxy, _minThreshold, _kickBondMin)
     {}
 
     // ========== MODIFIERS ==========
@@ -44,10 +42,17 @@ contract CoLPFacet is wsXmrStorage, ICoLPFacet {
         _reentrancyStatus = _NOT_ENTERED;
     }
 
+    /// @dev Reverts if the vault has an active kick/auction or is frozen.
+    modifier vaultNotBlocked(address lpVault) {
+        if (vaultFrozen[lpVault]) revert VaultIsFrozen();
+        if (vaultKicks[lpVault].active) revert KickActive();
+        _;
+    }
+
     // ========== CO-LP OPERATIONS ==========
 
     /// @inheritdoc ICoLPFacet
-    function setMaxCoLPRange(uint16 newMaxBps) external nonReentrant {
+    function setMaxCoLPRange(uint16 newMaxBps) external nonReentrant vaultNotBlocked(msg.sender) {
         if (!_vaults[msg.sender].active) revert VaultDoesNotExist();
         if (newMaxBps < MIN_COLP_RANGE_BPS || newMaxBps > MAX_COLP_RANGE_BPS) {
             revert InvalidConfig();
@@ -57,65 +62,62 @@ contract CoLPFacet is wsXmrStorage, ICoLPFacet {
     }
 
     /// @inheritdoc ICoLPFacet
+    /// @param collateralAmount Collateral the vault deploys, in RAW token units —
+    ///        agreed between user and LP off-chain; the pool consumes what its
+    ///        range needs and leftovers reconcile back to the vault.
     function userOpenCoLP(
         address lpVault,
         uint256 wsxmrAmount,
+        uint256 collateralAmount,
         uint256 deadline
-    ) external nonReentrant returns (uint256 tokenId) {
+    ) external nonReentrant vaultNotBlocked(lpVault) returns (uint256 tokenId) {
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (!_vaults[lpVault].active) revert VaultDoesNotExist();
         if (wsxmrAmount == 0) revert ZeroAmount();
+        if (collateralAmount == 0) revert ZeroAmount();
 
         Vault storage vault = _vaults[lpVault];
-        _tryRefreshOracle();
-        uint256 xmrPrice = _getXmrPriceFromStorage();
-        uint256 collateralPrice = _getCollateralPriceFromStorage();
 
-        uint256 wsxmrUsd = (wsxmrAmount * xmrPrice) / WSXMR_DECIMALS;
-        uint256 daiNeeded = (wsxmrUsd * _underlyingUnit()) / collateralPrice;
-        uint256 sharesNeeded = IERC4626(collateralToken).convertToShares(daiNeeded);
-
+        uint256 collateralNorm = _normFromRaw(collateralAmount);
         uint256 availableIdle = vault.collateralShares > vault.lockedCollateral
             ? vault.collateralShares - vault.lockedCollateral
             : 0;
-        if (availableIdle < sharesNeeded) revert InsufficientLPBuffer();
+        if (availableIdle < collateralNorm) revert InsufficientLPBuffer();
 
         IERC20(wsxmrToken).safeTransferFrom(msg.sender, address(this), wsxmrAmount);
 
-        vault.collateralShares -= sharesNeeded;
+        vault.collateralShares -= collateralNorm;
 
         uint16 rangeBps = vault.maxCoLPRangeBps > 0
             ? vault.maxCoLPRangeBps
             : uint16(DEFAULT_COLP_RANGE_BPS);
 
-        // Pool trades wsXMR/USDe — redeem shares to USDe before deploying
-        uint256 usdeForPosition = ISavingsDAI(collateralToken).redeem(sharesNeeded, address(this), address(this));
-        IERC20(underlyingToken).safeTransfer(liquidityRouter, usdeForPosition);
+        // Pool trades wsXMR/collateral — hand the raw tokens to the router.
+        IERC20(collateralToken).safeTransfer(liquidityRouter, collateralAmount);
         IERC20(wsxmrToken).safeTransfer(liquidityRouter, wsxmrAmount);
 
-        (uint256 _tokenId, uint128 liquidity, int24 tickLower, int24 tickUpper, uint256 daiConsumed, uint256 wsxmrConsumed) =
+        (uint256 _tokenId, uint128 liquidity, int24 tickLower, int24 tickUpper, uint256 collateralConsumed, uint256 wsxmrConsumed) =
             IwsXmrLiquidityRouter(liquidityRouter).mintConcentratedPosition(
-                usdeForPosition, wsxmrAmount, rangeBps, xmrPrice, deadline, uint16(DEFAULT_COLP_SLIPPAGE_BPS)
+                collateralAmount, wsxmrAmount, rangeBps, deadline, uint16(DEFAULT_COLP_SLIPPAGE_BPS)
             );
         tokenId = _tokenId;
 
         // M2: Reconcile accounting with actual consumed amounts. Leftover tokens swept back to hub.
-        uint256 leftoverDai = usdeForPosition > daiConsumed ? usdeForPosition - daiConsumed : 0;
+        uint256 leftoverCollateral = collateralAmount > collateralConsumed ? collateralAmount - collateralConsumed : 0;
         uint256 leftoverWsxmr = wsxmrAmount > wsxmrConsumed ? wsxmrAmount - wsxmrConsumed : 0;
-        if (leftoverDai > 0) {
-            // Re-wrap leftover USDe into shares for the vault
-            IERC20(underlyingToken).forceApprove(collateralToken, leftoverDai);
-            vault.collateralShares += ISavingsDAI(collateralToken).deposit(leftoverDai, address(this));
+        if (leftoverCollateral > 0) {
+            vault.collateralShares += _normFromRaw(leftoverCollateral);
         }
         if (leftoverWsxmr > 0) {
             pendingReturns[msg.sender][wsxmrToken] += leftoverWsxmr;
         }
 
-        vault.deployedSDAIShares += daiConsumed;
+        vault.deployedCollateral += _normFromRaw(collateralConsumed);
+        vault.deployedWsxmr += wsxmrConsumed;
         _positionMetadata[tokenId] = PositionMetadata({
             vaultOwner: lpVault,
             user: msg.sender,
-            sDAISharesOriginal: daiConsumed,
+            collateralOriginal: _normFromRaw(collateralConsumed),
             wsxmrOriginal: wsxmrConsumed,
             tickLower: tickLower,
             tickUpper: tickUpper,
@@ -125,12 +127,11 @@ contract CoLPFacet is wsXmrStorage, ICoLPFacet {
         _vaultPositions[lpVault].push(tokenId);
         _userPositions[msg.sender].push(tokenId);
 
-        // Verify vault remains healthy after co-LP deployment
-        uint256 postDeployDebt = _denormalizeDebt(vault.normalizedDebt);
-        uint256 postDeployRatio = _calculateCRWithPositions(lpVault, postDeployDebt);
-        if (postDeployRatio < COLLATERAL_RATIO) revert InsufficientCollateral();
+        // Verify vault remains covered at its own threshold post-deploy:
+        // (free + deployed legs) ≥ (debt + pending − netted wsXMR legs) × T.
+        _requireThresholdCoverage(lpVault, vault);
 
-        emit CoLPDeployed(lpVault, msg.sender, tokenId, daiConsumed, wsxmrConsumed, rangeBps);
+        emit CoLPDeployed(lpVault, msg.sender, tokenId, collateralConsumed, wsxmrConsumed, rangeBps);
     }
 
     /// @inheritdoc ICoLPFacet
@@ -139,21 +140,16 @@ contract CoLPFacet is wsXmrStorage, ICoLPFacet {
         if (meta.vaultOwner == address(0)) revert PositionNotFound();
         if (meta.vaultOwner != msg.sender && meta.user != msg.sender) revert Unauthorized();
 
-        (uint256 daiFees, uint256 wsxmrFees) = IwsXmrLiquidityRouter(liquidityRouter).collectFees(tokenId);
+        (uint256 collFees, uint256 wsxmrFees) = IwsXmrLiquidityRouter(liquidityRouter).collectFees(tokenId);
 
-        if (daiFees > 0) {
-            // Fees arrive as USDe — wrap to shares so pendingReturns stays
-            // denominated in the collateral share token like every other flow.
-            IERC20(underlyingToken).forceApprove(collateralToken, daiFees);
-            uint256 feeShares = ISavingsDAI(collateralToken).deposit(daiFees, address(this));
-            pendingReturns[meta.vaultOwner][collateralToken] += feeShares;
-            globalPendingSDAI += feeShares;
+        if (collFees > 0) {
+            pendingReturns[meta.vaultOwner][collateralToken] += collFees;
         }
         if (wsxmrFees > 0) {
             pendingReturns[meta.user][wsxmrToken] += wsxmrFees;
         }
 
-        emit CoLPFeesCollected(tokenId, daiFees, wsxmrFees);
+        emit CoLPFeesCollected(tokenId, collFees, wsxmrFees);
     }
 
     /// @inheritdoc ICoLPFacet
@@ -161,26 +157,28 @@ contract CoLPFacet is wsXmrStorage, ICoLPFacet {
         if (block.timestamp > deadline) revert DeadlineExpired();
         PositionMetadata memory meta = _positionMetadata[tokenId];
         if (meta.vaultOwner != msg.sender && meta.user != msg.sender) revert Unauthorized();
+        if (vaultFrozen[meta.vaultOwner]) revert VaultIsFrozen();
+        if (vaultKicks[meta.vaultOwner].active) revert KickActive();
 
         _unwindAndDistribute(tokenId, false);
     }
 
     /// @inheritdoc ICoLPFacet
+    /// @dev Threshold-derived: the vault's free collateral supports
+    ///      freeCollateral × 1e8 / threshold wsXMR of debt; subtract current debt.
     function getCoLPCapacity(address lpVault) external view returns (uint256 maxWsxmrAcceptable) {
         Vault memory vault = _vaults[lpVault];
         if (!vault.active) return 0;
 
-        uint256 availableIdle = vault.collateralShares > vault.lockedCollateral
-            ? vault.collateralShares - vault.lockedCollateral
-            : 0;
+        uint256 threshold = vault.thresholdSharesPerWsxmr;
+        if (threshold < minThreshold) return 0;
+
+        uint256 availableIdle = _freeCollateral(vault);
         if (availableIdle == 0) return 0;
 
-        uint256 xmrPrice = _getXmrPriceFromStorage();
-        uint256 collateralPrice = _getCollateralPriceFromStorage();
-
-        uint256 daiAmount = IERC4626(collateralToken).convertToAssets(availableIdle);
-        uint256 daiUsd = (daiAmount * collateralPrice) / _underlyingUnit();
-        maxWsxmrAcceptable = (daiUsd * WSXMR_DECIMALS) / xmrPrice;
+        uint256 supportable = (availableIdle * WSXMR_DECIMALS) / threshold;
+        uint256 debt = _denormalizeDebt(vault.normalizedDebt);
+        maxWsxmrAcceptable = supportable > debt ? supportable - debt : 0;
     }
 
     /// @inheritdoc ICoLPFacet
@@ -190,50 +188,55 @@ contract CoLPFacet is wsXmrStorage, ICoLPFacet {
         if (block.timestamp > deadline) revert DeadlineExpired();
         PositionMetadata memory meta = _positionMetadata[tokenId];
         if (meta.vaultOwner == address(0)) revert PositionNotFound();
+        if (vaultFrozen[meta.vaultOwner]) revert VaultIsFrozen();
+        if (vaultKicks[meta.vaultOwner].active) revert KickActive();
 
         Vault storage vault = _vaults[meta.vaultOwner];
         if (newRangeBps < MIN_COLP_RANGE_BPS || newRangeBps > vault.maxCoLPRangeBps) {
             revert InvalidRange();
         }
 
-        uint256 xmrPrice = _getXmrPriceFromStorage();
-        uint256 collateralPrice = _getCollateralPriceFromStorage();
-        bool outOfRange = IwsXmrLiquidityRouter(liquidityRouter).isPositionOutOfRange(tokenId, xmrPrice, collateralPrice);
+        // Pool-native check: position out of range iff its tick window no
+        // longer contains the pool's own slot0 tick.
+        bool outOfRange = IwsXmrLiquidityRouter(liquidityRouter).isPositionOutOfRange(tokenId);
         bool isOwner = msg.sender == meta.vaultOwner;
         if (!outOfRange && !isOwner) revert PositionInRange();
 
         address user = meta.user;
-        (uint256 daiOut, uint256 wsxmrOut) = IwsXmrLiquidityRouter(liquidityRouter)
-            .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS), xmrPrice, collateralPrice);
+        (uint256 collOut, uint256 wsxmrOut) = IwsXmrLiquidityRouter(liquidityRouter)
+            .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS));
 
         uint256 keeperFee = 0;
         if (!isOwner) {
-            keeperFee = (daiOut * COLP_REBALANCE_FEE_BPS) / BPS_DENOMINATOR;
-            IERC20(underlyingToken).safeTransfer(msg.sender, keeperFee);
-            daiOut -= keeperFee;
+            keeperFee = (collOut * COLP_REBALANCE_FEE_BPS) / BPS_DENOMINATOR;
+            IERC20(collateralToken).safeTransfer(msg.sender, keeperFee);
+            collOut -= keeperFee;
         }
 
         _removePositionFromArrays(tokenId, meta.vaultOwner, user);
-        if (vault.deployedSDAIShares >= meta.sDAISharesOriginal) {
-            vault.deployedSDAIShares -= meta.sDAISharesOriginal;
+        if (vault.deployedCollateral >= meta.collateralOriginal) {
+            vault.deployedCollateral -= meta.collateralOriginal;
         } else {
-            vault.deployedSDAIShares = 0;
+            vault.deployedCollateral = 0;
+        }
+        if (vault.deployedWsxmr >= meta.wsxmrOriginal) {
+            vault.deployedWsxmr -= meta.wsxmrOriginal;
+        } else {
+            vault.deployedWsxmr = 0;
         }
         delete _positionMetadata[tokenId];
 
-        if (daiOut > 0 && wsxmrOut > 0) {
-            uint256 newTokenId = _deployToNewPosition(meta.vaultOwner, user, daiOut, wsxmrOut, newRangeBps, deadline);
+        if (collOut > 0 && wsxmrOut > 0) {
+            uint256 newTokenId = _deployToNewPosition(meta.vaultOwner, user, collOut, wsxmrOut, newRangeBps, deadline);
             emit CoLPRebalanced(tokenId, newTokenId, meta.vaultOwner, user, msg.sender, newRangeBps);
         } else {
-            if (daiOut > 0) {
-                // daiOut is USDe — wrap to shares before crediting the vault
-                IERC20(underlyingToken).forceApprove(collateralToken, daiOut);
-                vault.collateralShares += ISavingsDAI(collateralToken).deposit(daiOut, address(this));
+            if (collOut > 0) {
+                vault.collateralShares += _normFromRaw(collOut);
             }
             if (wsxmrOut > 0) {
                 pendingReturns[user][wsxmrToken] += wsxmrOut;
             }
-            emit CoLPUnwound(tokenId, meta.vaultOwner, user, daiOut, wsxmrOut, false);
+            emit CoLPUnwound(tokenId, meta.vaultOwner, user, collOut, wsxmrOut, false);
         }
     }
 
@@ -269,63 +272,44 @@ contract CoLPFacet is wsXmrStorage, ICoLPFacet {
 
     // ========== INTERNAL FUNCTIONS ==========
 
-    function _calculateCRWithPositions(address vaultAddr, uint256 debtAmount)
-        internal view returns (uint256)
-    {
-        Vault memory vault = _vaults[vaultAddr];
-        uint256 xmrPrice = _getXmrPriceFromStorage();
-        uint256 collateralPrice = _getCollateralPriceFromStorage();
+    /// @dev Post-deploy coverage check: the vault's collateral backing (free +
+    ///      deployed collateral legs at face) must cover effective debt
+    ///      (normalized debt + pendingDebt − deployed wsXMR legs, floored at 0)
+    ///      at its own declared threshold.
+    function _requireThresholdCoverage(address lpVault, Vault storage vault) internal view {
+        uint256 threshold = vault.thresholdSharesPerWsxmr;
+        if (threshold < minThreshold) revert BelowMinThreshold();
 
-        if (vault.deployedSDAIShares == 0) {
-            return CollateralLogic.calculateRatioFromShares(
-                vault.collateralShares, debtAmount, collateralToken, collateralPrice, xmrPrice
-            );
+        uint256 debt = _denormalizeDebt(vault.normalizedDebt) + vault.pendingDebt;
+        uint256 effectiveDebt = debt > vault.deployedWsxmr ? debt - vault.deployedWsxmr : 0;
+        uint256 backing = _freeCollateral(vault) + vault.deployedCollateral;
+
+        if (backing < _requiredCollateral(effectiveDebt, threshold)) {
+            revert InsufficientCollateral();
         }
-
-        (uint256 positionDAI, uint256 positionWsxmr) = _getVaultPositionTotalsAtOracle(vaultAddr, xmrPrice);
-        return CollateralLogic.calculateVaultCRWithDeployment(
-            vault.collateralShares,
-            positionDAI,
-            positionWsxmr,
-            debtAmount,
-            collateralToken,
-            collateralPrice,
-            xmrPrice
-        );
-    }
-
-    function _getVaultPositionTotalsAtOracle(address vaultAddr, uint256 xmrPrice)
-        internal view
-        returns (uint256 totalDAI, uint256 totalWsxmr)
-    {
-        uint256 collateralPrice = _getCollateralPriceFromStorage();
-        uint256[] memory positions = _vaultPositions[vaultAddr];
-        for (uint256 i = 0; i < positions.length; i++) {
-            (uint256 dai, uint256 wsxmr) = IwsXmrLiquidityRouter(liquidityRouter)
-                .getPositionAmountsAtPrice(positions[i], xmrPrice, collateralPrice);
-            totalDAI += dai;
-            totalWsxmr += wsxmr;
-        }
+        lpVault; // silence unused-param warning (struct already loaded)
     }
 
     function _unwindAndDistribute(uint256 tokenId, bool fromLiquidation) internal {
         PositionMetadata memory meta = _positionMetadata[tokenId];
         Vault storage vault = _vaults[meta.vaultOwner];
-        uint256 xmrPrice = _getXmrPriceFromStorage();
 
-        (uint256 daiOut, uint256 wsxmrOut) = IwsXmrLiquidityRouter(liquidityRouter)
-            .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS), xmrPrice, _getCollateralPriceFromStorage());
+        (uint256 collOut, uint256 wsxmrOut) = IwsXmrLiquidityRouter(liquidityRouter)
+            .drainPosition(tokenId, uint16(DEFAULT_COLP_SLIPPAGE_BPS));
 
-        if (vault.deployedSDAIShares >= meta.sDAISharesOriginal) {
-            vault.deployedSDAIShares -= meta.sDAISharesOriginal;
+        if (vault.deployedCollateral >= meta.collateralOriginal) {
+            vault.deployedCollateral -= meta.collateralOriginal;
         } else {
-            vault.deployedSDAIShares = 0;
+            vault.deployedCollateral = 0;
+        }
+        if (vault.deployedWsxmr >= meta.wsxmrOriginal) {
+            vault.deployedWsxmr -= meta.wsxmrOriginal;
+        } else {
+            vault.deployedWsxmr = 0;
         }
 
-        if (daiOut > 0) {
-            // daiOut is USDe — wrap to shares before crediting the vault
-            IERC20(underlyingToken).forceApprove(collateralToken, daiOut);
-            vault.collateralShares += ISavingsDAI(collateralToken).deposit(daiOut, address(this));
+        if (collOut > 0) {
+            vault.collateralShares += _normFromRaw(collOut);
         }
 
         if (wsxmrOut > 0) {
@@ -335,7 +319,7 @@ contract CoLPFacet is wsXmrStorage, ICoLPFacet {
         _removePositionFromArrays(tokenId, meta.vaultOwner, meta.user);
         delete _positionMetadata[tokenId];
 
-        emit CoLPUnwound(tokenId, meta.vaultOwner, meta.user, daiOut, wsxmrOut, fromLiquidation);
+        emit CoLPUnwound(tokenId, meta.vaultOwner, meta.user, collOut, wsxmrOut, fromLiquidation);
     }
 
     function _removePositionFromArrays(uint256 tokenId, address vaultAddr, address userAddr) internal {
@@ -360,42 +344,40 @@ contract CoLPFacet is wsXmrStorage, ICoLPFacet {
     function _deployToNewPosition(
         address lpVault,
         address user,
-        uint256 daiAmount,
+        uint256 collateralAmount,
         uint256 wsxmrAmount,
         uint16 rangeBps,
         uint256 deadline
     ) internal returns (uint256 tokenId) {
         Vault storage vault = _vaults[lpVault];
-        uint256 xmrPrice = _getXmrPriceFromStorage();
 
-        // daiAmount is USDe — the pool's quote token
-        IERC20(underlyingToken).safeTransfer(liquidityRouter, daiAmount);
+        // collateralAmount is raw collateral — the pool's quote token
+        IERC20(collateralToken).safeTransfer(liquidityRouter, collateralAmount);
         IERC20(wsxmrToken).safeTransfer(liquidityRouter, wsxmrAmount);
 
-        (uint256 _tokenId, uint128 liquidity, int24 tickLower, int24 tickUpper, uint256 daiConsumed, uint256 wsxmrConsumed) =
+        (uint256 _tokenId, uint128 liquidity, int24 tickLower, int24 tickUpper, uint256 collateralConsumed, uint256 wsxmrConsumed) =
             IwsXmrLiquidityRouter(liquidityRouter).mintConcentratedPosition(
-                daiAmount, wsxmrAmount, rangeBps, xmrPrice, deadline, uint16(DEFAULT_COLP_SLIPPAGE_BPS)
+                collateralAmount, wsxmrAmount, rangeBps, deadline, uint16(DEFAULT_COLP_SLIPPAGE_BPS)
             );
         tokenId = _tokenId;
 
         // M2: Reconcile accounting with actual consumed amounts
-        uint256 leftoverDai = daiAmount > daiConsumed ? daiAmount - daiConsumed : 0;
+        uint256 leftoverCollateral = collateralAmount > collateralConsumed ? collateralAmount - collateralConsumed : 0;
         uint256 leftoverWsxmr = wsxmrAmount > wsxmrConsumed ? wsxmrAmount - wsxmrConsumed : 0;
-        if (leftoverDai > 0) {
-            // Re-wrap leftover USDe into shares for the vault
-            IERC20(underlyingToken).forceApprove(collateralToken, leftoverDai);
-            vault.collateralShares += ISavingsDAI(collateralToken).deposit(leftoverDai, address(this));
+        if (leftoverCollateral > 0) {
+            vault.collateralShares += _normFromRaw(leftoverCollateral);
         }
         if (leftoverWsxmr > 0) {
             pendingReturns[user][wsxmrToken] += leftoverWsxmr;
         }
 
-        vault.deployedSDAIShares += daiConsumed;
+        vault.deployedCollateral += _normFromRaw(collateralConsumed);
+        vault.deployedWsxmr += wsxmrConsumed;
 
         _positionMetadata[tokenId] = PositionMetadata({
             vaultOwner: lpVault,
             user: user,
-            sDAISharesOriginal: daiConsumed,
+            collateralOriginal: _normFromRaw(collateralConsumed),
             wsxmrOriginal: wsxmrConsumed,
             tickLower: tickLower,
             tickUpper: tickUpper,
@@ -405,6 +387,6 @@ contract CoLPFacet is wsXmrStorage, ICoLPFacet {
         _vaultPositions[lpVault].push(tokenId);
         _userPositions[user].push(tokenId);
 
-        emit CoLPDeployed(lpVault, user, tokenId, daiConsumed, wsxmrConsumed, rangeBps);
+        emit CoLPDeployed(lpVault, user, tokenId, collateralConsumed, wsxmrConsumed, rangeBps);
     }
 }

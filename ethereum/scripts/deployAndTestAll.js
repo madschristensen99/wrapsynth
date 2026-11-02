@@ -1,13 +1,18 @@
 #!/usr/bin/env node
 /**
- * Single deploy + test entry point.
+ * Single deploy + test entry point (oracle-free protocol).
  *
- * 1. forge script DeployGnosis.s.sol --broadcast
+ * 1. forge script script/Deploy<Chain>.s.sol --broadcast
  * 2. Parse console output for contract addresses
- * 3. Write deployment.json (root + frontend copy)
- * 4. Run testFullCycleNow.js, testCoLPNow.js, testPoolSwaps.js
+ * 3. Write deployments/<chain>-deployment.json + frontend copy
+ * 4. Run testFullCycleNow, testCoLPNow, testPoolSwaps for that chain
  *
- * Usage: npm run deploy
+ * Usage:
+ *   node scripts/deployAndTestAll.js base|bnb|robinhood
+ *   npm run deploy -- base
+ *
+ * Env: PRIVATE_KEY (required), <CHAIN>_RPC_URL or RPC_URL, and optionally
+ *      MIN_THRESHOLD / KICK_BOND_MIN (normalized 18-dec units).
  */
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
@@ -25,6 +30,27 @@ function section(t) {
     const l = '='.repeat(70);
     log(`\n${l}`, 'cyan'); log(`  ${t}`, 'bright'); log(`${l}\n`, 'cyan');
 }
+
+const CHAINS = {
+    base: {
+        script: 'DeployBase.s.sol:DeployBase',
+        rpcEnv: 'BASE_RPC_URL', rpcFallback: 'https://mainnet.base.org',
+        chainId: 8453, explorer: 'https://basescan.org',
+        collateralKey: 'cbbtc',
+    },
+    bnb: {
+        script: 'DeployBnb.s.sol:DeployBnb',
+        rpcEnv: 'BSC_RPC_URL', rpcFallback: 'https://bsc-dataseed.bnbchain.org',
+        chainId: 56, explorer: 'https://bscscan.com',
+        collateralKey: 'qqqb',
+    },
+    robinhood: {
+        script: 'DeployRobinhood.s.sol:DeployRobinhood',
+        rpcEnv: 'ROBINHOOD_RPC_URL', rpcFallback: 'https://rpc.mainnet.chain.robinhood.com',
+        chainId: 4663, explorer: 'https://robin.etherscan.io',
+        collateralKey: 'spy',
+    },
+};
 
 // ── Run a command, capture stdout ─────────────────────────────────────────────
 function runCmd(cmd, args, opts = {}) {
@@ -52,99 +78,66 @@ function parseAddresses(output) {
         const m = output.match(re);
         return m ? m[1] : null;
     };
-    const grabIndented = (label) => {
-        const re = new RegExp(`${label}\\s+(0x[0-9a-fA-F]{40})`);
-        const m = output.match(re);
-        return m ? m[1] : null;
-    };
 
     const addr = {
         wsXMR: grab('wsXMR deployed to'),
         wsXmrHub: grab('wsXmrHub deployed to'),
         liquidityRouter: grab('Router deployed to'),
-        swapHelper: grab('SwapHelper deployed to'),
-        RedStoneOracleFacet: grab('RedStoneOracleFacet deployed to'),
         VaultFacet: grab('VaultFacet deployed to'),
         MintFacet: grab('MintFacet deployed to'),
         BurnFacet: grab('BurnFacet deployed to'),
-        LiquidationFacet: grab('LiquidationFacet deployed to'),
-        YieldFacet: grab('YieldFacet deployed to'),
-        pool: grabIndented('Uniswap V3 Pool'),
+        LiquidationAuctionFacet: grab('LiquidationAuctionFacet deployed to'),
+        CoLPFacet: grab('CoLPFacet deployed to'),
+        pool: grab('wsXMR/\\S+ pool:\\s*(0x[0-9a-fA-F]{40})') || grab('Pool created') || grab('Pool already exists'),
     };
 
     // Also try the summary section
-    if (!addr.wsXMR) addr.wsXMR = grabIndented('wsXMR:');
-    if (!addr.wsXmrHub) addr.wsXmrHub = grabIndented('wsXmrHub:');
-    if (!addr.liquidityRouter) addr.liquidityRouter = grabIndented('LiquidityRouter:');
-    if (!addr.swapHelper) addr.swapHelper = grabIndented('SwapHelper:');
-    if (!addr.RedStoneOracleFacet) addr.RedStoneOracleFacet = grabIndented('OracleFacet:');
-    if (!addr.VaultFacet) addr.VaultFacet = grabIndented('VaultFacet:');
-    if (!addr.MintFacet) addr.MintFacet = grabIndented('MintFacet:');
-    if (!addr.BurnFacet) addr.BurnFacet = grabIndented('BurnFacet:');
-    if (!addr.LiquidationFacet) addr.LiquidationFacet = grabIndented('LiquidationFacet:');
-    if (!addr.YieldFacet) addr.YieldFacet = grabIndented('YieldFacet:');
-    if (!addr.pool) addr.pool = grabIndented('Uniswap V3 Pool:');
+    if (!addr.wsXMR) addr.wsXMR = grab('wsXMR:');
+    if (!addr.wsXmrHub) addr.wsXmrHub = grab('wsXmrHub:');
+    if (!addr.liquidityRouter) addr.liquidityRouter = grab('LiquidityRouter:');
+    if (!addr.VaultFacet) addr.VaultFacet = grab('VaultFacet:');
+    if (!addr.MintFacet) addr.MintFacet = grab('MintFacet:');
+    if (!addr.BurnFacet) addr.BurnFacet = grab('BurnFacet:');
+    if (!addr.LiquidationAuctionFacet) addr.LiquidationAuctionFacet = grab('LiquidationAuction:');
+    if (!addr.CoLPFacet) addr.CoLPFacet = grab('CoLPFacet:');
+    if (!addr.pool) addr.pool = grab('wsXMR/\\S+ pool:');
 
     return addr;
 }
 
 // ── Write deployment.json ─────────────────────────────────────────────────────
-function writeDeployment(addr) {
+function writeDeployment(chain, addr) {
     const deployerWallet = new (require('ethers').Wallet)(process.env.PRIVATE_KEY);
 
     const deployment = {
-        network: 'Gnosis Chain Mainnet',
-        chainId: 100,
+        network: chain,
+        chainId: CHAINS[chain].chainId,
         deploymentDate: new Date().toISOString(),
-        rpcUrl: 'https://rpc.gnosischain.com',
-        wsUrl: 'wss://rpc.gnosischain.com/wss',
-        explorer: 'https://gnosisscan.io',
-        contracts: {
-            wsXMR: addr.wsXMR,
-            wsXmrHub: addr.wsXmrHub,
-            liquidityRouter: addr.liquidityRouter,
-            swapHelper: addr.swapHelper,
-            facets: {
-                RedStoneOracleFacet: addr.RedStoneOracleFacet,
-                VaultFacet: addr.VaultFacet,
-                MintFacet: addr.MintFacet,
-                BurnFacet: addr.BurnFacet,
-                LiquidationFacet: addr.LiquidationFacet,
-                YieldFacet: addr.YieldFacet,
-            },
+        oracleFree: true,
+        wsXMR: addr.wsXMR,
+        wsXmrHub: addr.wsXmrHub,
+        liquidityRouter: addr.liquidityRouter,
+        pool: addr.pool,
+        facets: {
+            VaultFacet: addr.VaultFacet,
+            MintFacet: addr.MintFacet,
+            BurnFacet: addr.BurnFacet,
+            LiquidationAuctionFacet: addr.LiquidationAuctionFacet,
+            CoLPFacet: addr.CoLPFacet,
         },
-        externalContracts: {
-            sDAI: '0xaf204776c7245bF4147c2612BF6e5972Ee483701',
-            wxDAI: '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d',
-            UniswapV3Factory: '0xe32F7dD7e3f098D518ff19A22d5f028e076489B1',
-            UniswapV3PositionManager: '0xAE8fbE656a77519a7490054274910129c9244FA3',
-            SwapHelper: addr.swapHelper,
-            Ed25519Helper: '0xaECa36374039EAb9e267B5daa48bAb9Ab0e50F00',
-        },
-        pool: {
-            uniswapV3Pool: addr.pool,
-            feeTier: 3000,
-        },
-        urls: {
-            moneroDaemon: 'https://xmr-node.cakewallet.com:18081',
-            moneroNetwork: 'mainnet',
-        },
-        lpConfig: {
-            defaultLpVault: deployerWallet.address,
-            apiPort: 3001,
-            minCollateralRatio: 150,
-            liquidationThreshold: 120,
-            targetCollateralRatio: 180,
-        },
+        deployer: deployerWallet.address,
+        explorer: CHAINS[chain].explorer,
         verification: { status: 'pending', verifiedContracts: [] },
     };
 
-    const rootPath = path.join(__dirname, '..', '..', 'deployment.json');
-    const frontendPath = path.join(__dirname, '..', '..', 'frontend', 'deployment.json');
+    const deployDir = path.join(__dirname, '..', 'deployments');
+    fs.mkdirSync(deployDir, { recursive: true });
+    const deployPath = path.join(deployDir, `${chain}-deployment.json`);
+    const frontendPath = path.join(__dirname, '..', '..', 'frontend', `deployment.${chain}.json`);
     const json = JSON.stringify(deployment, null, 2) + '\n';
-    fs.writeFileSync(rootPath, json);
-    fs.writeFileSync(frontendPath, json);
-    log(`✓ deployment.json written (root + frontend)`, 'green');
+    fs.writeFileSync(deployPath, json);
+    try { fs.writeFileSync(frontendPath, json); } catch (_) { /* frontend dir may differ */ }
+    log(`✓ ${chain}-deployment.json written (deployments/ + frontend/)`, 'green');
     log(`  wsXMR:         ${addr.wsXMR}`, 'green');
     log(`  wsXmrHub:      ${addr.wsXmrHub}`, 'green');
     log(`  Router:        ${addr.liquidityRouter}`, 'green');
@@ -154,53 +147,59 @@ function writeDeployment(addr) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function main() {
     const t0 = Date.now();
+    const chain = (process.argv[2] || '').toLowerCase();
+    if (!CHAINS[chain]) {
+        log('Usage: node scripts/deployAndTestAll.js base|bnb|robinhood', 'red');
+        process.exit(1);
+    }
 
     log('\n' + '█'.repeat(70), 'bright');
-    log('  WRAPSYNTH — DEPLOY + TEST (single script)', 'bright');
+    log(`  WRAPSYNTH — DEPLOY + TEST (${chain.toUpperCase()}, oracle-free)`, 'bright');
     log('█'.repeat(70) + '\n', 'bright');
 
-    // Env check
-    const required = ['PRIVATE_KEY', 'GNOSIS_RPC_URL'];
-    const missing = required.filter(k => !process.env[k]);
-    if (missing.length) { log(`Missing env vars: ${missing.join(', ')}`, 'red'); process.exit(1); }
-    log('✓ Environment OK', 'green');
+    const rpcUrl = process.env[CHAINS[chain].rpcEnv] || process.env.RPC_URL || CHAINS[chain].rpcFallback;
+    if (!process.env.PRIVATE_KEY) {
+        log('Missing env var: PRIVATE_KEY', 'red');
+        process.exit(1);
+    }
+    log(`✓ Environment OK (rpc: ${rpcUrl})`, 'green');
 
     try {
         // ── Step 1: Deploy ────────────────────────────────────────────────────
-        section('STEP 1: Deploy contracts to Gnosis');
+        section(`STEP 1: Deploy contracts to ${chain}`);
         const forgeOutput = await runCmd('forge', [
-            'script', 'script/DeployGnosis.s.sol:DeployGnosis',
-            '--rpc-url', process.env.GNOSIS_RPC_URL,
+            'script', `script/${CHAINS[chain].script}`,
+            '--rpc-url', rpcUrl,
             '--broadcast', '--slow',
         ]);
 
         // ── Step 2: Parse + write deployment.json ─────────────────────────────
-        section('STEP 2: Update deployment.json');
+        section('STEP 2: Update deployment manifest');
         const addr = parseAddresses(forgeOutput);
         const missingAddr = Object.entries(addr).filter(([, v]) => !v).map(([k]) => k);
         if (missingAddr.length) {
             log(`⚠️  Could not parse: ${missingAddr.join(', ')}`, 'yellow');
-            log('  You may need to manually update deployment.json', 'yellow');
+            log('  You may need to manually update the deployment manifest', 'yellow');
         }
-        writeDeployment(addr);
+        writeDeployment(chain, addr);
 
         // ── Step 3: testFullCycleNow ──────────────────────────────────────────
         section('STEP 3: testFullCycleNow (mint + burn)');
-        await runInherit('node', ['scripts/testFullCycleNow.js']);
+        await runInherit('node', [`scripts/testFullCycleNow.${chain}.js`]);
 
         // ── Step 4: testCoLPNow ───────────────────────────────────────────────
         section('STEP 4: testCoLPNow (co-LP position)');
-        await runInherit('node', ['scripts/testCoLPNow.js']);
+        await runInherit('node', [`scripts/testCoLPNow.${chain}.js`]);
 
         // ── Step 5: testPoolSwaps ─────────────────────────────────────────────
         section('STEP 5: testPoolSwaps (pool trading)');
-        await runInherit('node', ['scripts/testPoolSwaps.js']);
+        await runInherit('node', [`scripts/testPoolSwaps.${chain}.js`]);
 
         // ── Done ──────────────────────────────────────────────────────────────
         const dur = ((Date.now() - t0) / 1000).toFixed(1);
         section('ALL DONE');
         log(`✓ Deploy + tests completed in ${dur}s`, 'green');
-        log('✓ Frontend and lp-server will pick up new addresses from deployment.json\n', 'green');
+        log('✓ Frontend and lp-server will pick up new addresses from the deployment manifest\n', 'green');
         process.exit(0);
     } catch (err) {
         const dur = ((Date.now() - t0) / 1000).toFixed(1);

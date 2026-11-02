@@ -21,7 +21,7 @@ const LP_MAIN_ADDRESS = '47c5D4w8C8Ya9cwKjXZVJDDZmCJh3DisqaUzHkrrKZDrY7psQni4udG
 const SECRETS_FILE = path.join(__dirname, 'lp-secrets.json');
 
 const HUB_ABI = [
-  'function getMintRequest(bytes32) view returns (tuple(bytes32 requestId, address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout, uint256 griefingDeposit, uint256 normalizedDebtAmount, uint256 vaultMintNonce, bytes32 lpCommitment, bytes32 revealedSecret, uint8 status))',
+  'function getMintRequest(bytes32) view returns (tuple(bytes32 requestId, address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout, uint256 griefingDeposit, uint256 normalizedDebtAmount, uint256 vaultMintNonce, bytes32 lpCommitment, bytes32 revealedSecret, uint8 status, uint256 lockedCollateral, uint256 thresholdAtReady))',
   'function lpPublicKeys(bytes32) view returns (bytes32)',
   'function lpPublicViewKeys(bytes32) view returns (bytes32)',
 ];

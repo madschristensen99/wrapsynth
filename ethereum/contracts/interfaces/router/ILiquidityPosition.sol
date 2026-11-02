@@ -5,6 +5,8 @@ pragma solidity ^0.8.28;
  * @title ILiquidityPosition
  * @notice Interface for concentrated liquidity position operations on the router.
  * @dev All mutating functions are onlyDiamond. Views are public.
+ *      Oracle-free: no price inputs anywhere — ranges derive from the pool's
+ *      own slot0 tick and slippage protection is caller-supplied bounds.
  */
 interface ILiquidityPosition {
     // ========== ERRORS ==========
@@ -16,25 +18,24 @@ interface ILiquidityPosition {
 
     // ========== MUTATING (onlyDiamond) ==========
 
-    /// @notice Mint a concentrated V3 position. Caller (diamond) must have transferred
-    ///         daiAmount of DAI and wsxmrAmount of wsXMR to this contract before calling.
-    /// @param daiAmount DAI amount (1e18)
+    /// @notice Mint a concentrated V3 position centered on the pool's own slot0
+    ///         tick. Caller (diamond) must have transferred collateralAmount of
+    ///         collateral and wsxmrAmount of wsXMR to this contract before calling.
+    /// @param collateralAmount Collateral amount (raw token units)
     /// @param wsxmrAmount wsXMR amount (1e8)
     /// @param rangeBps Full width in bps (e.g. 2000 = ±10% around center)
-    /// @param centerXmrPrice Oracle XMR price used to compute the center tick
     /// @param deadline Transaction deadline
     /// @param slippageBps Max acceptable slippage in bps (e.g. 50 = 0.5%)
     /// @return tokenId V3 NFT id (owned by the diamond)
     /// @return liquidity Amount of liquidity minted
     /// @return tickLower Lower tick (snapped to tick spacing)
     /// @return tickUpper Upper tick (snapped to tick spacing)
-    /// @return daiConsumed Actual sDAI amount consumed by the mint
+    /// @return daiConsumed Actual collateral amount consumed by the mint
     /// @return wsxmrConsumed Actual wsXMR amount consumed by the mint
     function mintConcentratedPosition(
-        uint256 daiAmount,
+        uint256 collateralAmount,
         uint256 wsxmrAmount,
         uint16 rangeBps,
-        uint256 centerXmrPrice,
         uint256 deadline,
         uint16 slippageBps
     ) external returns (
@@ -47,38 +48,28 @@ interface ILiquidityPosition {
     );
 
     /// @notice Drain all liquidity from a position and collect tokens to diamond.
-    ///         Burns the NFT after draining.
+    ///         Burns the NFT after draining. Post-collect sanity check compares
+    ///         returned amounts against what the pool's current slot0 price
+    ///         predicts for the position's liquidity — no oracle input.
     /// @param tokenId V3 NFT id (diamond must own it)
     /// @param slippageBps Max acceptable slippage in bps (e.g. 50 = 0.5%)
-    /// @param oracleXmrPrice Oracle XMR price (18 decimals) for slippage bounds
-    /// @param oracleCollateralPrice Oracle collateral price (18 decimals) for slippage bounds
-    /// @return daiOut DAI recovered
+    /// @return collOut Collateral recovered
     /// @return wsxmrOut wsXMR recovered
-    function drainPosition(uint256 tokenId, uint16 slippageBps, uint256 oracleXmrPrice, uint256 oracleCollateralPrice)
-        external returns (uint256 daiOut, uint256 wsxmrOut);
+    function drainPosition(uint256 tokenId, uint16 slippageBps)
+        external returns (uint256 collOut, uint256 wsxmrOut);
 
     /// @notice Collect accumulated fees on a position to the diamond.
     function collectFees(uint256 tokenId)
-        external returns (uint256 daiFees, uint256 wsxmrFees);
+        external returns (uint256 collFees, uint256 wsxmrFees);
 
     // ========== VIEW ==========
 
     /// @notice Return current token amounts in a position at pool spot price.
-    /// @dev For fee accounting reference only. Do NOT use for CR calculations.
+    /// @dev For fee accounting / display reference only.
     function getPositionAmountsAtSpot(uint256 tokenId)
-        external view returns (uint256 daiAmount, uint256 wsxmrAmount);
+        external view returns (uint256 collateralAmount, uint256 wsxmrAmount);
 
-    /// @notice Return token amounts a position would yield if priced at given XMR price.
-    /// @dev This is the function to use for CR calculations. Pass oracle xmrPrice.
+    /// @notice Check if the position is out of range at the pool's own slot0 price.
     /// @param tokenId V3 NFT id
-    /// @param xmrPriceUSD18 XMR price in USD (18 decimals)
-    /// @param collateralPriceUSD18 Collateral price in USD (18 decimals)
-    function getPositionAmountsAtPrice(uint256 tokenId, uint256 xmrPriceUSD18, uint256 collateralPriceUSD18)
-        external view returns (uint256 daiAmount, uint256 wsxmrAmount);
-
-    /// @notice Check if the position is out of range at the given oracle XMR price.
-    /// @param tokenId V3 NFT id
-    /// @param xmrPrice XMR price in USD (18 decimals)
-    /// @param collateralPrice Collateral price in USD (18 decimals)
-    function isPositionOutOfRange(uint256 tokenId, uint256 xmrPrice, uint256 collateralPrice) external view returns (bool);
+    function isPositionOutOfRange(uint256 tokenId) external view returns (bool);
 }

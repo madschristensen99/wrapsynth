@@ -2,16 +2,15 @@
 pragma solidity ^0.8.28;
 
 import {console} from "forge-std/Test.sol";
+import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
 import {BaseMockTestBase} from "./BaseTestBase.sol";
 import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
-import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
-import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
+import {LiquidationAuctionFacet} from "../contracts/facets/LiquidationAuctionFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
-import {YieldLogic} from "../contracts/libraries/YieldLogic.sol";
 import {IErrors} from "../contracts/interfaces/IErrors.sol";
 
 /**
@@ -20,6 +19,8 @@ import {IErrors} from "../contracts/interfaces/IErrors.sol";
  * @dev Forks HyperEVM for stataUSDe / HyperCore oracle interactions
  */
 contract AuditRegressionTestBase is BaseMockTestBase {
+    using stdStorage for StdStorage;
+
     address attacker = makeAddr("attacker");
     address keeper = makeAddr("keeper");
 
@@ -66,7 +67,7 @@ contract AuditRegressionTestBase is BaseMockTestBase {
 
         // Any call through the fallback should work normally
         vm.prank(lp);
-        VaultFacet(address(hub)).setMaxMintBps(100);
+        VaultFacet(address(hub)).setMaxMintWsxmr(100e8);
 
         // After the call, a direct call to a privileged function must still revert
         vm.expectRevert(IwsXmrHubBase.Unauthorized.selector);
@@ -100,52 +101,6 @@ contract AuditRegressionTestBase is BaseMockTestBase {
 
         uint256 pendingAfter = _getPendingReturns(user, address(0));
         assertEq(pendingAfter, griefingDeposit, "ETH should be queued to pendingReturns, not pushed");
-    }
-
-    // ========== H1: YieldLogic decimal bug ==========
-
-    /// @notice H1: calculateExtractableYield respects the 150% floor with correct wsXMR decimals
-    /// @dev Before fix: /1e18 understated debt by 1e10, so floor was ~never enforced.
-    ///      After fix: /1e8 correctly converts wsXMR to USD and the 150% cap works.
-    function test_H1_YieldExtraction_Respects150PercentFloor() public {
-        _createVaultAndDeposit(lp, 10_000 ether);
-        _updatePrices();
-        _configureVault(lp);
-
-        // Mint a small amount so vault is barely above 150% CR
-        // At $390 XMR, 1e8 wsXMR = $390. 10k DAI collateral at 150% can support
-        // ~2564 wsXMR. Let's mint ~2000 wsXMR so vault is just above 150%.
-        uint256 xmrAmount = 20_0000000000; // 20 XMR => 20 * 1e4 = 200k wsXMR units
-        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(0x1234));
-        bytes32 commitment = keccak256(abi.encodePacked(px, py));
-
-        vm.prank(user);
-        bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, xmrAmount, commitment, bytes32(uint256(0xdeadbeef)));
-
-        vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
-
-        vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(reqId);
-
-        vm.prank(user);
-        MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
-        MintFacet(address(hub)).finalizeMint(reqId);
-
-        // Now artificially inflate sDAI value (simulate yield) by depositing more sDAI to the hub
-        // But to test yield extraction properly, we deposit extra collateral then remove principal tracking
-        // Simpler: deposit additional collateral as a different LP, then have original LP try to extract
-
-        // For this test, we just verify that syncVaultYield does NOT crash the vault below 150%
-        // by checking the vault health before and after an explicit yield sync.
-        uint256 healthBefore = hub.getVaultHealth(lp);
-        assertGe(healthBefore, 150, "Vault should be at or above 150% before sync");
-
-        // Anyone can call syncVaultYield on the LP
-        yieldFacet.syncVaultYield(lp);
-
-        uint256 healthAfter = hub.getVaultHealth(lp);
-        assertGe(healthAfter, 150, "Vault must stay >= 150% after yield sync (H1 fix)");
     }
 
     // ========== H2: denormalizeDebt reads hub storage, not facet frozen storage ==========
@@ -186,16 +141,9 @@ contract AuditRegressionTestBase is BaseMockTestBase {
         uint256 hubDebt = hub.getVaultDebt(lp);
         assertEq(hubDebt, hubDebtBefore, "Debt at 1e18 index");
 
-        // Now simulate a buy-and-burn that reduces globalDebtIndex to 0.5e18
-        // We directly manipulate the index via vm.store on the correct hub storage slot.
-        // wsXmrStorage slot layout (immutables excluded):
-        //   0: vaultFacet, 1: mintFacet, 2: burnFacet, 3: liquidationFacet,
-        //   4: yieldFacet, 5: oracleFacet, 6: facets mapping, 7: liquidityRouter,
-        //   8: lastXmrPrice, 9: lastXmrPriceTimestamp, 10: lastCollateralPrice,
-        //   11: lastCollateralPriceTimestamp, 12: lastBuyTimestamp, 13: globalTotalDebt,
-        //   14: globalDebtIndex  (N2: MUST update if wsXmrStorage layout changes)
-        bytes32 globalDebtIndexSlot = bytes32(uint256(14));
-        vm.store(address(hub), globalDebtIndexSlot, bytes32(uint256(0.5e18)));
+        // Now simulate a buy-and-burn that reduces globalDebtIndex to 0.5e18.
+        // stdStorage locates the slot automatically — no fragile hard-coded layout.
+        stdstore.target(address(hub)).sig("globalDebtIndex()").checked_write(0.5e18);
 
         // After manipulation, hub index is 0.5e18
         assertEq(hub.globalDebtIndex(), 0.5e18, "Index should be 0.5e18 after store");
@@ -204,18 +152,19 @@ contract AuditRegressionTestBase is BaseMockTestBase {
         uint256 hubDebtAfter = hub.getVaultDebt(lp);
         assertApproxEqRel(hubDebtAfter, hubDebtBefore / 2, 0.001e18, "Hub debt should halve with index");
 
-        // The old oracleFacet.denormalizeDebt would still return hubDebtBefore (using facet's frozen 1e18)
-        uint256 facetDebt = oracleFacet.denormalizeDebt(hubDebtBefore);
-        assertEq(facetDebt, hubDebtBefore, "Facet debt stays at old value (frozen storage)");
-
         // Critical: state-modifying functions via the hub must use the hub's live index.
-        // We verify by calling syncVaultYield which internally uses _denormalizeDebt.
-        // If it used the facet's frozen index, it would think actualDebt is 2x larger
-        // and potentially extract less yield (or mis-calculate health).
-        // We just assert the call doesn't revert and health stays sane.
-        yieldFacet.syncVaultYield(lp);
+        // repayDebt internally uses _denormalizeDebt — with a halved index a repay of
+        // half the minted debt clears the whole vault debt. If it used a frozen index
+        // it would think actualDebt is 2x larger.
+        uint256 minted = wsxmr.balanceOf(user);
+        vm.prank(user);
+        wsxmr.transfer(lp, minted);
+        vm.startPrank(lp);
+        wsxmr.approve(address(hub), minted);
+        VaultFacet(address(hub)).repayDebt(hubDebtAfter);
+        vm.stopPrank();
         uint256 healthAfter = hub.getVaultHealth(lp);
-        assertGt(healthAfter, 0, "Health should remain sane after sync with non-1e18 index");
+        assertGt(healthAfter, 0, "Health should remain sane after repay with non-1e18 index");
     }
 
     // ========== L3: addSelectors collision check ==========
@@ -230,61 +179,11 @@ contract AuditRegressionTestBase is BaseMockTestBase {
         hub.addSelectors(address(mintFacet), selectors);
     }
 
-    // ========== H1 Regression: Yield harvesting unit mismatch ==========
-
-    /// @notice H1-2: With fix, syncVaultYield must NOT extract phantom yield when no real
-    ///         yield has accrued. Before fix, passing lpPrincipalShares (sDAI shares) into
-    ///         calculateExtractableYield's principalDeposits param (DAI assets) caused
-    ///         convertToAssets(shares) > shares to be treated as "yield".
-    function test_H1_NoPhantomYield_OnFreshDeposit() public {
-        _createVaultAndDeposit(lp, 25_000 ether);
-        _updatePrices();
-        _configureVault(lp);
-
-        // Mint a small amount so vault is at ~250% CR
-        uint256 xmrAmount = 20_0000000000;
-        (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(0x1234));
-        bytes32 commitment = keccak256(abi.encodePacked(px, py));
-
-        vm.prank(user);
-        bytes32 reqId = MintFacet(address(hub)).initiateMint{value: 0.001 ether}(lp, user, xmrAmount, commitment, bytes32(uint256(0xdeadbeef)));
-
-        vm.prank(lp);
-        MintFacet(address(hub)).provideLPKey(reqId, bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)), bytes32(uint256(0xdeadbeef)));
-
-        vm.prank(lp);
-        MintFacet(address(hub)).setMintReady(reqId);
-
-        vm.prank(user);
-        MintFacet(address(hub)).revealSecret(reqId, bytes32(uint256(0x1234)));
-        MintFacet(address(hub)).finalizeMint(reqId);
-
-        // Record pre-sync state
-        uint256 principalDepositsBefore = hub.lpPrincipalDeposits(lp);
-        uint256 vaultSharesBefore = _getVaultCollateralShares(lp);
-        uint256 warChestBefore = _getYieldWarChest();
-
-        // Call sync immediately — no real yield has accrued yet
-        yieldFacet.syncVaultYield(lp);
-
-        uint256 vaultSharesAfter = _getVaultCollateralShares(lp);
-        uint256 warChestAfter = _getYieldWarChest();
-        uint256 principalDepositsAfter = hub.lpPrincipalDeposits(lp);
-
-        // H1 Fix assertions:
-        // 1. Vault collateral shares must NOT shrink (no phantom yield)
-        assertGe(vaultSharesAfter, vaultSharesBefore, "H1: vault shares must not shrink from phantom yield");
-        // 2. Principal deposits must not change
-        assertEq(principalDepositsAfter, principalDepositsBefore, "H1: principal deposits must not change");
-        // 3. War chest must not increase from phantom yield
-        assertEq(warChestAfter, warChestBefore, "H1: war chest must not grow from phantom yield on fresh deposit");
-    }
-
     // ========== H2 Regression: Bad-debt socialization index scaling ==========
 
-    /// @notice H2-2: After liquidation writes off bad debt, healthy vault B's denormalized
-    ///         debt must NOT change, and globalTotalDebt must equal the sum of all
-    ///         vault denormalized debts.
+    /// @notice H2-2: After a liquidation auction burns vault A's debt, healthy vault B's
+    ///         denormalized debt must NOT change, and globalTotalDebt must equal the sum
+    ///         of all vault denormalized debts.
     function test_H2_BadDebtWriteOff_KeepsHealthyVaultDebt() public {
         address vaultA = makeAddr("vaultA");
         address vaultB = makeAddr("vaultB");
@@ -337,24 +236,29 @@ contract AuditRegressionTestBase is BaseMockTestBase {
         uint256 globalDebtBefore = hub.globalTotalDebt();
         uint256 indexBefore = hub.globalDebtIndex();
 
-        // Raise XMR price so A is underwater (higher XMR price increases debt value)
-        // At $390, vault A is at ~160% CR. At $2000, debt USD ≈ 80, CR ≈ 62% < 120%.
-        _setXmrPrice8dec(2000_00000000);
+        // Kick vault A — permissionless; the auction is the solvency test
+        _kickVault(keeper, vaultA);
 
-        // Verify A is liquidatable
-        // Use _hubView because hub fallback uses TSTORE which fails in STATICCALL
-        bytes memory liqResult = _hubView(
-            abi.encodeWithSelector(LiquidationFacet.isVaultLiquidatable.selector, vaultA)
+        // Roll past grace + open delay so the auction is ACTIVE.
+        // auctionEnd = kickBlock + GRACE + OPEN_DELAY + DURATION, so the active
+        // window starts at auctionEnd - AUCTION_DURATION (3600 blocks).
+        bytes memory kickResult = _hubView(
+            abi.encodeWithSelector(LiquidationAuctionFacet.auctionState.selector, vaultA)
         );
-        bool isLiquidatable = abi.decode(liqResult, (bool));
-        assertTrue(isLiquidatable, "Vault A should be liquidatable after price rise");
+        (,,,,,, uint256 auctionEnd,) = abi.decode(
+            kickResult, (bool, uint8, uint256, uint256, uint256, address, uint256, bool)
+        );
+        vm.roll(auctionEnd - hub.AUCTION_DURATION_BLOCKS() + 10);
 
-        // Give keeper wsXMR so liquidation can burn it
-        deal(address(wsxmr), keeper, 1_000_000_000);
+        // Give keeper wsXMR covering vault A's full debt so the bid clears it
+        uint256 vaultADebt = hub.getVaultDebt(vaultA);
+        deal(address(wsxmr), keeper, vaultADebt);
 
-        // Liquidate vault A — all collateral will be seized and some debt remains as bad debt
-        vm.prank(keeper);
-        LiquidationFacet(address(hub)).liquidate(vaultA, type(uint256).max);
+        // Bid — burns the vault's full debt for X% of the offered collateral
+        vm.startPrank(keeper);
+        wsxmr.approve(address(hub), vaultADebt);
+        LiquidationAuctionFacet(address(hub)).bid(vaultA);
+        vm.stopPrank();
 
         // H2 Fix assertions:
         // 1. globalDebtIndex must NOT have changed (no bogus scaling)
@@ -491,26 +395,13 @@ contract AuditRegressionTestBase is BaseMockTestBase {
         wsXmrStorage.Vault memory vault = abi.decode(vaultResult, (wsXmrStorage.Vault));
         assertGt(vault.lockedCollateral, 0, "lockedCollateral must be > 0 after burn request");
 
-        // Set a tiny maxMintBps (1 = 0.01%) so almost any mint exceeds the cap.
-        // CRITICAL: The maxMintBps check must:
-        //   1. Convert sDAI shares to DAI assets via convertToAssets()
-        //   2. Subtract lockedCollateral from total shares before conversion
-        // 
-        // With 10k sDAI deposited (~10.45k DAI after conversion at ~1.045 rate):
-        //   Old buggy code (used raw shares): (10000 shares * price) / 1e18 = WRONG
-        //   Fixed code: convertToAssets(availableShares) * price / 1e18 = CORRECT
-        //
-        // With lockedCollateral > 0, available < total, so capacity is reduced.
-        // maxMintAllowed = (availableDAI * collPrice * 100/150) * 0.01%
+        // Set a tiny absolute wsXMR cap so almost any mint exceeds it.
+        // CRITICAL: the capacity check must subtract lockedCollateral from total
+        // shares — with lockedCollateral > 0 the quote cap still binds.
         vm.prank(lp);
-        VaultFacet(address(hub)).setMaxMintBps(1);
+        VaultFacet(address(hub)).setMaxMintWsxmr(1); // 1 wei of wsXMR — everything reverts
 
-        // With maxMintBps=1 (0.01%) and ~10k available collateral:
-        //   maxMintAllowed ≈ (10450 DAI * $1 * 100/150) * 0.01% ≈ $0.697
-        // At XMR price ~$390: maxMintAllowed ≈ 0.00179 wsXMR
-        // 
-        // Mint 1 full wsXMR (100000000000 XMR atomic units = 10000000 wsXMR atomic = 0.1 wsXMR)
-        // This is ~57x the cap, so must revert with InvalidValue.
+        // Mint 0.1 wsXMR — far over the cap, so must revert with InvalidValue.
         uint256 xmrAmount = 100_000_000_000; // 0.1 wsXMR
         (uint256 px3, uint256 py3) = Ed25519.scalarMultBase(uint256(0x3333));
         bytes32 commitment3 = keccak256(abi.encodePacked(px3, py3));
@@ -571,7 +462,7 @@ contract AuditRegressionTestBase is BaseMockTestBase {
     // ========== Helpers ==========
 
     function _updatePrices() internal {
-        _setXmrPrice8dec(XMR_PRICE_8DEC);
+        
     }
 
     function _createVaultAndDeposit(address who, uint256 amount) internal {
@@ -588,7 +479,7 @@ contract AuditRegressionTestBase is BaseMockTestBase {
 
     function _configureVault(address who) internal {
         vm.startPrank(who);
-        VaultFacet(address(hub)).setMaxMintBps(0);
+        VaultFacet(address(hub)).setMaxMintWsxmr(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
         VaultFacet(address(hub)).setVaultMarketMetrics(100, 100); // 1% fees
@@ -613,10 +504,6 @@ contract AuditRegressionTestBase is BaseMockTestBase {
         return vault.collateralShares;
     }
 
-    function _getYieldWarChest() internal returns (uint256) {
-        bytes memory result = _hubView(abi.encodeWithSelector(YieldFacet.getYieldWarChest.selector));
-        return abi.decode(result, (uint256));
-    }
 }
 
 interface IwsXmrHubBase {

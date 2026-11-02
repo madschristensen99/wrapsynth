@@ -10,8 +10,8 @@ module.exports = {
     WSXMR_ADDRESS: deployment.wsXMR,
     LIQUIDITY_ROUTER: deployment.liquidityRouter,
     POOL_ADDRESS: deployment.pool,
-    STATA_ADDRESS: deployment.stataSPY,            // collateral share token
-    QQQB_ADDRESS: deployment.spy,                  // underlying collateral token (SPY)
+    // Collateral is raw SPY — no share adapter, no stata layer.
+    QQQB_ADDRESS: deployment.spy,                  // collateral token (SPY)
     WETH_ADDRESS: deployment.weth,
     USDG_ADDRESS: deployment.usdg,
     ED25519_HELPER: process.env.ED25519_HELPER || deployment.ed25519Helper,
@@ -20,7 +20,6 @@ module.exports = {
     UNI_SWAP_ROUTER: deployment.uniSwapRouter,
     SWAP_HELPER: process.env.SWAP_HELPER || deployment.swapHelper,
     POOL_FEE: 500,                                  // wsXMR/SPY V3 fee tier
-    SPY_USDG_POOL: deployment.spyUsdgPool,
     RPC_URL: process.env.ROBINHOOD_RPC_URL || 'https://rpc.mainnet.chain.robinhood.com',
     EXPLORER: 'https://robin.etherscan.io',
 };

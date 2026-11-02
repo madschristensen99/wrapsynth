@@ -15,14 +15,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Create a per-chain burn handler. Each chain gets isolated state:
- * its own pendingBurns map, burn secrets file, nonce manager, oracle
- * updater, provider, and log-scan chunk size. Shared: the Monero
+ * its own pendingBurns map, burn secrets file, nonce manager,
+ * provider, and log-scan chunk size. Shared: the Monero
  * wallet RPC (serialized by moneroWallet's global wallet lock).
  *
  * ctx = {
  *   key, provider, wallet, hub, hubAddress,
- *   nonce (createNonceManager), oracle (createOracleUpdater),
- *   burnSecretsFile, logChunkSize
+ *   nonce (createNonceManager), burnSecretsFile, logChunkSize
  * }
  */
 export function createBurnHandler(ctx) {
@@ -37,7 +36,6 @@ const LOG_QUERY_CHUNK = ctx.logChunkSize || 900;
 // Chain-scoped aliases — call sites below stay unchanged.
 const getNextNonce = () => ctx.nonce.getNextNonce();
 const resetNonceCache = () => ctx.nonce.resetNonceCache();
-const updateOraclePricesManual = () => ctx.oracle.updateOraclePricesManual();
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 const AUTO_PROCESS_BURNS = (process.env.AUTO_PROCESS_BURNS || 'false').toLowerCase() === 'true';
@@ -475,32 +473,11 @@ async function processFinalize(reqIdHex) {
     console.log(`[${CHAIN}][Burn] ${reqIdHex} already revealed on-chain — skipping to settleBurn`);
   }
 
-  // Step 2: update oracle prices, then settle (settlement touches vault
-  // accounting and requires a fresh price).
-  try {
-    await updateOraclePricesManual();
-  } catch (priceErr) {
-    console.warn(`[${CHAIN}][Burn] Oracle price update failed before settle: ${priceErr.message}`);
-    console.log(`[${CHAIN}][Burn] Proceeding with settleBurn anyway (may revert with StalePrice)...`);
-  }
-
+  // Step 2: settle. Oracle-free — settlement pays par off the threshold
+  // locked at request time, no price freshness gate.
   const settleNonce = await getNextNonce();
   console.log(`[${CHAIN}][Burn] Calling settleBurn(${reqIdHex}) nonce: ${settleNonce}`);
-
-  let tx;
-  try {
-    tx = await hubContract.settleBurn(reqIdHex, { nonce: settleNonce });
-  } catch (err) {
-    // If StalePrice, retry once more after price update
-    if (err.message && (err.message.includes('0x19abf40e') || err.message.includes('StalePrice'))) {
-      console.warn(`[${CHAIN}][Burn] StalePrice on settleBurn, updating prices and retrying...`);
-      await updateOraclePricesManual();
-      const retryNonce = await getNextNonce();
-      tx = await hubContract.settleBurn(reqIdHex, { nonce: retryNonce });
-    } else {
-      throw err;
-    }
-  }
+  const tx = await hubContract.settleBurn(reqIdHex, { nonce: settleNonce });
 
   console.log(`[${CHAIN}][Burn] settleBurn tx: ${tx.hash}`);
   const receipt = await tx.wait();
@@ -755,7 +732,7 @@ function attachEventListeners() {
     'function settleBurn(bytes32 requestId) external',
     'function claimSlashedCollateral(bytes32 requestId, bytes32 userSecret) external',
     'function resolveDeclinedProposal(bytes32 requestId, bytes32 userSecret) external',
-    'function getBurnRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address user, address lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 lockedCollateral, uint256 rewardCollateral, bytes32 secretHash, uint256 deadline, uint256 vaultLiquidationNonce, uint256 normalizedDebtAmount, uint8 status, bytes32 userClaimCommitment, bytes32 userPublicKey, bytes32 userViewKey, uint256 xmrPriceAtRequest, bytes32 revealedSecret))',
+    'function getBurnRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address user, address lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 lockedCollateral, uint256 rewardCollateral, bytes32 secretHash, uint256 deadline, uint256 vaultLiquidationNonce, uint256 normalizedDebtAmount, uint8 status, bytes32 userClaimCommitment, bytes32 userPublicKey, bytes32 userViewKey, uint256 thresholdAtRequest, bytes32 revealedSecret))',
   ];
 
   const existingAbi = hub.interface.fragments.map(f => f.format('full'));

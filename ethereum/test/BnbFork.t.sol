@@ -4,32 +4,34 @@ pragma solidity ^0.8.28;
 import {console} from "forge-std/Test.sol";
 import {BnbTestBase} from "./BnbTestBase.sol";
 import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
-import {BnbOracleFacet} from "../contracts/facets/BnbOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {CoLPFacet} from "../contracts/facets/CoLPFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
 import {wsXMR} from "../contracts/wsXMR.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
 import {BnbAddresses} from "../contracts/BnbAddresses.sol";
 
 /**
  * @title BnbForkTest
- * @notice BNB Chain fork tests: deployment wiring, on-chain QQQB collateral
- *         TWAP, StataQQQB vault lifecycle, full mint cycle, burn request, and
- *         a co-LP position minted on real PancakeSwap V3.
+ * @notice BNB Chain fork tests: deployment wiring, raw QQQB collateral,
+ *         vault lifecycle, full mint cycle, burn request, and a co-LP
+ *         position minted on real PancakeSwap V3.
+ *         Oracle-free: thresholds are the declared par/capacity rate.
  */
 contract BnbForkTest is BnbTestBase {
 
     bytes32 public testSecret = bytes32(uint256(0x1234567890abcdef));
 
+    /// @dev Test collateral quantity: 50 QQQB ~ $36k
+    uint256 constant TEST_DEPOSIT = 50e18;
+
     function setUp() public override {
         super.setUp();
         console.log("=== BNB FORK DEPLOYMENT ===");
         console.log("wsXmrHub:", address(hub));
-        console.log("StataQQQB:", address(stata));
+        console.log("collateral (QQQB):", USDE);
         console.log("wsXMR/QQQB pool:", pool);
     }
 
@@ -37,45 +39,26 @@ contract BnbForkTest is BnbTestBase {
 
     function testDeployment() public view {
         assertTrue(hub.facets(address(vaultFacet)), "vaultFacet not registered");
-        assertTrue(hub.facets(address(oracleFacet)), "oracleFacet not registered");
-        assertEq(hub.collateralToken(), address(stata), "collateralToken");
-        assertEq(hub.underlyingToken(), BnbAddresses.QQQB, "underlyingToken");
-        assertEq(hub.collateralTwapPool(), BnbAddresses.QQQB_WBNB_POOL, "collateralTwapPool");
-        assertEq(hub.collateralTwapWindow(), BnbAddresses.COLLATERAL_TWAP_WINDOW, "twapWindow");
+        assertTrue(hub.facets(address(liquidationAuctionFacet)), "auctionFacet not registered");
+        assertTrue(hub.facets(address(coLPFacet)), "coLPFacet not registered");
+        assertEq(hub.collateralToken(), USDE, "collateralToken");
+        assertEq(hub.collateralScale(), 1, "QQQB is 18-dec: scale = 1");
         assertEq(router.POOL_FEE(), BnbAddresses.WSXMR_POOL_FEE, "router fee");
         assertEq(router.TICK_SPACING(), BnbAddresses.WSXMR_TICK_SPACING, "router spacing");
     }
 
-    // ========== ORACLE ==========
-
-    /// @notice Collateral price comes from real on-chain TWAPs — sanity-band it
-    ///         ($200–$2000 covers QQQ drift across any realistic fork block).
-    function testCollateralTwapPrice() public {
-        uint256 px = _collateralPrice18();
-        console.log("QQQB TWAP USD price:", px / 1e18);
-        assertGt(px, 200e18, "QQQB price below sanity floor");
-        assertLt(px, 2000e18, "QQQB price above sanity ceiling");
-
-        // Second refresh must succeed too (idempotent, keeps fresh timestamp)
-        _refreshCollateral();
-        assertEq(hub.lastCollateralPriceTimestamp(), block.timestamp, "collateral ts not fresh");
-    }
-
-    /// @notice Stale collateral price fails closed.
-    function testCollateralStaleness() public {
-        vm.warp(block.timestamp + 3 minutes);
-        vm.expectRevert();
-        BnbOracleFacet(address(hub)).getCollateralPrice();
-    }
-
     // ========== VAULT LIFECYCLE ==========
 
+    /// @notice QQQB is 18-decimal and held raw; the vault's normalized
+    ///         collateralShares equal the deposit.
     function testVaultDepositWithdraw() public {
-        uint256 deposit = 50e18; // 50 QQQB ~ $36k
-        _lpVaultWithCollateral(lp, deposit);
+        _lpVaultWithCollateral(lp, TEST_DEPOSIT);
 
-        // stataQQQB is 1:1 — shares == QQQB deposited
-        assertEq(stata.balanceOf(address(hub)), deposit, "hub should hold stataQQQB shares");
+        assertEq(
+            IERC20(USDE).balanceOf(address(hub)),
+            TEST_DEPOSIT,
+            "hub should hold raw QQQB"
+        );
 
         // No debt → health is max
         assertEq(hub.getVaultHealth(lp), type(uint256).max, "empty vault health should be max");
@@ -83,18 +66,20 @@ contract BnbForkTest is BnbTestBase {
         // Withdraw everything
         uint256 balBefore = IERC20(BnbAddresses.QQQB).balanceOf(lp);
         vm.prank(lp);
-        VaultFacet(address(hub)).withdrawCollateral(deposit);
-        assertEq(IERC20(BnbAddresses.QQQB).balanceOf(lp), balBefore + deposit, "QQQB not returned");
+        VaultFacet(address(hub)).withdrawCollateral(TEST_DEPOSIT);
+        assertEq(IERC20(BnbAddresses.QQQB).balanceOf(lp), balBefore + TEST_DEPOSIT, "QQQB not returned");
     }
 
-    /// @notice Mint capacity must reflect the QQQB collateral price, not $1.
-    function testMintCapacityUsesCollateralPrice() public {
-        _lpVaultWithCollateral(lp, 50e18);
+    /// @notice Mint capacity derives from the vault's declared threshold, not
+    ///         any external price. At the minThreshold floor, 50 QQQB of free
+    ///         collateral yields ~23.8 wsXMR of capacity.
+    function testMintCapacityUsesThreshold() public {
+        _lpVaultWithCollateral(lp, TEST_DEPOSIT); // 50e18 normalized
         uint256 cap = hub.getMintCapacity(lp);
         assertGt(cap, 0, "capacity should be nonzero");
 
-        // 50 QQQB * ~$700 / 150% CR => ~$23k capacity => ~60 wsXMR at $390.
-        // Loose band: anything sane between 1 and 1000 wsXMR (1e8 dec).
+        // cap = freeNorm * 1e8 * 100 / (T * (100+110)) = 50e18*1e8*100/(1e18*210)
+        //     ≈ 23.8e8 wsXMR
         assertLt(cap, 1000e8, "capacity absurdly large");
         assertGt(cap, 1e8, "capacity too small");
     }
@@ -102,7 +87,7 @@ contract BnbForkTest is BnbTestBase {
     // ========== FULL MINT CYCLE ==========
 
     function testFullMintCycle() public returns (bytes32 requestId) {
-        _lpVaultWithCollateral(lp, 50e18);
+        _lpVaultWithCollateral(lp, TEST_DEPOSIT);
         _configureVaultForMint();
         return _performMint();
     }
@@ -129,7 +114,6 @@ contract BnbForkTest is BnbTestBase {
             bytes32(uint256(0xdeadbeef))
         );
 
-        _refreshCollateral();
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady(requestId);
 
@@ -145,7 +129,7 @@ contract BnbForkTest is BnbTestBase {
     // ========== BURN REQUEST ==========
 
     function testBurnRequestAndAbort() public {
-        _lpVaultWithCollateral(lp, 50e18);
+        _lpVaultWithCollateral(lp, TEST_DEPOSIT);
         _configureVaultForMint();
         _performMint();
 
@@ -179,7 +163,7 @@ contract BnbForkTest is BnbTestBase {
     /// @notice Opens a co-LP position pairing user wsXMR with vault QQQB
     ///         collateral on real PCS V3 — exercises the NFPM ABI path.
     function testCoLPOnPancakeSwap() public {
-        _lpVaultWithCollateral(lp, 50e18);
+        _lpVaultWithCollateral(lp, TEST_DEPOSIT);
         _configureVaultForMint();
         _performMint();
         _initializePool();
@@ -197,7 +181,7 @@ contract BnbForkTest is BnbTestBase {
 
         vm.startPrank(user);
         wsxmr.approve(address(hub), amount);
-        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, amount, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, amount, 1e17, block.timestamp + 1 hours);
         vm.stopPrank();
 
         assertGt(tokenId, 0, "no NFT position minted");

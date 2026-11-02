@@ -4,12 +4,9 @@ pragma solidity ^0.8.28;
 import {console} from "forge-std/Test.sol";
 import {RobinhoodMockTestBase} from "./RobinhoodTestBase.sol";
 import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
-import {RobinhoodOracleFacet} from "../contracts/facets/RobinhoodOracleFacet.sol";
-import {IOracleFacet} from "../contracts/interfaces/facets/IOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
-import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
 import {IErrors} from "../contracts/interfaces/IErrors.sol";
@@ -33,10 +30,9 @@ contract ConcurrencyDebtInvariantTestRobin is RobinhoodMockTestBase {
         vm.deal(user2, 1000 ether);
         vm.deal(keeper, 1000 ether);
 
-        // Initialize the HyperSwap pool and set the test's XMR price ($300)
+        // Initialize the HyperSwap pool at a deploy-time display price ($300)
         vm.prank(address(hub));
         router.initializePool(TEST_XMR_PRICE_8DEC * 1e10);
-        _setXmrPrice8dec(TEST_XMR_PRICE_8DEC);
 
         // Standard vault setup for LP
         _createVaultAndDeposit(lp, 5000 ether);
@@ -82,23 +78,19 @@ contract ConcurrencyDebtInvariantTestRobin is RobinhoodMockTestBase {
         assertEq(uint256(burnId) != 0, true, "Burn should be created successfully");
     }
 
-    /// @notice triggerBuyAndBurn mid-mint → must revert with PendingMintLock
-    function test_PendingMintLock_TriggerBuyAndBurnMidMint_Reverts() public {
-        // Inject yield so war chest is non-empty
-        _injectWarChestYield(1000 ether);
-        _mockEmaPrice(400 * 1e18);
-        vm.warp(block.timestamp + 25 hours);
-        _updatePrices();
+    /// @notice kick() mid-mint is permissionless — the auction settles the in-flight
+    ///         mint at open, so kicks must NOT be blocked by PendingMintLock.
+    function test_PendingMintLock_KickMidMint_Allowed() public {
+        // Real debt is required to kick — mint first
+        _mintForUser(user, lp);
 
-        // Start a mint and advance to READY
-        bytes32 reqId = _initiateMint(user, lp);
+        // Start a second mint and advance to READY (pending-mint lock engaged)
+        bytes32 reqId = _initiateMint(user2, lp);
         _provideLPKey(lp, reqId);
         _setMintReady(lp, reqId);
 
-        // Keeper tries to trigger buy-and-burn while mint is READY
-        vm.prank(keeper);
-        vm.expectRevert(wsXmrStorage.PendingMintLock.selector);
-        YieldFacet(address(hub)).triggerBuyAndBurn(3000);
+        // Keeper can still kick while a mint is READY (settlement handles it)
+        _kickVault(keeper, lp);
     }
 
     /// @notice After finalizeMint, pendingMintCount returns to 0 and ops are unblocked
@@ -246,10 +238,11 @@ contract ConcurrencyDebtInvariantTestRobin is RobinhoodMockTestBase {
         assertEq(_getGlobalPendingBurnDebt(), pendingBurnBefore - burnAmount, "pendingBurnDebt should decrease");
     }
 
-    // ========== Fix 2 & 3: triggerBuyAndBurn Invariants ==========
+    // ========== Fix 2 & 3: repayDebt debt-clearance invariants ==========
 
-    /// @notice triggerBuyAndBurn full-wipe zeros all vault normalizedDebts and resets index
-    function test_BuyAndBurn_FullWipe_ZerosVaultDebt() public {
+    /// @notice Full repayDebt zeroes the vault's debt — the oracle-free analogue of
+    ///         the old buy-and-burn full wipe.
+    function test_RepayDebt_FullWipe_ZerosVaultDebt() public {
         // Mint debt on both vaults
         _mintForUser(user, lp);
         _mintForUser(user2, lp2);
@@ -258,64 +251,18 @@ contract ConcurrencyDebtInvariantTestRobin is RobinhoodMockTestBase {
         assertGt(_getVaultNormalizedDebt(lp), 0, "LP1 should have debt");
         assertGt(_getVaultNormalizedDebt(lp2), 0, "LP2 should have debt");
 
-        uint256 totalDebt = _getGlobalTotalDebt();
+        // LP1 fully repays: give it wsXMR equal to its actual debt and burn it
+        uint256 lpDebt = _getActualDebt(lp);
+        deal(address(wsxmr), lp, lpDebt);
+        vm.startPrank(lp);
+        wsxmr.approve(address(hub), lpDebt);
+        VaultFacet(address(hub)).repayDebt(lpDebt);
+        vm.stopPrank();
 
-        // Inject yield and mock a full-wipe swap (buy >= totalDebt)
-        _injectWarChestYield(100000 ether);
-        _mockEmaPrice(400 * 1e18);
-        _mockSwapRouter(totalDebt + 1); // Buy more than total debt → full wipe
-        deal(address(wsxmr), address(hub), totalDebt + 1);
-        vm.warp(block.timestamp + 25 hours);
-        _updatePrices();
-
-        vm.prank(keeper);
-        YieldFacet(address(hub)).triggerBuyAndBurn(3000);
-
-        // Complete the batch debt wipe
-        YieldFacet(address(hub)).continueDebtWipe(10000);
-
-        // All vault debts should be zeroed
-        assertEq(_getVaultNormalizedDebt(lp), 0, "LP1 debt should be zeroed after full wipe");
-        assertEq(_getVaultNormalizedDebt(lp2), 0, "LP2 debt should be zeroed after full wipe");
-
-        // Index should be reset to 1e18
-        assertEq(_getGlobalDebtIndex(), 1e18, "globalDebtIndex should be 1e18 after full wipe");
-    }
-
-    /// @notice triggerBuyAndBurn proportional path excludes globalPendingBurnDebt
-    function test_BuyAndBurn_ProportionalExcludesPendingBurnDebt() public {
-        _mintForUser(user, lp);
-
-        uint256 burnAmount = 100_000;
-        _requestBurn(user, lp, burnAmount);
-
-        uint256 globalDebt = _getGlobalTotalDebt();
-        uint256 pendingBurn = _getGlobalPendingBurnDebt();
-        uint256 effectiveDebt = globalDebt - pendingBurn;
-        uint256 actualDebtBefore = _getActualDebt(lp);
-
-        // Buy exactly half of effective debt
-        uint256 buyAmount = effectiveDebt / 2;
-
-        _injectWarChestYield(100000 ether);
-        _mockEmaPrice(400 * 1e18);
-        _mockSwapRouter(buyAmount);
-        deal(address(wsxmr), address(hub), buyAmount);
-        vm.warp(block.timestamp + 25 hours);
-        _updatePrices();
-
-        vm.prank(keeper);
-        YieldFacet(address(hub)).triggerBuyAndBurn(3000);
-
-        // globalTotalDebt should decrease by buyAmount (not including pending burn)
-        assertEq(_getGlobalTotalDebt(), globalDebt - buyAmount, "globalTotalDebt should decrease by buyAmount");
-
-        // Actual debt should be halved (proportional reduction on effective debt)
-        // After migration, index is 1e18 and normalizedDebt is rescaled, so actualDebt is preserved
-        uint256 actualDebtAfter = _getActualDebt(lp);
-        uint256 expectedAfter = actualDebtBefore / 2;
-        // Allow 1 unit rounding tolerance
-        assertApproxEqAbs(actualDebtAfter, expectedAfter, 1, "Actual debt should be halved after proportional buy");
+        // LP1's debt is zeroed; LP2's is untouched
+        assertEq(_getVaultNormalizedDebt(lp), 0, "LP1 debt should be zeroed after full repay");
+        assertGt(_getVaultNormalizedDebt(lp2), 0, "LP2 debt must remain");
+        assertEq(_getGlobalTotalDebt(), _getActualDebt(lp2), "global debt = LP2 debt only");
     }
 
     // ========== Debt Invariant: sum of actualDebts == globalTotalDebt ==========
@@ -364,52 +311,22 @@ contract ConcurrencyDebtInvariantTestRobin is RobinhoodMockTestBase {
         assertEq(sum, _getGlobalTotalDebt(), "Sum of actualDebts should equal globalTotalDebt after finalizeBurn");
     }
 
-    /// @notice After buy-and-burn proportional path, invariant holds
-    function test_Invariant_BuyAndBurnProportionalSumActualDebts() public {
+    /// @notice After partial repayDebt, invariant holds
+    function test_Invariant_RepayDebtPartialSumActualDebts() public {
         _mintForUser(user, lp);
         _mintForUser(user2, lp2);
 
-        uint256 globalDebt = _getGlobalTotalDebt();
-        uint256 buyAmount = globalDebt / 3; // Buy 1/3 of debt
-
-        _injectWarChestYield(100000 ether);
-        _mockEmaPrice(400 * 1e18);
-        _mockSwapRouter(buyAmount);
-        deal(address(wsxmr), address(hub), buyAmount);
-        vm.warp(block.timestamp + 25 hours);
-        _updatePrices();
-
-        vm.prank(keeper);
-        YieldFacet(address(hub)).triggerBuyAndBurn(3000);
+        uint256 lpDebt = _getActualDebt(lp);
+        uint256 repay = lpDebt / 3;
+        deal(address(wsxmr), lp, repay);
+        vm.startPrank(lp);
+        wsxmr.approve(address(hub), repay);
+        VaultFacet(address(hub)).repayDebt(repay);
+        vm.stopPrank();
 
         uint256 sum = _getActualDebt(lp) + _getActualDebt(lp2);
         // Allow 2 unit rounding tolerance from integer division
-        assertApproxEqAbs(sum, _getGlobalTotalDebt(), 2, "Sum of actualDebts should equal globalTotalDebt after buy-and-burn");
-    }
-
-    /// @notice After buy-and-burn full wipe, invariant holds (both zero)
-    function test_Invariant_BuyAndBurnFullWipeSumActualDebts() public {
-        _mintForUser(user, lp);
-        _mintForUser(user2, lp2);
-
-        uint256 totalDebt = _getGlobalTotalDebt();
-
-        _injectWarChestYield(100000 ether);
-        _mockEmaPrice(400 * 1e18);
-        _mockSwapRouter(totalDebt + 1);
-        deal(address(wsxmr), address(hub), totalDebt + 1);
-        vm.warp(block.timestamp + 25 hours);
-        _updatePrices();
-
-        vm.prank(keeper);
-        YieldFacet(address(hub)).triggerBuyAndBurn(3000);
-
-        // Complete the batch debt wipe
-        YieldFacet(address(hub)).continueDebtWipe(10000);
-
-        uint256 sum = _getActualDebt(lp) + _getActualDebt(lp2);
-        assertEq(sum, _getGlobalTotalDebt(), "Sum of actualDebts should equal globalTotalDebt after full wipe");
-        assertEq(sum, 0, "All debt should be zero after full wipe");
+        assertApproxEqAbs(sum, _getGlobalTotalDebt(), 2, "Sum of actualDebts should equal globalTotalDebt after partial repay");
     }
 
     // ========== Issue #68: claimSlashedCollateral uncapped debt reduction ==========
@@ -462,32 +379,27 @@ contract ConcurrencyDebtInvariantTestRobin is RobinhoodMockTestBase {
         );
     }
 
-    /// @notice A full buy-and-burn debt wipe zeroes normalizedDebt while a committed
-    ///         burn is in flight — claimSlashedCollateral must still succeed (cap to 0).
+    /// @notice A full repayDebt zeroes normalizedDebt while a committed burn is in
+    ///         flight — claimSlashedCollateral must still succeed (cap to 0).
     function test_ClaimSlashed_AfterDebtWipe_DoesNotRevert() public {
         _mintForUser(user, lp);
 
-        // Burn the user's entire minted balance — ~99% of the vault's debt.
-        uint256 burnAmount = wsxmr.balanceOf(user);
+        // Burn half the user's minted balance (the 1.3x proportional lock caps
+        // single burns at ~77% of vault debt).
+        uint256 burnAmount = wsxmr.balanceOf(user) / 2;
         bytes32 burnId = _requestBurn(user, lp, burnAmount);
         _proposeHash(lp, burnId);
 
         vm.prank(user);
         BurnFacet(address(hub)).confirmMoneroLock(burnId);
 
-        // Keeper executes a buy-and-burn covering the whole effective (non-pending)
-        // debt → full wipe zeroes every vault's normalizedDebt.
-        uint256 effectiveDebt = _getGlobalTotalDebt() - _getGlobalPendingBurnDebt();
-        _injectWarChestYield(100000 ether);
-        _mockEmaPrice(400 * 1e18);
-        _mockSwapRouter(effectiveDebt);
-        deal(address(wsxmr), address(hub), effectiveDebt);
-        vm.warp(block.timestamp + 25 hours);
-        _updatePrices();
-
-        vm.prank(keeper);
-        YieldFacet(address(hub)).triggerBuyAndBurn(3000);
-        YieldFacet(address(hub)).continueDebtWipe(10000);
+        // LP fully repays the vault's actual (non-pending) debt → normalizedDebt = 0.
+        uint256 actualDebt = _getActualDebt(lp);
+        deal(address(wsxmr), lp, actualDebt);
+        vm.startPrank(lp);
+        wsxmr.approve(address(hub), actualDebt);
+        VaultFacet(address(hub)).repayDebt(actualDebt);
+        vm.stopPrank();
 
         assertEq(_getVaultNormalizedDebt(lp), 0, "Wipe must zero the vault's debt");
 
@@ -550,7 +462,7 @@ contract ConcurrencyDebtInvariantTestRobin is RobinhoodMockTestBase {
 
     function _configureVault(address who) internal {
         vm.startPrank(who);
-        VaultFacet(address(hub)).setMaxMintBps(0);
+        VaultFacet(address(hub)).setMaxMintWsxmr(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
         VaultFacet(address(hub)).setVaultMarketMetrics(100, 100);
@@ -664,34 +576,5 @@ contract ConcurrencyDebtInvariantTestRobin is RobinhoodMockTestBase {
 
     // ========== MOCK HELPERS ==========
 
-    function _mockEmaPrice(uint256 emaPrice) internal {
-        vm.mockCall(
-            address(hub),
-            abi.encodeWithSelector(IOracleFacet.getXmrEmaPrice.selector),
-            abi.encode(emaPrice)
-        );
-    }
-
-    function _mockSwapRouter(uint256 wsxmrOut) internal {
-        vm.mockCall(
-            HYPERSWAP_ROUTER,
-            abi.encodeWithSelector(ISwapRouter.exactInputSingle.selector),
-            abi.encode(wsxmrOut)
-        );
-    }
-
-    function _updatePrices() internal {
-        _setXmrPrice8dec(TEST_XMR_PRICE_8DEC);
-    }
-
-    function _injectWarChestYield(uint256 shares) internal {
-        // deal() on the adapter only fakes the ERC20 balance — redeem() needs real
-        // HyperLend aToken backing. Deposit USDe through the adapter to mint real
-        // shares directly to the hub, then set the yieldWarChest accounting slot.
-        uint256 usdeNeeded = stata.convertToAssets(shares);
-        deal(USDE, address(this), usdeNeeded);
-        IERC20(USDE).approve(address(stata), usdeNeeded);
-        stata.deposit(usdeNeeded, address(hub));
-        vm.store(address(hub), bytes32(uint256(15)), bytes32(shares)); // yieldWarChest slot
-    }
+    function _updatePrices() internal {}
 }

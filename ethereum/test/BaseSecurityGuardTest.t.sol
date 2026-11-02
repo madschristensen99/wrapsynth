@@ -5,12 +5,10 @@ import {console} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {BaseMockTestBase} from "./BaseTestBase.sol";
 import {wsXmrStorage} from "../contracts/core/wsXmrStorage.sol";
-import {BaseOracleFacet} from "../contracts/facets/BaseOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
-import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
-import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
+import {LiquidationAuctionFacet} from "../contracts/facets/LiquidationAuctionFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
 import {IErrors} from "../contracts/interfaces/IErrors.sol";
@@ -153,7 +151,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
 
         vm.prank(attacker);
         vm.expectRevert(IBurnOperations.OnlyUserCanInitiate.selector);
-        BurnFacet(address(hub)).requestBurn(minted, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
+        BurnFacet(address(hub)).requestBurn(minted / 2, lp, user, bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3)));
     }
 
     /// @notice Non-router cannot call requestBurnFromRouter
@@ -168,7 +166,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     /// @notice Non-LP cannot call proposeHash
     function test_Burn_ProposeHash_NonLP_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
 
         bytes32 secret = bytes32(uint256(0xcafebabe));
         (uint256 px, uint256 py) = Ed25519.scalarMultBase(uint256(secret));
@@ -182,7 +180,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     /// @notice Non-user cannot call confirmMoneroLock
     function test_Burn_ConfirmMoneroLock_NonUser_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
         _proposeHash(lp, burnId);
 
         vm.prank(attacker);
@@ -193,7 +191,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     /// @notice Non-user cannot call abortBurn
     function test_Burn_AbortBurn_NonUser_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
 
         // Warp past deadline
         vm.roll(block.number + 172805);
@@ -206,7 +204,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     /// @notice Non-user cannot call forceSettleBurn
     function test_Burn_ForceSettleBurn_NonUser_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
 
         vm.roll(block.number + 172805);
 
@@ -218,7 +216,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     /// @notice Non-user cannot call claimSlashedCollateral
     function test_Burn_ClaimSlashedCollateral_NonUser_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
         _proposeHash(lp, burnId);
 
         vm.prank(user);
@@ -236,7 +234,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     /// @notice confirmMoneroLock before proposeHash must revert
     function test_Burn_ConfirmMoneroLock_BeforePropose_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
 
         // Skip proposeHash, go straight to confirm
         vm.prank(user);
@@ -247,7 +245,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     /// @notice finalizeBurn on REQUESTED (before confirm) must revert
     function test_Burn_FinalizeBurn_BeforeConfirm_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
         _proposeHash(lp, burnId);
 
         // Skip confirmMoneroLock, try to finalize
@@ -259,7 +257,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     /// @notice finalizeBurn with wrong secret must revert
     function test_Burn_FinalizeBurn_WrongSecret_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
         _proposeHash(lp, burnId);
 
         vm.prank(user);
@@ -273,7 +271,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     /// @notice proposeHash on already-proposed request must revert
     function test_Burn_ProposeHash_AlreadyProposed_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
         _proposeHash(lp, burnId);
 
         vm.prank(lp);
@@ -286,7 +284,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     /// @notice abortBurn before deadline must revert
     function test_Burn_AbortBurn_BeforeDeadline_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
 
         vm.prank(user);
         vm.expectRevert(IBurnOperations.DeadlineNotExpired.selector);
@@ -296,7 +294,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     /// @notice forceSettleBurn before deadline must revert
     function test_Burn_ForceSettleBurn_BeforeDeadline_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
 
         vm.prank(user);
         vm.expectRevert(IBurnOperations.DeadlineNotExpired.selector);
@@ -306,7 +304,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     /// @notice claimSlashedCollateral before deadline must revert
     function test_Burn_ClaimSlashed_BeforeDeadline_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
         _proposeHash(lp, burnId);
 
         vm.prank(user);
@@ -321,7 +319,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     /// @notice claimSlashedCollateral with zero userSecret must revert
     function test_Burn_ClaimSlashed_ZeroSecret_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
         _proposeHash(lp, burnId);
 
         vm.prank(user);
@@ -337,7 +335,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     /// @notice claimSlashedCollateral with wrong userSecret must revert
     function test_Burn_ClaimSlashed_WrongSecret_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
         _proposeHash(lp, burnId);
 
         vm.prank(user);
@@ -354,7 +352,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     ///         so the LP can sweep the shared XMR (invariant: every exit reveals a secret).
     function test_Burn_ClaimSlashed_CorrectSecret_EmitsUserSecret() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
         _proposeHash(lp, burnId);
 
         vm.prank(user);
@@ -387,7 +385,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     /// @notice resolveDeclinedProposal before deadline must revert
     function test_Burn_ResolveDeclined_BeforeDeadline_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
         _proposeHash(lp, burnId);
 
         vm.prank(lp);
@@ -398,7 +396,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     /// @notice resolveDeclinedProposal with zero userSecret must revert
     function test_Burn_ResolveDeclined_ZeroSecret_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
         _proposeHash(lp, burnId);
 
         vm.roll(block.number + 172805);
@@ -411,7 +409,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
     /// @notice resolveDeclinedProposal with wrong userSecret must revert
     function test_Burn_ResolveDeclined_WrongSecret_Reverts() public {
         uint256 minted = _mintForUser(user, lp);
-        bytes32 burnId = _requestBurn(user, lp, minted);
+        bytes32 burnId = _requestBurn(user, lp, minted / 2);
         _proposeHash(lp, burnId);
 
         vm.roll(block.number + 172805);
@@ -423,28 +421,33 @@ contract SecurityGuardTestBase is BaseMockTestBase {
 
     // ========== LIQUIDATION: GUARDS ==========
 
-    /// @notice liquidate on healthy vault must revert
-    function test_Liquidate_HealthyVault_Reverts() public {
+    /// @notice kick is permissionless — a healthy-but-debted vault CAN be kicked;
+    ///         the auction itself is the solvency test (KICK_SANE protects the LP).
+    function test_Kick_HealthyDebtedVault_Succeeds() public {
         // Mint some debt so vault has debt but is still healthy
         _mintForUser(user, lp);
 
-        vm.prank(keeper);
-        vm.expectRevert(ILiquidationFacetBase.VaultHealthy.selector);
-        LiquidationFacet(address(hub)).liquidate(lp, 100);
+        _kickVault(keeper, lp);
+        (bool ok, bytes memory res) = address(hub).call(
+            abi.encodeWithSelector(LiquidationAuctionFacet.auctionState.selector, lp)
+        );
+        require(ok, "auctionState failed");
+        (bool active,,,,,,,) = abi.decode(res, (bool, uint8, uint256, uint256, uint256, address, uint256, bool));
+        assertTrue(active, "kick should open on a healthy-but-debted vault");
     }
 
-    /// @notice liquidate with zero debtToClear must revert
-    function test_Liquidate_ZeroAmount_Reverts() public {
+    /// @notice kick on a debt-free vault must revert with InsufficientDebt
+    function test_Kick_NoDebt_Reverts() public {
         vm.prank(keeper);
-        vm.expectRevert(IErrors.ZeroAmount.selector);
-        LiquidationFacet(address(hub)).liquidate(lp, 0);
+        vm.expectRevert(IErrors.InsufficientDebt.selector);
+        LiquidationAuctionFacet(address(hub)).kick(lp);
     }
 
     /// @notice backstopVault on self must revert
     function test_BackstopVault_Self_Reverts() public {
         vm.prank(lp);
         vm.expectRevert(IErrors.InvalidValue.selector);
-        LiquidationFacet(address(hub)).backstopVault(lp);
+        LiquidationAuctionFacet(address(hub)).backstopVault(lp);
     }
 
     /// @notice backstopVault on healthy vault must revert
@@ -456,10 +459,10 @@ contract SecurityGuardTestBase is BaseMockTestBase {
         // Mint some debt on lp so it's not InsufficientDebt
         _mintForUser(user, lp);
 
-        // lp2 tries to backstop lp, but lp is healthy
+        // lp2 tries to backstop lp, but lp isn't frozen — no backstop needed
         vm.prank(lp2);
-        vm.expectRevert(ILiquidationFacetBase.VaultHealthy.selector);
-        LiquidationFacet(address(hub)).backstopVault(lp);
+        vm.expectRevert(IErrors.InvalidStatus.selector);
+        LiquidationAuctionFacet(address(hub)).backstopVault(lp);
     }
 
     // ========== VAULT: GUARDS ==========
@@ -485,34 +488,11 @@ contract SecurityGuardTestBase is BaseMockTestBase {
         VaultFacet(address(hub)).withdrawReturns(address(stata));
     }
 
-    // ========== ORACLE: GUARDS ==========
-    // The HyperCore oracle is permissionless (refreshPrices is a public poke
-    // reading trustless L1 precompiles) — there is no updater role to guard.
-    // The relevant guard is that invalid precompile data is rejected.
-
-    /// @notice A zero oracle price from the precompile is ignored — the stored
-    ///         price is not updated and goes stale.
-    function test_Oracle_ZeroPrice_Ignored() public {
-        mockOracle.setPrice(XMR_PERP_INDEX, 0);
-        mockMark.setPrice(XMR_PERP_INDEX, 0);
-        vm.warp(block.timestamp + 3 minutes);
-        BaseOracleFacet(address(hub)).refreshPrices(); // skips zero price
-        vm.expectRevert();
-        BaseOracleFacet(address(hub)).getXmrPrice();
-    }
-
-    /// @notice getXmrPrice when stale must revert
-    function test_Oracle_GetXmrPrice_Stale_Reverts() public {
-        // Warp past 2 minute staleness window
-        vm.warp(block.timestamp + 3 minutes);
-
-        vm.expectRevert();
-        BaseOracleFacet(address(hub)).getXmrPrice();
-    }
-
     // ========== VAULT EVICTION: GRIEFING PREVENTION ==========
     // activeVaultCount is at storage slot 37 (after vaultList at slot 36)
-    uint256 constant ACTIVE_VAULT_COUNT_SLOT = 37;
+    // activeVaultCount is at wsXmrStorage slot 26 (forge inspect wsXmrStorage
+    // storage-layout — update if the layout changes)
+    uint256 constant ACTIVE_VAULT_COUNT_SLOT = 26;
 
     /// @notice Empty vaults are evictable when cap is reached
     function test_Vault_Eviction_EmptyVaultEvicted() public {
@@ -661,9 +641,8 @@ contract SecurityGuardTestBase is BaseMockTestBase {
             address(vaultFacet),
             address(mintFacet),
             address(burnFacet),
-            address(liquidationFacet),
-            address(yieldFacet),
-            address(oracleFacet)
+            address(liquidationAuctionFacet),
+            address(coLPFacet)
         );
     }
 
@@ -708,7 +687,7 @@ contract SecurityGuardTestBase is BaseMockTestBase {
 
     function _configureVault(address who) internal {
         vm.startPrank(who);
-        VaultFacet(address(hub)).setMaxMintBps(0);
+        VaultFacet(address(hub)).setMaxMintWsxmr(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
         VaultFacet(address(hub)).setVaultMarketMetrics(100, 100);
@@ -784,14 +763,4 @@ interface IVaultFacetBase {
     error VaultNotEvictable();
 }
 
-interface IOracleFacetBase {
-    error StalePrice();
-    error PriceNormalizedToZero();
-    error RefundFailed();
-    error PriceDeviationTooHigh();
-}
 
-interface ILiquidationFacetBase {
-    error VaultHealthy();
-    error CancelBurnsFirst();
-}

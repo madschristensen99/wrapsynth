@@ -43,10 +43,9 @@ contract PoolSwapTestRobin is RobinhoodMockTestBase, IUniswapV3SwapCallbackRobin
         poolAddr = pool;
         console.log("Pool address:", poolAddr);
 
-        // Initialize the HyperSwap pool at the test's XMR price ($300)
+        // Initialize the HyperSwap pool at a deploy-time display price
         vm.prank(address(hub));
         router.initializePool(XMR_PRICE);
-        _setXmrPrice8dec(TEST_XMR_PRICE_8DEC);
 
         // Fund swapper with USDe and wsXMR
         deal(USDE, swapper, 10_000 * 1e18); // 10,000 USDe
@@ -197,7 +196,7 @@ contract PoolSwapTestRobin is RobinhoodMockTestBase, IUniswapV3SwapCallbackRobin
         // 1. Setup LP vault with collateral
         vm.startPrank(lp);
         VaultFacet(address(hub)).createVault();
-        VaultFacet(address(hub)).setMaxMintBps(0);
+        VaultFacet(address(hub)).setMaxMintWsxmr(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
 
@@ -237,7 +236,7 @@ contract PoolSwapTestRobin is RobinhoodMockTestBase, IUniswapV3SwapCallbackRobin
         wsxmr.approve(address(hub), type(uint256).max);
 
         vm.prank(user);
-        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, 1e18, block.timestamp + 1 hours);
         assertTrue(tokenId > 0, "Co-LP should return valid tokenId");
 
         console.log("Co-LP created, tokenId:", tokenId);
@@ -301,7 +300,7 @@ contract PoolSwapTestRobin is RobinhoodMockTestBase, IUniswapV3SwapCallbackRobin
         // 1. Setup LP vault with collateral
         vm.startPrank(lp);
         VaultFacet(address(hub)).createVault();
-        VaultFacet(address(hub)).setMaxMintBps(0);
+        VaultFacet(address(hub)).setMaxMintWsxmr(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
 
@@ -318,7 +317,7 @@ contract PoolSwapTestRobin is RobinhoodMockTestBase, IUniswapV3SwapCallbackRobin
         vm.prank(user);
         wsxmr.approve(address(hub), type(uint256).max);
         vm.prank(user);
-        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, 1e18, block.timestamp + 1 hours);
         assertTrue(tokenId > 0, "Co-LP should return valid tokenId");
 
         // 4. Trade against the position to generate fees
@@ -356,7 +355,7 @@ contract PoolSwapTestRobin is RobinhoodMockTestBase, IUniswapV3SwapCallbackRobin
         // 1. Setup LP vault with significant collateral
         vm.startPrank(lp);
         VaultFacet(address(hub)).createVault();
-        VaultFacet(address(hub)).setMaxMintBps(0);
+        VaultFacet(address(hub)).setMaxMintWsxmr(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
 
@@ -373,7 +372,7 @@ contract PoolSwapTestRobin is RobinhoodMockTestBase, IUniswapV3SwapCallbackRobin
         vm.prank(user);
         wsxmr.approve(address(hub), type(uint256).max);
         vm.prank(user);
-        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, wsxmrToDeposit, 1e18, block.timestamp + 1 hours);
         assertTrue(tokenId > 0, "Co-LP should return valid tokenId");
 
         console.log("Co-LP tokenId:", tokenId);
@@ -383,7 +382,7 @@ contract PoolSwapTestRobin is RobinhoodMockTestBase, IUniswapV3SwapCallbackRobin
         // The on-chain bug was: uint256(liq) * (1 << 96) * diff0 overflowed uint256
         // when liquidity was ~3.4e23. This test creates a position and verifies
         // the router can compute its value without reverting.
-        (uint256 daiAmt, uint256 wsxmrAmt) = router.getPositionAmountsAtPrice(tokenId, XMR_PRICE, 1e18);
+        (uint256 daiAmt, uint256 wsxmrAmt) = router.getPositionAmountsAtSpot(tokenId);
         console.log("Position sDAI value:", daiAmt);
         console.log("Position wsXMR value:", wsxmrAmt);
         // Values should be non-zero for an in-range position

@@ -62,7 +62,6 @@ import { MintFlow } from './mintFlow.js?v=3.59';
 import { stopTimers } from './mintFlowTimers.js?v=3.59';
 import { BurnFlow } from './burnFlow.js?v=3.59';
 import { getLPPanel } from './lpPanel.js?v=3.59';
-import { getPoolFlow } from './poolFlow.js?v=3.59';
 import { getCoLPFlow } from './coLPFlow.js?v=3.59';
 import { getDashboard } from './dashboard.js?v=3.59';
 import { hasActiveSwap, loadActiveSwap, loadActiveSwaps, saveActiveSwap, addOrUpdateActiveSwap, removeActiveSwap, clearActiveSwap, setSwapsArray, getActiveSwapByRequestId, saveToHistory, getSwapHistory } from './storage.js?v=3.59';
@@ -597,11 +596,13 @@ async function handleUpdatePrices() {
         btn.disabled = true;
         btn.innerHTML = '<span class="btn-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg></span><span>Updating...</span>';
         
-        console.log('Manually updating oracle prices...');
-        
-        // Import and call the update function
-        const { updateOraclePrices } = await import('./redstoneWrapper.js?v=' + Date.now());
-        await updateOraclePrices();
+        // Display-only market price refresh — the protocol is oracle-free,
+        // so this only re-reads off-chain quote APIs.
+        console.log('Refreshing display prices...');
+        const { fetchDisplayPrices } = await import('./prices.js?v=3.59');
+        const prices = await fetchDisplayPrices();
+        if (!prices) throw new Error('no price source available');
+        await fetchXmrPrice(true);
         
         // Success feedback
         btn.innerHTML = '<span class="btn-icon">✅</span><span>Updated!</span>';
@@ -610,9 +611,8 @@ async function handleUpdatePrices() {
             btn.disabled = false;
         }, 2000);
         
-        console.log('✅ Oracle prices updated successfully');
         const { showSuccessNotification } = await import('./ui.js?v=3.59');
-        showSuccessNotification('Prices Updated', '<p>Oracle prices have been updated with latest RedStone data.</p>');
+        showSuccessNotification('Prices Refreshed', `<p>XMR $${prices.xmr?.toFixed(2) ?? '—'}${prices.coll ? ` · collateral $${prices.coll.toFixed(2)}` : ''} (display only — the protocol is oracle-free).</p>`);
         
     } catch (error) {
         console.error('Failed to update prices:', error);
@@ -623,7 +623,7 @@ async function handleUpdatePrices() {
         }, 2000);
         
         const { showErrorNotification } = await import('./ui.js?v=3.59');
-        showErrorNotification('Update Failed', `<p>Could not update oracle prices: ${error.message}</p>`);
+        showErrorNotification('Refresh Failed', `<p>Could not fetch market prices: ${error.message}</p>`);
     }
 }
 
@@ -800,13 +800,13 @@ async function handleAccountChange(newAddress) {
 async function checkPendingReturns(address) {
     try {
         const ethReturns = await readHub('getPendingReturns', [address, '0x0000000000000000000000000000000000000000']);
-        const usdeReturns = CONTRACTS.stataUSDe
-            ? await readHub('getPendingReturns', [address, CONTRACTS.stataUSDe])
+        const collReturns = CONTRACTS.collateralToken
+            ? await readHub('getPendingReturns', [address, CONTRACTS.collateralToken])
             : 0n;
         const wsxmrReturns = CONTRACTS.wsxmrToken
             ? await readHub('getPendingReturns', [address, CONTRACTS.wsxmrToken])
             : 0n;
-        const hasReturns = ethReturns > 0n || usdeReturns > 0n || wsxmrReturns > 0n;
+        const hasReturns = ethReturns > 0n || collReturns > 0n || wsxmrReturns > 0n;
         const fmtAmt = (raw, decimals) => {
             const n = Number(formatUnits(raw, decimals));
             if (n >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
@@ -816,7 +816,7 @@ async function checkPendingReturns(address) {
         };
         const parts = [];
         if (wsxmrReturns > 0n) parts.push(`${fmtAmt(wsxmrReturns, 8)} wsXMR`);
-        if (usdeReturns > 0n) parts.push(`${fmtAmt(usdeReturns, 18)} ${ASSET.share}`);
+        if (collReturns > 0n) parts.push(`${fmtAmt(collReturns, (getActiveChain()?.collateral.decimals ?? 18))} ${ASSET.collateral}`);
         if (ethReturns > 0n) parts.push(`${fmtAmt(ethReturns, 18)} ${ASSET.gas}`);
         // Show only when there's something to claim — label carries the amounts.
         // On read failure (catch) we leave the current state untouched rather
@@ -831,7 +831,7 @@ async function checkPendingReturns(address) {
                 amtEl.textContent = parts.join(' + ');
                 const exact = [];
                 if (wsxmrReturns > 0n) exact.push(`${formatUnits(wsxmrReturns, 8)} wsXMR`);
-                if (usdeReturns > 0n) exact.push(`${formatUnits(usdeReturns, 18)} ${ASSET.share}`);
+                if (collReturns > 0n) exact.push(`${formatUnits(collReturns, (getActiveChain()?.collateral.decimals ?? 18))} ${ASSET.collateral}`);
                 if (ethReturns > 0n) exact.push(`${formatUnits(ethReturns, 18)} ${ASSET.gas}`);
                 amtEl.title = exact.join(' + ');
                 row.classList.remove('hidden');
@@ -853,7 +853,7 @@ async function handleWithdrawReturns() {
     
     try {
         const ethReturns = await readHub('getPendingReturns', [address, '0x0000000000000000000000000000000000000000']);
-        const usdeReturns = await readHub('getPendingReturns', [address, CONTRACTS.stataUSDe]);
+        const collReturns = await readHub('getPendingReturns', [address, CONTRACTS.collateralToken]);
         const wsxmrReturns = await readHub('getPendingReturns', [address, CONTRACTS.wsxmrToken]);
         
         const txs = [];
@@ -863,8 +863,8 @@ async function handleWithdrawReturns() {
             txs.push(receipt.transactionHash);
         }
         
-        if (usdeReturns > 0n) {
-            const receipt = await writeHub('withdrawReturns', [CONTRACTS.stataUSDe]);
+        if (collReturns > 0n) {
+            const receipt = await writeHub('withdrawReturns', [CONTRACTS.collateralToken]);
             txs.push(receipt.transactionHash);
         }
 
@@ -1233,13 +1233,13 @@ async function handleRefreshCoLPPositions() {
 
         listEl.innerHTML = positions.map((p, i) => {
             const vaultShort = `${p.vault.slice(0, 6)}...${p.vault.slice(-4)}`;
-            const fees = feeResults[i].status === 'fulfilled' ? feeResults[i].value : { wsxmr: 0n, usde: 0n };
+            const fees = feeResults[i].status === 'fulfilled' ? feeResults[i].value : { wsxmr: 0n, collateral: 0n };
             const wsxmrFee = parseFloat(formatUnits(fees.wsxmr, 8));
-            const hasFees = fees.wsxmr > 0n || fees.usde > 0n;
+            const hasFees = fees.wsxmr > 0n || fees.collateral > 0n;
             const claimLabel = hasFees ? `Claim ${wsxmrFee.toFixed(8)}` : 'Claim 0';
             const claimDisabled = hasFees ? '' : 'disabled';
             const claimTitle = hasFees
-                ? `title="Your wsXMR share: ${wsxmrFee.toFixed(8)} · Vault ${ASSET.collateral} share: ${parseFloat(formatUnits(fees.usde, 18)).toFixed(6)}"`
+                ? `title="Your wsXMR share: ${wsxmrFee.toFixed(8)} · Vault ${ASSET.collateral} share: ${parseFloat(formatUnits(fees.collateral, (getActiveChain()?.collateral.decimals ?? 18))).toFixed(6)}"`
                 : 'title="No fees accrued yet"';
             return `
                 <div class="position-card" data-token-id="${p.tokenId}">
@@ -1498,7 +1498,7 @@ async function handleCoLPUnwind(tokenIdParam) {
 
 /**
  * Handle claim Co-LP fees — collects accrued UniV3 fees into pendingReturns.
- * wsXMR fees go to the user, stataUSDe share fees to the LP vault. After
+ * wsXMR fees go to the user, collateral fees to the LP vault. After
  * collecting, the user sweeps them out via the Withdraw Returns button.
  */
 async function handleCoLPClaimFees(tokenIdParam) {
@@ -1626,8 +1626,8 @@ async function loadLpStats(address, vaultData) {
         console.log('Vault pending debt:', vault.pendingDebt);
         
         // Update UI with vault stats
-        const shareDec = getActiveChain()?.collateral.shareDecimals ?? 18;
-        document.getElementById('lp-collateral').textContent = `${(Number(vault.collateralShares) / 10 ** shareDec).toFixed(2)} ${ASSET.share}`;
+        // collateralShares is normalized 18-dec — /1e18 is human collateral
+        document.getElementById('lp-collateral').textContent = `${(Number(vault.collateralShares) / 1e18).toFixed(2)} ${ASSET.collateral}`;
         document.getElementById('lp-debt').textContent = `${(Number(debt) / 1e8).toFixed(4)} wsXMR`;
         document.getElementById('lp-pending-debt').textContent = `${(Number(vault.pendingDebt) / 1e8).toFixed(4)} wsXMR`;
         document.getElementById('lp-health').textContent = `${(Number(health) / 1e16).toFixed(0)}%`;
@@ -1635,7 +1635,7 @@ async function loadLpStats(address, vaultData) {
         // Update settings inputs
         document.getElementById('lp-mint-fee').value = Number(vault.mintFeeBps);
         document.getElementById('lp-burn-fee').value = Number(vault.burnRewardBps);
-        document.getElementById('lp-max-mint').value = Number(vault.maxMintBps) / 100;
+        document.getElementById('lp-max-mint').value = Number(vault.maxMintWsxmr) / 1e8;
         document.getElementById('lp-griefing').value = (Number(vault.mintGriefingDeposit) / 1e18).toFixed(3);
         
         // TODO: Fetch fees earned from events
@@ -2247,72 +2247,32 @@ export async function loadVaults() {
         let totalCollateralWei = 0n;
 
         // Fire ALL independent reads in a single Promise.all — no sequential round-trips
-        const { getPublicClient } = await import('./viemClient.js?v=3.59');
-        const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
-        const publicClient = getPublicClient();
-        const shareAbi = parseAbi(['function convertToAssets(uint256 shares) view returns (uint256)']);
-        const shareTokenAddress = CONTRACTS.stataUSDe; // active chain's collateral share token
         const collDec = getActiveChain()?.collateral.decimals ?? 18;
 
-        let xmrPrice = 0;
-        let collPrice = 0;
-        let globalDebtIndex = 1e18;
-        let pricesFresh = false;
+        // Display-only market prices for USD context — the protocol itself is
+        // oracle-free. Capacity/coverage come from each vault's declared
+        // threshold, never from a price feed.
+        const { fetchDisplayPrices } = await import('./prices.js?v=3.59');
+        const live = await fetchDisplayPrices().catch(() => null);
+        const xmrPrice = live?.xmr ?? priceCache.value ?? 0;
+        const collPrice = live?.coll ?? 0;
+        const globalDebtIndex = await readHub('globalDebtIndex').catch(e => {
+            console.warn('globalDebtIndex failed:', e.message);
+            return 1000000000000000000n;
+        });
 
-        // Single round-trip: all oracle reads + vault data + burn IDs in parallel.
-        // lastXmrPrice/lastCollateralPrice are public storage getters that NEVER
-        // revert — the last logged oracle price is always readable. getXmrPrice/
-        // getCollateralPrice revert when stale, so they're used only as a
-        // freshness probe (getMintCapacity reverts when stale).
-        const oracleResults = await Promise.all([
-            readHub('lastXmrPrice').catch(e => {
-                console.warn('lastXmrPrice failed:', e.message);
-                return null;
-            }),
-            readHub('lastCollateralPrice').catch(e => {
-                console.warn('lastCollateralPrice failed:', e.message);
-                return null;
-            }),
-            readHub('getXmrPrice').catch(() => null),
-            readHub('getCollateralPrice').catch(() => null),
-            readHub('globalDebtIndex').catch(e => {
-                console.warn('globalDebtIndex failed:', e.message);
-                return null;
-            }),
-        ]);
-
-        // Stored prices are 8-decimal int192
-        if (oracleResults[0] !== null) xmrPrice = Number(oracleResults[0]) / 1e8;
-        if (oracleResults[1] !== null) collPrice = Number(oracleResults[1]) / 1e8;
-        pricesFresh = oracleResults[2] !== null && oracleResults[3] !== null;
-
-        if (xmrPrice > 0 && collPrice > 0) {
-            console.log('Oracle prices (stored):', { xmrPrice, collPrice, fresh: pricesFresh });
-        } else {
-            xmrPrice = priceCache.value || 0;
-            collPrice = 0;
-            console.log('Using off-chain fallback prices:', { xmrPrice, collPrice, source: 'CoinGecko cache' });
-        }
-        if (oracleResults[4] !== null) {
-            globalDebtIndex = oracleResults[4];
-        }
-
-        // Only attempt getMintCapacity if oracle prices are fresh (it reverts otherwise)
         const vaultReads = knownVaults.map(vaultAddress => {
-            const mintCapacityPromise = pricesFresh
-                ? readHub('getMintCapacity', [vaultAddress]).catch(e => {
-                    console.warn('getMintCapacity failed:', e.message);
-                    return null;
-                })
-                : Promise.resolve(null);
-
             return Promise.all([
                 readHub('getVault', [vaultAddress]),
                 readHub('getVaultBurnRequests', [vaultAddress]).catch(e => {
                     console.warn('[Capacity] Could not query vault burn requests:', e.message);
                     return [];
                 }),
-                mintCapacityPromise,
+                // Threshold-derived — always readable, no freshness gate.
+                readHub('getMintCapacity', [vaultAddress]).catch(e => {
+                    console.warn('getMintCapacity failed:', e.message);
+                    return null;
+                }),
             ]).then(([vaultData, burnIdsResult, mintCapacityResult]) => ({
                 vaultAddress, vaultData, burnIdsResult, mintCapacityResult,
             }));
@@ -2334,38 +2294,20 @@ export async function loadVaults() {
                     const lockedShares = BigInt(vaultData.lockedCollateral.toString());
                     const availableShares = collShares > lockedShares ? collShares - lockedShares : 0n;
 
-                    // Fetch convertToAssets calls and all burn request details in parallel
-                    const [assetsWeiResult, totalAssetsWeiResult, ...burnReqResults] = await Promise.all([
-                        publicClient.readContract({
-                            address: shareTokenAddress,
-                            abi: shareAbi,
-                            functionName: 'convertToAssets',
-                            args: [availableShares]
-                        }).catch(e => {
-                            console.warn('convertToAssets failed, using shares as fallback:', e.message);
-                            return null;
-                        }),
-                        publicClient.readContract({
-                            address: shareTokenAddress,
-                            abi: shareAbi,
-                            functionName: 'convertToAssets',
-                            args: [collShares]
-                        }).catch(e => {
-                            console.warn('convertToAssets for total collateral failed:', e.message);
-                            return null;
-                        }),
-                        ...burnIdsResult.map(burnId =>
+                    // Fetch all burn request details in parallel — collateral is
+                    // already raw tokens (normalized 18-dec), no share conversion.
+                    const burnReqResults = await Promise.all(
+                        burnIdsResult.map(burnId =>
                             readHub('getBurnRequest', [burnId]).catch(e => {
                                 console.warn('[Capacity] getBurnRequest failed for', burnId, ':', e.message);
                                 return null;
                             })
-                        ),
-                    ]);
+                        )
+                    );
 
-                    let collAmountUSDe = Number(availableShares) / 10 ** collDec; // fallback: assume 1:1
-                    if (assetsWeiResult !== null) {
-                        collAmountUSDe = Number(assetsWeiResult) / 10 ** collDec;
-                    }
+                    // normalized 18-dec → human collateral units
+                    const collAmount = Number(availableShares) / 1e18;
+                    const totalCollateralHuman = Number(collShares) / 1e18;
 
                     // Denormalize debt using globalDebtIndex (actualDebt = normalizedDebt * index / 1e18)
                     const normalizedDebt = BigInt(vaultData.normalizedDebt.toString());
@@ -2388,46 +2330,26 @@ export async function loadVaults() {
                     }
 
                     const totalDebt = debtAmount + pendingDebtAmount + inFlightBurnDebt;
-                    const debtValueUsd = debtAmount * xmrPrice;
-                    const pendingDebtValueUsd = (pendingDebtAmount + inFlightBurnDebt) * xmrPrice;
-                    const totalDebtValueUsd = totalDebt * xmrPrice;
 
-                    const usedCollateral = collPrice > 0 ? debtValueUsd / collPrice : 0;
-                    const pendingCollateral = collPrice > 0 ? pendingDebtValueUsd / collPrice : 0;
-                    // Buffer = extra 50% collateral required to maintain 150% ratio (on total debt)
-                    const bufferCollateral = (usedCollateral + pendingCollateral) * 0.5;
-                    const freeCollateral = Math.max(0, collAmountUSDe - usedCollateral - pendingCollateral - bufferCollateral);
-                    
-                    console.log('💰 CAPACITY BREAKDOWN:', {
-                        collAmountUSDe,
+                    // Threshold-relative accounting (normalized 18-dec per 1e8
+                    // wsXMR). Committed collateral = debt × threshold / 1e8 —
+                    // this IS the vault's own solvency line, no price feed.
+                    const threshold = BigInt(vaultData.thresholdSharesPerWsxmr?.toString?.() || '0');
+                    const perWsxmrHuman = Number(threshold) / 1e18; // collateral per wsXMR
+                    const usedCollateral = debtAmount * perWsxmrHuman;
+                    const pendingCollateral = (pendingDebtAmount + inFlightBurnDebt) * perWsxmrHuman;
+                    const freeCollateral = Math.max(0, collAmount - usedCollateral - pendingCollateral);
+
+                    console.log('💰 CAPACITY BREAKDOWN (threshold-relative):', {
+                        threshold: threshold.toString(),
+                        perWsxmrHuman,
+                        collAmount,
                         usedCollateral,
                         pendingCollateral,
-                        bufferCollateral,
                         freeCollateral,
-                        calculation: `${collAmountUSDe.toFixed(4)} - ${usedCollateral.toFixed(4)} - ${pendingCollateral.toFixed(4)} - ${bufferCollateral.toFixed(4)} = ${freeCollateral.toFixed(4)}`
                     });
 
-                    console.log('Vault capacity:', {
-                        collShares: collShares.toString(),
-                        lockedShares: lockedShares.toString(),
-                        availableShares: availableShares.toString(),
-                        collAmountUSDe,
-                        normalizedDebt: normalizedDebt.toString(),
-                        actualDebt: actualDebt.toString(),
-                        debtAmount,
-                        pendingDebtAmount,
-                        totalDebt,
-                        xmrPrice,
-                        collPrice,
-                        debtValueUsd,
-                        pendingDebtValueUsd,
-                        usedCollateral,
-                        pendingCollateral,
-                        bufferCollateral,
-                        freeCollateral
-                    });
-
-                    // Use pre-fetched mint capacity result (accounts for yield sync, same as initiateMint)
+                    // Threshold-derived mint capacity — always readable.
                     let maxMintCapacityXmr = 0;
                     let capacityAvailable = false;
                     let capacityEstimated = false;
@@ -2435,53 +2357,29 @@ export async function loadVaults() {
                         maxMintCapacityXmr = Number(mintCapacityResult) / 1e8;
                         capacityAvailable = true;
                         console.log('On-chain mint capacity (wsXMR):', mintCapacityResult.toString(), '=> XMR:', maxMintCapacityXmr);
-                    } else if (xmrPrice > 0 && collPrice > 0) {
-                        // Fallback: estimate matching provideLPKey's check — the
-                        // 110% key bond is reserved from free collateral BEFORE the
-                        // 150% CR check, so the divisor is 1.1 + 1.5 = 2.6, not 1.5.
-                        // (freeCollateral already excludes 1.5x existing debt.)
-                        maxMintCapacityXmr = (freeCollateral * collPrice) / (2.6 * xmrPrice);
-                        const maxMintBps = Number(vaultData.maxMintBps);
-                        if (maxMintBps > 0) {
-                            const collateralValueUsd = collAmountUSDe * collPrice;
-                            const maxTotalDebtCapacity = (collateralValueUsd * 100) / 150;
-                            const maxMintAllowedUsd = (maxTotalDebtCapacity * maxMintBps) / 10000;
-                            const maxMintBpsCapacity = maxMintAllowedUsd / xmrPrice;
-                            maxMintCapacityXmr = Math.min(maxMintCapacityXmr, maxMintBpsCapacity);
-                        }
-                        capacityEstimated = true;
-                        console.log('Estimated mint capacity (off-chain prices):', maxMintCapacityXmr, 'XMR');
                     } else {
-                        console.warn('getMintCapacity reverted and no off-chain prices available');
+                        console.warn('getMintCapacity unavailable for', vaultAddress);
                     }
 
-                    // Use pre-fetched total collateral conversion result
-                    let totalCollateralUSDe = Number(collShares) / 10 ** collDec;
-                    if (totalAssetsWeiResult !== null) {
-                        totalCollateralUSDe = Number(totalAssetsWeiResult) / 10 ** collDec;
-                    }
+                    const totalCollateral = totalCollateralHuman;
 
-                    // Derive breakdown slices; free is the residual so the chart
-                    // always sums to total collateral:
-                    // - usedColl: debt value in collateral units
-                    // - pendingColl: pending + in-flight burn debt in collateral units
-                    // - bufferColl: 50% of (used + pending) for 150% CR safety
-                    // - coLpColl: deployedUSDeShares (co-LP deployed collateral)
-                    // - lockedColl: vault.lockedCollateral (burn escrow)
+                    // Breakdown slices in human collateral units; free is the
+                    // residual so the chart always sums to total collateral:
+                    // - usedColl: debt × threshold (par-committed)
+                    // - pendingColl: (pending + in-flight burns) × threshold
+                    // - bufferColl: none — the LP's threshold IS the buffer line
+                    // - coLpColl: deployedCollateral (co-LP collateral leg)
+                    // - lockedColl: vault.lockedCollateral (burn escrow / bonds)
                     // - freeColl: everything left over
-                    // NOTE: do NOT back-calc free from getMintCapacity — its divisor
-                    // is (150% CR + 110% key bond) = 2.6, not 1.5, which understates
-                    // free collateral and leaves a gap in the donut chart.
                     const breakdownUsedColl = usedCollateral;
                     const breakdownPendingColl = pendingCollateral;
-                    const breakdownBufferColl = bufferCollateral;
-                    const breakdownCoLpColl = Number(vaultData.deployedUSDeShares) / 10 ** collDec;
-                    const breakdownLockedColl = Number(vaultData.lockedCollateral) / 10 ** collDec;
+                    const breakdownBufferColl = 0;
+                    const breakdownCoLpColl = Number(vaultData.deployedCollateral || 0n) / 1e18;
+                    const breakdownLockedColl = Number(vaultData.lockedCollateral) / 1e18;
                     const breakdownFreeColl = Math.max(0,
-                        totalCollateralUSDe
+                        totalCollateral
                         - breakdownUsedColl
                         - breakdownPendingColl
-                        - breakdownBufferColl
                         - breakdownCoLpColl
                         - breakdownLockedColl
                     );
@@ -2490,12 +2388,15 @@ export async function loadVaults() {
                         address: vaultAddress,
                         name: `LP Vault ${vaultAddress.slice(0,6)}...${vaultAddress.slice(-4)}`,
                         collateral: vaultData.collateralShares,
-                        collateralAmount: totalCollateralUSDe, // Converted to underlying collateral
+                        collateralAmount: totalCollateral, // human collateral units
                         lockedCollateral: vaultData.lockedCollateral,
                         debt: vaultData.normalizedDebt,
                         actualDebt: actualDebt,
                         pendingDebt: vaultData.pendingDebt,
-                        deployedUSDeShares: vaultData.deployedUSDeShares,
+                        deployedCollateral: vaultData.deployedCollateral,
+                        deployedWsxmr: vaultData.deployedWsxmr,
+                        thresholdSharesPerWsxmr: vaultData.thresholdSharesPerWsxmr,
+                        maxMintWsxmr: vaultData.maxMintWsxmr,
                         usedCollateral: breakdownUsedColl,
                         pendingCollateral: breakdownPendingColl,
                         bufferCollateral: breakdownBufferColl,
@@ -2505,7 +2406,6 @@ export async function loadVaults() {
                         capacityEstimated,
                         xmrPrice,
                         collPrice,
-                        pricesFresh,
                         mintFeeBps: Number(vaultData.mintFeeBps || 0),
                         burnRewardBps: Number(vaultData.burnRewardBps || 0),
                         mintTimeoutBlocks: Number(vaultData.mintTimeoutBlocks || 0),
@@ -2516,13 +2416,9 @@ export async function loadVaults() {
                     console.log('Adding active vault:', vault);
                     activeVaults.push(vault);
 
-                    // TVL must be in *underlying* units — collateralShares are
-                    // stata share units (18 dec even for 8-dec collateral like
-                    // cbBTC). Use the convertToAssets result fetched above,
-                    // falling back to raw shares only if the call failed.
-                    totalCollateralWei += BigInt(
-                        totalAssetsWeiResult !== null ? totalAssetsWeiResult.toString() : collShares.toString()
-                    );
+                    // TVL in normalized units — human collateral = sum/1e18 on
+                    // every chain (norm = rawAtomic × collateralScale).
+                    totalCollateralWei += collShares;
                 } else {
                     console.warn('Vault has no collateral and is not active');
                 }
@@ -2540,7 +2436,7 @@ export async function loadVaults() {
         // Update TVL: collateral token amount * collateral USD price
         const tvlStatEl = document.getElementById('tvl-stat');
         if (tvlStatEl && totalCollateralWei > 0n && collPrice > 0) {
-            const collateralTokens = Number(totalCollateralWei) / 10 ** collDec;
+            const collateralTokens = Number(totalCollateralWei) / 1e18;
             const tvlUsd = collateralTokens * collPrice;
             if (tvlUsd >= 1000) {
                 tvlStatEl.textContent = `$${(tvlUsd / 1000).toFixed(1)}K`;
@@ -2605,12 +2501,14 @@ export async function loadVaults() {
             // Update backing collateral display
             const backingEl = document.getElementById('mint-backing-collateral');
             if (backingEl) {
-                const coll = firstVault.collateralAmount || 0;
                 const debt = firstVault.actualDebt ? Number(firstVault.actualDebt) / 1e8 : 0;
-                const xmrPrice = firstVault.xmrPrice || 200;
-                const collPrice = firstVault.collPrice || 0;
-                const cr = (collPrice > 0 && xmrPrice > 0) ? (debt * xmrPrice > 0 ? Math.round((coll * collPrice) / (debt * xmrPrice) * 100) : 200) : null;
-                backingEl.textContent = cr === null ? ASSET.collateral : `${ASSET.collateral} · ${cr}%`;
+                const t = firstVault.thresholdSharesPerWsxmr ? Number(firstVault.thresholdSharesPerWsxmr) / 1e18 : 0;
+                // coverage % = free collateral / (debt × threshold) — the
+                // vault's own declared solvency line, not a market CR.
+                const required = debt * t;
+                const free = (firstVault.collateralAmount || 0) - required;
+                const cov = required > 0 ? Math.round((Math.max(0, free) / required) * 100) : 200;
+                backingEl.textContent = `${ASSET.collateral} · ${cov}%`;
             }
         }
         
@@ -2645,7 +2543,7 @@ function updateMintCapacityDisplay() {
 
     if (vault.capacityAvailable === false && !vault.capacityEstimated) {
         capacityEl.classList.remove('hidden');
-        capacityEl.innerHTML = `<span style="color:var(--amber)">⚠ Oracle prices stale — capacity unavailable. Click "Update Prices" to refresh.</span>`;
+        capacityEl.innerHTML = `<span style="color:var(--amber)">⚠ Capacity unavailable — getMintCapacity did not return a value.</span>`;
         if (elements.startMint) elements.startMint.disabled = true;
         return;
     }
@@ -2759,7 +2657,8 @@ function updateMintReceiveAmount() {
 
 /**
  * Calculate and display the backing collateral for the current mint amount.
- * Shows 150% of the XMR value in collateral terms.
+ * The LP's key bond is par × 110% — par itself is amount × vault threshold
+ * (normalized collateral per wsXMR). No market price involved.
  */
 async function updateMintBackingCollateral() {
     try {
@@ -2768,41 +2667,17 @@ async function updateMintBackingCollateral() {
 
         const amountStr = document.getElementById('mint-amount')?.value || '';
         const amount = parseFloat(amountStr);
-        if (isNaN(amount) || amount <= 0) {
-            backingEl.textContent = `${ASSET.collateral} · 150%`;
-            return;
-        }
-
-        // Fetch fresh XMR price from oracle, fall back to CoinGecko cache, then vault cache
-        let xmrPrice = 0;
-        try {
-            const { readHub } = await import('./viemClient.js?v=3.59');
-            const xmrPriceWei = await readHub('getXmrPrice');
-            xmrPrice = Number(xmrPriceWei) / 1e18;
-        } catch (e) {
-            // RPC failed (rate-limited etc.) — try CoinGecko price cache, then vault cache
-            xmrPrice = priceCache.value || 0;
-            if (!xmrPrice) {
-                const vaultSelect = document.getElementById('mint-vault-select');
-                const vaultAddress = vaultSelect?.value;
-                const vault = vaultAddress ? cachedVaults.find(v => v.address.toLowerCase() === vaultAddress.toLowerCase()) : null;
-                xmrPrice = vault?.xmrPrice || 0;
-            }
-        }
-
-        if (!xmrPrice || xmrPrice <= 0) {
-            backingEl.textContent = `${ASSET.collateral} · 150%`;
-            return;
-        }
-
-        // Collateral needed = XMR amount * XMR price (USD) * 150%, divided by
-        // the collateral's USD price to get token units.
         const vaultSelectEl = document.getElementById('mint-vault-select');
         const v = vaultSelectEl?.value ? cachedVaults.find(x => x.address.toLowerCase() === vaultSelectEl.value.toLowerCase()) : cachedVaults[0];
-        const collPrice = v?.collPrice || 0;
-        if (!(collPrice > 0)) { backingEl.textContent = `${ASSET.collateral} · 150%`; return; }
-        const collAmount = (amount * xmrPrice * 1.5) / collPrice;
-        backingEl.textContent = `${collAmount.toFixed(4)} ${ASSET.collateral} · 150%`;
+        const thresholdHuman = v?.thresholdSharesPerWsxmr ? Number(v.thresholdSharesPerWsxmr) / 1e18 : 0;
+
+        if (isNaN(amount) || amount <= 0 || !(thresholdHuman > 0)) {
+            backingEl.textContent = `${ASSET.collateral} · par × 110%`;
+            return;
+        }
+
+        const par = amount * thresholdHuman;
+        backingEl.textContent = `${(par * 1.1).toFixed(4)} ${ASSET.collateral} · par × 110%`;
     } catch (err) {
         console.warn('[BackingCollateral] Update failed:', err.message);
     }
@@ -2849,7 +2724,7 @@ async function _updateBurnRewardDisplay() {
     try {
         const amountStr = document.getElementById('burn-amount')?.value || '';
         const vaultSelect = document.getElementById('burn-vault-select');
-        const rewardEl = document.getElementById('burn-reward-usde');
+        const rewardEl = document.getElementById('burn-reward-coll');
         if (!rewardEl) return;
 
         const amount = parseFloat(amountStr);
@@ -2869,11 +2744,9 @@ async function _updateBurnRewardDisplay() {
         const { parseAbi } = await import('https://esm.sh/viem@2.7.0');
         const publicClient = getPublicClient();
 
-        // Call calculateBurnCollateral to get exact on-chain rewardLock (stataUSDe shares)
-        // Include StalePrice error in ABI so viem decodes it properly
+        // rewardLock is normalized 18-dec collateral — /1e18 renders human units
         const hubAbi = parseAbi([
-            'function calculateBurnCollateral(address lpVault, uint256 wsxmrAmount) external view returns (uint256 baseLock, uint256 rewardLock)',
-            'error StalePrice()'
+            'function calculateBurnCollateral(address lpVault, uint256 wsxmrAmount) external view returns (uint256 baseLock, uint256 rewardLock)'
         ]);
         const result = await publicClient.readContract({
             address: CONTRACTS.hub,
@@ -2882,40 +2755,24 @@ async function _updateBurnRewardDisplay() {
             args: [vaultAddress, wsxmrAmount]
         });
 
-        // Convert collateral shares to underlying units for display
-        const shareAbi = parseAbi(['function convertToAssets(uint256 shares) external view returns (uint256)']);
-        const collDec = getActiveChain()?.collateral.decimals ?? 18;
-        const assetsWei = await publicClient.readContract({
-            address: CONTRACTS.stataUSDe,
-            abi: shareAbi,
-            functionName: 'convertToAssets',
-            args: [result[1]] // rewardLock
-        });
-
-        const rewardColl = Number(assetsWei) / 10 ** collDec;
+        const rewardColl = Number(result[1]) / 1e18;
         if (rewardColl > 0) {
-            // USD approx via the stored collateral price (1e8) — no $1 assumption
             let usdNote = '';
-            try {
-                const collPriceRaw = await readHub('lastCollateralPrice').catch(() => null);
-                if (collPriceRaw !== null && Number(collPriceRaw) > 0) {
-                    const usd = rewardColl * (Number(collPriceRaw) / 1e8);
-                    usdNote = `<span style="color:var(--muted);font-size:11px"> ≈ $${usd < 0.01 ? usd.toFixed(4) : usd < 1 ? usd.toFixed(3) : usd.toFixed(2)}</span>`;
-                }
-            } catch {}
+            const vault = cachedVaults.find(x => x.address.toLowerCase() === vaultAddress.toLowerCase());
+            const collPrice = vault?.collPrice || 0;
+            if (collPrice > 0) {
+                const usd = rewardColl * collPrice;
+                usdNote = `<span style="color:var(--muted);font-size:11px"> ≈ $${usd < 0.01 ? usd.toFixed(4) : usd < 1 ? usd.toFixed(3) : usd.toFixed(2)}</span>`;
+            }
             rewardEl.innerHTML = `${rewardColl.toFixed(4)} ${ASSET.collateral}${usdNote}`;
         } else {
             rewardEl.textContent = '—';
         }
     } catch (err) {
-        const rewardEl = document.getElementById('burn-reward-usde');
+        const rewardEl = document.getElementById('burn-reward-coll');
         if (rewardEl) {
-            if (err.errorName === 'StalePrice' || err.message?.includes('StalePrice') || err.message?.includes('0x19abf40e')) {
-                rewardEl.textContent = '— (oracle stale)';
-            } else {
-                console.warn('[Reward] Burn reward display failed:', err.message);
-                rewardEl.textContent = '—';
-            }
+            console.warn('[Reward] Burn reward display failed:', err.message);
+            rewardEl.textContent = '—';
         }
     }
 }
@@ -2968,10 +2825,9 @@ async function handleVaultSelect(isMint) {
         if (backingEl) {
             const coll = vault.collateralAmount || 0;
             const debt = vault.actualDebt ? Number(vault.actualDebt) / 1e8 : 0;
-            const xmrPrice = vault.xmrPrice || 200;
-            const collPrice = vault.collPrice || 0;
-            const cr = (collPrice > 0 && xmrPrice > 0) ? (debt * xmrPrice > 0 ? Math.round((coll * collPrice) / (debt * xmrPrice) * 100) : 200) : null;
-            backingEl.textContent = cr === null ? ASSET.collateral : `${ASSET.collateral} · ${cr}%`;
+            const t = vault.thresholdSharesPerWsxmr ? Number(vault.thresholdSharesPerWsxmr) / 1e18 : 0;
+            const cov = t > 0 && debt > 0 ? Math.round((coll / (debt * t)) * 100) : (t > 0 ? null : null);
+            backingEl.textContent = (cov === null) ? ASSET.collateral : `${ASSET.collateral} · ${cov}%`;
         }
     } else {
         // Fallback: fetch from RPC if not in cache

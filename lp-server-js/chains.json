@@ -13,9 +13,6 @@
         "https://bsc-dataseed.bnbchain.org",
         "https://bsc.drpc.org"
       ],
-      "redstoneFeeds": [
-        "XMR"
-      ],
       "logChunkSize": 900
     },
     {
@@ -29,9 +26,6 @@
         "https://base.drpc.org",
         "https://mainnet.base.org"
       ],
-      "redstoneFeeds": [
-        "XMR"
-      ],
       "logChunkSize": 200
     },
     {
@@ -42,9 +36,6 @@
       "rpcEnv": "ROBINHOOD_RPC_URLS",
       "rpcUrls": [
         "https://rpc.mainnet.chain.robinhood.com"
-      ],
-      "redstoneFeeds": [
-        "XMR"
       ],
       "logChunkSize": 900,
       "usesL1BlockNumber": true

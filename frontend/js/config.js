@@ -31,11 +31,11 @@ export const CHAINS = {
         dexscreenerSlug: 'bsc',
         collateral: {
             symbol: 'QQQB',
-            shareSymbol: 'stataQQQB',
             decimals: 18,
-            shareDecimals: 18,
+            collateralScale: '1',
             name: 'Invesco QQQ (bStocks)',
             icon: 'assets/tokens/qqqb.png',
+            priceProxy: { yahoo: 'QQQ' },
             address: '0x205812CdBed920aFf76C6580abD681a46D11efc7',
             whatItIs: 'Tokenized Invesco QQQ — tracks the Nasdaq-100 ETF (bStocks)',
             note: 'Securities-linked token; availability varies by jurisdiction.',
@@ -57,9 +57,6 @@ export const CHAINS = {
             // suggested) plus gas. Displayed in the funding panel.
             gasHint: 'Minting needs BNB for gas plus the vault\'s griefing deposit (~0.001 BNB typical).',
         },
-        // RedStone feeds appended to updateOraclePrices calldata.
-        // Collateral price is on-chain TWAP — only XMR needs a signed feed.
-        redstoneFeeds: ['XMR'],
         blockTimeSec: 0.45,  // BSC measured ~0.45s/block post-Fermi (was 0.75)
         logChunkSize: 5000   // BSC public RPCs allow ~5k-block getLogs
     },
@@ -80,11 +77,11 @@ export const CHAINS = {
         dexscreenerSlug: 'base',
         collateral: {
             symbol: 'cbBTC',
-            shareSymbol: 'stataCbBTC',
             decimals: 8,
-            shareDecimals: 8,
+            collateralScale: '10000000000',
             name: 'Coinbase Wrapped BTC',
             icon: 'assets/tokens/cbbtc.png',
+            priceProxy: { yahoo: 'BTC-USD', coingecko: 'bitcoin' },
             address: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf',
             whatItIs: 'Coinbase Wrapped BTC — Bitcoin held 1:1 by Coinbase',
             note: null,
@@ -103,7 +100,6 @@ export const CHAINS = {
             ],
             gasHint: 'Minting needs ETH on Base for gas plus the vault\'s griefing deposit (~0.0002 ETH typical).',
         },
-        redstoneFeeds: ['XMR'],
         blockTimeSec: 2,     // Base 2s blocks
         logChunkSize: 9000   // Base public RPCs allow ~10k-block getLogs
     },
@@ -124,11 +120,11 @@ export const CHAINS = {
         dexscreenerSlug: 'robinhood',
         collateral: {
             symbol: 'SPY',
-            shareSymbol: 'stataSPY',
             decimals: 18,
-            shareDecimals: 18,
+            collateralScale: '1',
             name: 'SPDR S&P 500 (Robinhood Token)',
             icon: 'assets/tokens/spy.png',
+            priceProxy: { yahoo: 'SPY' },
             address: '0x117cc2133c37B721F49dE2A7a74833232B3B4C0C',
             whatItIs: 'Robinhood stock token tracking SPDR S&P 500 (RH Assets, Jersey)',
             note: 'Robinhood stock tokens are not offered to US persons — check your jurisdiction.',
@@ -147,7 +143,6 @@ export const CHAINS = {
             wsxmr: [],
             gasHint: 'Minting needs ETH bridged to Robinhood Chain for gas plus the vault\'s griefing deposit.',
         },
-        redstoneFeeds: ['XMR'],
         blockTimeSec: 0.25,  // Arbitrum Orbit ~250ms blocks
         // Orbit quirk: contracts see block.number == L1 (Ethereum) block number,
         // but eth_blockNumber returns the L2 block number. On-chain deadlines
@@ -215,9 +210,9 @@ function _applyDeployment(key) {
     CONTRACTS.hub = DC.wsXmrHub;
     CONTRACTS.wsxmrToken = DC.wsXMR;
     CONTRACTS.liquidityRouter = DC.liquidityRouter;
-    // Collateral share token — stataQQQB on BNB, stataCbBTC on Base,
-    // stataSPY on Robinhood. Key name kept for call-site compatibility.
-    CONTRACTS.stataUSDe = DE.stataQQQB || DE.stataCbBTC || DE.stataSPY || DE.stataUSDe || DE.sDAI || DC.StataUSDe;
+    // Vaults hold the raw collateral token directly — no share/yield
+    // wrapper. Prefer the manifest entry, fall back to the known token.
+    CONTRACTS.collateralToken = DE.collateral || DC.collateral || CHAINS[key].collateral.address;
     CONTRACTS.uniswapV3Pool = DP.uniswapV3Pool;
     CONTRACTS.nfpm = DE.PancakeV3PositionManager || DE.UniswapV3PositionManager || DE.pcsV3NFPM || DE.uniV3NFPM;
     // Default LP vault to use for mints (the active LP running the LP node)
@@ -246,9 +241,14 @@ export async function setActiveChain(key) {
  */
 export const ASSET = {
     get collateral() { return getActiveChain()?.collateral.symbol ?? 'collateral'; },
-    get share() { return getActiveChain()?.collateral.shareSymbol ?? 'shares'; },
     get gas() { return getActiveChain()?.nativeCurrency.symbol ?? 'ETH'; },
 };
+
+// Vault "collateralShares" are normalized 18-dec units:
+//   norm = rawAtomic × collateralScale  =>  human collateral = norm / 1e18
+export function normToHuman(norm) {
+    return Number(norm) / 1e18;
+}
 
 /** Per-chain localStorage key — keeps swaps/history/preferences isolated. */
 export function chainScopedKey(base) {
@@ -270,7 +270,7 @@ export const DECIMALS = {
     wsXMR: 8,      // EVM wsXMR token decimals
     XMR: 12,       // Monero atomic units decimals
     ETH: 18,       // ETH/HYPE decimals
-    USD: 18        // Pyth price decimals
+    USD: 18        // off-chain display-price decimals
 };
 
 // Monero Network Configuration
@@ -334,7 +334,8 @@ export const RAW_ABIS = {
                 { name: 'lockedCollateral', type: 'uint256' },
                 { name: 'normalizedDebt', type: 'uint256' },
                 { name: 'pendingDebt', type: 'uint256' },
-                { name: 'maxMintBps', type: 'uint16' },
+                { name: 'thresholdSharesPerWsxmr', type: 'uint256' },
+                { name: 'maxMintWsxmr', type: 'uint256' },
                 { name: 'mintGriefingDeposit', type: 'uint256' },
                 { name: 'mintFeeBps', type: 'uint16' },
                 { name: 'burnRewardBps', type: 'uint16' },
@@ -342,7 +343,8 @@ export const RAW_ABIS = {
                 { name: 'mintNonce', type: 'uint256' },
                 { name: 'minBurnAmount', type: 'uint256' },
                 { name: 'active', type: 'bool' },
-                { name: 'deployedUSDeShares', type: 'uint256' },
+                { name: 'deployedCollateral', type: 'uint256' },
+                { name: 'deployedWsxmr', type: 'uint256' },
                 { name: 'maxCoLPRangeBps', type: 'uint16' },
                 { name: 'mintTimeoutBlocks', type: 'uint256' },
                 { name: 'burnTimeoutBlocks', type: 'uint256' },
@@ -376,7 +378,7 @@ export const RAW_ABIS = {
                 { name: 'revealedSecret', type: 'bytes32' },
                 { name: 'status', type: 'uint8' },
                 { name: 'lockedCollateral', type: 'uint256' },
-                { name: 'xmrPriceAtReady', type: 'uint256' }
+                { name: 'thresholdAtReady', type: 'uint256' }
             ],
             name: '',
             type: 'tuple'
@@ -391,7 +393,7 @@ export const RAW_ABIS = {
             components: [
                 { name: 'vaultOwner', type: 'address' },
                 { name: 'user', type: 'address' },
-                { name: 'sDAISharesOriginal', type: 'uint256' },
+                { name: 'collateralOriginal', type: 'uint256' },
                 { name: 'wsxmrOriginal', type: 'uint256' },
                 { name: 'tickLower', type: 'int24' },
                 { name: 'tickUpper', type: 'int24' },
@@ -431,7 +433,7 @@ export const RAW_ABIS = {
                 { name: 'userClaimCommitment', type: 'bytes32' },
                 { name: 'userPublicKey', type: 'bytes32' },
                 { name: 'userViewKey', type: 'bytes32' },
-                { name: 'xmrPriceAtRequest', type: 'uint256' },
+                { name: 'thresholdAtRequest', type: 'uint256' },
                 { name: 'revealedSecret', type: 'bytes32' }
             ],
             name: '',
@@ -475,19 +477,20 @@ export const ABIS = {
         'function revealBurnSecret(bytes32 requestId, bytes32 secret) external',
         'function settleBurn(bytes32 requestId) external',
         'function claimSlashedCollateral(bytes32 requestId) external',
-        'function cancelBurn(bytes32 requestId) external',
         'function getUserBurnRequests(address user) external view returns (bytes32[])',
         'function getVaultBurnRequests(address vault) external view returns (bytes32[])',
 
-        // Vault (LP-side)
+        // Vault (LP-side) — collateral is the raw token; "shares" amounts are
+        // normalized 18-dec units (raw × collateralScale).
         'function createVault() external',
         'function deactivateVault() external',
         'function depositCollateral(uint256 amount) external',
-        'function depositShares(uint256 shares) external',
         'function withdrawCollateral(uint256 shares) external',
+        'function repayDebt(uint256 wsxmrAmount) external',
+        'function setThreshold(uint256 newThreshold) external',
+        'function setMaxMintWsxmr(uint256 maxMintWsxmr) external',
         'function setMintGriefingDeposit(uint256 deposit) external',
         'function setVaultMarketMetrics(uint16 mintFeeBps, uint16 burnRewardBps) external',
-        'function setMaxMintBps(uint16 maxMintBps) external',
         'function setMinBurnAmount(uint256 minAmount) external',
         'function withdrawReturns(address token) external',
         'function getVaultHealth(address lpAddress) external view returns (uint256 ratio)',
@@ -499,7 +502,7 @@ export const ABIS = {
         'function hasActiveVault(address lpAddress) external view returns (bool)',
 
         // Co-LP operations
-        'function userOpenCoLP(address lpVault, uint256 wsxmrAmount, uint256 deadline) external returns (uint256 tokenId)',
+        'function userOpenCoLP(address lpVault, uint256 wsxmrAmount, uint256 collateralAmount, uint256 deadline) external returns (uint256 tokenId)',
         'function unwindCoLP(uint256 tokenId, uint256 deadline) external',
         'function collectCoLPFees(uint256 tokenId) external',
         'function rebalanceCoLP(uint256 tokenId, uint16 newRangeBps, uint256 deadline) external',
@@ -508,8 +511,6 @@ export const ABIS = {
         'function setMaxCoLPRange(uint16 newMaxBps) external',
 
         // Errors (so viem can decode reverts instead of showing "internal error")
-        'error StalePrice()',
-        'error PriceNormalizedToZero()',
         'error RefundFailed()',
         'error VaultDoesNotExist()',
         'error ZeroAmount()',
@@ -549,25 +550,39 @@ export const ABIS = {
         'error CancelBurnsFirst()',
         'error InvalidPoolFeeTier()',
         'error CooldownActive()',
-        'error XMRNotDipped()',
-        'error WarChestEmpty()',
-        'error InvalidSpotPrice()',
-        'error InvalidEMAPrice()',
-        'error PriceExponentMismatch()',
         'error InvalidConfig()',
         'error PoolNotInitialized()',
         'error PoolAlreadyInitialized()',
+        'error BelowMinThreshold()',
+        'error BelowMinimumBurn()',
+        'error BurnExceedsVaultDebt()',
+        'error InvalidUserSecret()',
+        'error PendingMintLock()',
+        'error NoEvictableVaultFound()',
+        'error KickActive()',
+        'error NoActiveKick()',
+        'error KickOnCooldown()',
+        'error BidNotOpen()',
+        'error AuctionNotEnded()',
+        'error VaultIsFrozen()',
+        'error NoReauctionAvailable()',
+        'error VaultHasDebt()',
+        'error VaultHasCollateral()',
+        'error VaultHasLockedCollateral()',
+        'error VaultHasPositions()',
+        'error SlippageExceeded()',
 
-        // Oracle (RedStoneOracleFacet — user can update prices with RedStone data)
-        'function updateOraclePrices(bytes[] calldata) external payable',
-        'function getXmrPrice() external view returns (uint256)',
-        'function getCollateralPrice() external view returns (uint256)',
-        'function getXmrPriceWithAge(uint256 maxAge) external view returns (uint256)',
-        'function getCollateralPriceWithAge(uint256 maxAge) external view returns (uint256)',
-        'function lastXmrPrice() external view returns (int192)',
-        'function lastCollateralPrice() external view returns (int192)',
+        // Liquidation auction (bonded kicks + Dutch haircut — oracle-free)
+        'function kick(address lpVault) external',
+        'function bid(address lpVault) external',
+        'function reauction(address lpVault) external',
+        'function resolveKick(address lpVault) external',
+        'function openAuction(address lpVault) external',
+        'function backstopVault(address oldVault) external',
+        'function auctionState(address lpVault) external view returns (bool active, uint8 phase, uint256 xBps, uint256 offeredCollateral, uint256 bond, address kicker, uint256 auctionEnd, bool frozen)',
+        'function getKickBond(address lpVault) external view returns (uint256)',
+        'function vaultFrozen(address lpVault) external view returns (bool)',
         'function globalDebtIndex() external view returns (uint256)',
-        'function xmrEmaPrice() external view returns (uint256)',
 
         // Events
         'event MintInitiated(bytes32 indexed requestId, address indexed initiator, address indexed recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout)',
@@ -583,46 +598,31 @@ export const ABIS = {
         'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey)',
         'event HashProposed(bytes32 indexed requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey)',
         'event BurnCommitted(bytes32 indexed requestId, uint256 deadline)',
-        'event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 reward)',
-        'event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 totalSeized)',
+        'event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 rewardPaid)',
+        'event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 collateralSeized, bytes32 userSecret)',
         'event BurnCancelled(bytes32 indexed requestId)',
-        'event VaultCreated(address indexed lp)',
-        'event CollateralDeposited(address indexed lp, uint256 amount, uint256 shares)',
-        'event CollateralWithdrawn(address indexed lp, uint256 amount, uint256 shares)'
+        'event VaultCreated(address indexed lpAddress)',
+        'event CollateralDeposited(address indexed lpAddress, uint256 underlyingAmount, uint256 shares)',
+        'event CollateralWithdrawn(address indexed lpAddress, uint256 underlyingAmount, uint256 shares)',
+        'event ThresholdUpdated(address indexed lpVault, uint256 newThreshold)',
+        'event MaxMintWsxmrUpdated(address indexed lpVault, uint256 newMaxMintWsxmr)',
+        'event DebtRepaid(address indexed lpVault, uint256 wsxmrAmount)',
+        'event KickStarted(address indexed vault, address indexed kicker, uint256 bond, uint256 auctionEnd)',
+        'event ReauctionStarted(address indexed vault, address indexed kicker, uint256 bond, uint256 auctionEnd)',
+        'event KickCancelled(address indexed vault, address indexed kicker, uint256 bond, bool bondToLP)',
+        'event AuctionOpened(address indexed vault, uint256 offeredCollateral)',
+        'event AuctionSettled(address indexed vault, address indexed bidder, uint256 debtCleared, uint256 clearingXBps, uint256 bidderCollateral, uint256 kickerPayout, bool wrongfulKick)',
+        'event VaultFrozen(address indexed vault)',
+        'event VaultBackstopped(address indexed oldVault, address indexed newVault, uint256 debtAssumed, uint256 collateralAbsorbed)'
     ],
 
     liquidityRouter: [
-        // LP side
-        'function allocateLiquidity(uint256 usdeAmount) external',
-        'function withdrawUSDe(uint256 usdeAmount) external',
-        'function increaseUserApproval(address user, uint256 additionalUSDe) external',
-        'function decreaseUserApproval(address user, uint256 reduceUSDe) external',
-        // User side
-        'function depositWsxmr(uint256 amount) external',
-        'function withdrawWsXMR(uint256 wsxmrAmount) external',
-        'function increaseLpApproval(address lp, uint256 additionalWsxmr) external',
-        'function decreaseLpApproval(address lp, uint256 reduceWsxmr) external',
-        'function burnFromInternalBalance(uint256 wsxmrAmount, address lpVault) external returns (bytes32)',
-        // Positions
-        'function createPosition(address lp, address user, uint256 usdeAmount, uint256 wsxmrAmount, uint256 deadline) external returns (uint256)',
-        'function createPositionWithPriceUpdate(address lp, address user, uint256 usdeAmount, uint256 wsxmrAmount, uint256 deadline, bytes[] calldata oracleUpdateData) external payable returns (uint256)',
-        'function closePosition(uint256 positionIndex, uint256 deadline, uint256 minTotalValueUSD) external',
-        'function collectFees(uint256 positionIndex) external',
-        'function withdrawFees() external',
-        'function withdrawETH() external',
-        // Views
-        'function getLpAvailableLiquidity(address lp) external view returns (uint256)',
-        'function getUserAvailableWsxmr(address user) external view returns (uint256)',
-        'function lpApprovalAmount(address lp, address user) external view returns (uint256)',
-        'function userApprovalAmount(address user, address lp) external view returns (uint256)',
-        'function activePositionCount(address account) external view returns (uint256)',
-        // Events
-        'event PositionCreated(uint256 indexed positionIndex, uint256 dexTokenId, address indexed lp, address indexed user, uint256 usdeAmount, uint256 wsxmrAmount)',
-        'event PositionClosed(uint256 indexed positionIndex, uint256 usdeReturned, uint256 wsxmrReturned)',
-        'event LpApprovedUser(address indexed lp, address indexed user, uint256 amount)',
-        'event UserApprovedLp(address indexed user, address indexed lp, uint256 amount)',
-        'event ILSUSDeCredited(address indexed user, uint256 amount, uint256 positionIndex)',
-        'event ILWsxmrCredited(address indexed lp, uint256 amount, uint256 positionIndex)'
+        // Diamond-only Uniswap V3 helper — co-LP calls route through the hub.
+        'function poolInitialized() external view returns (bool)',
+        'function token0() external view returns (address)',
+        'function token1() external view returns (address)',
+        'function isPositionOutOfRange(uint256 tokenId) external view returns (bool)',
+        'function getPositionAmountsAtSpot(uint256 tokenId) external view returns (uint256 amount0, uint256 amount1)'
     ],
 
     wsxmr: [

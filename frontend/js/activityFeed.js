@@ -13,14 +13,14 @@ const HUB_EVENTS_ABI = parseAbi([
     'event BurnRequested(bytes32 indexed requestId, address indexed user, address indexed lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 rewardCollateral, bytes32 claimCommitment, bytes32 userPublicKey, bytes32 userViewKey)',
     'event HashProposed(bytes32 indexed requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey)',
     'event BurnCommitted(bytes32 indexed requestId, uint256 deadline)',
-    'event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 reward)',
-    'event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 totalSeized, bytes32 userSecret)',
+    'event BurnFinalized(bytes32 indexed requestId, bytes32 secret, uint256 rewardPaid)',
+    'event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 collateralSeized, bytes32 userSecret)',
     'event BurnCancelled(bytes32 indexed requestId)',
-    'event VaultCreated(address indexed lp)',
-    'event CollateralDeposited(address indexed lp, uint256 amount, uint256 shares)',
-    'event CollateralWithdrawn(address indexed lp, uint256 amount, uint256 shares)',
-    'event CoLPDeployed(address indexed vault, address indexed user, uint256 indexed tokenId, uint256 usdeShares, uint256 wsxmrAmount, uint16 rangeBps)',
-    'event CoLPUnwound(uint256 indexed tokenId, address indexed vault, address indexed user, uint256 usdeReturned, uint256 wsxmrReturned, bool liquidationTriggered)',
+    'event VaultCreated(address indexed lpAddress)',
+    'event CollateralDeposited(address indexed lpAddress, uint256 underlyingAmount, uint256 shares)',
+    'event CollateralWithdrawn(address indexed lpAddress, uint256 underlyingAmount, uint256 shares)',
+    'event CoLPDeployed(address indexed vault, address indexed user, uint256 indexed tokenId, uint256 collateralAmount, uint256 wsxmrAmount, uint16 rangeBps)',
+    'event CoLPUnwound(uint256 indexed tokenId, address indexed vault, address indexed user, uint256 collateralOut, uint256 wsxmrOut, bool liquidationTriggered)',
     'event CoLPRebalanced(uint256 indexed oldTokenId, uint256 indexed newTokenId, address indexed vault, address user, address keeper, uint16 newRangeBps)'
 ]);
 
@@ -244,7 +244,7 @@ function renderActivityItem(event, currentBlock) {
         case 'burnSlashed': {
             const user = args.user || 'Unknown';
             const shortUser = user !== 'Unknown' ? `${user.slice(0, 6)}...${user.slice(-4)}` : 'Unknown';
-            const seized = args.totalSeized ? (Number(args.totalSeized) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18)).toFixed(2) : '?';
+            const seized = args.collateralSeized ? (Number(args.collateralSeized) / 10 ** (getActiveChain()?.collateral.decimals ?? 18)).toFixed(2) : '?';
             title = 'Burn Slashed';
             detail = `${seized} ${ASSET.collateral} seized from ${shortUser}`;
             break;
@@ -256,24 +256,24 @@ function renderActivityItem(event, currentBlock) {
             break;
         }
         case 'vaultCreated': {
-            const lp = args.lp || 'Unknown';
+            const lp = args.lpAddress || 'Unknown';
             const shortLp = lp !== 'Unknown' ? `${lp.slice(0, 6)}...${lp.slice(-4)}` : 'Unknown';
             title = 'Vault Created';
             detail = `by ${shortLp}`;
             break;
         }
         case 'collateralDeposited': {
-            const lp = args.lp || 'Unknown';
+            const lp = args.lpAddress || 'Unknown';
             const shortLp = lp !== 'Unknown' ? `${lp.slice(0, 6)}...${lp.slice(-4)}` : 'Unknown';
-            const amount = args.amount ? (Number(args.amount) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18)).toFixed(2) : '?';
+            const amount = args.underlyingAmount ? (Number(args.underlyingAmount) / 10 ** (getActiveChain()?.collateral.decimals ?? 18)).toFixed(2) : '?';
             title = 'Collateral Deposited';
             detail = `${amount} ${ASSET.collateral} by ${shortLp}`;
             break;
         }
         case 'collateralWithdrawn': {
-            const lp = args.lp || 'Unknown';
+            const lp = args.lpAddress || 'Unknown';
             const shortLp = lp !== 'Unknown' ? `${lp.slice(0, 6)}...${lp.slice(-4)}` : 'Unknown';
-            const amount = args.amount ? (Number(args.amount) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18)).toFixed(2) : '?';
+            const amount = args.underlyingAmount ? (Number(args.underlyingAmount) / 10 ** (getActiveChain()?.collateral.decimals ?? 18)).toFixed(2) : '?';
             title = 'Collateral Withdrawn';
             detail = `${amount} ${ASSET.collateral} by ${shortLp}`;
             break;
@@ -283,11 +283,11 @@ function renderActivityItem(event, currentBlock) {
             const shortVault = vault !== 'Unknown' ? `${vault.slice(0, 6)}...${vault.slice(-4)}` : 'Unknown';
             const user = args.user || 'Unknown';
             const shortUser = user !== 'Unknown' ? `${user.slice(0, 6)}...${user.slice(-4)}` : 'Unknown';
-            const usde = args.usdeShares ? (Number(args.usdeShares) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18)).toFixed(2) : '?';
+            const coll = args.collateralAmount ? (Number(args.collateralAmount) / 10 ** (getActiveChain()?.collateral.decimals ?? 18)).toFixed(2) : '?';
             const wsxmr = args.wsxmrAmount ? (Number(args.wsxmrAmount) / 1e8).toFixed(4) : '?';
             const tokenId = args.tokenId?.toString() || '?';
             title = 'Co-LP Position Opened';
-            detail = `Token #${tokenId} — ${usde} ${ASSET.collateral} + ${wsxmr} wsXMR (${shortUser} + ${shortVault})`;
+            detail = `Token #${tokenId} — ${coll} ${ASSET.collateral} + ${wsxmr} wsXMR (${shortUser} + ${shortVault})`;
             break;
         }
         case 'coLPUnwound': {
@@ -296,11 +296,11 @@ function renderActivityItem(event, currentBlock) {
             const shortVault = vault !== 'Unknown' ? `${vault.slice(0, 6)}...${vault.slice(-4)}` : 'Unknown';
             const user = args.user || 'Unknown';
             const shortUser = user !== 'Unknown' ? `${user.slice(0, 6)}...${user.slice(-4)}` : 'Unknown';
-            const usdeRet = args.usdeReturned ? (Number(args.usdeReturned) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18)).toFixed(2) : '?';
+            const collRet = args.collateralOut ? (Number(args.collateralOut) / 10 ** (getActiveChain()?.collateral.decimals ?? 18)).toFixed(2) : '?';
             const wsxmrRet = args.wsxmrReturned ? (Number(args.wsxmrReturned) / 1e8).toFixed(4) : '?';
             const liq = args.liquidationTriggered ? ' (liquidation)' : '';
             title = 'Co-LP Position Unwound';
-            detail = `Token #${tokenId} — ${usdeRet} ${ASSET.collateral} + ${wsxmrRet} wsXMR${liq}`;
+            detail = `Token #${tokenId} — ${collRet} ${ASSET.collateral} + ${wsxmrRet} wsXMR${liq}`;
             break;
         }
         case 'coLPRebalanced': {

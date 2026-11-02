@@ -18,7 +18,9 @@ interface IVaultFacet is IErrors {
     event CollateralWithdrawn(address indexed lpAddress, uint256 underlyingAmount, uint256 shares);
     event MintGriefingDepositUpdated(address indexed lpVault, uint256 newDeposit);
     event VaultMarketMetricsUpdated(address indexed lpVault, uint16 mintFeeBps, uint16 burnRewardBps);
-    event MaxMintBpsUpdated(address indexed lpVault, uint16 newMaxMintBps);
+    event ThresholdUpdated(address indexed lpVault, uint256 newThreshold);
+    event MaxMintWsxmrUpdated(address indexed lpVault, uint256 newMaxMintWsxmr);
+    event DebtRepaid(address indexed lpVault, uint256 wsxmrAmount);
     event MinBurnAmountUpdated(address indexed lpVault, uint256 newMinBurnAmount);
     event MintTimeoutBlocksUpdated(address indexed lpVault, uint256 newBlocks);
     event BurnTimeoutBlocksUpdated(address indexed lpVault, uint256 newBlocks);
@@ -48,16 +50,12 @@ interface IVaultFacet is IErrors {
     
     // ========== COLLATERAL MANAGEMENT ==========
     
-    /// @notice Deposit native token (auto-converts to yield-bearing)
-    /// @param amount Amount of native token to deposit
+    /// @notice Deposit collateral tokens (raw underlying, normalized internally)
+    /// @param amount Amount of collateral tokens to deposit
     function depositCollateral(uint256 amount) external;
-    
-    /// @notice Deposit yield-bearing shares directly
-    /// @param shares Amount of shares to deposit
-    function depositShares(uint256 shares) external;
-    
-    /// @notice Withdraw collateral (if health ratio allows)
-    /// @param shares Amount of shares to withdraw
+
+    /// @notice Withdraw collateral (if threshold coverage allows)
+    /// @param shares Amount of normalized collateral units to withdraw
     function withdrawCollateral(uint256 shares) external;
     
     // ========== VAULT CONFIGURATION ==========
@@ -71,9 +69,22 @@ interface IVaultFacet is IErrors {
     /// @param burnRewardBps Reward paid for burning (basis points, max 1000)
     function setVaultMarketMetrics(uint16 mintFeeBps, uint16 burnRewardBps) external;
     
-    /// @notice Set maximum single mint size
-    /// @param maxMintBps Max mint as percentage of capacity (basis points)
-    function setMaxMintBps(uint16 maxMintBps) external;
+    /// @notice Set the vault's threshold quote — normalized collateral required
+    ///         per 1e8 wsXMR of debt. Mint bound, self-declared solvency line,
+    ///         and par-settlement rate for in-flight requests.
+    /// @param newThreshold New threshold (must be >= deployment minThreshold)
+    function setThreshold(uint256 newThreshold) external;
+
+    /// @notice Set maximum single mint size (LP-quoted absolute cap)
+    /// @param maxMintWsxmr Max wsXMR mintable in one request (0 = uncapped)
+    function setMaxMintWsxmr(uint256 maxMintWsxmr) external;
+
+    /// @notice Repay vault debt by burning the LP's own wsXMR
+    /// @dev During kick GRACE any repay cancels the kick; post-grace only a
+    ///      full-debt repay cancels. On a frozen vault, reaching zero debt
+    ///      unfreezes.
+    /// @param wsxmrAmount Amount of wsXMR debt to repay
+    function repayDebt(uint256 wsxmrAmount) external;
     
     /// @notice Set minimum burn amount
     /// @param minAmount Minimum wsXMR for burn requests (0 = global default)
@@ -116,7 +127,8 @@ interface IVaultFacet is IErrors {
     function getVaultDebt(address lpAddress) external view returns (uint256);
 
     /// @notice Get max wsXMR amount a vault can mint in a single transaction
-    /// @dev Simulates yield sync and collateral ratio check exactly as initiateMint would
+    /// @dev Threshold-derived and quote-capped — mirrors the bond-reserved
+    ///      coverage check in initiateMint/provideLPKey.
     /// @param lpVault LP vault address
     /// @return maxWsxmrAmount Maximum wsXMR (8 decimals) that can be minted
     function getMintCapacity(address lpVault) external view returns (uint256 maxWsxmrAmount);
@@ -140,9 +152,11 @@ interface IVaultFacet is IErrors {
     /// @notice Check if a minter is whitelisted for a vault
     function isMinterWhitelisted(address vault, address minter) external view returns (bool);
     
-    /// @notice Calculate collateral ratio for given amounts
+    /// @notice Calculate threshold-relative coverage for given amounts
+    /// @dev collateral / (debt × threshold) × RATIO_PRECISION
     function calculateCollateralRatio(
         uint256 collateralAmount,
-        uint256 debtAmount
-    ) external view returns (uint256);
+        uint256 debtAmount,
+        uint256 threshold
+    ) external pure returns (uint256);
 }

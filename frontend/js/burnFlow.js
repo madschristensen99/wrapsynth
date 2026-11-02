@@ -121,18 +121,12 @@ export class BurnFlow {
         });
     }
 
-    async updatePrices() {
-        updateBurnProgress('evm-request', 'Updating XMR price onchain...');
-        const { updateOraclePrices } = await import('./redstoneWrapper.js?v=' + Date.now());
-        await updateOraclePrices();
-        console.log('Oracle prices updated for burn');
-    }
-
     /**
-     * Call requestBurn on the Hub — approves wsXMR, pushes fresh oracle prices,
-     * submits the burn request with the user's Ed25519 commitment and public keys.
-     * Extracts the requestId from the BurnRequested event. Handles stale price retries
-     * and RPC simulation failures with unsafe fallback.
+     * Call requestBurn on the Hub — approves wsXMR, then submits the burn
+     * request with the user's Ed25519 commitment and public keys. Extracts the
+     * requestId from the BurnRequested event. Oracle-free: the request locks
+     * par collateral at the vault's declared threshold, no price push needed.
+     * RPC simulation failures fall back to the unsafe path.
      */
     async requestBurnOnEVM() {
         this.state = 'evm-request';
@@ -143,7 +137,7 @@ export class BurnFlow {
         const userAddress = getUserAddress();
         const wsxmrAmountAtomic = BigInt(Math.floor(this.wsxmrAmount * Math.pow(10, DECIMALS.wsXMR)));
 
-        updateBurnProgress('evm-request', 'Step 1/3: Approving wsXMR spend (check wallet)...');
+        updateBurnProgress('evm-request', 'Step 1/2: Approving wsXMR spend (check wallet)...');
         try {
             await writeWsxmr('approve', [CONTRACTS.hub, wsxmrAmountAtomic]);
         } catch (approveErr) {
@@ -151,18 +145,6 @@ export class BurnFlow {
             await writeWsxmrUnsafe('approve', [CONTRACTS.hub, wsxmrAmountAtomic]);
         }
         console.log('wsXMR approved for burn');
-        updateBurnProgress('evm-request', '✓ wsXMR approved — updating oracle price...');
-
-        // Push fresh prices before attempting requestBurn
-        try {
-            updateBurnProgress('evm-request', 'Step 2/3: Updating oracle price (check wallet)...');
-            await this.updatePrices();
-            updateBurnProgress('evm-request', '✓ Oracle updated — step 3/3: submitting burn request (check wallet)...');
-        } catch (priceErr) {
-            console.warn('Could not update oracle prices:', priceErr.message);
-            console.log('Continuing anyway — transaction will revert if prices are stale');
-            updateBurnProgress('evm-request', 'Step 3/3: Submitting burn request (check wallet)...');
-        }
 
         // Use per-burn key set (not the agent's master keys) so each burn has a unique secret
         const claimCommitment = this.perBurnKeySet.commitment;
@@ -210,7 +192,7 @@ export class BurnFlow {
 
         let receipt;
         const attemptRequestBurn = async () => {
-            updateBurnProgress('evm-request', 'Step 3/3: Submitting burn request (check wallet)...');
+            updateBurnProgress('evm-request', 'Step 2/2: Submitting burn request (check wallet)...');
             // Explicit padded gas — requestBurn's cost varies with vault state
             // (yield sync, pending-debt branch, request-array loops) and
             // wallet estimation can land below the real need → mined OOG,
@@ -229,44 +211,7 @@ export class BurnFlow {
         try {
             receipt = await attemptRequestBurn();
         } catch (error) {
-            const isStalePrice = error.message && (
-                error.message.includes('0x19abf40e') ||
-                error.message.includes('StalePrice')
-            );
-
-            if (isStalePrice) {
-                console.warn('Oracle prices stale, pushing fresh prices...');
-                updateBurnProgress('evm-request', 'Oracle prices stale — updating prices (check wallet)...');
-
-                try {
-                    await this.updatePrices();
-                    updateBurnProgress('evm-request', '✓ Fresh prices pushed — retrying burn request...');
-                    console.log('Fresh prices pushed, retrying requestBurn...');
-                } catch (updateErr) {
-                    console.warn('Price update failed:', updateErr.message);
-                    updateBurnProgress('evm-request', 'Waiting for fresh oracle prices...');
-                    // Fall back to polling if proactive update fails
-                    let fresh = false;
-                    for (let i = 0; i < 20; i++) {
-                        await new Promise(r => setTimeout(r, 3000));
-                        try {
-                            await readHub('getXmrPrice', []);
-                            fresh = true;
-                            break;
-                        } catch (pollError) {
-                            if (!pollError.message.includes('0x19abf40e') && !pollError.message.includes('StalePrice')) {
-                                throw pollError;
-                            }
-                        }
-                    }
-                    if (!fresh) {
-                        throw new Error('Oracle prices are still stale after 60 seconds. Please wait for the LP node to update prices, then try again.');
-                    }
-                    updateBurnProgress('evm-request', '✓ Fresh prices available — retrying burn request...');
-                }
-
-                receipt = await attemptRequestBurn();
-            } else if (error.message && error.message.includes('internal error')) {
+            if (error.message && error.message.includes('internal error')) {
                 console.warn('RPC simulation failed with internal error, retrying without simulation...');
                 updateBurnProgress('evm-request', 'Submitting burn request (bypassing simulation, check wallet)...');
                 receipt = await writeHubUnsafe('requestBurn', [

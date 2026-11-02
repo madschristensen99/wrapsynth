@@ -6,7 +6,7 @@ import {BaseMockTestBase} from "./BaseTestBase.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
 import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
-import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
+import {LiquidationAuctionFacet} from "../contracts/facets/LiquidationAuctionFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
 
@@ -45,7 +45,7 @@ contract E2EAdvancedScenariosTestBase is BaseMockTestBase {
         deal(USDE, lp, collateralAmount);
         vm.startPrank(lp);
         VaultFacet(address(hub)).createVault();
-        VaultFacet(address(hub)).setMaxMintBps(0);
+        VaultFacet(address(hub)).setMaxMintWsxmr(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
         
@@ -92,43 +92,42 @@ contract E2EAdvancedScenariosTestBase is BaseMockTestBase {
         
         // Call view function on hub - THIS WORKS! No more StateChangeDuringStaticCall!
         uint256 healthBefore = hub.getVaultHealth(lp1);
-        console.log("[3] Vault health before crash:", healthBefore, "%");
+        console.log("[3] Vault health:", healthBefore, "%");
         console.log("    [OK] View function works through hub!");
-        
-        // CRASH: XMR price drops from $390 to $200 (48% drop)
-        // NOTE: When XMR price drops, debt VALUE drops, making vault HEALTHIER!
-        // This is correct - wsXMR is the debt asset, not collateral
-        console.log("\n[CRASH] XMR price drops from $390 to $200!");
-        _setXmrPrice8dec(200_00000000);
-        
-        // Check vault health after crash - should be HEALTHIER now!
+
+        // STRESS: LP raises its threshold → par obligation rises → coverage falls.
+        // The declared threshold is the oracle-free solvency line.
+        console.log("\n[STRESS] LP raises threshold 4x - coverage collapses");
+        uint256 _thrlp158 = hub.minThreshold() * 4;
+        vm.prank(lp1);
+        VaultFacet(address(hub)).setThreshold(_thrlp158);
+
         uint256 healthAfter = hub.getVaultHealth(lp1);
-        console.log("[4] Vault health after crash:", healthAfter, "%");
-        console.log("    Vault is now HEALTHIER because debt value decreased!");
-        assertTrue(healthAfter > healthBefore, "Health should improve when XMR price drops");
-        
-        // Liquidator liquidates the vault
-        console.log("[5] Liquidator attempting liquidation");
-        
-        // Liquidator needs wsXMR to burn
+        console.log("[4] Vault health after threshold raise:", healthAfter, "%");
+        assertTrue(healthAfter < healthBefore, "Health should drop when par obligation rises");
+
+        // Liquidator kicks → waits out grace + open delay → bids
+        console.log("[5] Liquidator running kick/bid auction");
         vm.deal(liquidator, 1000 ether);
-        _performMint(lp1, liquidator, 20000000); // 0.2 XMR to liquidate
-        
+
+        _kickVault(liquidator, lp1);
+        vm.roll(block.number + hub.KICK_GRACE_BLOCKS() + 1);
+        LiquidationAuctionFacet(address(hub)).openAuction(lp1);
+        vm.roll(block.number + hub.AUCTION_OPEN_DELAY_BLOCKS() + 1);
+
+        uint256 debtToClear = hub.getVaultDebt(lp1);
+        deal(address(wsxmr), liquidator, debtToClear);
+
         vm.startPrank(liquidator);
-        uint256 collateralBefore = IERC20(address(stata)).balanceOf(liquidator);
-        
-        // Try to liquidate - use a reasonable amount (5M wsXMR)
-        try LiquidationFacet(address(hub)).liquidate(lp1, 5000000) {
-            uint256 collateralAfter = IERC20(address(stata)).balanceOf(liquidator);
-            console.log("[6] Liquidator received collateral:", collateralAfter - collateralBefore);
-            console.log("[7] Liquidation bonus earned: 10%");
-        } catch {
-            console.log("[6] Liquidation failed - vault may not be liquidatable yet");
-            console.log("[7] This demonstrates price crash scenario");
-        }
+        uint256 collateralBefore = IERC20(USDE).balanceOf(liquidator);
+        wsxmr.approve(address(hub), debtToClear);
+        LiquidationAuctionFacet(address(hub)).bid(lp1);
+        uint256 collateralAfter = IERC20(USDE).balanceOf(liquidator);
+        console.log("[6] Liquidator received collateral:", collateralAfter - collateralBefore);
         vm.stopPrank();
-        
-        console.log("\n[OK] Price crash liquidation completed successfully!\n");
+
+        assertEq(hub.getVaultDebt(lp1), 0, "Auction bid must clear the vault's debt");
+        console.log("\n[OK] Auction liquidation completed successfully!\n");
     }
     
     function test_TimeWarpMintTimeout() public {
@@ -174,7 +173,7 @@ contract E2EAdvancedScenariosTestBase is BaseMockTestBase {
         (uint256 upkx, uint256 upky) = Ed25519.scalarMultBase(uint256(TEST_USER_SECRET));
         bytes32 userPubKey = bytes32(Ed25519.compressPoint(upkx, upky));
         vm.prank(user1);
-        bytes32 burnRequestId = BurnFacet(address(hub)).requestBurn(mintedAmount, lp1, user1, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
+        bytes32 burnRequestId = BurnFacet(address(hub)).requestBurn(mintedAmount / 2, lp1, user1, bytes32(uint256(1)), userPubKey, bytes32(uint256(3)));
         console.log("[2] User1 requested burn");
         
         // LP proposes hash
@@ -197,7 +196,7 @@ contract E2EAdvancedScenariosTestBase is BaseMockTestBase {
         console.log("[5] Warping time forward 3 hours...");
         vm.roll(block.number + 10800);
         
-        // User can now claim slashed collateral — revealing userSecret lets the LP sweep the shared XMR
+        // User can now claim slashed collateral - revealing userSecret lets the LP sweep the shared XMR
         uint256 collateralBefore = IERC20(address(stata)).balanceOf(user1);
         vm.prank(user1);
         BurnFacet(address(hub)).claimSlashedCollateral(burnRequestId, TEST_USER_SECRET);
@@ -223,54 +222,40 @@ contract E2EAdvancedScenariosTestBase is BaseMockTestBase {
         console.log("[2] User1 minted", lp1Minted, "from LP1");
         console.log("[3] User2 minted", lp2Minted, "from LP2");
         
-        // Price drops to $250
-        console.log("\n[CRASH 1] XMR drops to $250");
-        _setXmrPrice8dec(250_00000000);
-        
-        // Note: Can't call getVaultHealth due to hub staticcall issue
-        console.log("[4] Both vaults should be stressed but still above 120%");
-        
-        // Price drops further to $180
-        console.log("\n[CRASH 2] XMR drops to $180");
-        _setXmrPrice8dec(180_00000000);
-        
-        // Both should be liquidatable now
-        console.log("[5] Both vaults should now be liquidatable (< 120%)");
-        
-        console.log("[6] Both vaults are now liquidatable!");
-        
-        // Price recovers to $300
-        console.log("\n[RECOVERY] XMR recovers to $300");
-        _setXmrPrice8dec(300_00000000);
-        
+        // Stress 1: both LPs raise thresholds - par obligations rise
+        console.log("\n[STRESS 1] LPs raise threshold 2x");
+        uint256 _thrlp1719 = hub.minThreshold() * 2;
+        vm.prank(lp1);
+        VaultFacet(address(hub)).setThreshold(_thrlp1719);
+        uint256 _thrlp2319 = hub.minThreshold() * 2;
+        vm.prank(lp2);
+        VaultFacet(address(hub)).setThreshold(_thrlp2319);
+
+        console.log("[4] Both vaults should be stressed (higher par obligation)");
+
+        // Stress 2: threshold raised further
+        console.log("\n[STRESS 2] Threshold raised 4x - vaults deep underwater");
+        uint256 _thrlp158 = hub.minThreshold() * 4;
+        vm.prank(lp1);
+        VaultFacet(address(hub)).setThreshold(_thrlp158);
+        uint256 _thrlp2167 = hub.minThreshold() * 4;
+        vm.prank(lp2);
+        VaultFacet(address(hub)).setThreshold(_thrlp2167);
+
+        console.log("[5] Both vaults are now deep underwater - kickable by anyone");
+
+        // Recovery: thresholds back to floor → par obligations drop
+        console.log("\n[RECOVERY] Thresholds return to floor");
+        uint256 _thrlp1687 = hub.minThreshold();
+        vm.prank(lp1);
+        VaultFacet(address(hub)).setThreshold(_thrlp1687);
+        uint256 _thrlp2986 = hub.minThreshold();
+        vm.prank(lp2);
+        VaultFacet(address(hub)).setThreshold(_thrlp2986);
+
         console.log("[7] After recovery, vaults should be healthier");
-        
-        console.log("\n[OK] Price volatility test completed!\n");
-    }
-    
-    function test_OracleStalenessCheck() public {
-        console.log("\n=== SCENARIO: ORACLE STALENESS CHECK ===\n");
-        
-        _setupVault(lp1, 100 ether);
-        console.log("[1] LP1 vault created");
-        
-        // Update prices
-        _setXmrPrice8dec(INITIAL_XMR_PRICE);
-        console.log("[2] Prices updated at time:", block.timestamp);
-        
-        // Warp time forward 3 minutes (past 2 minute staleness threshold)
-        console.log("[3] Warping time forward 3 minutes...");
-        vm.warp(block.timestamp + 3 minutes);
-        
-        // Note: Can't test getXmrPrice due to hub staticcall issue
-        console.log("[4] Price would be stale at this point");
-        
-        // Update prices again
-        _setXmrPrice8dec(INITIAL_XMR_PRICE);
-        console.log("[5] Prices refreshed");
-        console.log("[6] Fresh prices now available");
-        
-        console.log("\n[OK] Oracle staleness check passed!\n");
+
+        console.log("\n[OK] Threshold volatility test completed!\n");
     }
     
     function test_ComplexScenario_CrashRecoveryYield() public {
@@ -283,24 +268,28 @@ contract E2EAdvancedScenariosTestBase is BaseMockTestBase {
         uint256 mintedAmount = _performMint(lp1, user1, 160_000_000_000); // ~1.6 XMR
         console.log("[2] User1 minted", mintedAmount, "wsXMR at $390");
         
-        // Price crashes to $200
-        console.log("\n[CRASH] Price drops to $200");
-        _setXmrPrice8dec(200_00000000);
-        console.log("[3] Vault health should be stressed after crash");
-        
-        // Time passes - 30 days for yield accumulation
-        console.log("[4] Time passes - 30 days for sDAI yield...");
+        // Stress: LP raises threshold - par obligation rises
+        console.log("\n[STRESS] Threshold raised 3x");
+        uint256 _thrlp121 = hub.minThreshold() * 3;
+        vm.prank(lp1);
+        VaultFacet(address(hub)).setThreshold(_thrlp121);
+        console.log("[3] Vault health should be stressed after threshold raise");
+
+        // Time passes
+        console.log("[4] Time passes - 30 days...");
         vm.warp(block.timestamp + 30 days);
-        
-        // Price recovers to $350
-        console.log("\n[RECOVERY] Price recovers to $350");
-        _setXmrPrice8dec(350_00000000);
+
+        // Recovery: threshold back to floor
+        console.log("\n[RECOVERY] Threshold returns to floor");
+        uint256 _thrlp1687 = hub.minThreshold();
+        vm.prank(lp1);
+        VaultFacet(address(hub)).setThreshold(_thrlp1687);
         console.log("[5] Vault health should improve after recovery");
-        
-        // LP withdraws some collateral (now has yield)
+
+        // LP withdraws some collateral
         vm.prank(lp1);
         VaultFacet(address(hub)).withdrawCollateral(10 ether);
-        console.log("[6] LP1 withdrew 10 ether of collateral (including yield)");
+        console.log("[6] LP1 withdrew 10 ether of collateral");
         
         // User burns half
         vm.prank(user1);

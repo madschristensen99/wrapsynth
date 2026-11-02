@@ -10,8 +10,8 @@ module.exports = {
     WSXMR_ADDRESS: deployment.wsXMR,
     LIQUIDITY_ROUTER: deployment.liquidityRouter,
     POOL_ADDRESS: deployment.pool,
-    STATA_ADDRESS: deployment.stataCbBTC,          // collateral share token
-    QQQB_ADDRESS: deployment.cbbtc,                // underlying collateral token (cbBTC)
+    // Collateral is raw cbBTC — no share adapter, no stata layer.
+    QQQB_ADDRESS: deployment.cbbtc,                // collateral token (cbBTC)
     WETH_ADDRESS: deployment.weth,
     USDC_ADDRESS: deployment.usdc,
     ED25519_HELPER: process.env.ED25519_HELPER || '0xA1b9115450c3e3dCAD11c04Cf9Bf4092335B3A64',
@@ -21,7 +21,6 @@ module.exports = {
     UNI_V3_QUOTER_V2: deployment.uniV3QuoterV2,
     SWAP_HELPER: process.env.SWAP_HELPER || '0x313166bb40927D94e969c51Af227bc22F30df6D2',
     POOL_FEE: 500,                                  // wsXMR/cbBTC V3 fee tier
-    CBBTC_USDC_POOL: deployment.cbbtcUsdcPool,
     RPC_URL: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
     EXPLORER: 'https://basescan.org',
 };

@@ -552,15 +552,16 @@ export async function showBurnTab() {
 function vaultSummary(v) {
     const collateral = v.collateralAmount || 0;
     const debt = v.actualDebt ? Number(v.actualDebt) / 1e8 : 0;
-    const xmrPrice = v.xmrPrice || 200;
-    const collPrice = v.collPrice || 0;
-    const collateralUSD = collateral * collPrice;
-    const debtUSD = debt * xmrPrice;
-    const cr = (collPrice > 0 && xmrPrice > 0) ? (debtUSD > 0 ? Math.round((collateralUSD / debtUSD) * 100) : 200) : null;
+    // Threshold-relative coverage: collateral vs the vault's own declared
+    // par obligations (debt × threshold). Display-only market prices are
+    // irrelevant here — the threshold IS the solvency line.
+    const thresholdHuman = v.thresholdSharesPerWsxmr ? Number(v.thresholdSharesPerWsxmr) / 1e18 : 0;
+    const required = debt * thresholdHuman;
+    const cr = required > 0 ? Math.round((collateral / required) * 100) : 200;
     const crColor = cr === null ? 'var(--muted)' : (cr >= 200 ? 'var(--teal)' : cr >= 150 ? 'var(--amber)' : 'var(--red)');
     const dotColor = cr >= 200 ? '#2fe6c4' : cr >= 150 ? '#facc15' : '#ff4444';
     const cap = v.maxMintCapacityXmr || 0;
-    const capPct = collateral > 0 ? Math.min(100, (cap * xmrPrice / (collateralUSD || 1)) * 100) : 0;
+    const capPct = collateral > 0 ? Math.min(100, (cap * thresholdHuman / (collateral || 1)) * 100) : 0;
     const feePct = (v.mintFeeBps || 0) / 100;
     return { cr, crColor, dotColor, cap, capPct, feePct, collateral, debt };
 }
@@ -735,25 +736,22 @@ export function populateVaults(vaults) {
             const vaultsHtml = vaults.map(v => {
                 const shortAddr = `${v.address.slice(0, 6)}...${v.address.slice(-4)}`;
                 // Use pre-converted collateralAmount if available
-                const collateral = v.collateralAmount || (v.collateral ? Number(v.collateral) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18) : 0);
+                const collateral = v.collateralAmount || (v.collateral ? Number(v.collateral) / 1e18 : 0);
                 // Use actual debt if available, otherwise fall back to normalized debt
                 const debt = v.actualDebt ? Number(v.actualDebt) / 1e8 : (v.debt ? Number(v.debt) / 1e8 : 0);
                 
-                // Calculate ratio in USD terms (collateral priced via oracle, wsXMR needs XMR price)
-                // Use stored xmrPrice and collPrice from vault data if available
-                const xmrPrice = v.xmrPrice || 200; // fallback
-                const collPrice = v.collPrice || 0; // 0 when oracle unavailable — never assume $1
-                const collateralUSD = collateral * collPrice;
-                const debtUSD = debt * xmrPrice;
-                const cr = (collPrice > 0 && xmrPrice > 0) ? (debtUSD > 0 ? Math.round((collateralUSD / debtUSD) * 100) : 200) : null;
+                // Threshold-relative coverage — no market price needed
+                const thresholdHuman = v.thresholdSharesPerWsxmr ? Number(v.thresholdSharesPerWsxmr) / 1e18 : 0;
+                const required = debt * thresholdHuman;
+                const cr = required > 0 ? Math.round((collateral / required) * 100) : 200;
                 const crDisplay = cr === null ? '—' : (cr > 9999 ? '>9,999%' : `${cr}%`);
                 
                 // Calculate collateral breakdown percentages
                 const usedColl = v.usedCollateral || 0;
                 const pendingColl = v.pendingCollateral || 0;
                 const bufferColl = v.bufferCollateral || 0;
-                const coLpColl = v.deployedUSDeShares ? Number(v.deployedUSDeShares) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18) : 0;
-                const lockedColl = v.lockedCollateral ? Number(v.lockedCollateral) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18) : 0;
+                const coLpColl = v.deployedCollateral ? Number(v.deployedCollateral) / 1e18 : 0;
+                const lockedColl = v.lockedCollateral ? Number(v.lockedCollateral) / 1e18 : 0;
                 const totalColl = collateral;
                 const freeColl = v.capacityAvailable === false && !v.capacityEstimated ? 0 : (v.freeCollateral || 0);
                 
@@ -804,7 +802,7 @@ export function showVaultInfo(vaultData, isMint = true) {
     
     const html = `
         <p><strong>Total XMR Locked:</strong> ${formatBalance(vaultData.totalXmrLocked, DECIMALS.wsXMR)} XMR</p>
-        <p><strong>Collateral:</strong> ${formatBalance(vaultData.totalCollateral, getActiveChain()?.collateral.shareDecimals ?? 18)} ${ASSET.share}</p>
+        <p><strong>Collateral:</strong> ${formatBalance(vaultData.totalCollateral, 18)} ${ASSET.collateral}</p>
         <p><strong>Collateralization:</strong> ${vaultData.collateralizationRatio / 100}%</p>
         <p><strong>Griefing Deposit:</strong> ${formatBalance(vaultData.mintGriefingDeposit, DECIMALS.ETH)} ${ASSET.gas}</p>
         <p><strong>Status:</strong> ${vaultData.isActive ? '✅ Active' : '❌ Inactive'}</p>
@@ -829,11 +827,9 @@ export function renderLPDetailCard(isMint, vault) {
 
     const collateral = vault.collateralAmount || 0;
     const debt = vault.actualDebt ? Number(vault.actualDebt) / 1e8 : 0;
-    const xmrPrice = vault.xmrPrice || 200;
-    const collPrice = vault.collPrice || 0;
-    const collateralUSD = collateral * collPrice;
-    const debtUSD = debt * xmrPrice;
-    const cr = (collPrice > 0 && xmrPrice > 0) ? (debtUSD > 0 ? Math.round((collateralUSD / debtUSD) * 100) : 200) : null;
+    const thresholdHuman = vault.thresholdSharesPerWsxmr ? Number(vault.thresholdSharesPerWsxmr) / 1e18 : 0;
+    const required = debt * thresholdHuman;
+    const cr = required > 0 ? Math.round((collateral / required) * 100) : 200;
     const crDisplay = cr === null ? '—' : (cr > 9999 ? '>9,999%' : `${cr}%`);
     const crColor = cr === null ? 'var(--muted)' : (cr >= 200 ? 'var(--teal)' : cr >= 150 ? 'var(--amber)' : 'var(--red)');
 
@@ -841,8 +837,8 @@ export function renderLPDetailCard(isMint, vault) {
     const usedColl = vault.usedCollateral || 0;
     const pendingColl = vault.pendingCollateral || 0;
     const bufferColl = vault.bufferCollateral || 0;
-    const coLpColl = vault.deployedUSDeShares ? Number(vault.deployedUSDeShares) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18) : 0;
-    const lockedColl = vault.lockedCollateral ? Number(vault.lockedCollateral) / 10 ** (getActiveChain()?.collateral.shareDecimals ?? 18) : 0;
+    const coLpColl = vault.deployedCollateral ? Number(vault.deployedCollateral) / 1e18 : 0;
+    const lockedColl = vault.lockedCollateral ? Number(vault.lockedCollateral) / 1e18 : 0;
     const totalColl = collateral;
     const freeColl = vault.capacityAvailable === false && !vault.capacityEstimated ? 0 : (vault.freeCollateral || 0);
 

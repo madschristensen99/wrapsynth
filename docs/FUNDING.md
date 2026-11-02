@@ -32,8 +32,8 @@ want".
   hold the collateral token yourself.
 
 ### Provide LP liquidity
-- **The collateral token itself** (QQQB / cbBTC / SPY). The hub wraps it
-  into stata shares automatically on deposit — no separate step.
+- **The collateral token itself** (QQQB / cbBTC / SPY). The hub holds it raw
+  and normalizes to 18-dec units at the boundary — no separate step.
 - Native gas token.
 
 ## Acquiring each asset

@@ -24,13 +24,13 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
 
     address public immutable hub;
     address public immutable positionManager;
-    address public immutable sDAI;
+    address public immutable collateral;
     address public immutable wsXMR;
     address public immutable pool;
-    bool public immutable sDAIIsToken0;
+    bool public immutable collateralIsToken0;
 
     /// @dev sqrt of the raw-unit decimal scale factor between the quote token
-    ///      ("sDAI"/collateral) and wsXMR (8 decimals). For an 18-dec quote
+    ///      ("collateral"/collateral) and wsXMR (8 decimals). For an 18-dec quote
     ///      token the factor is 1e10 → SQRT_DEC_DEN = 1e5; for an 8-dec quote
     ///      (cbBTC) both are 1; for a sub-8-dec quote the inverse lands on the
     ///      numerator side (SQRT_DEC_NUM = sqrt(10^(8-dec))).
@@ -52,21 +52,21 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
     constructor(
         address _hub,
         address _positionManager,
-        address _sDAI,
+        address _collateral,
         address _wsXMR,
         address _pool
     ) {
         if (_hub == address(0) || _positionManager == address(0) ||
-            _sDAI == address(0) || _wsXMR == address(0) || _pool == address(0)) {
+            _collateral == address(0) || _wsXMR == address(0) || _pool == address(0)) {
             revert ZeroAddress();
         }
 
         hub = _hub;
         positionManager = _positionManager;
-        sDAI = _sDAI;
+        collateral = _collateral;
         wsXMR = _wsXMR;
         pool = _pool;
-        sDAIIsToken0 = _sDAI < _wsXMR;
+        collateralIsToken0 = _collateral < _wsXMR;
 
         // Self-derive fee tier, tick spacing, and the quote token's decimals
         // from the pool so one codebase serves UniV3 (3000/60), PancakeSwap
@@ -74,17 +74,17 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         POOL_FEE = IUniswapV3Pool(_pool).fee();
         TICK_SPACING = IUniswapV3Pool(_pool).tickSpacing();
 
-        uint8 sDaiDec;
-        try IERC20Metadata(_sDAI).decimals() returns (uint8 d) {
-            sDaiDec = d;
+        uint8 collateralDec;
+        try IERC20Metadata(_collateral).decimals() returns (uint8 d) {
+            collateralDec = d;
         } catch {
-            sDaiDec = 18;
+            collateralDec = 18;
         }
-        if (sDaiDec >= 8) {
-            SQRT_DEC_DEN = _sqrt(10 ** (sDaiDec - 8));
+        if (collateralDec >= 8) {
+            SQRT_DEC_DEN = _sqrt(10 ** (collateralDec - 8));
             SQRT_DEC_NUM = 1;
         } else {
-            SQRT_DEC_NUM = _sqrt(10 ** (8 - sDaiDec));
+            SQRT_DEC_NUM = _sqrt(10 ** (8 - collateralDec));
             SQRT_DEC_DEN = 1;
         }
     }
@@ -99,7 +99,7 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
     // ========== INITIALIZATION ==========
 
     function initializePool(uint256 initialXmrPrice) external onlyDiamond {
-        initializePoolWithPrice(initialXmrPrice, 1e18); // sDAI/USDe ≈ $1
+        initializePoolWithPrice(initialXmrPrice, 1e18); // collateral/USDe ≈ $1
     }
 
     /// @notice Initialize the pool at an explicit collateral price — required on
@@ -116,11 +116,13 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
 
     // ========== POSITION MANAGEMENT ==========
 
+    /// @notice Mint a concentrated position centered on the pool's own slot0
+    ///         tick. No oracle input — the caller (CoLPFacet) supplies both leg
+    ///         amounts and slippage bounds; the range is pool-native.
     function mintConcentratedPosition(
-        uint256 daiAmount,
+        uint256 collateralAmount,
         uint256 wsxmrAmount,
         uint16 rangeBps,
-        uint256 /*centerXmrPrice*/,
         uint256 deadline,
         uint16 slippageBps
     ) external onlyDiamond returns (
@@ -128,7 +130,7 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         uint128 liquidity,
         int24 tickLower,
         int24 tickUpper,
-        uint256 daiConsumed,
+        uint256 collateralConsumed,
         uint256 wsxmrConsumed
     ) {
         if (block.timestamp > deadline) revert DeadlineExpired();
@@ -176,13 +178,13 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         uint256 amount1Desired;
         
         if (sqrtPriceX96 <= sqrtLower) {
-            // Price below range - only need token0 (wsXMR if wsXMR is token0, else sDAI)
-            amount0Desired = sDAIIsToken0 ? daiAmount : wsxmrAmount;
+            // Price below range - only need token0 (wsXMR if wsXMR is token0, else collateral)
+            amount0Desired = collateralIsToken0 ? collateralAmount : wsxmrAmount;
             amount1Desired = 0;
         } else if (sqrtPriceX96 >= sqrtUpper) {
-            // Price above range - only need token1 (sDAI if wsXMR is token0, else wsXMR)
+            // Price above range - only need token1 (collateral if wsXMR is token0, else wsXMR)
             amount0Desired = 0;
-            amount1Desired = sDAIIsToken0 ? wsxmrAmount : daiAmount;
+            amount1Desired = collateralIsToken0 ? wsxmrAmount : collateralAmount;
         } else {
             // Price in range - calculate ratio needed
             // For a given liquidity L, amounts are:
@@ -190,8 +192,8 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
             // amount1 = L * (sqrt(price) - sqrt(lower))
             
             // Calculate liquidity from each token and use the smaller one
-            uint256 amount0Avail = sDAIIsToken0 ? daiAmount : wsxmrAmount;
-            uint256 amount1Avail = sDAIIsToken0 ? wsxmrAmount : daiAmount;
+            uint256 amount0Avail = collateralIsToken0 ? collateralAmount : wsxmrAmount;
+            uint256 amount1Avail = collateralIsToken0 ? wsxmrAmount : collateralAmount;
             
             // L from amount0: L = amount0 * sqrt(upper) * sqrt(price) / (sqrt(upper) - sqrt(price)) / 2^96
             uint256 liq0;
@@ -236,10 +238,10 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         }
         
         // Approve position manager with the exact amounts we'll use
-        IERC20(sDAI).forceApprove(positionManager, sDAIIsToken0 ? amount0Desired : amount1Desired);
-        IERC20(wsXMR).forceApprove(positionManager, sDAIIsToken0 ? amount1Desired : amount0Desired);
+        IERC20(collateral).forceApprove(positionManager, collateralIsToken0 ? amount0Desired : amount1Desired);
+        IERC20(wsXMR).forceApprove(positionManager, collateralIsToken0 ? amount1Desired : amount0Desired);
 
-        (address _token0, address _token1) = sDAIIsToken0 ? (sDAI, wsXMR) : (wsXMR, sDAI);
+        (address _token0, address _token1) = collateralIsToken0 ? (collateral, wsXMR) : (wsXMR, collateral);
 
         // Compute slippage floors: at least (100% - slippageBps) of each desired amount must be consumed
         uint256 amount0Min = amount0Desired > 0
@@ -268,24 +270,29 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         (tokenId, liquidity, amount0, amount1) = INonfungiblePositionManager(positionManager).mint(params);
 
         // M2: Sweep any leftover tokens back to hub so they don't strand in the router
-        uint256 leftoverSDAI = IERC20(sDAI).balanceOf(address(this));
+        uint256 leftoverCollateral = IERC20(collateral).balanceOf(address(this));
         uint256 leftoverWSXMR = IERC20(wsXMR).balanceOf(address(this));
-        if (leftoverSDAI > 0) {
-            IERC20(sDAI).safeTransfer(hub, leftoverSDAI);
+        if (leftoverCollateral > 0) {
+            IERC20(collateral).safeTransfer(hub, leftoverCollateral);
         }
         if (leftoverWSXMR > 0) {
             IERC20(wsXMR).safeTransfer(hub, leftoverWSXMR);
         }
 
-        // Map token0/token1 consumed back to sDAI/wsXMR for caller accounting
-        (daiConsumed, wsxmrConsumed) = sDAIIsToken0
+        // Map token0/token1 consumed back to collateral/wsXMR for caller accounting
+        (collateralConsumed, wsxmrConsumed) = collateralIsToken0
             ? (amount0, amount1)
             : (amount1, amount0);
     }
 
-    function drainPosition(uint256 tokenId, uint16 slippageBps, uint256 oracleXmrPrice, uint256 oracleCollateralPrice)
+    /// @notice Drain a position entirely — remove all liquidity, collect all
+    ///         tokens to the hub, burn the NFT.
+    /// @dev Post-collect slippage check uses the pool's own spot price: the
+    ///      returned amounts are compared to what current slot0 predicts for
+    ///      the position's liquidity. No oracle input.
+    function drainPosition(uint256 tokenId, uint16 slippageBps)
         external onlyDiamond
-        returns (uint256 daiOut, uint256 wsxmrOut)
+        returns (uint256 collOut, uint256 wsxmrOut)
     {
         if (slippageBps >= BPS_DENOMINATOR) revert SlippageExceeded();
 
@@ -295,7 +302,7 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         if (liq > 0) {
             // D1: For a full drain of our own liquidity, Uniswap's internal slippage check
             // on decreaseLiquidity is not needed — no MEV can steal liquidity we own.
-            // We verify the final collected amounts against oracle price AFTER collect().
+            // We verify the final collected amounts against the pool's spot price AFTER collect().
             INonfungiblePositionManager.DecreaseLiquidityParams memory decParams =
                 INonfungiblePositionManager.DecreaseLiquidityParams({
                     tokenId: tokenId,
@@ -318,17 +325,17 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         (uint256 amount0, uint256 amount1) =
             INonfungiblePositionManager(positionManager).collect(colParams);
 
-        (daiOut, wsxmrOut) = sDAIIsToken0
+        (collOut, wsxmrOut) = collateralIsToken0
             ? (amount0, amount1)
             : (amount1, amount0);
 
-        // D2: Post-collect oracle sanity check — verify returned amounts are within
-        // slippage tolerance of what the oracle price predicts.
+        // D2: Post-collect spot sanity check — verify returned amounts are within
+        // slippage tolerance of what the pool's current price predicts.
         {
-            uint160 oracleSqrtPriceX96 = _priceToSqrtPriceX96(oracleXmrPrice, oracleCollateralPrice);
-            (uint256 expectedDai, uint256 expectedWsxmr) = _getAmountsAtSqrtPrice(tokenId, oracleSqrtPriceX96);
+            (uint160 sqrtPriceX96, , , , , , ) = IUniswapV3Pool(pool).slot0();
+            (uint256 expectedCollateral, uint256 expectedWsxmr) = _getAmountsAtSqrtPrice(tokenId, sqrtPriceX96);
 
-            if (expectedDai > 0 && daiOut < (expectedDai * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR) {
+            if (expectedCollateral > 0 && collOut < (expectedCollateral * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR) {
                 revert SlippageExceeded();
             }
             if (expectedWsxmr > 0 && wsxmrOut < (expectedWsxmr * (BPS_DENOMINATOR - slippageBps)) / BPS_DENOMINATOR) {
@@ -341,7 +348,7 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
 
     function collectFees(uint256 tokenId)
         external onlyDiamond
-        returns (uint256 daiFees, uint256 wsxmrFees)
+        returns (uint256 collFees, uint256 wsxmrFees)
     {
         INonfungiblePositionManager.CollectParams memory colParams =
             INonfungiblePositionManager.CollectParams({
@@ -354,7 +361,7 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         (uint256 amount0, uint256 amount1) =
             INonfungiblePositionManager(positionManager).collect(colParams);
 
-        (daiFees, wsxmrFees) = sDAIIsToken0
+        (collFees, wsxmrFees) = collateralIsToken0
             ? (amount0, amount1)
             : (amount1, amount0);
     }
@@ -363,25 +370,20 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
 
     function getPositionAmountsAtSpot(uint256 tokenId)
         external view
-        returns (uint256 daiAmount, uint256 wsxmrAmount)
+        returns (uint256 collateralAmount, uint256 wsxmrAmount)
     {
         (uint160 sqrtPriceX96, , , , , , ) = IUniswapV3Pool(pool).slot0();
         return _getAmountsAtSqrtPrice(tokenId, sqrtPriceX96);
     }
 
-    function getPositionAmountsAtPrice(uint256 tokenId, uint256 xmrPriceUSD18, uint256 collateralPriceUSD18)
-        external view
-        returns (uint256 daiAmount, uint256 wsxmrAmount)
-    {
-        uint160 sqrtPriceX96 = _priceToSqrtPriceX96(xmrPriceUSD18, collateralPriceUSD18);
-        return _getAmountsAtSqrtPrice(tokenId, sqrtPriceX96);
-    }
-
-    function isPositionOutOfRange(uint256 tokenId, uint256 xmrPrice, uint256 collateralPrice) external view returns (bool) {
+    /// @notice Out-of-range check against the pool's own slot0 price.
+    ///         No oracle input — a position is "out of range" iff the pool's
+    ///         current tick sits outside its [tickLower, tickUpper] window.
+    function isPositionOutOfRange(uint256 tokenId) external view returns (bool) {
         (, , , , , int24 tickLower, int24 tickUpper, , , , , ) =
             INonfungiblePositionManager(positionManager).positions(tokenId);
 
-        uint160 sqrtPriceX96 = _priceToSqrtPriceX96(xmrPrice, collateralPrice);
+        (uint160 sqrtPriceX96, , , , , , ) = IUniswapV3Pool(pool).slot0();
 
         uint160 sqrtLower = TickMath.getSqrtRatioAtTick(tickLower);
         uint160 sqrtUpper = TickMath.getSqrtRatioAtTick(tickUpper);
@@ -393,20 +395,20 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
     }
 
     function token0() external view returns (address) {
-        return sDAIIsToken0 ? sDAI : wsXMR;
+        return collateralIsToken0 ? collateral : wsXMR;
     }
 
     function token1() external view returns (address) {
-        return sDAIIsToken0 ? wsXMR : sDAI;
+        return collateralIsToken0 ? wsXMR : collateral;
     }
 
     // ========== INTERNAL: TICK MATH ==========
 
-    /// @dev Convert oracle XMR price (USD, 18 decimals) to sqrtPriceX96 for the sDAI/wsXMR pool.
+    /// @dev Convert oracle XMR price (USD, 18 decimals) to sqrtPriceX96 for the collateral/wsXMR pool.
     ///      Calculates: sqrtPriceX96 = sqrt(price) * 2^96
     ///      where price = token1/token0 in raw units, accounting for decimal difference.
-    ///      When sDAI is token0: price = wsXMR/sDAI = collateralPrice / (xmrPrice * 1e10)
-    ///      When wsXMR is token0: price = sDAI/wsXMR = (xmrPrice * 1e10) / collateralPrice
+    ///      When collateral is token0: price = wsXMR/collateral = collateralPrice / (xmrPrice * 1e10)
+    ///      When wsXMR is token0: price = collateral/wsXMR = (xmrPrice * 1e10) / collateralPrice
     function _priceToSqrtPriceX96(uint256 xmrPrice, uint256 collateralPrice)
         private view returns (uint160)
     {
@@ -414,13 +416,13 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         uint256 sqrtCollateralPrice = _sqrt(collateralPrice);
         uint256 sqrtPriceX96;
 
-        if (sDAIIsToken0) {
-            // price = wsXMR/sDAI = collateralPrice / (xmrPrice * decScale)
+        if (collateralIsToken0) {
+            // price = wsXMR/collateral = collateralPrice / (xmrPrice * decScale)
             // sqrtPriceX96 = sqrtCollateralPrice * SQRT_DEC_NUM * 2^96
             //              / (sqrtXmrPrice * SQRT_DEC_DEN)
             sqrtPriceX96 = (sqrtCollateralPrice * SQRT_DEC_NUM * (1 << 96)) / (sqrtXmrPrice * SQRT_DEC_DEN);
         } else {
-            // price = sDAI/wsXMR = (xmrPrice * decScale) / collateralPrice
+            // price = collateral/wsXMR = (xmrPrice * decScale) / collateralPrice
             sqrtPriceX96 = (sqrtXmrPrice * SQRT_DEC_DEN * (1 << 96)) / (sqrtCollateralPrice * SQRT_DEC_NUM);
         }
 
@@ -429,7 +431,7 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
 
     function _getAmountsAtSqrtPrice(uint256 tokenId, uint160 sqrtPriceX96)
         private view
-        returns (uint256 daiAmount, uint256 wsxmrAmount)
+        returns (uint256 collateralAmount, uint256 wsxmrAmount)
     {
         (, , , , , int24 tickLower, int24 tickUpper, uint128 liq, , , , ) =
             INonfungiblePositionManager(positionManager).positions(tokenId);
@@ -457,7 +459,7 @@ contract wsXMRLiquidityRouter is IwsXmrLiquidityRouter {
         // amount1 = L * (sqrtPrice - sqrtLower) / 2^96
         uint256 amount1 = FullMath.mulDiv(uint256(liq), diff1, 1 << 96);
 
-        (daiAmount, wsxmrAmount) = sDAIIsToken0
+        (collateralAmount, wsxmrAmount) = collateralIsToken0
             ? (amount0, amount1)
             : (amount1, amount0);
     }

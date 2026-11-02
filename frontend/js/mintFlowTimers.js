@@ -166,7 +166,7 @@ export async function startDeadlineTimer(mintFlow) {
                                     // Also withdraw slashed collateral (active chain's share token)
                                     try {
                                         const { CONTRACTS } = await import('./config.js?v=3.59');
-                                        await writeHub('withdrawReturns', [CONTRACTS.stataUSDe]);
+                                        await writeHub('withdrawReturns', [CONTRACTS.collateralToken]);
                                     } catch (e) { /* may have no collateral returns */ }
                                     timerElement.innerHTML = '<strong style="color:var(--success-color);">Deposit + Collateral Recovered</strong>';
                                     refundBtn.remove();

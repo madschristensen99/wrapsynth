@@ -18,7 +18,7 @@ contract E2EComprehensiveTestBnb is BnbMockTestBase {
     function setUp() public override {
         super.setUp();
         vm.warp(block.timestamp + 1 days);
-        _setXmrPrice8dec(XMR_PRICE_8DEC); // refresh after warp
+        
         
         user2 = makeAddr("user2");
         vm.deal(user2, 1000 ether);
@@ -26,7 +26,7 @@ contract E2EComprehensiveTestBnb is BnbMockTestBase {
         // Setup LP vault with USDe collateral
         vm.startPrank(lp);
         VaultFacet(address(hub)).createVault();
-        VaultFacet(address(hub)).setMaxMintBps(0);
+        VaultFacet(address(hub)).setMaxMintWsxmr(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
         vm.stopPrank();

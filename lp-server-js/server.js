@@ -6,10 +6,10 @@ import path from 'path';
 import { execSync, spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { createBurnHandler } from './burnHandler.js';
+import { createKickWatcher } from './kickWatcher.js';
 import * as moneroWallet from './moneroWallet.js';
 import * as moneroCrypto from './moneroCrypto.js';
 import { computeSecretHash } from './commitment.js';
-import { createOracleUpdater } from './oracleUpdate.js';
 import { createNonceManager, withTimeout } from './nonceManager.js';
 import crypto from 'crypto';
 
@@ -42,50 +42,17 @@ app.use((req, res, next) => {
   next();
 });
 
-// ─── RedStone oracle proxy ────────────────────────────────────────────────
-// RedStone's public gateways are being sunset — the frontend must fetch
-// signed data packages through an authenticated gateway, but API keys can't
-// ship in browser JS. This route forwards /redstone/* to the gateway and
-// attaches the server-side key. Point the frontend's dataServiceConfig.urls
-// at http://localhost:<PORT>/redstone.
-//
-// Env:
-//   REDSTONE_GATEWAY_URL — authenticated gateway base (required once keys are issued)
-//   REDSTONE_API_KEY     — sent as x-api-key
-//   Falls back to the public gateway when unset (works between rejection windows).
-const REDSTONE_UPSTREAM = (process.env.REDSTONE_GATEWAY_URL || 'https://oracle-gateway-1.a.redstone.finance').replace(/\/+$/, '');
-const redstoneCache = new Map(); // path -> { t, status, body }
-const REDSTONE_CACHE_MS = 3000;
-app.use('/redstone', async (req, res) => {
-  try {
-    const path = req.url; // e.g. /data-packages/latest/redstone-primary-prod
-    const cached = redstoneCache.get(path);
-    if (cached && Date.now() - cached.t < REDSTONE_CACHE_MS) {
-      return res.status(cached.status).type('application/json').send(cached.body);
-    }
-    const headers = {};
-    if (process.env.REDSTONE_API_KEY) headers['x-api-key'] = process.env.REDSTONE_API_KEY;
-    const upstream = await fetch(REDSTONE_UPSTREAM + path, { headers });
-    const body = await upstream.text();
-    if (upstream.ok) redstoneCache.set(path, { t: Date.now(), status: upstream.status, body });
-    res.status(upstream.status).type('application/json').send(body);
-  } catch (e) {
-    console.error('[redstone-proxy]', e.message);
-    res.status(502).json({ error: 'redstone proxy failed', message: e.message });
-  }
-});
-
 // ─── Multi-chain Config ────────────────────────────────────────────────────
 // One LP service can monitor multiple independent wsXMR deployments. Chain
 // contexts come from chains.json (lp-server-js/chains.json): each entry names a
-// deployment manifest, its RPC env var, RedStone feeds, and log-scan settings.
+// deployment manifest, its RPC env var, and log-scan settings.
 // Backward compat: with no chains.json, fall back to ../deployment.json +
 // RPC_URL/RPC_URLS env vars (the legacy single-chain mode).
 //
 // Shared across chains: the Monero wallet RPC (all wallet operations are
 // serialized by moneroWallet's global wallet lock) and this express app.
-// Per chain: provider, wallet binding, hub contract, nonce manager, oracle
-// updater, ctx.pendingMints map, secrets file, event pollers.
+// Per chain: provider, wallet binding, hub contract, nonce manager,
+// ctx.pendingMints map, secrets file, event pollers, kick watcher.
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const PORT = process.env.PORT || 3001;
@@ -115,12 +82,18 @@ const HUB_ABI = [
   'event BurnAborted(bytes32 indexed requestId)',
   'event BurnProposalDeclined(bytes32 indexed requestId, bytes32 userSecret)',
   'event BurnSlashed(bytes32 indexed requestId, address indexed user, uint256 collateralSeized, bytes32 userSecret)',
+  // Liquidation auction events
+  'event KickStarted(address indexed vault, address indexed kicker, uint256 bond, uint256 auctionEnd)',
+  'event ReauctionStarted(address indexed vault, address indexed kicker, uint256 bond, uint256 auctionEnd)',
+  'event AuctionOpened(address indexed vault, uint256 offeredCollateral)',
+  'event AuctionSettled(address indexed vault, address indexed bidder, uint256 debtCleared, uint256 clearingXBps, uint256 bidderCollateral, uint256 kickerPayout, bool wrongfulKick)',
+  'event VaultFrozen(address indexed vault)',
   // Functions
   'function provideLPKey(bytes32 requestId, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey, bytes32 lpCommitment) external',
   'function setMintReady(bytes32 requestId) external',
   'function revealSecret(bytes32 requestId, bytes32 secret) external',
   'function finalizeMint(bytes32 requestId) external',
-  'function getVault(address lpAddress) external view returns (tuple(address lpAddress, uint256 collateralShares, uint256 lockedCollateral, uint256 normalizedDebt, uint256 pendingDebt, uint16 maxMintBps, uint256 mintGriefingDeposit, uint16 mintFeeBps, uint16 burnRewardBps, uint256 liquidationNonce, uint256 mintNonce, uint256 minBurnAmount, bool active, uint256 deployedSDAIShares, uint16 maxCoLPRangeBps, uint256 mintTimeoutBlocks, uint256 burnTimeoutBlocks, uint256 pendingMintCount))',
+  'function getVault(address lpAddress) external view returns (tuple(address lpAddress, uint256 collateralShares, uint256 lockedCollateral, uint256 normalizedDebt, uint256 pendingDebt, uint256 thresholdSharesPerWsxmr, uint256 maxMintWsxmr, uint256 mintGriefingDeposit, uint16 mintFeeBps, uint16 burnRewardBps, uint256 liquidationNonce, uint256 mintNonce, uint256 minBurnAmount, bool active, uint256 deployedCollateral, uint256 deployedWsxmr, uint16 maxCoLPRangeBps, uint256 mintTimeoutBlocks, uint256 burnTimeoutBlocks, uint256 pendingMintCount))',
   'function proposeHash(bytes32 requestId, bytes32 secretHash, bytes32 lpPublicSpendKey, bytes32 lpPublicViewKey) external',
   'function finalizeBurn(bytes32 requestId, bytes32 secret) external',
   'function revealBurnSecret(bytes32 requestId, bytes32 secret) external',
@@ -128,15 +101,21 @@ const HUB_ABI = [
   'function claimSlashedCollateral(bytes32 requestId, bytes32 userSecret) external',
   'function resolveDeclinedProposal(bytes32 requestId, bytes32 userSecret) external',
   'function abandonProposedBurn(bytes32 requestId) external',
-  'function getBurnRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address user, address lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 lockedCollateral, uint256 rewardCollateral, bytes32 secretHash, uint256 deadline, uint256 vaultLiquidationNonce, uint256 normalizedDebtAmount, uint8 status, bytes32 userClaimCommitment, bytes32 userPublicKey, bytes32 userViewKey, uint256 xmrPriceAtRequest, bytes32 revealedSecret))',
-  'function getMintRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout, uint256 griefingDeposit, uint256 normalizedDebtAmount, uint256 vaultMintNonce, bytes32 lpCommitment, bytes32 revealedSecret, uint8 status))',
+  'function getBurnRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address user, address lpVault, uint256 wsxmrAmount, uint256 xmrAmount, uint256 lockedCollateral, uint256 rewardCollateral, bytes32 secretHash, uint256 deadline, uint256 vaultLiquidationNonce, uint256 normalizedDebtAmount, uint8 status, bytes32 userClaimCommitment, bytes32 userPublicKey, bytes32 userViewKey, uint256 thresholdAtRequest, bytes32 revealedSecret))',
+  'function getMintRequest(bytes32 requestId) external view returns (tuple(bytes32 requestId, address initiator, address recipient, address lpVault, uint256 xmrAmount, uint256 wsxmrAmount, uint256 feeAmount, bytes32 claimCommitment, bytes32 userPublicKey, uint256 timeout, uint256 griefingDeposit, uint256 normalizedDebtAmount, uint256 vaultMintNonce, bytes32 lpCommitment, bytes32 revealedSecret, uint8 status, uint256 lockedCollateral, uint256 thresholdAtReady))',
   'function lpPublicKeys(bytes32 requestId) external view returns (bytes32)',
   'function lpPublicViewKeys(bytes32 requestId) external view returns (bytes32)',
-  'function updateOraclePrices(bytes[] calldata updateData) external payable',
-  'function lastXmrPriceTimestamp() external view returns (uint256)',
-  'function lastCollateralPriceTimestamp() external view returns (uint256)',
   'function cancelMint(bytes32 requestId, bytes32 userSecret) external',
   'function abandonKeyProvidedMint(bytes32 requestId, bytes32 lpSecret) external',
+  // Liquidation auction + vault rescue
+  'function auctionState(address lpVault) external view returns (bool active, uint8 phase, uint256 xBps, uint256 offeredCollateral, uint256 bond, address kicker, uint256 auctionEnd, bool frozen)',
+  'function kick(address lpVault) external',
+  'function bid(address lpVault) external',
+  'function reauction(address lpVault) external',
+  'function repayDebt(uint256 wsxmrAmount) external',
+  'function depositCollateral(uint256 amount) external',
+  'function wsxmrToken() external view returns (address)',
+  'function collateralToken() external view returns (address)',
 ];
 
 // ─── Chain registry ─────────────────────────────────────────────────────────
@@ -148,7 +127,6 @@ const HUB_ABI = [
 //     "manifest": "../frontend/deployment.bnb.json",   // path relative to lp-server-js/
 //     "rpcEnv": "BNB_RPC_URLS",          // env var holding comma-separated RPCs
 //     "rpcUrls": ["https://..."]          // fallback RPCs if env var unset
-//     "redstoneFeeds": ["XMR"],          // feeds appended to updateOraclePrices
 //     "logChunkSize": 900,               // eth_getLogs block-range cap
 //     "secretsFile": "lp-secrets-bnb.json",       // optional override
 //     "burnSecretsFile": "lp-burn-secrets-bnb.json"   // optional override
@@ -173,7 +151,6 @@ function loadChainConfigs() {
       manifest: legacyManifest,
       rpcUrls: (process.env.RPC_URLS || process.env.RPC_URL || 'https://rpc.gnosischain.com')
         .split(',').map(u => u.trim()).filter(Boolean),
-      redstoneFeeds: ['XMR', 'DAI'],
       logChunkSize: 900,
     }];
   }
@@ -186,7 +163,7 @@ function manifestHubAddress(deployment) {
   return (deployment.contracts && deployment.contracts.wsXmrHub) || deployment.wsXmrHub;
 }
 
-/** Build the per-chain context: provider, wallet, hub, nonce mgr, oracle. */
+/** Build the per-chain context: provider, wallet, hub, nonce mgr. */
 function buildChainContext(chainCfg) {
   const manifestPath = path.isAbsolute(chainCfg.manifest)
     ? chainCfg.manifest
@@ -246,12 +223,8 @@ function buildChainContext(chainCfg) {
     secretsFile: path.join(__dirname, chainCfg.secretsFile || `lp-secrets-${chainCfg.key}.json`),
     burnSecretsFile: path.join(__dirname, chainCfg.burnSecretsFile || `lp-burn-secrets-${chainCfg.key}.json`),
   };
-  ctx.oracle = createOracleUpdater({
-    hub, wallet, hubAddress, nonceMgr: nonce,
-    dataFeeds: chainCfg.redstoneFeeds || ['XMR'],
-    chainLabel: `${ctx.key}-oracle`,
-  });
   ctx.burns = createBurnHandler(ctx);
+  ctx.kicks = createKickWatcher(ctx);
   return ctx;
 }
 
@@ -500,8 +473,6 @@ async function verifyCommitmentBinding(claimCommitment, userPublicKey) {
   }
 }
 
-// ─── Oracle Price Update: imported from oracleUpdate.js ────────────────────
-// Initialize with hub and wallet instances
 // ─── Core Mint Processing ───────────────────────────────────────────────────
 async function processMint(ctx, reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpSpendPriv) {
   console.log(`[Mint] Processing ${reqIdHex}`);
@@ -605,31 +576,12 @@ async function processMint(ctx, reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpS
     xmrAmount: mint.xmrAmount,
   });
 
-  // 2. Provide LP key on-chain (skip if already provided)
+  // 2. Provide LP key on-chain (skip if already provided). Oracle-free:
+  //    provideLPKey locks the par-value bond against the vault's declared
+  //    threshold — no price freshness gate, no pipelined oracle tx.
   if (onChainStatus < 2) {
-    // provideLPKey reads XMR + collateral prices from storage and reverts with
-    // StalePrice if they're older than ~120s. Pipeline the oracle update and
-    // provideLPKey with consecutive nonces: same-account txs execute in nonce
-    // order, so provideLPKey always sees the fresh price no matter how slow
-    // confirmation is — this avoids the StalePrice race that a confirmation
-    // wait between the two txs would introduce.
-    const oracleNonce = await ctx.nonce.getNextNonce();
-    try {
-      const otx = await ctx.oracle.broadcastOracleUpdate(oracleNonce);
-      otx.wait()
-        .then(r => console.log(`[Oracle] Update confirmed in block ${r.blockNumber}`))
-        .catch(e => console.warn(`[Oracle] Update confirmation failed: ${e.shortMessage || e.message}`));
-    } catch (priceErr) {
-      console.warn(`[Chain] Oracle broadcast failed before provideLPKey: ${priceErr.message}`);
-      // Oracle tx didn't broadcast — its reserved nonce went unused, so resync
-      // to avoid leaving a gap that would stall the next transaction.
-      ctx.nonce.resetNonceCache();
-    }
     console.log(`[Chain] Calling provideLPKey(${reqIdHex})...`);
-    const nonce = await ctx.nonce.getNextNonce(); // oracleNonce+1 if the update broadcast, else resynced
-    // Explicit gasLimit skips estimateGas — estimation runs against the latest
-    // (pre-oracle-update) block and would revert with StalePrice before the
-    // pipelined oracle tx has a chance to mine. ~64k gas is actually used.
+    const nonce = await ctx.nonce.getNextNonce();
     const tx1 = await withTimeout(
       ctx.hub.provideLPKey(reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpCommitment, { nonce, gasLimit: 500000n }),
       60000,
@@ -741,12 +693,12 @@ async function processMint(ctx, reqIdHex, lpPublicSpendKey, lpPublicViewKey, lpS
     console.warn(`[Mint] MONERO_WALLET_RPC_URL not configured or no deposit address — skipping deposit verification`);
   }
 
-  // 5-7. Oracle update, persist lpSecret, setMintReady
+  // 5-6. Persist lpSecret, setMintReady
   await finalizeMint(ctx, reqIdHex, mint, lpCommitment);
 }
 
 // ─── Finalize a verified mint ───────────────────────────────────────────────
-// Runs the oracle update, persists lpSecret, and calls setMintReady. Invoked by
+// Persists lpSecret and calls setMintReady. Invoked by
 // processMint after the deposit scan succeeds. Guarded against double-invocation.
 async function finalizeMint(ctx, reqIdHex, mint, lpCommitment) {
   if (mint.finalizeStarted) {
@@ -756,15 +708,7 @@ async function finalizeMint(ctx, reqIdHex, mint, lpCommitment) {
   mint.finalizeStarted = true;
   ctx.pendingMints.set(reqIdHex, mint);
 
-  // 5. Update oracle prices before setMintReady (contract requires fresh price for collateral check)
-  try {
-    await ctx.oracle.updateOraclePricesManual();
-  } catch (priceErr) {
-    console.warn(`[Chain] Oracle price update failed: ${priceErr.message}`);
-    console.warn(`[Chain] Proceeding with setMintReady anyway (may revert with StalePrice)...`);
-  }
-
-  // 6. Update persisted lpSecret with deposit info (secret itself was already
+  // 5. Update persisted lpSecret with deposit info (secret itself was already
   //    persisted right after generation in processMint).
   persistMintSecret(ctx, reqIdHex, {
     lpSecret: mint.lpSecret,
@@ -775,7 +719,7 @@ async function finalizeMint(ctx, reqIdHex, mint, lpCommitment) {
     depositHeight: mint.depositTx ? mint.depositTx.height : undefined,
   });
 
-  // 7. Call setMintReady (non-payable — bond is tracked in vault config, not sent as ETH)
+  // 6. Call setMintReady (non-payable — bond is tracked in vault config, not sent as ETH)
   const mintNonce = await ctx.nonce.getNextNonce();
   console.log(`[Chain] Calling setMintReady(${reqIdHex})... nonce: ${mintNonce}`);
   let tx2;
@@ -1634,6 +1578,11 @@ async function startChain(ctx) {
     ctx.burns.attachEventListeners();
   } catch (err) {
     console.error(`[${ctx.key}][Startup] Burn handler attach failed:`, err.message);
+  }
+  try {
+    ctx.kicks.start();
+  } catch (err) {
+    console.error(`[${ctx.key}][Startup] Kick watcher start failed:`, err.message);
   }
   try {
     await ctx.burns.startupRecoverBurns();

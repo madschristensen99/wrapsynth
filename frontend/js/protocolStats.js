@@ -2,6 +2,7 @@
 
 import { getPublicClient, getContractEventsChunked, readHub } from './viemClient.js?v=3.59';
 import { CONTRACTS, getActiveChain, getDeployment } from './config.js?v=3.59';
+import { fetchDisplayPrices } from './prices.js?v=3.59';
 import { formatUnits } from 'https://esm.sh/viem@2.7.0';
 
 // Correct inline event definitions matching the deployed contract ABI
@@ -95,21 +96,11 @@ async function fetchVaultAggregates() {
         vaultAddresses.push(CONTRACTS.defaultLpVault);
     }
 
-    // Fetch oracle prices — use the public storage getters (never revert) so the
-    // last logged price is always available even when the oracle is stale.
-    let xmrPrice = 0;
-    let collateralPrice = 0;
-    try {
-        const [xmrPriceRaw, collPriceRaw] = await Promise.all([
-            readHub('lastXmrPrice').catch(() => null),
-            readHub('lastCollateralPrice').catch(() => null),
-        ]);
-        if (xmrPriceRaw !== null) xmrPrice = Number(xmrPriceRaw) / 1e8;
-        if (collPriceRaw !== null) collateralPrice = Number(collPriceRaw) / 1e8;
-    } catch (e) {
-        console.warn('[Protocol Stats] Price fetch failed, using defaults');
-    }
-    if (xmrPrice <= 0) xmrPrice = 150; // last resort — should not happen
+    // Display-only market prices — the protocol itself is oracle-free, so
+    // the aggregate ratio below is informational, not a consensus value.
+    const live = await fetchDisplayPrices().catch(() => null);
+    const xmrPrice = live?.xmr ?? 0;
+    const collateralPrice = live?.coll ?? 0;
 
     // Fetch all vault data + debts in parallel
     const vaultResults = await Promise.all(
@@ -143,23 +134,10 @@ async function fetchVaultAggregates() {
         activeCount++;
     }
 
-    // Collateral ratio — convert share-token units to underlying assets (share price > 1)
-    let collateralAssets = totalCollateral;
-    try {
-        const publicClient = getPublicClient();
-        const assets = await publicClient.readContract({
-            address: CONTRACTS.stataUSDe,
-            abi: [{ name: 'convertToAssets', type: 'function', stateMutability: 'view', inputs: [{ name: 'shares', type: 'uint256' }], outputs: [{ name: '', type: 'uint256' }] }],
-            functionName: 'convertToAssets',
-            args: [totalCollateral],
-        });
-        if (assets !== null && assets !== undefined) collateralAssets = BigInt(assets.toString());
-    } catch (e) {
-        console.warn('[Protocol Stats] convertToAssets failed, using shares as collateral:', e.message);
-    }
-    const collDecimals = getActiveChain()?.collateral.decimals ?? 18;
+    // Collateral is held as raw tokens — collateralShares is normalized
+    // 18-dec, so /1e18 is the human collateral amount on every chain.
     const collateralValueUsd = collateralPrice > 0
-        ? Number(formatUnits(collateralAssets, collDecimals)) * collateralPrice
+        ? Number(formatUnits(totalCollateral, 18)) * collateralPrice
         : 0;
     const debtValueUsd = Number(formatUnits(totalDebt, 8)) * xmrPrice;
     const collateralRatio = debtValueUsd > 0 ? (collateralValueUsd / debtValueUsd) * 100 : 0;

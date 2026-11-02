@@ -5,9 +5,7 @@ import {console} from "forge-std/Test.sol";
 import {BaseMockTestBase} from "./BaseTestBase.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
-import {BurnFacet} from "../contracts/facets/BurnFacet.sol";
-import {LiquidationFacet} from "../contracts/facets/LiquidationFacet.sol";
-import {YieldFacet} from "../contracts/facets/YieldFacet.sol";
+import {LiquidationAuctionFacet} from "../contracts/facets/LiquidationAuctionFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ed25519} from "../contracts/Ed25519.sol";
 import {IErrors} from "../contracts/interfaces/IErrors.sol";
@@ -302,17 +300,17 @@ contract VaultFacetCoverageTestBase is BaseMockTestBase {
         assertEq(capacity, 0, "non-existent vault should return 0");
     }
 
-    function test_GetMintCapacity_MaxMintBpsCapsCapacity() public {
-        // Set maxMintBps to 10% (1000 bps)
+    function test_GetMintCapacity_MaxMintWsxmrCapsCapacity() public {
+        // Set an absolute 1-wsXMR cap
         vm.prank(lp);
-        VaultFacet(address(hub)).setMaxMintBps(1000);
+        VaultFacet(address(hub)).setMaxMintWsxmr(1e8);
 
         uint256 capacity = VaultFacet(address(hub)).getMintCapacity(lp);
         assertGt(capacity, 0, "should have capacity with maxMintBps set");
 
         // Without maxMintBps, capacity should be higher
         vm.prank(lp);
-        VaultFacet(address(hub)).setMaxMintBps(0);
+        VaultFacet(address(hub)).setMaxMintWsxmr(0);
         uint256 uncappedCapacity = VaultFacet(address(hub)).getMintCapacity(lp);
         assertGt(uncappedCapacity, capacity, "uncapped capacity should be higher");
     }
@@ -365,7 +363,7 @@ contract VaultFacetCoverageTestBase is BaseMockTestBase {
 
     function _calculateCollateralRatio(uint256 collateralAmount, uint256 debtAmount) internal returns (uint256) {
         bytes memory result = _hubView(
-            abi.encodeWithSelector(VaultFacet.calculateCollateralRatio.selector, collateralAmount, debtAmount)
+            abi.encodeWithSelector(VaultFacet.calculateCollateralRatio.selector, collateralAmount, debtAmount, MIN_THRESHOLD)
         );
         return abi.decode(result, (uint256));
     }
@@ -383,7 +381,7 @@ contract VaultFacetCoverageTestBase is BaseMockTestBase {
 
     function _configureVault(address who) internal {
         vm.startPrank(who);
-        VaultFacet(address(hub)).setMaxMintBps(0);
+        VaultFacet(address(hub)).setMaxMintWsxmr(0);
         VaultFacet(address(hub)).setMinBurnAmount(0);
         VaultFacet(address(hub)).setMintGriefingDeposit(0.001 ether);
         VaultFacet(address(hub)).setVaultMarketMetrics(100, 100);

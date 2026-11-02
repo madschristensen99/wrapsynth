@@ -4,7 +4,6 @@ pragma solidity ^0.8.28;
 import {console} from "forge-std/Test.sol";
 import {RobinhoodTestBase} from "./RobinhoodTestBase.sol";
 import {wsXmrHub} from "../contracts/core/wsXmrHub.sol";
-import {RobinhoodOracleFacet} from "../contracts/facets/RobinhoodOracleFacet.sol";
 import {VaultFacet} from "../contracts/facets/VaultFacet.sol";
 import {CoLPFacet} from "../contracts/facets/CoLPFacet.sol";
 import {MintFacet} from "../contracts/facets/MintFacet.sol";
@@ -16,10 +15,10 @@ import {RobinhoodAddresses} from "../contracts/RobinhoodAddresses.sol";
 
 /**
  * @title RobinhoodForkTest
- * @notice Robinhood Chain fork tests: deployment wiring, on-chain SPY
- *         collateral TWAP (single-leg SPY/USDG), StataSPY 1:1 adapter,
+ * @notice Robinhood Chain fork tests: deployment wiring, raw SPY collateral,
  *         vault lifecycle, full mint cycle, burn request, and a co-LP
  *         position minted on real Uniswap V3.
+ *         Oracle-free: thresholds are the declared par/capacity rate.
  */
 contract RobinhoodForkTest is RobinhoodTestBase {
 
@@ -32,7 +31,7 @@ contract RobinhoodForkTest is RobinhoodTestBase {
         super.setUp();
         console.log("=== ROBINHOOD CHAIN FORK DEPLOYMENT ===");
         console.log("wsXmrHub:", address(hub));
-        console.log("StataSPY:", address(stata));
+        console.log("collateral (SPY):", USDE);
         console.log("wsXMR/SPY pool:", pool);
     }
 
@@ -40,49 +39,25 @@ contract RobinhoodForkTest is RobinhoodTestBase {
 
     function testDeployment() public view {
         assertTrue(hub.facets(address(vaultFacet)), "vaultFacet not registered");
-        assertTrue(hub.facets(address(oracleFacet)), "oracleFacet not registered");
-        assertEq(hub.collateralToken(), address(stata), "collateralToken");
-        assertEq(hub.underlyingToken(), RobinhoodAddresses.SPY, "underlyingToken");
-        assertEq(hub.collateralTwapPool(), RobinhoodAddresses.SPY_USDG_POOL, "collateralTwapPool");
-        assertEq(hub.collateralTwapWindow(), RobinhoodAddresses.COLLATERAL_TWAP_WINDOW, "twapWindow");
+        assertTrue(hub.facets(address(liquidationAuctionFacet)), "auctionFacet not registered");
+        assertTrue(hub.facets(address(coLPFacet)), "coLPFacet not registered");
+        assertEq(hub.collateralToken(), USDE, "collateralToken");
+        assertEq(hub.collateralScale(), 1, "SPY is 18-dec: scale = 1");
         assertEq(router.POOL_FEE(), RobinhoodAddresses.WSXMR_POOL_FEE, "router fee");
         assertEq(router.TICK_SPACING(), RobinhoodAddresses.WSXMR_TICK_SPACING, "router spacing");
     }
 
-    // ========== ORACLE ==========
-
-    /// @notice Collateral price comes from the real on-chain SPY/USDG TWAP
-    ///         — sanity-band it ($100–$10k covers the S&P 500 across any
-    ///         realistic fork block).
-    function testCollateralTwapPrice() public {
-        uint256 px = _collateralPrice18();
-        console.log("SPY TWAP USD price:", px / 1e18);
-        assertGt(px, 100e18, "SPY price below sanity floor");
-        assertLt(px, 10_000e18, "SPY price above sanity ceiling");
-
-        // Second refresh must succeed too (idempotent, keeps fresh timestamp)
-        _refreshCollateral();
-        assertEq(hub.lastCollateralPriceTimestamp(), block.timestamp, "collateral ts not fresh");
-    }
-
-    /// @notice Stale collateral price fails closed.
-    function testCollateralStaleness() public {
-        vm.warp(block.timestamp + 3 minutes);
-        vm.expectRevert();
-        RobinhoodOracleFacet(address(hub)).getCollateralPrice();
-    }
-
     // ========== VAULT LIFECYCLE ==========
 
-    /// @notice SPY is 18-decimal; StataSPY mints 1:1, so the hub's share
-    ///         balance equals the deposit.
+    /// @notice SPY is 18-decimal and held raw; the vault's normalized
+    ///         collateralShares equal the deposit.
     function testVaultDepositWithdraw() public {
         _lpVaultWithCollateral(lp, TEST_DEPOSIT);
 
         assertEq(
-            stata.balanceOf(address(hub)),
+            IERC20(USDE).balanceOf(address(hub)),
             TEST_DEPOSIT,
-            "hub should hold stataSPY shares 1:1"
+            "hub should hold raw SPY"
         );
 
         // No debt → health is max
@@ -95,14 +70,16 @@ contract RobinhoodForkTest is RobinhoodTestBase {
         assertEq(IERC20(RobinhoodAddresses.SPY).balanceOf(lp), balBefore + TEST_DEPOSIT, "SPY not returned");
     }
 
-    /// @notice Mint capacity must reflect the SPY collateral price, not $1.
-    function testMintCapacityUsesCollateralPrice() public {
-        _lpVaultWithCollateral(lp, TEST_DEPOSIT); // 100 SPY ~ $77.5k collateral
+    /// @notice Mint capacity derives from the vault's declared threshold, not
+    ///         any external price. At the minThreshold floor, 100 SPY of free
+    ///         collateral yields ~47.6 wsXMR of capacity.
+    function testMintCapacityUsesThreshold() public {
+        _lpVaultWithCollateral(lp, TEST_DEPOSIT); // 100e18 normalized
         uint256 cap = hub.getMintCapacity(lp);
         assertGt(cap, 0, "capacity should be nonzero");
 
-        // 100 SPY * ~$775 / 150% CR => ~$51k capacity => ~133 wsXMR at $390.
-        // Loose band: anything sane between 1 and 10_000 wsXMR (1e8 dec).
+        // cap = freeNorm * 1e8 * 100 / (T * (100+110)) = 100e18*1e8*100/(1e18*210)
+        //     ≈ 47.6e8 wsXMR
         assertLt(cap, 10_000e8, "capacity absurdly large");
         assertGt(cap, 1e8, "capacity too small");
     }
@@ -137,7 +114,6 @@ contract RobinhoodForkTest is RobinhoodTestBase {
             bytes32(uint256(0xdeadbeef))
         );
 
-        _refreshCollateral();
         vm.prank(lp);
         MintFacet(address(hub)).setMintReady(requestId);
 
@@ -185,8 +161,7 @@ contract RobinhoodForkTest is RobinhoodTestBase {
     // ========== CO-LP ON REAL UNISWAP V3 ==========
 
     /// @notice Opens a co-LP position pairing user wsXMR with vault SPY
-    ///         collateral on real UniV3 — exercises the NFPM ABI path and the
-    ///         router's decimal-aware sqrt-price math (18-dec collateral).
+    ///         collateral on real UniV3 — exercises the NFPM ABI path.
     function testCoLPOnUniswapV3() public {
         _lpVaultWithCollateral(lp, TEST_DEPOSIT);
         _configureVaultForMint();
@@ -206,7 +181,7 @@ contract RobinhoodForkTest is RobinhoodTestBase {
 
         vm.startPrank(user);
         wsxmr.approve(address(hub), amount);
-        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, amount, block.timestamp + 1 hours);
+        uint256 tokenId = CoLPFacet(address(hub)).userOpenCoLP(lp, amount, 1e17, block.timestamp + 1 hours);
         vm.stopPrank();
 
         assertGt(tokenId, 0, "no NFT position minted");
