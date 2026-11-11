@@ -8,8 +8,8 @@
 // it resolves the active chain and populates CONTRACTS from the chain's
 // deployment manifest.
 
-import { CHAINS, setActiveChain, getActiveChain, getActiveChainKey, loadDeployment } from './config.js?v=3.59';
-import { switchToActiveChain, getUserAddress } from './viemClient.js?v=3.59';
+import { CHAINS, setActiveChain, getActiveChain, getActiveChainKey, loadDeployment } from './config.js?v=3.60';
+import { switchToActiveChain, getUserAddress } from './viemClient.js?v=3.60';
 
 const STORAGE_KEY = 'wrapsynth-active-chain';
 

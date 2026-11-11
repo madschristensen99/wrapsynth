@@ -1,0 +1,30 @@
+{
+  "network": "bnb",
+  "chainId": 56,
+  "deploymentDate": "2026-11-11T00:24:07.153Z",
+  "oracleFree": true,
+  "wsXMR": "0x71FeC2287DaAB5bf6d6bF76Ed817067E201Fb894",
+  "wsXmrHub": "0xb85220dd012dbF07CDedc0F451C5F24701bCb814",
+  "liquidityRouter": "0x7889Ff9C15e05c01Ce7c7D2e0D928D6bDBD1bF12",
+  "pool": "0xb194431E130faF842d8f530316a9D1653091e4d4",
+  "facets": {
+    "VaultFacet": "0x3cF0cB6FC2413Cb6303ecEF72dC3E9452AD5147A",
+    "MintFacet": "0x84365FdA06051b2274F6B9724Fa7433D5D740471",
+    "BurnFacet": "0xe2c9b0e18D67ef9769c953723045A5AcF6944E5E",
+    "LiquidationAuctionFacet": "0x4956E186Ae56367F6985abdfF5319da658017A41",
+    "CoLPFacet": "0x70A735AC9bab3a5DE68A0fa31867c98ca2d2aDA3"
+  },
+  "deployer": "0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB",
+  "explorer": "https://bscscan.com",
+  "qqqb": "0x205812CdBed920aFf76C6580abD681a46D11efc7",
+  "wbnb": "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+  "usdt": "0x55d398326f99059fF775485246999027B3197955",
+  "pcsV3Factory": "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
+  "pcsV3NFPM": "0x46A15B0b27311cedF172AB29E4f4766fbE7F4364",
+  "pcsSmartRouter": "0x1b81D678ffb9C0263b24A97847620C99d213eB14",
+  "pcsV3QuoterV2": "0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997",
+  "verification": {
+    "status": "pending",
+    "verifiedContracts": []
+  }
+}

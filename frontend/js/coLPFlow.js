@@ -8,8 +8,8 @@
  * Also includes helpers for querying active positions via on-chain event history.
  */
 
-import { CONTRACTS, ABIS, DECIMALS, getActiveChain, getActiveChainKey, getDeployment } from './config.js?v=3.59';
-import { readHub, writeHub, readWsxmr, writeWsxmr, getUserAddress, getPublicClient, getWalletClient } from './viemClient.js?v=3.59';
+import { CONTRACTS, ABIS, DECIMALS, getActiveChain, getActiveChainKey, getDeployment } from './config.js?v=3.60';
+import { readHub, writeHub, readWsxmr, writeWsxmr, getUserAddress, getPublicClient, getWalletClient } from './viemClient.js?v=3.60';
 import { formatUnits, parseUnits, parseAbi, decodeEventLog, toEventSelector, encodeFunctionData, decodeFunctionResult, keccak256, encodeAbiParameters, toHex } from 'https://esm.sh/viem@2.7.0';
 
 // Co-LP event signatures — a single eth_getLogs query matches all three by
@@ -479,7 +479,7 @@ export class CoLPFlow {
             this._saveScanCache(cache.events.concat(freshEvents), Number(scannedTo) + 1);
         };
 
-        const { getLogsChunked } = await import('./viemClient.js?v=3.59');
+        const { getLogsChunked } = await import('./viemClient.js?v=3.60');
         try {
             await getLogsChunked({
                 address: CONTRACTS.hub,

@@ -102,55 +102,6 @@ export const CHAINS = {
         },
         blockTimeSec: 2,     // Base 2s blocks
         logChunkSize: 9000   // Base public RPCs allow ~10k-block getLogs
-    },
-    robinhood: {
-        key: 'robinhood',
-        chainId: 4663,
-        name: 'Robinhood Chain',
-        chainIcon: 'assets/chains/robinhood.ico',
-        rpcUrls: [
-            'https://rpc.mainnet.chain.robinhood.com'
-        ],
-        explorer: 'https://robin.etherscan.io',
-        explorerName: 'Robinhood Explorer',
-        nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-        manifestUrl: './deployment.robinhood.json',
-        // DexScreener indexes Robinhood Chain as "robinhood" (verified via
-        // api.dexscreener.com — the wsXMR/SPY pool is listed).
-        dexscreenerSlug: 'robinhood',
-        collateral: {
-            symbol: 'SPY',
-            decimals: 18,
-            collateralScale: '1',
-            name: 'SPDR S&P 500 (Robinhood Token)',
-            icon: 'assets/tokens/spy.png',
-            priceProxy: { yahoo: 'SPY' },
-            address: '0x117cc2133c37B721F49dE2A7a74833232B3B4C0C',
-            whatItIs: 'Robinhood stock token tracking SPDR S&P 500 (RH Assets, Jersey)',
-            note: 'Robinhood stock tokens are not offered to US persons — check your jurisdiction.',
-        },
-        acquire: {
-            gas: [
-                { label: 'Robinhood Chain bridging', url: 'https://docs.robinhood.com/chain/' },
-                { label: 'Bridge via Rift', url: 'https://www.rift.trade' },
-            ],
-            collateral: [
-                { label: 'Buy SPY on Gifted Stock', url: 'https://www.giftedstock.com' },
-                { label: 'Swap via Rift', url: 'https://www.rift.trade' },
-            ],
-            // No hosted Uniswap-style UI indexes this chain yet — the
-            // wsXMR/SPY pool exists on-chain but minting is the primary path.
-            wsxmr: [],
-            gasHint: 'Minting needs ETH bridged to Robinhood Chain for gas plus the vault\'s griefing deposit.',
-        },
-        blockTimeSec: 0.25,  // Arbitrum Orbit ~250ms blocks
-        // Orbit quirk: contracts see block.number == L1 (Ethereum) block number,
-        // but eth_blockNumber returns the L2 block number. On-chain deadlines
-        // (mint/burn timeouts) are therefore in L1 blocks — compare against the
-        // block's l1BlockNumber field, not the L2 head.
-        usesL1BlockNumber: true,
-        deadlineBlockTimeSec: 12,   // L1 blocks tick ~12s
-        logChunkSize: 5000   // conservative until RH RPC limits are known
     }
 };
 

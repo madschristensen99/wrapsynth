@@ -37,12 +37,34 @@ const CHAINS = {
         rpcEnv: 'BASE_RPC_URL', rpcFallback: 'https://mainnet.base.org',
         chainId: 8453, explorer: 'https://basescan.org',
         collateralKey: 'cbbtc',
+        // Mirrors contracts/BaseAddresses.sol — deploymentConfig.<chain>.js
+        // reads these fields from the manifest.
+        manifest: {
+            cbbtc: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf',
+            weth: '0x4200000000000000000000000000000000000006',
+            usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+            uniV3Factory: '0x33128a8fC17869897dcE68Ed026d694621f6FDfD',
+            uniV3NFPM: '0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1',
+            uniSwapRouter: '0x2626664c2603336E57B271c5C0b26F421741e481',
+            uniV3QuoterV2: '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a',
+        },
     },
     bnb: {
         script: 'DeployBnb.s.sol:DeployBnb',
         rpcEnv: 'BSC_RPC_URL', rpcFallback: 'https://bsc-dataseed.bnbchain.org',
         chainId: 56, explorer: 'https://bscscan.com',
         collateralKey: 'qqqb',
+        // Mirrors contracts/BnbAddresses.sol — deploymentConfig.bnb.js reads
+        // these fields from the manifest.
+        manifest: {
+            qqqb: '0x205812CdBed920aFf76C6580abD681a46D11efc7',
+            wbnb: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',
+            usdt: '0x55d398326f99059fF775485246999027B3197955',
+            pcsV3Factory: '0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865',
+            pcsV3NFPM: '0x46A15B0b27311cedF172AB29E4f4766fbE7F4364',
+            pcsSmartRouter: '0x1b81D678ffb9C0263b24A97847620C99d213eB14',
+            pcsV3QuoterV2: '0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997',
+        },
     },
     robinhood: {
         script: 'DeployRobinhood.s.sol:DeployRobinhood',
@@ -127,6 +149,7 @@ function writeDeployment(chain, addr) {
         },
         deployer: deployerWallet.address,
         explorer: CHAINS[chain].explorer,
+        ...(CHAINS[chain].manifest || {}),
         verification: { status: 'pending', verifiedContracts: [] },
     };
 

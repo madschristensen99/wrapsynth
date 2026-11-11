@@ -1,0 +1,40 @@
+{
+  "network": "base",
+  "chainId": 8453,
+  "deploymentDate": "2026-11-10T23:33:28.834Z",
+  "oracleFree": true,
+  "wsXMR": "0x42caa1aA5B21250E4260431E90D07b12B2e2e592",
+  "wsXmrHub": "0x69cCB294c050dE270c61057051e53c70FfdBBBf7",
+  "liquidityRouter": "0xc509F558122b57a1F65BC1cD52b64044f34c3326",
+  "pool": "0x61dC3Bb99f76E069451Ec115da681aCc47611d6b",
+  "facets": {
+    "VaultFacet": "0xe6090643e06A7aFE311b1E5A3445B188C71a7CD1",
+    "MintFacet": "0x3dE58041087e672EBc781269571fa5BE4Ab062c6",
+    "BurnFacet": "0x04B884a4c50F65bd53a5f28B07E8B4E2377Dd29b",
+    "LiquidationAuctionFacet": "0xE5F494a970372954cB72Ac3Af2f1C9cD7fF45a4D",
+    "CoLPFacet": "0x4cB86EAC2d7D793eDec1d18DbcB1fE0bcefa2330"
+  },
+  "deployer": "0x492c0b9F298cC49FE2644a2EBc6eA8dF848c72FB",
+  "explorer": "https://basescan.org",
+  "cbbtc": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+  "weth": "0x4200000000000000000000000000000000000006",
+  "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "uniV3Factory": "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
+  "uniV3NFPM": "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1",
+  "uniSwapRouter": "0x2626664c2603336E57B271c5C0b26F421741e481",
+  "uniV3QuoterV2": "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a",
+  "verification": {
+    "status": "verified",
+    "verifiedContracts": [
+      "wsXMR",
+      "wsXmrHub",
+      "VaultFacet",
+      "MintFacet",
+      "BurnFacet",
+      "LiquidationAuctionFacet",
+      "CoLPFacet",
+      "wsXMRLiquidityRouter"
+    ],
+    "explorer": "https://basescan.org"
+  }
+}

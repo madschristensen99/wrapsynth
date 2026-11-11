@@ -11,7 +11,7 @@
 // that card to "--" rather than blanking the page. DexScreener responses
 // are cached in sessionStorage and refreshed every REFRESH_MS.
 
-import { CHAINS, loadDeployment } from './config.js?v=3.59';
+import { CHAINS, loadDeployment } from './config.js?v=3.60';
 
 const REFRESH_MS = 60_000;
 const DEX_CACHE_MS = 60_000;
@@ -141,6 +141,40 @@ async function readPoolOnChain(key, cfg, D) {
 
 // ─── On-chain reads ─────────────────────────────────────────────────────────
 
+// Collateral USD price with fallbacks — Yahoo proxy -> CoinGecko proxy ->
+// DexScreener token lookup. Returns 0 when every source fails.
+async function fetchCollateralUsd(key, cfg) {
+    const proxy = cfg.collateral?.priceProxy || {};
+    const addr = cfg.collateral?.address;
+    if (proxy.yahoo) {
+        try {
+            const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(proxy.yahoo)}`, { signal: AbortSignal.timeout(8000) });
+            const j = await res.json();
+            const p = j?.chart?.result?.[0]?.meta?.regularMarketPrice;
+            if (p) return p;
+        } catch (e) { /* next source */ }
+    }
+    if (proxy.coingecko) {
+        try {
+            const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${proxy.coingecko}&vs_currencies=usd`, { signal: AbortSignal.timeout(8000) });
+            const j = await res.json();
+            const p = j?.[proxy.coingecko]?.usd;
+            if (p) return p;
+        } catch (e) { /* next source */ }
+    }
+    if (addr) {
+        try {
+            const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${addr}`, { signal: AbortSignal.timeout(8000) });
+            const j = await res.json();
+            const pairs = (j.pairs || []).filter(p => p.chainId === (key === 'bnb' ? 'bsc' : key));
+            const p = (pairs[0] || j.pairs?.[0])?.priceUsd;
+            if (p) return parseFloat(p);
+        } catch (e) { /* exhausted */ }
+    }
+    console.warn(`[Landing] ${key}: collateral price unavailable from all sources`);
+    return 0;
+}
+
 async function readChainStats(key, client, hub, wsXMR, parseAbi, formatUnits) {
     const out = { supply: 0, vaults: 0, tvlUsd: 0, debtUsd: 0, xmrUsd: 0, collUsd: 0 };
     const [supply, vaultCount] = await Promise.all([
@@ -163,15 +197,9 @@ async function readChainStats(key, client, hub, wsXMR, parseAbi, formatUnits) {
 
     // Display-only market prices — the protocol is oracle-free, so off-chain
     // quotes are the only source for USD context (TVL, peg premium).
-    const yahoo = cfg.collateral.priceProxy?.yahoo;
-    if (yahoo) {
-        try {
-            const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahoo)}`, { signal: AbortSignal.timeout(8000) });
-            const j = await res.json();
-            const p = j?.chart?.result?.[0]?.meta?.regularMarketPrice;
-            if (p) out.collUsd = p;
-        } catch (e) { console.warn(`[Landing] ${key}: collateral price unavailable`); }
-    }
+    // Fallback chain: Yahoo -> CoinGecko -> DexScreener token price. Without a
+    // fallback a single blocked/failed source zeroes TVL while supply still shows.
+    out.collUsd = await fetchCollateralUsd(key, state.chains[key].cfg).catch(() => 0);
     out.xmrUsd = state.xmrUsd || 0;
 
     // collateralShares are normalized 18-dec — human collateral = /1e18.

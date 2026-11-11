@@ -8,7 +8,7 @@
 // Sources (in order): Yahoo Finance quote endpoints, then CoinGecko.
 // Per-chain collateral tickers live in CHAINS[key].collateral.priceProxy.
 
-import { getActiveChain } from './config.js?v=3.59';
+import { getActiveChain } from './config.js?v=3.60';
 
 // Default proxy tickers per collateral symbol — override via
 // CHAINS[key].collateral.priceProxy = { yahoo, coingecko }.
