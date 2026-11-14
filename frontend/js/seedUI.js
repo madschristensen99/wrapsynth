@@ -8,6 +8,16 @@ import { storeSeed, hasStoredSeed, loadSeed } from './seedStorage.js?v=3.60';
  * Returns a promise that resolves with the generated key set
  */
 export async function showSeedGenerationModal() {
+    // Cleaner Atomic Accounting seed handling (issue #71): never mint a NEW
+    // seed if one already exists for the currently connected wallet. Reuse the
+    // existing stored seed instead of silently creating a second identity for
+    // the same login context.
+    const { findStoredSeedKey } = await import('./seedStorage.js?v=3.60');
+    if (findStoredSeedKey()) {
+        console.log('[SEED] Stored seed found for this wallet — routing to reuse flow (no new seed generated).');
+        return showSeedInputModal();
+    }
+
     return new Promise((resolve, reject) => {
         // Generate new seed
         const seed = generateSeedPhrase(12);
@@ -171,8 +181,16 @@ export async function showSeedInputModal(publicSpendKey = null) {
     let publicSpendKeyHex = null;
     if (publicSpendKey) {
         const { toHex } = await import('https://esm.sh/viem@2.7.0');
-        publicSpendKeyHex = toHex(publicSpendKey);
+        // Accept either a hex string (already '0x…') or a Uint8Array key.
+        publicSpendKeyHex = typeof publicSpendKey === 'string' && publicSpendKey.startsWith('0x')
+            ? publicSpendKey
+            : toHex(publicSpendKey);
         hasStored = hasStoredSeed(publicSpendKeyHex);
+    } else {
+        // Auto-detect any seed already stored for the current wallet (login context).
+        const { findStoredSeedKey } = await import('./seedStorage.js?v=3.60');
+        publicSpendKeyHex = findStoredSeedKey();
+        hasStored = !!publicSpendKeyHex;
     }
     
     return new Promise((resolve, reject) => {
